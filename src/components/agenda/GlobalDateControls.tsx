@@ -16,14 +16,12 @@
 import { isSameDay } from 'date-fns'
 import { Calendar as CalendarIcon } from 'lucide-react'
 import type React from 'react'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
 import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
 import { Button } from '@/components/ui/button'
-import { useCalendarPageDates } from '@/hooks/useCalendarPageDates'
-import { getCalendarMonthRange } from '@/lib/date-utils'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 
@@ -40,8 +38,6 @@ export function GlobalDateControls(): React.ReactElement {
     useShallow((s) => ({ currentView: s.currentView, setView: s.setView })),
   )
   const [calendarOpen, setCalendarOpen] = useState(false)
-  const calendarRange = useMemo(() => getCalendarMonthRange(currentDate), [currentDate])
-  const { highlightedDays } = useCalendarPageDates(calendarRange)
 
   function handleToday() {
     const today = new Date()
@@ -120,7 +116,6 @@ export function GlobalDateControls(): React.ReactElement {
         {calendarOpen && (
           <JournalCalendarDropdown
             currentDate={currentDate}
-            highlightedDays={highlightedDays}
             onSelectDate={handleSelectDate}
             onSelectWeek={handleSelectWeek}
             onSelectMonth={handleSelectMonth}

@@ -6,10 +6,11 @@ import { useTranslation } from 'react-i18next'
 
 import { Calendar } from '@/components/ui/calendar'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { useCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import { formatDate, getWeekOptions } from '@/lib/date-utils'
+import { formatDate, getCalendarMonthRange, getWeekOptions } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
 import { toSpaceScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
@@ -101,7 +102,6 @@ function CalendarDayButton({
 
 export interface JournalCalendarDropdownProps {
   currentDate: Date
-  highlightedDays: Date[]
   onSelectDate: (day: Date) => void
   onSelectWeek: (dates: Date[]) => void
   onSelectMonth: (month: Date) => void
@@ -110,7 +110,6 @@ export interface JournalCalendarDropdownProps {
 
 export function JournalCalendarDropdown({
   currentDate,
-  highlightedDays,
   onSelectDate,
   onSelectWeek,
   onSelectMonth,
@@ -124,27 +123,39 @@ export function JournalCalendarDropdown({
   const [flipAbove, setFlipAbove] = useState(false)
   const [shiftLeft, setShiftLeft] = useState(0)
   const [agendaBySource, setAgendaBySource] = useState<Record<string, Record<string, number>>>({})
-  const [loading, setLoading] = useState(true)
+  const [agendaLoading, setAgendaLoading] = useState(true)
+  // #3340 — the picker's month is CONTROLLED. It used to be uncontrolled
+  // (`defaultMonth={currentDate}`) with react-day-picker's prev/next nav
+  // rendered, so paging the chevrons moved the grid while every indicator
+  // fetch stayed pinned to `currentDate`'s month: the paged-to month rendered
+  // with no page/due/scheduled/property dots at all (bar the leading outside
+  // days that happen to fall inside the fetched 42-day window), and nothing
+  // re-armed `loading`/`aria-busy` to signal that data was missing.
+  const [displayedMonth, setDisplayedMonth] = useState(currentDate)
 
-  const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`
+  // Journal-page highlights follow the DISPLAYED month too. This used to be
+  // computed by each caller off `currentDate` and passed down as a
+  // `highlightedDays` prop; the callers cannot see the paged-to month, so the
+  // range now lives here, next to the state that drives it.
+  const calendarRange = useMemo(() => getCalendarMonthRange(displayedMonth), [displayedMonth])
+  const { highlightedDays, loading: pageDatesLoading } = useCalendarPageDates(calendarRange)
+  const loading = agendaLoading || pageDatesLoading
 
-  // monthKey (`${year}-${month}`) is the intentional re-run key: agenda
-  // counts are fetched per visible month, so we deliberately do NOT depend
-  // on `currentDate` directly — that would refetch on every same-month day
-  // change for no benefit. currentDate is read inside but the month is what
-  // gates the fetch.
-  /* oxlint-disable react-hooks/exhaustive-deps -- currentDate is intentionally keyed via monthKey; see comment above. */
+  // Fetch agenda indicators for the month the user is actually viewing.
+  // `displayedMonth` only changes when react-day-picker pages, so this does
+  // not refetch for a selected-day change within the same month.
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    const dates = getCalendarDateRange(currentDate)
+    setAgendaLoading(true)
+    setAgendaBySource({})
+    const dates = getCalendarDateRange(displayedMonth)
     commands
       .countAgendaBatchBySource(dates, toSpaceScope(currentSpaceId))
       .then(unwrap)
       .then((data) => {
         if (!cancelled) {
           setAgendaBySource(data)
-          setLoading(false)
+          setAgendaLoading(false)
         }
       })
       .catch((err: unknown) => {
@@ -154,13 +165,12 @@ export function JournalCalendarDropdown({
           undefined,
           err,
         )
-        if (!cancelled) setLoading(false)
+        if (!cancelled) setAgendaLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [monthKey, invalidationKey, currentSpaceId])
-  /* oxlint-enable react-hooks/exhaustive-deps */
+  }, [displayedMonth, invalidationKey, currentSpaceId])
 
   const { datesWithDue, datesWithScheduled, datesWithProperty } = useMemo(
     () => computeSourceModifiers(agendaBySource),
@@ -233,7 +243,8 @@ export function JournalCalendarDropdown({
           mode="single"
           selected={currentDate}
           onSelect={(day) => day && onSelectDate(day)}
-          defaultMonth={currentDate}
+          month={displayedMonth}
+          onMonthChange={setDisplayedMonth}
           weekStartsOn={weekStartsOn}
           showWeekNumber
           showOutsideDays

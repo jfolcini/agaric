@@ -4,11 +4,14 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   computeSourceModifiers,
   JournalCalendarDropdown,
 } from '@/components/journal/JournalCalendarDropdown'
+import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
 import { logger } from '@/lib/logger'
+import { useSpaceStore } from '@/stores/space'
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -47,6 +50,13 @@ const mockedInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  __resetCalendarPageDatesForTests()
+  // No active space by default: `useCalendarPageDates` short-circuits without
+  // dispatching, so `count_agenda_batch_by_source` stays the only IPC in this
+  // file and the positional `mockRejectedValueOnce` error-path stubs below
+  // cannot be stolen by the journal-page highlight fetch. The two
+  // highlight tests seed a space explicitly.
+  useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: true })
   mockedInvoke.mockResolvedValue({})
 })
 
@@ -133,10 +143,18 @@ describe('computeSourceModifiers', () => {
   })
 })
 
+/** `list_journal_pages_in_range` is required-active — seed a space to run it. */
+function seedSpace(): void {
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
+  })
+}
+
 describe('JournalCalendarDropdown', () => {
   const defaultProps = {
     currentDate: new Date(2025, 5, 15),
-    highlightedDays: [],
     onSelectDate: vi.fn(),
     onSelectWeek: vi.fn(),
     onSelectMonth: vi.fn(),
@@ -232,12 +250,26 @@ describe('JournalCalendarDropdown', () => {
     expect(screen.getByTestId('mock-calendar').className).not.toContain('opacity-70')
   })
 
-  it('passes highlighted days as modifiers to Calendar', () => {
-    const highlightedDays = [new Date(2025, 5, 10), new Date(2025, 5, 20)]
-    render(<JournalCalendarDropdown {...defaultProps} highlightedDays={highlightedDays} />)
+  // #3340 — `highlightedDays` used to arrive as a prop computed by each caller
+  // off `currentDate`, which cannot follow the month the user pages to. The
+  // dropdown now derives them itself from the DISPLAYED month's range.
+  it('derives highlighted days from the journal-page fetch and passes them as modifiers', async () => {
+    seedSpace()
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        count_agenda_batch_by_source: () => ({}),
+        list_journal_pages_in_range: () => [
+          { id: 'P1', content: '2025-06-10' },
+          { id: 'P2', content: '2025-06-20' },
+        ],
+      }),
+    )
 
-    const calendar = screen.getByTestId('mock-calendar')
-    expect(calendar).toHaveAttribute('data-has-content', '2')
+    render(<JournalCalendarDropdown {...defaultProps} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-calendar')).toHaveAttribute('data-has-content', '2')
+    })
   })
 
   it('positions below by default (top-full class)', () => {
@@ -333,14 +365,20 @@ describe('JournalCalendarDropdown', () => {
   })
 
   it('has no a11y violations with highlighted days', async () => {
-    const highlightedDays = [new Date(2025, 5, 10)]
-    const { container } = render(
-      <JournalCalendarDropdown {...defaultProps} highlightedDays={highlightedDays} />,
+    seedSpace()
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        count_agenda_batch_by_source: () => ({}),
+        list_journal_pages_in_range: () => [{ id: 'P1', content: '2025-06-10' }],
+      }),
     )
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
+
+    const { container } = render(<JournalCalendarDropdown {...defaultProps} />)
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-calendar')).toHaveAttribute('data-has-content', '1')
     })
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 
   // -----------------------------------------------------------------------

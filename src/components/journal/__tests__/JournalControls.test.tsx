@@ -161,8 +161,14 @@ describe('JournalControls', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
   })
 
-  it('fetches the page list once on mount', async () => {
+  // #3340 — the calendar-highlight fetch moved OUT of this component and into
+  // `JournalCalendarDropdown`, so it runs once when the dropdown opens rather
+  // than on mount of the controls.
+  it('fetches the page list once when the calendar dropdown opens', async () => {
+    const user = userEvent.setup()
     render(<JournalControls />)
+
+    await user.click(screen.getByRole('button', { name: /calendar/i }))
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
@@ -177,13 +183,17 @@ describe('JournalControls', () => {
   })
 
   it('does not fetch the page list when no space is active (b1)', async () => {
-    // b1 — required-active: with no active space the mount fetch is skipped
+    // b1 — required-active: with no active space the fetch is skipped
     // rather than dispatching a Global scope (which the backend rejects).
     useSpaceStore.setState({ currentSpaceId: null })
+    const user = userEvent.setup()
 
     render(<JournalControls />)
+    // Open the dropdown — without this the assertion would be vacuous now
+    // that nothing fetches the page list before it mounts (#3340).
+    await user.click(screen.getByRole('button', { name: /calendar/i }))
+    await screen.findByTestId('mock-calendar')
 
-    await new Promise((r) => setTimeout(r, 0))
     expect(mockedInvoke).not.toHaveBeenCalledWith('list_journal_pages_in_range', expect.anything())
   })
 

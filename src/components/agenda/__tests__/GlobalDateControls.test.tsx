@@ -218,8 +218,15 @@ describe('GlobalDateControls', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
   })
 
-  it('fetches page list on mount for calendar highlighting', async () => {
+  // #3340 — the calendar-highlight fetch moved OUT of this component and into
+  // `JournalCalendarDropdown`, whose own `displayedMonth` state is the only
+  // thing that can follow the month the user pages to. It therefore runs when
+  // the dropdown OPENS, not on mount of these controls.
+  it('fetches page list for calendar highlighting when the dropdown opens', async () => {
+    const user = userEvent.setup()
     render(<GlobalDateControls />)
+
+    await user.click(screen.getByRole('button', { name: /calendar/i }))
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith(
@@ -234,18 +241,26 @@ describe('GlobalDateControls', () => {
     // space the calendar-highlight fetch must be skipped entirely rather
     // than dispatching a Global scope (which the backend rejects).
     useSpaceStore.setState({ currentSpaceId: null })
+    const user = userEvent.setup()
 
     render(<GlobalDateControls />)
+    // Open the dropdown — otherwise this assertion would be vacuous, since
+    // nothing fetches the page list before it mounts (#3340).
+    await user.click(screen.getByRole('button', { name: /calendar/i }))
+    await screen.findByTestId('mock-calendar')
 
-    // Give the mount effect a chance to run, then assert nothing dispatched.
-    await new Promise((r) => setTimeout(r, 0))
     expect(mockedInvoke).not.toHaveBeenCalledWith('list_journal_pages_in_range', expect.anything())
   })
 
-  it('shows error toast when page list fetch fails on mount', async () => {
+  it('shows error toast when the page list fetch fails', async () => {
+    // The dropdown registers `useCalendarPageDates` before its own
+    // agenda-count effect, so `list_journal_pages_in_range` is the first IPC
+    // out and takes this positional rejection.
     mockedInvoke.mockRejectedValueOnce(new Error('network error'))
+    const user = userEvent.setup()
 
     render(<GlobalDateControls />)
+    await user.click(screen.getByRole('button', { name: /calendar/i }))
 
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
@@ -257,10 +272,12 @@ describe('GlobalDateControls', () => {
     })
   })
 
-  it('still renders controls when page list fetch fails', async () => {
+  it('still renders controls when the page list fetch fails', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('backend unavailable'))
+    const user = userEvent.setup()
 
     render(<GlobalDateControls />)
+    await user.click(screen.getByRole('button', { name: /calendar/i }))
 
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalled()

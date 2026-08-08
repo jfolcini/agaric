@@ -4,7 +4,7 @@
  * Covers:
  *  1. collectUniquePageIds — dedup, null filtering, order preservation, empty
  *  2. buildPageTitleMap — null title fallback, duplicate last-wins, empty
- *  3. processFilterResult — no truncation (#721), pageIds derived, hasMore/cursor pass-through
+ *  3. processFilterResult — no truncation (#721), hasMore/cursor pass-through
  *  4. appendUniqueBlocks — load-more dedupe across merged source windows (#721)
  */
 
@@ -120,7 +120,6 @@ describe('processFilterResult', () => {
     expect(outcome.hasMore).toBe(true)
     expect(outcome.cursor).toBe('cursor_abc')
     expect(outcome.blocks).toEqual([])
-    expect(outcome.pageIds).toEqual([])
   })
 
   // #721 — the old 200-row slice silently dropped rows the pagination
@@ -137,13 +136,18 @@ describe('processFilterResult', () => {
     expect(outcome.blocks[249]?.id).toBe('B249')
   })
 
-  it('returns unique pageIds derived from ALL blocks (#721: no capped window)', () => {
+  // #721 — page IDs must be derived from ALL blocks, not a capped 200-row
+  // window. `processFilterResult` no longer derives them (AgendaView collects
+  // them from the accumulated `filteredBlocks` instead, #3340), so the
+  // no-capped-window property is asserted on the live function.
+  it('#721: collectUniquePageIds sees pages beyond the first 200 blocks', () => {
     const blocks = Array.from({ length: 250 }, (_, i) => {
       const pageIndex = i < 200 ? i % 5 : 5 + (i % 5)
       return makeBlock({ id: `B${i}`, page_id: `P${pageIndex}` })
     })
-    const outcome = processFilterResult({ blocks, hasMore: false, cursor: null })
-    expect(outcome.pageIds).toEqual(['P0', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9'])
+    expect(
+      collectUniquePageIds(processFilterResult({ blocks, hasMore: false, cursor: null }).blocks),
+    ).toEqual(['P0', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9'])
   })
 
   it('passes small block lists through untouched', () => {
@@ -152,15 +156,7 @@ describe('processFilterResult', () => {
       makeBlock({ id: 'B2', page_id: 'PAGE_B' }),
     ]
     const outcome = processFilterResult({ blocks, hasMore: false, cursor: null })
-    expect(outcome.blocks).toHaveLength(2)
-    expect(outcome.pageIds).toEqual(['PAGE_A', 'PAGE_B'])
-  })
-
-  it('returns empty pageIds when all blocks have null page_id', () => {
-    const blocks = [makeBlock({ id: 'B1', page_id: null }), makeBlock({ id: 'B2', page_id: null })]
-    const outcome = processFilterResult({ blocks, hasMore: false, cursor: null })
-    expect(outcome.blocks).toHaveLength(2)
-    expect(outcome.pageIds).toEqual([])
+    expect(outcome.blocks).toEqual(blocks)
   })
 
   it('does not mutate the input blocks array', () => {
