@@ -1,7 +1,8 @@
 use super::super::*;
 use super::common::*;
 use agaric_store::op::{
-    DeletePropertyPayload, EditBlockPayload, OpPayload, OpRef, RemoveTagPayload, SetPropertyPayload,
+    CreateBlockPayload, DeletePropertyPayload, EditBlockPayload, OpPayload, OpRef,
+    RemoveTagPayload, SetPropertyPayload,
 };
 use agaric_store::op_log;
 
@@ -8173,5 +8174,108 @@ async fn undo_page_group_skips_replicated_rows_2549() {
         Some("v0".into()),
         "content must revert to the pre-edit value, unaffected by the \
          never-applied foreign row"
+    );
+}
+
+// ======================================================================
+// #3644 — Ctrl+Z on a block that ARRIVED VIA SYNC.
+// ======================================================================
+
+/// #3644: the single-op undo path (Ctrl+Z) on the first LOCAL edit of a
+/// block that arrived via sync must restore the peer's content.
+///
+/// A peer-originated block is materialized locally through Loro, but the only
+/// `op_log` row that names it is a REPLICATED audit row. The user's first
+/// local edit therefore has no locally-authored predecessor for the blind
+/// timestamp scan to find — its only reconstruction source is the CAUSAL
+/// pointer `EditBlockPayload::prev_edit`, which names the peer's audit row.
+///
+/// This exercises the whole chain end-to-end: `find_prev_edit_in_tx` stamping
+/// the pointer, `resolve_prev_edit_target` resolving it, and
+/// `undo_page_op_inner` applying the result — the single-op kernel, which no
+/// other test covers for this shape.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_op_restores_peer_content_for_synced_block_3644() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "peer text".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Make the block look exactly like one that ARRIVED VIA SYNC: its content
+    // is materialized (Loro applied the peer's op) but its only `op_log` row
+    // is a replicated audit row authored by the peer. Drop the local create
+    // op through the compaction bypass — the same escape hatch
+    // `snapshot::compact_op_log` uses, and the same end state a
+    // peer-originated block has on a fresh install.
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM op_log WHERE block_id = ?1")
+        .bind(block.id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&pool)
+        .await
+        .unwrap();
+    append_replicated_op(
+        &pool,
+        "remote-dev",
+        1,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: block.id.clone(),
+            block_type: "content".into(),
+            parent_id: Some(page.id.clone()),
+            position: Some(1),
+            index: None,
+            content: "peer text".into(),
+        }),
+        1_000,
+    )
+    .await;
+
+    edit_block_inner(&pool, DEV, &mat, block.id.clone(), "my edit".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0).await;
+    assert!(
+        result.is_ok(),
+        "#3644: Ctrl+Z after editing a synced block must not fail — got {result:?}"
+    );
+    mat.flush_background().await.unwrap();
+
+    let after = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(
+        after.content,
+        Some("peer text".into()),
+        "#3644: undo must restore the peer's content, which Loro really did \
+         apply to this device"
     );
 }

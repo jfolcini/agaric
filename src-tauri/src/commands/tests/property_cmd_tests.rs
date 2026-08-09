@@ -3348,6 +3348,91 @@ async fn recurrence_custom_plus_3d() {
     mat.shutdown();
 }
 
+/// #3281: a MALFORMED `++` repeat rule must not wedge the completion
+/// transaction.
+///
+/// `repeat` is unvalidated free text (bare `<Input>` / inline `repeat::`),
+/// so `++2weeks` — a plausible typo for `++2w` — is reachable. Pre-fix,
+/// `shift_date_once` failed to PARSE the interval, the `++` arm could not
+/// tell that apart from a genuine `NaiveDate` overflow and returned
+/// `Err(Validation)`, which propagated through `build_recurrence_sibling_in_tx`
+/// → `handle_recurrence_in_tx` via `?` BEFORE `commit_and_dispatch` — rolling
+/// back the IMMEDIATE transaction, so the task could never be marked DONE.
+/// The same typo under a single `+` silently succeeded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn recurrence_malformed_plus_plus_rule_does_not_wedge_done_3281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "typo'd repeater".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        Some("2026-08-01".into()),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // `++2w` would be valid; `++2weeks` is the typo.
+    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "++2weeks").await;
+    mat.flush_background().await.unwrap();
+
+    let done = set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        Some("DONE".into()),
+    )
+    .await;
+    assert!(
+        done.is_ok(),
+        "#3281: a malformed `++` rule must not abort the completion \
+         transaction — got {done:?}"
+    );
+    mat.flush_background().await.unwrap();
+
+    let state: Option<String> =
+        sqlx::query_scalar!("SELECT todo_state FROM blocks WHERE id = ?1", block.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        state.as_deref(),
+        Some("DONE"),
+        "#3281: the task must actually reach DONE (pre-fix the tx rolled back, \
+         leaving it TODO forever)"
+    );
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn recurrence_no_repeat_property_does_nothing() {
     let (pool, _dir) = test_pool().await;

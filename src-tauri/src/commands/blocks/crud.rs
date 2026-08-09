@@ -17,43 +17,49 @@ use agaric_engine::block_ops::{
 };
 use agaric_store::space::{SpaceId, SpaceScope};
 
-/// Look up the most-recent `edit_block`/`create_block` op for the given
-/// `block_id`, scoped to the supplied connection (typically a live
-/// transaction). Returns the originating `(device_id, seq)` pair if any,
-/// shaped to drop straight into [`EditBlockPayload::prev_edit`].
+/// Look up the causal predecessor for the given `block_id` — the most-recent
+/// `edit_block`/`create_block` op for this block REGARDLESS OF PROVENANCE
+/// (local or replicated) — scoped to the supplied connection (typically a
+/// live transaction). Returns the originating
+/// `(device_id, seq)` pair if any, shaped to drop straight into
+/// [`EditBlockPayload::prev_edit`].
 ///
 /// Extracted to deduplicate the identical query that used
 /// to live inline in [`edit_block_inner`] and `commands::drafts::flush_draft_inner`.
 /// Keeping it on a `&mut SqliteConnection` lets both callers pass either
 /// `&mut **CommandTx` (this file) or `&mut *Transaction` (drafts.rs)
 /// without extra deref gymnastics.
+///
+/// #3281/#3644: this is the STAMPING site for the `prev_edit` pointer that
+/// `reverse::block_ops::reverse_edit_block` later follows. It now shares the
+/// single scan primitive with every other reconstruction site (see
+/// [`agaric_store::op_log::latest_block_edit_before`]).
+///
+/// It deliberately does NOT carry the `is_replicated = 0` guard that the
+/// blind `StrictlyBefore` prior-state walk carries — do not "restore the
+/// consistency" here. The question this scan answers is "what is the live
+/// value of the block I am about to overwrite", and a peer's edit that
+/// arrived through Loro IS part of that live value even though its op_log
+/// row is audit-only. Excluding replicated rows stamps the pointer at
+/// already-superseded text, and for a block that originated on a peer it
+/// stamps `None` — leaving the user's first local edit with no
+/// reconstruction source at all, so Ctrl+Z fails outright (#3644). #3281
+/// prescribed the guard here; that prescription was wrong, and its own
+/// Impact paragraph conceded the content did reach this device.
+///
+/// The `BlockEditScan::LatestCausal` ordering (`seq DESC, device_id DESC`,
+/// deliberately NOT `created_at`) is unchanged: #1526 depends on the pointer
+/// naming the causal predecessor, which is what makes it trustworthy under
+/// cross-device clock skew.
 pub(crate) async fn find_prev_edit_in_tx(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
 ) -> Result<Option<(String, i64)>, AppError> {
-    // B.1: query the native `block_id` column (migration 0030)
-    // instead of `json_extract(payload, '$.block_id')` so the lookup is
-    // index-supported by `idx_op_log_block_id` (migration 0030, line 23)
-    // rather than a full op_log scan.
-    //
-    // The `ORDER BY (seq DESC, device_id DESC)` is the op log's natural
-    // primary-key ordering and is functionally equivalent to the previous
-    // `created_at DESC` for this single-row lookup: within one device the
-    // most-recent edit is always the highest seq, and across devices the
-    // tuple is well-defined and total. There is no compound
-    // `(block_id, seq DESC, device_id DESC)` index today — the
-    // `idx_op_log_block_id` index narrows the scan to ops touching this
-    // block (typically a handful) and SQLite resolves the ORDER BY in
-    // memory on that small set, which is the desired plan.
-    let row = sqlx::query!(
-        "SELECT device_id, seq FROM op_log \
-         WHERE block_id = ?1 \
-         AND op_type IN ('edit_block', 'create_block') \
-         ORDER BY seq DESC, device_id DESC \
-         LIMIT 1",
-        block_id
+    let row = agaric_store::op_log::latest_block_edit_before(
+        &mut *conn,
+        block_id,
+        agaric_store::op_log::BlockEditScan::LatestCausal,
     )
-    .fetch_optional(conn)
     .await?;
     Ok(row.map(|r| (r.device_id, r.seq)))
 }

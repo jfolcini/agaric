@@ -16,7 +16,7 @@
 //! resolves unchanged.
 
 use agaric_core::error::AppError;
-use agaric_store::recurrence_math::shift_date_once;
+use agaric_store::recurrence_math::{ShiftFailure, shift_date_once, try_shift_date_once};
 
 /// Shift a `YYYY-MM-DD` date string by a recurrence interval.
 ///
@@ -29,6 +29,10 @@ use agaric_store::recurrence_math::shift_date_once;
 /// - `daily`  — every day
 /// - `weekly` — every 7 days
 /// - `monthly` — every month (same day-of-month, clamped)
+/// - `yearly` — every year (same month/day, clamped on Feb 29 → Feb 28).
+///   #3281: written by the `/repeat-yearly` slash command as the bare
+///   keyword; note the keyword arms match the BARE form only, so `+yearly`
+///   is not accepted (exactly like `+daily` / `+weekly` / `+monthly`).
 /// - `+Nd` / `Nd` — every N days
 /// - `+Nw` / `Nw` — every N weeks
 /// - `+Nm` / `Nm` — every N months
@@ -44,14 +48,23 @@ use agaric_store::recurrence_math::shift_date_once;
 ///   `rule`, zero/negative count, unknown unit). These are user-input
 ///   shape errors that the caller already treats as "skip the shift
 ///   silently"; preserving the `None` channel keeps that contract.
+///   #3281: this now covers ALL THREE prefixes, including `++`. A
+///   malformed interval under `++` (e.g. `++2weeks`, a typo for `++2w`)
+///   used to return `Err`, which propagated through
+///   `build_recurrence_sibling_in_tx` → `handle_recurrence_in_tx` before
+///   `commit_and_dispatch` and rolled back the whole completion
+///   transaction — so the task could never be marked DONE, and the error
+///   blamed "arithmetic overflow" for a typo. Three prefixes, one
+///   behaviour for one bad input.
 /// * `Err(AppError::Validation)` — the `++` arm hit one of two
 ///   distinct dead-ends that previously returned silent garbage:
-///   **:** `shift_date_once` returned `None` mid-loop
-///   (i.e. a `NaiveDate` arithmetic overflow on a single shift).
+///   **overflow:** [`try_shift_date_once`] reported
+///   [`ShiftFailure::Overflow`] mid-loop — a genuine `NaiveDate` / i64
+///   arithmetic overflow, or a result outside the calendar guard rail.
 ///   The pre-fix `?` propagation surfaced as `Ok(None)`, which the
 ///   compute caller treated as "no recurrence requested" and created
 ///   a sibling with no due date.
-///   **:** the 10 000-iteration safety budget elapsed
+///   **cap:** the 10 000-iteration safety budget elapsed
 ///   without `current > today` (e.g. `+1d` against an `original` ~30
 ///   years in the past). The pre-fix loop returned the stale past
 ///   date silently.
@@ -122,12 +135,36 @@ pub fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppError> {
             let mut current = original;
             let mut hit_cap = true;
             for _ in 0..10_000 {
-                let Some(next) = shift_date_once(current, interval) else {
-                    // Explicit overflow signal instead of
-                    // silently returning `Ok(None)` from the parent.
-                    return Err(AppError::validation(format!(
-                        "recurrence ++ arithmetic overflow: original={original} interval={interval}"
-                    )));
+                let next = match try_shift_date_once(current, interval) {
+                    Ok(next) => next,
+                    // #3281: a MALFORMED interval is user-input shape, not an
+                    // arithmetic dead-end. Rejoin the `Ok(None)` channel the
+                    // other two prefix arms already use, so a typo like
+                    // `++2weeks` is skipped rather than aborting the enclosing
+                    // completion transaction (and being mislabelled
+                    // "arithmetic overflow" on the way out).
+                    Err(ShiftFailure::Interval) => {
+                        // The `repeat` property is unvalidated free text, so
+                        // the only trace a typo leaves is a sibling with no
+                        // due date. Leave a diagnostic rather than nothing;
+                        // rejecting the rule at `set_property`, where the
+                        // user could see it, is the real fix (#3281).
+                        tracing::warn!(
+                            original = %original,
+                            interval = %interval,
+                            "recurrence `++` rule has a malformed interval; \
+                             skipping the shift (the sibling will have no date)"
+                        );
+                        return Ok(None);
+                    }
+                    // Genuine `NaiveDate` / calendar-rail dead-end: still a
+                    // hard error, now named accurately.
+                    Err(ShiftFailure::Overflow) => {
+                        return Err(AppError::validation(format!(
+                            "recurrence ++ date arithmetic overflow: original={original} \
+                             interval={interval} at={current}"
+                        )));
+                    }
                 };
                 current = next;
                 if current > today {

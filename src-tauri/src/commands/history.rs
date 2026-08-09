@@ -2586,24 +2586,32 @@ pub async fn compute_block_vs_current_diff_inner(
     // selected point. Bounding by `(created_at < ?c OR (created_at = ?c
     // AND seq <= ?s))` makes the bound agree with the ORDER BY.
     //
-    // ORDER BY `created_at DESC, seq DESC` (not `seq DESC`
-    // alone) to mirror `find_prior_text`'s cross-device tie-break and the
-    // canonical total order used by `commands/history.rs` /
-    // `pagination/history.rs`. Sorting by `created_at` first picks the
-    // latest wall-clock op, matching the user's mental model of "most
-    // recent change".
-    let row = sqlx::query!(
-        "SELECT op_type, payload FROM op_log \
-         WHERE block_id = ?1 \
-           AND op_type IN ('edit_block', 'create_block') \
-           AND (created_at < ?2 OR (created_at = ?2 AND seq <= ?3)) \
-         ORDER BY created_at DESC, seq DESC \
-         LIMIT 1",
-        block_id_upper,
-        historical_created_at,
-        historical_seq,
+    // Ordered by the canonical `(created_at, seq, device_id)` total order.
+    // Sorting by `created_at` first picks the latest wall-clock op, matching
+    // the user's mental model of "most recent change".
+    //
+    // #3281: this scan sat under a comment claiming it mirrored
+    // `find_prior_text`'s canonical total order while carrying no
+    // `device_id` tie-break, so an equal-`(created_at, seq)` cross-device
+    // collision resolved on SQLite's row order. It now goes through the
+    // single scan primitive, which owns that order.
+    //
+    // #3644: the preview deliberately does NOT filter `is_replicated = 0`.
+    // The preview's whole job is to state what a restore to this point would
+    // do, so it must never diverge from the restore kernels — and those
+    // follow the causal pointer into replicated rows. Filtering here would
+    // also break the panel outright: `get_block_history` deliberately LISTS
+    // replicated foreign ops (#2481), so selecting one, or any point at or
+    // before the first local edit of a synced block, would answer `NotFound`
+    // where the user simply asked to preview a row the panel offered them.
+    let row = agaric_store::op_log::latest_block_edit_before(
+        pool,
+        &block_id_upper,
+        agaric_store::op_log::BlockEditScan::AtOrBefore {
+            created_at: historical_created_at,
+            seq: historical_seq,
+        },
     )
-    .fetch_optional(pool)
     .await?;
 
     let Some(row) = row else {

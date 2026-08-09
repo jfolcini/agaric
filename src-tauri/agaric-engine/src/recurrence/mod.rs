@@ -338,6 +338,76 @@ mod tests {
         );
     }
 
+    /// #3281: a MALFORMED interval under the `++` prefix must stay on the
+    /// `Ok(None)` channel like the other two prefix arms, not masquerade as
+    /// an arithmetic overflow.
+    ///
+    /// `++2weeks` is a plausible typo for `++2w`. `shift_date_once` splits
+    /// it into `num_str = "2week"` / `unit = "s"`, fails to parse the count
+    /// and returns `None` — indistinguishable, at the `++` call site, from a
+    /// genuine `NaiveDate` overflow. Returning `Err` there propagates out
+    /// through `build_recurrence_sibling_in_tx` → `handle_recurrence_in_tx`
+    /// BEFORE `commit_and_dispatch`, rolling back the whole transaction: the
+    /// task can never be marked DONE, and the message blames overflow for a
+    /// typo. The same typo under `+` silently succeeds.
+    #[test]
+    fn shift_date_plus_plus_malformed_interval_is_ok_none_3281() {
+        for rule in ["++2weeks", "++xyz", "++0d", "++-3d", "++5x", "++w"] {
+            let got = shift_date("2026-08-01", rule);
+            assert!(
+                matches!(got, Ok(None)),
+                "#3281: malformed `{rule}` must be Ok(None) (a parse error), \
+                 not an Err — got {got:?}"
+            );
+        }
+    }
+
+    /// #3281: a GENUINE single-step date overflow under `++` must still be a
+    /// hard `Err`, and so must the 10 000-iteration safety cap. Fixing the
+    /// parse-error channel must not silence either.
+    #[test]
+    fn shift_date_plus_plus_real_overflow_still_errs_3281() {
+        // `in_calendar_rail` rejects the shifted date, so `shift_date_once`
+        // returns `None` for a genuine arithmetic/rail reason.
+        let overflow = shift_date("262142-01-01", "++1y");
+        assert!(
+            overflow.is_err(),
+            "#3281: genuine date-arithmetic overflow must stay an Err, got {overflow:?}"
+        );
+        // `+1d` from 1900 (inside the calendar rail) burns the whole
+        // 10 000-iteration budget without catching up to today.
+        let cap = shift_date("1900-01-01", "++1d");
+        assert!(
+            cap.is_err(),
+            "#3281: the 10 000-iteration cap must stay an Err, got {cap:?}"
+        );
+    }
+
+    /// #3281: `yearly` is advertised by the UI vocabulary — the
+    /// `/repeat-yearly` slash command (src/lib/slash-commands.ts) writes the
+    /// bare string `yearly` into the `repeat` property, and `repeat.yearly`
+    /// is a first-class i18n label — but `shift_date_once` had no `yearly`
+    /// arm, so the shift silently no-opped (`Ok(None)`) and produced a
+    /// dateless sibling.
+    #[test]
+    fn shift_date_yearly_is_supported_3281() {
+        assert_eq!(
+            shift_date("2026-08-01", "yearly").unwrap(),
+            Some("2027-08-01".into()),
+            "#3281: bare `yearly` (written by /repeat-yearly) must shift by one year"
+        );
+        // NB: `+yearly` stays unsupported, exactly like the pre-existing
+        // `+daily` / `+weekly` / `+monthly` — the keyword arms match the bare
+        // keyword only, and `/repeat-yearly` writes the bare form. Widening
+        // that is a separate change.
+        // Leap-day clamp, matching the `+1y` arm's documented behaviour.
+        assert_eq!(
+            shift_date("2024-02-29", "yearly").unwrap(),
+            Some("2025-02-28".into()),
+            "#3281: `yearly` must clamp Feb 29 like `+1y`"
+        );
+    }
+
     #[test]
     fn shift_date_monthly_from_string() {
         assert_eq!(

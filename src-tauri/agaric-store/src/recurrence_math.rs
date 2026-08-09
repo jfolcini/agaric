@@ -89,18 +89,54 @@ fn shift_by_months(base: chrono::NaiveDate, n_months: i64) -> Option<chrono::Nai
     chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))
 }
 
-/// Shift a `YYYY-MM-DD` date string by a recurrence interval once from
-/// the given base date.
+/// Why a single recurrence shift produced no date (#3281).
 ///
-/// Returns the shifted date or `None` if parsing fails.
-pub fn shift_date_once(base: chrono::NaiveDate, interval: &str) -> Option<chrono::NaiveDate> {
+/// [`shift_date_once`] collapses both causes into `None`, which is fine for
+/// the `+` / `.+` prefix arms (both treat any failure as "skip the shift
+/// silently"). The `++` arm must tell them apart: a malformed rule is user
+/// input to be ignored, while a genuine arithmetic dead-end is a real error
+/// worth aborting on. Conflating them made `++2weeks` — a typo for `++2w` —
+/// report "arithmetic overflow" and roll back the completion transaction, so
+/// the task could never be marked DONE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShiftFailure {
+    /// The interval string is malformed: unknown keyword, unknown unit
+    /// letter, non-numeric or non-positive count, or too short to split.
+    /// The caller should treat this as "no shift requested".
+    Interval,
+    /// The interval parsed fine, but the date arithmetic overflowed `i64` /
+    /// `NaiveDate`, or the result left the
+    /// `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail.
+    Overflow,
+}
+
+/// Shift `base` by one recurrence interval, distinguishing the two failure
+/// causes (#3281).
+///
+/// This is the kernel; [`shift_date_once`] is the `Option`-shaped wrapper
+/// kept for the call sites that do not care which cause fired.
+pub fn try_shift_date_once(
+    base: chrono::NaiveDate,
+    interval: &str,
+) -> Result<chrono::NaiveDate, ShiftFailure> {
     let year = base.year();
     let month = base.month();
     let day = base.day();
 
+    // Every arithmetic dead-end below is an `Overflow`; every rejected
+    // *shape* is an `Interval`.
+    let ovf = || ShiftFailure::Overflow;
+
     let shifted = match interval {
-        "daily" => shift_by_days(base, 1)?,
-        "weekly" => shift_by_days(base, 7)?,
+        "daily" => shift_by_days(base, 1).ok_or_else(ovf)?,
+        "weekly" => shift_by_days(base, 7).ok_or_else(ovf)?,
+        // #3281: `yearly` is advertised by the UI vocabulary — the
+        // `/repeat-yearly` slash command writes the bare string `yearly` into
+        // the `repeat` property and `repeat.yearly` is a first-class i18n
+        // label — but had no arm here, so the shift silently no-opped and
+        // produced a dateless sibling. Delegates to the same
+        // leap-day-clamping month arithmetic as `+1y`.
+        "yearly" => shift_by_months(base, 12).ok_or_else(ovf)?,
         "monthly" => {
             // #679: month-end clamp is INTENTIONALLY sticky (Org-mode
             // in-place shift semantics). We shift the *given base* by one
@@ -121,12 +157,12 @@ pub fn shift_date_once(base: chrono::NaiveDate, interval: &str) -> Option<chrono
             let max_day = days_in_month(new_year, new_month);
             // (b): apply the same calendar-year guard rail as the month/year
             // arms so e.g. `2200-12-01 monthly` (which would roll to 2201)
-            // returns `None` instead of leaking an out-of-rail date.
-            in_calendar_rail(chrono::NaiveDate::from_ymd_opt(
-                new_year,
-                new_month,
-                day.min(max_day),
-            )?)?
+            // fails instead of leaking an out-of-rail date.
+            in_calendar_rail(
+                chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))
+                    .ok_or_else(ovf)?,
+            )
+            .ok_or_else(ovf)?
         }
         _ => {
             // Parse +Nd, +Nw, +Nm patterns (the leading '+' is already stripped
@@ -134,35 +170,50 @@ pub fn shift_date_once(base: chrono::NaiveDate, interval: &str) -> Option<chrono
             // for the default `+` mode).
             let num_unit = interval.strip_prefix('+').unwrap_or(interval);
             if num_unit.len() < 2 {
-                return None;
+                return Err(ShiftFailure::Interval);
             }
             let (num_str, unit) = num_unit.split_at(num_unit.len() - 1);
-            let n: i64 = num_str.parse().ok()?;
+            // #3281: a count that does not parse is a MALFORMED RULE, not an
+            // arithmetic overflow — `++2weeks` splits into `"2week"` / `"s"`
+            // and lands here.
+            let Ok(n) = num_str.parse::<i64>() else {
+                return Err(ShiftFailure::Interval);
+            };
             // Org-mode recurrence semantics never go backwards (and
             // a zero interval would either no-op or, in `++` mode, loop
             // until the safety limit). Reject negative and zero counts at
             // parse time.
             if n <= 0 {
-                return None;
+                return Err(ShiftFailure::Interval);
             }
             match unit {
-                "d" => shift_by_days(base, n)?,
+                "d" => shift_by_days(base, n).ok_or_else(ovf)?,
                 // (b): guard `n * 7` against i64 overflow before handing the
                 // day count to the checked day shift.
-                "w" => shift_by_days(base, n.checked_mul(7)?)?,
+                "w" => shift_by_days(base, n.checked_mul(7).ok_or_else(ovf)?).ok_or_else(ovf)?,
                 // (b): `+Nm` and `+Ny` share the leap-day-clamping
                 // month arithmetic via `shift_by_months`; the `y` arm just
-                // Multiplies by 12 first. `+1y` from 2024-02-29 lands
+                // multiplies by 12 first. `+1y` from 2024-02-29 lands
                 // on 2025-02-28 because the helper clamps day against the
                 // destination month length.
-                "m" => shift_by_months(base, n)?,
-                "y" => shift_by_months(base, n.checked_mul(12)?)?,
-                _ => return None,
+                "m" => shift_by_months(base, n).ok_or_else(ovf)?,
+                "y" => shift_by_months(base, n.checked_mul(12).ok_or_else(ovf)?).ok_or_else(ovf)?,
+                _ => return Err(ShiftFailure::Interval),
             }
         }
     };
 
-    Some(shifted)
+    Ok(shifted)
+}
+
+/// Shift a `YYYY-MM-DD` date string by a recurrence interval once from
+/// the given base date.
+///
+/// Returns the shifted date or `None` if parsing fails or the arithmetic
+/// dead-ends. Use [`try_shift_date_once`] when the two causes must be told
+/// apart (#3281).
+pub fn shift_date_once(base: chrono::NaiveDate, interval: &str) -> Option<chrono::NaiveDate> {
+    try_shift_date_once(base, interval).ok()
 }
 
 // --- Per-block occurrence projection (was recurrence/projection.rs) ---
