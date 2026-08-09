@@ -15,8 +15,66 @@
 //! so every existing `crate::recurrence::…` / `super::parser::shift_date` path
 //! resolves unchanged.
 
-use agaric_core::error::AppError;
-use agaric_store::recurrence_math::{ShiftFailure, shift_date_once, try_shift_date_once};
+use agaric_core::error::{AppError, ValidationCode};
+use agaric_store::recurrence_math::{
+    REPEAT_MODE_DOT_PLUS, REPEAT_MODE_PLUS_PLUS, ShiftFailure, normalize_repeat_rule,
+    shift_date_once, split_repeat_rule, try_shift_date_once, validate_repeat_rule_shape,
+};
+
+/// The accepted `repeat` vocabulary, spelled once, for the user-facing
+/// rejection message (#3647). Kept next to [`shift_date`] — the function
+/// whose grammar it describes — so a grammar change and its help text are
+/// one edit apart.
+pub const REPEAT_RULE_HELP: &str = "accepted: `daily`, `weekly`, `monthly`, `yearly`, \
+     or `+Nd` / `+Nw` / `+Nm` / `+Ny` with N of 1 or more — optionally prefixed with \
+     `.+` (count from when you complete it) or `++` (catch up to today)";
+
+/// How much of an offending rule to echo back before eliding. A `repeat`
+/// value is free text with no length cap of its own, and the message goes
+/// into a toast.
+const MAX_ECHOED_RULE_CHARS: usize = 48;
+
+/// Validate a `repeat` property value at the point the user sets it (#3647).
+///
+/// # Why here
+///
+/// `repeat` is free text in a plain `text` column, authored through a bare
+/// `<Input>` or an inline `repeat:: …` line. Before this, a malformed rule
+/// was accepted at write time and only misbehaved much later, at completion:
+/// [`shift_date`] returns `Ok(None)` for a shape error, so the recurrence
+/// sibling was created with no date and the user got no feedback at all —
+/// far from the keystroke that caused it (#3281 traded a hard wedge for this
+/// quiet failure; this closes the loop).
+///
+/// # Agreement with the real grammar
+///
+/// Delegated wholesale to
+/// [`agaric_store::recurrence_math::validate_repeat_rule_shape`], which runs
+/// the production parser rather than describing it. See that function's docs.
+/// This wrapper only puts an [`AppError`] around the verdict — it applies no
+/// rule of its own.
+///
+/// # Errors
+///
+/// [`AppError::Validation`] coded [`ValidationCode::InvalidRepeatRule`], so
+/// the frontend can surface the reason verbatim instead of a generic
+/// "failed to save property" toast.
+pub fn validate_repeat_rule(rule: &str) -> Result<(), AppError> {
+    validate_repeat_rule_shape(rule).map_err(|problem| {
+        let echoed: String = if rule.chars().count() > MAX_ECHOED_RULE_CHARS {
+            rule.chars().take(MAX_ECHOED_RULE_CHARS).collect::<String>() + "…"
+        } else {
+            rule.to_owned()
+        };
+        AppError::validation_coded(
+            ValidationCode::InvalidRepeatRule,
+            format!(
+                "repeat rule '{echoed}' is not valid: {} ({REPEAT_RULE_HELP})",
+                problem.hint()
+            ),
+        )
+    })
+}
 
 /// Shift a `YYYY-MM-DD` date string by a recurrence interval.
 ///
@@ -88,20 +146,16 @@ pub fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppError> {
     };
     let today = chrono::Local::now().date_naive();
 
-    let trimmed = rule.trim().to_lowercase();
+    let trimmed = normalize_repeat_rule(rule);
 
-    // Determine mode and strip prefix
-    let (mode, interval) = if let Some(rest) = trimmed.strip_prefix(".+") {
-        ("dot_plus", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("++") {
-        ("plus_plus", rest)
-    } else {
-        // Default mode: `+` prefix or bare keyword
-        ("default", trimmed.as_str())
-    };
+    // Determine mode and strip prefix. (#3647) The normalization and the
+    // split are the shared `agaric_store::recurrence_math` helpers, so the
+    // write-time validator (`validate_repeat_rule`) resolves a rule to the
+    // exact same `(mode, interval)` pair this shifter does.
+    let (mode, interval) = split_repeat_rule(&trimmed);
 
     let shifted = match mode {
-        "dot_plus" => {
+        REPEAT_MODE_DOT_PLUS => {
             // Shift from today, not from the original date.
             // Parse failures stay on the `Ok(None)` channel (existing
             // contract); the compute caller treats this as "no shift".
@@ -110,7 +164,7 @@ pub fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppError> {
             };
             s
         }
-        "plus_plus" => {
+        REPEAT_MODE_PLUS_PLUS => {
             // Keep shifting from original until result > today.
             //
             // Two dead-ends that previously returned silent garbage now
@@ -267,5 +321,252 @@ mod tests_m80 {
             let expected_owned = expected.map(std::string::ToString::to_string);
             assert_eq!(actual, expected_owned, "{desc}");
         }
+    }
+}
+
+#[cfg(test)]
+mod repeat_rule_validation_tests_3647 {
+    //! (#3647) The write-time `repeat` gate, tested where BOTH downstream
+    //! consumers of the grammar are visible: the completion-time string
+    //! shifter ([`shift_date`]) and the read-time projector
+    //! ([`project_block_dates`]).
+    //!
+    //! The headline test is the differential: for every rule in a corpus
+    //! spanning the whole documented grammar plus a spread of real typos, the
+    //! validator's verdict must equal "recurrence actually does something with
+    //! this rule". That is the property the issue asks for — a validator that
+    //! is stricter than the engine silently refuses rules that work, and one
+    //! that is looser puts the failure back where the user cannot see it.
+
+    use super::{REPEAT_RULE_HELP, shift_date, validate_repeat_rule};
+    use agaric_core::error::{AppError, ValidationCode};
+    use agaric_store::recurrence_math::project_block_dates;
+
+    /// Every rule form the app can produce or a user can plausibly type.
+    /// Large counts that leave the `[1900, 2200]` calendar rail are excluded
+    /// deliberately: they are well-formed rules whose ARITHMETIC dead-ends,
+    /// a distinction covered by
+    /// `recurrence_math::repeat_rule_shape_tests::arithmetic_overflow_is_not_a_grammar_error`.
+    const CORPUS: &[&str] = &[
+        // --- the documented vocabulary -------------------------------
+        "daily",
+        "weekly",
+        "monthly",
+        "yearly",
+        "+1d",
+        "+3d",
+        "+2w",
+        "+6m",
+        "+1y",
+        "1d",
+        "3w",
+        "2m",
+        "1y",
+        ".+daily",
+        ".+weekly",
+        ".+monthly",
+        ".+yearly",
+        ".+1d",
+        ".+3w",
+        ".+2m",
+        "++daily",
+        "++weekly",
+        "++monthly",
+        "++yearly",
+        "++1d",
+        "++2w",
+        "++6m",
+        // --- normalization ------------------------------------------
+        "  daily  ",
+        "DAILY",
+        "++2W",
+        // --- typos and junk ------------------------------------------
+        "",
+        "   ",
+        "+",
+        "++",
+        ".+",
+        "+daily",
+        "+weekly",
+        "+yearly",
+        "++ 1d",
+        ".+ 1w",
+        "2 w",
+        "+0d",
+        "0w",
+        "-1d",
+        "+-3w",
+        "3.5d",
+        "5x",
+        "12q",
+        "w",
+        "+d",
+        "invalid",
+        "++2weeks",
+        "FREQ=DAILY",
+        "every day",
+    ];
+
+    /// A base date one day in the past: near enough that the clock-consulting
+    /// `++` arm catches up in a single step (no 10 000-iteration cap, no
+    /// calendar-rail overflow) for every count in the corpus.
+    fn base() -> chrono::NaiveDate {
+        chrono::Local::now().date_naive() - chrono::Duration::days(1)
+    }
+
+    /// Does the completion-time shifter produce a next occurrence?
+    fn shifter_honours(rule: &str) -> bool {
+        let base_str = base().format("%Y-%m-%d").to_string();
+        matches!(shift_date(&base_str, rule), Ok(Some(_)))
+    }
+
+    /// Does the read-time projector emit at least one occurrence?
+    fn projector_emits(rule: &str) -> bool {
+        let today = chrono::Local::now().date_naive();
+        let base_str = base().format("%Y-%m-%d").to_string();
+        let mut emitted = 0usize;
+        project_block_dates(
+            Some(&base_str),
+            None,
+            rule,
+            None,
+            None,
+            today,
+            today - chrono::Duration::days(2),
+            today + chrono::Duration::days(800),
+            Some(2),
+            |_date, _source| emitted += 1,
+        );
+        emitted > 0
+    }
+
+    /// THE agreement test. `validate_repeat_rule` must accept a rule if and
+    /// only if the recurrence engine honours it — no second grammar, no
+    /// drift. It holds by construction (the validator runs the production
+    /// interval parser rather than describing it); this pins that
+    /// construction against both consumers so a future edit to either side
+    /// cannot quietly separate them.
+    #[test]
+    fn validator_accepts_exactly_what_recurrence_honours_3647() {
+        for rule in CORPUS {
+            let accepted = validate_repeat_rule(rule).is_ok();
+            assert_eq!(
+                accepted,
+                shifter_honours(rule),
+                "`{rule}`: the write-time gate and the completion-time shifter \
+                 disagree (accepted={accepted})"
+            );
+            assert_eq!(
+                accepted,
+                projector_emits(rule),
+                "`{rule}`: the write-time gate and the read-time projector \
+                 disagree (accepted={accepted})"
+            );
+        }
+    }
+
+    /// Regression floor: every form the shipped UI can write must survive the
+    /// gate. A validator that is too strict is the real risk here — it would
+    /// break slash commands that work today.
+    #[test]
+    fn every_shipped_repeat_form_is_accepted_3647() {
+        // The exact `value_text` each `/repeat-*` slash command writes
+        // (`REPEAT_COMMANDS` in src/lib/slash-commands.ts → `handleRepeat`),
+        // plus the numeric forms `formatRepeatLabel` renders and the two
+        // examples in the property drawer's syntax-help popover
+        // (`property.repeatHelpExample`).
+        let shipped = [
+            "daily",
+            "weekly",
+            "monthly",
+            "yearly",
+            ".+daily",
+            ".+weekly",
+            ".+monthly",
+            "++daily",
+            "++weekly",
+            "++monthly",
+            // `formatRepeatLabel`'s custom-interval branch: /^(\d+)([dwmy])$/
+            // with and without the `+`, under each anchoring prefix.
+            "+3d",
+            "3d",
+            "+2w",
+            "2w",
+            "+2m",
+            "2m",
+            "+2y",
+            "2y",
+            ".+1w",
+            "++1d",
+        ];
+        for rule in shipped {
+            assert!(
+                validate_repeat_rule(rule).is_ok(),
+                "`{rule}` is written by the shipped UI and MUST stay accepted: {:?}",
+                validate_repeat_rule(rule)
+            );
+        }
+    }
+
+    /// The rejection has to tell the user what is wrong with THEIR rule, not
+    /// merely that something is: the offending text, a specific reason, and
+    /// the accepted vocabulary. And it must be machine-discriminable so the
+    /// frontend can show it instead of a generic toast.
+    #[test]
+    fn rejection_names_the_rule_the_reason_and_the_vocabulary_3647() {
+        let cases: &[(&str, &str)] = &[
+            ("++ 1d", "space"),
+            ("+daily", "no `+`"),
+            ("+0d", "1 or more"),
+            ("5x", "one of d, w, m, y"),
+            ("++2weeks", "not a keyword"),
+            ("++", "not followed by an interval"),
+            ("   ", "empty"),
+        ];
+        for (rule, reason_fragment) in cases {
+            let err = validate_repeat_rule(rule).expect_err("must be rejected");
+            assert_eq!(
+                err.validation_code(),
+                Some(ValidationCode::InvalidRepeatRule),
+                "`{rule}` must carry the coded sub-kind so the frontend can \
+                 surface the message verbatim"
+            );
+            let AppError::Validation { message, .. } = &err else {
+                panic!("expected a Validation error for `{rule}`, got {err:?}");
+            };
+            assert!(
+                message.contains(reason_fragment),
+                "`{rule}`: message must explain the problem (`{reason_fragment}`), got: {message}"
+            );
+            assert!(
+                message.contains(REPEAT_RULE_HELP),
+                "`{rule}`: message must list the accepted vocabulary, got: {message}"
+            );
+            // The user's own text is echoed so a toast is self-contained.
+            let trimmed = rule.trim();
+            assert!(
+                trimmed.is_empty() || message.contains(trimmed),
+                "`{rule}`: message must echo the offending rule, got: {message}"
+            );
+        }
+    }
+
+    /// A pathological value must not produce a pathological toast.
+    #[test]
+    fn absurdly_long_rule_is_elided_in_the_message_3647() {
+        let long = "z".repeat(5_000);
+        let err = validate_repeat_rule(&long).expect_err("junk must be rejected");
+        let AppError::Validation { message, .. } = &err else {
+            panic!("expected a Validation error, got {err:?}");
+        };
+        assert!(
+            message.len() < 500,
+            "the message must elide an oversized rule, got {} chars",
+            message.len()
+        );
+        assert!(
+            message.contains('…'),
+            "elision must be marked, got: {message}"
+        );
     }
 }

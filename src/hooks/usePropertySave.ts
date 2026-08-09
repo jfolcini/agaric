@@ -14,6 +14,7 @@ import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { handleDeleteProperty, handleSaveProperty } from '@/lib/property-save-utils'
+import { invalidRepeatRuleMessage } from '@/lib/repeat-utils'
 import type { PropertyRow } from '@/lib/tauri'
 
 export interface UsePropertySaveOptions {
@@ -76,7 +77,13 @@ export function usePropertySave({
             err,
           )
         }
-        notify.error(t(toasts?.saveFailed ?? 'property.saveFailed'))
+        // #3647 — a malformed `repeat` rule is now rejected by the backend at
+        // the point of entry, and the rejection says WHAT is wrong with the
+        // rule. Show that verbatim: collapsing it into the generic
+        // "Failed to save property" toast would put the user back where they
+        // started, which is the whole failure mode the validation removed.
+        const repeatReason = invalidRepeatRuleMessage(err)
+        notify.error(repeatReason ?? t(toasts?.saveFailed ?? 'property.saveFailed'))
       }
     },
     [blockId, t, setProperties, toasts?.invalidNumber, toasts?.saveFailed, announceOnSave, logTag],

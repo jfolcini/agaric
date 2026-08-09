@@ -51,6 +51,7 @@ import {
 } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { invalidRepeatRuleMessage } from '@/lib/repeat-utils'
 import { useUndoStore } from '@/stores/undo'
 
 /** Per-block flush sequence tokens — see the module docstring. */
@@ -105,6 +106,12 @@ export async function commitInlineProperties(opts: {
   const strippedLines = new Set<number>()
   const opRefs: OpRef[] = []
   let anyFailed = false
+  // #3647 — the backend's reason for rejecting a `repeat:: …` line, if one
+  // carried a malformed rule. Preferred over the generic toast: it names which
+  // rule is wrong and why, right where the user typed it. The rejected line
+  // stays LITERAL in the committed content (see `strippedLines`), so the text
+  // they now know how to fix is still on screen.
+  let repeatReason: string | null = null
   for (const prop of inlineProps) {
     try {
       const def = unwrap(await commands.getPropertyDef(prop.key))
@@ -126,6 +133,7 @@ export async function commitInlineProperties(opts: {
       strippedLines.add(prop.lineIndex)
     } catch (err: unknown) {
       anyFailed = true
+      repeatReason ??= invalidRepeatRuleMessage(err)
       logger.error(
         'BlockTree',
         'Failed to set inline property from :: syntax',
@@ -134,7 +142,7 @@ export async function commitInlineProperties(opts: {
       )
     }
   }
-  if (anyFailed) notify.error(i18n.t('blockTree.setPropertyFailed'))
+  if (anyFailed) notify.error(repeatReason ?? i18n.t('blockTree.setPropertyFailed'))
   // A newer save on this block superseded us while the IPCs were in flight —
   // bail without calling `edit()` so we don't clobber it. The newer session
   // owns the block's content + draft lifecycle, so resolve `true` (callers
