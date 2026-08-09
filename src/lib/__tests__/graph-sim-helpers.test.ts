@@ -10,8 +10,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createZoomKeyHandler,
   packPositions,
+  reducedMotionDuration,
   renderGraphElements,
   unpackPositions,
+  ZOOM_BUTTON_DURATION_MS,
+  ZOOM_RESET_DURATION_MS,
   ZOOM_STEP,
   zoomIdentity,
 } from '@/lib/graph-sim-helpers'
@@ -260,6 +263,86 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
 
     expect(zb.scaleBy).not.toHaveBeenCalled()
     expect(zb.transform).not.toHaveBeenCalled()
+  })
+})
+
+// ── #3308 finding 3: graph zoom transitions honour prefers-reduced-motion ──
+//
+// d3 transitions are rAF-driven JavaScript, so the app's global
+// `@media (prefers-reduced-motion: reduce)` CSS rule cannot suppress them.
+// `reducedMotionDuration` collapses the duration to 0 (the transform is
+// still applied — it just jumps), and every keyboard-zoom call site routes
+// its duration through it.
+describe('reduced-motion graph zoom (#3308)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    resetAllShortcuts()
+  })
+
+  function setReducedMotion(matches: boolean): void {
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) => ({ matches, media: query }) as MediaQueryList,
+    )
+  }
+
+  /** The `duration()` of the transition selection handed to d3-zoom. */
+  function transitionDuration(call: unknown[] | undefined): number {
+    const transition = call?.[0] as { duration: () => number }
+    return transition.duration()
+  }
+
+  function makeZoomBehavior() {
+    return { scaleBy: vi.fn(), transform: vi.fn() }
+  }
+
+  it('#3308: reducedMotionDuration returns 0 when reduced motion is requested', () => {
+    setReducedMotion(true)
+    expect(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)).toBe(0)
+    expect(reducedMotionDuration(ZOOM_RESET_DURATION_MS)).toBe(0)
+  })
+
+  it('#3308: reducedMotionDuration passes the duration through otherwise', () => {
+    setReducedMotion(false)
+    expect(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)).toBe(ZOOM_BUTTON_DURATION_MS)
+    expect(reducedMotionDuration(ZOOM_RESET_DURATION_MS)).toBe(ZOOM_RESET_DURATION_MS)
+  })
+
+  it('#3308: reducedMotionDuration reads matchMedia at call time, not module load', () => {
+    setReducedMotion(false)
+    expect(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)).toBe(ZOOM_BUTTON_DURATION_MS)
+    // The OS preference flips mid-session — the next call must honour it.
+    setReducedMotion(true)
+    expect(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)).toBe(0)
+  })
+
+  it('#3308: keyboard zoom in/out/reset transitions have duration 0 under reduced motion', () => {
+    setReducedMotion(true)
+    const svg = makeSvg()
+
+    const zoomIn = makeZoomBehavior()
+    createZoomKeyHandler(svg, zoomIn as never)(new KeyboardEvent('keydown', { key: '+' }))
+    expect(transitionDuration(zoomIn.scaleBy.mock.calls[0])).toBe(0)
+
+    const zoomOut = makeZoomBehavior()
+    createZoomKeyHandler(svg, zoomOut as never)(new KeyboardEvent('keydown', { key: '-' }))
+    expect(transitionDuration(zoomOut.scaleBy.mock.calls[0])).toBe(0)
+
+    const zoomReset = makeZoomBehavior()
+    createZoomKeyHandler(svg, zoomReset as never)(new KeyboardEvent('keydown', { key: '0' }))
+    expect(transitionDuration(zoomReset.transform.mock.calls[0])).toBe(0)
+  })
+
+  it('#3308: keyboard zoom transitions keep their animated durations otherwise', () => {
+    setReducedMotion(false)
+    const svg = makeSvg()
+
+    const zoomIn = makeZoomBehavior()
+    createZoomKeyHandler(svg, zoomIn as never)(new KeyboardEvent('keydown', { key: '+' }))
+    expect(transitionDuration(zoomIn.scaleBy.mock.calls[0])).toBe(ZOOM_BUTTON_DURATION_MS)
+
+    const zoomReset = makeZoomBehavior()
+    createZoomKeyHandler(svg, zoomReset as never)(new KeyboardEvent('keydown', { key: '0' }))
+    expect(transitionDuration(zoomReset.transform.mock.calls[0])).toBe(ZOOM_RESET_DURATION_MS)
   })
 })
 

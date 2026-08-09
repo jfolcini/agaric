@@ -162,6 +162,8 @@ export const shortcuts: Record<string, string> = {
   'keyboard.settings.formatHint': 'Format: Ctrl + Shift + E',
   'keyboard.settings.emptyBinding': 'Key binding cannot be empty',
   'keyboard.settings.validationModifierOnly': 'Binding must include at least one non-modifier key',
+  'keyboard.settings.validationUnknownKey':
+    'Unrecognized key name. Use a single character, F1-F24, or a key name like Escape, Enter, Tab, Backspace, Delete, Home, End, Page Up, Page Down, Space, or Arrow Up',
   'keyboard.category.tabs': 'Tabs',
   'keyboard.openInNewTab': 'Open current page in new tab',
   'keyboard.closeActiveTab': 'Close active tab',

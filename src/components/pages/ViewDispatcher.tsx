@@ -84,6 +84,56 @@ const TrashView = lazy(() =>
   import('@/components/TrashView').then((m) => ({ default: m.TrashView })),
 )
 
+/**
+ * #3308 — single owner of the per-view level-1 heading.
+ *
+ * Before this map there was no owner at all: the App shell rendered the view
+ * title as a plain `<span data-testid="header-label">`, and six views ALSO
+ * rendered a real `<h1>` via `FeaturePageHeader`. The five that did not
+ * (`pages`, `tags`, `history`, `query`, `search`) therefore exposed no heading
+ * whatsoever, so screen-reader heading navigation (`H` in NVDA/JAWS, the
+ * VoiceOver rotor) had nothing to land on after a view switch.
+ *
+ * The rule is now explicit and exhaustive over the `View` union (adding a
+ * member without a heading owner is a COMPILE error, mirroring the
+ * `_exhaustive: never` guard in `ViewDispatcher` itself):
+ *
+ * - `'view'` — the view component renders its own `<h1>` (via
+ *   `FeaturePageHeader`, or `page-editor`'s editable title). The shell keeps
+ *   rendering its label as a non-heading `<span>`, so the title stays visible
+ *   in the top bar but heading navigation lands on exactly ONE element rather
+ *   than two identically-named ones.
+ * - `'shell'` — the view has no heading of its own, so the shell's
+ *   `header-label` element is promoted to the `<h1>`.
+ *
+ * Kept honest by `src/components/pages/__tests__/view-heading-owner.test.ts`,
+ * which cross-checks each `'view'` entry against the presence of
+ * `<FeaturePageHeader` in that view's source file (and each `'shell'` entry
+ * against its absence), so the map cannot silently drift from the components.
+ */
+export const VIEW_HEADING_OWNER: Readonly<Record<View, 'shell' | 'view'>> = {
+  journal: 'view',
+  templates: 'view',
+  trash: 'view',
+  graph: 'view',
+  status: 'view',
+  settings: 'view',
+  // `page-editor` owns its title through `PageTitleEditor`'s labelled
+  // contenteditable; `useHeaderLabel` already returns '' for it so the shell
+  // never duplicates it.
+  'page-editor': 'view',
+  pages: 'shell',
+  tags: 'shell',
+  history: 'shell',
+  query: 'shell',
+  search: 'shell',
+}
+
+/** True when the shell's `header-label` element must carry the view's `<h1>`. */
+export function shellOwnsHeading(view: View): boolean {
+  return VIEW_HEADING_OWNER[view] === 'shell'
+}
+
 /** Resolve the header label from the current navigation state. */
 export function useHeaderLabel(): string {
   const { t } = useTranslation()

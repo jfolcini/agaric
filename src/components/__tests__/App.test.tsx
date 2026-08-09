@@ -2664,3 +2664,63 @@ describe('App', () => {
     })
   })
 })
+
+// #3308 — the shell header label is the per-view `<h1>` for every view that
+// does not render one of its own. Before this, `pages` / `tags` / `history` /
+// `query` / `search` exposed no heading at all, so screen-reader heading
+// navigation had nothing to land on after a view switch.
+describe('App shell heading ownership', () => {
+  it('renders the header label as a level-1 heading on a shell-owned view', async () => {
+    useNavigationStore.setState({ currentView: 'pages', selectedBlockId: null })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+    })
+
+    const headerLabel = screen.getByTestId('header-label')
+    expect(headerLabel.tagName).toBe('H1')
+    expect(screen.getByRole('heading', { level: 1, name: t('sidebar.pages') })).toBe(headerLabel)
+  })
+
+  it('keeps the header label a non-heading on a view that owns its own <h1>', async () => {
+    // `trash` renders `FeaturePageHeader`. Promoting the shell label here too
+    // would announce "Trash" as two separate level-1 headings.
+    useNavigationStore.setState({ currentView: 'trash', selectedBlockId: null })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+    })
+
+    const headerLabel = screen.getByTestId('header-label')
+    expect(headerLabel.tagName).toBe('SPAN')
+    expect(headerLabel).not.toHaveAttribute('role', 'heading')
+  })
+
+  it('never promotes an empty label to an empty heading (page-editor)', async () => {
+    useNavigationStore.setState({ currentView: 'page-editor', selectedBlockId: null })
+    useTabsStore.setState({
+      tabs: [
+        {
+          id: '0',
+          pageStack: [{ pageId: 'PAGE_1', title: 'My Test Page' }],
+          label: 'My Test Page',
+        },
+      ],
+      activeTabIndex: 0,
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+    })
+
+    const headerLabel = screen.getByTestId('header-label')
+    expect(headerLabel.textContent).toBe('')
+    expect(headerLabel.tagName).toBe('SPAN')
+  })
+})

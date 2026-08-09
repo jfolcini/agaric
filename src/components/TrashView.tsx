@@ -537,6 +537,11 @@ export function TrashView(): React.ReactElement {
         blocks={blocks}
         filteredBlocks={filteredBlocks}
         loading={loading}
+        // #3306 — mirror the toast's gating (`isError && !isFetching`) so a
+        // stale cached failure doesn't paint the error card while the
+        // `refetchOnMount:'always'` re-validation is still in flight.
+        loadError={isError && !isFetching && t('trash.loadFailed')}
+        onRetryLoad={reload}
         debouncedFilter={debouncedFilter}
         focusedIndex={focusedIndex}
         selectedIds={selected}

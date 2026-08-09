@@ -381,21 +381,50 @@ describe('TrashView', () => {
 
   // ── Error handling ──────────────────────────────────────────────────
 
-  it('handles failed load gracefully', async () => {
+  // #3306 — this test used to assert the DEFECT: a failed `list_trash` ended
+  // with `loading === false` and `blocks === []`, which is byte-identical to an
+  // empty trash, so the view painted "Nothing in trash. Deleted items will
+  // appear here." over the failure. A user could reasonably read that as "my
+  // deleted items were purged", and the only error signal was a ~4s toast.
+  it('shows an error state with a retry instead of the empty state on a failed load', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('DB error'))
 
     render(<TrashView />)
 
-    // Component catches the error, loading ends, blocks stays empty
-    // so the empty state is shown
+    const errorCard = await screen.findByTestId('list-error-state')
+    expect(errorCard).toHaveAttribute('role', 'alert')
+    expect(errorCard).toHaveTextContent('Failed to load trash')
+    expect(screen.getByTestId('list-error-state-retry')).toBeInTheDocument()
     expect(
-      await screen.findByText(/Nothing in trash\. Deleted items will appear here\./),
-    ).toBeInTheDocument()
+      screen.queryByText(/Nothing in trash\. Deleted items will appear here\./),
+    ).not.toBeInTheDocument()
 
-    // Should show error toast
+    // The toast still fires — the card is an addition, not a replacement.
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to load trash')
     })
+  })
+
+  it('retries the failed trash load when Retry is clicked', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock({ id: 'B1', content: 'recovered item', deleted_at: 1736899200000 })
+    let attempt = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_trash') {
+        attempt += 1
+        if (attempt === 1) throw new Error('DB error')
+        return { items: [block], next_cursor: null, has_more: false }
+      }
+      if (cmd === 'batch_resolve') return []
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await user.click(await screen.findByTestId('list-error-state-retry'))
+
+    expect(await screen.findByText('recovered item')).toBeInTheDocument()
+    expect(screen.queryByTestId('list-error-state')).not.toBeInTheDocument()
   })
 
   it('handles failed restore gracefully', async () => {

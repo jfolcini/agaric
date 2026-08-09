@@ -14,7 +14,8 @@
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { ListViewState } from '@/components/common/ListViewState'
@@ -507,6 +508,101 @@ describe('ListViewState', () => {
     )
     await waitFor(async () => {
       expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
+  // #3306 — the machine had no error branch, so a settled failure
+  // (`loading === false`, `items === []`) was byte-identical to an empty list
+  // and every consumer painted its "nothing here yet" copy over the failure.
+  describe('error branch (#3306)', () => {
+    it('renders the error card instead of the empty state on a settled failure', () => {
+      render(
+        <ListViewState
+          loading={false}
+          items={[]}
+          error="Failed to load pages"
+          empty={<p>No pages yet</p>}
+        >
+          {() => null}
+        </ListViewState>,
+      )
+
+      expect(screen.getByRole('alert')).toHaveTextContent('Failed to load pages')
+      expect(screen.queryByText('No pages yet')).not.toBeInTheDocument()
+    })
+
+    it('offers a Retry that re-runs the failed load', async () => {
+      const user = userEvent.setup()
+      const onRetry = vi.fn()
+      render(
+        <ListViewState
+          loading={false}
+          items={[]}
+          error
+          onRetry={onRetry}
+          empty={<p>No pages yet</p>}
+        >
+          {() => null}
+        </ListViewState>,
+      )
+
+      await user.click(screen.getByTestId('list-error-state-retry'))
+      expect(onRetry).toHaveBeenCalledTimes(1)
+    })
+
+    it('still shows the empty state on a settled SUCCESS', () => {
+      render(
+        <ListViewState loading={false} items={[]} error={false} empty={<p>No pages yet</p>}>
+          {() => null}
+        </ListViewState>,
+      )
+
+      expect(screen.getByText('No pages yet')).toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('keeps already-loaded items visible when a refresh fails', () => {
+      // A failed reload must not blank a list the user is reading.
+      render(
+        <ListViewState
+          loading={false}
+          items={[{ id: '1', name: 'Alpha' }]}
+          error
+          empty={<p>No pages yet</p>}
+        >
+          {(items) => (
+            <ul>
+              {items.map((i) => (
+                <li key={i.id}>{i.name}</li>
+              ))}
+            </ul>
+          )}
+        </ListViewState>,
+      )
+
+      expect(screen.getByText('Alpha')).toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('prefers the skeleton while a retry is in flight', () => {
+      render(
+        <ListViewState loading items={[]} error empty={<p>No pages yet</p>}>
+          {() => null}
+        </ListViewState>,
+      )
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('has no a11y violations (error state)', async () => {
+      const { container } = render(
+        <ListViewState loading={false} items={[]} error onRetry={vi.fn()} empty={<p>Empty</p>}>
+          {() => null}
+        </ListViewState>,
+      )
+      await waitFor(async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      })
     })
   })
 })

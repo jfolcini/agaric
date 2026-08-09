@@ -1713,6 +1713,86 @@ describe('keyboard-config', () => {
       it('rejects a modifier-only alternative inside a ` / ` list', () => {
         expect(validateBindingInput('Ctrl + E / Shift')).toBe('modifierOnly')
       })
+
+      // #3308 finding 2 — `parseChord` accepts ANY non-empty leftover as the
+      // key, so abbreviations the matcher compares literally against
+      // `KeyboardEvent.key` (`esc` !== `escape`) used to validate clean and
+      // save a dead override, silently costing the action its shortcut.
+      describe('unknownKey (#3308)', () => {
+        it('#3308: rejects abbreviated / non-existent key names', () => {
+          expect(validateBindingInput('Ctrl + Shift + Esc')).toBe('unknownKey')
+          expect(validateBindingInput('Cmd + Return')).toBe('unknownKey')
+          expect(validateBindingInput('Ctrl + Return')).toBe('unknownKey')
+          expect(validateBindingInput('Ctrl + Del')).toBe('unknownKey')
+          expect(validateBindingInput('Ctrl + Click')).toBe('unknownKey')
+          expect(validateBindingInput('F25')).toBe('unknownKey')
+        })
+
+        it('#3308: rejects an unknown key in one ` / ` alternative', () => {
+          expect(validateBindingInput('Ctrl + E / Ctrl + Esc')).toBe('unknownKey')
+        })
+
+        it('#3308: still accepts every key spelling the matcher honours', () => {
+          for (const binding of [
+            'Escape',
+            'escape',
+            'Enter',
+            'Tab',
+            'Backspace',
+            'Delete',
+            'Insert',
+            'Home',
+            'End',
+            'Page Up',
+            'PageDown',
+            'Space',
+            'Spacebar',
+            'Arrow Up',
+            'ArrowUp',
+            '↑',
+            'Up',
+            '←',
+            'Left',
+            'F1',
+            'F12',
+            'f24',
+            '+',
+            '-',
+            '/',
+            '.',
+            '?',
+            '@',
+            '=',
+            '0',
+            'Ctrl + Shift + Arrow Right',
+            'Alt + ←',
+            '+ / =',
+            'Enter / n',
+            'Ctrl + Y / Ctrl + Shift + Z',
+          ]) {
+            expect(validateBindingInput(binding), binding).toBeNull()
+          }
+        })
+
+        it('#3308: every rebindable catalog default still validates clean', () => {
+          for (const shortcut of DEFAULT_SHORTCUTS) {
+            if (shortcut.rebindable === false) continue
+            expect(validateBindingInput(shortcut.keys), shortcut.id).toBeNull()
+          }
+        })
+
+        it('#3308: an unknown key is rejected before it can be typed as a chord key', () => {
+          // Sanity: the matcher genuinely cannot fire on `Ctrl + Shift + Esc`,
+          // which is why validation must reject it.
+          setCustomShortcut('toggleTheme', 'Ctrl + Shift + Esc')
+          expect(
+            matchesShortcutBinding(
+              { ctrlKey: true, metaKey: false, shiftKey: true, altKey: false, key: 'Escape' },
+              'toggleTheme',
+            ),
+          ).toBe(false)
+        })
+      })
     })
   })
 

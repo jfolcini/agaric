@@ -15,6 +15,7 @@ import { useCallback, useRef } from 'react'
 import {
   createZoomKeyHandler,
   type GSel,
+  reducedMotionDuration,
   setupZoomBehavior,
   ZOOM_BUTTON_DURATION_MS,
   ZOOM_RESET_DURATION_MS,
@@ -50,7 +51,7 @@ export function useGraphZoom(svgRef: React.RefObject<SVGSVGElement | null>): Use
     if (!svgRef.current) return
     const svgSel = select(svgRef.current)
     zoomBehaviorRef.current?.scaleBy(
-      svgSel.transition().duration(ZOOM_BUTTON_DURATION_MS),
+      svgSel.transition().duration(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)),
       ZOOM_STEP,
     )
   }, [svgRef])
@@ -59,7 +60,7 @@ export function useGraphZoom(svgRef: React.RefObject<SVGSVGElement | null>): Use
     if (!svgRef.current) return
     const svgSel = select(svgRef.current)
     zoomBehaviorRef.current?.scaleBy(
-      svgSel.transition().duration(ZOOM_BUTTON_DURATION_MS),
+      svgSel.transition().duration(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)),
       1 / ZOOM_STEP,
     )
   }, [svgRef])
@@ -68,7 +69,7 @@ export function useGraphZoom(svgRef: React.RefObject<SVGSVGElement | null>): Use
     if (!svgRef.current) return
     const svgSel = select(svgRef.current)
     zoomBehaviorRef.current?.transform(
-      svgSel.transition().duration(ZOOM_RESET_DURATION_MS),
+      svgSel.transition().duration(reducedMotionDuration(ZOOM_RESET_DURATION_MS)),
       zoomIdentity,
     )
   }, [svgRef])
