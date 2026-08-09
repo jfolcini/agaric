@@ -2376,6 +2376,8 @@ function runSelfTest() {
     'src-tauri/agaric-engine/src/apply/sql_only_fallback.rs',
     'src-tauri/agaric-engine/src/loro/engine/cycle_rejected_metrics.rs',
     'src-tauri/agaric-engine/src/merge/divergence.rs',
+    // #3726 / #3727 audit op-log ingest aggregates.
+    'src-tauri/agaric-sync/src/sync_protocol/audit_ingest_metrics.rs',
     'src-tauri/agaric-sync/src/sync_protocol/snapshot_fallback_metrics.rs',
     'src-tauri/src/materializer/handlers/descendant_fanout_dropped.rs',
     'src-tauri/src/materializer/metrics.rs',

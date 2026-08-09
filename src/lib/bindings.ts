@@ -1509,6 +1509,39 @@ export type AttachmentRow = {
 };
 
 /**
+ *  Snapshot of the most recent audit-ingest stall. Surfaced (cloned) through
+ *  `StatusInfo::audit_ingest_last_stall`.
+ */
+export type AuditIngestStall = {
+	/**
+	 *  Monotonic ordinal of this stall within the process — equal to
+	 *  [`stalls`] at the moment it was recorded. Lets an operator tell apart
+	 *  "a new stall happened" from "the same stale record is being re-read".
+	 */
+	occurrence: number,
+	/**  Remote device / peer that shipped the batch. */
+	remote_device_id: string,
+	/**
+	 *  The op-log device whose chain stalled (usually *not* the peer that
+	 *  shipped it — frontiers propagate transitively).
+	 */
+	op_device_id: string,
+	/**
+	 *  The `seq` that faulted. Everything above it in that device's chain was
+	 *  deferred.
+	 */
+	op_seq: number,
+	/**
+	 *  How many consecutive batches this device has now stalled without making
+	 *  progress. `1` is an ordinary busy writer; a value at or above
+	 *  [`PERSISTENT_STALL_BATCHES`] is the #3727 permanent-stall condition.
+	 */
+	consecutive: number,
+	/**  The classified-as-transient error, rendered. */
+	error: string,
+};
+
+/**
  *  Tagged union of filter predicates for backlink queries.
  * 
  *  Filters are combined with AND semantics at the top level.
@@ -3764,6 +3797,46 @@ export type StatusInfo = {
 	 *  `sync_protocol::snapshot_fallback_metrics::last`.
 	 */
 	snapshot_fallback_last: SnapshotFallbackLast | null,
+	/**
+	 *  #3727: process-global count of replicated audit op records left for the
+	 *  peer to re-ship because a transient DB failure hit their device's chain
+	 *  (`BatchIngestOutcome::deferred`, summed over every pull session).
+	 *  Monotonic, never reset. A few is an ordinary busy writer; a total that
+	 *  keeps climbing session after session is the permanent-stall condition —
+	 *  the same device's tail being re-downloaded and discarded forever because
+	 *  a failure classified as transient (`AppError::Database`) is actually a
+	 *  full disk, a read-only mount or a corrupt `op_log` page. Pair with
+	 *  `audit_ingest_last_stall`. Sourced from
+	 *  `sync_protocol::audit_ingest_metrics::deferred_records`.
+	 */
+	audit_ingest_deferred: number,
+	/**
+	 *  #3727: process-global count of *stall events* — one per device whose
+	 *  chain was deferred in a batch, as opposed to `audit_ingest_deferred`,
+	 *  which counts the records that cost. Monotonic, never reset. Sourced from
+	 *  `sync_protocol::audit_ingest_metrics::stalls`.
+	 */
+	audit_ingest_stalls: number,
+	/**
+	 *  #3726: process-global count of replicated audit records presented out of
+	 *  ascending-`seq` order for their device. Monotonic, never reset, and
+	 *  **expected to stay zero** — `collect_ops_for_peer` emits
+	 *  `ORDER BY device_id ASC, seq ASC` and the ingest buffer preserves it. A
+	 *  non-zero value means something reordered or parallelised the batch
+	 *  between those two points, and that the ingest defer policy has therefore
+	 *  been able to advertise a frontier stepping over a record we do not hold
+	 *  — a permanent hole in that device's replicated history. Sourced from
+	 *  `sync_protocol::audit_ingest_metrics::out_of_order_records`.
+	 */
+	audit_ingest_out_of_order: number,
+	/**
+	 *  #3727: the most recent audit-ingest stall (peer, op device, faulting
+	 *  seq, consecutive-batch run, rendered error), or `None` if none has
+	 *  happened in this process. `consecutive` is the field that separates a
+	 *  passing busy writer from a device whose audit history is frozen.
+	 *  Sourced from `sync_protocol::audit_ingest_metrics::last`.
+	 */
+	audit_ingest_last_stall: AuditIngestStall | null,
 };
 
 /**

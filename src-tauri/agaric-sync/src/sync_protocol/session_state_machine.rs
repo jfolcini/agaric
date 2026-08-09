@@ -1385,6 +1385,7 @@ impl SyncOrchestrator {
                 already_held = outcome.already_held,
                 rejected = outcome.rejected,
                 deferred = outcome.deferred,
+                out_of_order = outcome.out_of_order,
                 total = records.len(),
                 "#2481: ingested buffered op-log audit records at session completion"
             );

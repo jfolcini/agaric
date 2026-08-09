@@ -498,4 +498,37 @@ pub struct StatusInfo {
     /// `sync_protocol::snapshot_fallback_metrics::last`.
     pub snapshot_fallback_last:
         Option<agaric_sync::sync_protocol::snapshot_fallback_metrics::SnapshotFallbackLast>,
+    /// #3727: process-global count of replicated audit op records left for the
+    /// peer to re-ship because a transient DB failure hit their device's chain
+    /// (`BatchIngestOutcome::deferred`, summed over every pull session).
+    /// Monotonic, never reset. A few is an ordinary busy writer; a total that
+    /// keeps climbing session after session is the permanent-stall condition —
+    /// the same device's tail being re-downloaded and discarded forever because
+    /// a failure classified as transient (`AppError::Database`) is actually a
+    /// full disk, a read-only mount or a corrupt `op_log` page. Pair with
+    /// `audit_ingest_last_stall`. Sourced from
+    /// `sync_protocol::audit_ingest_metrics::deferred_records`.
+    pub audit_ingest_deferred: u64,
+    /// #3727: process-global count of *stall events* — one per device whose
+    /// chain was deferred in a batch, as opposed to `audit_ingest_deferred`,
+    /// which counts the records that cost. Monotonic, never reset. Sourced from
+    /// `sync_protocol::audit_ingest_metrics::stalls`.
+    pub audit_ingest_stalls: u64,
+    /// #3726: process-global count of replicated audit records presented out of
+    /// ascending-`seq` order for their device. Monotonic, never reset, and
+    /// **expected to stay zero** — `collect_ops_for_peer` emits
+    /// `ORDER BY device_id ASC, seq ASC` and the ingest buffer preserves it. A
+    /// non-zero value means something reordered or parallelised the batch
+    /// between those two points, and that the ingest defer policy has therefore
+    /// been able to advertise a frontier stepping over a record we do not hold
+    /// — a permanent hole in that device's replicated history. Sourced from
+    /// `sync_protocol::audit_ingest_metrics::out_of_order_records`.
+    pub audit_ingest_out_of_order: u64,
+    /// #3727: the most recent audit-ingest stall (peer, op device, faulting
+    /// seq, consecutive-batch run, rendered error), or `None` if none has
+    /// happened in this process. `consecutive` is the field that separates a
+    /// passing busy writer from a device whose audit history is frozen.
+    /// Sourced from `sync_protocol::audit_ingest_metrics::last`.
+    pub audit_ingest_last_stall:
+        Option<agaric_sync::sync_protocol::audit_ingest_metrics::AuditIngestStall>,
 }

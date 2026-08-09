@@ -169,6 +169,16 @@ async fn snapshot_status_info_response() {
         // `sync_protocol::snapshot_fallback_metrics`.
         ".snapshot_fallback_count" => "[SNAPSHOT_FALLBACK_COUNT]",
         ".snapshot_fallback_last" => "[SNAPSHOT_FALLBACK_LAST]",
+        // #3726 / #3727: the audit op-log ingest aggregates are the same
+        // process-global, monotonic shape — the sync ingest tests in this
+        // binary defer records and record stalls before this snapshot samples
+        // them. Redact all four; the live wiring is asserted by the delta tests
+        // in `sync_protocol::audit_ingest_metrics` and by the end-to-end delta
+        // assertions in `sync_protocol::tests`.
+        ".audit_ingest_deferred" => "[AUDIT_INGEST_DEFERRED]",
+        ".audit_ingest_stalls" => "[AUDIT_INGEST_STALLS]",
+        ".audit_ingest_out_of_order" => "[AUDIT_INGEST_OUT_OF_ORDER]",
+        ".audit_ingest_last_stall" => "[AUDIT_INGEST_LAST_STALL]",
     });
 }
 
