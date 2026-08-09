@@ -169,6 +169,36 @@ pub async fn set_property_inner(
             )));
         }
     }
+    // #3647 — validate the `repeat` recurrence grammar HERE, at the user's
+    // point of entry, so a malformed rule fails where it was typed.
+    //
+    // `repeat` is free text in a plain `text` column (migration 0016),
+    // authored through the property drawer's bare `<Input>` or an inline
+    // `repeat:: …` line. Until now a bad rule was accepted silently and only
+    // misbehaved at completion time, inside a transaction the user cannot
+    // observe: `shift_date` returns `Ok(None)` for a shape error, so the
+    // recurrence sibling was created with no date and nothing said why
+    // (#3281 replaced a hard wedge with exactly this quiet failure).
+    //
+    // Deliberately at the COMMAND boundary, not inside `set_property_in_tx`:
+    // the recurrence flow copies the parent's rule onto the new sibling
+    // through that same helper (`compute::set_recurrence_property`), so
+    // validating there would make a task carrying an already-stored bad rule
+    // un-completable — re-creating the #3281 wedge for existing rows. It is
+    // also NOT in `op::validate_set_property`, which runs on the remote-op
+    // ingest path (`dag::insert_remote_op`): a peer's legacy rule must still
+    // land, or the two devices stop converging. See the back-compat note in
+    // `repeat_rule_validation_is_entry_point_only_3647`.
+    //
+    // Non-text values need no gate here: `repeat` is a declared `text`
+    // property, so `validate_property_value` already rejects a `value_num` /
+    // `value_date` / `value_ref` / `value_bool` write to it.
+    if key == "repeat"
+        && let Some(ref rule) = value_text
+    {
+        agaric_engine::recurrence::validate_repeat_rule(rule)?;
+    }
+
     // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).

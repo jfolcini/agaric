@@ -5,6 +5,7 @@
  *  - handleSave calls handleSaveProperty and refreshes property list
  *  - handleSave shows invalidNumber toast when validation fails
  *  - handleSave shows saveFailed toast on error
+ *  - handleSave surfaces a coded InvalidRepeatRule reason verbatim (#3647)
  *  - handleSave announces on success when announceOnSave is set
  *  - handleSave logs errors when logTag is set
  *  - handleDelete calls handleDeleteProperty and removes from list
@@ -84,6 +85,54 @@ describe('usePropertySave handleSave', () => {
 
   it('shows saveFailed toast on error', async () => {
     mockedInvoke.mockRejectedValue(new Error('backend error'))
+
+    const setProperties = vi.fn()
+    const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', setProperties }))
+
+    await act(async () => {
+      await result.current.handleSave('status', 'val', 'text')
+    })
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to save property')
+  })
+
+  // #3647 — the backend validates the `repeat` recurrence grammar at
+  // `set_property` and ships the reason as a CODED validation error
+  // (`InvalidRepeatRule`). Collapsing that into the generic toast would leave
+  // the user exactly as uninformed as the silent misbehaviour the validation
+  // replaced, so the reason must reach the toast verbatim.
+  it('surfaces the backend reason verbatim for a malformed repeat rule (#3647)', async () => {
+    mockedInvoke.mockRejectedValue(
+      Object.assign(new Error('rejected'), {
+        kind: 'validation',
+        code: 'InvalidRepeatRule',
+        message:
+          "repeat rule '++ 1d' is not valid: it contains a space — write `++1d`, not `++ 1d`",
+      }),
+    )
+
+    const setProperties = vi.fn()
+    const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', setProperties }))
+
+    await act(async () => {
+      await result.current.handleSave('repeat', '++ 1d', 'text')
+    })
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+      "repeat rule '++ 1d' is not valid: it contains a space — write `++1d`, not `++ 1d`",
+    )
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalledWith('Failed to save property')
+  })
+
+  // Only the coded repeat rejection is special-cased: any other validation
+  // failure keeps the established generic copy.
+  it('keeps the generic toast for an uncoded validation failure (#3647)', async () => {
+    mockedInvoke.mockRejectedValue(
+      Object.assign(new Error('rejected'), {
+        kind: 'validation',
+        message: 'set_property.value_text.empty',
+      }),
+    )
 
     const setProperties = vi.fn()
     const { result } = renderHook(() => usePropertySave({ blockId: 'BLOCK_1', setProperties }))

@@ -36,6 +36,8 @@ export const ValidationCode = {
   RequiresRefresh: 'RequiresRefresh',
   /** Requested page/root block does not belong to the requesting space. */
   PageNotInSpace: 'PageNotInSpace',
+  /** Malformed `repeat` recurrence rule rejected at `set_property` (#3647). */
+  InvalidRepeatRule: 'InvalidRepeatRule',
 } as const satisfies { [K in GeneratedValidationCode]: K }
 
 /**

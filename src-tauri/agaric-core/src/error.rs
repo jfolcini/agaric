@@ -73,6 +73,13 @@ pub enum ValidationCode {
     /// on that path so the frontend heal (`page-blocks.ts` `load()`)
     /// keys on this code instead of the generic `kind: "validation"`.
     PageNotInSpace,
+    /// Malformed `repeat` recurrence rule, rejected at `set_property`
+    /// (#3647, `agaric_engine::recurrence::validate_repeat_rule`). The
+    /// `message` names what is wrong with the rule and lists the accepted
+    /// vocabulary, so the property-save surfaces render it VERBATIM instead
+    /// of the generic "failed to save property" toast — which is the whole
+    /// point of validating at the point of entry.
+    InvalidRepeatRule,
 }
 
 /// Helper struct matching the `{ kind, message, code? }` JSON shape that
@@ -766,18 +773,65 @@ mod tests {
         // The exact strings the old `"<Code>: …"` message prefixes spelled —
         // and the strings the TS `ValidationCode` union in bindings.ts (and
         // its runtime mirror in validation-codes.ts) discriminates on.
-        let cases: [(ValidationCode, &str); 6] = [
+        let cases: [(ValidationCode, &str); 7] = [
             (ValidationCode::InvalidGlob, "InvalidGlob"),
             (ValidationCode::InvalidRegex, "InvalidRegex"),
             (ValidationCode::InvalidDateFilter, "InvalidDateFilter"),
             (ValidationCode::InvalidFilter, "InvalidFilter"),
             (ValidationCode::RequiresRefresh, "RequiresRefresh"),
             (ValidationCode::PageNotInSpace, "PageNotInSpace"),
+            (ValidationCode::InvalidRepeatRule, "InvalidRepeatRule"),
         ];
         for (code, expected) in cases {
             assert_eq!(
                 serde_json::to_value(code).expect("code serializes"),
                 serde_json::Value::String(expected.into()),
+                "wire string drift for {code:?}"
+            );
+        }
+    }
+
+    /// #3674 / #3647 — make the table in `validation_code_wire_strings_pinned`
+    /// exhaustive by construction.
+    ///
+    /// That table is an array LITERAL: adding a `ValidationCode` variant does
+    /// not break it, so the pin silently stops covering the new code and the
+    /// TS union in `bindings.ts` / its runtime mirror in `validation-codes.ts`
+    /// can drift with nothing failing. This wildcard-free `match` DOES break —
+    /// a new variant is `E0004` here until it is spelled — and the
+    /// length-checked `[_; N]` above then forces the table row too.
+    ///
+    /// Kept as a SEPARATE test rather than folded into the pin so it does not
+    /// fight #3674, which replaces the `AppError` / `AppErrorKind` literal
+    /// tables with `macro_rules!`-generated ones. When that lands, if
+    /// `ValidationCode` gets the same treatment this test is redundant and
+    /// should be deleted along with the literal table it guards; until then it
+    /// is the only thing making a new code fail to compile.
+    #[test]
+    fn every_validation_code_is_covered_by_the_wire_pin() {
+        fn expected_wire(code: ValidationCode) -> &'static str {
+            match code {
+                ValidationCode::InvalidGlob => "InvalidGlob",
+                ValidationCode::InvalidRegex => "InvalidRegex",
+                ValidationCode::InvalidDateFilter => "InvalidDateFilter",
+                ValidationCode::InvalidFilter => "InvalidFilter",
+                ValidationCode::RequiresRefresh => "RequiresRefresh",
+                ValidationCode::PageNotInSpace => "PageNotInSpace",
+                ValidationCode::InvalidRepeatRule => "InvalidRepeatRule",
+            }
+        }
+        for code in [
+            ValidationCode::InvalidGlob,
+            ValidationCode::InvalidRegex,
+            ValidationCode::InvalidDateFilter,
+            ValidationCode::InvalidFilter,
+            ValidationCode::RequiresRefresh,
+            ValidationCode::PageNotInSpace,
+            ValidationCode::InvalidRepeatRule,
+        ] {
+            assert_eq!(
+                serde_json::to_value(code).expect("code serializes"),
+                serde_json::Value::String(expected_wire(code).into()),
                 "wire string drift for {code:?}"
             );
         }

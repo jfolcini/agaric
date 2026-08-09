@@ -2975,6 +2975,10 @@ async fn todo_state_auto_todo_to_null_clears_both_timestamps() {
 // ====================================================================
 
 /// Helper: set a repeat property on a block via block_properties table.
+///
+/// Goes through the `set_property` command boundary, so since #3647 the rule
+/// must be a VALID one. To plant a malformed rule the way an already-stored
+/// row exists, use [`seed_legacy_repeat_property`].
 async fn set_repeat_property(
     pool: &SqlitePool,
     device_id: &str,
@@ -2997,6 +3001,278 @@ async fn set_repeat_property(
     )
     .await
     .unwrap();
+}
+
+/// (#3647) Plant a `repeat` rule the way one gets into a real database
+/// WITHOUT passing the new entry-point gate: through `set_property_in_tx`,
+/// one layer below `set_property_inner`.
+///
+/// That is not a contrivance — it is the exact path three real writers take:
+/// a row written by a pre-#3647 build, a `SetProperty` op arriving from a
+/// sync peer (`dag::insert_remote_op` → `engine_apply`), and the recurrence
+/// flow copying the parent's rule onto each new sibling
+/// (`recurrence::compute::set_recurrence_property`). The gate is deliberately
+/// at the command boundary so none of those three can be broken by it; the
+/// graceful-degradation tests below use this helper to keep proving it.
+async fn seed_legacy_repeat_property(
+    pool: &SqlitePool,
+    device_id: &str,
+    mat: &Materializer,
+    block_id: &str,
+    rule: &str,
+) {
+    let mut tx = crate::db::CommandTx::begin_immediate(pool, "seed_legacy_repeat")
+        .await
+        .unwrap();
+    tx.arm_engine_rollback(mat.loro_state());
+    let (_row, op_record) = crate::commands::blocks::set_property_in_tx(
+        &mut tx,
+        mat.loro_state(),
+        device_id,
+        block_id.to_string(),
+        "repeat",
+        Some(rule.to_string()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    tx.enqueue_background(std::sync::Arc::new(op_record));
+    tx.commit_and_dispatch(mat).await.unwrap();
+}
+
+// ====================================================================
+// #3647 — repeat-grammar validation at the set_property boundary
+// ====================================================================
+
+/// #3647: a malformed `repeat` rule must be REJECTED where the user typed it,
+/// and must leave nothing behind.
+///
+/// Pre-fix, `set_property` accepted any free text into `repeat`. The rule then
+/// misbehaved much later and somewhere else: at completion, `shift_date`
+/// returns `Ok(None)` for a shape error, so the recurrence sibling was created
+/// with no date and the user got no feedback at all (#3281 replaced an
+/// unrecoverable wedge with exactly this silence). `++ 1d` is not a strawman —
+/// it is the form the property drawer's own syntax-help popover advertised.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_rejects_malformed_repeat_rule_3647() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "typo'd repeater".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    for rule in ["++ 1d", "invalid_rule", "+daily", "+0d", "++2weeks", "5x"] {
+        let err = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.as_str().into(),
+            "repeat".into(),
+            Some(rule.into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect_err("#3647: a malformed repeat rule must be rejected at set_property");
+
+        assert_eq!(
+            err.validation_code(),
+            Some(agaric_core::error::ValidationCode::InvalidRepeatRule),
+            "#3647: `{rule}` must reject with the coded sub-kind so the frontend \
+             can surface the reason instead of a generic toast — got {err:?}"
+        );
+        let AppError::Validation { message, .. } = &err else {
+            panic!("expected AppError::Validation for `{rule}`, got {err:?}");
+        };
+        assert!(
+            message.contains(rule),
+            "#3647: the message must name the offending rule, got: {message}"
+        );
+    }
+
+    mat.flush_background().await.unwrap();
+
+    // Nothing landed: no property row and no op_log entry. A rejection that
+    // still wrote would be worse than the silence it replaced.
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    assert!(
+        props.iter().all(|p| p.key != "repeat"),
+        "#3647: a rejected rule must not be stored, got {props:?}"
+    );
+    let ops: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' \
+         AND json_extract(payload, '$.block_id') = ? \
+         AND json_extract(payload, '$.key') = 'repeat'",
+    )
+    .bind(&block.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        ops, 0,
+        "#3647: a rejected rule must append no op (the gate runs before the tx)"
+    );
+
+    mat.shutdown();
+}
+
+/// #3647 (the regression risk): a gate that is too strict would break rules
+/// that work today. Every form the shipped UI writes — and every form the
+/// recurrence engine honours — must still be accepted through the command.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_accepts_every_valid_repeat_rule_3647() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "good repeater".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // The `/repeat-*` slash-command vocabulary, the numeric forms, both
+    // anchoring prefixes, and the normalization cases (surrounding
+    // whitespace / capitals) the parser has always folded away.
+    let valid = [
+        "daily",
+        "weekly",
+        "monthly",
+        "yearly",
+        ".+daily",
+        ".+weekly",
+        ".+monthly",
+        ".+yearly",
+        "++daily",
+        "++weekly",
+        "++monthly",
+        "++yearly",
+        "+1d",
+        "3d",
+        "+2w",
+        "12w",
+        "+6m",
+        "2m",
+        "+1y",
+        "2y",
+        ".+1w",
+        "++10d",
+        "  daily  ",
+        "DAILY",
+        "++2W",
+    ];
+    for rule in valid {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.as_str().into(),
+            "repeat".into(),
+            Some(rule.into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("#3647: `{rule}` is a valid rule and must be accepted: {e:?}"));
+    }
+    mat.flush_background().await.unwrap();
+
+    // The value is stored verbatim — the gate validates, it does not rewrite.
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let stored = props
+        .iter()
+        .find(|p| p.key == "repeat")
+        .expect("repeat property must exist");
+    assert_eq!(
+        stored.value_text.as_deref(),
+        Some("++2W"),
+        "#3647: the gate must not normalize the stored value"
+    );
+
+    mat.shutdown();
+}
+
+/// #3647: the gate lives at the command boundary ONLY.
+///
+/// `set_property_in_tx` is shared with the recurrence flow, which copies the
+/// parent's rule onto every new sibling, and with the sync-apply path. If the
+/// gate lived there, a task carrying an already-stored malformed rule could
+/// never be completed — re-creating the very #3281 wedge this issue's parent
+/// removed — and a peer's legacy op could not land, so the two devices would
+/// stop converging. This pins that a legacy rule stays writable below the
+/// boundary and readable above it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn repeat_rule_validation_is_entry_point_only_3647() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "legacy repeater".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Rejected at the command boundary…
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        "repeat".into(),
+        Some("++ 1d".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect_err("the command boundary must reject it");
+
+    // …but still writable below it, and readable afterwards.
+    seed_legacy_repeat_property(&pool, DEV, &mat, block.id.as_str(), "++ 1d").await;
+    mat.flush_background().await.unwrap();
+
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let stored = props.iter().find(|p| p.key == "repeat").expect(
+        "#3647: an existing malformed rule must remain readable — the \
+                 gate is a write-time check on new values, not a data migration",
+    );
+    assert_eq!(stored.value_text.as_deref(), Some("++ 1d"));
+
+    mat.shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3400,7 +3676,12 @@ async fn recurrence_malformed_plus_plus_rule_does_not_wedge_done_3281() {
     mat.flush_background().await.unwrap();
 
     // `++2w` would be valid; `++2weeks` is the typo.
-    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "++2weeks").await;
+    //
+    // #3647: the typo can no longer be TYPED — `set_property` now rejects it
+    // at the boundary. It can still be PRESENT: written by an older build, or
+    // replicated from a peer. Plant it that way, because the #3281 invariant
+    // this test guards is precisely about an already-stored bad rule.
+    seed_legacy_repeat_property(&pool, DEV, &mat, block.id.as_str(), "++2weeks").await;
     mat.flush_background().await.unwrap();
 
     let done = set_todo_state_inner(
@@ -4345,22 +4626,14 @@ async fn set_todo_state_done_with_malformed_repeat_creates_sibling_without_shift
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Set malformed repeat value
-    set_property_inner(
-        &pool,
-        DEV,
-        &mat,
-        resp.id.as_str().into(),
-        "repeat".into(),
-        Some("invalid_rule".into()),
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+    // Set malformed repeat value.
+    //
+    // #3647: `set_property` now rejects `invalid_rule` at the boundary, so a
+    // user can no longer create this state. An existing row can still hold
+    // it (older build / sync peer), and the graceful degradation this test
+    // pins is exactly what must keep happening for those rows — hence the
+    // below-the-boundary seed.
+    seed_legacy_repeat_property(&pool, DEV, &mat, resp.id.as_str(), "invalid_rule").await;
     mat.flush_background().await.unwrap();
 
     set_todo_state_inner(

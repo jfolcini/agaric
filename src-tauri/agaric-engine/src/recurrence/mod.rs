@@ -18,7 +18,10 @@ pub mod compute;
 pub mod parser;
 
 pub use compute::build_recurrence_sibling_in_tx;
-pub use parser::shift_date;
+// (#3647) `validate_repeat_rule` is the write-time gate the app crate's
+// `set_property_inner` calls; `REPEAT_RULE_HELP` is the accepted-vocabulary
+// blurb its message embeds (also re-used by the mock-parity test).
+pub use parser::{REPEAT_RULE_HELP, shift_date, validate_repeat_rule};
 
 #[cfg(test)]
 mod tests {

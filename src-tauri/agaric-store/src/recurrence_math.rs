@@ -216,6 +216,175 @@ pub fn shift_date_once(base: chrono::NaiveDate, interval: &str) -> Option<chrono
     try_shift_date_once(base, interval).ok()
 }
 
+// --- Rule-string normalization + mode split (one definition, #3647) ---
+
+/// Normalize a raw `repeat` property value the way EVERY consumer does
+/// before parsing it: trim surrounding whitespace, lowercase.
+///
+/// (#3647) Extracted so the write-time validator, the completion-time
+/// string shifter (`agaric_engine::recurrence::shift_date`) and the
+/// read-time projector ([`project_block_dates`]) cannot disagree about what
+/// "the same rule" is. All three previously spelled `rule.trim().to_lowercase()`
+/// inline.
+#[must_use]
+pub fn normalize_repeat_rule(rule: &str) -> String {
+    rule.trim().to_lowercase()
+}
+
+/// Mode tag for the `.+` anchoring prefix (shift from today / completion).
+pub const REPEAT_MODE_DOT_PLUS: &str = "dot_plus";
+/// Mode tag for the `++` anchoring prefix (catch up past today).
+pub const REPEAT_MODE_PLUS_PLUS: &str = "plus_plus";
+/// Mode tag for a rule with no anchoring prefix (shift from the base date).
+pub const REPEAT_MODE_DEFAULT: &str = "default";
+
+/// Split a NORMALIZED rule (see [`normalize_repeat_rule`]) into its
+/// anchoring-mode tag and the interval that follows it.
+///
+/// (#3647) The single definition of the prefix grammar. Note the `+` of a
+/// plain `+Nd` rule is deliberately NOT stripped here — it belongs to the
+/// interval and [`try_shift_date_once`] strips it itself — so only the two
+/// two-character anchoring prefixes are recognised.
+#[must_use]
+pub fn split_repeat_rule(normalized: &str) -> (&'static str, &str) {
+    if let Some(rest) = normalized.strip_prefix(".+") {
+        (REPEAT_MODE_DOT_PLUS, rest)
+    } else if let Some(rest) = normalized.strip_prefix("++") {
+        (REPEAT_MODE_PLUS_PLUS, rest)
+    } else {
+        (REPEAT_MODE_DEFAULT, normalized)
+    }
+}
+
+// --- Write-time rule validation (#3647) ---
+
+/// Probe base date used to run the real interval parser during validation.
+///
+/// Mid-calendar-rail, first-of-month, non-leap-sensitive: no shape-valid
+/// interval can be rejected here for a *date* reason that another base date
+/// would accept. It does not need to be — [`try_shift_date_once`] returns
+/// [`ShiftFailure::Interval`] purely as a function of the interval STRING
+/// (every such `return` is inside the string-shape branch, never the
+/// arithmetic branch), and
+/// `repeat_rule_shape_tests::probe_verdict_is_base_independent` pins that.
+const REPEAT_PROBE: (i32, u32, u32) = (2000, 1, 1);
+
+/// Why a `repeat` rule was rejected by [`validate_repeat_rule_shape`].
+///
+/// **Explanation only.** These variants never decide validity — the verdict
+/// always comes from [`try_shift_date_once`], the same parser recurrence runs
+/// at completion and projection time. Classification runs only *after* the
+/// parser has already rejected the rule, purely to turn "invalid" into
+/// something the user can act on. A bug here can make a message unhelpful; it
+/// cannot make a good rule fail or a bad rule pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepeatRuleProblem {
+    /// The whole rule is empty or whitespace-only.
+    Empty,
+    /// An anchoring prefix (`.+` / `++`) with nothing after it.
+    MissingInterval,
+    /// The interval contains whitespace (`++ 1d` — a very common typo, and
+    /// one the drawer's free-text `<Input>` invites).
+    InternalWhitespace,
+    /// A bare keyword carrying a `+` (`+daily`). The keyword arms match the
+    /// bare form only.
+    KeywordWithPlus,
+    /// `+0d` / `-3w` — Org-mode recurrence never stands still or goes back.
+    NonPositiveCount,
+    /// The count parsed but the trailing unit letter is not `d`/`w`/`m`/`y`.
+    UnknownUnit,
+    /// Anything else: junk, a float count, a missing count (`+d`).
+    Unparseable,
+}
+
+impl RepeatRuleProblem {
+    /// A short human reason, phrased to complete
+    /// "repeat rule '…' is not valid: **{hint}**".
+    #[must_use]
+    pub fn hint(self) -> &'static str {
+        match self {
+            RepeatRuleProblem::Empty => "the rule is empty",
+            RepeatRuleProblem::MissingInterval => {
+                "the `.+` / `++` prefix is not followed by an interval"
+            }
+            RepeatRuleProblem::InternalWhitespace => {
+                "it contains a space — write `++1d`, not `++ 1d`"
+            }
+            RepeatRuleProblem::KeywordWithPlus => {
+                "the plain keywords take no `+` — write `daily`, or `+1d` for the numeric form"
+            }
+            RepeatRuleProblem::NonPositiveCount => "the count must be 1 or more",
+            RepeatRuleProblem::UnknownUnit => "the unit must be one of d, w, m, y",
+            RepeatRuleProblem::Unparseable => "the interval is not a keyword or a `+N<unit>` count",
+        }
+    }
+}
+
+/// Classify an interval the parser has ALREADY rejected. Explanation only —
+/// see [`RepeatRuleProblem`].
+fn classify_rejected_interval(interval: &str) -> RepeatRuleProblem {
+    if interval.is_empty() {
+        return RepeatRuleProblem::MissingInterval;
+    }
+    if interval.chars().any(char::is_whitespace) {
+        return RepeatRuleProblem::InternalWhitespace;
+    }
+    let num_unit = interval.strip_prefix('+').unwrap_or(interval);
+    if num_unit != interval && matches!(num_unit, "daily" | "weekly" | "monthly" | "yearly") {
+        return RepeatRuleProblem::KeywordWithPlus;
+    }
+    if num_unit.len() >= 2 {
+        // Same split the parser uses; only the count is inspected here —
+        // if it parses, the trailing unit letter is by elimination what
+        // `try_shift_date_once` rejected.
+        let (num_str, _unit) = num_unit.split_at(num_unit.len() - 1);
+        if let Ok(n) = num_str.parse::<i64>() {
+            return if n <= 0 {
+                RepeatRuleProblem::NonPositiveCount
+            } else {
+                // The count is fine, so the unit is what the parser choked on.
+                RepeatRuleProblem::UnknownUnit
+            };
+        }
+    }
+    RepeatRuleProblem::Unparseable
+}
+
+/// Is `rule` a well-formed `repeat` rule? (#3647)
+///
+/// # How this is guaranteed to agree with the real grammar
+///
+/// It does not re-describe the grammar. It normalizes and splits the rule
+/// with the SAME two helpers the shifter and the projector use
+/// ([`normalize_repeat_rule`] / [`split_repeat_rule`]) and then hands the
+/// interval to [`try_shift_date_once`] — the production parser — and reads
+/// its verdict. Adding an interval form to the parser makes it valid here
+/// automatically; there is no second table to keep in sync.
+///
+/// Only [`ShiftFailure::Interval`] — a rejected *shape* — is a malformed
+/// rule. [`ShiftFailure::Overflow`] means the rule parsed and the date
+/// arithmetic dead-ended for this particular base date (`+199y` from 2050
+/// leaves the calendar rail), which is a property of the date, not of the
+/// grammar; rejecting it at write time would refuse rules that are perfectly
+/// usable from a different base date.
+///
+/// # Errors
+///
+/// [`RepeatRuleProblem`] describing what is wrong, for the message.
+pub fn validate_repeat_rule_shape(rule: &str) -> Result<(), RepeatRuleProblem> {
+    let normalized = normalize_repeat_rule(rule);
+    if normalized.is_empty() {
+        return Err(RepeatRuleProblem::Empty);
+    }
+    let (_mode, interval) = split_repeat_rule(&normalized);
+    let probe = chrono::NaiveDate::from_ymd_opt(REPEAT_PROBE.0, REPEAT_PROBE.1, REPEAT_PROBE.2)
+        .expect("invariant: REPEAT_PROBE is a real calendar date");
+    match try_shift_date_once(probe, interval) {
+        Ok(_) | Err(ShiftFailure::Overflow) => Ok(()),
+        Err(ShiftFailure::Interval) => Err(classify_rejected_interval(interval)),
+    }
+}
+
 // --- Per-block occurrence projection (was recurrence/projection.rs) ---
 
 /// Project one repeating block's occurrence dates within
@@ -321,7 +490,7 @@ pub fn project_block_dates<F>(
 ) where
     F: FnMut(chrono::NaiveDate, &'static str),
 {
-    let trimmed_rule = repeat_rule.trim().to_lowercase();
+    let trimmed_rule = normalize_repeat_rule(repeat_rule);
     if trimmed_rule.is_empty() {
         return;
     }
@@ -329,13 +498,10 @@ pub fn project_block_dates<F>(
     // Parse mode and interval from the rule string. The interval is a
     // borrow into `trimmed_rule` so we keep `trimmed_rule` alive for
     // the duration of the projection.
-    let (mode, interval) = if let Some(rest) = trimmed_rule.strip_prefix(".+") {
-        ("dot_plus", rest)
-    } else if let Some(rest) = trimmed_rule.strip_prefix("++") {
-        ("plus_plus", rest)
-    } else {
-        ("default", trimmed_rule.as_str())
-    };
+    // (#3647) The split is the shared [`split_repeat_rule`] — the same one
+    // `shift_date` and `validate_repeat_rule_shape` use, so the write-time
+    // gate cannot accept a prefix this projector would not.
+    let (mode, interval) = split_repeat_rule(&trimmed_rule);
 
     // Source iteration: due_date, then scheduled_date. Fixed order so
     // both callsites observe the same emission sequence (the cache's
@@ -353,8 +519,8 @@ pub fn project_block_dates<F>(
 
         // Determine the starting point based on mode.
         let mut current = match mode {
-            "dot_plus" => today,
-            "plus_plus" => {
+            REPEAT_MODE_DOT_PLUS => today,
+            REPEAT_MODE_PLUS_PLUS => {
                 // Advance from `base` one step at a time until strictly
                 // greater than today. The caught-up date is pre-emitted
                 // below, then the main loop continues from it.
@@ -426,7 +592,8 @@ pub fn project_block_dates<F>(
         // when it falls before `range_start` (#1550: budget tracks the true
         // series, not just the in-range window). The `emit` itself stays
         // gated on the full `[range_start, range_end]` check.
-        if mode == "plus_plus" && projected_count < max_remaining && current <= range_end {
+        if mode == REPEAT_MODE_PLUS_PLUS && projected_count < max_remaining && current <= range_end
+        {
             let past_until = repeat_until.is_some_and(|until| current > until);
             if !past_until {
                 if current >= range_start {
@@ -479,6 +646,183 @@ pub fn project_block_dates<F>(
                 emit(current, source_name);
                 emitted_count += 1;
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod repeat_rule_shape_tests {
+    //! (#3647) Tests for the write-time grammar gate.
+    //!
+    //! The gate's whole design claim is that it does not own a grammar — it
+    //! asks [`try_shift_date_once`]. These tests pin the two things that
+    //! claim depends on (the probe date is irrelevant to the verdict; an
+    //! arithmetic dead-end is not a grammar error) plus the message
+    //! classification. The end-to-end "the validator accepts exactly what
+    //! recurrence honours" differential lives one layer up, in
+    //! `agaric_engine::recurrence::parser`, where both the string shifter and
+    //! the projector are visible.
+
+    use super::{
+        RepeatRuleProblem, ShiftFailure, normalize_repeat_rule, split_repeat_rule,
+        try_shift_date_once, validate_repeat_rule_shape,
+    };
+
+    /// Rules spanning the whole grammar plus a spread of malformed shapes.
+    /// Reused by several tests below.
+    const CORPUS: &[&str] = &[
+        // valid
+        "daily",
+        "weekly",
+        "monthly",
+        "yearly",
+        "1d",
+        "+1d",
+        "+3d",
+        "+2w",
+        "+6m",
+        "+1y",
+        "12w",
+        ".+daily",
+        ".+weekly",
+        ".+monthly",
+        ".+yearly",
+        ".+1d",
+        ".+3w",
+        "++daily",
+        "++weekly",
+        "++monthly",
+        "++yearly",
+        "++2w",
+        "++10d",
+        // malformed
+        "",
+        "   ",
+        "+",
+        "++",
+        ".+",
+        "+daily",
+        "++ 1d",
+        ".+ weekly",
+        "2 w",
+        "+0d",
+        "-1d",
+        "+-3w",
+        "3.5d",
+        "5x",
+        "w",
+        "+d",
+        "invalid",
+        "++2weeks",
+        "FREQ=DAILY",
+    ];
+
+    /// The probe date in [`super::REPEAT_PROBE`] is only sound if the
+    /// `Interval` (shape) verdict does not depend on the base date. Every
+    /// `Err(ShiftFailure::Interval)` in `try_shift_date_once` sits in a
+    /// string-shape branch, so it must not — pin that, because if it ever
+    /// stops being true the validator silently starts accepting or rejecting
+    /// rules based on an arbitrary constant.
+    #[test]
+    fn probe_verdict_is_base_independent() {
+        let bases = [
+            (2000, 1, 1),
+            (1900, 1, 1),
+            (2024, 2, 29),
+            (2200, 12, 31),
+            (2100, 6, 15),
+        ];
+        for rule in CORPUS {
+            let normalized = normalize_repeat_rule(rule);
+            let (_mode, interval) = split_repeat_rule(&normalized);
+            let verdicts: Vec<bool> = bases
+                .iter()
+                .map(|&(y, m, d)| {
+                    let base = chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap();
+                    matches!(
+                        try_shift_date_once(base, interval),
+                        Err(ShiftFailure::Interval)
+                    )
+                })
+                .collect();
+            assert!(
+                verdicts.windows(2).all(|w| w[0] == w[1]),
+                "shape verdict for `{rule}` varies by base date ({verdicts:?}) — \
+                 the single-probe validator is unsound"
+            );
+        }
+    }
+
+    /// An arithmetic dead-end is NOT a grammar error. `+199y` is a
+    /// well-formed rule that overflows the calendar rail from a 2050 base and
+    /// works fine from a 1950 one; rejecting it at write time would refuse a
+    /// rule the engine can honour.
+    #[test]
+    fn arithmetic_overflow_is_not_a_grammar_error() {
+        for rule in ["+199y", "+9999m", "++500y", ".+2000w"] {
+            assert!(
+                validate_repeat_rule_shape(rule).is_ok(),
+                "`{rule}` parses as a rule — an out-of-rail RESULT is a date \
+                 property, not a malformed grammar"
+            );
+        }
+        // …and the probe really does overflow on at least one of them, so the
+        // test is exercising the `Err(Overflow) => Ok(())` arm rather than
+        // passing vacuously.
+        let probe = chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap();
+        assert_eq!(
+            try_shift_date_once(probe, "9999m"),
+            Err(ShiftFailure::Overflow),
+            "expected the probe to hit the calendar rail for `9999m`"
+        );
+    }
+
+    /// Every rejected rule gets the classification its message needs. These
+    /// are explanation only — the reject/accept split is asserted elsewhere;
+    /// here we only check the reason handed to the user.
+    #[test]
+    fn rejected_rules_are_classified_for_the_message() {
+        let cases: &[(&str, RepeatRuleProblem)] = &[
+            ("", RepeatRuleProblem::Empty),
+            ("   ", RepeatRuleProblem::Empty),
+            ("++", RepeatRuleProblem::MissingInterval),
+            (".+", RepeatRuleProblem::MissingInterval),
+            ("++ 1d", RepeatRuleProblem::InternalWhitespace),
+            (".+ weekly", RepeatRuleProblem::InternalWhitespace),
+            ("+daily", RepeatRuleProblem::KeywordWithPlus),
+            ("+yearly", RepeatRuleProblem::KeywordWithPlus),
+            ("+0d", RepeatRuleProblem::NonPositiveCount),
+            ("-1d", RepeatRuleProblem::NonPositiveCount),
+            ("5x", RepeatRuleProblem::UnknownUnit),
+            ("12q", RepeatRuleProblem::UnknownUnit),
+            ("3.5d", RepeatRuleProblem::Unparseable),
+            ("++2weeks", RepeatRuleProblem::Unparseable),
+            ("invalid", RepeatRuleProblem::Unparseable),
+            ("w", RepeatRuleProblem::Unparseable),
+        ];
+        for (rule, expected) in cases {
+            assert_eq!(
+                validate_repeat_rule_shape(rule),
+                Err(*expected),
+                "wrong reason for `{rule}`"
+            );
+            assert!(
+                !expected.hint().is_empty(),
+                "every problem must carry a hint"
+            );
+        }
+    }
+
+    /// Normalization is part of the contract: a rule the user typed with
+    /// surrounding whitespace or in capitals is the same rule.
+    #[test]
+    fn surrounding_whitespace_and_case_are_normalized_not_rejected() {
+        for rule in ["  daily  ", "DAILY", "  ++2W", "\t.+Monthly\n"] {
+            assert!(
+                validate_repeat_rule_shape(rule).is_ok(),
+                "`{rule}` must normalize to a valid rule (the shifter and the \
+                 projector both normalize the same way)"
+            );
         }
     }
 }

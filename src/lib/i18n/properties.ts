@@ -318,8 +318,13 @@ export const properties: Record<string, string> = {
   'property.repeatHelpTitle': 'Repeat syntax',
   'property.repeatHelpCatchup': 'Reschedule from the original date plus the interval (catch-up).',
   'property.repeatHelpFromCompletion': 'Reschedule from the moment of completion.',
+  // #3647 — this example used to read `++ 1d` / `.+ 1w`, WITH a space. The
+  // recurrence parser has never accepted a space inside the interval (`++ 1d`
+  // splits to the interval `" 1d"`, whose count fails to parse), so the app's
+  // own help text taught a rule that silently did nothing. Now that the
+  // grammar is enforced at `set_property`, the copy must be a rule that works.
   'property.repeatHelpExample':
-    'Example: `++ 1d` repeats daily catching up; `.+ 1w` waits a week from when you marked it done.',
+    'Example: `++1d` repeats daily catching up; `.+1w` waits a week from when you marked it done.',
   'property.repeatHelpPopoverLabel': 'Repeat syntax help',
   'filter.operatorContains': 'contains',
   'filter.operatorStartsWith': 'starts with',
