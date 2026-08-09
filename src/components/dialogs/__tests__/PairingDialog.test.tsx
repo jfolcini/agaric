@@ -2218,12 +2218,6 @@ describe('PairingDialog', () => {
   // -----------------------------------------------------------------------
   describe('#3714/#3715 the queue is device-scoped and bounded', () => {
     /**
-     * Holds `open` in state the way `DeviceManagement` does, so
-     * `onOpenChange(false)` genuinely closes the dialog instead of being
-     * swallowed by a spy. Without this the cleanup effect never fires and
-     * only the first of the two clears is observable (#3714).
-     */
-    /**
      * Unmount and let the close/unmount cleanup's `cancel_pairing` be
      * DISPATCHED inside the test that armed it.
      *
@@ -2240,6 +2234,12 @@ describe('PairingDialog', () => {
       await flushMicrotasks()
     }
 
+    /**
+     * Holds `open` in state the way `DeviceManagement` does, so
+     * `onOpenChange(false)` genuinely closes the dialog instead of being
+     * swallowed by a spy. Without this the cleanup effect never fires and
+     * only the first of the two clears is observable (#3714).
+     */
     function PairingDialogHarness() {
       const [open, setOpen] = useState(true)
       return (
