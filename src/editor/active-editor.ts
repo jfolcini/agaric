@@ -3,7 +3,8 @@
  *
  * Each `BlockTree` runs one roving TipTap instance (AGENTS.md invariant
  * 4), but the app can mount several BlockTrees at once (the journal
- * week/month views render one per day). App-level UI outside the tree —
+ * week and stream views render one per day; the month view is a calendar
+ * grid and mounts none). App-level UI outside the tree —
  * notably the command palette's `[[Page]]` link insertion — needs the
  * live `Editor` to run undo-preserving commands (`insertContent`) instead
  * of the deprecated `document.execCommand('insertText')`, without

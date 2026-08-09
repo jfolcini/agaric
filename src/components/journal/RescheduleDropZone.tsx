@@ -1,7 +1,7 @@
 /**
  * RescheduleDropZone — native HTML5 drop target for rescheduling tasks (F-32).
  *
- * Wraps a DaySection in weekly/monthly views. Accepts blocks dragged
+ * Wraps a DaySection in the weekly view. Accepts blocks dragged
  * via native drag with 'application/x-block-reschedule' data type.
  * On drop, calls setDueDate to reschedule the task to this day.
  *
