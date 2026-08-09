@@ -26,9 +26,13 @@ Exactly one block hosts a `<EditorContent>` (TipTap) at any moment. Every other 
 
 This keeps:
 
-- **Memory bounded** — one editor instance, not one per block.
+- **Memory bounded** — editor instances scale with mounted `BlockTree`s, not with blocks.
 - **Undo isolated** — each edit session has its own ProseMirror history.
 - **DOM lean** — static blocks are pure presentational divs, not editor instances.
+
+**The `Editor` is per mounted `BlockTree`, not per app.** The sentence above is about `<EditorContent>`: it is singular because focus is global, so at most one block anywhere is mounting the editor surface. The underlying `Editor` object is not a process-wide singleton — each `BlockTree` runs its own roving instance, and the journal week / month / stream views render one `DaySection` → one `BlockTree` per day (`src/components/journal/WeeklyView.tsx`, `src/components/journal/DaySection.tsx`). `useLazyRovingEditor` (`src/hooks/useLazyRovingEditor.ts`) flips every mounted tree into constructing its own ~50-extension `Editor` on an idle callback, before any block in it is focused — 7 live editors in the weekly view. That is the bound the "memory bounded" line is really claiming: ~one editor per visible day, versus one per block.
+
+This is why app-level editor access goes through the registry in `src/editor/active-editor.ts`, which holds the **most-recently-focused** editor and is published on the editor's `focus` event rather than on mount, "so the value tracks the caret rather than mount order". Code outside a tree — command-palette `[[Page]]` insertion, a global formatting action, a crash-flush — must read it (`getActiveEditor()`) and tolerate `null`. A module-level slot in `src/editor/` keyed on "the" editor and filled at mount time is won by mount order, and in a multi-day journal view will fire against the wrong day's document.
 
 The `RovingEditorHandle` indirection (`src/editor/use-roving-editor.ts`) decouples the editor's lifecycle from React's render cycle.
 
@@ -130,7 +134,7 @@ Note the phrase "keeping the React tree mounted": the IntersectionObserver patte
 
 ## Mount envelope (#2467)
 
-The backend has a precise, bench-validated envelope (`docs/architecture/operations.md` § Memory footprint & scaling envelope; `interactive_slo.rs` gates CI at 100K blocks/space) and a hard per-page load cap (`PAGE_SUBTREE_MAX_BLOCKS = 10_000` in `commands/pages/listing.rs`, surfaced to the user via `blockTree.truncatedNotice`). Until #2467, the frontend had no counterpart: every block `load_page_subtree` returned was mounted as a React component, so a page anywhere near the backend's 10K cap meant 10K mounted fibers — the "full-tree mounting" cliff the frontend architecture review flagged.
+The backend has a precise, bench-validated envelope (`docs/architecture/operations.md` § Memory footprint & scaling envelope; `interactive_slo.rs` gates the **weekly** `bench-slo` lane at 100K blocks/space — not a per-PR check; see `src-tauri/benches/AGENTS.md`) and a hard per-page load cap (`PAGE_SUBTREE_MAX_BLOCKS = 10_000` in `commands/pages/listing.rs`, surfaced to the user via `blockTree.truncatedNotice`). Until #2467, the frontend had no counterpart: every block `load_page_subtree` returned was mounted as a React component, so a page anywhere near the backend's 10K cap meant 10K mounted fibers — the "full-tree mounting" cliff the frontend architecture review flagged.
 
 **What exists today (this slice):** `useBlockMountLimit` (`src/components/block-tree/use-block-mount-limit.ts`) caps how many of the collapse-filtered rows actually mount, applied in `BlockTree.tsx` immediately after `useBlockCollapse` and before zoom/DnD/keyboard-nav — everything downstream of that point only ever sees the capped set, so the mount cap composes with collapse instead of conflicting with it.
 

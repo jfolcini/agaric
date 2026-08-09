@@ -86,7 +86,7 @@ To add a shortcut: append a `ShortcutBinding` entry to `catalog.ts` (`id`, `keys
 
 ## Editor architecture
 
-- **Single roving editor.** Exactly one block hosts `<EditorContent>` at a time. All others render via `StaticBlock` → `RichContentRenderer`. Focus changes unmount the editor from the previous block (after persisting markdown) and mount it in the new one.
+- **Single roving editor — but one `Editor` per mounted `BlockTree`.** Exactly one block hosts `<EditorContent>` at a time (focus is global). All others render via `StaticBlock` → `RichContentRenderer`. Focus changes unmount the editor from the previous block (after persisting markdown) and mount it in the new one. The `Editor` objects themselves are per tree, not per app — the journal week/month/stream views mount one `BlockTree`, and one lazily-constructed editor, per day. App-level code must get the live editor from `src/editor/active-editor.ts` (published on focus, so it tracks the caret), never from a module-level slot filled at mount.
 - **Position capture before async.** Picker plugins that await IPC must save `insertPos` first and check `insertPos <= editor.state.doc.content.size` before inserting on the await side. The doc may have shrunk during the await.
 - **`flushSync` on blur-to-save.** When `handleBlur` calls `edit()` or `splitBlock()`, the store update must complete before the editor unmounts. Wrap in `flushSync()`.
 - **Re-entrancy refs.** `handleDeleteBlock`, `handleEnterSave`, and other async block handlers can be triggered twice (double-click, rapid `Enter`). Use a `useRef(false)` set inside `try`, cleared in `finally`.
