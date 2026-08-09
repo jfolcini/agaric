@@ -96,12 +96,26 @@ export interface UseUnlinkedReferencesResult {
   isFetchingMore: boolean
   loadMore: () => void
   isError: boolean
+  /** Re-run the current query. Drives the panel's error-state Retry (#3738 note 1). */
+  refetch: () => void
   /**
    * The exact query key this hook reads from, exported so the component can
    * `queryClient.setQueryData(queryKey, …)` for the optimistic "Link it"
    * removal without re-deriving (and risking drift from) the key.
    */
   queryKey: unknown[]
+  /**
+   * `queryKey` MINUS the trailing `groupLimit` — i.e. every cache entry that
+   * counts the SAME thing, whichever page size fetched it.
+   *
+   * #3738 note 8: the optimistic "Link it" removal used to rewrite only the
+   * currently-keyed entry, so linking a mention while expanded left the
+   * collapsed (limit-1) entry holding the pre-link count. Collapsing the panel
+   * then re-keyed onto that entry and the header ticked 39 → 40 until the
+   * refetch landed. Passed to `queryClient.setQueriesData`, which prefix-matches,
+   * this updates every limit variant at once.
+   */
+  queryKeyPrefix: unknown[]
 }
 
 export function useUnlinkedReferences(
@@ -120,12 +134,13 @@ export function useUnlinkedReferences(
   // the key is stable across property changes. `groupLimit` IS part of the key
   // so expanding the panel refetches the full page rather than showing the
   // single group the collapsed fetch returned.
-  const queryKey = useMemo(
-    () => ['unlinkedReferences', spaceId, pageId, filters, sort, groupLimit],
-    [spaceId, pageId, filters, sort, groupLimit],
+  const queryKeyPrefix = useMemo(
+    () => ['unlinkedReferences', spaceId, pageId, filters, sort],
+    [spaceId, pageId, filters, sort],
   )
+  const queryKey = useMemo(() => [...queryKeyPrefix, groupLimit], [queryKeyPrefix, groupLimit])
 
-  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, isError } =
+  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, isError, refetch } =
     useInfiniteQuery(
       {
         queryKey,
@@ -202,7 +217,6 @@ export function useUnlinkedReferences(
   // `setTruncated(resp.truncated)` sit OUTSIDE the cursor branch), so the value
   // shown is always the most-recently-fetched page's — i.e. the last page.
   const lastPage = data?.pages.at(-1)
-  const truncated = lastPage?.truncated ?? false
 
   // #3733 note 2 — the counts must SURVIVE the `groupLimit` re-key.
   //
@@ -222,16 +236,34 @@ export function useUnlinkedReferences(
   // spot. Only the counts are carried — `groups`, `loading` and `hasMore` still
   // report the real state of the new key, so the list itself still shows its
   // loading state rather than a stale single group.
-  const countIdentity = useMemo(
-    () => JSON.stringify([spaceId, pageId, filters, sort]),
-    [spaceId, pageId, filters, sort],
-  )
-  const carriedRef = useRef<{ identity: string; total: number; filtered: number } | null>(null)
+  //
+  // #3738 note 2 — `truncated` rides along. It is displayed immediately beside
+  // the counts ("showing the first N of each group"), and leaving it out made
+  // it flip true → false → true across an expand while the numbers next to it
+  // held steady: the same "these two adjacent statements disagree" defect the
+  // carry exists to remove.
+  //
+  // #3738 note 1 — the carry deliberately also survives a FAILED fetch (`data`
+  // is `undefined` for an errored key exactly as it is for a pending one). The
+  // count is not unknown just because the *next* page size could not be
+  // fetched, and dropping it would make the whole panel disappear out from
+  // under a user who had just clicked to expand it, leaving only a toast. What
+  // the panel must NOT do is present the carried count over an empty-state that
+  // claims there is nothing — `UnlinkedReferences` renders an explicit error +
+  // Retry for that case instead.
+  const countIdentity = useMemo(() => JSON.stringify(queryKeyPrefix), [queryKeyPrefix])
+  const carriedRef = useRef<{
+    identity: string
+    total: number
+    filtered: number
+    truncated: boolean
+  } | null>(null)
   if (lastPage) {
     carriedRef.current = {
       identity: countIdentity,
       total: lastPage.total_count,
       filtered: lastPage.filtered_count,
+      truncated: lastPage.truncated,
     }
   } else if (carriedRef.current && carriedRef.current.identity !== countIdentity) {
     carriedRef.current = null
@@ -244,10 +276,15 @@ export function useUnlinkedReferences(
   // from the whole post-filter match set, not the paginated slice), so the last
   // page carries the same value as the first.
   const filteredCount = lastPage?.filtered_count ?? carried?.filtered ?? 0
+  const truncated = lastPage?.truncated ?? carried?.truncated ?? false
 
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+  const retry = useCallback(() => {
+    void refetch()
+  }, [refetch])
 
   return {
     groups,
@@ -259,6 +296,8 @@ export function useUnlinkedReferences(
     isFetchingMore: isFetchingNextPage,
     loadMore,
     isError,
+    refetch: retry,
     queryKey,
+    queryKeyPrefix,
   }
 }

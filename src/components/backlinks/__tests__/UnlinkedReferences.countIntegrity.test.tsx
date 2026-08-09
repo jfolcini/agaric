@@ -246,6 +246,113 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
     })
   })
 
+  // #3738 note 1 — the count carry across the `groupLimit` re-key also spans a
+  // FAILED expand (`data` is `undefined` for an errored key exactly as it is for
+  // a pending one), so the panel no longer vanishes on a failed expand. Keeping
+  // it is the deliberate choice — a panel that disappears under the click that
+  // opened it, leaving only a toast, is worse. What it must not do is pair the
+  // carried count with an empty-state that claims there is nothing there.
+  describe('a failed expand', () => {
+    /** Collapsed fetch succeeds with a count; the expanded one rejects. */
+    function mockFailingExpand() {
+      mockedListUnlinked.mockImplementation(async (args) => {
+        if (Number(args.limit) === 1) return makeResponse({ ids: ['B1'], total: 12, filtered: 12 })
+        throw new Error('expand failed')
+      })
+    }
+
+    it('keeps the measured count and says the load failed, rather than "no results"', async () => {
+      const user = userEvent.setup()
+      mockFailingExpand()
+
+      renderPanel()
+      const twelve = t('unlinkedRefs.header', { count: 12 })
+      await screen.findByRole('button', { name: new RegExp(twelve, 'i') })
+
+      await expand(user)
+
+      const error = await screen.findByTestId('unlinked-references-error')
+      expect(error).toHaveTextContent(t('unlinkedRefs.loadFailed'))
+      expect(error).toHaveAttribute('role', 'alert')
+      expect(screen.getByRole('button', { name: t('unlinkedRefs.retryLabel') })).toBeInTheDocument()
+      // THE property: the panel never asserts an emptiness nobody measured.
+      expect(screen.queryByText(t('unlinkedRefs.noResults'))).not.toBeInTheDocument()
+      // …and the count it did measure is still the one on the header.
+      expect(screen.getByRole('button', { name: new RegExp(twelve, 'i') })).toBeInTheDocument()
+    })
+
+    it('Retry re-runs the fetch and the rows arrive', async () => {
+      const user = userEvent.setup()
+      let expandFails = true
+      mockedListUnlinked.mockImplementation(async (args) => {
+        if (Number(args.limit) === 1) return makeResponse({ ids: ['B1'], total: 12, filtered: 12 })
+        if (expandFails) throw new Error('expand failed')
+        return makeResponse({ ids: ['B1', 'B2'], total: 12, filtered: 12 })
+      })
+
+      const { container } = renderPanel()
+      await screen.findByRole('button', {
+        name: new RegExp(t('unlinkedRefs.header', { count: 12 }), 'i'),
+      })
+      await expand(user)
+      await screen.findByTestId('unlinked-references-error')
+
+      expandFails = false
+      await user.click(screen.getByRole('button', { name: t('unlinkedRefs.retryLabel') }))
+
+      await waitFor(() => {
+        expect(rowCount(container)).toBe(2)
+      })
+      expect(screen.queryByTestId('unlinked-references-error')).not.toBeInTheDocument()
+    })
+  })
+
+  // #3738 note 8 — the optimistic "Link it" removal rewrote only the
+  // currently-keyed cache entry, so the collapsed (limit-1) entry kept the
+  // pre-link count. Collapsing the panel re-keys onto that entry, so the header
+  // ticked back up until the refetch landed.
+  it('"Link it" while expanded also decrements the collapsed panel\'s count', async () => {
+    const user = userEvent.setup()
+    let collapsedFetches = 0
+    mockedListUnlinked.mockImplementation(async (args) => {
+      if (Number(args.limit) === 1) {
+        collapsedFetches += 1
+        if (collapsedFetches === 1) return makeResponse({ ids: ['B1'], total: 40, filtered: 40 })
+        // Belt and braces: if collapsing ever DID refetch, this never settles,
+        // so the header still renders the cached entry — the frame the user
+        // sees. In practice it does not: `staleTime: Infinity` plus an observer
+        // that changes key rather than mounting means nothing re-fetches, so a
+        // stale count here does not heal on its own at all.
+        return new Promise<GroupedBacklinkResponse>(() => {})
+      }
+      return makeResponse({ ids: ['B1', 'B2'], total: 40, filtered: 40 })
+    })
+
+    const { container } = renderPanel()
+    const forty = t('unlinkedRefs.header', { count: 40 })
+    await screen.findByRole('button', { name: new RegExp(forty, 'i') })
+
+    await expand(user)
+    await waitFor(() => {
+      expect(rowCount(container)).toBe(2)
+    })
+
+    await user.click(screen.getAllByRole('button', { name: /^Link it:/i })[0] as HTMLElement)
+
+    const thirtyNine = t('unlinkedRefs.header', { count: 39 })
+    await screen.findByRole('button', { name: new RegExp(thirtyNine, 'i') })
+
+    // Collapse: the panel re-keys onto the limit-1 entry.
+    await user.click(screen.getByRole('button', { name: new RegExp(thirtyNine, 'i') }))
+    await waitFor(() => {
+      expect(rowCount(container)).toBe(0)
+    })
+    expect(collapsedFetches).toBe(1)
+
+    expect(screen.getByRole('button', { name: new RegExp(thirtyNine, 'i') })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: new RegExp(forty, 'i') })).not.toBeInTheDocument()
+  })
+
   // #3733 note 4 / #3732's sibling concern.
   describe('row divider under windowing', () => {
     it('keeps the divider on the last MOUNTED row when the group continues', async () => {

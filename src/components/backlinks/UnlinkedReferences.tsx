@@ -127,7 +127,8 @@ export function UnlinkedReferences({
     isFetchingMore,
     loadMore,
     isError,
-    queryKey,
+    refetch,
+    queryKeyPrefix,
     // #3316 item 2 — `collapsed` gates the fetch size: while the panel is shut
     // it asks for one group instead of twenty, which is all the header count
     // needs. Expanding re-keys the query and pulls the full page.
@@ -269,7 +270,9 @@ export function UnlinkedReferences({
         // the count by exactly one. `editBlock` only changes content — it emits
         // no `block:properties-changed`, so nothing else refetches this; the
         // update is purely optimistic (no invalidate).
-        queryClient.setQueryData<InfiniteData<GroupedBacklinkResponse>>(queryKey, (old) => {
+        const dropLinkedBlock = (
+          old: InfiniteData<GroupedBacklinkResponse> | undefined,
+        ): InfiniteData<GroupedBacklinkResponse> | undefined => {
           if (!old) return old
           const lastIdx = old.pages.length - 1
           const pages: GroupedBacklinkResponse[] = []
@@ -307,13 +310,25 @@ export function UnlinkedReferences({
             })
           })
           return { ...old, pages }
-        })
+        }
+        // #3738 note 8 — apply the decrement to EVERY limit variant of this
+        // panel's query, not just the currently-keyed one. `queryKeyPrefix` is
+        // the key minus `groupLimit`, and `setQueriesData` prefix-matches, so
+        // the collapsed (limit-1) entry is updated alongside the expanded
+        // (limit-20) one. Linking a mention while expanded used to leave the
+        // collapsed entry holding the pre-link count, so collapsing the panel
+        // re-keyed onto it and the header ticked 39 → 40 until the refetch
+        // landed.
+        queryClient.setQueriesData<InfiniteData<GroupedBacklinkResponse>>(
+          { queryKey: queryKeyPrefix },
+          dropLinkedBlock,
+        )
       } catch (err) {
         logger.error('UnlinkedReferences', 'Failed to link block to page', { blockId, pageId }, err)
         notify.error(t('unlinkedRefs.linkFailed'))
       }
     },
-    [pageId, pageTitle, aliases, t, queryKey],
+    [pageId, pageTitle, aliases, t, queryKeyPrefix],
   )
 
   const toggleCollapsed = useCallback(() => {
@@ -470,7 +485,35 @@ export function UnlinkedReferences({
                 <Spinner /> {t('unlinkedRefs.loading')}
               </div>
             }
-            empty={<EmptyState compact message={t('unlinkedRefs.noResults')} />}
+            // #3738 note 1 — a FAILED fetch reaches the same "no items, not
+            // loading" branch as a genuinely empty result, and since #3735 the
+            // header keeps the carried count across the re-key, so a failed
+            // expand read "12 Unlinked References" directly above "No unlinked
+            // references found." Keeping the panel is the deliberate choice
+            // (making it vanish under the click that expanded it is worse), so
+            // the body has to be honest instead: say the load failed and offer
+            // the retry, rather than assert an emptiness nobody measured.
+            empty={
+              isError ? (
+                <div
+                  className="unlinked-references-error flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
+                  role="alert"
+                  data-testid="unlinked-references-error"
+                >
+                  <span>{t('unlinkedRefs.loadFailed')}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={refetch}
+                    aria-label={t('unlinkedRefs.retryLabel')}
+                  >
+                    {t('unlinkedRefs.retry')}
+                  </Button>
+                </div>
+              ) : (
+                <EmptyState compact message={t('unlinkedRefs.noResults')} />
+              )
+            }
           >
             {() => (
               <>

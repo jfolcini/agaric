@@ -189,6 +189,70 @@ describe('PageBrowserBatchToolbar', () => {
     expect(onMutated).not.toHaveBeenCalled()
   })
 
+  // #3703 item 3 — Retry re-opens the confirm (#3701) rather than re-firing the
+  // id list captured at failure time, which could cascade a delete over a set
+  // the user could no longer see. The residue: the toast outlives the toolbar,
+  // which the parent unmounts as soon as the selection empties, so
+  // `setTrashConfirmOpen(true)` became a no-op on an unmounted component and
+  // Retry did nothing and said nothing.
+  describe('Retry on the trash-failure toast', () => {
+    /** Drive a failed batch trash and hand back the toast's Retry callback. */
+    async function failTrash() {
+      const user = userEvent.setup()
+      mockedInvoke.mockRejectedValueOnce(new Error('backend boom'))
+      const utils = renderToolbar()
+
+      await user.click(screen.getByTestId('page-batch-trash-btn'))
+      await user.click(
+        await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+      )
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(
+          t('pageBrowser.batch.trashFailed'),
+          expect.objectContaining({
+            action: expect.objectContaining({ label: t('action.retry') }),
+          }),
+        )
+      })
+      const call = mockedToastError.mock.calls.find(
+        (c) => c[0] === t('pageBrowser.batch.trashFailed'),
+      )
+      const retry = (call?.[1] as { action?: { onClick?: () => void } } | undefined)?.action
+        ?.onClick
+      expect(retry).toBeTypeOf('function')
+      return { ...utils, user, retry: retry as () => void }
+    }
+
+    it('re-opens the confirm while the selection is still there', async () => {
+      const { retry } = await failTrash()
+
+      retry()
+
+      expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+    })
+
+    it('says why it cannot proceed once the selection is gone', async () => {
+      const { retry, unmount } = await failTrash()
+
+      // Clearing the selection unmounts the toolbar (the parent renders it only
+      // while ≥1 page is selected) — the toast, and its Retry, remain.
+      unmount()
+      mockedToastError.mockClear()
+      const deletesBefore = mockedInvoke.mock.calls.filter(
+        (c) => c[0] === 'delete_blocks_by_ids',
+      ).length
+
+      retry()
+
+      expect(mockedToastError).toHaveBeenCalledWith(t('pageBrowser.batch.retryNoSelection'))
+      // …and it must NOT silently do the one thing it cannot do safely: re-fire
+      // the captured id list over a selection nobody can see any more.
+      expect(mockedInvoke.mock.calls.filter((c) => c[0] === 'delete_blocks_by_ids')).toHaveLength(
+        deletesBefore,
+      )
+    })
+  })
+
   it('Add tag loads the space tags, fires add_tags_by_ids with the chosen tag, clears + refreshes', async () => {
     const user = userEvent.setup()
     // list_all_tags_in_space → tag rows; add_tags_by_ids → count

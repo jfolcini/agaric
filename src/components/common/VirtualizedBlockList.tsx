@@ -162,16 +162,41 @@ export function VirtualizedBlockList<B extends { id: string }>({
   // The style is a pure function of the row's `start` offset, so caching by
   // offset hands back a stable reference for as long as a row does not move.
   // Bounded by the number of distinct offsets in the list (<= `blocks.length`,
-  // itself capped at `MAX_BLOCKS_PER_GROUP`); the guard below drops the cache
-  // wholesale if re-measuring ever churns it past that.
+  // itself capped at `MAX_BLOCKS_PER_GROUP`); re-measuring can churn it past
+  // that, so the cache evicts.
+  //
+  // #3738 note 3 — the eviction is LRU by ACCESS, not a wholesale `clear()`.
+  // `clear()` dropped entries for rows that had ALREADY been served earlier in
+  // the same render pass, so the very next render handed every one of them a
+  // fresh object and `BacklinkRow`'s `memo` missed for the whole window — not
+  // just for the rows whose offsets were actually churning. Insertion order is
+  // no good either: `Map.set` on an existing key does not reorder, so the
+  // oldest-inserted key is typically a row still on screen (offset 0 is
+  // inserted first and is almost always live) while the churned, dead offsets
+  // sit at the end. Re-inserting on a hit makes the map's iteration order a
+  // true recency order, so eviction takes the offsets nothing has asked for.
   const styleCacheRef = useRef(new Map<number, React.CSSProperties>())
   const rowCount = blocks.length
   const styleForOffset = useCallback(
     (start: number): React.CSSProperties => {
       const cache = styleCacheRef.current
       const hit = cache.get(start)
-      if (hit) return hit
-      if (cache.size > rowCount * 2) cache.clear()
+      if (hit) {
+        // Move to the most-recently-used end (delete + set; `set` alone on an
+        // existing key leaves iteration order untouched).
+        cache.delete(start)
+        cache.set(start, hit)
+        return hit
+      }
+      // At least one entry, so a single-row list can still cache. Two per row
+      // leaves headroom for a re-measure moving every mounted row exactly once
+      // before anything is evicted.
+      const capacity = Math.max(rowCount * 2, 1)
+      while (cache.size >= capacity) {
+        const oldest = cache.keys().next()
+        if (oldest.done) break
+        cache.delete(oldest.value)
+      }
       const style: React.CSSProperties = {
         position: 'absolute',
         top: 0,
@@ -280,12 +305,24 @@ export function VirtualizedBlockList<B extends { id: string }>({
       {rows.map((row) =>
         renderBlock(row.block, {
           style: styleForOffset(row.start),
-          // The anchor gets no real `measureRef`: it is transient and
-          // off-screen, and reporting a measurement for it would perturb the
-          // virtualizer's size cache from outside the window it is currently
-          // tracking. The real measurement is taken when the row enters the
-          // window — at which point this prop flips to `measureElement` on the
-          // same, surviving DOM node.
+          // The anchor gets no real `measureRef`: nothing in this component
+          // asks the virtualizer to size a row it is not currently tracking.
+          // The real measurement is taken when the row enters the window — at
+          // which point this prop flips to `measureElement` on the same,
+          // surviving DOM node.
+          //
+          // #3738 note 4 — this is NOT a guarantee that an anchored row goes
+          // unmeasured, and the comment used to imply it was. That held while
+          // a row leaving the window unmounted; since the anchor shares the
+          // rows array (see the key-stability comment above) the same `<li>`
+          // now survives the window→anchor direction, and the ref swap calls
+          // `measureElement(null)`, which in virtual-core 3.17.x prunes only
+          // DISCONNECTED nodes from `elementsCache` — this one is still in the
+          // document, so its ResizeObserver registration outlives the swap and
+          // a resize while anchored still reaches `resizeItem`. Harmless: the
+          // row keeps its real `data-index`, which is what `indexFromElement`
+          // reads, so any height it reports lands on its own item and is the
+          // height that item really has.
           measureRef: row.measured ? virtualizer.measureElement : NOOP_MEASURE_REF,
           index: row.index,
           isLast: row.index === lastIndex,

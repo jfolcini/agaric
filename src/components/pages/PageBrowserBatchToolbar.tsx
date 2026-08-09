@@ -34,7 +34,7 @@
 
 import { SlidersHorizontal, Star, StarOff, Tag, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
@@ -109,6 +109,24 @@ export function PageBrowserBatchToolbar({
   const [propertyValue, setPropertyValue] = useState<string>('')
   const [busy, setBusy] = useState(false)
   const [trashConfirmOpen, setTrashConfirmOpen] = useState(false)
+
+  // #3703 item 3 — the trash-failure toast outlives this component. The parent
+  // renders the toolbar only while ≥1 page is selected, so clearing the
+  // selection UNMOUNTS it while the toast is still on screen with its Retry
+  // button. `setTrashConfirmOpen(true)` on an unmounted component is a silent
+  // no-op, so Retry looked actionable and did nothing at all. A ref pair is
+  // what the toast can still read: `selectedCountRef` for a selection that
+  // merely emptied, `mountedRef` because the last render before an unmount
+  // still carried the old (non-zero) count.
+  const selectedCountRef = useRef(selectedIds.length)
+  selectedCountRef.current = selectedIds.length
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   // Human labels for the property keys and their reserved value options.
   const propertyLabels: Record<PropertyKey, string> = {
@@ -226,7 +244,19 @@ export function PageBrowserBatchToolbar({
       // toast can outlive the selection the user had when it failed, and a
       // cascade over a set they can no longer see is exactly what the confirm
       // exists to prevent.
-      notify.retry(t('pageBrowser.batch.trashFailed'), () => setTrashConfirmOpen(true))
+      //
+      // #3703 item 3 — but "re-open the confirm" is not possible once the
+      // selection is gone: there is nothing to confirm, and the toolbar has
+      // been unmounted, so the state setter is a no-op. Silent was better than
+      // destructive, and it is still a control that presents as actionable and
+      // does nothing. Say why instead.
+      notify.retry(t('pageBrowser.batch.trashFailed'), () => {
+        if (!mountedRef.current || selectedCountRef.current === 0) {
+          notify.error(t('pageBrowser.batch.retryNoSelection'))
+          return
+        }
+        setTrashConfirmOpen(true)
+      })
     } finally {
       setBusy(false)
     }

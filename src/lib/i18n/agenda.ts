@@ -153,6 +153,9 @@ export const agenda: Record<string, string> = {
   'unfinished.loading': 'Loading unfinished tasks',
   'unfinished.countPartial': '{{n}}+',
   'unfinished.countPartialLabel': 'At least {{n}} unfinished tasks — expand to load the rest',
+  // #3703 item 1 — the same qualifier for a panel that is ALREADY open, where
+  // "expand to load the rest" names an action the listener has already taken.
+  'unfinished.countPartialLabelExpanded': 'At least {{n}} unfinished tasks loaded so far',
   'unfinished.loadError': 'Could not load unfinished tasks.',
   'unfinished.partialLoadError': 'Some unfinished tasks could not be loaded.',
   'unfinished.retry': 'Retry',

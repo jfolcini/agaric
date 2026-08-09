@@ -32,6 +32,10 @@ export const references: Record<string, string> = {
   'unlinkedRefs.loading': 'Loading\u2026',
   'unlinkedRefs.loadingDots': 'Loading...',
   'unlinkedRefs.loadFailed': 'Failed to load unlinked references',
+  // #3738 note 1 — in-panel error affordance. The toast alone left the panel
+  // asserting a carried count over an "empty" body after a failed expand.
+  'unlinkedRefs.retry': 'Retry',
+  'unlinkedRefs.retryLabel': 'Retry loading unlinked references',
   'unlinkedRefs.linkFailed': 'Failed to link reference',
   'unlinkedRefs.noResults': 'No unlinked references found.',
   'unlinkedRefs.untitled': 'Untitled',

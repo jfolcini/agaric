@@ -82,6 +82,19 @@ const mockedInvoke = vi.mocked(invoke)
 /** One group larger than the window, so most rows are never laid out. */
 const GROUP_SIZE = 30
 
+/**
+ * The fixture's block id for row `i`.
+ *
+ * #3738 note 5 — every selector in this file goes through here. Two of them
+ * used to hand-build the padding (`` `B0${WINDOW_SIZE - 1}` ``), which is only
+ * correct while the constant it interpolates stays below 10: raise
+ * `WINDOW_SIZE` and the selector silently stops matching any row, and the
+ * `not.toBeNull()` on the next line fails somewhere unrelated to the change.
+ */
+function blockId(i: number): string {
+  return `B${String(i).padStart(2, '0')}`
+}
+
 function makeGroupedResponse() {
   return {
     groups: [
@@ -89,7 +102,7 @@ function makeGroupedResponse() {
         page_id: 'P1',
         page_title: 'Page One',
         blocks: Array.from({ length: GROUP_SIZE }, (_, i) => ({
-          id: `B${String(i).padStart(2, '0')}`,
+          id: blockId(i),
           block_type: 'content',
           content: `reference ${i}`,
           parent_id: 'P1',
@@ -153,7 +166,7 @@ describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () 
     // wrap-around below really does target an off-window row.
     expect(container.querySelectorAll('[data-backlink-item]')).toHaveLength(WINDOW_SIZE)
     expect(
-      container.querySelector(`[data-backlink-item="B${GROUP_SIZE - 1}"]`),
+      container.querySelector(`[data-backlink-item="${blockId(GROUP_SIZE - 1)}"]`),
     ).not.toBeInTheDocument()
   })
 
@@ -179,7 +192,7 @@ describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () 
     const active = container.ownerDocument.getElementById(activeId)
     expect(active).not.toBeNull()
     // And it is the wrapped-to last row, not some coincidental survivor.
-    expect(active?.getAttribute('data-backlink-item')).toBe(`B${GROUP_SIZE - 1}`)
+    expect(active?.getAttribute('data-backlink-item')).toBe(blockId(GROUP_SIZE - 1))
   })
 
   it('wrap-around still paints the roving focus ring on the wrapped-to row', async () => {
@@ -191,7 +204,7 @@ describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () 
     await user.keyboard('{ArrowUp}')
 
     await waitFor(() => {
-      const active = container.querySelector(`[data-backlink-item="B${GROUP_SIZE - 1}"]`)
+      const active = container.querySelector(`[data-backlink-item="${blockId(GROUP_SIZE - 1)}"]`)
       expect(active).not.toBeNull()
       // `useFocusedRowEffect` adds BACKLINK_FOCUS_CLASSES via the DOM lookup;
       // LinkedReferences has no declarative fallback for the ring.
@@ -211,7 +224,7 @@ describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () 
     list.focus()
     await user.keyboard('{ArrowUp}')
 
-    const lastSelector = `[data-backlink-item="B${GROUP_SIZE - 1}"]`
+    const lastSelector = `[data-backlink-item="${blockId(GROUP_SIZE - 1)}"]`
     await waitFor(() => {
       expect(container.querySelector(lastSelector)).toHaveClass('ring-2')
     })
@@ -241,7 +254,9 @@ describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () 
     const user = userEvent.setup()
     const { container } = await renderPanel()
 
-    const lastWindowed = container.querySelector(`[data-backlink-item="B0${WINDOW_SIZE - 1}"]`)
+    const lastWindowed = container.querySelector(
+      `[data-backlink-item="${blockId(WINDOW_SIZE - 1)}"]`,
+    )
     expect(lastWindowed).not.toBeNull()
     // Mid-group: it must keep its divider, and must not defer to `:last-child`.
     expect(lastWindowed).toHaveClass('border-b')
@@ -254,11 +269,13 @@ describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () 
     await user.keyboard('{ArrowUp}')
 
     await waitFor(() => {
-      expect(container.querySelector(`[data-backlink-item="B${GROUP_SIZE - 1}"]`)).not.toBeNull()
+      expect(
+        container.querySelector(`[data-backlink-item="${blockId(GROUP_SIZE - 1)}"]`),
+      ).not.toBeNull()
     })
-    expect(container.querySelector(`[data-backlink-item="B${GROUP_SIZE - 1}"]`)).toHaveClass(
-      'border-b-0',
-    )
+    expect(
+      container.querySelector(`[data-backlink-item="${blockId(GROUP_SIZE - 1)}"]`),
+    ).toHaveClass('border-b-0')
   })
 
   it('has no a11y violations after a wrap-around', async () => {

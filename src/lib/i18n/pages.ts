@@ -270,6 +270,9 @@ export const pages: Record<string, string> = {
   'pageBrowser.batch.trashed_one': 'Moved {{count}} page to Trash',
   'pageBrowser.batch.trashed_other': 'Moved {{count}} pages to Trash',
   'pageBrowser.batch.trashFailed': 'Failed to trash the selected pages',
+  // #3703 item 3 — Retry on the trash-failure toast re-opens the confirm, which
+  // needs a selection to confirm. Say so rather than doing nothing silently.
+  'pageBrowser.batch.retryNoSelection': 'Nothing selected — select the pages again to retry',
   'pageBrowser.batch.trashConfirmTitle_one': 'Move {{count}} page to Trash?',
   'pageBrowser.batch.trashConfirmTitle_other': 'Move {{count}} pages to Trash?',
   'pageBrowser.batch.trashConfirmDescription_one':
