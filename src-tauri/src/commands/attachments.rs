@@ -365,8 +365,12 @@ pub async fn add_attachment_with_bytes_inner(
     let filename = validate_new_attachment(&filename, &mime_type, size_bytes)?;
 
     // Backend-generated relative storage path — the FE never supplies one.
+    // #3370: minted through the same type the apply / undo / replay writers
+    // coerce into and the resolvers parse, so there is exactly one definition
+    // of what a stored attachment path may look like.
     let storage_id = ulid::Ulid::generate().to_string().to_uppercase();
-    let fs_path = format!("attachments/{storage_id}");
+    let fs_path =
+        agaric_core::attachment_path::AttachmentFsPath::for_storage_id(&storage_id).into_string();
     agaric_sync::sync_files::check_attachment_fs_path_shape(&fs_path)?;
 
     // Write the bytes first (creates the attachments dir). `write_attachment_file`

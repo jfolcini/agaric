@@ -107,3 +107,4 @@
 0100_peer_refs_loro_vv_bytes.sql
 0101_op_log_reverses_columns.sql
 0102_projected_agenda_horizon.sql
+0108_attachments_fs_path_shape.sql

@@ -683,3 +683,125 @@ async fn cleanup_orphaned_attachments_still_collects_when_nothing_races_3519() {
         "the quarantined copy must be destroyed too, leaving nothing behind: {remaining:?}"
     );
 }
+
+// ============================================================================
+// #3370 — a peer-supplied `fs_path` must reach the row already canonical
+// ============================================================================
+
+/// Apply a replicated `AddAttachment` through the production apply path, the
+/// way sync's op-apply does, and hand back what actually landed in the row.
+async fn apply_peer_add_attachment(
+    pool: &SqlitePool,
+    attachment_id: &str,
+    fs_path: &str,
+) -> String {
+    const BLK: &str = "01HZ3370000000000000000BLK";
+    sqlx::query("INSERT OR IGNORE INTO blocks (id, block_type, content) VALUES (?, 'content', '')")
+        .bind(BLK)
+        .execute(pool)
+        .await
+        .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    agaric_engine::apply::attachments::apply_add_attachment_tx(
+        &mut conn,
+        AddAttachmentPayload {
+            attachment_id: BlockId::from(attachment_id),
+            block_id: BlockId::from(BLK),
+            mime_type: "image/png".into(),
+            filename: "photo.png".into(),
+            size_bytes: 5,
+            fs_path: fs_path.to_owned(),
+        },
+        FIXED_TS,
+    )
+    .await
+    .expect("apply must never reject a replicated op");
+    drop(conn);
+
+    sqlx::query_scalar::<_, String>("SELECT fs_path FROM attachments WHERE id = ?")
+        .bind(attachment_id)
+        .fetch_one(pool)
+        .await
+        .expect("the replicated row must exist")
+}
+
+/// #3370 — the GC decides what to unlink by testing its walk-derived path
+/// string (`attachments/photo.png`) for membership in the set of stored
+/// `fs_path` strings. A peer that spells the same file `attachments/./photo.png`
+/// misses that set, and the GC destroys the bytes of the very row that
+/// references them — silent data loss on a live attachment, on a path where a
+/// hard reject is not available because it would wedge the apply pipeline.
+///
+/// So the apply path must canonicalize before the value is stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replicated_non_canonical_fs_path_keeps_its_bytes_through_a_gc_pass_3370() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+    // The bytes live where every resolver puts them; only the *spelling* the
+    // peer used differs.
+    let full = attachments.join("photo.png");
+    tokio::fs::write(&full, b"bytes").await.unwrap();
+
+    let stored = apply_peer_add_attachment(
+        &pool,
+        "01HZ3370000000000000000AT1",
+        "attachments/./photo.png",
+    )
+    .await;
+    assert_eq!(
+        stored, "attachments/photo.png",
+        "the row must hold the spelling the GC's directory walk produces"
+    );
+
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+
+    assert!(
+        full.exists(),
+        "the GC destroyed the bytes of a live, referenced attachment because the \
+         row spelled the path non-canonically (#3370)"
+    );
+}
+
+/// #3370 — the hostile case. `app_data_dir` holds the SQLite database itself,
+/// so a peer-supplied *relative* path outside `attachments/` names a
+/// non-attachment file. The old shape check accepted any relative path, and the
+/// file-receive path writes the peer's bytes at whatever the row says.
+///
+/// The row must never hold such a value in the first place.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replicated_fs_path_naming_the_database_file_never_reaches_the_row_3370() {
+    let (pool, dir) = test_pool().await;
+
+    let stored = apply_peer_add_attachment(&pool, "01HZ3370000000000000000AT2", "notes.db").await;
+
+    assert_eq!(
+        stored, "attachments/01HZ3370000000000000000AT2",
+        "an unusable peer path must be replaced by this device's own path, not stored"
+    );
+    // And the replacement is a value the resolvers will accept, so the
+    // attachment stays fetchable rather than being wedged by its own fix.
+    agaric_sync::sync_files::validate_attachment_fs_path(dir.path(), &stored)
+        .expect("the coerced path must resolve");
+}
+
+/// #3370 — traversal spellings that the *old* shape check already refused at
+/// use time were still stored verbatim by apply, leaving a row no resolver
+/// could ever read. They are coerced now, on the same path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replicated_traversal_fs_path_never_reaches_the_row_3370() {
+    let (pool, _dir) = test_pool().await;
+
+    let stored = apply_peer_add_attachment(
+        &pool,
+        "01HZ3370000000000000000AT3",
+        "attachments/../../../etc/passwd",
+    )
+    .await;
+
+    assert_eq!(stored, "attachments/01HZ3370000000000000000AT3");
+    assert!(!stored.contains(".."), "no `..` may survive into the row");
+}

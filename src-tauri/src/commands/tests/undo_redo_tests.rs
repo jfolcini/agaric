@@ -1573,7 +1573,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
     .bind("image/png")
     .bind("photo.png")
     .bind(1024_i64)
-    .bind("/tmp/photo.png")
+    .bind("attachments/photo.png")
     .bind(att_ts)
     .execute(&pool)
     .await
@@ -1588,7 +1588,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
             size_bytes: 1024,
-            fs_path: "/tmp/photo.png".into(),
+            fs_path: "attachments/photo.png".into(),
         }),
         att_ts,
     )
@@ -1608,7 +1608,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
         DEV,
         OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
-            fs_path: "/tmp/photo.png".into(),
+            fs_path: "attachments/photo.png".into(),
         }),
         del_ts,
     )
@@ -1695,7 +1695,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
     .bind("image/png")
     .bind("photo.png")
     .bind(1024_i64)
-    .bind("/tmp/photo.png")
+    .bind("attachments/photo.png")
     .bind(att_ts)
     .execute(&pool)
     .await
@@ -1710,7 +1710,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
             size_bytes: 1024,
-            fs_path: "/tmp/photo.png".into(),
+            fs_path: "attachments/photo.png".into(),
         }),
         att_ts,
     )
@@ -1731,7 +1731,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
         DEV,
         OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
-            fs_path: "/tmp/photo.png".into(),
+            fs_path: "attachments/photo.png".into(),
         }),
         del_ts,
     )
@@ -1943,7 +1943,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
     .bind("image/png")
     .bind("photo.png")
     .bind(1024_i64)
-    .bind("/tmp/photo.png")
+    .bind("attachments/photo.png")
     .bind(att_ts)
     .execute(&pool)
     .await
@@ -1958,7 +1958,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
             size_bytes: 1024,
-            fs_path: "/tmp/photo.png".into(),
+            fs_path: "attachments/photo.png".into(),
         }),
         att_ts,
     )
@@ -1974,7 +1974,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
         DEV,
         OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
-            fs_path: "/tmp/photo.png".into(),
+            fs_path: "attachments/photo.png".into(),
         }),
         del_ts,
     )
@@ -2962,7 +2962,7 @@ async fn revert_add_attachment_hard_deletes_row_c7() {
     .bind("image/png")
     .bind("photo.png")
     .bind(1024_i64)
-    .bind("/tmp/photo.png")
+    .bind("attachments/photo.png")
     .bind(FIXED_TS)
     .execute(&pool)
     .await
@@ -2978,7 +2978,7 @@ async fn revert_add_attachment_hard_deletes_row_c7() {
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
             size_bytes: 1024,
-            fs_path: "/tmp/photo.png".into(),
+            fs_path: "attachments/photo.png".into(),
         }),
         FIXED_TS,
     )
@@ -4293,7 +4293,7 @@ async fn apply_reverse_delete_attachment_on_nonexistent_is_idempotent() {
 
     let payload = OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
         attachment_id: BlockId::test_id("ATT_GHOST"),
-        fs_path: "/tmp/ghost.bin".into(),
+        fs_path: "attachments/ghost.bin".into(),
     });
     let result = apply_reverse_in_tx(
         &mut tx,

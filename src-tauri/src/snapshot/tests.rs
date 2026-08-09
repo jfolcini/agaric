@@ -3436,17 +3436,24 @@ async fn apply_snapshot_uses_awaiting_enqueue_background() {
 }
 
 // =======================================================================
-// Apply_snapshot_rejects_traversal_attachment_fs_path
+// Apply_snapshot_coerces_traversal_attachment_fs_path (#3370)
 // =======================================================================
 
-/// Belt-and-suspenders: ensure a snapshot that contains an attachment
-/// with a traversal `fs_path` (e.g. from a corrupted / hostile snapshot
-/// file) is rejected at the trust boundary. `read_attachment_file` and
-/// `write_attachment_file` already validate on access, but we want the
-/// table-level invariant "rows in `attachments` have well-formed fs_path"
-/// to hold.
+/// A snapshot carrying an attachment with a traversal `fs_path` (a corrupted
+/// or hostile snapshot file) must not be able to seed that value into the
+/// table — the invariant "rows in `attachments` have a well-formed fs_path"
+/// is what the orphan GC and every resolver lean on.
+///
+/// #3370 changed HOW that invariant is kept here, from reject to coerce.
+/// Rejecting rolled the whole restore back, so one bad row in an otherwise
+/// legitimate snapshot denied the user their entire restore — the same DoS
+/// argument the `filename` sanitize on this exact row already makes. It also
+/// mattered more once the shape rule was tightened to confine paths to
+/// `attachments/`: strictly more values reach this branch than before.
+/// Coercion is the stronger form of the invariant anyway — it holds for every
+/// restored row rather than refusing the restore.
 #[tokio::test]
-async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
+async fn apply_snapshot_coerces_traversal_attachment_fs_path_3370() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
@@ -3489,36 +3496,31 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
     };
 
     let encoded = encode_snapshot(&data).unwrap();
-    let err = apply_snapshot(&pool, &mat, &encoded[..])
+    apply_snapshot(&pool, &mat, &encoded[..])
         .await
-        .expect_err("apply_snapshot must reject traversal fs_path");
+        .expect("one hostile fs_path must not deny the user the whole restore");
 
-    // The rejection must happen before the data lands — `attachments` stays empty.
-    let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM attachments")
+    // The traversal value is gone: the row holds this device's own path.
+    let stored: String = sqlx::query_scalar::<_, String>("SELECT fs_path FROM attachments")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(
-        count, 0,
-        "attachment row must NOT be committed when fs_path fails validation"
+        stored,
+        format!("attachments/{}", BlockId::test_id("ATT-BAD").as_str()),
+        "a traversal fs_path must be replaced, never stored"
+    );
+    assert!(
+        agaric_sync::sync_files::check_attachment_fs_path_shape(&stored).is_ok(),
+        "what restore stored must be a value the resolvers accept"
     );
 
-    // And blocks also stay empty — the entire transaction must have rolled back,
-    // not just the attachment insert. This asserts atomicity of restore.
+    // And the rest of the snapshot landed — that is the point of coercing.
     let blk_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(
-        blk_count, 0,
-        "blocks must also roll back on attachment validation failure"
-    );
-
-    // Error is the Validation variant from sync_files.
-    match err {
-        AppError::Validation { .. } => {}
-        other => panic!("expected Validation error, got {other:?}"),
-    }
+    assert_eq!(blk_count, 1, "the legitimate rows must still restore");
 
     mat.shutdown();
 }

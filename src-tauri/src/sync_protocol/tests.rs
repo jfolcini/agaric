@@ -3295,7 +3295,7 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
     }
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES (?, ?, 'text/plain', 'a.txt', 4, 'att/a.txt', 0)",
+         VALUES (?, ?, 'text/plain', 'a.txt', 4, 'attachments/a.txt', 0)",
     )
     .bind("01HZ2128ATTACHMENTROWEEEE5")
     .bind(c1)
@@ -3327,7 +3327,7 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
     }
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES (?, ?, 'text/plain', 'a.txt', 4, 'att/a.txt', 0)",
+         VALUES (?, ?, 'text/plain', 'a.txt', 4, 'attachments/a.txt', 0)",
     )
     .bind("01HZ2128ATTACHMENTROWEEEE5")
     .bind(c1)

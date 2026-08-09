@@ -58,7 +58,10 @@ async fn seed_attachments_for_block(pool: &SqlitePool, block_id: &str, m: usize)
         // `fs_path` carries a partial UNIQUE index (migration 0037,
         // `idx_attachments_fs_path_unique`); a shared literal path would make
         // the 2nd row collide. Derive a per-attachment path from `att_id`.
-        let fs_path = format!("/tmp/bench_{att_id}.txt");
+        // #3370: `fs_path` is confined to the `attachments/` subtree and the
+        // shape is enforced by migration 0108's triggers, so the seed has to
+        // mint the same shape production does.
+        let fs_path = format!("attachments/bench_{att_id}.txt");
         sqlx::query(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
              VALUES (?, ?, 'text/plain', 'file.txt', 1024, ?, 1767225600000)",

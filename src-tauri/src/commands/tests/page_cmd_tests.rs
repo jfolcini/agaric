@@ -1265,7 +1265,7 @@ async fn insert_attachment(pool: &SqlitePool, id: &str, block_id: &str, filename
     sqlx::query(
         "INSERT INTO attachments \
          (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES (?, ?, 'application/octet-stream', ?, 123, '/tmp/x', 1)",
+         VALUES (?, ?, 'application/octet-stream', ?, 123, 'attachments/x', 1)",
     )
     .bind(id)
     .bind(block_id)

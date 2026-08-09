@@ -848,6 +848,25 @@ pub async fn apply_reverse_in_tx(
             let created_at = original_created_at.unwrap_or_else(crate::db::now_ms);
             let block_id_str = p.block_id.as_str();
 
+            // #3370 (SECURITY): the second payload-carried writer into
+            // `attachments.fs_path`. The reverse payload is built from the
+            // op-log record of the op being undone, which may be a *peer's*
+            // op — so the same coercion the apply path runs must run here, or
+            // undo re-introduces the value apply just refused to store.
+            let fs_path = agaric_core::attachment_path::AttachmentFsPath::coerce_from_peer(
+                &p.fs_path,
+                attachment_id_str,
+            );
+            let fs_path_str = fs_path.as_str();
+            if fs_path_str != p.fs_path {
+                tracing::warn!(
+                    attachment_id = attachment_id_str,
+                    original = %p.fs_path,
+                    canonical = fs_path_str,
+                    "rewrote unsafe or non-canonical attachment fs_path on undo re-insert"
+                );
+            }
+
             sqlx::query!(
                 "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -856,7 +875,7 @@ pub async fn apply_reverse_in_tx(
                 p.mime_type,
                 p.filename,
                 p.size_bytes,
-                p.fs_path,
+                fs_path_str,
                 created_at,
             )
             .execute(&mut **tx)
@@ -2926,7 +2945,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO attachments \
              (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-             VALUES (?, ?, 'image/png', 'f.png', 1, 'p/f.png', ?)",
+             VALUES (?, ?, 'image/png', 'f.png', 1, 'attachments/p_f.png', ?)",
         )
         .bind(att_id.as_str())
         .bind(child_id.as_str())
@@ -2948,7 +2967,7 @@ mod tests {
 
         let del = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
             attachment_id: att_id.clone(),
-            fs_path: "p/f.png".into(),
+            fs_path: "attachments/p_f.png".into(),
         });
         append_local_op_at(&pool, DEV, del, FIXED_TS + 1)
             .await
@@ -2962,7 +2981,7 @@ mod tests {
             mime_type: "image/png".into(),
             filename: "g.png".into(),
             size_bytes: 1,
-            fs_path: "p/g.png".into(),
+            fs_path: "attachments/p_g.png".into(),
         });
         append_local_op_at(&pool, DEV, add, FIXED_TS + 2)
             .await
