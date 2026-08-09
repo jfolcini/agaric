@@ -1670,7 +1670,13 @@ name = "migrations: blocks rebuild guard self-test"
 entry = "node scripts/check-migrations-rebuild-cascade.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-migrations-rebuild-cascade\\.mjs$"
+# The self-test also cross-checks the two other copies of the rebuild recipe
+# (#3438): the ```sql block in migrations/AGENTS.md — which it now runs through
+# the guard itself — and the `recipe` format string executed by
+# `agents_md_table_rebuild_recipe_preserves_authoritative_state_606`. Those two
+# files are inputs to the self-test, so editing either has to re-run this hook
+# or the drift check would only fire on an unrelated later commit.
+files = "^(scripts/check-migrations-rebuild-cascade\\.mjs|src-tauri/migrations/AGENTS\\.md|src-tauri/src/db/tests\\.rs)$"
 stages = ["pre-commit"]
 
 # zizmor-version-pin: the zizmor version zizmor-hook.sh's

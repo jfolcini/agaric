@@ -4206,7 +4206,10 @@ async fn legacy_satellite_counts(pool: &SqlitePool, block_id: &str) -> (i64, i64
     (aliases, drafts)
 }
 
-/// Seed the complete authoritative-state fixture available after 0089.
+/// Seed the complete authoritative-state fixture. Its registry and membership
+/// halves are available from 0089, but the fixture as a whole requires **0092**:
+/// it binds `block_drafts.draft_anchor_seq`/`draft_anchor_device`, which 0092
+/// adds (#3438 — this said "available after 0089", which is the wrong boundary).
 /// Register through the canonical `is_space` property trigger and assert the
 /// precondition before stamping the member. The fixture performs no later
 /// property writes: the rebuild DROP cascade removes this derived property,
