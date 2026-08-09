@@ -391,6 +391,13 @@ mod integration_tests;
 /// for B2-B4).
 #[cfg(test)]
 mod proptest_db_harness;
+/// #3345 (programme #3351, theme T3): the reconciliation oracle — rebuild each
+/// covered derived artefact from base tables and diff it against the
+/// incrementally-maintained state. Consumed by
+/// `materializer::handlers::apply_reproject_proptest` (op-sequence wiring) and
+/// by its own attachment-lifecycle property test.
+#[cfg(test)]
+mod reconciliation_oracle;
 // LoroSync end-to-end integration tests live in
 // `agaric_sync::sync_protocol::tests` (`loro_sync_e2e_*`).
 

@@ -81,6 +81,12 @@ const B4_CASES: u32 = 32;
 /// keep the budget in line with B3.
 const B5_CASES: u32 = 32;
 
+/// #3345 B6 (reconciliation oracle) runs the from-base rebuild after EVERY op
+/// of the chain, so its per-case cost grows with chain length. Kept low
+/// deliberately — the oracle's value is in being run on every generated shape,
+/// not in exhausting the space; bump with `PROPTEST_CASES` for a deeper search.
+const B6_CASES: u32 = 16;
+
 /// Short op chains: a handful of ops already exercises create / edit / move /
 /// property interleavings and keeps shrunk counter-examples small.
 const CHAIN_LEN: std::ops::RangeInclusive<usize> = 1..=14;
@@ -803,6 +809,230 @@ proptest! {
                     "SQL positions not dense 1..=N for parent {:?}", parent
                 );
             }
+            Ok(())
+        })?;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// B6 — reconciliation oracle over the same generated op chains (#3345)
+// ---------------------------------------------------------------------------
+
+/// A SECOND page, seeded into SQL only, used purely as a LINK TARGET.
+///
+/// `pages_cache.inbound_link_count` excludes same-page and self links, so a
+/// chain whose blocks all live on [`PAGE_ID`] can never move that column off
+/// zero — asserting on it would be asserting on an unreachable condition. A
+/// distinct target page makes the column genuinely observable.
+const LINK_PAGE_ID: &str = "01HZ0000000000000000LINKPG";
+
+/// Seed [`LINK_PAGE_ID`] as a live page in SQL.
+///
+/// SQL only, deliberately: it is never a parent and never carries an op, so
+/// the engine never needs to know about it. It DOES need
+/// `space_id = SPACE_ID`, because `reindex_block_links_conn` refuses to record
+/// an edge whose target sits in a different space — a NULL-space target would
+/// silently drop every generated link and put the column back out of reach.
+async fn seed_link_target_page(pool: &SqlitePool) {
+    // dynamic-sql: test-only harness seed/readback (not a production query path)
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES (?, 'page', 'link target', NULL, 1, ?, ?)",
+    )
+    .bind(LINK_PAGE_ID)
+    .bind(LINK_PAGE_ID)
+    .bind(SPACE_ID)
+    .execute(pool)
+    .await
+    .expect("seed link-target page row");
+}
+
+/// Sprinkle `[[LINK_PAGE_ID]]` tokens through a prepared chain so the
+/// generated ops exercise the LINK half of `pages_cache` maintenance as well
+/// as the child-count half.
+///
+/// The predicate is a function of the generator's own content, so the chain
+/// contains blocks created WITH a link, blocks created without one, edits that
+/// ADD a link to an unlinked block, and edits that REMOVE the link from a
+/// linked one — i.e. both directions of the increment/decrement pair, rather
+/// than only the direction that is easy to reach.
+fn inject_link_tokens(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
+    fn decorate(text: &str) -> String {
+        if text.len().is_multiple_of(2) {
+            format!("{text} [[{LINK_PAGE_ID}]]")
+        } else {
+            text.to_owned()
+        }
+    }
+    payloads
+        .into_iter()
+        .map(|p| match p {
+            OpPayload::CreateBlock(mut c) => {
+                c.content = decorate(&c.content);
+                OpPayload::CreateBlock(c)
+            }
+            OpPayload::EditBlock(mut e) => {
+                e.to_text = decorate(&e.to_text);
+                OpPayload::EditBlock(e)
+            }
+            other => other,
+        })
+        .collect()
+}
+
+/// Read one materialised `pages_cache` count column for `page_id`, or 0 when
+/// the page has no cache row. Used only by B6's non-vacuity tracking — the
+/// oracle itself never reads a single column.
+async fn page_count_column(pool: &SqlitePool, page_id: &str, column: &str) -> i64 {
+    // dynamic-sql: test-only harness read-back over a FIXED two-value column
+    // allowlist (no caller input reaches the SQL text).
+    let sql = match column {
+        "child_block_count" => "SELECT child_block_count FROM pages_cache WHERE page_id = ?",
+        "inbound_link_count" => "SELECT inbound_link_count FROM pages_cache WHERE page_id = ?",
+        other => panic!("page_count_column: unknown column {other}"),
+    };
+    sqlx::query_scalar::<_, i64>(sql)
+        .bind(page_id)
+        .fetch_optional(pool)
+        .await
+        .expect("pages_cache count read-back")
+        .unwrap_or(0)
+}
+
+/// Does this op defer its `pages_cache` count maintenance to the background
+/// `RebuildPagesCacheCounts` task?
+///
+/// `maintain_pages_cache_counts_after_op` returns early for every COHORT op
+/// (#2042) and `materializer::dispatch` enqueues the rebuild instead. A driver
+/// that skipped the deferred pass would be asserting against an un-settled
+/// state; one that ran it after EVERY op would let the full-table rebuild
+/// repair the synchronous arms and mask their bugs. So it runs exactly where
+/// production runs it.
+fn defers_pages_cache_counts(payload: &OpPayload) -> bool {
+    matches!(
+        payload,
+        OpPayload::DeleteBlock(_) | OpPayload::RestoreBlock(_) | OpPayload::PurgeBlock(_)
+    )
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: B6_CASES, .. ProptestConfig::default() })]
+
+    /// **B6 — reconciliation oracle (#3345).** After EVERY op of a random
+    /// chain driven through the production apply path, the derived state must
+    /// equal an independent from-base rebuild.
+    ///
+    /// This is the T3 gate: `pages_cache`'s two aggregate columns are
+    /// hand-maintained per `PreOpState` arm, and until now nothing recomputed
+    /// them from `blocks` + `block_links` and diffed the result. The oracle
+    /// (`crate::reconciliation_oracle`) folds both columns in Rust over raw row
+    /// dumps, sharing no code with the correlated-subquery UPDATE it audits.
+    ///
+    /// Asserting per-op rather than once at the end is deliberate: the first
+    /// divergence then names the op that caused it, which is the whole point of
+    /// an oracle over a generated sequence.
+    #[test]
+    fn b6_derived_state_reconciles_with_a_from_base_rebuild(
+        sketches in op_chain_strategy(CHAIN_LEN),
+    ) {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async {
+            let state = &agaric_engine::loro::shared::LoroState::new();
+
+            let (pool, _dir) = fresh_pool("b6").await;
+            seed_space_row(&pool).await;
+            seed_page_via_engine(&pool, state, HARNESS_DEVICE).await;
+            seed_link_target_page(&pool).await;
+
+            // Seed the `pages_cache` ROWS the way production does — via the
+            // title/orphan rebuild, which inserts one row per live page block
+            // and leaves both count columns at their DEFAULT 0. Without rows
+            // there is nothing for the count arms to maintain and the oracle
+            // would pass vacuously.
+            agaric_store::cache::rebuild_pages_cache(&pool)
+                .await
+                .expect("seed pages_cache rows");
+
+            let fallback_before = sql_only_fallback::count();
+
+            let payloads = inject_link_tokens(prepare_chain(resolve_chain(&sketches)));
+            // What this particular chain is CAPABLE of driving. Used below to
+            // turn "the oracle was green" into "the oracle was green about
+            // something", per column.
+            let chain_creates = payloads
+                .iter()
+                .filter(|p| matches!(p, OpPayload::CreateBlock(_)))
+                .count();
+            let chain_links = payloads.iter().filter(|p| match p {
+                OpPayload::CreateBlock(c) => c.content.contains(LINK_PAGE_ID),
+                OpPayload::EditBlock(e) => e.to_text.contains(LINK_PAGE_ID),
+                _ => false,
+            }).count();
+
+            let mut peak_child_count: i64 = 0;
+            let mut peak_inbound_count: i64 = 0;
+
+            let mut driver = ChainDriver::new(HARNESS_DEVICE);
+            for (index, payload) in payloads.into_iter().enumerate() {
+                let op_type = payload.op_type().as_str();
+                let deferred = defers_pages_cache_counts(&payload);
+                driver.drive(&pool, state, payload).await;
+
+                if deferred {
+                    // Production's deferred cohort pass — the DECREMENT arm.
+                    crate::reconciliation_oracle::settle_deferred_pages_cache_counts(&pool)
+                        .await
+                        .expect("deferred pages_cache count pass");
+                }
+
+                let context = format!("op #{index} ({op_type})");
+                if let Some(report) =
+                    crate::reconciliation_oracle::reconciliation_failure(&pool, &context).await
+                {
+                    prop_assert!(false, "{}", report);
+                }
+
+                peak_child_count = peak_child_count.max(page_count_column(&pool, PAGE_ID, "child_block_count").await);
+                peak_inbound_count =
+                    peak_inbound_count.max(page_count_column(&pool, LINK_PAGE_ID, "inbound_link_count").await);
+            }
+
+            // ENGINE-PATH GUARD (#891): no op silently degraded to sql_only.
+            prop_assert_eq!(
+                sql_only_fallback::count() - fallback_before,
+                0,
+                "an op took the SQL-only FALLBACK — the test is false-green (not the engine path)"
+            );
+
+            // NON-VACUITY: a green oracle over an empty artefact observes
+            // nothing. Three live pages were seeded (the space block, the
+            // rooting page, the link target), so the count columns the oracle
+            // diffs must actually exist.
+            let coverage = crate::reconciliation_oracle::oracle_coverage(&pool)
+                .await
+                .expect("oracle coverage");
+            prop_assert!(
+                coverage.pages_cache_rows >= 3,
+                "pages_cache must hold the seeded pages for the oracle to observe anything, got {:?}",
+                coverage
+            );
+            // Rows alone are not enough: both audited columns must actually
+            // leave their DEFAULT 0 at some point in a chain that can move
+            // them, or the oracle is diffing 0 against 0. This is what stops
+            // the assertion from silently becoming unreachable if a future
+            // harness change drops link injection or re-anchors creates.
+            prop_assert!(
+                chain_creates == 0 || peak_child_count > 0,
+                "chain created {} blocks under PAGE_ID but pages_cache.child_block_count \
+                 never left 0 — the oracle diffed 0 against 0",
+                chain_creates
+            );
+            prop_assert!(
+                chain_links == 0 || peak_inbound_count > 0,
+                "chain wrote {} link tokens at LINK_PAGE_ID but its \
+                 pages_cache.inbound_link_count never left 0 — the oracle diffed 0 against 0",
+                chain_links
+            );
             Ok(())
         })?;
     }
