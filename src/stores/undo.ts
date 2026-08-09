@@ -374,23 +374,45 @@ function withoutEntry(undoStack: UndoStackEntry[], entry: UndoStackEntry): UndoS
 }
 
 /**
- * #3353 (follow-up to #3323) — is this a PERMANENT, non-retryable revert
- * failure? Resubmitting the identical entry against one of these can never
- * succeed, so `undoByRefs` must drop the dead entry instead of leaving it on
- * top of the stack (where it would fail identically on every subsequent
- * Ctrl+Z, wedging undo on the page forever):
+ * #3353 (follow-up to #3323) — is this a NON-RETRYABLE revert/replay
+ * failure? Resubmitting the identical ref against one of these gets the
+ * identical rejection, so `undoByRefs` / `performSingleRedo` must drop the
+ * dead entry instead of leaving it on top of the stack (where it would fail
+ * identically on every subsequent Ctrl+Z / Ctrl+Shift+Z, wedging the page):
  *
  * - `validation` (#3323) — oversized batch past `MAX_REVERT_OPS`, a
- *   duplicate ref, a target that's already reversed.
+ *   duplicate ref, a target that's already reversed. On the redo path
+ *   (#3546) also "not an undo op" and "replicated audit op"
+ *   (`redo_page_op_inner`, `src-tauri/src/commands/history.rs`).
  * - `not_found` — the op ref no longer exists (`verify_undo_targets_in_tx`,
  *   `src-tauri/src/commands/history.rs`); reachable once a session outlives
  *   the 90-day `op_log_compact` retention.
- * - `non_reversible` — the reverse-move preflight rejected the revert
- *   (`src-tauri/src/commands/history.rs`).
+ * - `non_reversible` — the backend found no applicable inverse
+ *   (`purge_block`, an unreconstructible `edit_block`, or a reverse-move
+ *   the preflight refused).
+ *
+ * #3546 — "permanent" is exact for `validation` and `not_found`, whose
+ * verdicts are functions of immutable op-log history. It is NOT exact for
+ * every `non_reversible` arm: `reverse_move_preflight` also rejects when the
+ * prior parent is merely SOFT-DELETED (a trash restore revives it — and
+ * `TrashView` never touches this store, so the dropped entry really would
+ * have worked afterwards) or when it has transiently become a descendant of
+ * the moved block (a later move breaks the cycle). Those are temporarily,
+ * not permanently, impossible.
+ *
+ * They are dropped anyway, deliberately. The `{ kind, message }` envelope
+ * carries no sub-kind to separate them from the genuinely irreversible arms
+ * (`AppError::NonReversible` has no `code` field, and its `op_type` reads
+ * `"move_block"` for the permanent create-payload arm too — see
+ * `reverse/batch.rs`), so retaining "the transient ones" is not expressible
+ * here. Retaining ALL of them restores exactly the #3353 wedge; dropping
+ * costs at most one undo the user could have recovered by first restoring a
+ * block from trash, which no signal tells us to wait for. Distinguishing
+ * them would need a new backend sub-kind, not a frontend change.
  *
  * Deliberately narrower than "any AppError": a TRANSIENT failure
  * (`pool_busy`, `database`, a dropped IPC) deserves a retry with the entry
- * intact, so only this permanent class is dropped here.
+ * intact, so only this class is dropped here.
  */
 function isPermanentRevertFailure(err: unknown): boolean {
   return isValidation(err) || isNotFound(err) || isNonReversible(err)
@@ -450,8 +472,24 @@ export const useUndoStore = create<UndoStore>((set, get) => {
   /**
    * Perform a single redo operation (one op at a time).
    * Handles optimistic updates and rollback on error.
+   *
+   * #3546 — the outcome is a tagged union, not `UndoResult | null`, because
+   * the two failure shapes have to be accounted for DIFFERENTLY by the
+   * caller: `'retained'` pushed the ref back onto `redoStack` (so it still
+   * counts toward the group's residual size), `'dropped'` did not (so the
+   * residual must shrink by one, or `sum(redoGroupSizes)` would exceed
+   * `redoStack.length`).
    */
-  async function performSingleRedo(pageId: string): Promise<UndoResult | null> {
+  type RedoAttempt =
+    | { status: 'ok'; result: UndoResult }
+    /** Nothing left on `redoStack` — the loop should stop, nothing to account. */
+    | { status: 'empty' }
+    /** Transient failure: the ref is back on `redoStack`, retryable. */
+    | { status: 'retained' }
+    /** Non-retryable failure: the ref was discarded to avoid wedging redo. */
+    | { status: 'dropped' }
+
+  async function performSingleRedo(pageId: string): Promise<RedoAttempt> {
     const opRef = (() => {
       const state = get()
       const pageState = getOrCreatePage(state.pages, pageId)
@@ -477,7 +515,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       return first as OpRef
     })()
 
-    if (opRef === null) return null
+    if (opRef === null) return { status: 'empty' }
 
     try {
       const result = await redoPageOp({
@@ -486,22 +524,36 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       })
 
       // On success: state already updated optimistically
-      return result
+      return { status: 'ok', result }
     } catch (err) {
       logger.error('UndoStore', 'redo operation failed', { pageId }, err)
-      // On error: roll back the optimistic update
+      // #3546 — redo carried the same wedge #3353 fixed on the undo path.
+      // `redo_page_op` rejects NON-RETRYABLY for three reasons of its own
+      // (`redo_page_op_inner`, `src-tauri/src/commands/history.rs`): the
+      // op_log row is gone (`not_found`), the target is not an undo op or
+      // is a replicated audit row (`validation`, #659/#2549), or the undo
+      // op has no computable reverse (`non_reversible`). None of those can
+      // change for a ref already sitting in a session-scoped redo stack, so
+      // rolling the ref back on made every subsequent Ctrl+Shift+Z reissue
+      // the same doomed IPC — redo dead for the page until a reset. Same
+      // bug, same predicate, same fix as `undoByRefs`.
+      const retain = !isPermanentRevertFailure(err)
+      // `undoDepth` is restored either way: the redo did NOT happen, so the
+      // op is still undone and the positional anchor must reflect that. Only
+      // the ref's place on `redoStack` differs — mirroring `undoByRefs`,
+      // which likewise touches only the stack and leaves depth alone.
       set((state) => ({
         pages: setPageState(state.pages, pageId, (current) =>
           current
             ? {
                 ...current,
-                redoStack: [opRef, ...current.redoStack],
+                redoStack: retain ? [opRef, ...current.redoStack] : current.redoStack,
                 undoDepth: current.undoDepth + 1,
               }
             : current,
         ),
       }))
-      return null
+      return retain ? { status: 'retained' } : { status: 'dropped' }
     }
   }
 
@@ -517,11 +569,13 @@ export const useUndoStore = create<UndoStore>((set, get) => {
    * On failure, redo/depth are always left untouched, and the atomic-abort
    * contract of `undoOps` guarantees the backend reverted nothing either. For
    * a TRANSIENT failure (`pool_busy`, a dropped IPC) the entry itself is also
-   * left on the stack so a later Ctrl+Z retries it. For a PERMANENT
+   * left on the stack so a later Ctrl+Z retries it. For a NON-RETRYABLE
    * rejection (#3323/#3353: validation, not_found, or non_reversible)
-   * resubmitting would fail identically forever, so the entry is DROPPED
-   * from the stack here (see the `isPermanentRevertFailure` branch below)
-   * instead of waiting for it to self-heal on the next `onNewAction` /
+   * resubmitting the identical refs gets the identical rejection, so the
+   * entry is DROPPED from the stack here (see the
+   * `isPermanentRevertFailure` branch below — and its doc for the one
+   * `non_reversible` arm that is only temporarily impossible) instead of
+   * waiting for it to self-heal on the next `onNewAction` /
    * `reanchorAfterRemoteOps` reset.
    */
   async function undoByRefs(pageId: string, entry: UndoStackEntry): Promise<UndoResult | null> {
@@ -540,14 +594,13 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     } catch (err) {
       logger.error('UndoStore', 'undo_op failed', { pageId, refCount: newestFirst.length }, err)
       notify.warning(t('undo.batchUnavailable'))
-      // #3323/#3353 — a PERMANENT failure (validation, not_found, or
-      // non_reversible — see `isPermanentRevertFailure`) can never succeed
-      // on retry: resubmitting the identical entry fails identically
-      // forever, wedging Ctrl+Z on this page permanently. Drop the dead
-      // entry so the stack can move on to the next one. Narrower than a
-      // blanket drop-on-any-error: a TRANSIENT failure (pool_busy, a
-      // dropped IPC) deserves a retry with the entry intact, so only the
-      // permanent class is dropped here.
+      // #3323/#3353 — a NON-RETRYABLE failure (validation, not_found, or
+      // non_reversible — see `isPermanentRevertFailure`) gets the identical
+      // rejection on retry, wedging Ctrl+Z on this page. Drop the dead entry
+      // so the stack can move on to the next one. Narrower than a blanket
+      // drop-on-any-error: a TRANSIENT failure (pool_busy, a dropped IPC)
+      // deserves a retry with the entry intact, so only that class is
+      // dropped here.
       if (isPermanentRevertFailure(err)) {
         set((state) => ({
           pages: setPageState(state.pages, pageId, (current) =>
@@ -767,16 +820,29 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         // order so they re-enter the undo stack as ONE coalesced entry.
         const newUndoRefs: OpRef[] = []
 
+        // #3546 — refs `performSingleRedo` DISCARDED as non-retryable. They
+        // left `redoStack` without being replayed, so they must come off the
+        // group's residual size too: counting them as "still pending" would
+        // leave `sum(redoGroupSizes) > redoStack.length` and hand a later
+        // redo a group size no refs can satisfy.
+        let droppedCount = 0
+
         for (let i = 0; i < groupSize; i++) {
-          const result = await performSingleRedo(pageId)
-          if (!result) break
-          if (i === 0) firstResult = result
-          newUndoRefs.push(result.new_op_ref)
+          const attempt = await performSingleRedo(pageId)
+          if (attempt.status !== 'ok') {
+            if (attempt.status === 'dropped') droppedCount++
+            break
+          }
+          if (i === 0) firstResult = attempt.result
+          newUndoRefs.push(attempt.result.new_op_ref)
           redoneCount++
         }
 
-        if (redoneCount > 0) {
-          const residual = groupSize - redoneCount
+        // A dropped ref changes the accounting even when NOTHING redid
+        // successfully (groupSize 1, first attempt permanently rejected):
+        // the stale group-size entry has to go, or it outlives its refs.
+        if (redoneCount > 0 || droppedCount > 0) {
+          const residual = groupSize - redoneCount - droppedCount
           set((state) => ({
             pages: setPageState(state.pages, pageId, (current) => {
               if (!current) return current
@@ -797,11 +863,17 @@ export const useUndoStore = create<UndoStore>((set, get) => {
               }
               // #2468 — the redone group becomes the next undo target: push
               // its refs as ONE ref-addressed entry so undo→redo→undo cycles
-              // stay ref-addressed end-to-end.
-              const undoStack = [{ refs: newUndoRefs, at: Date.now() }, ...current.undoStack].slice(
-                0,
-                MAX_UNDO_STACK,
-              )
+              // stay ref-addressed end-to-end. Guarded on a NON-EMPTY ref set
+              // (#3546): a redo that only dropped a dead ref replayed nothing,
+              // and a `{ refs: [] }` entry would be neither ref-addressable
+              // nor a legitimate positional-fallback target.
+              const undoStack =
+                newUndoRefs.length > 0
+                  ? [{ refs: newUndoRefs, at: Date.now() }, ...current.undoStack].slice(
+                      0,
+                      MAX_UNDO_STACK,
+                    )
+                  : current.undoStack
               return { ...current, redoGroupSizes, undoStack }
             }),
           }))

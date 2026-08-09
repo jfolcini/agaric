@@ -83,4 +83,52 @@ describe('ActivityFeed', () => {
     // is NOT applied on failure.
     expect(screen.getByTestId('mcp-activity-undo')).toBeInTheDocument()
   })
+
+  // #3546 — the non-reversible branch narrows with the SHARED
+  // `isNonReversible` predicate from `@/lib/app-error`, not a local
+  // re-implementation. The two were not equivalent: the local copy accepted
+  // ANY object carrying `kind === 'non_reversible'`, while the shared one
+  // also requires the `message: string` half of the `{ kind, message }`
+  // envelope every real `AppError` serialises. The pair below pins both
+  // halves of that difference, so re-introducing the looser local copy reds
+  // the second case.
+  describe('non-reversible narrowing (#3546)', () => {
+    it('a full { kind, message } AppError takes the dedicated non-reversible toast', async () => {
+      const user = userEvent.setup()
+      // `commands.*` returns the Result envelope; `unwrap` throws `.error`,
+      // which is where the raw IPC `AppError` lands.
+      mockRevert.mockResolvedValueOnce({
+        status: 'error' as const,
+        error: {
+          kind: 'non_reversible',
+          message: 'Non-reversible operation: purge_block cannot be undone',
+        },
+      })
+      render(<ActivityFeed entries={[UNDOABLE]} />)
+      await user.click(screen.getByTestId('mcp-activity-undo'))
+
+      await waitFor(() => {
+        expect(mockNotify.error).toHaveBeenCalledWith('This agent action cannot be undone')
+      })
+      expect(mockNotify.error).not.toHaveBeenCalledWith('Could not undo agent action')
+    })
+
+    it('a message-less non_reversible lookalike takes the GENERIC failure toast', async () => {
+      const user = userEvent.setup()
+      // No `message` → not an `AppError` by the app-wide definition
+      // (`isAppError`), so the feed must not claim the backend said
+      // "non-reversible". The retired local predicate accepted this.
+      mockRevert.mockResolvedValueOnce({
+        status: 'error' as const,
+        error: { kind: 'non_reversible' },
+      })
+      render(<ActivityFeed entries={[UNDOABLE]} />)
+      await user.click(screen.getByTestId('mcp-activity-undo'))
+
+      await waitFor(() => {
+        expect(mockNotify.error).toHaveBeenCalledWith('Could not undo agent action')
+      })
+      expect(mockNotify.error).not.toHaveBeenCalledWith('This agent action cannot be undone')
+    })
+  })
 })

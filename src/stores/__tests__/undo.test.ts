@@ -420,6 +420,132 @@ describe('useUndoStore', () => {
       expect(summed).toBeLessThanOrEqual(pageState?.redoStack.length ?? 0)
     })
 
+    // #3546 — redo carried the SAME wedge #3353 fixed on the undo path.
+    // `redo_page_op` rejects non-retryably when the op_log row is gone
+    // (`not_found`), when the target is not an undo op / is a replicated
+    // audit row (`validation`, #659/#2549), or when the undo op has no
+    // computable reverse (`non_reversible`). Rolling such a ref back onto
+    // `redoStack` made every subsequent Ctrl+Shift+Z reissue the same doomed
+    // IPC. These tests assert the property "wedged" names: after the failed
+    // redo, a SECOND redo must actually succeed — plus exact stack contents
+    // and group-size accounting, so an orphaned ref or a residual entry with
+    // no refs behind it would fail too.
+    describe('non-retryable redo failures drop the dead ref (#3546)', () => {
+      it('validation: drops the ref, trims its group size, AND a later redo works', async () => {
+        // Two single undos → redoStack [101, 100], redoGroupSizes [1, 1].
+        mockedUndoPageGroup.mockResolvedValueOnce([
+          makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 100 }),
+        ])
+        await useUndoStore.getState().undo('page1')
+        mockedUndoPageGroup.mockResolvedValueOnce([
+          makeUndoResult({ deviceId: 'dev1', seq: 4, newSeq: 101 }),
+        ])
+        await useUndoStore.getState().undo('page1')
+        expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([1, 1])
+        expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(2)
+
+        mockedRedoPageOp.mockRejectedValueOnce({
+          kind: 'validation',
+          message: 'redo target (dev1, 101) is a replicated audit op (#2549)',
+        })
+
+        const first = await useUndoStore.getState().redo('page1')
+        expect(first).toBeNull()
+
+        const afterFirst = useUndoStore.getState().pages.get('page1')
+        // The dead ref is gone, the surviving one untouched, and its group
+        // entry went with it — not left behind pointing at nothing.
+        expect(afterFirst?.redoStack).toEqual([{ device_id: 'dev1', seq: 100 }])
+        expect(afterFirst?.redoGroupSizes).toEqual([1])
+        // The redo did not happen, so the op is still undone: depth restored.
+        expect(afterFirst?.undoDepth).toBe(2)
+        // Nothing was replayed → no `{ refs: [] }` entry pushed onto undo.
+        expect(afterFirst?.undoStack).toEqual([])
+
+        // The property a "wedge" violates: Ctrl+Shift+Z again must actually
+        // succeed against the ref underneath, not reissue the dead one.
+        mockedRedoPageOp.mockResolvedValueOnce(
+          makeUndoResult({ deviceId: 'dev1', seq: 100, newSeq: 300, isRedo: true }),
+        )
+        const second = await useUndoStore.getState().redo('page1')
+
+        expect(mockedRedoPageOp).toHaveBeenLastCalledWith({ undoDeviceId: 'dev1', undoSeq: 100 })
+        expect(second).not.toBeNull()
+        const afterSecond = useUndoStore.getState().pages.get('page1')
+        expect(afterSecond?.redoStack).toEqual([])
+        expect(afterSecond?.redoGroupSizes).toEqual([])
+        expect(afterSecond?.undoDepth).toBe(1)
+        expect(afterSecond?.undoStack[0]?.refs).toEqual([{ device_id: 'dev1', seq: 300 }])
+      })
+
+      it('not_found and non_reversible drop the ref too', async () => {
+        for (const err of [
+          { kind: 'not_found', message: 'op_log (dev1, 100) not found' },
+          { kind: 'non_reversible', message: 'Non-reversible operation: move_block' },
+        ]) {
+          useUndoStore.setState({ pages: new Map() })
+          mockedUndoPageGroup.mockResolvedValueOnce([
+            makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 100 }),
+          ])
+          await useUndoStore.getState().undo('page1')
+
+          mockedRedoPageOp.mockRejectedValueOnce(err)
+          await useUndoStore.getState().redo('page1')
+
+          const after = useUndoStore.getState().pages.get('page1')
+          expect(after?.redoStack, `kind=${err.kind}`).toEqual([])
+          expect(after?.redoGroupSizes, `kind=${err.kind}`).toEqual([])
+          expect(useUndoStore.getState().canRedo('page1'), `kind=${err.kind}`).toBe(false)
+        }
+      })
+
+      it('a TRANSIENT failure still retains the ref for retry', async () => {
+        mockedUndoPageGroup.mockResolvedValueOnce([
+          makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 100 }),
+        ])
+        await useUndoStore.getState().undo('page1')
+
+        mockedRedoPageOp.mockRejectedValueOnce({
+          kind: 'pool_busy',
+          message: 'pool exhausted',
+        })
+        await useUndoStore.getState().redo('page1')
+
+        // Untouched — the next Ctrl+Shift+Z must be able to retry it.
+        const after = useUndoStore.getState().pages.get('page1')
+        expect(after?.redoStack).toEqual([{ device_id: 'dev1', seq: 100 }])
+        expect(after?.redoGroupSizes).toEqual([1])
+        expect(after?.undoDepth).toBe(1)
+      })
+
+      it('mid-group drop shrinks the residual by the dropped ref, not just the redone ones', async () => {
+        // Batch-undo a group of 3 → redoStack length 3, redoGroupSizes [3].
+        mockedUndoPageGroup.mockResolvedValueOnce(makeGroup(3, 3, 'dev1'))
+        await useUndoStore.getState().undo('page1')
+        expect(useUndoStore.getState().pages.get('page1')?.redoStack).toHaveLength(3)
+
+        // One redoes; the second is rejected non-retryably and DROPPED, so
+        // only ONE group ref is still pending — the residual must be 1, not
+        // the 2 a `groupSize - redoneCount` arithmetic would produce.
+        mockedRedoPageOp
+          .mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
+          .mockRejectedValueOnce({
+            kind: 'non_reversible',
+            message: 'reinserted parent no longer exists',
+          })
+
+        await useUndoStore.getState().redo('page1')
+
+        const after = useUndoStore.getState().pages.get('page1')
+        expect(after?.redoStack).toHaveLength(1)
+        expect(after?.redoGroupSizes).toEqual([1])
+        // The pairing the undo path relies on — a residual of 2 here would
+        // promise a later redo two refs that no longer exist.
+        const summed = (after?.redoGroupSizes ?? []).reduce((s, n) => s + n, 0)
+        expect(summed).toBeLessThanOrEqual(after?.redoStack.length ?? 0)
+      })
+    })
+
     it('handles mixed group sizes correctly', async () => {
       // First batch undo of 2, then a single undo.
       mockedUndoPageGroup.mockResolvedValueOnce(makeGroup(4, 2, 'dev1'))
