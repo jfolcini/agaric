@@ -58,7 +58,12 @@ function makeBigGroup(pageId: string): TestGroup {
   }
 }
 
-function renderList(props: { virtualizeRows: boolean; groups: TestGroup[] }) {
+function renderList(props: {
+  virtualizeRows: boolean
+  groups: TestGroup[]
+  listClassName?: string
+  activeBlockId?: string
+}) {
   const expandedGroups = Object.fromEntries(props.groups.map((g) => [g.page_id, true]))
   return render(
     <CollapsibleGroupList<TestGroup>
@@ -67,6 +72,8 @@ function renderList(props: { virtualizeRows: boolean; groups: TestGroup[] }) {
       onToggleGroup={vi.fn()}
       untitledLabel="Untitled"
       virtualizeRows={props.virtualizeRows}
+      {...(props.listClassName === undefined ? {} : { listClassName: props.listClassName })}
+      {...(props.activeBlockId === undefined ? {} : { activeBlockId: props.activeBlockId })}
       renderBlock={(block, _group, virtualRow) => (
         <li
           key={block.id}
@@ -114,6 +121,65 @@ describe('CollapsibleGroupList — #3316 item 3 windowing', () => {
     renderList({ virtualizeRows: false, groups: [makeBigGroup('P1')] })
 
     expect(screen.getAllByTestId('row')).toHaveLength(GROUP_SIZE)
+  })
+
+  // Both reference panels pass `space-y-1` through `listClassName` — correct
+  // for the unvirtualized `<ul>`, where rows are in flow. On the windowed path
+  // it compiles to `& > * ~ * { margin-top: .25rem }`, and margin-top DOES
+  // displace an absolutely-positioned box: with `top: 0` the MARGIN edge is
+  // placed at the offset, so every mounted row but the first lands 4px below
+  // the `translateY(start)` the virtualizer computed — and the gap jumps as the
+  // window slides. The windowed list owns row positioning, so it drops the
+  // utility itself rather than relying on every caller to know its layout mode.
+  it('strips caller-supplied space-y-* so it cannot displace the absolute rows', () => {
+    const { container } = renderList({
+      virtualizeRows: true,
+      groups: [makeBigGroup('P1')],
+      // The exact string BacklinkGroupRenderer / UnlinkedReferences pass.
+      listClassName: 'linked-references-blocks ml-4 mt-1 space-y-1',
+    })
+
+    const list = container.querySelector('ul')
+    expect(list).not.toBeNull()
+    // The spacing utility is gone…
+    expect(list?.className).not.toMatch(/(?:^|[\s:])space-y-/)
+    // …while every other caller class survives untouched.
+    expect(list).toHaveClass('linked-references-blocks', 'ml-4', 'mt-1')
+  })
+
+  // `useListKeyboardNavigation` defaults to `wrap: true`, so ArrowUp at index 0
+  // jumps to the LAST row — far outside `overscan`. `scrollToIndex` remounts the
+  // window only after its scroll lands, but the panels' `useFocusedRowEffect`
+  // runs in the same commit and never re-runs, so without an anchor the ring is
+  // never painted and `aria-activedescendant` names an absent element.
+  it('mounts the roving-focus row even when it falls outside the window', () => {
+    const group = makeBigGroup('P1')
+    const lastId = group.blocks[GROUP_SIZE - 1]?.id as string
+
+    const { container } = renderList({
+      virtualizeRows: true,
+      groups: [group],
+      activeBlockId: lastId,
+    })
+
+    // The window still holds only its own rows…
+    expect(container.querySelectorAll('[data-backlink-item]')).toHaveLength(WINDOW_SIZE + 1)
+    // …plus the out-of-window active row, mounted exactly once.
+    expect(container.querySelectorAll(`[data-backlink-item="${lastId}"]`)).toHaveLength(1)
+  })
+
+  it('does not double-mount the active row when it is already inside the window', () => {
+    const group = makeBigGroup('P1')
+    const firstId = group.blocks[0]?.id as string
+
+    const { container } = renderList({
+      virtualizeRows: true,
+      groups: [group],
+      activeBlockId: firstId,
+    })
+
+    expect(container.querySelectorAll('[data-backlink-item]')).toHaveLength(WINDOW_SIZE)
+    expect(container.querySelectorAll(`[data-backlink-item="${firstId}"]`)).toHaveLength(1)
   })
 
   it('has no a11y violations while windowed', async () => {

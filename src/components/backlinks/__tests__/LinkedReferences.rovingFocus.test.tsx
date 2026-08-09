@@ -1,0 +1,191 @@
+/**
+ * #3316 item 3 follow-up — roving focus must survive WINDOWING.
+ *
+ * The regression this pins: `useListKeyboardNavigation` defaults to
+ * `wrap: true`, so ArrowUp on the first row jumps to the LAST row of the list —
+ * far outside the virtualizer's `overscan`. `VirtualizedBlockList` asks the
+ * virtualizer to `scrollToIndex` that row, but the window is only remounted
+ * once that scroll lands, whereas `LinkedReferences`' `useFocusedRowEffect`
+ * runs in the SAME commit as the focus change and never re-runs (its deps are
+ * keyed on the focused row id, which does not change again).
+ *
+ * The consequences are both user-visible:
+ *   1. `aria-activedescendant` on the panel's `role="group"` container names an
+ *      element that is not in the document — strictly worse for AT than the
+ *      unvirtualized list it replaces.
+ *   2. `LinkedReferences` paints its focus ring ONLY through that DOM lookup
+ *      (`BACKLINK_FOCUS_CLASSES` via `useFocusedRowEffect`), unlike
+ *      `UnlinkedReferences`, which also sets it declaratively via `className` —
+ *      so the ring silently vanishes on wrap-around.
+ *
+ * This file deliberately uses a WINDOWED virtualizer mock (the other backlink
+ * suites lay out every row, which cannot reproduce an off-window focus target).
+ * The mock's `scrollToIndex` is inert, which faithfully models the same-commit
+ * problem: the fix must make the active row exist WITHOUT waiting for a scroll.
+ */
+
+import { invoke } from '@tauri-apps/api/core'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+
+/** Rows the virtualizer lays out, well below `GROUP_SIZE`. */
+const WINDOW_SIZE = 5
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: 5 }))
+
+import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
+import { queryClient } from '@/lib/query-client'
+import { useNavigationStore } from '@/stores/navigation'
+import { useTabsStore } from '@/stores/tabs'
+
+vi.mock('@/hooks/useBlockPropertyEvents', () => ({
+  useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: 0 })),
+}))
+
+vi.mock('@/components/filters/SourcePageFilter', () => ({
+  SourcePageFilter: () => <div data-testid="source-page-filter" />,
+}))
+
+vi.mock('@/components/BacklinkFilterBuilder', () => ({
+  BacklinkFilterBuilder: () => <div data-testid="backlink-filter-builder" />,
+}))
+
+vi.mock('@/components/pages/PageLink', () => ({
+  PageLink: ({ title, children }: { title: string; children?: React.ReactNode }) => (
+    <button type="button">{children ?? title}</button>
+  ),
+}))
+
+const mockedInvoke = vi.mocked(invoke)
+
+/** One group larger than the window, so most rows are never laid out. */
+const GROUP_SIZE = 30
+
+function makeGroupedResponse() {
+  return {
+    groups: [
+      {
+        page_id: 'P1',
+        page_title: 'Page One',
+        blocks: Array.from({ length: GROUP_SIZE }, (_, i) => ({
+          id: `B${String(i).padStart(2, '0')}`,
+          block_type: 'content',
+          content: `reference ${i}`,
+          parent_id: 'P1',
+          page_id: 'P1',
+          position: i,
+          deleted_at: null,
+        })),
+      },
+    ],
+    next_cursor: null,
+    has_more: false,
+    total_count: GROUP_SIZE,
+    filtered_count: GROUP_SIZE,
+    truncated: false,
+  }
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  queryClient.clear()
+  _resetPropertyKeysCacheForTest()
+  useNavigationStore.setState({ currentView: 'journal', selectedBlockId: null })
+  useTabsStore.setState({ tabs: [{ id: '0', pageStack: [], label: '' }], activeTabIndex: 0 })
+  mockedInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'list_backlinks_grouped') return makeGroupedResponse()
+    if (cmd === 'batch_resolve') return []
+    if (cmd === 'list_property_keys') return []
+    if (cmd === 'list_tags_by_prefix') return []
+    return null
+  })
+})
+
+/** The panel's roving container — it owns `aria-activedescendant`. */
+function rovingContainer(container: HTMLElement): HTMLElement {
+  const el = container.querySelector<HTMLElement>('.linked-references-list')
+  if (!el) throw new Error('roving container not found')
+  return el
+}
+
+async function renderPanel() {
+  const utils = render(
+    <TooltipProvider>
+      <LinkedReferences pageId="PAGE1" />
+    </TooltipProvider>,
+  )
+  await screen.findByText('reference 0')
+  return utils
+}
+
+describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () => {
+  it('only the virtual window is laid out (precondition for the wrap-around case)', async () => {
+    const { container } = await renderPanel()
+
+    // Precondition: the last row is genuinely NOT rendered at rest, so the
+    // wrap-around below really does target an off-window row.
+    expect(container.querySelectorAll('[data-backlink-item]')).toHaveLength(WINDOW_SIZE)
+    expect(
+      container.querySelector(`[data-backlink-item="B${GROUP_SIZE - 1}"]`),
+    ).not.toBeInTheDocument()
+  })
+
+  it('wrap-around leaves aria-activedescendant pointing at an element in the DOM', async () => {
+    const user = userEvent.setup()
+    const { container } = await renderPanel()
+
+    const list = rovingContainer(container)
+    // Focus the roving container — `useFocusedRowEffect` deliberately no-ops
+    // until focus is actually inside the list.
+    list.focus()
+    expect(list).toHaveFocus()
+
+    // ArrowUp at index 0 wraps to the LAST row, far outside the window.
+    await user.keyboard('{ArrowUp}')
+
+    await waitFor(() => {
+      expect(list.getAttribute('aria-activedescendant')).toBeTruthy()
+    })
+
+    const activeId = list.getAttribute('aria-activedescendant') as string
+    // THE assertion: the element the container names must actually exist.
+    const active = container.ownerDocument.getElementById(activeId)
+    expect(active).not.toBeNull()
+    // And it is the wrapped-to last row, not some coincidental survivor.
+    expect(active?.getAttribute('data-backlink-item')).toBe(`B${GROUP_SIZE - 1}`)
+  })
+
+  it('wrap-around still paints the roving focus ring on the wrapped-to row', async () => {
+    const user = userEvent.setup()
+    const { container } = await renderPanel()
+
+    const list = rovingContainer(container)
+    list.focus()
+    await user.keyboard('{ArrowUp}')
+
+    await waitFor(() => {
+      const active = container.querySelector(`[data-backlink-item="B${GROUP_SIZE - 1}"]`)
+      expect(active).not.toBeNull()
+      // `useFocusedRowEffect` adds BACKLINK_FOCUS_CLASSES via the DOM lookup;
+      // LinkedReferences has no declarative fallback for the ring.
+      expect(active).toHaveClass('ring-2')
+    })
+  })
+
+  it('has no a11y violations after a wrap-around', async () => {
+    const user = userEvent.setup()
+    const { container } = await renderPanel()
+
+    const list = rovingContainer(container)
+    list.focus()
+    await user.keyboard('{ArrowUp}')
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})

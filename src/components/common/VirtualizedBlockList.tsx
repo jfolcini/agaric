@@ -64,6 +64,37 @@ const OVERSCAN = 8
  */
 const GROUP_VIEWPORT_CLASS = 'max-h-[max(calc(100dvh-320px),12rem)] overflow-y-auto'
 
+/**
+ * Matches a Tailwind vertical-spacing utility, including variant prefixes
+ * (`sm:`, `dark:`, …) and arbitrary values (`space-y-[3px]`).
+ */
+const SPACE_Y_UTILITY = /(?:^|:)space-y-/
+
+/** Ref for the off-window focus anchor — see the anchor comment in the body. */
+const NOOP_MEASURE_REF = (): void => {}
+
+/**
+ * Strip `space-y-*` from a caller-supplied `<ul>` class list.
+ *
+ * `space-y-1` compiles to `& > :not([hidden]) ~ :not([hidden]) { margin-top }`,
+ * and `margin-top` DOES displace an absolutely-positioned box: with `top: 0`,
+ * CSS places the box's MARGIN edge at the offset, so the border box lands
+ * `margin-top` px lower than the `transform: translateY(start)` the virtualizer
+ * computed. Every mounted row but the first would sit 4px below its virtual
+ * offset — and because the window slides as the user scrolls, *which* row is
+ * "first" changes, so the gap visibly jumps.
+ *
+ * Both reference panels pass `space-y-1` through `listClassName` (it is correct
+ * for the unvirtualized `<ul>`, where rows are in flow). Rather than making
+ * every caller remember which layout mode it is in, the windowed list — which
+ * owns row positioning outright — drops the utility itself.
+ */
+export function stripSpaceY(className: string | undefined): string | undefined {
+  if (!className) return className
+  const kept = className.split(/\s+/).filter((token) => token && !SPACE_Y_UTILITY.test(token))
+  return kept.join(' ')
+}
+
 /** Per-row virtualization context handed to `renderBlock`. */
 export interface VirtualRowContext {
   /** Absolute positioning at the row's virtual offset. Spread onto the `<li>`. */
@@ -106,9 +137,7 @@ export function VirtualizedBlockList<B extends { id: string }>({
     getItemKey: (index) => blocks[index]?.id ?? index,
   })
 
-  // Mount the roving-focus row when it belongs to this group, so the panel's
-  // `aria-activedescendant` target exists and `useFocusedRowEffect` can find it
-  // by `data-backlink-item` to paint the focus ring.
+  // Bring the roving-focus row into view when it belongs to this group.
   const activeIndex = activeBlockId ? blocks.findIndex((b) => b.id === activeBlockId) : -1
   useEffect(() => {
     if (activeIndex < 0) return
@@ -117,6 +146,25 @@ export function VirtualizedBlockList<B extends { id: string }>({
 
   const virtualItems = virtualizer.getVirtualItems()
   const totalSize = virtualizer.getTotalSize()
+
+  // `scrollToIndex` alone is NOT enough to keep the roving focus valid.
+  // `useListKeyboardNavigation` defaults to `wrap: true`, so ArrowUp at index 0
+  // jumps to the LAST row of the LAST group — far outside `overscan`. The
+  // virtualizer remounts the window only after the scroll it schedules lands,
+  // but the panel's `useFocusedRowEffect` runs in the SAME commit as the focus
+  // change and never re-runs (its deps are keyed on the focused row id, which
+  // does not change again). So the ring is never painted, and — worse — the
+  // container's `aria-activedescendant` names an element that is not in the
+  // document. A dangling `aria-activedescendant` is a real a11y regression
+  // against the unvirtualized list it replaces.
+  //
+  // Fix: always mount the active row, even when it falls outside the window, so
+  // it exists in the same commit that focus moves to it. It is off-screen by
+  // definition until `scrollToIndex` lands, at which point the window contains
+  // it and the anchor is dropped — so it is never rendered twice and its
+  // estimate-based offset is never the offset the user actually sees.
+  const activeIsWindowed = virtualItems.some((vi) => vi.index === activeIndex)
+  const anchorBlock = activeIndex >= 0 && !activeIsWindowed ? blocks[activeIndex] : undefined
 
   return (
     <ul
@@ -129,7 +177,7 @@ export function VirtualizedBlockList<B extends { id: string }>({
       // clamp short. A pseudo-element (not a spacer `<div>`) keeps the list's
       // only DOM children `<li>`s.
       className={cn(
-        className,
+        stripSpaceY(className),
         'relative list-none',
         GROUP_VIEWPORT_CLASS,
         "before:content-[''] before:block before:w-px before:h-[var(--vbl-total-size)]",
@@ -154,6 +202,23 @@ export function VirtualizedBlockList<B extends { id: string }>({
           index: vi.index,
         })
       })}
+      {anchorBlock
+        ? renderBlock(anchorBlock, {
+            style: {
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              transform: `translateY(${activeIndex * ESTIMATED_ROW_HEIGHT}px)`,
+            },
+            // No `measureRef`: this row is transient and off-screen, and
+            // reporting a measurement for it would perturb the virtualizer's
+            // size cache from outside the window it is currently tracking. The
+            // real measurement is taken when the row enters the window.
+            measureRef: NOOP_MEASURE_REF,
+            index: activeIndex,
+          })
+        : null}
     </ul>
   )
 }
