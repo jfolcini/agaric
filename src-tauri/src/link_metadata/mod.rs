@@ -362,9 +362,24 @@ fn shared_client() -> Result<reqwest::Client, AppError> {
         }
     });
 
+    // Proxy policy (#3317): the SSRF guard is a *connect-target* control, and a
+    // proxy replaces the connect target. With `HTTP_PROXY` / `http_proxy` /
+    // `ALL_PROXY` exported — routine on corporate and containerised machines,
+    // and inherited by any GUI app launched from a shell — reqwest's default
+    // `auto_sys_proxy` sends every fetch to the proxy instead of to the host in
+    // the URL. `SsrfGuardResolver` is then never consulted (the socket goes to
+    // the proxy, which resolves the name itself), so a link naming an internal
+    // host would be dereferenced BY THE PROXY on the app's behalf, from inside
+    // the network perimeter, with the response streamed back. `.no_proxy()`
+    // keeps the guard load-bearing by keeping the connect target equal to the
+    // validated host. Cost: link previews stop working for users who can only
+    // reach the internet through a proxy — an acceptable trade for a
+    // non-essential preview whose only safety property is exactly the one a
+    // proxy removes.
     let built = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .redirect(redirect_policy)
+        .no_proxy()
         .dns_resolver(Arc::new(SsrfGuardResolver))
         .user_agent("Agaric/1.0")
         .build()

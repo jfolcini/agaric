@@ -44,7 +44,16 @@ use agaric_core::error::AppError;
 // SPECIFIC values (`$HOME`, `device_id`, peer IDs) and let
 // everything else through.
 //
-// **Pipeline** (per [`redact_line`]):
+// **Two formats, declared not sniffed** (#3317). Every file in the bundle
+// declares its [`LineFormat`] at the call site that read it: `agaric.log`
+// (and its rolled siblings) is `TracingLog`; the OpenTelemetry signal files
+// under [`OTEL_SUBDIRS`] are `OtelSignal` — tab-separated `key=value`, one
+// record per line. Both branches are deny-by-default at the field-value
+// level; they differ only in how a line is split into fields. Dispatching on
+// "does this line parse as JSON?" — as this pipeline used to — silently gave
+// the OTel files the H-9a allow-list, which passes all text verbatim.
+//
+// **Pipeline** (per [`redact_line`], the `TracingLog` format):
 //   1. If the line parses as JSON (i.e. structured `tracing` JSON output),
 //      walk the parsed tree and replace every leaf string VALUE that
 //      doesn't match a safe-token pattern with `[REDACTED]`. Field KEYS
@@ -552,7 +561,10 @@ pub fn collect_bug_report_metadata_inner(
     let redactor = Redactor::new(&ctx);
     let recent_errors = raw_recent_errors
         .iter()
-        .map(|line| redact_line_with_redactor(line, &redactor))
+        // `recent_errors_from_log_dir` reads only `agaric.log`(`.YYYY-MM-DD`),
+        // never an OTel signal file, so the format is `TracingLog` by
+        // provenance — same as the ZIP bundle's `agaric.log` block.
+        .map(|line| redact_line_with_redactor(line, &redactor, LineFormat::TracingLog))
         .collect();
 
     Ok(BugReport {
@@ -934,17 +946,204 @@ fn cap_line_length(out: String) -> String {
 #[cfg(test)]
 fn redact_line(line: &str, ctx: &RedactionContext<'_>) -> String {
     let redactor = Redactor::new(ctx);
-    redact_line_with_redactor(line, &redactor)
+    redact_line_with_redactor(line, &redactor, LineFormat::TracingLog)
+}
+
+/// Which on-disk line format a bundled file is written in — chosen by the
+/// file's PROVENANCE at the two [`read_logs_for_report_inner`] call sites,
+/// never sniffed from the bytes.
+///
+/// #3317 — the dispatch used to be a per-line content sniff: "parses as a JSON
+/// object" took the deny-by-default [`redact_json_value`] path and EVERYTHING
+/// ELSE fell through to [`apply_allow_list`], which passes all text verbatim
+/// except four known needles and an email regex. `agaric.log` is JSON, so it
+/// took the strong path; the OpenTelemetry signal files are tab-separated
+/// `key=value` (see `agaric_observability::exporter`), so they silently took
+/// the weak one — a page title that became `[REDACTED]` in `agaric.log` was
+/// bundled verbatim from `otel-logs/`. Making the format an explicit input
+/// means a file cannot get the wrong (weaker) treatment by looking like
+/// something it is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineFormat {
+    /// `agaric.log` and its rolled `agaric.log.YYYY-MM-DD` siblings: JSON per
+    /// line today, plain `tracing` text in files written before the format
+    /// switch. Dispatches JSON → [`redact_json_line`], else the legacy H-9a
+    /// [`apply_allow_list`] fallback.
+    TracingLog,
+    /// The OpenTelemetry signal files under [`OTEL_SUBDIRS`] — `traces/`,
+    /// `otel-logs/`, and `metrics/`. One tab-separated `key=value` record per
+    /// line; dispatches to the deny-by-default [`redact_kv_line`].
+    OtelSignal,
 }
 
 /// Per-line redaction against a pre-built [`Redactor`]. Hoisted out
 /// of [`redact_line`] so [`redact_log`] can construct the matcher once
 /// per log file instead of once per line.
-fn redact_line_with_redactor(line: &str, redactor: &Redactor) -> String {
-    if let Some(redacted) = redact_json_line(line) {
-        return cap_line_length(redacted);
+fn redact_line_with_redactor(line: &str, redactor: &Redactor, format: LineFormat) -> String {
+    match format {
+        LineFormat::TracingLog => {
+            if let Some(redacted) = redact_json_line(line) {
+                return cap_line_length(redacted);
+            }
+            cap_line_length(apply_allow_list(line, redactor))
+        }
+        // The H-9a static-needle + email pass still runs AFTER the deny-list,
+        // so the OTel branch keeps every H-9a guarantee on top of its own:
+        // a `device_id=<ULID>` value is a "safe token" by shape and would
+        // otherwise survive the deny-list, but the needle pass rewrites it.
+        // Markers (`[REDACTED]`) match no needle, so this cannot double-rewrite.
+        LineFormat::OtelSignal => {
+            cap_line_length(apply_allow_list(&redact_kv_line(line), redactor))
+        }
     }
-    cap_line_length(apply_allow_list(line, redactor))
+}
+
+/// Replacement marker for anything the deny-list does not positively allow.
+/// Same spelling as the JSON path so a reader of the bundle sees one marker.
+const REDACTED: &str = "[REDACTED]";
+
+/// Keys owned by the OTel line FORMATS themselves rather than by an
+/// instrumentation site — the fixed leading skeleton of a signal record.
+///
+/// Sources (all in `agaric-observability`): `exporter::format_span`
+/// (`end name trace span parent dur_ms status`), `exporter::format_log_record`
+/// (`end level trace span target body`), `ingest::write_frontend_span`
+/// (`end service name trace span parent dur_ms status`), and
+/// `metrics_exporter`'s sum/histogram writers (`end metric sum` /
+/// `end metric count sum min max`).
+///
+/// A skeleton key gets ONE extra, narrowly-shaped allowance beyond
+/// [`is_safe_token`] (see [`skeleton_value_is_allowed`]) because these values
+/// are structural — a dotted span name or a fractional `dur_ms` is not a
+/// "safe token" by shape, and redacting them would leave a bundle of
+/// `[REDACTED]` skeletons with no diagnostic value at all. Adding a new field
+/// to a line format therefore requires a deliberate edit HERE, which is the
+/// review point: everything not listed is treated as an instrumentation-site
+/// attribute and is deny-by-default.
+const SKELETON_KEYS: &[&str] = &[
+    "end", "level", "trace", "span", "parent", "target", "body", "name", "service", "status",
+    "dur_ms", "metric", "sum", "count", "min", "max",
+];
+
+/// `true` for the `-` every OTel format writes for an absent field.
+fn is_absent_marker(value: &str) -> bool {
+    value == "-"
+}
+
+/// `true` for a decimal / non-finite number — `dur_ms`, histogram `sum`,
+/// `min`, `max`. Integers already pass [`is_safe_token`]; this adds the
+/// fractional and IEEE special forms the `{:.3}` / `Display` writers emit.
+fn is_numeric_value(value: &str) -> bool {
+    matches!(value, "NaN" | "inf" | "-inf")
+        || value
+            .strip_prefix('-')
+            .unwrap_or(value)
+            .split_once('.')
+            .is_some_and(|(int, frac)| {
+                !int.is_empty()
+                    && !frac.is_empty()
+                    && int.bytes().all(|b| b.is_ascii_digit())
+                    && frac.bytes().all(|b| b.is_ascii_digit())
+            })
+}
+
+/// `true` for a compile-time label: a span/metric/service name or a tracing
+/// target. Identifier-shaped with `.`/`:`/`-` separators and no whitespace,
+/// so `materializer.run_foreground`, `agaric.ipc.duration`, and
+/// `agaric-frontend` round-trip while any prose — a page title, a path, a
+/// query — does not. Bounded so a long value cannot ride through on shape.
+fn is_signal_label(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '-'))
+}
+
+/// The per-key allowance for a value in the skeleton prefix of an OTel line.
+///
+/// Deliberately narrow and per-key: each arm encodes the shape the format
+/// writer can actually produce. `status` accepts only the closed set of status
+/// tags — an `Error { description: … }` carries the error's text and is
+/// redacted like any other free value. `body` (the bridged log message) gets
+/// exactly the [`STABLE_MESSAGES`] exception the JSON path gives `message`.
+fn skeleton_value_is_allowed(key: &str, value: &str) -> bool {
+    if is_absent_marker(value) {
+        return true;
+    }
+    match key {
+        "dur_ms" | "sum" | "count" | "min" | "max" => is_numeric_value(value),
+        "name" | "service" | "metric" | "target" | "level" => is_signal_label(value),
+        "status" => matches!(value, "Unset" | "Ok" | "ok" | "error" | "Error"),
+        "body" => STABLE_MESSAGES.contains(&value),
+        // `end` / `trace` / `span` / `parent` carry a timestamp or a hex id,
+        // both of which `is_safe_token` already covers; they need no widening
+        // beyond the `-` marker handled above.
+        _ => false,
+    }
+}
+
+/// `true` if `key` is shaped like a field name our code (or the frontend
+/// tracer) would emit. Keys are echoed verbatim — the schema of a record is
+/// the skeleton a reader follows — but the attribute keys on an ingested
+/// frontend span arrive over IPC, so an unbounded free-text "key" is possible
+/// in a way it is not for the compiled-in log schema. Anything not shaped like
+/// an identifier is redacted rather than echoed.
+fn is_structural_key(key: &str) -> bool {
+    is_signal_label(key)
+}
+
+/// Deny-by-default redaction for one tab-separated `key=value` OTel record.
+///
+/// Mirrors the JSON path's contract — KEYS are preserved, every VALUE must
+/// earn its way out — with the two shape allowances the line formats need:
+/// [`is_safe_token`] for any value, plus [`skeleton_value_is_allowed`] for the
+/// format-owned leading fields.
+///
+/// The skeleton allowance is POSITIONAL, not just key-based: it applies only
+/// to the unbroken run of [`SKELETON_KEYS`] at the head of the line. Once a
+/// non-skeleton key appears, every later segment is an instrumentation-site
+/// attribute and gets the plain deny-by-default test — so an attribute that
+/// happens to be named `name` or `body` cannot borrow the skeleton's
+/// allowance by colliding with a format key.
+///
+/// A segment with no `=` is not a key/value pair at all; it is treated
+/// wholesale as a value (deny-by-default) rather than echoed.
+fn redact_kv_line(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_skeleton = true;
+
+    for (i, segment) in line.split('\t').enumerate() {
+        if i > 0 {
+            out.push('\t');
+        }
+        let Some((key, value)) = segment.split_once('=') else {
+            in_skeleton = false;
+            out.push_str(if is_safe_token(segment) {
+                segment
+            } else {
+                REDACTED
+            });
+            continue;
+        };
+
+        let skeleton = in_skeleton && SKELETON_KEYS.contains(&key);
+        in_skeleton = skeleton;
+
+        out.push_str(if is_structural_key(key) {
+            key
+        } else {
+            REDACTED
+        });
+        out.push('=');
+        if is_safe_token(value) || (skeleton && skeleton_value_is_allowed(key, value)) {
+            out.push_str(value);
+        } else {
+            out.push_str(REDACTED);
+        }
+    }
+    out
 }
 
 /// Apply line-by-line redaction to an entire log file's contents.
@@ -953,10 +1152,14 @@ fn redact_line_with_redactor(line: &str, redactor: &Redactor) -> String {
 /// (today's log, after the format switch) and text (older rolled files)
 /// without confusing the pipeline.
 ///
+/// `format` is the file's declared provenance (see [`LineFormat`]), not a
+/// guess: the caller knows whether it read `agaric.log` or an OTel signal
+/// file, and a file never silently gets the other format's treatment.
+///
 /// Builds the [`Redactor`] once before the loop so the Aho-Corasick
 /// matcher (covering home / device_id / peer IDs) is shared
 /// across every line in the file.
-fn redact_log(contents: &str, ctx: &RedactionContext<'_>) -> String {
+fn redact_log(contents: &str, ctx: &RedactionContext<'_>, format: LineFormat) -> String {
     let redactor = Redactor::new(ctx);
     let mut out = String::with_capacity(contents.len());
     for line in contents.split_inclusive('\n') {
@@ -966,7 +1169,7 @@ fn redact_log(contents: &str, ctx: &RedactionContext<'_>) -> String {
             Some(body) => (body, "\n"),
             None => (line, ""),
         };
-        out.push_str(&redact_line_with_redactor(body, &redactor));
+        out.push_str(&redact_line_with_redactor(body, &redactor, format));
         out.push_str(newline);
     }
     out
@@ -1103,7 +1306,7 @@ pub fn read_logs_for_report_inner(
                 device_id,
                 peer_device_ids,
             };
-            redact_log(&contents, &ctx)
+            redact_log(&contents, &ctx, LineFormat::TracingLog)
         } else {
             contents
         };
@@ -1118,10 +1321,15 @@ pub fn read_logs_for_report_inner(
     // mirroring `agaric.log`; we take the newest (live tail) file from each
     // and run it through the SAME `read_capped_file` + `redact_log` pipeline.
     //
-    // The OTel lines are PII-safe by construction (ids / counts / durations
-    // only), but still pass through `redact_log` for defense-in-depth — the
-    // JSON deny-list / home-path / device-id scrub applies identically so a
-    // future noisy span field can never widen the bundle's trust boundary.
+    // #3317 — these lines are NOT PII-safe by construction, and this comment
+    // used to claim they were. They are tab-separated `key=value` records whose
+    // attribute values are whatever the instrumentation site attached: the
+    // import span really did carry the user's page title, and every `tracing`
+    // event bridged into `otel-logs/` carries its fields verbatim. Because the
+    // old dispatch keyed on "is this line JSON?", they took the weak allow-list
+    // branch and were bundled unredacted. They now declare their format
+    // (`LineFormat::OtelSignal`) and take the deny-by-default `key=value` path,
+    // which is where the guarantee this comment asserts actually comes from.
     //
     // Ordering: these entries are appended AFTER the `agaric.log` block so the
     // newest-first [`apply_bundle_cap`] walk prioritises `agaric.log` — if the
@@ -1153,7 +1361,7 @@ pub fn read_logs_for_report_inner(
                 device_id,
                 peer_device_ids,
             };
-            redact_log(&contents, &ctx)
+            redact_log(&contents, &ctx, LineFormat::OtelSignal)
         } else {
             contents
         };
@@ -2062,10 +2270,28 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let log_dir = dir.path();
         fs::write(log_dir.join("agaric.log"), "today content\n").unwrap();
+        // Realistic signal lines (tab-separated `key=value`) — #3317 made the
+        // OTel branch parse that shape, so a prose fixture would no longer
+        // exercise the production path.
         for (subdir, file, body) in [
-            ("traces", "agaric-traces.log", "span line\n"),
-            ("otel-logs", "agaric-otel.log", "otel log line\n"),
-            ("metrics", "agaric-metrics.log", "metric line\n"),
+            (
+                "traces",
+                "agaric-traces.log",
+                "end=2026-08-09T10:23:45.123Z\tname=create_block\ttrace=-\tspan=-\t\
+                 parent=-\tdur_ms=1.500\tstatus=Ok\n",
+            ),
+            (
+                "otel-logs",
+                "agaric-otel.log",
+                "end=2026-08-09T10:23:45.123Z\tlevel=INFO\ttrace=-\tspan=-\t\
+                 target=agaric::commands\tbody=compaction starting\n",
+            ),
+            (
+                "metrics",
+                "agaric-metrics.log",
+                "end=2026-08-09T10:23:45.123Z\tmetric=agaric.ipc.duration\tcount=3\t\
+                 sum=1.500\tmin=0.100\tmax=1.000\n",
+            ),
         ] {
             let sd = log_dir.join(subdir);
             fs::create_dir_all(&sd).unwrap();
@@ -2106,7 +2332,11 @@ mod tests {
             .iter()
             .find(|e| e.name == "traces/agaric-traces.log")
             .unwrap();
-        assert!(traces.contents.contains("span line"));
+        assert!(
+            traces.contents.contains("name=create_block"),
+            "the span skeleton survives redaction: {}",
+            traces.contents
+        );
     }
 
     /// #2110 (M7) — (b) absent OTel subdirs ⇒ only the `agaric.log` entries,
@@ -2135,10 +2365,13 @@ mod tests {
         fs::write(log_dir.join("agaric.log"), "ok\n").unwrap();
         let sd = log_dir.join("traces");
         fs::create_dir_all(&sd).unwrap();
-        // A span line that (hypothetically) leaked a home path + device id.
+        // A span line that leaked a home path + device id as attributes.
         fs::write(
             sd.join("agaric-traces.log"),
-            format!("span export path={HOME}/notes.db device={DEV}\n"),
+            format!(
+                "end=2026-08-09T10:23:45.123Z\tname=export\ttrace=-\tspan=-\tparent=-\t\
+                 dur_ms=1.000\tstatus=Ok\tpath={HOME}/notes.db\tdevice={DEV}\n"
+            ),
         )
         .unwrap();
 
@@ -2153,9 +2386,14 @@ mod tests {
             "home path must be scrubbed in OTel file, got: {}",
             traces.contents
         );
+        // #3317 — deny-by-default now fires FIRST: an attribute value that is
+        // not a safe token never reaches the H-9a needle pass, so the path
+        // collapses whole rather than surviving as `~/notes.db`. That is
+        // strictly stronger; the needle pass still covers safe-token-shaped
+        // identifiers (see `otel_branch_keeps_the_h9a_needle_scrubs`).
         assert!(
-            traces.contents.contains("~/notes.db"),
-            "home must become ~, got: {}",
+            traces.contents.contains("path=[REDACTED]"),
+            "a filesystem path attribute must be denied by default, got: {}",
             traces.contents
         );
         assert!(
@@ -2164,8 +2402,9 @@ mod tests {
             traces.contents
         );
         assert!(
-            traces.contents.contains("[REDACTED_DEVICE_ID]"),
-            "device-id marker must be present, got: {}",
+            traces.contents.contains("device=[REDACTED_DEVICE_ID]")
+                || traces.contents.contains("device=[REDACTED]"),
+            "the device id must be replaced by a marker, got: {}",
             traces.contents
         );
     }
@@ -2917,7 +3156,7 @@ mod tests {
             home: Some("/home/alice"),
             ..Default::default()
         };
-        let out = redact_log(contents, &ctx);
+        let out = redact_log(contents, &ctx, LineFormat::TracingLog);
         // First line: JSON deny-list path, stable message preserved.
         assert!(
             out.contains("compaction starting"),
@@ -2972,7 +3211,7 @@ mod tests {
 2025-01-01 DEBUG [sync] peer=[REDACTED:PEER_DEVICE_ID] forwarded to [REDACTED:PEER_DEVICE_ID]\n\
 2025-01-01 DEBUG [sync] long peer=[REDACTED:PEER_DEVICE_ID] reachable\n\
 2025-01-01 ERROR upstream=[EMAIL] timed out at ~/cache\n";
-        let out = redact_log(input, &ctx);
+        let out = redact_log(input, &ctx, LineFormat::TracingLog);
         assert_eq!(
             out, expected,
             "single-pass Aho-Corasick output diverged from hand-computed legacy expectation"
@@ -3050,5 +3289,270 @@ mod tests {
             "home_dir_string must mirror dirs::home_dir() on Windows"
         );
         assert!(!got.is_empty(), "home_dir_string must filter empty strings");
+    }
+
+    // =================================================================
+    // #3317 — OTel signal files take the deny-by-default kv path
+    // =================================================================
+
+    /// A realistic `otel-logs/agaric-otel.log` line: the bridged form of
+    /// `tracing::info!(page = %page_title, blocks_total, space = %space_id, …)`
+    /// from `import_markdown_with_progress`.
+    fn otel_log_line(page_title: &str) -> String {
+        format!(
+            "end=2026-08-09T10:23:45.123Z\tlevel=INFO\t\
+             trace=4bf92f3577b34da6a3ce929d0e0e4736\tspan=00f067aa0ba902b7\t\
+             target=agaric::commands::pages::markdown\t\
+             body=import: starting markdown import\t\
+             page={page_title}\tblocks_total=42\tspace=01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        )
+    }
+
+    /// The headline #3317 regression: a page title bridged into an OTel log
+    /// record must not survive redaction. Reverting `LineFormat::OtelSignal`
+    /// to the old sniff (or `redact_kv_line` to `apply_allow_list`) turns this
+    /// red — the title rides through the allow-list verbatim.
+    #[test]
+    fn otel_log_attribute_value_is_redacted() {
+        let title = "Quarterly Board Notes/Layoffs";
+        let out = redact_log(
+            &format!("{}\n", otel_log_line(title)),
+            &RedactionContext::default(),
+            LineFormat::OtelSignal,
+        );
+        assert!(
+            !out.contains(title),
+            "a bridged page title must never survive into the bundle: {out}"
+        );
+        assert!(
+            out.contains("page=[REDACTED]"),
+            "the attribute KEY stays, the value goes: {out}"
+        );
+        // The structural skeleton stays readable — redaction that destroys the
+        // whole line is not the goal.
+        assert!(out.contains("level=INFO"), "level survives: {out}");
+        assert!(
+            out.contains("target=agaric::commands::pages::markdown"),
+            "target survives: {out}"
+        );
+        assert!(
+            out.contains("trace=4bf92f3577b34da6a3ce929d0e0e4736"),
+            "trace id survives: {out}"
+        );
+        assert!(
+            out.contains("blocks_total=42"),
+            "an integer attribute survives: {out}"
+        );
+        assert!(
+            out.contains("space=01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            "a ULID attribute survives: {out}"
+        );
+    }
+
+    /// Deny-by-default is the point: an attribute nobody has thought of yet is
+    /// redacted without anyone editing this file. Any future
+    /// `#[instrument(fields(…))]` / `tracing::info!(…)` field that carries free
+    /// text is covered by construction.
+    #[test]
+    fn unknown_otel_attribute_with_free_text_is_denied_by_default() {
+        let line = "end=2026-08-09T10:23:45.123Z\tlevel=INFO\ttrace=-\tspan=-\t\
+                    target=agaric::commands::search\tbody=search\t\
+                    a_field_invented_tomorrow=my private search phrase";
+        let out = redact_line_with_redactor(
+            line,
+            &Redactor::new(&RedactionContext::default()),
+            LineFormat::OtelSignal,
+        );
+        assert!(
+            out.ends_with("a_field_invented_tomorrow=[REDACTED]"),
+            "an unknown attribute must be denied by default: {out}"
+        );
+    }
+
+    /// A span line from `traces/`: the skeleton (dotted span name, fractional
+    /// duration, status tag, `-` parent) must round-trip, while an attribute
+    /// carrying a title must not.
+    #[test]
+    fn otel_span_line_keeps_skeleton_and_redacts_content() {
+        let line = "end=2026-08-09T10:23:45.123Z\tname=materializer.run_foreground\t\
+                    trace=4bf92f3577b34da6a3ce929d0e0e4736\tspan=00f067aa0ba902b7\t\
+                    parent=-\tdur_ms=12.345\tstatus=Unset\t\
+                    page_title=My Secret Page\tblocks_total=7";
+        let out = redact_line_with_redactor(
+            line,
+            &Redactor::new(&RedactionContext::default()),
+            LineFormat::OtelSignal,
+        );
+        assert!(out.contains("name=materializer.run_foreground"), "{out}");
+        assert!(out.contains("parent=-"), "{out}");
+        assert!(out.contains("dur_ms=12.345"), "{out}");
+        assert!(out.contains("status=Unset"), "{out}");
+        assert!(out.contains("blocks_total=7"), "{out}");
+        assert!(
+            out.contains("page_title=[REDACTED]") && !out.contains("My Secret Page"),
+            "a content-bearing span attribute must be redacted: {out}"
+        );
+    }
+
+    /// The skeleton allowance is positional. An *attribute* that collides with
+    /// a format key (`name`, `body`, `status`) sits after the skeleton run and
+    /// gets the plain deny-by-default test, so it cannot borrow the widening.
+    #[test]
+    fn attribute_cannot_borrow_the_skeleton_allowance() {
+        let line = "end=2026-08-09T10:23:45.123Z\tname=create_block\ttrace=-\tspan=-\t\
+                    parent=-\tdur_ms=1.000\tstatus=Ok\tnote=Groceries\tname=Groceries";
+        let out = redact_line_with_redactor(
+            line,
+            &Redactor::new(&RedactionContext::default()),
+            LineFormat::OtelSignal,
+        );
+        assert!(
+            out.contains("name=create_block"),
+            "the skeleton span name survives: {out}"
+        );
+        assert!(
+            !out.contains("Groceries"),
+            "a label-shaped attribute value after the skeleton must still be \
+             redacted (it is not a safe token): {out}"
+        );
+        assert_eq!(
+            out.matches("[REDACTED]").count(),
+            2,
+            "both trailing attributes are redacted: {out}"
+        );
+    }
+
+    /// A `body` outside [`STABLE_MESSAGES`] is redacted (a formatted message
+    /// can interpolate user content); a stable literal survives, exactly as
+    /// `message` does on the JSON path.
+    #[test]
+    fn otel_body_follows_the_stable_message_rule() {
+        let base = "end=2026-08-09T10:23:45.123Z\tlevel=WARN\ttrace=-\tspan=-\t\
+                    target=agaric::materializer\tbody=";
+        let stable = redact_line_with_redactor(
+            &format!("{base}background queue full, dropping task"),
+            &Redactor::new(&RedactionContext::default()),
+            LineFormat::OtelSignal,
+        );
+        assert!(
+            stable.ends_with("body=background queue full, dropping task"),
+            "a STABLE_MESSAGES body survives: {stable}"
+        );
+        let freeform = redact_line_with_redactor(
+            &format!("{base}could not open /home/ada/notes/Private Journal.md"),
+            &Redactor::new(&RedactionContext::default()),
+            LineFormat::OtelSignal,
+        );
+        assert!(
+            freeform.ends_with("body=[REDACTED]"),
+            "a free-text body is redacted: {freeform}"
+        );
+    }
+
+    /// A `status=Error { description: … }` embeds the error's text, which
+    /// routinely names a path or a title. Only the closed set of status tags
+    /// is allowed through.
+    #[test]
+    fn otel_span_error_status_description_is_redacted() {
+        let line = "end=2026-08-09T10:23:45.123Z\tname=import_markdown\ttrace=-\tspan=-\t\
+                    parent=-\tdur_ms=1.000\tstatus=Error { description: \"no such file: \
+                    /home/ada/vault/Diary.md\" }";
+        let out = redact_line_with_redactor(
+            line,
+            &Redactor::new(&RedactionContext::default()),
+            LineFormat::OtelSignal,
+        );
+        assert!(
+            !out.contains("Diary.md"),
+            "an error description must not survive: {out}"
+        );
+    }
+
+    /// Frontend spans are ingested straight off the IPC, so an attribute KEY is
+    /// as untrusted as its value. A prose "key" is redacted rather than echoed.
+    #[test]
+    fn free_text_attribute_key_is_redacted_too() {
+        let line = "end=2026-08-09T10:23:45.123Z\tservice=agaric-frontend\t\
+                    name=click_create_block\ttrace=-\tspan=-\tparent=-\tdur_ms=3.000\t\
+                    status=ok\tthe user typed this=1";
+        let out = redact_line_with_redactor(
+            line,
+            &Redactor::new(&RedactionContext::default()),
+            LineFormat::OtelSignal,
+        );
+        assert!(out.contains("service=agaric-frontend"), "{out}");
+        assert!(out.contains("status=ok"), "{out}");
+        assert!(
+            !out.contains("the user typed this"),
+            "a prose attribute key must be redacted: {out}"
+        );
+    }
+
+    /// H-9a is not lost on this branch: the static needles (home path, device
+    /// id, peer ids) and the email catch-all still run after the deny-list, so
+    /// an identifier that IS a safe token by shape is still scrubbed.
+    #[test]
+    fn otel_branch_keeps_the_h9a_needle_scrubs() {
+        const DEV: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let line = format!(
+            "end=2026-08-09T10:23:45.123Z\tname=sync.try_sync_with_peer\ttrace=-\tspan=-\t\
+             parent=-\tdur_ms=1.000\tstatus=Ok\tpeer={DEV}"
+        );
+        let out = redact_line_with_redactor(
+            &line,
+            &Redactor::new(&RedactionContext {
+                home: None,
+                device_id: Some(DEV),
+                peer_device_ids: &[],
+            }),
+            LineFormat::OtelSignal,
+        );
+        assert!(
+            out.contains("peer=[REDACTED_DEVICE_ID]"),
+            "the device-id needle still fires on the OTel branch: {out}"
+        );
+    }
+
+    /// End-to-end + structural: EVERY subdir in [`OTEL_SUBDIRS`] is bundled
+    /// through the deny-by-default path. Adding a fourth signal dir to that
+    /// const inherits the treatment (one loop, one `LineFormat`), and this test
+    /// proves it for whatever the const currently holds.
+    #[test]
+    fn every_otel_subdir_is_redacted_deny_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_dir = dir.path();
+        std::fs::write(log_dir.join("agaric.log"), "{}\n").unwrap();
+
+        let secret = "Zzyzx Confidential Merger Memo";
+        for subdir in OTEL_SUBDIRS {
+            let sub = log_dir.join(subdir);
+            std::fs::create_dir_all(&sub).unwrap();
+            std::fs::write(
+                sub.join("agaric-signal.log"),
+                format!("{}\n", otel_log_line(secret)),
+            )
+            .unwrap();
+        }
+
+        let out = read_logs_for_report_inner(log_dir, true, None, None, &[]).unwrap();
+        for subdir in OTEL_SUBDIRS {
+            let entry = out
+                .iter()
+                .find(|e| e.name.starts_with(&format!("{subdir}/")))
+                .unwrap_or_else(|| panic!("{subdir} must appear in the bundle: {out:?}"));
+            assert!(
+                !entry.contents.contains(secret),
+                "{subdir} leaked user content into the bundle: {}",
+                entry.contents
+            );
+        }
+
+        // And the unredacted path is unchanged — `redact: false` is the user
+        // explicitly asking for raw logs, so this must still round-trip.
+        let raw = read_logs_for_report_inner(log_dir, false, None, None, &[]).unwrap();
+        assert!(
+            raw.iter().any(|e| e.contents.contains(secret)),
+            "redact=false must still bundle the raw signal files"
+        );
     }
 }

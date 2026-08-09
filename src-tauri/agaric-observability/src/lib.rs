@@ -81,13 +81,30 @@
 //!    `Observability { layers: <empty>, guard: None }`. An empty `Vec<Layer>`
 //!    is a no-op on the registry, so the existing logging behaviour is
 //!    byte-identical and overhead is ~zero.
-//! 3. **PII discipline.** Span names + attributes carry ONLY opaque ids
-//!    (ULIDs), enums/op-types, counts, durations, and booleans. NEVER block
-//!    `content`, `to_text`, search query strings, tag names, or property
-//!    values. This is enforced at every `#[instrument(... fields(...))]` site;
-//!    the exporters just serialize what they are handed. Bridged log *bodies*
-//!    mirror what already goes to `agaric.log` and ride the same redaction pass
-//!    (M7); a leak-guard test asserts log attribute keys stay PII-free too.
+//! 3. **PII discipline — with the boundary drawn where it actually holds.**
+//!    Span names + attributes carry ONLY opaque ids (ULIDs), enums/op-types,
+//!    counts, durations, and booleans. NEVER block `content`, `to_text`,
+//!    search query strings, tag names, or property values. This is enforced at
+//!    every `#[instrument(... fields(...))]` site — and, since #3317, by a
+//!    mechanism rather than a convention: `agaric::commands::observability`'s
+//!    `span_fields_stay_on_the_pii_allowlist` test scans every `#[instrument]`
+//!    field and `Span::record` key in the workspace against an opaque-only
+//!    allowlist. (It exists because the two leak-guard tests at the bottom of
+//!    this file only ever inspect spans they build themselves, so they could
+//!    not see the real `page_title` attribute #3317 removed.)
+//!
+//!    Two surfaces are deliberately NOT covered by that allowlist, and the
+//!    honest statement of the guarantee is:
+//!    - Bridged log records (`otel-logs/`) carry arbitrary `tracing` event
+//!      fields, and span EVENTS (which `tracing-opentelemetry` folds into the
+//!      enclosing span, including the `err` line) carry them too. Both may
+//!      contain user content.
+//!    - What is guaranteed is therefore CONTAINMENT plus REDACTION AT THE
+//!      EGRESS POINTS, not a PII-free pipeline: the local files never leave the
+//!      app data dir, the opt-in OTLP path is loopback-validated with redirects
+//!      and the system proxy both disabled ([`otlp`]), and the one path that
+//!      hands these files to a third party — the bug-report bundle — redacts
+//!      every value deny-by-default (`commands::bug_report`, `LineFormat`).
 
 // The submodules cross-referenced from module docs (here + in the app crate's
 // `bug_report` collector, which documents the on-disk sink layout) are `pub mod`
@@ -317,9 +334,16 @@ mod tests {
     /// Builds a provider with the SDK's in-memory exporter, drives a span
     /// through the real `tracing-opentelemetry` layer, force-flushes, and
     /// asserts (a) the span landed with the expected name and (b) every
-    /// attribute key is on a PII-safe allowlist. The allowlist assertion is
-    /// the leak guard: if any future `#[instrument]` adds a content/query/tag
-    /// attribute, this test fails.
+    /// attribute key is on a PII-safe allowlist.
+    ///
+    /// SCOPE (#3317): the allowlist assertion covers the span THIS TEST
+    /// BUILDS, so it proves the pipeline preserves attribute keys end-to-end —
+    /// it does NOT see real `#[instrument]` sites and never did. The comment
+    /// here used to claim "if any future `#[instrument]` adds a
+    /// content/query/tag attribute, this test fails", which is how a real
+    /// `page_title` attribute shipped under a green test. The guard that
+    /// actually reads the codebase is
+    /// `agaric::commands::observability::tests::span_fields_stay_on_the_pii_allowlist`.
     #[test]
     fn span_pipeline_emits_safe_attributes_only() {
         let exporter = InMemorySpanExporter::default();
@@ -509,7 +533,11 @@ mod tests {
             "log span_id must equal the span's span_id"
         );
 
-        // PII leak-guard on log attribute keys — same discipline as spans.
+        // PII leak-guard on log attribute keys — same discipline as spans, and
+        // the same scope caveat (#3317): these are the keys THIS TEST emitted.
+        // Real bridged records carry arbitrary `tracing` event fields; the
+        // boundary that covers those is the bug-report bundle's
+        // deny-by-default `LineFormat::OtelSignal` pass, not this assertion.
         const FORBIDDEN_SUBSTRINGS: &[&str] = &[
             "content", "to_text", "query", "tag", "property", "value", "text", "title",
         ];
