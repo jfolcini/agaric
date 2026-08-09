@@ -15,13 +15,15 @@ import {
   addBlockWithMarker,
   blockStaticByMarker,
   navigateTo,
+  runScopedMarker,
   waitForAppReady,
 } from './helpers'
 
 // Marker rule (run 30057838392): NO adjacent duplicate characters — WebKit
 // key handling deterministically coalesces repeated keystrokes ('ss'->'s'),
-// so a marker with doubles can never be typed verbatim.
-const MARKER = 'wdio-journal-viewhop'
+// so a marker with doubles can never be typed verbatim. `runScopedMarker`
+// enforces that rule over the run suffix it appends (#3334).
+const MARKER = runScopedMarker('wdio-journal-viewhop')
 
 describe('Agaric real-backend cross-view durability (#3085)', () => {
   it('keeps a Journal block after switching to Pages and back', async () => {

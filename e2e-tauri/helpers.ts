@@ -141,6 +141,33 @@ export async function navigateTo(label: NavLabel): Promise<void> {
 }
 
 /**
+ * Suffix unique to this WDIO process. Every spec file in a run imports the same
+ * module instance, so all of them share one value — distinct across runs,
+ * stable within one.
+ */
+const RUN_ID = `${Date.now().toString(36)}-${process.pid.toString(36)}`
+
+/**
+ * Scope a marker to this run (#3334).
+ *
+ * `blockStaticByMarker` matches by SUBSTRING, so a fixed marker cannot tell
+ * "the block this spec just created" apart from "an identical block a previous
+ * run left behind". With a per-run vault that leftover can no longer exist —
+ * but the two mechanisms fail independently, and the cost of a suffix is a
+ * dozen extra keystrokes. Belt and braces on an assertion whose whole job is to
+ * distinguish "durably persisted" from "looks persisted".
+ *
+ * The dedupe pass is load-bearing, not cosmetic: `typeMarkerVerified` documents
+ * that WebKit coalesces adjacent duplicate keystrokes, so a marker containing
+ * `mm` or `88` could never be typed back intact. Collapsing runs of repeated
+ * characters keeps every generated marker typeable. (It is a no-op on the fixed
+ * prefixes, none of which contain a repeated character.)
+ */
+export function runScopedMarker(base: string): string {
+  return `${base}-${RUN_ID}`.replace(/(.)\1+/g, '$1')
+}
+
+/**
  * Locate a committed block row by a substring of its text. A non-focused block
  * renders as StaticBlock (`data-testid="block-static"`); `*=` matches its text.
  * Returned lazily (chainable) so callers can `waitForDisplayed` /

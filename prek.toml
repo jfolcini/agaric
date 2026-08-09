@@ -575,6 +575,42 @@ pass_filenames = false
 files = "^scripts/check-raw-invoke\\.mjs$"
 stages = ["pre-commit"]
 
+# vault-isolation (#3334): the wdio lane drives the REAL binary against a
+# REAL SQLite vault, and before #3334 it resolved that vault from the
+# bundle identifier alone — i.e. the developer's own notes, which a local
+# run polluted and a repeat run could pass green against. Two halves are
+# guarded, both of them the kind a refactor deletes without noticing:
+# (a) `src-tauri/src/app_paths.rs` is the ONLY caller of
+# `app.path().app_data_dir()`, so no call site can keep writing to the real
+# vault while the rest of the process is sandboxed; (b) `wdio.conf.ts` must
+# still mint a per-run temp vault, pass it to the spawned tauri-driver
+# explicitly, mark the run with AGARIC_E2E_SANDBOX (which makes the app
+# refuse to boot rather than fall back), and VERIFY at runtime that the
+# binary obeyed. pass_filenames=false — the script walks src-tauri/src
+# itself. Keyed to the Rust tree AND the harness because either side alone
+# can reopen the hole.
+[[repos.hooks]]
+id = "vault-isolation"
+name = "e2e vault isolation (no path to the real vault)"
+entry = "node scripts/check-vault-isolation.mjs"
+language = "system"
+pass_filenames = false
+files = "^(src-tauri/src/.*\\.rs|wdio\\.conf\\.ts)$"
+stages = ["pre-commit"]
+
+# Self-test the vault-isolation guard's own exit behavior (a direct
+# resolve outside the seam FAILS, a commented one PASSES, a wdio.conf.ts
+# missing any single piece FAILS) whenever the guard script itself
+# changes, so a regression that defangs it can't land.
+[[repos.hooks]]
+id = "vault-isolation-selftest"
+name = "e2e vault isolation guard self-test"
+entry = "node scripts/check-vault-isolation.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-vault-isolation\\.mjs$"
+stages = ["pre-commit"]
+
 # tauri-import-baseline (#2927): `src/lib/tauri.ts` is a hand-written IPC
 # wrapper layer being retired in favor of the generated `commands.*`
 # bindings. This ratchet forbids NEW non-test importers of `@/lib/tauri`

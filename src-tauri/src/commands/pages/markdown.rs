@@ -3928,16 +3928,14 @@ pub async fn import_markdown(
     progress: tauri::ipc::Channel<ImportProgressUpdate>,
     ctx: State<'_, WriteCtx>,
 ) -> Result<ImportResult, AppError> {
-    use tauri::Manager;
     // b2 (#2248): required-target-space commands take the `SpaceId` newtype at
     // the wire boundary. The lenient `Deserialize` only uppercases, so reject a
     // malformed id here rather than letting a never-matching filter reach the
     // in-transaction space-existence check with an opaque error.
     space_id.validate_shape()?;
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    // #3334 — the `app_paths` seam: imported vault files' bytes must land in
+    // the same directory this process opened `notes.db` in.
+    let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     import_markdown_with_progress(
         ctx.pool(),
         ctx.device_id(),

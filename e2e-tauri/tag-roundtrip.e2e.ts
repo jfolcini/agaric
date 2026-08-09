@@ -14,12 +14,21 @@
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
-import { ACTION_TIMEOUT, NAV_TIMEOUT, navigateTo, waitForAppReady } from './helpers'
+import {
+  ACTION_TIMEOUT,
+  NAV_TIMEOUT,
+  navigateTo,
+  runScopedMarker,
+  waitForAppReady,
+} from './helpers'
 
-// Fixed, hyphenated marker: unique within this spec file. WDIO runs against
-// fresh app data each CI run, so a stable name cannot collide across runs; the
-// hyphens keep both the typed input and the `tag-item-<name>` testid clean.
-const TAG_NAME = 'wdio-tag-roundtrip'
+// Hyphenated so both the typed input and the `tag-item-<name>` testid stay
+// clean. The name used to be fixed, on the reasoning that "WDIO runs against
+// fresh app data each CI run, so a stable name cannot collide across runs" —
+// true of the ephemeral CI runner, false of a developer's machine, where the
+// suite ran against the real vault and a second run would find this tag already
+// there. #3334 fixed the vault; scoping the name removes the assumption too.
+const TAG_NAME = runScopedMarker('wdio-tag-roundtrip')
 
 describe('Agaric real-backend tag round-trip (#3085 / #3081)', () => {
   it('keeps a UI-created tag listed after navigating away to Journal and back', async () => {

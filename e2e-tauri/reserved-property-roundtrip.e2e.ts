@@ -33,10 +33,13 @@ import {
   addBlockWithMarker,
   blockStaticByMarker,
   navigateTo,
+  runScopedMarker,
   waitForAppReady,
 } from './helpers'
 
-const MARKER = 'wdio-reserved-prop-todo'
+// #3334 — scoped to this run, so the durable read cannot resolve a previous
+// run's leftover row (which would carry its own already-set todo state).
+const MARKER = runScopedMarker('wdio-reserved-prop-todo')
 
 describe('Agaric real-backend reserved-property round-trip (#3085)', () => {
   it('persists a todo state set via the task checkbox across a navigation round-trip', async () => {

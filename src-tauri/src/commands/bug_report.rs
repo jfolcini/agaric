@@ -29,7 +29,6 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use sqlx::SqlitePool;
-use tauri::Manager;
 
 use crate::log_dir_for_app_data;
 use agaric_core::error::AppError;
@@ -579,10 +578,9 @@ pub async fn collect_bug_report_metadata(
     pool: tauri::State<'_, crate::db::ReadPool>,
     device_id: tauri::State<'_, agaric_sync::device::DeviceId>,
 ) -> Result<BugReport, AppError> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    // #3334 — the `app_paths` seam, so a bug report describes the vault this
+    // process actually opened rather than the one it would have opened by default.
+    let data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     let home = home_dir_string();
     let peer_device_ids = fetch_redaction_extras(&pool.inner().0).await;
     collect_bug_report_metadata_inner(
@@ -1251,10 +1249,9 @@ pub async fn read_logs_for_report(
     device_id: tauri::State<'_, agaric_sync::device::DeviceId>,
     redact: bool,
 ) -> Result<Vec<LogFileEntry>, AppError> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    // #3334 — the `app_paths` seam, so a bug report describes the vault this
+    // process actually opened rather than the one it would have opened by default.
+    let data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     let log_dir = log_dir_for_app_data(&data_dir);
     let home = home_dir_string();
     let peer_device_ids = if redact {

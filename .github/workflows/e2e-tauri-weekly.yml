@@ -217,6 +217,15 @@ jobs:
       - name: Run WebdriverIO real-backend smoke (Xvfb)
         # The binary is already built above, so tell wdio.conf.ts to skip its
         # own onPrepare build. xvfb-run gives the WebKitWebView a display.
+        #
+        # #3334 — no vault isolation is configured HERE on purpose. The runner
+        # being ephemeral used to be the only thing keeping this lane off a real
+        # vault, which is exactly why a developer running the same command
+        # locally wrote into their own notes. wdio.conf.ts now mints a throwaway
+        # vault per run and refuses to start if the app does not use it, so CI
+        # and a laptop get the identical guarantee from the identical code path
+        # — nothing about this job may be load-bearing for it. Set
+        # WDIO_KEEP_VAULT=1 to retain the sandbox for a post-mortem.
         env:
           WDIO_SKIP_TAURI_BUILD: '1'
         run: xvfb-run -a npm run test:e2e-tauri
