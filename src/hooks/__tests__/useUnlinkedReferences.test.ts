@@ -316,6 +316,117 @@ describe('useUnlinkedReferences', () => {
     expect(unlinkedCalls().map(limitOf)).toEqual([1, 20])
   })
 
+  // #3738 note 2 — the counts already survive the `groupLimit` re-key (#3733
+  // note 2), but `truncated` did not, so it flipped true → false → true across
+  // an expand while the numbers rendered right next to it held steady. It is
+  // the same "two adjacent statements about the same fetch disagree" defect the
+  // carry was introduced to remove.
+  it('#3738 note 2: truncated survives the collapsed→expanded re-key with the counts', async () => {
+    const collapsedPage = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 12,
+      filtered_count: 12,
+      truncated: true,
+    }
+    // The expanded fetch never settles, so the new key holds no data at all —
+    // exactly the window the carry exists for.
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_unlinked_references: (args) =>
+          Number(args['limit']) === 1 ? collapsedPage : new Promise(() => {}),
+      }),
+    )
+
+    const { result, rerender } = renderHook(
+      ({ collapsed }: { collapsed: boolean }) => useUnlinkedReferences(baseParams({ collapsed })),
+      { initialProps: { collapsed: true } },
+    )
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    expect(result.current.truncated).toBe(true)
+    expect(result.current.totalCount).toBe(12)
+
+    rerender({ collapsed: false })
+
+    await waitFor(() => {
+      expect(
+        mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unlinked_references'),
+      ).toHaveLength(2)
+    })
+    // Mid-re-key: the counts are carried…
+    expect(result.current.totalCount).toBe(12)
+    expect(result.current.filteredCount).toBe(12)
+    // …and so is the flag rendered beside them.
+    expect(result.current.truncated).toBe(true)
+  })
+
+  // #3738 note 1 — the carry deliberately also spans a FAILED fetch: `data` is
+  // `undefined` for an errored key exactly as it is for a pending one. Dropping
+  // it would make the whole panel disappear under the click that expanded it.
+  it('#3738 note 1: a failed expand keeps the count already known for that identity', async () => {
+    const collapsedPage = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 12,
+      filtered_count: 12,
+      truncated: false,
+    }
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_unlinked_references: (args) => {
+          if (Number(args['limit']) === 1) return collapsedPage
+          throw new Error('expand failed')
+        },
+      }),
+    )
+
+    const { result, rerender } = renderHook(
+      ({ collapsed }: { collapsed: boolean }) => useUnlinkedReferences(baseParams({ collapsed })),
+      { initialProps: { collapsed: true } },
+    )
+    await waitFor(() => {
+      expect(result.current.totalCount).toBe(12)
+    })
+
+    rerender({ collapsed: false })
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true)
+    })
+
+    // The count was never unknown — only the bigger page failed to arrive.
+    expect(result.current.totalCount).toBe(12)
+    expect(result.current.groups).toHaveLength(0)
+  })
+
+  // #3738 note 8 — the optimistic "Link it" removal has to reach EVERY limit
+  // variant, so the key it targets is exported without the limit too.
+  it('#3738 note 8: exports the limit-free key prefix that matches both variants', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedInvoke.mockImplementation(mockInvokeCommands({ list_unlinked_references: () => resp }))
+
+    const { result } = renderHook(() => useUnlinkedReferences(baseParams()))
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    expect(result.current.queryKeyPrefix).toEqual(['unlinkedReferences', null, 'PAGE1', [], null])
+    // It is exactly the read key minus the trailing group limit, so
+    // `setQueriesData` prefix-matching cannot drift from where the hook reads.
+    expect(result.current.queryKey).toEqual([...result.current.queryKeyPrefix, 20])
+  })
+
   // #3316 item 2 (b) — `pageId` is part of the query key, so under the client's
   // inherited `gcTime: Infinity` a session that visits N pages leaves N
   // observer-less cache entries that are never collected. The hook must

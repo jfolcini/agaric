@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import type { BlockRow } from '@/lib/tauri'
@@ -1140,6 +1141,107 @@ describe('UnfinishedTasks', () => {
     })
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // #3703 items 1 + 2 — both concern what a non-visual user is told about a
+  // partially-loaded panel, and they sit in the same region, so they are read
+  // together: the badge's qualifier must describe the panel's ACTUAL state, and
+  // the load that produces the rest of the count has to announce itself.
+  describe('#3703 — what the partial panel announces', () => {
+    /** Page 1 loads and advertises more; page 2 rejects, so the drain stops
+     *  with `hasNextPage` still true. That is the shortest reachable route to
+     *  an EXPANDED panel whose badge is still partial. */
+    function mockPartialThenFailure() {
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_unfinished_tasks') {
+          const params = args as { cursor?: string | null }
+          if (params.cursor == null) {
+            return {
+              items: [makeYesterdayBlock('P1-A'), makeYesterdayBlock('P1-B', 'Second')],
+              next_cursor: 'CURSOR-1',
+              has_more: true,
+            }
+          }
+          throw new Error('mid-drain page failure')
+        }
+        if (cmd === 'batch_resolve') return []
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+    }
+
+    it('stops telling a screen reader to expand a panel that is already expanded', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      mockPartialThenFailure()
+      const user = userEvent.setup()
+
+      render(<UnfinishedTasks />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+
+      // Collapsed: "expand to load the rest" names the affordance in front of
+      // the user, so it is exactly right here.
+      expect(screen.getByText('2+')).toBeInTheDocument()
+      expect(screen.getByText(t('unfinished.countPartialLabel', { n: 2 }))).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { expanded: false }))
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks-partial-error')).toBeInTheDocument()
+      })
+
+      // Still partial (the drain died on page 2), so the qualifier is still
+      // needed — but the instruction it used to carry is now nonsense.
+      expect(screen.getByText('2+')).toBeInTheDocument()
+      expect(
+        screen.queryByText(t('unfinished.countPartialLabel', { n: 2 })),
+      ).not.toBeInTheDocument()
+      expect(
+        screen.getByText(t('unfinished.countPartialLabelExpanded', { n: 2 })),
+      ).toBeInTheDocument()
+
+      warnSpy.mockRestore()
+    })
+
+    it('announces the in-body drain, which no longer replaces anything', async () => {
+      // Page 1 resolves and advertises more; the drain's page 2 never settles,
+      // so the panel stays expanded WITH the in-body skeleton up.
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_unfinished_tasks') {
+          const params = args as { cursor?: string | null }
+          if (params.cursor == null) {
+            return {
+              items: [makeYesterdayBlock('DRAIN-A')],
+              next_cursor: 'CURSOR-1',
+              has_more: true,
+            }
+          }
+          return new Promise(() => {})
+        }
+        if (cmd === 'batch_resolve') return []
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+      const user = userEvent.setup()
+
+      render(<UnfinishedTasks />)
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { expanded: false }))
+
+      const body = await screen.findByTestId('unfinished-tasks-body-loading')
+      // #3701 moved this skeleton INSIDE the expanded body so the disclosure
+      // button survives the expand-triggered load — which also means the load
+      // no longer replaces the region, so nothing announced it.
+      expect(body).toHaveAttribute('role', 'status')
+      expect(body).toHaveAttribute('aria-busy', 'true')
+      // A live region announces its CONTENT, and a skeleton has none, so the
+      // status must carry real (visually hidden) text.
+      expect(body).toHaveTextContent(t('unfinished.loading'))
+      // …and the button the user activated is still there to collapse again.
+      expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument()
+    })
   })
 
   it('has no a11y violations when expanded with tasks', async () => {

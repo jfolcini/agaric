@@ -405,10 +405,21 @@ export function UnfinishedTasks({
           {hasNextPage ? t('unfinished.countPartial', { n: blocks.length }) : blocks.length}
           {/* `Badge` is a plain <span> (implicit role `generic`), which does not
               take `aria-label` — so the "at least N" qualifier has to be real
-              text for AT rather than an attribute that is silently dropped. */}
+              text for AT rather than an attribute that is silently dropped.
+
+              #3703 item 1 — the copy is gated on the collapsed state. "expand
+              to load the rest" is the *visual* affordance's promise, and
+              reading it out to someone whose panel is already open told them
+              to perform an action they had already performed. Expanded, the
+              badge can still be partial (the drain is mid-flight, the
+              MAX_UNFINISHED_PAGES cap was hit, or a page rejected), so the
+              qualifier is still needed — it just has to say what is actually
+              true of an open panel. */}
           {hasNextPage && (
             <span className="sr-only">
-              {t('unfinished.countPartialLabel', { n: blocks.length })}
+              {collapsed
+                ? t('unfinished.countPartialLabel', { n: blocks.length })
+                : t('unfinished.countPartialLabelExpanded', { n: blocks.length })}
             </span>
           )}
         </Badge>
@@ -434,8 +445,23 @@ export function UnfinishedTasks({
         </div>
       )}
 
+      {/* #3703 item 2 — the in-body skeleton is a live region.
+          Confining the skeleton to the expanded body (rather than swapping the
+          whole section out) is what keeps the disclosure button — and focus —
+          alive across an expand-triggered drain, but it also means the load no
+          longer replaces anything a screen reader was on, so nothing announced
+          that the panel had started working. `role="status"` restores that
+          signal without reintroducing the unmount; the visually-hidden text is
+          what it has to announce, since a skeleton is all boxes and no words. */}
       {!collapsed && loading && (
-        <div aria-busy="true" data-testid="unfinished-tasks-body-loading" className="mt-1">
+        <div
+          aria-busy="true"
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- kept as role="status" so the in-body loading indicator is discoverable via [role="status"]; <output> drops the explicit attribute relied on by callers/tests
+          role="status"
+          data-testid="unfinished-tasks-body-loading"
+          className="mt-1"
+        >
+          <span className="sr-only">{t('unfinished.loading')}</span>
           <LoadingSkeleton count={3} height="h-10" className="unfinished-tasks-loading" />
         </div>
       )}

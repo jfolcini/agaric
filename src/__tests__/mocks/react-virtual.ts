@@ -56,6 +56,18 @@ export interface MockReactVirtualOptions {
    * rows (honest spacer height). Pass a number for a fixed total.
    */
   totalSize?: number
+  /**
+   * Override a row's `start` offset. Defaults to the running sum of the
+   * estimated sizes (rows packed from 0, which is what the real virtualizer
+   * reports before anything is measured).
+   *
+   * The lever for RE-MEASUREMENT churn: the real virtualizer shifts the rows
+   * BELOW a row whose measured height changed while the ones above keep their
+   * offsets, and no combination of `windowSize`/`estimateSize` can express
+   * that. Read lazily on every `useVirtualizer` call, so a `vi.hoisted` cell
+   * can move offsets between renders. Return `null` to keep the default.
+   */
+  rowStart?: (index: number, defaultStart: number) => number | null
   /** Spy/handler for `scrollToIndex(index)`. Defaults to a fresh `vi.fn()`. */
   scrollToIndex?: (index: number) => void
   /** Spy/handler for `scrollToOffset(offset)`. Defaults to a fresh `vi.fn()`. */
@@ -76,6 +88,7 @@ export interface MockReactVirtualOptions {
 export function mockReactVirtual(options: MockReactVirtualOptions = {}) {
   const {
     windowSize = null,
+    rowStart,
     totalSize,
     scrollToIndex = vi.fn(),
     scrollToOffset = vi.fn(),
@@ -90,11 +103,12 @@ export function mockReactVirtual(options: MockReactVirtualOptions = {}) {
       const win = typeof windowSize === 'function' ? windowSize() : windowSize
       const limit = win === null ? opts.count : Math.min(win, opts.count)
 
-      let start = 0
+      let packed = 0
       const items: VirtualItem[] = Array.from({ length: limit }, (_, index) => {
         const size = opts.estimateSize(index)
+        const start = rowStart?.(index, packed) ?? packed
         const item: VirtualItem = { index, key: index, start, size, end: start + size }
-        start += size
+        packed += size
         return item
       })
 
