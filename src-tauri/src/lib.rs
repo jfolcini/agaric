@@ -1,5 +1,9 @@
 #[cfg(target_os = "linux")]
 pub mod appimage_integration;
+// #3334 — the ONE seam that resolves the app-data directory ("the vault"),
+// honouring `AGARIC_DATA_DIR` and refusing to fall back to the real vault under
+// `AGARIC_E2E_SANDBOX`. Nothing else may call `app.path().app_data_dir()`.
+pub mod app_paths;
 #[cfg(test)]
 mod cache_app_tests;
 pub mod commands;
@@ -2104,8 +2108,14 @@ pub fn run() {
             // instead of returning it so the same failure does NOT also bubble to
             // the `.build().unwrap_or_else` handler and pop a second dialog.
             let boot_result: Result<(), Box<dyn std::error::Error>> = (|| {
-                // Resolve the OS-standard app data directory from tauri.conf.json identifier
-                let app_data_dir = app.path().app_data_dir()?;
+                // #3334 — resolve the app data directory through the single
+                // `app_paths` seam: normally the OS-standard directory derived
+                // from the `tauri.conf.json` identifier, but `AGARIC_DATA_DIR`
+                // relocates it and `AGARIC_E2E_SANDBOX` makes that relocation
+                // MANDATORY. A sandboxed harness whose override went missing
+                // fails here — loudly, in the boot dialog — rather than
+                // quietly opening the user's real vault.
+                let app_data_dir = crate::app_paths::resolve_app_data_dir(app)?;
                 std::fs::create_dir_all(&app_data_dir)?;
                 let db_path = app_data_dir.join("notes.db");
 

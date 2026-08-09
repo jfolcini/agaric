@@ -5,7 +5,6 @@ use std::path::Path;
 use sqlx::SqlitePool;
 use tracing::instrument;
 
-use tauri::Manager;
 use tauri::State;
 
 use crate::db::now_ms;
@@ -826,10 +825,11 @@ pub async fn add_attachment_with_bytes(
     mime_type: String,
     bytes: Vec<u8>,
 ) -> Result<AttachmentRow, AppError> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    // #3334 — via the `app_paths` seam so attachment bytes land in the SAME
+    // directory boot opened `notes.db` in. A direct `app.path().app_data_dir()`
+    // here would write into the real vault while a sandboxed run's database
+    // lived elsewhere: rows pointing at files nobody sandboxed.
+    let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     add_attachment_with_bytes_inner(
         ctx.pool(),
         ctx.device_id(),
@@ -868,10 +868,11 @@ pub async fn read_attachment(
     pool: State<'_, ReadPool>,
     attachment_id: AttachmentId,
 ) -> Result<tauri::ipc::Response, AppError> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    // #3334 — via the `app_paths` seam so attachment bytes land in the SAME
+    // directory boot opened `notes.db` in. A direct `app.path().app_data_dir()`
+    // here would write into the real vault while a sandboxed run's database
+    // lived elsewhere: rows pointing at files nobody sandboxed.
+    let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     let bytes = read_attachment_inner(&pool.0, &app_data_dir, attachment_id)
         .await
         .map_err(sanitize_internal_error)?;
@@ -901,10 +902,11 @@ pub async fn delete_attachment(
     ctx: State<'_, WriteCtx>,
     attachment_id: AttachmentId,
 ) -> Result<(), AppError> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    // #3334 — via the `app_paths` seam so attachment bytes land in the SAME
+    // directory boot opened `notes.db` in. A direct `app.path().app_data_dir()`
+    // here would write into the real vault while a sandboxed run's database
+    // lived elsewhere: rows pointing at files nobody sandboxed.
+    let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     delete_attachment_inner(
         ctx.pool(),
         ctx.device_id(),

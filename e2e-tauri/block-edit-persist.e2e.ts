@@ -21,10 +21,13 @@ import {
   addBlockWithMarker,
   blockStaticByMarker,
   navigateTo,
+  runScopedMarker,
   waitForAppReady,
 } from './helpers'
 
-const BASE = 'wdio-edit-base'
+// #3334 — run-scoped, so step 6's "the edit was durably written" assertion
+// cannot be satisfied by an already-edited row an earlier run left behind.
+const BASE = runScopedMarker('wdio-edit-base')
 const SUFFIX = '-edited'
 
 describe('Agaric real-backend edit persistence (#3085)', () => {
