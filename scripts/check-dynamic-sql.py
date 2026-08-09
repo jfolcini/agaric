@@ -371,6 +371,34 @@ def drifted_entries(baseline: dict[str, int], counts: dict[str, int]) -> list[st
     ]
 
 
+def in_scan_scope(rel: str) -> bool:
+    """True iff the scan actually covers `rel` right now.
+
+    The single definition of "covered", so the three places that need it —
+    `orphan_entries` (which flags an entry the scan no longer covers),
+    `baseline_count` (which must record ZERO for exactly those), and
+    `compute_baseline` via `all_production_files` — cannot disagree. They
+    did: an entry whose file had become a whole-file `#![cfg(test)]`
+    module, or had moved under a test/fixture glob, was flagged as an
+    orphan but then RE-WRITTEN by the scoped `--update-baseline` the
+    guard's own message told you to run, because that path only asked
+    `is_file()`. The guard stayed red pointing at a remedy that could not
+    clear it, leaving `--all` (what #3659 exists to avoid) or a hand-edit
+    of a generated file (the #3717 anti-pattern) as the only ways out.
+    """
+    path = REPO_ROOT / rel
+    return (
+        path.is_file()
+        and not is_excluded_file(rel)
+        and not is_test_only_module(read_source(path))
+    )
+
+
+def baseline_count(rel: str) -> int:
+    """The count a baseline entry for `rel` should record — 0 if uncovered."""
+    return count_sites(REPO_ROOT / rel)[0] if in_scan_scope(rel) else 0
+
+
 def orphan_entries(baseline: dict[str, int]) -> list[str]:
     """Entries naming a file the scan no longer covers.
 
@@ -721,6 +749,67 @@ def run_self_test() -> int:
     if orphan_entries({}):
         failures.append("orphan check fired on an empty baseline")
 
+    # --- The printed remedy must actually clear the orphan (#3724 review) ---
+    # `orphan_entries` flags three kinds; the scoped re-anchor used to ask
+    # only `is_file()`, so for two of them `count_sites` still returned a
+    # positive number and the entry was RE-WRITTEN instead of dropped. The
+    # guard then stayed red pointing at a command that could not fix it.
+    # Real files, chosen because each has runtime sites the old code would
+    # have recorded — a fixture with zero sites could not tell the two
+    # implementations apart.
+    remedy_fixtures = [
+        ("src-tauri/src/reconciliation_oracle.rs", "whole-file #![cfg(test)] module"),
+        ("src-tauri/agaric-store/src/test_support.rs", "test/fixture glob"),
+        ("src-tauri/src/definitely-not-here-3659.rs", "deleted file"),
+    ]
+    for rel, kind in remedy_fixtures:
+        path = REPO_ROOT / rel
+        if path.is_file() and count_sites(path)[0] == 0:
+            failures.append(
+                f"remedy fixture stale: {rel} ({kind}) no longer has any "
+                "runtime site, so it cannot distinguish the two "
+                "implementations — pick another file"
+            )
+        if in_scan_scope(rel):
+            failures.append(
+                f"remedy fixture stale: {rel} is now IN scan scope ({kind} no "
+                "longer holds)"
+            )
+        if baseline_count(rel) != 0:
+            failures.append(
+                f"scoped re-anchor cannot clear the {kind} orphan: "
+                f"baseline_count({rel!r}) = {baseline_count(rel)}, expected 0"
+            )
+
+    # End to end: an operator who runs exactly the command the guard prints,
+    # over exactly the entries it flagged, ends up green.
+    healthy = "src-tauri/agaric-engine/src/block_ops.rs"
+    orphaned_baseline = {
+        healthy: 1,  # deliberately stale, and IN scope: must be re-anchored
+        **{rel: 7 for rel, _ in remedy_fixtures},
+    }
+    flagged = orphan_entries(orphaned_baseline)
+    if len(flagged) != len(remedy_fixtures):
+        failures.append(
+            f"expected {len(remedy_fixtures)} orphans flagged, got {flagged}"
+        )
+    remedy_scope = [rel for rel, _ in remedy_fixtures] + [healthy]
+    after = merge_baseline(
+        orphaned_baseline,
+        remedy_scope,
+        {rel: baseline_count(rel) for rel in remedy_scope},
+    )
+    if orphan_entries(after):
+        failures.append(
+            "running the printed remedy left orphans behind: "
+            f"{orphan_entries(after)}"
+        )
+    if after.get(healthy) != count_sites(REPO_ROOT / healthy)[0]:
+        failures.append(
+            "the printed remedy did not re-anchor the in-scope entry: "
+            f"{after.get(healthy)}"
+        )
+
     # --- The baseline agrees with the tree, right now ---
     # The property that silently stopped holding. Asserted against the live
     # checkout, not a fixture: after a re-anchor, a second `--update-baseline`
@@ -754,7 +843,7 @@ def run_self_test() -> int:
         + len(scope_cases)
         + len(test_only_cases)
         + len(marker_cases)
-        + 10  # scoped-update / drift / orphan / live-agreement assertions
+        + 14  # scoped-update / drift / orphan / remedy / live-agreement
     )
     print(f"check-dynamic-sql self-test passed ({total} cases).")
     return 0
@@ -811,10 +900,10 @@ def update_baseline(argv: list[str]) -> int:
         else:
             scope_label = f"{len(scope)} file(s) given on the command line"
 
-        counts = {
-            rel: (count_sites(REPO_ROOT / rel)[0] if (REPO_ROOT / rel).is_file() else 0)
-            for rel in scope
-        }
+        # `baseline_count`, not a bare `count_sites`: a file the scan no
+        # longer covers must record ZERO (i.e. drop out), or the remedy
+        # this command exists to be cannot clear the orphan it is run for.
+        counts = {rel: baseline_count(rel) for rel in scope}
         new = merge_baseline(existing, scope, counts)
 
     changed = sorted(

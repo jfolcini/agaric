@@ -316,14 +316,70 @@ if [ "${1:-}" = "--self-test" ]; then
     #     Diagnosing the cause after the five red hooks have already
     #     printed is the state this fixes; a future edit that moves the
     #     call below Phase A restores it while cases 10-13 stay green.
-    st_call_line="$(grep -n '^if ! node_deps_problem_out=' "${BASH_SOURCE[0]}" | head -1 | cut -d: -f1)"
-    st_phase_a_line="$(grep -n '^if ! SKIP="\$PHASE_A_SKIP" prek run' "${BASH_SOURCE[0]}" | head -1 | cut -d: -f1)"
-    if [ -n "$st_call_line" ] && [ -n "$st_phase_a_line" ] \
-        && [ "$st_call_line" -lt "$st_phase_a_line" ]; then
-        st_ok "the node-deps preflight runs before Phase A (line $st_call_line < $st_phase_a_line)"
+    #
+    #     The lookup is a function called from a condition context, with
+    #     `|| true` on each capture. This script runs `set -uo pipefail`
+    #     WITHOUT `-e`, so the inline form here did still reach its
+    #     diagnosis (verified) — unlike push.sh's, which aborted silently.
+    #     One `set -e` away from the same bug, and the fixtures below cost
+    #     nothing, so it gets the same shape.
+    st_line_of() {
+        grep -n "$1" "$2" 2>/dev/null | head -1 | cut -d: -f1 || true
+    }
+    st_order_check() {
+        # $1 file, $2 anchor that must come FIRST, $3 anchor after it.
+        # Echoes a human diagnosis; non-zero on any violation, including a
+        # MISSING anchor (unwired is a failure, not a reason to skip).
+        local f="$1" first="$2" second="$3" a b
+        a="$(st_line_of "$first" "$f")"
+        b="$(st_line_of "$second" "$f")"
+        if [ -z "$a" ]; then
+            echo "<not wired>: no line matching /$first/"
+            return 1
+        fi
+        if [ -z "$b" ]; then
+            echo "<anchor missing>: no line matching /$second/"
+            return 1
+        fi
+        if [ "$a" -lt "$b" ]; then
+            echo "ok (line $a < $b)"
+            return 0
+        fi
+        echo "<out of order>: /$first/ at line $a is not before /$second/ at line $b"
+        return 1
+    }
+
+    ST_CALL_ANCHOR='^if ! node_deps_problem_out='
+    ST_PHASE_A_ANCHOR='^if ! SKIP="\$PHASE_A_SKIP" prek run'
+    st_rc=0
+    st_out="$(st_order_check "${BASH_SOURCE[0]}" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
+    if [ "$st_rc" -eq 0 ]; then
+        st_ok "the node-deps preflight runs before Phase A — $st_out"
     else
-        st_bad "the node-deps preflight runs before Phase A" \
-            "call=${st_call_line:-<not wired>} phaseA=${st_phase_a_line:-<not found>}"
+        st_bad "the node-deps preflight runs before Phase A" "$st_out"
+    fi
+
+    # 15. The ratchet's diagnostics must survive the failure they describe:
+    #     a NAMED message, not a silent abort and not a bare non-zero.
+    grep -v "$ST_CALL_ANCHOR" "${BASH_SOURCE[0]}" >"$st_fixture_root/unwired.sh" || true
+    st_rc=0
+    st_out="$(st_order_check "$st_fixture_root/unwired.sh" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'not wired'; then
+        st_ok "ratchet names an UNWIRED preflight instead of aborting silently"
+    else
+        st_bad "ratchet names an UNWIRED preflight instead of aborting silently" \
+            "rc=$st_rc out=$st_out"
+    fi
+
+    printf 'if ! SKIP="$PHASE_A_SKIP" prek run --all-files\nif ! node_deps_problem_out="x"\n' \
+        >"$st_fixture_root/swapped.sh"
+    st_rc=0
+    st_out="$(st_order_check "$st_fixture_root/swapped.sh" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'out of order'; then
+        st_ok "ratchet names a preflight moved BELOW Phase A, with both line numbers"
+    else
+        st_bad "ratchet names a preflight moved BELOW Phase A, with both line numbers" \
+            "rc=$st_rc out=$st_out"
     fi
 
     rm -rf "$st_fixture_root"
