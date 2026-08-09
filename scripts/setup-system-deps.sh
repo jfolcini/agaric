@@ -55,8 +55,30 @@ manual_install_hint() {
   printf '\n'
 }
 
+# One record PER LINE — NOT an exact-string compare on a bare `${Status}`
+# (#3637). dpkg-query renders the format string once per matching record and
+# inserts no separator of its own, so on a multi-arch host
+# (`dpkg --add-architecture i386`) a package installed for two architectures
+# came back as the single run-on string `install ok installedinstall ok
+# installed`, which equals nothing, so a *present* package read as MISSING.
+# The consequence was not a harmless miss: the post-install re-verification
+# below then printed "apt reported success but N package(s) are still
+# missing" and set the "will not compile or test" advisory on a fully
+# provisioned box — the exact false-negative class this script exists to
+# prevent. `${binary:Package}` carries the arch qualifier, so the trailing
+# `\n` unambiguously ends each record.
+#
+# Captured into a variable and matched with `[[ ]]`, NOT piped into `grep -q`:
+# this script runs under `set -o pipefail` and `grep -q` exits the instant it
+# matches, so dpkg-query is killed by SIGPIPE while still writing and the
+# pipeline returns 141 — a package would read as missing on a coin-flip
+# (observed immediately when this fix was first written that way). A package
+# name cannot contain a space, so a substring test against the leading space
+# of the status field cannot be satisfied by anything but a real record.
 package_is_installed() {
-  [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null || true)" = 'install ok installed' ]
+  local records
+  records="$(dpkg-query -W -f='${binary:Package} ${Status}\n' "$1" 2>/dev/null || true)"
+  [[ "$records" == *" install ok installed"* ]]
 }
 
 use_sudo=false
@@ -104,9 +126,17 @@ only_patchelf_missing() {
 # exit path funnels through fail_status() (0/1/42) or the explicit `return 0`
 # on success, never a raw propagated apt-get/dpkg-query status. Do NOT "tidy"
 # this back to 2.
+#
+# The wording says "is present", not "installed fine" (#3637): fail_status is
+# reached from paths where NOTHING was installed — the no-privilege bail-out
+# and the apt-update failure both call it before any package is touched — and
+# on those a message claiming an install had gone well was simply false. The
+# classification was always right; only the claim about how the compile/test
+# set got there was wrong, and this script's whole value is that its messages
+# can be trusted.
 fail_status() {
   if only_patchelf_missing; then
-    warn 'patchelf (bundle-time only, used by "cargo tauri build" to rewrite RPATH) is the only package still missing — the compile/test package set installed fine.'
+    warn 'patchelf (bundle-time only, used by "cargo tauri build" to rewrite RPATH) is the only package still missing — the compile/test package set is present.'
     return 42
   fi
   return 1
@@ -160,6 +190,26 @@ main() {
   fi
 
   echo "Installing ${#missing[@]} missing Linux build/test system package(s)…"
+
+  # Self-heal an interrupted dpkg before touching apt (#3637). This installer
+  # runs synchronously inside .claude/hooks/session-start.sh's hard ~600s
+  # provisioning cap; a SIGKILL landing mid-`apt-get install` leaves dpkg
+  # half-configured, and every subsequent apt-get then aborts outright with
+  # "dpkg was interrupted, you must manually run 'dpkg --configure -a'".
+  # Every other bootstrap step in this repo is re-runnable; without this one
+  # line, the step whose whole job is to make a sandbox build-ready was the
+  # single one that a timeout could wedge permanently.
+  #
+  # Cheap and safe to run unconditionally: with nothing pending it is a no-op
+  # that exits 0. Best-effort — a failure here is NOT a reason to abort, the
+  # apt-get below reports the real problem with far better context, so its
+  # status is deliberately swallowed rather than propagated.
+  if command -v dpkg >/dev/null 2>&1; then
+    if ! run_as_root dpkg --configure -a >/dev/null 2>&1; then
+      warn 'dpkg --configure -a (interrupted-install self-heal) did not succeed; continuing — the apt-get below will report the real error.'
+    fi
+  fi
+
   if ! run_as_root apt-get -o Acquire::Retries=3 update -qq; then
     warn 'apt-get update failed; Rust builds/tests may remain unavailable.'
     manual_install_hint >&2

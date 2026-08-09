@@ -157,21 +157,36 @@ ensure_cargo_binstall() {
     local url="https://github.com/cargo-bins/cargo-binstall/releases/download/v${BINSTALL_VERSION}/cargo-binstall-${triple}.tgz"
     local dest="$HOME/.cargo/bin" tmp
     tmp="$(mktemp -d)"
-    mkdir -p "$dest"
-    # Download the tarball, verify its pinned SHA-256, then extract the single
-    # `cargo-binstall` binary and install it. No downloaded content is ever
-    # handed to a shell interpreter.
-    if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/cb.tgz" \
-         && verify_sha256 "$tmp/cb.tgz" "$want" \
-         && tar -xzf "$tmp/cb.tgz" -C "$tmp" cargo-binstall \
-         && install -m 0755 "$tmp/cargo-binstall" "$dest/cargo-binstall" \
-         && have cargo-binstall; then
-      ok "cargo-binstall (prebuilt v${BINSTALL_VERSION}, ${triple})"
+    # `set -u` does NOT fire on a failed `mktemp -d` (#3622): the command
+    # substitution yields an empty STRING, and assigning "" is not an unset
+    # variable — and this script deliberately runs without `set -e` (see the
+    # header), so nothing stops it either. With $tmp="" the download below
+    # writes `/cb.tgz` at the filesystem ROOT (root-owned in the CI
+    # containers this runs in), `tar -C ""` then fails, `rm -rf ""` removes
+    # nothing, and the function falls back to `cargo install` — so
+    # provisioning "succeeds" and the stray root-owned file is never even
+    # reported. Bail out BEFORE anything is written, and before any cleanup
+    # path can expand to `rm -rf ""` (the same guard --self-test carries
+    # since #3621).
+    if [ -z "$tmp" ] || [ ! -d "$tmp" ]; then
+      warn "mktemp -d failed (no writable temp dir?) — skipping the prebuilt cargo-binstall download, falling back to cargo install"
+    else
+      mkdir -p "$dest"
+      # Download the tarball, verify its pinned SHA-256, then extract the
+      # single `cargo-binstall` binary and install it. No downloaded content
+      # is ever handed to a shell interpreter.
+      if curl -fsSL --proto '=https' --tlsv1.2 "$url" -o "$tmp/cb.tgz" \
+           && verify_sha256 "$tmp/cb.tgz" "$want" \
+           && tar -xzf "$tmp/cb.tgz" -C "$tmp" cargo-binstall \
+           && install -m 0755 "$tmp/cargo-binstall" "$dest/cargo-binstall" \
+           && have cargo-binstall; then
+        ok "cargo-binstall (prebuilt v${BINSTALL_VERSION}, ${triple})"
+        rm -rf "$tmp"
+        return
+      fi
       rm -rf "$tmp"
-      return
+      warn "prebuilt cargo-binstall download/verify failed — falling back to cargo install"
     fi
-    rm -rf "$tmp"
-    warn "prebuilt cargo-binstall download/verify failed — falling back to cargo install"
   fi
   if cargo install --locked cargo-binstall >/dev/null 2>&1; then
     ok "cargo-binstall (cargo install)"
@@ -414,16 +429,26 @@ install_lychee() {
     # across GNU/bsd tar.
     local tmp bin=""
     tmp="$(mktemp -d)"
-    if curl -fsSL "$url" | tar -xz -C "$tmp" >/dev/null 2>&1; then
-      bin="$(find "$tmp" -type f -name lychee 2>/dev/null | head -1)"
-    fi
-    if [ -n "$bin" ] && install -m 0755 "$bin" "$HOME/.local/bin/lychee" 2>/dev/null; then
-      ok "lychee (prebuilt $triple)"
+    # Same guard, same reasoning as ensure_cargo_binstall above (#3622): a
+    # failed `mktemp -d` leaves $tmp empty and neither `set -u` nor (absent)
+    # `set -e` stops the script. Here nothing is written at the filesystem
+    # root — `tar -C ""` fails first — but the resulting "prebuilt lychee
+    # tarball unreachable (proxy/network)" is a lie about the cause, and
+    # `rm -rf ""` cleans nothing. Fail with the real reason instead.
+    if [ -z "$tmp" ] || [ ! -d "$tmp" ]; then
+      warn "mktemp -d failed (no writable temp dir?) — skipping the prebuilt lychee download, falling back to cargo binstall"
+    else
+      if curl -fsSL "$url" | tar -xz -C "$tmp" >/dev/null 2>&1; then
+        bin="$(find "$tmp" -type f -name lychee 2>/dev/null | head -1)"
+      fi
+      if [ -n "$bin" ] && install -m 0755 "$bin" "$HOME/.local/bin/lychee" 2>/dev/null; then
+        ok "lychee (prebuilt $triple)"
+        rm -rf "$tmp"
+        return
+      fi
       rm -rf "$tmp"
-      return
+      warn "prebuilt lychee tarball unreachable (proxy/network) — falling back to cargo binstall"
     fi
-    rm -rf "$tmp"
-    warn "prebuilt lychee tarball unreachable (proxy/network) — falling back to cargo binstall"
   else
     warn "no prebuilt lychee tarball for $OS-$arch — falling back to cargo binstall"
   fi
@@ -549,23 +574,37 @@ FAKECARGO
   # installed here.
   stub_path="$stub_dir"
 
+  # The version every assertion below compares against, read from the pin
+  # TABLE rather than repeated as a literal (#3623). The table is the single
+  # source of truth the CI cross-check (Test 4/4b) already uses; spelling the
+  # value out again here made bumping the pin redden a handful of tests that
+  # are not about the value at all, which is exactly the kind of friction
+  # that invites weakening an assertion instead of reading it. The value
+  # itself is still anchored — by Test 4/4b, against CI's `tool:` lists.
+  want_pin="$(pinned_version_for sqruff)"
+  if [ -z "$want_pin" ]; then
+    st_bad "pinned_version_for sqruff returns a version" "got an empty string — every sqruff assertion below is vacuous without it"
+    echo "setup-hooks.sh self-test FAILED" >&2
+    exit 2
+  fi
+
   # ── Test 1 (the falsifiable core) ── a PINNED crate is requested at its
   # exact pinned version FIRST — never at "latest" first. Calls
   # `cargo_get_pinned` with the exact arguments the real call site below
   # passes — not `cargo_get`, which has no pin awareness at all (#3611).
   req_log="$stub_dir/requests.log"
   : >"$req_log"
-  out="$(PATH="$stub_path" REQUEST_LOG="$req_log" cargo_get_pinned sqruff "$(pinned_version_for sqruff)" sqruff "$SQRUFF_VERSION_AWK" 2>&1)"
+  out="$(PATH="$stub_path" REQUEST_LOG="$req_log" cargo_get_pinned sqruff "$want_pin" sqruff "$SQRUFF_VERSION_AWK" 2>&1)"
   first_req="$(head -n1 "$req_log" 2>/dev/null || true)"
-  if [ "$first_req" = "binstall -y sqruff@0.38.0" ]; then
-    st_ok "cargo_get_pinned sqruff requests the PINNED version first (matches CI's sqruff@0.38.0)"
+  if [ "$first_req" = "binstall -y sqruff@$want_pin" ]; then
+    st_ok "cargo_get_pinned sqruff requests the PINNED version first (pinned_version_for says $want_pin)"
   else
-    st_bad "cargo_get_pinned sqruff requests the PINNED version first (matches CI's sqruff@0.38.0)" \
-      "first cargo request was '${first_req:-<none>}', wanted 'binstall -y sqruff@0.38.0' — full log: $(tr '\n' ';' <"$req_log" 2>/dev/null)"
+    st_bad "cargo_get_pinned sqruff requests the PINNED version first (pinned_version_for says $want_pin)" \
+      "first cargo request was '${first_req:-<none>}', wanted 'binstall -y sqruff@$want_pin' — full log: $(tr '\n' ';' <"$req_log" 2>/dev/null)"
   fi
   case "$out" in
-    *0.38.0*) st_ok "cargo_get_pinned sqruff's own report names the pinned version" ;;
-    *) st_bad "cargo_get_pinned sqruff's own report names the pinned version" "output was: $out" ;;
+    *"$want_pin"*) st_ok "cargo_get_pinned sqruff's own report names the pinned version ($want_pin)" ;;
+    *) st_bad "cargo_get_pinned sqruff's own report names the pinned version ($want_pin)" "output was: $out" ;;
   esac
   # A bare/unversioned request IS "latest" — the exact thing #3602 forbids
   # for a pinned crate. It must never appear in the log at all.
@@ -626,21 +665,24 @@ FAKECARGO
   # before this PR — so this guards its correctness in isolation; Test 1c
   # below guards the other half, that sqruff's call site actually reaches
   # this function at all. Stub a sqruff binary that reports a version other
-  # than the pin.
-  cat >"$stub_dir/sqruff" <<'FAKESQRUFF'
+  # than the pin — `0.0.0-selftest-wrong`, which no real release can ever
+  # carry, so this stays a wrong version no matter what the pin is bumped to
+  # (#3623: nothing here may hardcode the pinned value).
+  wrong_pin="0.0.0-selftest-wrong"
+  cat >"$stub_dir/sqruff" <<FAKESQRUFF
 #!/usr/bin/env bash
-echo "sqruff 0.30.0"
+echo "sqruff $wrong_pin"
 FAKESQRUFF
   chmod +x "$stub_dir/sqruff"
 
   req_log3="$stub_dir/requests3.log"
   : >"$req_log3"
-  out3="$(PATH="$stub_path" REQUEST_LOG="$req_log3" cargo_get_pinned sqruff "$(pinned_version_for sqruff)" sqruff "$SQRUFF_VERSION_AWK" 2>&1)"
-  if grep -qxF 'binstall -y sqruff@0.38.0' "$req_log3" 2>/dev/null; then
+  out3="$(PATH="$stub_path" REQUEST_LOG="$req_log3" cargo_get_pinned sqruff "$want_pin" sqruff "$SQRUFF_VERSION_AWK" 2>&1)"
+  if grep -qxF "binstall -y sqruff@$want_pin" "$req_log3" 2>/dev/null; then
     st_ok "cargo_get_pinned sqruff detects a wrong version already on PATH and reinstalls at the pin"
   else
     st_bad "cargo_get_pinned sqruff detects a wrong version already on PATH and reinstalls at the pin" \
-      "wrong-version sqruff 0.30.0 stub was on PATH — expected a 'binstall -y sqruff@0.38.0' reinstall request, got: $(tr '\n' ';' <"$req_log3" 2>/dev/null || echo '<none>') (output: $out3)"
+      "wrong-version sqruff $wrong_pin stub was on PATH — expected a 'binstall -y sqruff@$want_pin' reinstall request, got: $(tr '\n' ';' <"$req_log3" 2>/dev/null || echo '<none>') (output: $out3)"
   fi
 
   # ── Test 1c (#3611 finding 1, the actual wiring) ── Test 1b above proves
@@ -657,8 +699,18 @@ FAKESQRUFF
   # literal string, and it lives (like the rest of --self-test) ABOVE that
   # banner, so searching the whole file ($0) would always match its own
   # source line regardless of what the real call site says.
-  if awk '/^echo "Setting up the prek hook toolchain/{p=1} p' "$0" \
-      | grep -qF 'cargo_get_pinned sqruff "$(pinned_version_for sqruff)" sqruff "$SQRUFF_VERSION_AWK"'; then
+  #
+  # A `case` on a captured string, NOT `awk … | grep -qF`: this script runs
+  # under `set -o pipefail`, `grep -q` exits the instant it matches, and awk
+  # is then killed by SIGPIPE while still writing the rest of the production
+  # section — so the pipeline returned 141 and this assertion FAILED
+  # spuriously on roughly 1 run in 15 (measured: 3/40 on HEAD before this
+  # change, and this hook runs at pre-commit). Whether awk finishes writing
+  # before grep exits is pure scheduling luck, which is not something a guard
+  # may depend on. Found while measuring #3623.
+  call_site_region="$(awk '/^echo "Setting up the prek hook toolchain/{p=1} p' "$0")"
+  call_site_needle='cargo_get_pinned sqruff "$(pinned_version_for sqruff)" sqruff "$SQRUFF_VERSION_AWK"'
+  if [ "$call_site_region" != "${call_site_region#*"$call_site_needle"}" ]; then
     st_ok "setup-hooks.sh's sqruff call site is wired through cargo_get_pinned, not cargo_get"
   else
     st_bad "setup-hooks.sh's sqruff call site is wired through cargo_get_pinned, not cargo_get" \
@@ -668,12 +720,16 @@ FAKESQRUFF
   # ── Test 3 ── the pin/fallback tables carry sqruff under the right NAME:
   # a hard pin (pinned_version_for), no longer an MSRV-skew fallback
   # (msrv_fallback_version_for) — the name/precedence mismatch is how #3602
-  # happened in the first place.
-  if [ "$(pinned_version_for sqruff)" = "0.38.0" ]; then
-    st_ok "pinned_version_for sqruff == 0.38.0"
-  else
-    st_bad "pinned_version_for sqruff == 0.38.0" "got '$(pinned_version_for sqruff)'"
-  fi
+  # happened in the first place. Asserts the SHAPE, not the value (#3623):
+  # sqruff must be in the pin table with a version-looking entry. The value
+  # itself is anchored by Test 4/4b against CI's `tool:` lists, which is the
+  # only comparison that can catch real drift — repeating the literal here as
+  # well only meant a legitimate pin bump reddened a test about table
+  # membership.
+  case "$want_pin" in
+    [0-9]*.[0-9]*) st_ok "pinned_version_for sqruff is a hard pin ($want_pin)" ;;
+    *) st_bad "pinned_version_for sqruff is a hard pin" "got '$want_pin', which is not a version" ;;
+  esac
   if [ -z "$(msrv_fallback_version_for sqruff)" ]; then
     st_ok "msrv_fallback_version_for sqruff is empty — sqruff moved to the pin table, not the MSRV-skew table"
   else
@@ -714,7 +770,51 @@ FAKESQRUFF
   # scoped only to the file it lives in never fires on the other side of the
   # comparison (#3619). If you narrow either one, narrow both.
   repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-  want_pin="$(pinned_version_for sqruff)"
+
+  # sqruff_pins <file>… — emit `<path>:<lineno>:sqruff@<version>` for every
+  # pin in the named files. ONE extractor for both Test 4 (per-file) and Test
+  # 4b (repo-wide) so the two can never disagree about what counts as a pin.
+  #
+  # Whole-line comments are skipped (#3623). The regex this replaces matched
+  # `sqruff@<version>` anywhere, including inside a YAML comment, so a
+  # commented-out pin — the normal way to park a version while testing a bump
+  # — counted toward the per-file and repo-wide COUNT assertions and reddened
+  # a file where nothing had drifted. Fail-safe (it broke loudly rather than
+  # passing silently), which is why this waited for a real report; a comment
+  # is not a pin and must not be counted as one. Deliberately minimal: only a
+  # line that is ENTIRELY a comment is skipped, so a trailing `# sqruff@x.y.z`
+  # note beside a live pin is still read, and no live pin can hide behind a
+  # `#` this loop chose to ignore.
+  sqruff_pins() {
+    awk '
+      /^[[:space:]]*#/ { next }
+      {
+        rest = $0
+        while (match(rest, /sqruff@[0-9][^,[:space:]"]*/)) {
+          printf "%s:%d:%s\n", FILENAME, FNR, substr(rest, RSTART, RLENGTH)
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+      }
+    ' "$@"
+  }
+
+  # Falsifiable coverage for that skip, since no file in this repo currently
+  # carries a commented-out pin: a fixture with one live pin and one
+  # commented-out pin must yield exactly ONE hit, at the live line.
+  pin_fixture="$stub_dir/pin-fixture.yml"
+  {
+    printf '        tool: taplo-cli,sqruff@%s\n' "$want_pin"
+    printf '        # tool: taplo-cli,sqruff@0.31.0   (parked while testing)\n'
+    printf '    #tool: sqruff@0.32.0\n'
+  } >"$pin_fixture"
+  fixture_hits="$(sqruff_pins "$pin_fixture" | wc -l | tr -d ' ')"
+  if [ "$fixture_hits" = "1" ]; then
+    st_ok "sqruff pin extraction ignores commented-out pins (1 live pin, 2 commented)"
+  else
+    st_bad "sqruff pin extraction ignores commented-out pins (1 live pin, 2 commented)" \
+      "expected 1 hit, got $fixture_hits: $(sqruff_pins "$pin_fixture" | tr '\n' ';')"
+  fi
+
   # Summed from the per-file spec below so there is ONE list to update, not
   # two that can drift apart.
   want_total=0
@@ -730,17 +830,19 @@ FAKESQRUFF
       st_bad "sqruff pin cross-check: $wf exists" "file not found at $wf_path"
       continue
     fi
-    # `grep -n` (not just -o) so a mismatch report NAMES the offending line —
-    # with several pins per file, "CI says 0.99.0" alone would not say which.
-    # Each hit reads `<lineno>:sqruff@<version>`.
-    ci_hits="$(grep -noE 'sqruff@[0-9][^,[:space:]"]*' "$wf_path" || true)"
+    # Line numbers are carried through (not just the versions) so a mismatch
+    # report NAMES the offending line — with several pins per file, "CI says
+    # 0.99.0" alone would not say which. Each hit reads
+    # `<path>:<lineno>:sqruff@<version>`.
+    ci_hits="$(sqruff_pins "$wf_path" || true)"
     pin_count=0
     seen_pins=""
     bad_pins=""
     while IFS= read -r hit; do
       [ -n "$hit" ] || continue
       pin_count=$((pin_count + 1))
-      hit_line="${hit%%:*}"
+      hit_line="${hit#*:}"
+      hit_line="${hit_line%%:*}"
       hit_ver="${hit##*@}"
       seen_pins="$seen_pins line $hit_line=$hit_ver;"
       if [ "$hit_ver" != "$want_pin" ]; then
@@ -773,8 +875,17 @@ FAKESQRUFF
   # and version-checks every `sqruff@` pin anywhere under .github/, so a pin
   # added to a file the list does not name reddens instead of passing
   # unexamined. Run from $repo_root so the reported paths are repo-relative.
-  # Each hit reads `<path>:<lineno>:sqruff@<version>`.
-  all_hits="$(cd "$repo_root" && grep -rnoE 'sqruff@[0-9][^,[:space:]"]*' .github || true)"
+  # Each hit reads `<path>:<lineno>:sqruff@<version>`. `grep -rl` only picks
+  # the CANDIDATE files (anything mentioning the string at all, comments
+  # included); sqruff_pins above is what decides which mentions are pins.
+  pin_files=()
+  while IFS= read -r pin_file; do
+    [ -n "$pin_file" ] && pin_files+=("$pin_file")
+  done < <(cd "$repo_root" && grep -rlE 'sqruff@[0-9]' .github 2>/dev/null || true)
+  all_hits=""
+  if [ "${#pin_files[@]}" -gt 0 ]; then
+    all_hits="$(cd "$repo_root" && sqruff_pins "${pin_files[@]}" || true)"
+  fi
   total_count=0
   all_seen=""
   all_bad=""
@@ -802,6 +913,79 @@ FAKESQRUFF
     st_bad "sqruff pin cross-check: every sqruff@ pin under .github matches pinned_version_for's $want_pin" \
       "scripts/setup-hooks.sh says $want_pin; CI disagrees at:$all_bad"
   fi
+
+  # ── Test 5 (#3622) ── the two LIVE provisioning downloads refuse to run
+  # when `mktemp -d` fails, instead of continuing with an empty $tmp.
+  #
+  # This is not a hypothetical: `set -u` does not fire on an empty
+  # assignment and this script has no `set -e`, so pre-#3622
+  # `ensure_cargo_binstall` went on to `curl … -o "$tmp/cb.tgz"` with
+  # $tmp="" — i.e. it wrote `/cb.tgz`, root-owned in the containers this runs
+  # in — then failed at `tar -C ""`, cleaned up nothing with `rm -rf ""`, and
+  # fell back to `cargo install` so provisioning still reported success and
+  # the stray file was never mentioned.
+  #
+  # Driving the REAL functions, not a transcription of them: a fake `curl`
+  # that only RECORDS its argv (it never writes anything, so this test cannot
+  # itself create the file it is about), a fake `uname` so the prebuilt-triple
+  # branch is entered on every host, TMPDIR pointed at a nonexistent
+  # directory so a REAL `mktemp -d` genuinely fails, and HOME redirected into
+  # the scratch dir so the `mkdir -p "$HOME/…"` these functions do first
+  # cannot touch the developer's actual home. The assertion is that curl is
+  # never reached: without the guard it is, with the `-o /cb.tgz` argv to
+  # prove it.
+  probe_dir="$stub_dir/mktemp-probe"
+  probe_home="$stub_dir/probe-home"
+  mkdir -p "$probe_dir" "$probe_home"
+  curl_log="$stub_dir/curl.log"
+  : >"$curl_log"
+  cat >"$probe_dir/curl" <<'FAKECURL'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$CURL_LOG"
+exit 1
+FAKECURL
+  chmod +x "$probe_dir/curl"
+  cat >"$probe_dir/uname" <<'FAKEUNAME'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -m) echo x86_64 ;;
+  *)  echo Linux ;;
+esac
+FAKEUNAME
+  chmod +x "$probe_dir/uname"
+  # Real tools the probed code paths need. `mktemp` above all: if it were
+  # missing, `mktemp -d` would fail as "command not found" and this test
+  # would pass without ever exercising the documented TMPDIR failure. `cargo`
+  # is the stub from Test 1 (both functions fall back to `cargo install`);
+  # `cargo-binstall` is deliberately NOT linked here, or
+  # `ensure_cargo_binstall` would early-return before reaching any of this.
+  for real_tool in bash mktemp mkdir rm; do
+    if command -v "$real_tool" >/dev/null 2>&1; then
+      ln -sf "$(command -v "$real_tool")" "$probe_dir/$real_tool"
+    fi
+  done
+  ln -sf "$stub_dir/cargo" "$probe_dir/cargo"
+  probe_req_log="$stub_dir/requests5.log"
+  : >"$probe_req_log"
+
+  saved_os="$OS"
+  OS="Linux"
+  for probe_fn in ensure_cargo_binstall install_lychee; do
+    : >"$curl_log"
+    probe_out="$(PATH="$probe_dir" HOME="$probe_home" TMPDIR="/nonexistent-dir" \
+      CURL_LOG="$curl_log" REQUEST_LOG="$probe_req_log" "$probe_fn" 2>&1)"
+    if [ -s "$curl_log" ]; then
+      st_bad "$probe_fn aborts its download when mktemp -d fails, instead of running with an empty \$tmp" \
+        "curl was invoked despite no temp dir: $(tr '\n' ';' <"$curl_log") — an empty \$tmp interpolates to the filesystem ROOT"
+    else
+      st_ok "$probe_fn aborts its download when mktemp -d fails, instead of running with an empty \$tmp"
+    fi
+    case "$probe_out" in
+      *"mktemp -d failed"*) st_ok "$probe_fn names the temp-dir failure as the reason it fell back" ;;
+      *) st_bad "$probe_fn names the temp-dir failure as the reason it fell back" "output was: $probe_out" ;;
+    esac
+  done
+  OS="$saved_os"
 
   rm -rf "$stub_dir"
   trap - EXIT

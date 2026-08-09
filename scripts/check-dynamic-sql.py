@@ -17,9 +17,11 @@ every one is out of scope for the hook. Instead the hook applies
 back-pressure to NEW sites:
 
   * A file whose count EXCEEDS its baseline must carry, at every dynamic
-    site, an adjacent `// dynamic-sql: <reason>` marker (on the call line
-    or the line immediately above) — otherwise the hook fails and points
-    the author at the macro forms.
+    site, a `// dynamic-sql: <reason>` marker attached to the STATEMENT
+    the call belongs to — on the call line, on any earlier physical line
+    of the same statement, or anywhere in the contiguous comment run
+    directly above it (#3653) — otherwise the hook fails and points the
+    author at the macro forms.
   * A file whose count is at or below baseline passes unchanged (existing
     sites are grandfathered; no mass retrofit required).
   * When a file's site count drops, regenerate the baseline:
@@ -30,7 +32,10 @@ back-pressure to NEW sites:
 The scan reuses the comment/string-stripping and `#[cfg(test)]`-module
 logic from check-raw-tx.py (imported), so a `sqlx::query(` mention inside
 a comment or string never fires, a call split across lines is still
-caught, and test fixtures are excluded.
+caught, and test fixtures are excluded. A file carrying an INNER
+`#![cfg(test)]` attribute is skipped outright (#3653): such a module
+cannot be compiled into a release binary at all, so none of its queries
+can reach production and the guard has no remit over them.
 
 Invocation: prek passes the set of changed files as argv (hook id
 `check-dynamic-sql`). Run manually over the whole tree with:
@@ -140,6 +145,15 @@ DYN_SQL_RE = re.compile(r"sqlx::query(?:_as|_scalar)?\s*(?:::<.*?>)?\s*\(")
 
 MARKER = "// dynamic-sql:"
 
+# An INNER attribute — `#![cfg(test)]` at the top of a file, before any item.
+# Rust only accepts inner attributes there, so a match found while scanning
+# down from line 1 past blanks, comments and other inner attributes gates the
+# WHOLE file: it is compiled only under `cfg(test)` and cannot reach a release
+# binary (#3653). `#[cfg(test)]` (outer, no `!`) does not match — that gates a
+# single item and is already handled per-line by `cfg_test_line_set`.
+INNER_CFG_TEST_RE = re.compile(r"^\s*#!\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]")
+_INNER_ATTR_RE = re.compile(r"^\s*#!\s*\[")
+
 HINT = (
     "    -> #646: a runtime `sqlx::query(`/`query_as(`/`query_scalar(` is a\n"
     "       NEW dynamic-SQL site. Prefer the compile-checked macro form\n"
@@ -147,21 +161,43 @@ HINT = (
     "       the schema at build time (the .sqlx offline cache).\n"
     "       If the query is genuinely dynamic (recursive CTE built at\n"
     "       runtime, FTS5 query builder, snapshot/sync fan-out), add a\n"
-    "       `// dynamic-sql: <reason>` comment on the call line or the line\n"
-    "       above, then re-anchor the baseline:\n"
+    "       `// dynamic-sql: <reason>` comment on the call line, on an\n"
+    "       earlier line of the same statement, or in the comment block\n"
+    "       directly above it, then re-anchor the baseline:\n"
     "         python3 scripts/check-dynamic-sql.py --update-baseline"
 )
 
 
-def count_sites(path: Path) -> tuple[int, list[int]]:
-    """Return (count, 0-based-line-indices) of dynamic-SQL sites.
+def is_test_only_module(text: str) -> bool:
+    """True iff the file carries a file-level inner `#![cfg(test)]` (#3653).
+
+    Scans down from line 1 through blank lines, comments and other inner
+    attributes — the only things Rust allows before one. The first line that
+    is none of those ends the inner-attribute region, so an `#![cfg(test)]`
+    written inside an inline `mod foo { … }` further down is never mistaken
+    for a whole-file gate.
+
+    Such a file is compiled only under `cfg(test)`; no query in it can reach
+    a release binary, which is the entire population this guard polices. It
+    is skipped rather than required to justify itself.
+    """
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("//") or line.startswith("/*"):
+            continue
+        if INNER_CFG_TEST_RE.match(raw):
+            return True
+        if _INNER_ATTR_RE.match(raw):
+            continue
+        return False
+    return False
+
+
+def scan_text(text: str) -> list[int]:
+    """0-based line indices of production dynamic-SQL sites in `text`.
 
     Comment-/string-stripped, `#[cfg(test)]`-module lines excluded.
     """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return 0, []
     stripped = strip_rust_comments(text)
     stripped_lines = stripped.splitlines()
     test_lines = cfg_test_line_set(stripped_lines)
@@ -171,23 +207,84 @@ def count_sites(path: Path) -> tuple[int, list[int]]:
         if idx in test_lines:
             continue
         indices.append(idx)
+    return indices
+
+
+def _marker_scope(raw: list[str], code: list[str], idx: int) -> list[int]:
+    """Line indices a marker for the site at `idx` may legitimately live on.
+
+    The original rule was "the call line or the ONE line above", which is a
+    physical-offset rule masquerading as a semantic one — and `cargo fmt`
+    owns the physical offsets. Reflowing `let rows = sqlx::query_as(…)` into
+    `let rows =` / `sqlx::query_as(…)` pushes a perfectly valid marker two
+    lines up and turns a passing file red at PRE-COMMIT, with no way to fix
+    it except contorting the code (hoisting the SQL into a `const`) so the
+    call fits back onto one line (#3653).
+
+    So the marker attaches to the STATEMENT instead. Walking up from the
+    call line, the scope covers:
+      * earlier physical lines of the same statement — a line that does not
+        close one (no trailing `;` / `{` / `}` in its CODE, comments and
+        string literals already blanked out in `code`); and
+      * the contiguous run of comment lines directly above that statement,
+        so a multi-line justification block reads top-down as written.
+
+    It stops at the first blank line or completed statement/block boundary,
+    so a marker belonging to a PREVIOUS statement — including a trailing
+    `// dynamic-sql:` comment on one — never covers this site.
+    """
+    scope = [idx]
+    j = min(idx, len(raw)) - 1
+    while j >= 0:
+        code_line = code[j].strip() if j < len(code) else ""
+        raw_line = raw[j].strip()
+        if not code_line:
+            # No code on this line: either a comment-only line (comments are
+            # blanked in `code`) or a genuinely blank one.
+            if raw_line.startswith(("//", "/*", "*")):
+                scope.append(j)
+                j -= 1
+                continue
+            break
+        if code_line.endswith((";", "{", "}")):
+            break
+        scope.append(j)
+        j -= 1
+    return scope
+
+
+def unmarked_sites(text: str, indices: list[int]) -> list[int]:
+    """Return the 0-based indices of dynamic sites WITHOUT a marker."""
+    raw = text.splitlines()
+    code = strip_rust_comments(text).splitlines()
+    missing: list[int] = []
+    for idx in indices:
+        if any(
+            MARKER in raw[j]
+            for j in _marker_scope(raw, code, idx)
+            if j < len(raw)
+        ):
+            continue
+        missing.append(idx)
+    return missing
+
+
+def read_source(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def count_sites(path: Path) -> tuple[int, list[int]]:
+    """Return (count, 0-based-line-indices) of dynamic-SQL sites."""
+    indices = scan_text(read_source(path))
     return len(indices), indices
 
 
 def site_has_marker(path: Path, indices: list[int]) -> list[int]:
     """Return the 0-based indices of dynamic sites WITHOUT a marker."""
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return indices
-    missing: list[int] = []
-    for idx in indices:
-        line = lines[idx] if idx < len(lines) else ""
-        above = lines[idx - 1] if idx > 0 else ""
-        if MARKER in line or MARKER in above:
-            continue
-        missing.append(idx)
-    return missing
+    return unmarked_sites(read_source(path), indices)
 
 
 def all_production_files() -> list[Path]:
@@ -198,6 +295,8 @@ def all_production_files() -> list[Path]:
         for p in sorted(root.rglob("*.rs")):
             rel = str(p.relative_to(REPO_ROOT))
             if is_excluded_file(rel):
+                continue
+            if is_test_only_module(read_source(p)):
                 continue
             files.append(p)
     return files
@@ -317,12 +416,143 @@ def run_self_test() -> int:
                 f"got {got}"
             )
 
+    # --- Test-only-module contract (#3653, part 1) ---
+    # A file whose FIRST item-level thing is an inner `#![cfg(test)]` is
+    # compiled only under cfg(test) and cannot reach a release binary, so it
+    # is out of the guard's remit however it is named. Before #3653 such a
+    # file was scanned like production code and its every runtime query had
+    # to carry a justification marker.
+    test_only_cases: list[tuple[str, bool, str]] = [
+        (
+            "#![cfg(test)]\n\nuse sqlx::SqlitePool;\n"
+            'async fn f(p: &SqlitePool) { sqlx::query("SELECT 1"); }\n',
+            True,
+            "bare inner attribute on line 1",
+        ),
+        (
+            "//! Oracle module, test-only.\n\n// leading comment\n"
+            "#![allow(clippy::pedantic)]\n#![cfg(test)]\n\nfn f() {}\n",
+            True,
+            "inner attribute after doc comments and another inner attribute",
+        ),
+        (
+            "  #! [ cfg ( test ) ]\nfn f() {}\n",
+            True,
+            "whitespace-tolerant spelling",
+        ),
+        (
+            'use sqlx::SqlitePool;\nfn f() { sqlx::query("SELECT 1"); }\n',
+            False,
+            "ordinary production file",
+        ),
+        (
+            "#[cfg(test)]\nmod tests {\n    fn f() {}\n}\n",
+            False,
+            "OUTER #[cfg(test)] gates one item, not the file",
+        ),
+        (
+            "fn real() {}\nmod inline {\n    #![cfg(test)]\n    fn f() {}\n}\n",
+            False,
+            "inner attribute inside an inline mod is not a file-level gate",
+        ),
+    ]
+    for text, expect_skip, label in test_only_cases:
+        got_skip = is_test_only_module(text)
+        if got_skip != expect_skip:
+            failures.append(
+                f"is_test_only_module ({label}): expected {expect_skip}, "
+                f"got {got_skip}"
+            )
+
+    # --- Marker-scope contract (#3653, part 2) ---
+    # The marker attaches to the STATEMENT, not to a physical line offset.
+    # `cargo fmt` owns the offsets: reflowing a call across two lines used to
+    # orphan a valid marker and redden a passing file at pre-commit. Each
+    # case is (source, expected count of UNMARKED sites, label).
+    marker_cases: list[tuple[str, int, str]] = [
+        (
+            'let rows = sqlx::query("SELECT 1"); // dynamic-sql: on the call\n',
+            0,
+            "marker on the call line",
+        ),
+        (
+            "// dynamic-sql: reason\n"
+            'let rows = sqlx::query("SELECT 1");\n',
+            0,
+            "marker on the line immediately above (the pre-#3653 rule)",
+        ),
+        (
+            "// The schema is chosen at runtime from the caller's space set,\n"
+            "// so the column list cannot be known at compile time.\n"
+            "// dynamic-sql: runtime-built column list\n"
+            "// (see the module header for the full derivation)\n"
+            'let rows = sqlx::query("SELECT 1");\n',
+            0,
+            "marker anywhere in the contiguous comment run above",
+        ),
+        (
+            # Verbatim `rustfmt --edition 2021` output for a one-line call
+            # that no longer fits: it hoists `let … =` onto its own line and
+            # the marker, valid before the reformat, is now TWO lines above
+            # the call. This exact shape reddens under the pre-#3653 rule.
+            "    // dynamic-sql: runtime-built column list\n"
+            "    let rows_for_the_current_space =\n"
+            "        sqlx::query_as::<_, (String, i64, String)>(sql)\n"
+            "            .fetch_all(pool)\n"
+            "            .await;\n",
+            0,
+            "marker survives a cargo fmt reflow of the same statement",
+        ),
+        (
+            'let rows = sqlx::query("SELECT 1");\n',
+            1,
+            "no marker at all still fails",
+        ),
+        (
+            "// dynamic-sql: this one is justified\n"
+            'let a = sqlx::query("SELECT 1");\n'
+            'let b = sqlx::query("SELECT 2");\n',
+            1,
+            "a previous statement's marker does not cover the next site",
+        ),
+        (
+            'let a = sqlx::query("SELECT 1"); // dynamic-sql: justified\n'
+            'let b = sqlx::query("SELECT 2");\n',
+            1,
+            "a previous statement's TRAILING marker does not leak downward",
+        ),
+        (
+            "// dynamic-sql: justified\n"
+            "\n"
+            'let rows = sqlx::query("SELECT 1");\n',
+            1,
+            "a blank line ends the comment run",
+        ),
+    ]
+    for text, expect_missing, label in marker_cases:
+        indices = scan_text(text)
+        if not indices:
+            failures.append(f"marker scope ({label}): no site detected at all")
+            continue
+        got_missing = len(unmarked_sites(text, indices))
+        if got_missing != expect_missing:
+            failures.append(
+                f"marker scope ({label}): expected {expect_missing} unmarked "
+                f"site(s), got {got_missing}"
+            )
+
     if failures:
         print("check-dynamic-sql self-test FAILED:", file=sys.stderr)
         for f in failures:
             print(f"  {f}", file=sys.stderr)
         return 1
-    total = len(should_match) + len(should_not_match) + len(scope_cases)
+    total = (
+        len(should_match)
+        + len(should_not_match)
+        + len(scope_cases)
+        + len(test_only_cases)
+        + len(marker_cases)
+    )
     print(f"check-dynamic-sql self-test passed ({total} cases).")
     return 0
 
@@ -357,6 +587,10 @@ def main(argv: list[str]) -> int:
         if is_excluded_file(rel):
             continue
         if not p.is_file():
+            continue
+        # A whole-file `#![cfg(test)]` module cannot reach a release binary
+        # (#3653) — outside this guard's remit, whatever its filename.
+        if is_test_only_module(read_source(p)):
             continue
         targets.append(p)
 
