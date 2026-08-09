@@ -46,6 +46,7 @@ use crate::transport::bulk::{recv_bulk, send_bulk};
 use crate::transport::session::{
     RECV_TIMEOUT, recv_sync_message, recv_sync_message_within, send_sync_message,
 };
+use agaric_core::attachment_path::AttachmentFsPath;
 use agaric_core::error::AppError;
 
 // There is no chunk size here any more. The copy granularity now lives inside
@@ -113,82 +114,54 @@ impl FileTransferProgress<'_> {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// Validate that an attachment's stored `fs_path` is a safe relative path
-/// under `app_data_dir` and return the resolved absolute path.
+/// Validate that an attachment's stored `fs_path` names a file inside the
+/// `attachments/` subtree of `app_data_dir`, and return the resolved absolute
+/// path — built from the **canonical** spelling, not the caller's.
 ///
-/// Prevents a malformed op record or corrupted row from
-/// redirecting attachment reads/writes to arbitrary filesystem locations
-/// via `..` traversal or absolute paths.  The threat model (`AGENTS.md`)
-/// is not adversarial — sync peers are the user's own devices — but this
-/// guard is a data-integrity defense against buggy frontends, bad imports
-/// and corrupted metadata.
+/// Prevents a malformed op record or corrupted row from redirecting attachment
+/// reads/writes to other filesystem locations. Sync peers are the user's own
+/// devices, but their ops are not vetted by this device's origination guard, so
+/// this is also the boundary that stops a peer-supplied `fs_path` from naming a
+/// file that is not an attachment.
 ///
-/// Rejects:
-/// - Empty `fs_path`
-/// - Absolute `fs_path` (any platform)
-/// - Any `..` (`Component::ParentDir`) component anywhere in the path
-/// - Any root-dir component (`/`, drive prefix on Windows)
+/// Rejects everything [`agaric_core::attachment_path::AttachmentFsPath::parse`]
+/// rejects: empty, absolute, `..` traversal, drive/stream separators, control
+/// characters, and — the part that matters most here (#3370) — any relative
+/// path *outside* `attachments/`. `app_data_dir` also holds the SQLite database
+/// and its WAL, so an unconfined relative path is a write primitive over them.
 ///
-/// The check is lexical so it works for paths whose target file does not
-/// exist yet (required by [`write_attachment_file`]). Callers that want
-/// an additional canonicalization check should do so separately.
+/// The check is lexical so it works for paths whose target file does not exist
+/// yet (required by [`write_attachment_file`]). Callers that want an additional
+/// canonicalization check should do so separately.
 ///
 /// # Errors
 ///
-/// Returns [`AppError::Validation`] when the path escapes or is otherwise
-/// malformed.
+/// Returns [`AppError::Validation`] when the path escapes, leaves the
+/// attachments root, or is otherwise malformed.
 pub fn validate_attachment_fs_path(
     app_data_dir: &Path,
     fs_path: &str,
 ) -> Result<PathBuf, AppError> {
-    check_attachment_fs_path_shape(fs_path)?;
-    Ok(app_data_dir.join(fs_path))
+    let canonical = AttachmentFsPath::parse(fs_path)?;
+    Ok(app_data_dir.join(canonical.as_str()))
 }
 
-/// Pure lexical check on an attachment `fs_path` — rejects absolute paths,
-/// `..` traversal, root / drive prefixes, and empty strings. Exists for trust
-/// boundaries such as snapshot restore and pre-write checks that need lexical
-/// validation without resolving the path or requiring its target to exist.
+/// Pure lexical check on an attachment `fs_path`. Exists for trust boundaries
+/// such as snapshot restore and pre-write checks that need lexical validation
+/// without resolving the path or requiring its target to exist.
 /// See [`validate_attachment_fs_path`] for the full docs.
+///
+/// Thin wrapper over [`agaric_core::attachment_path::AttachmentFsPath::parse`],
+/// which is the single definition of what a stored attachment path may be —
+/// the apply/undo/replay writers parse with the same function, so what the
+/// resolvers accept and what the writers store cannot drift apart.
 ///
 /// # Errors
 ///
-/// Returns [`AppError::Validation`] when the path escapes or is otherwise
-/// malformed.
+/// Returns [`AppError::Validation`] when the path escapes, leaves the
+/// attachments root, or is otherwise malformed.
 pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
-    use std::path::Component;
-
-    if fs_path.is_empty() {
-        return Err(AppError::validation(
-            "attachment path must not be empty".into(),
-        ));
-    }
-
-    let candidate = Path::new(fs_path);
-    if candidate.is_absolute() {
-        return Err(AppError::validation(
-            "attachment path escapes app data dir".into(),
-        ));
-    }
-
-    // Lexical walk: reject anything that is not a plain named component.
-    // Note: PathBuf::components() normalizes interior `.` but NOT `..`,
-    // so a `..` anywhere in the path will surface as `Component::ParentDir`.
-    // On non-Windows, backslash-separated strings like "..\\foo" are a
-    // single opaque file-name component (harmless on Linux / macOS but
-    // Documented in).
-    for component in candidate.components() {
-        match component {
-            Component::Normal(_) | Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(AppError::validation(
-                    "attachment path escapes app data dir".into(),
-                ));
-            }
-        }
-    }
-
-    Ok(())
+    AttachmentFsPath::parse(fs_path).map(|_| ())
 }
 
 /// Query the `attachments` table and return entries whose `fs_path` file

@@ -113,11 +113,16 @@ async fn find_missing_classifies_non_not_found_io_error_as_missing() {
     // same path shape produces a non-`NotFound` error too (the kind
     // varies by version), so the assertion intentionally checks the
     // behavioural outcome rather than the error kind.
-    std::fs::write(dir.path().join("regular_file"), b"not a directory").unwrap();
+    std::fs::create_dir_all(dir.path().join("attachments")).unwrap();
+    std::fs::write(
+        dir.path().join("attachments/regular_file"),
+        b"not a directory",
+    )
+    .unwrap();
 
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES ('ATT_ENOTDIR', 'BLK1', 'image/png', 'p.png', 1024, 'regular_file/under.png', 1736942400000)",
+         VALUES ('ATT_ENOTDIR', 'BLK1', 'image/png', 'p.png', 1024, 'attachments/regular_file/under.png', 1736942400000)",
     )
     .execute(&pool)
     .await
@@ -130,7 +135,7 @@ async fn find_missing_classifies_non_not_found_io_error_as_missing() {
         "non-NotFound IO error must still be classified as missing"
     );
     assert_eq!(missing[0].id, "ATT_ENOTDIR");
-    assert_eq!(missing[0].fs_path, "regular_file/under.png");
+    assert_eq!(missing[0].fs_path, "attachments/regular_file/under.png");
 }
 
 // ── read_attachment_file ─────────────────────────────────────────────
@@ -1871,11 +1876,11 @@ fn read_attachment_file_hash_determinism() {
     let content = b"deterministic hash content";
 
     // Write the same content to two different paths
-    write_attachment_file(dir.path(), "file_a.bin", content).unwrap();
-    write_attachment_file(dir.path(), "file_b.bin", content).unwrap();
+    write_attachment_file(dir.path(), "attachments/file_a.bin", content).unwrap();
+    write_attachment_file(dir.path(), "attachments/file_b.bin", content).unwrap();
 
-    let (_, hash_a) = read_attachment_file(dir.path(), "file_a.bin").unwrap();
-    let (_, hash_b) = read_attachment_file(dir.path(), "file_b.bin").unwrap();
+    let (_, hash_a) = read_attachment_file(dir.path(), "attachments/file_a.bin").unwrap();
+    let (_, hash_b) = read_attachment_file(dir.path(), "attachments/file_b.bin").unwrap();
 
     assert_eq!(
         hash_a, hash_b,
@@ -1890,9 +1895,9 @@ fn write_attachment_file_creates_deeply_nested_parent_dirs() {
     let dir = TempDir::new().unwrap();
     let content = b"deeply nested file content";
 
-    write_attachment_file(dir.path(), "subdir/subdir2/file.bin", content).unwrap();
+    write_attachment_file(dir.path(), "attachments/subdir/subdir2/file.bin", content).unwrap();
 
-    let full_path = dir.path().join("subdir/subdir2/file.bin");
+    let full_path = dir.path().join("attachments/subdir/subdir2/file.bin");
     assert!(
         full_path.exists(),
         "deeply nested file should exist after write"
@@ -2687,34 +2692,85 @@ fn validate_rejects_empty_fs_path() {
     );
 }
 
-/// On Linux, Windows-style backslashes in a relative path are treated
-/// as a single opaque file-name component (PathBuf::components()
-/// returns one `Normal` segment for `"..\\..\\secrets"`). That's safe
-/// — no real `..` component is produced — but the behaviour differs
-/// between platforms, so this test documents it explicitly. On
-/// Windows, PathBuf::join parses backslashes as separators and the
-/// `..` components DO surface, which the validator rejects.
+/// Backslashes used to be platform-dependent here: `PathBuf::components()`
+/// returns one opaque `Normal` segment for `"..\\..\\secrets"` on Linux, so the
+/// old validator accepted it there and rejected it on Windows. #3370 made `\` a
+/// separator on every platform — one replicated op must canonicalize
+/// identically on every device, or two peers disagree about which file a row
+/// names — and confined the result to `attachments/`, so this is now rejected
+/// everywhere, for both reasons.
 #[test]
 fn validate_windows_style_backslashes_on_current_platform() {
     let dir = TempDir::new().unwrap();
     let result = validate_attachment_fs_path(dir.path(), "..\\..\\secrets");
-    #[cfg(unix)]
-    {
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "backslashes are separators on every platform now, so `..\\\\..\\\\secrets` \
+         must be rejected identically everywhere, got {result:?}"
+    );
+}
+
+/// #3370 (SECURITY) — the consequence that makes this a security bug rather
+/// than a tidiness one. `app_data_dir` is not a private attachment store: the
+/// SQLite database and its WAL sit directly in it. The old shape check refused
+/// `..` and absolute paths but accepted **any other relative path**, and the
+/// file-receive path writes a peer's bytes at whatever the row's `fs_path`
+/// says. `fs_path: "notes.db"` was therefore a write primitive over the
+/// database file.
+///
+/// Confinement to `attachments/` removes it for every caller of the resolver at
+/// once — including a row that predates the parse, or one written by some
+/// future writer that skipped it.
+#[test]
+fn a_relative_path_outside_the_attachments_root_cannot_reach_the_database_file_3370() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("notes.db");
+    std::fs::write(&db, b"the real database").unwrap();
+
+    for hostile in ["notes.db", "notes.db-wal", "./notes.db", "sub/../notes.db"] {
+        let result = write_attachment_file(dir.path(), hostile, b"peer-supplied bytes");
         assert!(
-            result.is_ok(),
-            "on Linux, `..\\\\..\\\\secrets` is a single opaque component; \
-             validator accepts it because PathBuf does not parse backslashes \
-             as separators. (Note: any OS later interpreting this path would \
-             still only look in `app_data_dir/..\\..\\secrets` — no escape.)"
+            result.is_err(),
+            "{hostile:?} names a file outside the attachments root and must be refused, \
+             got {result:?}"
         );
     }
-    #[cfg(windows)]
-    {
-        assert!(
-            matches!(result, Err(AppError::Validation { .. })),
-            "on Windows, backslashes ARE separators so `..\\..\\secrets` \
-             must be rejected, got {result:?}"
-        );
+
+    assert_eq!(
+        std::fs::read(&db).unwrap(),
+        b"the real database",
+        "the database file must be untouched"
+    );
+}
+
+/// The other half of the confinement: the read side must not resolve a
+/// non-attachment file for a peer either.
+#[test]
+fn a_relative_path_outside_the_attachments_root_cannot_be_read_back_3370() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("notes.db"), b"the real database").unwrap();
+
+    let result = validate_attachment_fs_path(dir.path(), "notes.db");
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "reads must be confined to the attachments root too, got {result:?}"
+    );
+}
+
+/// #3370 — the resolver joins the *canonical* spelling, so equivalent
+/// spellings of one file resolve to one path rather than to N distinct ones.
+#[test]
+fn equivalent_spellings_resolve_to_one_canonical_path_3370() {
+    let dir = TempDir::new().unwrap();
+    let expected = dir.path().join("attachments").join("photo.png");
+    for spelling in [
+        "attachments/photo.png",
+        "attachments/./photo.png",
+        "attachments//photo.png",
+        "./attachments/photo.png",
+    ] {
+        let resolved = validate_attachment_fs_path(dir.path(), spelling).expect(spelling);
+        assert_eq!(resolved, expected, "{spelling:?} must resolve canonically");
     }
 }
 
@@ -2730,15 +2786,17 @@ fn shape_check_matches_full_validator() {
         ("../../etc/passwd", true),
         ("../other", true),
         ("attachments/../escape", true),
+        // #3370: rejected on every platform now, not just Windows — the rules
+        // are one shared parse, so they cannot differ per target.
+        ("/etc/passwd", true),
+        ("C:\\Windows", true),
+        // #3370: relative but outside the attachments root.
+        ("notes.db", true),
+        ("attachments", true),
         ("attachments/ABC", false),
         ("attachments/photo.png", false),
     ];
-    #[cfg(unix)]
-    let abs = "/etc/passwd";
-    #[cfg(windows)]
-    let abs = "C:\\Windows";
-    let mut all: Vec<(&str, bool)> = cases.to_vec();
-    all.push((abs, true));
+    let all: Vec<(&str, bool)> = cases.to_vec();
 
     let dir = TempDir::new().unwrap();
     for (input, should_fail) in all {

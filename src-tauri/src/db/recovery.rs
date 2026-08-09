@@ -1640,7 +1640,26 @@ pub(crate) async fn recover_derived_state_from_op_log(
                         );
                     }
                     let size_bytes = payload["size_bytes"].as_i64().unwrap_or(0);
-                    let fs_path = payload["fs_path"].as_str().unwrap_or("");
+                    // #3370 (SECURITY): same argument as the filename above, but
+                    // for a value that actually reaches the filesystem. Parse the
+                    // peer's `fs_path` into the confined canonical form; a value
+                    // that cannot be made safe becomes this device's own
+                    // `attachments/<attachment_id>` path. Coerce, never reject —
+                    // rejecting would wedge the recovery replay.
+                    let raw_fs_path = payload["fs_path"].as_str().unwrap_or("");
+                    let fs_path = agaric_core::attachment_path::AttachmentFsPath::coerce_from_peer(
+                        raw_fs_path,
+                        attachment_id,
+                    );
+                    let fs_path = fs_path.as_str();
+                    if fs_path != raw_fs_path {
+                        tracing::warn!(
+                            attachment_id,
+                            original = raw_fs_path,
+                            canonical = fs_path,
+                            "rewrote unsafe or non-canonical peer attachment fs_path on recovery replay (add_attachment)"
+                        );
+                    }
                     let created_at: i64 = row.try_get("created_at")?;
 
                     // Guard the `block_id` FK (→ blocks(id)): an attachment whose

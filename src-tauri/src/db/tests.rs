@@ -2243,6 +2243,19 @@ async fn init_pool_recovery_sanitizes_peer_traversal_filename_3029() {
         filename, ".._secret_evil.sh",
         "peer traversal rename must be replayed as a sanitized single component"
     );
+
+    // #3370: the same replay carries a peer-supplied `fs_path` — `/tmp/evil.sh`
+    // here — and unlike `filename` that value reaches the filesystem. It must
+    // land confined and canonical, not verbatim.
+    let fs_path: String =
+        sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = 'ATT3029'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        fs_path, "attachments/ATT3029",
+        "an unusable peer fs_path must be replaced by this device's own path on replay"
+    );
 }
 
 /// #616 regression: the derived-state replay needs a POSITIVE corruption
@@ -4977,4 +4990,122 @@ async fn peer_refs_0107_endpoint_id_check_rejects_non_canonical_encodings_3464()
             "expected a CHECK constraint failure for {bad:?} ({why}), got: {err}"
         );
     }
+}
+
+// ----------------------------------------------------------------------
+// 0108 — attachments.fs_path shape triggers (#3370)
+// ----------------------------------------------------------------------
+
+/// The triggers are the backstop for a writer that skips
+/// `AttachmentFsPath::parse`. They must refuse exactly the shapes the parser
+/// refuses — an unconfined path (the database file is a sibling of
+/// `attachments/`) and a non-canonical spelling (which the orphan GC's
+/// walk-derived membership test misses, so it destroys bytes a live row
+/// references).
+///
+/// `GLOB` rather than `LIKE` is load-bearing: SQLite's `LIKE` is
+/// case-insensitive for ASCII, so a `LIKE 'attachments/%'` rule would admit
+/// `Attachments/photo.png` — a different directory on any case-sensitive
+/// filesystem. `Attachments/…` is in the table below for that reason.
+#[tokio::test]
+async fn attachments_0108_fs_path_shape_triggers_refuse_unsafe_writes_3370() {
+    let (pool, _dir) = test_pool().await;
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('BLK3370', 'content', '')")
+        .execute(&pool)
+        .await
+        .expect("seed the owning block");
+
+    let insert = |id: &'static str, fs_path: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO attachments \
+                     (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+                 VALUES (?, 'BLK3370', 'image/png', 'f.png', 1, ?, 1735689600000)",
+            )
+            .bind(id)
+            .bind(fs_path)
+            .execute(&pool)
+            .await
+        }
+    };
+
+    // Canonical shapes the writers actually mint must pass, or the backstop
+    // would refuse what the canonicalizer just produced.
+    insert(
+        "ATT3370OK1",
+        "attachments/01J0000000000000000000000A".into(),
+    )
+    .await
+    .expect("a canonical ingest path must be accepted");
+    insert("ATT3370OK2", "attachments/sub/photo.png".into())
+        .await
+        .expect("a nested canonical path must be accepted");
+    // A legal file name that merely looks alarming must still be accepted —
+    // the triggers police path shape, not name aesthetics.
+    insert("ATT3370OK3", "attachments/.._.._evil".into())
+        .await
+        .expect("a dotted single component is a legal file name");
+    // The digest fallback `for_storage_id` mints when the id is not a
+    // component `parse` accepts verbatim — hex, so it cannot be refused
+    // (#3370 review).
+    insert(
+        "ATT3370OK4",
+        format!("attachments/id-{}", blake3::hash(b"C:X").to_hex()),
+    )
+    .await
+    .expect("the digest fallback must be accepted");
+
+    for (i, bad) in [
+        // Unconfined: `app_data_dir` holds the database and its WAL.
+        "notes.db",
+        "notes.db-wal",
+        "attachments",
+        // `LIKE` would admit this one; `GLOB` does not.
+        "Attachments/photo.png",
+        // Non-canonical spellings the GC's membership test cannot match.
+        "attachments/./photo.png",
+        "attachments//photo.png",
+        "attachments/photo.png/",
+        "attachments/sub/../photo.png",
+        "attachments/sub/..",
+        "attachments/sub/.",
+        // #3370 review / migration 0109: Windows folds a trailing dot or space
+        // away at create time, so these spell the same file as the bare name
+        // and the GC's walk-derived string cannot match them.
+        "attachments/photo.png.",
+        "attachments/photo.png ",
+        "attachments/photo.png..",
+        "attachments/sub./photo.png",
+        "attachments/sub /photo.png",
+        // Separator and drive/stream forms.
+        "attachments\\photo.png",
+        "attachments/C:photo.png",
+        "/attachments/photo.png",
+        "../../etc/passwd",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let err = insert("ATT3370BAD", bad.to_owned())
+            .await
+            .expect_err(bad)
+            .to_string();
+        assert!(
+            err.contains("canonical path under attachments/"),
+            "case {i} ({bad:?}) must fail the 0108 trigger, got: {err}"
+        );
+    }
+
+    // The UPDATE trigger closes the same door for a repoint (the blob-dedup
+    // link and the boot backfills both `UPDATE attachments SET fs_path = ?`).
+    let err = sqlx::query("UPDATE attachments SET fs_path = 'notes.db' WHERE id = 'ATT3370OK1'")
+        .execute(&pool)
+        .await
+        .expect_err("repointing a row out of the attachments root must abort")
+        .to_string();
+    assert!(
+        err.contains("canonical path under attachments/"),
+        "the UPDATE trigger must fire too, got: {err}"
+    );
 }

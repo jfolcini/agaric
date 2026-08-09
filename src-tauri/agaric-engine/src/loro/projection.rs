@@ -2139,7 +2139,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-             VALUES ('01HZ2128PROJUNITATTACHROW1', ?, 'text/plain', 'a.txt', 3, 'p/a.txt', 0)",
+             VALUES ('01HZ2128PROJUNITATTACHROW1', ?, 'text/plain', 'a.txt', 3, 'attachments/p_a.txt', 0)",
         )
         .bind(seed)
         .execute(&pool)

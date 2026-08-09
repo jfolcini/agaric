@@ -7,6 +7,7 @@
 //! existing `crate::error::…` path resolving unchanged.
 
 pub mod attachment_filename;
+pub mod attachment_path;
 pub mod date_filter;
 pub mod date_validation;
 pub mod error;

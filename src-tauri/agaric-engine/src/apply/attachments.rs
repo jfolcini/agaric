@@ -6,6 +6,7 @@
 
 use super::*;
 use agaric_core::attachment_filename::sanitize_attachment_filename;
+use agaric_core::attachment_path::AttachmentFsPath;
 
 /// Per-variant body for [`OpType::AddAttachment`].
 pub async fn apply_add_attachment_tx(
@@ -29,6 +30,26 @@ pub async fn apply_add_attachment_tx(
             "sanitized traversal-unsafe peer attachment filename on apply (add_attachment)"
         );
     }
+    // #3370 (SECURITY): `p.fs_path` is peer-supplied too, and unlike `filename`
+    // it is a real path — every resolver joins it onto `app_data_dir` and then
+    // reads, writes or unlinks what it names. Parse it into the confined,
+    // canonical form before it reaches the row. Two things this stops:
+    // an unconfined relative path (`notes.db`) naming a non-attachment file
+    // that the file-receive path then overwrites with the peer's bytes, and a
+    // non-canonical spelling (`attachments/./x.png`) that the orphan GC's
+    // walk-derived membership test misses — whereupon it destroys the bytes of
+    // this very row. Coerce (never reject), as for `filename`: a reject here
+    // would wedge the apply pipeline on one hostile op.
+    let fs_path = AttachmentFsPath::coerce_from_peer(&p.fs_path, attachment_id_str);
+    let fs_path_str = fs_path.as_str();
+    if fs_path_str != p.fs_path {
+        tracing::warn!(
+            attachment_id = attachment_id_str,
+            original = %p.fs_path,
+            canonical = fs_path_str,
+            "rewrote unsafe or non-canonical peer attachment fs_path on apply (add_attachment)"
+        );
+    }
     sqlx::query!(
         "INSERT OR IGNORE INTO attachments \
              (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) \
@@ -36,7 +57,7 @@ pub async fn apply_add_attachment_tx(
         attachment_id_str,
         block_id_str,
         filename,
-        p.fs_path,
+        fs_path_str,
         p.mime_type,
         p.size_bytes,
         created_at,

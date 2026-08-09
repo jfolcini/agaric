@@ -600,11 +600,28 @@ pub async fn apply_snapshot<R: std::io::Read>(
         rows: data.tables.attachments,
         bind: |q, a| {
             // Gate every attachment row at the trust boundary: a malformed
-            // snapshot must not be able to seed `..`/absolute paths into the
-            // attachments table even though later reads/writes would catch
-            // them (defense in depth — we want the invariant "no bad rows
-            // in attachments" to hold).
-            crate::sync_files::check_attachment_fs_path_shape(&a.fs_path)?;
+            // snapshot must not be able to seed a path outside the attachments
+            // root into the table even though later reads/writes would catch
+            // it (defense in depth — we want the invariant "no bad rows in
+            // attachments" to hold).
+            //
+            // #3370: this COERCES rather than rejecting, for the same reason
+            // the `filename` sanitize below does — a reject aborts the entire
+            // legitimate restore on one bad row, a DoS. It is also the stronger
+            // form of the stated invariant: coercion makes it hold for every
+            // restored row instead of refusing the restore.
+            let fs_path = agaric_core::attachment_path::AttachmentFsPath::coerce_from_peer(
+                &a.fs_path,
+                a.id.as_str(),
+            );
+            if fs_path.as_str() != a.fs_path {
+                tracing::warn!(
+                    attachment_id = a.id.as_str(),
+                    original = %a.fs_path,
+                    canonical = fs_path.as_str(),
+                    "rewrote unsafe or non-canonical attachment fs_path on snapshot restore"
+                );
+            }
             // #3029 (SECURITY): the display `filename` is peer-supplied too —
             // a hostile snapshot is the same trust boundary as the op-apply /
             // recovery-replay paths. Sanitize (never reject: a reject here
@@ -626,7 +643,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
                 .bind(&a.mime_type)
                 .bind(filename)
                 .bind(a.size_bytes)
-                .bind(&a.fs_path)
+                .bind(fs_path.into_string())
                 .bind(a.created_at)
                 .bind(&a.deleted_at)
                 // #2022: round-trip the blake3 content_hash (migration 0093)

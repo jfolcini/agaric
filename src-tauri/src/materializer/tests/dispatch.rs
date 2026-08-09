@@ -489,7 +489,7 @@ async fn dispatch_op_add_attachment() {
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
             size_bytes: 1024,
-            fs_path: "/tmp/photo.png".into(),
+            fs_path: "attachments/photo.png".into(),
         }),
     )
     .await;
@@ -517,13 +517,13 @@ async fn dispatch_op_delete_attachment() {
     // Store the row with the canonical-uppercase id so it matches the
     // bind value the materializer derives from the auto-normalized
     // AttachmentId in the payload.
-    sqlx::query("INSERT INTO attachments (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) VALUES ('ATT-2', 'BLK-ATT-DEL', 'f.txt', '/tmp/f.txt', 'text/plain', 10, 1735689600000)")
+    sqlx::query("INSERT INTO attachments (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) VALUES ('ATT-2', 'BLK-ATT-DEL', 'f.txt', 'attachments/f.txt', 'text/plain', 10, 1735689600000)")
         .execute(&pool).await.unwrap();
     let r = make_op_record(
         &pool,
         OpPayload::DeleteAttachment(DeleteAttachmentPayload {
             attachment_id: BlockId::test_id("ATT-2"),
-            fs_path: "/tmp/f.txt".into(),
+            fs_path: "attachments/f.txt".into(),
         }),
     )
     .await;
