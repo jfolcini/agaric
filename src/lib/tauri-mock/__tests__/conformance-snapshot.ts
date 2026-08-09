@@ -12,6 +12,8 @@
  * See the Rust module's doc comment for the relabeling contract.
  */
 
+import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
+
 // ---------------------------------------------------------------------------
 // Mock state shapes (subset of what handlers.ts reads/writes).
 // ---------------------------------------------------------------------------
@@ -38,11 +40,6 @@ export interface NormalizedSnapshot {
   page_links: Array<Record<string, unknown>>
   op_log_digest: { count: number; ops: Array<Record<string, unknown>> }
 }
-
-// The same `[[ULID]]` link regex the mock's `deriveLinkEdges` uses. The mock
-// derives page links live from non-deleted block content; we replicate that
-// here so the TS snapshot is symmetric with the backend's `block_links` table.
-const LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
 
 /** Numeric sort key for a `Bn` canonical token (`B12` < `B2` would be wrong
  *  lexically). Pass-through (non-`Bn`) tokens sort after all `Bn` tokens. */
@@ -191,26 +188,23 @@ export function buildSnapshot(
   // Page links — derive [[ULID]] edges from non-deleted block content, mirror
   // of the backend's `block_links` table joined to the source's page_id. The
   // target must reference a live block (mirrors the backend's EXISTS guard).
+  //
+  // #3332 — the derivation is `deriveLinkEdges`, the function the MOCK runs,
+  // not a private copy of its regex. The Rust side of this comparison reads the
+  // real materialized `block_links` table, so a private copy here would have
+  // let the two `page_links` snapshots agree while every live link handler
+  // served different semantics.
   const liveIds = new Set(
     [...state.blocks.values()].filter((b) => b['deleted_at'] == null).map((b) => b['id'] as string),
   )
   const linkRows: Array<Record<string, unknown>> = []
-  for (const b of state.blocks.values()) {
-    if (b['deleted_at'] != null) continue
-    const content = (b['content'] as string | null) ?? ''
-    if (!content.includes('[[')) continue
-    const sourceId = b['id'] as string
-    const sourcePageId = (b['page_id'] as string | null) ?? null
-    LINK_RE.lastIndex = 0
-    for (const m of content.matchAll(LINK_RE)) {
-      const targetId = m[1] as string
-      if (!liveIds.has(targetId)) continue
-      linkRows.push({
-        source_id: relabel(sourceId),
-        target_id: relabel(targetId),
-        source_page_id: relabelOpt(sourcePageId),
-      })
-    }
+  for (const edge of deriveLinkEdges(state.blocks)) {
+    if (!liveIds.has(edge.targetId)) continue
+    linkRows.push({
+      source_id: relabel(edge.sourceId),
+      target_id: relabel(edge.targetId),
+      source_page_id: relabelOpt(edge.sourcePageId),
+    })
   }
   const page_links = linkRows.toSorted((a, b) => {
     let c = cmpTokens(a['source_id'] as string, b['source_id'] as string)

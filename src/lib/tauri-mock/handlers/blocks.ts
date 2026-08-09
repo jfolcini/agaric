@@ -12,12 +12,14 @@
 import {
   type TypedHandlers,
   assertValidReservedPropertyValue,
+  deleteCohort,
   insertAtSlotAndRenumber,
   invalidOperationRejection,
   nextCohortMarker,
   notFoundRejection,
   refreshDescendantPageIds,
   renumberSiblings,
+  restoreCohort,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import {
@@ -364,50 +366,22 @@ export const blocksHandlers = {
   // recursive walk only descends into children whose `deleted_at` is NULL
   // (active), so an already-deleted descendant — and the subtree beneath it —
   // is left untouched, exactly like the SQL CTE's `b.deleted_at IS NULL` arm.
-  // `descendants_affected` counts the descendants tombstoned (the target
-  // itself is excluded, matching the backend's command return).
+  // `descendants_affected` mirrors the backend's `rows_affected()` from the
+  // `descendants_cte_active` UPDATE, whose `descendants` CTE includes the SEED
+  // (target) at depth 0. So the count is the TOTAL number of rows tombstoned —
+  // target INCLUDED — not just the strict descendants. (The field name is the
+  // backend's; its value is target-inclusive, as the
+  // `snapshot_delete_block_response` fixture proves: a lone block delete
+  // returns `descendants_affected: 1`.)
+  //
+  // #3331 — the walk itself now lives in `@/lib/tauri-mock/cohort` so the
+  // undo/revert paths reverse a delete through the SAME cohort definition
+  // instead of clearing the target row alone.
   delete_block: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
-    const target = blocks.get(blockId)
     const now = nextCohortMarker()
-    let descendantsAffected = 0
-    // Only cascade for a live target; a missing / already-deleted target is a
-    // no-op cascade (mirrors the CTE seed `WHERE deleted_at IS NULL` filter on
-    // the UPDATE). The seed row itself is still re-stamped to `now` if live.
-    if (target && !target['deleted_at']) {
-      // BFS over the ACTIVE descendant subtree. Descend only into children
-      // whose `deleted_at` is NULL — an already-deleted descendant boundary
-      // (and everything below it) is skipped.
-      const stack: string[] = [blockId]
-      const seen = new Set<string>()
-      while (stack.length > 0) {
-        const id = stack.pop()
-        if (id == null) break
-        if (seen.has(id)) continue
-        seen.add(id)
-        const node = blocks.get(id)
-        if (!node || node['deleted_at']) continue
-        node['deleted_at'] = now
-        // `descendants_affected` mirrors the backend's `rows_affected()` from
-        // the `descendants_cte_active` UPDATE, whose `descendants` CTE includes
-        // the SEED (target) at depth 0. So the count is the TOTAL number of
-        // rows tombstoned — target INCLUDED — not just the strict descendants.
-        // (The field name is the backend's; its value is target-inclusive, as
-        // the `snapshot_delete_block_response` fixture proves: a lone block
-        // delete returns `descendants_affected: 1`.)
-        descendantsAffected++
-        for (const child of blocks.values()) {
-          if (
-            child['parent_id'] === id &&
-            !child['deleted_at'] &&
-            !seen.has(child['id'] as string)
-          ) {
-            stack.push(child['id'] as string)
-          }
-        }
-      }
-    }
+    const descendantsAffected = deleteCohort(blocks, blockId, now)
     const op = pushOp('delete_block', { block_id: blockId })
     // #2468 — `WithOps<DeleteResponse>`.
     return {
@@ -474,35 +448,13 @@ export const blocksHandlers = {
   // first boundary block of a DIFFERENT cohort (e.g. an independently-deleted
   // nested subtree) — leaving that descendant deleted, exactly like the SQL
   // cohort CTE. `restored_count` is the number of blocks actually restored.
+  //
+  // #3331 — the walk itself now lives in `@/lib/tauri-mock/cohort`, shared with
+  // the undo/revert reversal of a `delete_block`.
   restore_block: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
-    const target = blocks.get(blockId)
-    const cohort = target?.['deleted_at'] as string | null | undefined
-    let restoredCount = 0
-    // A live (non-deleted) or missing target yields no cohort to restore.
-    if (target && cohort) {
-      const stack: string[] = [blockId]
-      const seen = new Set<string>()
-      while (stack.length > 0) {
-        const id = stack.pop()
-        if (id == null) break
-        if (seen.has(id)) continue
-        seen.add(id)
-        const node = blocks.get(id)
-        // Only same-cohort blocks are restored; a block whose `deleted_at`
-        // differs from the seed's marker is a boundary — skip it and the
-        // subtree below it (we never enqueue its children).
-        if (!node || node['deleted_at'] !== cohort) continue
-        node['deleted_at'] = null
-        restoredCount++
-        for (const child of blocks.values()) {
-          if (child['deleted_at'] === cohort && !seen.has(child['id'] as string)) {
-            if (child['parent_id'] === id) stack.push(child['id'] as string)
-          }
-        }
-      }
-    }
+    const restoredCount = restoreCohort(blocks, blockId)
     pushOp('restore_block', { block_id: blockId })
     return { block_id: blockId, restored_count: restoredCount }
   },

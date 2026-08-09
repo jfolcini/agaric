@@ -10,7 +10,12 @@
  */
 
 import { matchesSearchFolded } from '@/lib/fold-for-search'
-import { type TypedHandlers } from '@/lib/tauri-mock/handlers/shared'
+import {
+  type TypedHandlers,
+  contentLinksTo,
+  inSpaceScope,
+  scanLinkTargets,
+} from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
 
 export const linksHandlers = {
@@ -23,21 +28,14 @@ export const linksHandlers = {
     // different space. Global is unfiltered (legacy cross-space view).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    // Scan all blocks for [[ULID]] tokens matching the target
-    const LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
-    const backlinkItems = [...blocks.values()].filter((b) => {
-      if (b['deleted_at']) return false
-      if (spaceId !== null) {
-        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        if (ownerSpace !== spaceId) return false
-      }
-      const content = (b['content'] as string) ?? ''
-      for (const m of content.matchAll(LINK_RE)) {
-        if (m[1] === targetId) return true
-      }
-      return false
-    })
+    // Scan all blocks for [[ULID]] tokens matching the target (#3332: the scan
+    // itself is `contentLinksTo`, the single owner of the token grammar).
+    const backlinkItems = [...blocks.values()].filter(
+      (b) =>
+        !b['deleted_at'] &&
+        inSpaceScope(b, spaceId) &&
+        contentLinksTo(b['content'] as string | null, targetId),
+    )
     return { items: backlinkItems, next_cursor: null, has_more: false, total_count: null }
   },
 
@@ -50,21 +48,13 @@ export const linksHandlers = {
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
 
-    // Scan all blocks for [[ULID]] tokens matching the target
-    const LINK_RE_F = /\[\[([0-9A-Z]{26})\]\]/g
-    let backlinkItems = [...blocks.values()].filter((b) => {
-      if (b['deleted_at']) return false
-      if (spaceId !== null) {
-        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        if (ownerSpace !== spaceId) return false
-      }
-      const content = (b['content'] as string) ?? ''
-      for (const m of content.matchAll(LINK_RE_F)) {
-        if (m[1] === targetId) return true
-      }
-      return false
-    })
+    // Scan all blocks for [[ULID]] tokens matching the target.
+    let backlinkItems = [...blocks.values()].filter(
+      (b) =>
+        !b['deleted_at'] &&
+        inSpaceScope(b, spaceId) &&
+        contentLinksTo(b['content'] as string | null, targetId),
+    )
 
     // Apply simple filter support
     for (const filter of filterList) {
@@ -113,27 +103,18 @@ export const linksHandlers = {
     // fall back to `null` (cross-space, legacy) for `Global`.
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    const LINK_RE_BATCH = /\[\[([0-9A-Z]{26})\]\]/g
     const result: Record<string, number> = {}
     for (const pid of pageIds) {
-      const count = [...blocks.values()].filter((b) => {
-        if (b['deleted_at']) return false
-        // Active-space scoping: drop source blocks whose owning page
-        // (resolved via `page_id`, falling back to the block's own id
-        // if it IS a page) doesn't carry `space = <spaceId>`. Matches
-        // the SQL `COALESCE(b.page_id, b.id) IN (... space ...)` used
-        // by `count_backlinks_batch_inner`.
-        if (spaceId !== null) {
-          const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-          const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-          if (ownerSpace !== spaceId) return false
-        }
-        const content = (b['content'] as string) ?? ''
-        for (const m of content.matchAll(LINK_RE_BATCH)) {
-          if (m[1] === pid) return true
-        }
-        return false
-      }).length
+      // Active-space scoping (`inSpaceScope`) drops source blocks whose owning
+      // page doesn't carry `space = <spaceId>` — the SQL
+      // `COALESCE(b.page_id, b.id) IN (... space ...)` predicate
+      // `count_backlinks_batch_inner` uses.
+      const count = [...blocks.values()].filter(
+        (b) =>
+          !b['deleted_at'] &&
+          inSpaceScope(b, spaceId) &&
+          contentLinksTo(b['content'] as string | null, pid),
+      ).length
       result[pid] = count
     }
     return result
@@ -146,20 +127,12 @@ export const linksHandlers = {
     // `list_backlinks_grouped_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    const LINK_RE_G = /\[\[([0-9A-Z]{26})\]\]/g
-    const backlinkItems = [...blocks.values()].filter((b) => {
-      if (b['deleted_at']) return false
-      if (spaceId !== null) {
-        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        if (ownerSpace !== spaceId) return false
-      }
-      const content = (b['content'] as string) ?? ''
-      for (const m of content.matchAll(LINK_RE_G)) {
-        if (m[1] === targetId) return true
-      }
-      return false
-    })
+    const backlinkItems = [...blocks.values()].filter(
+      (b) =>
+        !b['deleted_at'] &&
+        inSpaceScope(b, spaceId) &&
+        contentLinksTo(b['content'] as string | null, targetId),
+    )
     // Group by parent_id (source page)
     const groupMap = new Map<string, Record<string, unknown>[]>()
     for (const item of backlinkItems) {
@@ -214,23 +187,15 @@ export const linksHandlers = {
       }
     // Find blocks that mention the page title as text but don't have a [[link]].
     // Unicode-aware fold (mock / backend parity).
-    const LINK_RE_UL = /\[\[([0-9A-Z]{26})\]\]/g
     const unlinked = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       if (b['id'] === pageId) return false
       if (b['parent_id'] === pageId) return false
-      if (spaceId !== null) {
-        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        if (ownerSpace !== spaceId) return false
-      }
+      if (!inSpaceScope(b, spaceId)) return false
       const content = (b['content'] as string) ?? ''
       if (!matchesSearchFolded(content, pageTitle)) return false
-      // Exclude if it already has a [[link]] to this page
-      for (const m of content.matchAll(LINK_RE_UL)) {
-        if (m[1] === pageId) return false
-      }
-      return true
+      // Exclude if it already has a [[link]] to this page.
+      return !contentLinksTo(content, pageId)
     })
     const groupMap = new Map<string, Record<string, unknown>[]>()
     for (const item of unlinked) {
@@ -281,7 +246,6 @@ export const linksHandlers = {
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const pageSpace = (pid: string): string | null =>
       (properties.get(pid)?.get('space')?.['value_ref'] as string | null) ?? null
-    const LINK_RE_PL = /\[\[([0-9A-Z]{26})\]\]/g
     const linkSet = new Set<string>()
     const pageLinks: Array<{ source_id: string; target_id: string; ref_count: number }> = []
     for (const b of blocks.values()) {
@@ -294,8 +258,7 @@ export const linksHandlers = {
       // Active-scope filter on source page.
       if (spaceId !== null && pageSpace(parentId) !== spaceId) continue
       const content = (b['content'] as string) ?? ''
-      for (const m of content.matchAll(LINK_RE_PL)) {
-        const targetPageId = m[1] as string
+      for (const targetPageId of scanLinkTargets(content)) {
         // Ensure target is an existing non-deleted page
         const targetBlock = blocks.get(targetPageId)
         if (!targetBlock || targetBlock['block_type'] !== 'page' || targetBlock['deleted_at'])
