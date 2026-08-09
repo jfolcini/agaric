@@ -88,6 +88,64 @@ sqlx_probe_dir_cleanup() {
     return 0
 }
 
+# ── Node dependency preflight (#3656) ──────────────────────────────
+# A `git worktree add` checkout has no `node_modules` — it is not a
+# tracked path, and the convention here is to symlink it from the main
+# checkout (scripts/seed-worktree.sh, step 1). Forget that, and Phase A
+# does not say so: `npx oxlint`, `npx oxfmt`, `npx tsc` and the
+# node-based guard scripts each fail on their own terms, producing five
+# unrelated red hooks — two of them *guard self-tests*, which reads as
+# "your change broke a guard" — and not one line of the output contains
+# the string `node_modules`. The failure is real; its ATTRIBUTION is
+# wrong, and wrong attribution is what costs the hour (the natural next
+# move is to bisect the branch's content).
+#
+# So: name the cause before any hook runs. Returns 1 and echoes a
+# one-line diagnosis when the node-based hooks cannot possibly work;
+# returns 0 silently otherwise. Takes the root as an argument so the
+# self-test below can drive it against fixture directories.
+node_deps_problem() {
+    local root="${1:-}" nm
+    nm="$root/node_modules"
+
+    if [ -L "$nm" ] && [ ! -e "$nm" ]; then
+        printf 'node_modules is a DANGLING symlink: %s -> %s\n' \
+            "$nm" "$(readlink "$nm" 2>/dev/null || echo '?')"
+        return 1
+    fi
+    if [ ! -d "$nm" ]; then
+        printf 'node_modules is MISSING: %s\n' "$nm"
+        return 1
+    fi
+    if [ ! -d "$nm/.bin" ]; then
+        printf 'node_modules exists but has no .bin/ (dependencies not installed): %s\n' "$nm"
+        return 1
+    fi
+    return 0
+}
+
+# Remedy text for the failure above, tailored to where you are: a linked
+# worktree (`--git-dir` != `--git-common-dir`) wants the symlink that
+# seed-worktree.sh creates; the main checkout wants an `npm ci`.
+node_deps_remedy() {
+    local root="${1:-}" git_dir common_dir main_root
+    git_dir="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null || echo '')"
+    common_dir="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo '')"
+    if [ -n "$git_dir" ] && [ -n "$common_dir" ] && [ "$git_dir" != "$common_dir" ]; then
+        main_root="$(cd "$common_dir/.." 2>/dev/null && pwd || echo '<main-checkout>')"
+        printf 'This is a LINKED WORKTREE. Seed it (idempotent, also fixes the\n'
+        printf '  upstream and dev.db prerequisites):\n'
+        printf '    bash scripts/seed-worktree.sh\n'
+        printf '  or, node_modules alone:\n'
+        printf '    ln -s %s/node_modules %s/node_modules\n' "$main_root" "$root"
+        printf '  (create the symlink BEFORE anything runs tsc/npm here — once a\n'
+        printf '  REAL node_modules directory exists, `ln -s` nests inside it.)\n'
+    else
+        printf 'Install dependencies in this checkout:\n'
+        printf '    npm ci\n'
+    fi
+}
+
 # ── self-test ──────────────────────────────────────────────────────
 # Fixture suite for the probe-DB isolation above (#3257), wired as the
 # `verify-ci-equivalent-selftest` prek hook so a regression back to a
@@ -200,6 +258,132 @@ if [ "${1:-}" = "--self-test" ]; then
             'no `&& DATABASE_URL="sqlite:$root_db" cargo sqlx migrate run \` line found'
     fi
 
+    # ── Node dependency preflight (#3656) ────────────────────────────
+    # The property: a checkout whose node-based hooks CANNOT run is named
+    # as such, and one whose dependencies are present is left alone.
+    st_fixture_root="$(mktemp -d -t pre-push-nodedeps.XXXXXX)"
+
+    # 10. The live #3656 shape: a fresh worktree with no node_modules at
+    #     all. Must be diagnosed, and the diagnosis must contain the
+    #     string the five-red-hooks output never did.
+    mkdir -p "$st_fixture_root/fresh"
+    st_out="$(node_deps_problem "$st_fixture_root/fresh")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'node_modules'; then
+        st_ok "missing node_modules is diagnosed by name"
+    else
+        st_bad "missing node_modules is diagnosed by name" "rc=$st_rc out=$st_out"
+    fi
+
+    # 11. A dangling symlink — `ln -s` run against a main checkout that
+    #     has since moved. `-d` alone follows the link and reports false,
+    #     so this would otherwise be indistinguishable from case 10; it
+    #     gets its own diagnosis because the remedy differs.
+    mkdir -p "$st_fixture_root/dangling"
+    ln -s "$st_fixture_root/does-not-exist" "$st_fixture_root/dangling/node_modules"
+    st_out="$(node_deps_problem "$st_fixture_root/dangling")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qi 'dangling'; then
+        st_ok "dangling node_modules symlink is diagnosed as dangling"
+    else
+        st_bad "dangling node_modules symlink is diagnosed as dangling" "rc=$st_rc out=$st_out"
+    fi
+
+    # 12. Present but empty — `npm ci` interrupted, or a stray `mkdir`.
+    #     `npx oxlint` still cannot run, so this must not pass.
+    mkdir -p "$st_fixture_root/empty/node_modules"
+    st_out="$(node_deps_problem "$st_fixture_root/empty")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -ne 0 ]; then
+        st_ok "node_modules without .bin/ is diagnosed (npx would fail)"
+    else
+        st_bad "node_modules without .bin/ is diagnosed (npx would fail)" "rc=$st_rc"
+    fi
+
+    # 13. The healthy shapes — a real directory, and the symlink the
+    #     worktree convention actually uses — must pass SILENTLY. A
+    #     preflight that fires on a good checkout is worse than none.
+    mkdir -p "$st_fixture_root/real/node_modules/.bin"
+    st_out="$(node_deps_problem "$st_fixture_root/real")" && st_rc=0 || st_rc=$?
+    mkdir -p "$st_fixture_root/linked"
+    ln -s "$st_fixture_root/real/node_modules" "$st_fixture_root/linked/node_modules"
+    st_out2="$(node_deps_problem "$st_fixture_root/linked")" && st_rc2=0 || st_rc2=$?
+    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ] && [ "$st_rc2" -eq 0 ] && [ -z "$st_out2" ]; then
+        st_ok "installed deps (real dir and symlink) pass silently"
+    else
+        st_bad "installed deps (real dir and symlink) pass silently" \
+            "real: rc=$st_rc out=$st_out | symlink: rc=$st_rc2 out=$st_out2"
+    fi
+
+    # 14. Ratchet: the preflight must be WIRED, and wired BEFORE Phase A.
+    #     Diagnosing the cause after the five red hooks have already
+    #     printed is the state this fixes; a future edit that moves the
+    #     call below Phase A restores it while cases 10-13 stay green.
+    #
+    #     The lookup is a function called from a condition context, with
+    #     `|| true` on each capture. This script runs `set -uo pipefail`
+    #     WITHOUT `-e`, so the inline form here did still reach its
+    #     diagnosis (verified) — unlike push.sh's, which aborted silently.
+    #     One `set -e` away from the same bug, and the fixtures below cost
+    #     nothing, so it gets the same shape.
+    st_line_of() {
+        grep -n "$1" "$2" 2>/dev/null | head -1 | cut -d: -f1 || true
+    }
+    st_order_check() {
+        # $1 file, $2 anchor that must come FIRST, $3 anchor after it.
+        # Echoes a human diagnosis; non-zero on any violation, including a
+        # MISSING anchor (unwired is a failure, not a reason to skip).
+        local f="$1" first="$2" second="$3" a b
+        a="$(st_line_of "$first" "$f")"
+        b="$(st_line_of "$second" "$f")"
+        if [ -z "$a" ]; then
+            echo "<not wired>: no line matching /$first/"
+            return 1
+        fi
+        if [ -z "$b" ]; then
+            echo "<anchor missing>: no line matching /$second/"
+            return 1
+        fi
+        if [ "$a" -lt "$b" ]; then
+            echo "ok (line $a < $b)"
+            return 0
+        fi
+        echo "<out of order>: /$first/ at line $a is not before /$second/ at line $b"
+        return 1
+    }
+
+    ST_CALL_ANCHOR='^if ! node_deps_problem_out='
+    ST_PHASE_A_ANCHOR='^if ! SKIP="\$PHASE_A_SKIP" prek run'
+    st_rc=0
+    st_out="$(st_order_check "${BASH_SOURCE[0]}" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
+    if [ "$st_rc" -eq 0 ]; then
+        st_ok "the node-deps preflight runs before Phase A — $st_out"
+    else
+        st_bad "the node-deps preflight runs before Phase A" "$st_out"
+    fi
+
+    # 15. The ratchet's diagnostics must survive the failure they describe:
+    #     a NAMED message, not a silent abort and not a bare non-zero.
+    grep -v "$ST_CALL_ANCHOR" "${BASH_SOURCE[0]}" >"$st_fixture_root/unwired.sh" || true
+    st_rc=0
+    st_out="$(st_order_check "$st_fixture_root/unwired.sh" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'not wired'; then
+        st_ok "ratchet names an UNWIRED preflight instead of aborting silently"
+    else
+        st_bad "ratchet names an UNWIRED preflight instead of aborting silently" \
+            "rc=$st_rc out=$st_out"
+    fi
+
+    printf 'if ! SKIP="$PHASE_A_SKIP" prek run --all-files\nif ! node_deps_problem_out="x"\n' \
+        >"$st_fixture_root/swapped.sh"
+    st_rc=0
+    st_out="$(st_order_check "$st_fixture_root/swapped.sh" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'out of order'; then
+        st_ok "ratchet names a preflight moved BELOW Phase A, with both line numbers"
+    else
+        st_bad "ratchet names a preflight moved BELOW Phase A, with both line numbers" \
+            "rc=$st_rc out=$st_out"
+    fi
+
+    rm -rf "$st_fixture_root"
+
     if [ "$st_fail" != 0 ]; then
         echo "verify-ci-equivalent self-test FAILED" >&2
         exit 2
@@ -237,6 +421,21 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
+
+# ── Preflight: node dependencies (#3656) ───────────────────────────
+# Before Phase A, not after five of its hooks have gone red for reasons
+# none of them can name. Costs a stat; saves the diagnosis.
+if ! node_deps_problem_out="$(node_deps_problem "$REPO_ROOT")"; then
+    echo "✗ Pre-push verification cannot run: $node_deps_problem_out" >&2
+    echo "" >&2
+    echo "  Every node-based hook in Phase A (npx oxlint / oxfmt / tsc, and the" >&2
+    echo "  node guard scripts) needs this. Without it they fail one by one on" >&2
+    echo "  their own terms — including two guard SELF-TESTS, which look like" >&2
+    echo "  your change broke a guard. It did not; the dependencies are absent." >&2
+    echo "" >&2
+    node_deps_remedy "$REPO_ROOT" | sed 's/^/  /' >&2
+    exit 1
+fi
 
 # shellcheck disable=SC1091
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"

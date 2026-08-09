@@ -24,10 +24,27 @@ back-pressure to NEW sites:
     author at the macro forms.
   * A file whose count is at or below baseline passes unchanged (existing
     sites are grandfathered; no mass retrofit required).
-  * When a file's site count drops, regenerate the baseline:
-        python3 scripts/check-dynamic-sql.py --update-baseline
-    (also run this when you add a new site WITH its marker, to re-anchor
-    the baseline so future additions are measured against the new floor).
+  * When a file's site count changes, re-anchor ITS entry:
+        python3 scripts/check-dynamic-sql.py --update-baseline <path>...
+    With no paths it re-anchors the files in your current diff. Either
+    way it is SCOPED: every other entry stays byte-identical.
+
+Why scoped (#3659). `--update-baseline` used to regenerate the WHOLE file
+from the tree. The baseline had drifted — eight entries disagreed with the
+code, in both directions, `block_ops.rs` by nine sites — so the
+safest-looking command in the guard's own interface silently laundered
+eight unrelated changes into any diff that legitimately needed to touch
+one. The observed workarounds were to not re-anchor at all (a file left
+above its baseline stays in the stricter every-site-must-be-marked mode,
+which passes), and — in #3717 — to hand-edit a single line into this
+generated file. Both are the interface's fault.
+
+Drift is now an error rather than something that accumulates: a file whose
+count is BELOW its baseline is slack the ratchet is not reclaiming, and an
+entry naming a file that no longer holds any dynamic SQL is dead weight.
+Both fail, and both are fixed by the scoped command above.
+`--update-baseline --all` still regenerates everything, for when that is
+genuinely what you mean.
 
 The scan reuses the comment/string-stripping and `#[cfg(test)]`-module
 logic from check-raw-tx.py (imported), so a `sqlx::query(` mention inside
@@ -312,12 +329,137 @@ def compute_baseline() -> dict[str, int]:
     return baseline
 
 
+def merge_baseline(
+    existing: dict[str, int], scope: list[str], counts: dict[str, int]
+) -> dict[str, int]:
+    """Existing baseline with ONLY `scope`'s entries re-anchored (#3659).
+
+    Every key outside `scope` is carried through untouched — including one
+    that disagrees with the tree. That is the point: a whole-file
+    regeneration is what dragged eight unrelated drifted entries into a
+    diff that meant to touch one. Reconciling the rest is its own commit,
+    with its own review.
+
+    A scoped path whose count is zero (file deleted, its last runtime
+    query converted to a macro, or the file became test-only) drops out of
+    the baseline rather than being recorded as `0`.
+    """
+    merged = dict(existing)
+    for rel in scope:
+        cnt = counts.get(rel, 0)
+        if cnt:
+            merged[rel] = cnt
+        else:
+            merged.pop(rel, None)
+    return merged
+
+
+def drifted_entries(baseline: dict[str, int], counts: dict[str, int]) -> list[str]:
+    """Entries whose recorded count sits ABOVE the tree's actual count.
+
+    Downward drift is invisible to the ratchet — the guard only fires when
+    a file EXCEEDS its baseline — so it accumulates silently, and every
+    stale entry is headroom for a future unjustified site to be added
+    without anyone noticing. `counts` holds the actual counts for the
+    files being checked; entries not in it are not judged here.
+    """
+    return [
+        f"{rel}: baseline records {baseline[rel]} site(s), the tree has "
+        f"{counts[rel]}"
+        for rel in sorted(counts)
+        if rel in baseline and counts[rel] < baseline[rel]
+    ]
+
+
+def in_scan_scope(rel: str) -> bool:
+    """True iff the scan actually covers `rel` right now.
+
+    The single definition of "covered", so the three places that need it —
+    `orphan_entries` (which flags an entry the scan no longer covers),
+    `baseline_count` (which must record ZERO for exactly those), and
+    `compute_baseline` via `all_production_files` — cannot disagree. They
+    did: an entry whose file had become a whole-file `#![cfg(test)]`
+    module, or had moved under a test/fixture glob, was flagged as an
+    orphan but then RE-WRITTEN by the scoped `--update-baseline` the
+    guard's own message told you to run, because that path only asked
+    `is_file()`. The guard stayed red pointing at a remedy that could not
+    clear it, leaving `--all` (what #3659 exists to avoid) or a hand-edit
+    of a generated file (the #3717 anti-pattern) as the only ways out.
+    """
+    path = REPO_ROOT / rel
+    return (
+        path.is_file()
+        and not is_excluded_file(rel)
+        and not is_test_only_module(read_source(path))
+    )
+
+
+def baseline_count(rel: str) -> int:
+    """The count a baseline entry for `rel` should record — 0 if uncovered."""
+    return count_sites(REPO_ROOT / rel)[0] if in_scan_scope(rel) else 0
+
+
+def orphan_entries(baseline: dict[str, int]) -> list[str]:
+    """Entries naming a file the scan no longer covers.
+
+    Deleted, renamed, moved under a test/fixture glob, or turned into a
+    whole-file `#![cfg(test)]` module. Cheap (a stat plus, at most, one
+    read per entry) and global, so an orphan cannot hide in a file nobody
+    happens to be touching.
+    """
+    orphans: list[str] = []
+    for rel in sorted(baseline):
+        path = REPO_ROOT / rel
+        if not path.is_file():
+            orphans.append(f"{rel}: no such file (deleted or renamed)")
+        elif is_excluded_file(rel):
+            orphans.append(f"{rel}: now a test/fixture path, outside the scan")
+        elif is_test_only_module(read_source(path)):
+            orphans.append(f"{rel}: now a whole-file `#![cfg(test)]` module")
+    return orphans
+
+
+def changed_production_files() -> list[str]:
+    """Repo-relative production .rs paths in the current diff.
+
+    The default scope for a bare `--update-baseline`: what you are
+    actually working on. Uses the working tree + index against HEAD, plus
+    untracked files, so a brand-new module counts.
+    """
+    import subprocess  # local: only the update path shells out
+
+    out: list[str] = []
+    for cmd in (
+        ["git", "diff", "--name-only", "HEAD"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
+    ):
+        try:
+            res = subprocess.run(
+                cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=False
+            )
+        except OSError:
+            continue
+        out.extend(line.strip() for line in res.stdout.splitlines())
+
+    root_prefixes = tuple(
+        str(root.relative_to(REPO_ROOT)) + "/" for root in CRATE_ROOTS
+    )
+    scope: list[str] = []
+    for rel in out:
+        if not rel.endswith(".rs") or not rel.startswith(root_prefixes):
+            continue
+        if is_excluded_file(rel) or rel in scope:
+            continue
+        scope.append(rel)
+    return sorted(scope)
+
+
 def write_baseline(baseline: dict[str, int]) -> None:
     lines = [
         "# Dynamic-SQL baseline (#646) — per-file count of runtime "
         "`sqlx::query(`/`query_as(`/`query_scalar(` sites.",
         "# Generated by: python3 scripts/check-dynamic-sql.py "
-        "--update-baseline",
+        "--update-baseline <path>...  (SCOPED — #3659)",
         "# The check-dynamic-sql prek hook fails when a file's site count "
         "EXCEEDS its baseline",
         "# unless every dynamic site in that file carries an adjacent "
@@ -541,6 +683,155 @@ def run_self_test() -> int:
                 f"site(s), got {got_missing}"
             )
 
+    # --- Scoped-re-anchor contract (#3659) ---
+    # `--update-baseline` regenerated the WHOLE file, so an update that
+    # legitimately needed one entry rewrote every drifted one alongside it —
+    # into a diff where a reviewer reading a focused change has no reason to
+    # question them. The scoped merge must leave every out-of-scope entry
+    # exactly as it found it, drift and all.
+    fixture = {
+        "src-tauri/src/a.rs": 3,
+        "src-tauri/src/b.rs": 8,
+        "src-tauri/src/drifted.rs": 2,  # tree really has 11 — must NOT move
+        "src-tauri/src/gone.rs": 1,
+    }
+    merged = merge_baseline(
+        fixture,
+        ["src-tauri/src/a.rs"],
+        {"src-tauri/src/a.rs": 5, "src-tauri/src/drifted.rs": 11},
+    )
+    if merged.get("src-tauri/src/a.rs") != 5:
+        failures.append("scoped update: the in-scope entry was not re-anchored")
+    untouched = {k: v for k, v in merged.items() if k != "src-tauri/src/a.rs"}
+    expected_untouched = {k: v for k, v in fixture.items() if k != "src-tauri/src/a.rs"}
+    if untouched != expected_untouched:
+        failures.append(
+            f"scoped update: out-of-scope entries changed — {untouched} != "
+            f"{expected_untouched}"
+        )
+    if len(merged) != len(fixture):
+        failures.append(
+            f"scoped update: entry count not preserved ({len(merged)} vs "
+            f"{len(fixture)})"
+        )
+
+    # A scoped path that no longer has any site drops out — and still only
+    # that one.
+    dropped = merge_baseline(fixture, ["src-tauri/src/gone.rs"], {})
+    if "src-tauri/src/gone.rs" in dropped:
+        failures.append("scoped update: a zero-count scoped entry was not removed")
+    if {k: v for k, v in dropped.items() if k != "src-tauri/src/gone.rs"} != {
+        k: v for k, v in fixture.items() if k != "src-tauri/src/gone.rs"
+    }:
+        failures.append("scoped update: removing one entry disturbed the others")
+
+    # Re-anchoring nothing must be a no-op, byte for byte.
+    if merge_baseline(fixture, [], {}) != fixture:
+        failures.append("scoped update: an empty scope changed the baseline")
+
+    # --- Downward-drift / orphan contract (#3659) ---
+    # A file BELOW its recorded count never trips the ratchet (the guard
+    # only fires above it), which is how eight entries drifted unnoticed.
+    drift = drifted_entries(
+        {"src-tauri/src/a.rs": 8, "src-tauri/src/b.rs": 2},
+        {"src-tauri/src/a.rs": 5, "src-tauri/src/b.rs": 2},
+    )
+    if len(drift) != 1 or "src-tauri/src/a.rs" not in drift[0]:
+        failures.append(f"downward drift not reported exactly once: {drift}")
+    if drifted_entries({"src-tauri/src/a.rs": 5}, {"src-tauri/src/a.rs": 9}):
+        failures.append(
+            "a file ABOVE its baseline was reported as drift (that is the "
+            "marker rule's job, not this one)"
+        )
+    orphans = orphan_entries({"src-tauri/src/definitely-not-here-3659.rs": 2})
+    if len(orphans) != 1:
+        failures.append(f"orphan baseline entry not reported: {orphans}")
+    if orphan_entries({}):
+        failures.append("orphan check fired on an empty baseline")
+
+    # --- The printed remedy must actually clear the orphan (#3724 review) ---
+    # `orphan_entries` flags three kinds; the scoped re-anchor used to ask
+    # only `is_file()`, so for two of them `count_sites` still returned a
+    # positive number and the entry was RE-WRITTEN instead of dropped. The
+    # guard then stayed red pointing at a command that could not fix it.
+    # Real files, chosen because each has runtime sites the old code would
+    # have recorded — a fixture with zero sites could not tell the two
+    # implementations apart.
+    remedy_fixtures = [
+        ("src-tauri/src/reconciliation_oracle.rs", "whole-file #![cfg(test)] module"),
+        ("src-tauri/agaric-store/src/test_support.rs", "test/fixture glob"),
+        ("src-tauri/src/definitely-not-here-3659.rs", "deleted file"),
+    ]
+    for rel, kind in remedy_fixtures:
+        path = REPO_ROOT / rel
+        if path.is_file() and count_sites(path)[0] == 0:
+            failures.append(
+                f"remedy fixture stale: {rel} ({kind}) no longer has any "
+                "runtime site, so it cannot distinguish the two "
+                "implementations — pick another file"
+            )
+        if in_scan_scope(rel):
+            failures.append(
+                f"remedy fixture stale: {rel} is now IN scan scope ({kind} no "
+                "longer holds)"
+            )
+        if baseline_count(rel) != 0:
+            failures.append(
+                f"scoped re-anchor cannot clear the {kind} orphan: "
+                f"baseline_count({rel!r}) = {baseline_count(rel)}, expected 0"
+            )
+
+    # End to end: an operator who runs exactly the command the guard prints,
+    # over exactly the entries it flagged, ends up green.
+    healthy = "src-tauri/agaric-engine/src/block_ops.rs"
+    orphaned_baseline = {
+        healthy: 1,  # deliberately stale, and IN scope: must be re-anchored
+        **{rel: 7 for rel, _ in remedy_fixtures},
+    }
+    flagged = orphan_entries(orphaned_baseline)
+    if len(flagged) != len(remedy_fixtures):
+        failures.append(
+            f"expected {len(remedy_fixtures)} orphans flagged, got {flagged}"
+        )
+    remedy_scope = [rel for rel, _ in remedy_fixtures] + [healthy]
+    after = merge_baseline(
+        orphaned_baseline,
+        remedy_scope,
+        {rel: baseline_count(rel) for rel in remedy_scope},
+    )
+    if orphan_entries(after):
+        failures.append(
+            "running the printed remedy left orphans behind: "
+            f"{orphan_entries(after)}"
+        )
+    if after.get(healthy) != count_sites(REPO_ROOT / healthy)[0]:
+        failures.append(
+            "the printed remedy did not re-anchor the in-scope entry: "
+            f"{after.get(healthy)}"
+        )
+
+    # --- The baseline agrees with the tree, right now ---
+    # The property that silently stopped holding. Asserted against the live
+    # checkout, not a fixture: after a re-anchor, a second `--update-baseline`
+    # must be a no-op, and the number of baselined entries must equal the
+    # number of files that really carry dynamic SQL.
+    live_actual = compute_baseline()
+    live_recorded = read_baseline()
+    if live_actual != live_recorded:
+        only_tree = {
+            k: v for k, v in live_actual.items() if live_recorded.get(k) != v
+        }
+        only_base = {
+            k: v for k, v in live_recorded.items() if live_actual.get(k) != v
+        }
+        failures.append(
+            "the checked-in baseline disagrees with the tree "
+            f"({len(live_recorded)} entries recorded, {len(live_actual)} real): "
+            f"tree says {only_tree}; baseline says {only_base}. "
+            "Re-anchor with: python3 scripts/check-dynamic-sql.py "
+            "--update-baseline <path>..."
+        )
+
     if failures:
         print("check-dynamic-sql self-test FAILED:", file=sys.stderr)
         for f in failures:
@@ -552,8 +843,86 @@ def run_self_test() -> int:
         + len(scope_cases)
         + len(test_only_cases)
         + len(marker_cases)
+        + 14  # scoped-update / drift / orphan / remedy / live-agreement
     )
     print(f"check-dynamic-sql self-test passed ({total} cases).")
+    return 0
+
+
+def _to_rel(arg: str) -> str | None:
+    """Normalize a CLI path to a repo-relative production .rs path."""
+    try:
+        rel = str(Path(arg).resolve().relative_to(REPO_ROOT))
+    except (ValueError, OSError):
+        return None
+    root_prefixes = tuple(
+        str(root.relative_to(REPO_ROOT)) + "/" for root in CRATE_ROOTS
+    )
+    if not rel.endswith(".rs") or not rel.startswith(root_prefixes):
+        return None
+    return rel
+
+
+def update_baseline(argv: list[str]) -> int:
+    """Scoped re-anchor (#3659). Only the named entries may change."""
+    existing = read_baseline()
+
+    if "--all" in argv:
+        new = compute_baseline()
+        scope_label = "the whole tree (--all)"
+    else:
+        scope: list[str] = []
+        for arg in argv:
+            if arg.startswith("--"):
+                continue
+            rel = _to_rel(arg)
+            if rel is None:
+                print(
+                    f"check-dynamic-sql: not a scanned production .rs path: {arg}",
+                    file=sys.stderr,
+                )
+                return 1
+            if rel not in scope:
+                scope.append(rel)
+        if not scope:
+            scope = changed_production_files()
+            scope_label = f"{len(scope)} file(s) from the current diff"
+            if not scope:
+                print(
+                    "check-dynamic-sql: nothing to re-anchor — no production .rs "
+                    "files in the current diff.\n"
+                    "  Name the files explicitly, or pass --all to regenerate the "
+                    "whole baseline\n"
+                    "  (which rewrites EVERY entry — see #3659).",
+                    file=sys.stderr,
+                )
+                return 1
+        else:
+            scope_label = f"{len(scope)} file(s) given on the command line"
+
+        # `baseline_count`, not a bare `count_sites`: a file the scan no
+        # longer covers must record ZERO (i.e. drop out), or the remedy
+        # this command exists to be cannot clear the orphan it is run for.
+        counts = {rel: baseline_count(rel) for rel in scope}
+        new = merge_baseline(existing, scope, counts)
+
+    changed = sorted(
+        rel
+        for rel in set(existing) | set(new)
+        if existing.get(rel) != new.get(rel)
+    )
+    write_baseline(new)
+    print(f"Re-anchored {BASELINE_PATH.relative_to(REPO_ROOT)} — scope: {scope_label}")
+    if not changed:
+        print("  (no entry changed — the baseline already agreed with the tree)")
+    for rel in changed:
+        before = existing.get(rel)
+        after = new.get(rel)
+        print(
+            f"  {rel}: {'-' if before is None else before} -> "
+            f"{'removed' if after is None else after}"
+        )
+    print(f"  {len(new)} entries (was {len(existing)})")
     return 0
 
 
@@ -561,9 +930,7 @@ def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         return run_self_test()
     if "--update-baseline" in argv:
-        write_baseline(compute_baseline())
-        print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")
-        return 0
+        return update_baseline([a for a in argv if a != "--update-baseline"])
 
     baseline = read_baseline()
 
@@ -595,9 +962,11 @@ def main(argv: list[str]) -> int:
         targets.append(p)
 
     violations: list[str] = []
+    actual_counts: dict[str, int] = {}
     for p in targets:
         rel = str(p.resolve().relative_to(REPO_ROOT))
         cnt, indices = count_sites(p)
+        actual_counts[rel] = cnt
         base = baseline.get(rel, 0)
         if cnt <= base:
             continue
@@ -627,6 +996,31 @@ def main(argv: list[str]) -> int:
             print(f"  {v}", file=sys.stderr)
         print("", file=sys.stderr)
         print(HINT, file=sys.stderr)
+        return 1
+
+    # Baseline-vs-tree agreement (#3659). Checked AFTER the marker rule so a
+    # genuine violation is never buried under bookkeeping. Downward drift is
+    # judged only for the files being checked (the whole tree, under prek's
+    # --all-files); orphaned entries are judged globally, since an entry
+    # naming a file nobody is touching is exactly how drift survives.
+    stale = drifted_entries(baseline, actual_counts) + orphan_entries(baseline)
+    if stale:
+        print(
+            "Dynamic-SQL baseline is out of step with the tree (#3659) — the "
+            "ratchet is holding\nslack it should have reclaimed:\n",
+            file=sys.stderr,
+        )
+        for s in stale:
+            print(f"  {s}", file=sys.stderr)
+        print(
+            "\n    -> Re-anchor just these entries (every other line stays "
+            "byte-identical):\n"
+            "         python3 scripts/check-dynamic-sql.py --update-baseline "
+            "<path>...\n"
+            "       or, for the files in your current diff:\n"
+            "         python3 scripts/check-dynamic-sql.py --update-baseline",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

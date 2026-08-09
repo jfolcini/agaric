@@ -985,9 +985,15 @@ pass_filenames = false
 files = "^scripts/check-snapshot-redaction\\.mjs$"
 stages = ["pre-commit"]
 
-# Session-log numbering: next number is NUMERIC max + 1. Past session-999,
-# lexicographic `ls | tail` reports the wrong max (session-1000 < session-996),
-# which produced fifteen session-1000 collisions before this guard existed.
+# Session-log numbering: the number must be free in the MERGE TARGET, not
+# just on your branch. Past session-999, lexicographic `ls | tail` reported
+# the wrong max (session-1000 < session-996) and produced fifteen
+# session-1000 collisions. The max+1 rule that fixed that is not
+# collision-safe under parallel work (#3690): two branches forked from the
+# same main both compute the same next number, both pass in isolation, and
+# collide on merge — which is how docs/session-log/ ended up with two
+# session-1281 files. The guard now checks against origin/main too, and
+# checks the `# Session NNNN` heading inside the file against the filename.
 [[repos.hooks]]
 id = "session-log-numbering"
 name = "session-log numbering guard"
@@ -995,6 +1001,20 @@ entry = "bash scripts/check-session-log-numbering.sh"
 language = "system"
 pass_filenames = false
 files = "^docs/session-log/session-.*\\.md$"
+stages = ["pre-commit"]
+
+# #3690: the guard above is only worth having if it fails on a collision it
+# used to pass. Its fixture suite builds throwaway repositories — including
+# the exact parallel-branch shape (base at 1280, origin/main already at
+# 1281) — and runs the guard inside them, so what is asserted is the guard
+# as invoked rather than a model of it.
+[[repos.hooks]]
+id = "session-log-numbering-self-test"
+name = "session-log numbering guard self-test (#3690 parallel-collision fixtures)"
+entry = "bash scripts/check-session-log-numbering.sh --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-session-log-numbering\\.sh$"
 stages = ["pre-commit"]
 
 # JS: better-npm-audit (security advisories). Pre-push only (#817, #1087):
@@ -1243,8 +1263,14 @@ stages = ["pre-commit", "pre-push"]
 # roots the #2621 split moved dynamic-SQL surface into (app = src-tauri/src,
 # agaric-store, agaric-engine, agaric-sync) — mirroring the table-ownership
 # hook's `files` — plus the diagnostics crate (its bins are excluded at the
-# guard level). Regenerate the baseline with `python3
-# scripts/check-dynamic-sql.py --update-baseline`. Allowlist/rules live in
+# guard level). Re-anchor the baseline with `python3
+# scripts/check-dynamic-sql.py --update-baseline <path>...`, which since
+# #3659 rewrites ONLY the named entries (bare = the files in your current
+# diff; `--all` = everything). It used to regenerate the whole file, so an
+# update that needed one entry silently laundered eight unrelated drifted
+# ones into the same diff. The guard now also fails on a baseline that has
+# drifted DOWNWARD or names a file the scan no longer covers, so the slack
+# cannot accumulate again. Allowlist/rules live in
 # scripts/check-dynamic-sql.py.
 [[repos.hooks]]
 id = "check-dynamic-sql"
