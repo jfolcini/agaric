@@ -110,12 +110,24 @@ export function isValidation(err: unknown): err is TypedAppError & { kind: 'vali
 }
 
 /**
- * Was this a reverse-move preflight failure? #3353 — `undoOp`/`undoOps`
- * reject with this kind when the backend's reverse-move check (moving the
- * target back would violate a structural invariant, e.g. the reinserted
- * parent no longer exists or the move would create a cycle) fails during
- * revert. Like `validation`, resubmitting the identical entry fails
- * identically forever — see `isPermanentRevertFailure` in `stores/undo.ts`.
+ * Was this an "op has no applicable inverse" rejection? #3353 —
+ * `undoOp`/`undoOps`/`redoPageOp` reject with this kind when the backend
+ * cannot reverse the target: `purge_block` has no inverse at all
+ * (`src-tauri/src/reverse/mod.rs`), an `edit_block` whose prior text is
+ * unreconstructible has none either (`reverse/block_ops.rs`), and the
+ * reverse-move preflight (`src-tauri/src/commands/history.rs`) refuses a
+ * move whose prior parent is gone/soft-deleted or has become a descendant
+ * of the block being moved back.
+ *
+ * #3546 — do NOT read this as "will fail identically forever". Two of
+ * those arms are functions of the CURRENT tree, not of immutable op-log
+ * history: a soft-deleted prior parent can be revived from trash, and a
+ * cycle can be broken by a later move. The wire envelope is the bare
+ * `{ kind, message }` (no `code` sub-kind, unlike `validation`), and the
+ * `op_type` in the message is `"move_block"` for the state-dependent AND
+ * the permanent move arms alike, so callers cannot tell them apart. See
+ * `isPermanentRevertFailure` in `stores/undo.ts` for what the undo store
+ * does with that, and why.
  */
 export function isNonReversible(err: unknown): err is TypedAppError & { kind: 'non_reversible' } {
   return isAppError(err) && err.kind === 'non_reversible'

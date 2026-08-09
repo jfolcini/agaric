@@ -31,27 +31,25 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ActivityEntry } from '@/hooks/useMcpActivityFeed'
-import { unwrap } from '@/lib/app-error'
+import { isNonReversible, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 
-/**
- * Shape of an `AppError::NonReversible` once it crosses the Tauri IPC
- * boundary.  Used by the undo handler to branch on a dedicated toast —
- * the 6 current RW tools never produce non-reversible ops, but this
- * guard exists for forward-compat (future `purge_block` surfacing etc).
- */
-function isNonReversibleError(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'kind' in err &&
-    (err as { kind?: unknown }).kind === 'non_reversible'
-  )
-}
+// #3546 — the dedicated non-reversible toast branches on the SHARED
+// `isNonReversible` narrowing predicate (`@/lib/app-error`), never on a
+// local copy of the rule.  This file used to hand-roll one that accepted
+// any object carrying `kind === 'non_reversible'`; the shared predicate
+// additionally requires the `message: string` half of the `{ kind,
+// message }` IPC envelope (via `isAppError`), so a message-less lookalike
+// now takes the generic-failure branch instead of claiming the backend
+// said "non-reversible".  Every real `AppError::NonReversible`
+// (`src-tauri/agaric-core/src/error.rs`) serialises both fields, so the
+// production wire shape is unaffected — what goes away is a second
+// definition of the same rule, free to drift from the one every other
+// consumer narrows with.
 
 export interface ActivityFeedProps {
   entries: ActivityEntry[]
@@ -112,7 +110,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
       } catch (err) {
         logger.error('AgentAccessSettingsTab', 'undo failed', { opRef }, err)
         notify.error(
-          isNonReversibleError(err)
+          isNonReversible(err)
             ? t('agentAccess.undoAgentOp.nonReversible')
             : t('agentAccess.undoAgentOp.failed'),
         )
@@ -214,7 +212,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
         err,
       )
       notify.error(
-        isNonReversibleError(err)
+        isNonReversible(err)
           ? t('agentAccess.revertSession.nonReversible')
           : t('agentAccess.revertSession.failed'),
       )
