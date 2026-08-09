@@ -53,6 +53,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import type { FlatBlock } from '@/lib/tree-utils'
+import type { MountedBlocks, ZoomedBlocks } from '@/lib/zoom-scope'
 
 /**
  * Provisional per-page mount ceiling (#2467). Unmeasured — see file header.
@@ -65,9 +66,13 @@ export const INITIAL_MOUNT_LIMIT = 500
 /** Rows revealed per `expandMountLimit()` call once the ceiling is hit. */
 export const MOUNT_LIMIT_STEP = 500
 
-export interface UseBlockMountLimitReturn<L extends FlatBlock[] = FlatBlock[]> {
-  /** `visibleBlocks`, truncated to the current mount limit. */
-  mounted: L
+export interface UseBlockMountLimitReturn {
+  /**
+   * `visibleBlocks`, truncated to the current mount limit — and re-branded
+   * `'mounted'`, because that truncation makes it a DIFFERENT contract from
+   * its input (#3641). See the hook's doc comment.
+   */
+  mounted: MountedBlocks
   /** Count of `visibleBlocks` rows beyond the current mount limit. */
   hiddenCount: number
   /** Reveal (mount) the next batch of rows. */
@@ -90,17 +95,22 @@ export interface UseBlockMountLimitOptions {
 }
 
 /**
- * #3344 — generic in the ARRAY type, not just the element type, so the
- * zoom-scope brand (`ZoomedBlocks`, see `use-block-zoom.ts`) survives the cap:
- * BlockTree feeds this the zoom projection and needs the capped result to stay
- * a legal argument for the command-path hooks. `L` is inferred from the
- * argument, so this propagates a brand it is given and can never mint one —
- * passing an un-scoped list still yields an un-scoped list.
+ * #3344/#3641 — brand-gated in BOTH directions. The input must be a
+ * `ZoomedBlocks` (only `useBlockZoom` derives one), so this can never mint a
+ * scope out of an arbitrary array; and the output carries the DISTINCT
+ * `'mounted'` kind rather than propagating `'view'`, because the cap is a
+ * third render transform (after zoom and collapse) applied to the view and
+ * not to the command path. Propagating the kind — what this hook did when it
+ * was generic in the array type — made the uncapped list interchangeable with
+ * the capped one at every gated consumer, so a rewiring to
+ * `uncappedZoomedVisible` would let focus-next or Backspace-merge target a
+ * row past the ceiling that `BlockListRenderer` never mounted (#3251 sourced
+ * from virtualization instead of zoom).
  */
-export function useBlockMountLimit<L extends FlatBlock[]>(
-  visibleBlocks: L,
+export function useBlockMountLimit(
+  visibleBlocks: ZoomedBlocks,
   options: UseBlockMountLimitOptions = {},
-): UseBlockMountLimitReturn<L> {
+): UseBlockMountLimitReturn {
   const { initialLimit = INITIAL_MOUNT_LIMIT, step = MOUNT_LIMIT_STEP, pageKey = null } = options
 
   const [mountScope, setMountScope] = useState(() => ({ pageKey, limit: initialLimit }))
@@ -127,8 +137,11 @@ export function useBlockMountLimit<L extends FlatBlock[]>(
   // the mount-cap-free (common) case, same discipline as
   // `useBlockCollapse.visibleBlocks` returning `blocks` as-is.
   // The truncation is a NARROWING of `visibleBlocks` — every element came from
-  // it — so re-asserting `L` preserves whatever contract the input carried.
-  const mounted = (hiddenCount > 0 ? visibleBlocks.slice(0, mountLimit) : visibleBlocks) as L
+  // it — which is what makes re-branding it here legitimate rather than a mint
+  // out of nothing: the input was already zoom-scoped.
+  const capped: readonly FlatBlock[] =
+    hiddenCount > 0 ? visibleBlocks.slice(0, mountLimit) : visibleBlocks
+  const mounted = capped as MountedBlocks
 
   return { mounted, hiddenCount, expandMountLimit }
 }

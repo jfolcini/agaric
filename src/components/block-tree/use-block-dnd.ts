@@ -21,7 +21,6 @@ import {
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { type RefObject, useCallback, useMemo, useRef, useState } from 'react'
 
-import type { ZoomedBlocks } from '@/components/block-tree/use-block-zoom'
 import { INDENT_WIDTH } from '@/components/editor/SortableBlock'
 import { useAutoScrollOnDrag } from '@/hooks/useAutoScrollOnDrag'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -37,6 +36,7 @@ import {
   SENTINEL_ID,
   simulateProjection,
 } from '@/lib/tree-utils'
+import type { MountedBlocks } from '@/lib/zoom-scope'
 
 interface UseBlockDnDParams {
   blocks: FlatBlock[]
@@ -44,10 +44,10 @@ interface UseBlockDnDParams {
    * The ACTIVE view projection — the rows the drag can actually target, and
    * the list the depth projection is computed against.
    *
-   * #3344 — brand-gated (`ZoomedBlocks`) alongside the other command paths:
+   * #3344/#3641 — brand-gated (`MountedBlocks`) alongside the other command paths:
    * this one has been correct since #712, and the type now holds it that way.
    */
-  collapsedVisible: ZoomedBlocks
+  collapsedVisible: MountedBlocks
   /**
    * Parent that depth-0 drops in `collapsedVisible` resolve to. This is the
    * page root normally, but the ZOOMED block id when a zoom is active (#712):
@@ -104,7 +104,7 @@ export interface UseBlockDnDReturn {
    * ABOVE it when false. Null when there is no active drag / over-target.
    */
   dropAfter: boolean
-  visibleItems: FlatBlock[]
+  visibleItems: readonly FlatBlock[]
   /**
    * #914 — whether the active drag is moving the whole multi-selection (the
    * dragged block is one of >1 selection roots) rather than a single block.

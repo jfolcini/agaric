@@ -95,7 +95,7 @@ function mapRows(rows: readonly PropertyRow[]): Array<{ key: string; value: stri
     .filter((p) => p.value !== '')
 }
 
-export function useExtraBlockProperties(blocks: Array<{ id: string }>): BlockPropertiesMap {
+export function useExtraBlockProperties(blocks: ReadonlyArray<{ id: string }>): BlockPropertiesMap {
   const batch = useBatchPropertyRows()
   // The provider's `get` identity changes iff its underlying map is
   // rebuilt — i.e. on a (re)fetch. It stays stable across drag/reorder

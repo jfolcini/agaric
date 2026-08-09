@@ -3,7 +3,6 @@ import type { RefObject } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 
 import { consumePendingSplit } from '@/components/block-tree/use-block-flush'
-import type { ZoomedBlocks } from '@/components/block-tree/use-block-zoom'
 import { parse } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
 import { pmEndOfFirstBlock } from '@/editor/types'
@@ -13,6 +12,7 @@ import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import type { FlatBlock } from '@/lib/tree-utils'
+import type { MountedBlocks } from '@/lib/zoom-scope'
 
 /**
  * Scroll the block's DOM node into view after a reorder so the
@@ -162,12 +162,12 @@ export interface UseBlockActionOrchestrationParams {
    * delete boundary guard and its post-delete refocus) walks it, so it must
    * contain exactly the rows `BlockListRenderer` mounts.
    *
-   * #3344 — brand-gated (`ZoomedBlocks`): #3251 was this parameter being handed
+   * #3344/#3641 — brand-gated (`MountedBlocks`): #3251 was this parameter being handed
    * the un-zoomed page list, which typechecked because both lists were
    * `FlatBlock[]`. Only `useBlockZoom` derives this type, so the page-wide list
    * is no longer a legal argument here.
    */
-  collapsedVisible: ZoomedBlocks
+  collapsedVisible: MountedBlocks
   /**
    * #1342 — the FULL flat tree (not the collapsed/visible projection). The
    * merge handlers need it to find the merged-away block's DIRECT children

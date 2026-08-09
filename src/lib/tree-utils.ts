@@ -126,7 +126,7 @@ export function buildFlatTree(
  * preserves the original single-call behaviour exactly.
  */
 export function getDragDescendants(
-  items: FlatBlock[],
+  items: readonly FlatBlock[],
   activeId: string,
   indexById?: ReadonlyMap<string, number>,
 ): Set<string> {
@@ -152,7 +152,7 @@ export function getDragDescendants(
  * matching `findIndex` (which returns the FIRST match) only when ids are unique —
  * which they are in a well-formed flat tree.
  */
-export function buildIndexById(items: FlatBlock[]): Map<string, number> {
+export function buildIndexById(items: readonly FlatBlock[]): Map<string, number> {
   const index = new Map<string, number>()
   for (let i = 0; i < items.length; i++) index.set((items[i] as FlatBlock).id, i)
   return index
@@ -185,7 +185,10 @@ export function buildIndexById(items: FlatBlock[]): Map<string, number> {
  * DFS flatten, the ancestor chain of the item at index `i` is exactly the
  * trailing stack of items whose depth strictly decreases as we walk backwards.
  */
-export function computeSelectionRoots(items: FlatBlock[], selectedIds: Iterable<string>): string[] {
+export function computeSelectionRoots(
+  items: readonly FlatBlock[],
+  selectedIds: Iterable<string>,
+): string[] {
   const selected = selectedIds instanceof Set ? selectedIds : new Set(selectedIds)
   if (selected.size === 0) return []
 
@@ -275,7 +278,7 @@ export type ProjectionSim =
  *   exceed MAX_BLOCK_DEPTH and be rejected by the backend (#928). 0 for a leaf.
  */
 export function simulateProjection(
-  items: FlatBlock[],
+  items: readonly FlatBlock[],
   activeId: string,
   overId: string,
   rootParentId: string | null = null,
@@ -476,7 +479,7 @@ export function projectDepth(
  * @param subtreeHeight Height of the dragged subtree; see {@link simulateProjection}.
  */
 export function getProjection(
-  items: FlatBlock[],
+  items: readonly FlatBlock[],
   activeId: string,
   overId: string,
   dragOffset: number,
@@ -511,7 +514,7 @@ export function getProjection(
  * @param activeId  ID of the block being moved (excluded from the sibling scan).
  */
 export function computeDropIndex(
-  items: FlatBlock[],
+  items: readonly FlatBlock[],
   parentId: string | null,
   overId: string,
   activeId: string,

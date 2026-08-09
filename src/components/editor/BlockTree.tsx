@@ -52,8 +52,7 @@ import { useBlockSlashCommands } from '@/components/block-tree/use-block-slash-c
 import { useBlockTreeContextBags } from '@/components/block-tree/use-block-tree-context-bags'
 import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tree-event-listeners'
 import { useBlockTreeKeyboardShortcuts } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
-import type { SelectAllScopeIds, ZoomedIds } from '@/components/block-tree/use-block-zoom'
-import { useBlockZoom, zoomScopedIds } from '@/components/block-tree/use-block-zoom'
+import { useBlockZoom } from '@/components/block-tree/use-block-zoom'
 import { useBlockZoomEmptySeed } from '@/components/block-tree/use-block-zoom-empty-seed'
 import { BlockListRenderer } from '@/components/editor/BlockListRenderer'
 import { BlockTreeDialogs } from '@/components/editor/BlockTreeDialogs'
@@ -83,6 +82,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { searchPropertyKeys, searchSlashCommands } from '@/lib/slash-commands'
 import { getDragDescendants } from '@/lib/tree-utils'
+import { mountedScopedIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import { storeOwnsBlock, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -154,23 +154,16 @@ export function BlockTree({
   } = pageStore.getState()
   // Global focus/selection actions
   const { setFocused, toggleSelected, clearSelected } = useBlockStore.getState()
-  // #3344 — the three selection entry points are generic store primitives
-  // typed `string[]`; their `visibleIds` parameter name states the contract
-  // ("the tree's rendered order, collapse/zoom visibility already applied")
-  // that #3252 violated. Adapt them into THIS component under the
-  // `ZoomedIds` brand, so every id that can reach the batch delete / batch
-  // TODO handlers had to come out of the active projection. Narrowing here
-  // rather than in the store keeps the store layer free of a component-layer
-  // type while still closing the command path — the brand is contravariant in
-  // parameter position, so the wider store signatures assign cleanly.
-  const { rangeSelect, selectAll, extendSelection: rawExtendSelection } = useBlockStore.getState()
-  const rawRangeSelect: (blockId: string, visibleIds: ZoomedIds) => void = rangeSelect
-  // Ctrl/Cmd+A's scope is its own brand kind — at the page root it includes
-  // collapse-hidden rows, so it must not be substitutable for the rendered
-  // `ZoomedIds` the two range-select entry points above take.
-  const rawSelectAll: (visibleIds: SelectAllScopeIds) => void = selectAll
-  const extendSelection: (direction: 'up' | 'down', visibleIds: ZoomedIds) => void =
-    rawExtendSelection
+  // #3344/#3642 — the three selection entry points carry the zoom-scope brands
+  // on the STORE primitives themselves (`@/lib/zoom-scope`), so every id that
+  // can reach the batch delete / batch TODO handlers had to come out of the
+  // active projection. The gate used to be a set of narrowing adapters right
+  // here, which closed the path for `BlockTree` and nobody else.
+  const {
+    rangeSelect: rawRangeSelect,
+    selectAll: rawSelectAll,
+    extendSelection,
+  } = useBlockStore.getState()
 
   // ── Editor-event dispatch (#1019) ──────────────────────────────────
   // Owns the late-bound handler refs for the editor events whose handlers are
@@ -274,10 +267,10 @@ export function BlockTree({
   // Shift+Arrow keyboard range-select slice against this so neither ever pulls
   // an invisible block into the selection. Memoized so the document keydown
   // listener (useBlockTreeKeyboardShortcuts) doesn't re-attach every render.
-  // #3344 — `zoomScopedIds` carries the zoom-scope brand across the
+  // #3344 — `mountedScopedIds` carries the mount-scope brand across the
   // `FlatBlock[]` → `string[]` projection, so the selection entry points below
   // cannot be handed the page-wide list instead.
-  const visibleIds = useMemo(() => zoomScopedIds(zoomedVisible), [zoomedVisible])
+  const visibleIds = useMemo(() => mountedScopedIds(zoomedVisible), [zoomedVisible])
 
   // #1066 — `visibleIds` is re-derived from `blocks` on every edit, so a
   // `handleSelect` that closed over it would get a new identity per edit and

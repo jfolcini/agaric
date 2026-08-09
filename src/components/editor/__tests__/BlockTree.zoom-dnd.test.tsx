@@ -65,10 +65,6 @@ vi.mock('@/components/block-tree/use-block-zoom', () => ({
     // stubbed zoom does not hand BlockTree an undefined select-all list.
     selectAllIds: collapseVisible.map((b) => b.id),
   }),
-  // #3344 — this factory replaces the whole module, so the id projection
-  // BlockTree imports from it has to be stubbed too. Same behaviour as the
-  // real one; the brand it carries is erased at runtime.
-  zoomScopedIds: (blocks: FlatBlock[]) => blocks.map((b) => b.id),
 }))
 
 // ── Editor + dnd-kit stubs (same shape as BlockTree.test.tsx) ─────────────
