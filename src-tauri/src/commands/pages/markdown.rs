@@ -1722,13 +1722,25 @@ pub async fn import_markdown_inner(
 /// import as failed (possibly partially-applied per the chunk semantics
 /// above). Sends are best-effort (see [`ImportProgressSink`]).
 // #1934 — declare identifying span fields up front so the import span can be
-// filtered/grouped in logs by page title, target space, and size. `content`,
-// `progress`, and the heavy handles are `skip`-ped; `space_id` is recorded
-// here (it is an arg) while `page_title` / `blocks_total` are derived inside
-// and back-filled via `Span::current().record(...)` once known.
+// filtered/grouped by target space and size. `content`, `progress`, and the
+// heavy handles are `skip`-ped; `space_id` is recorded here (it is an arg)
+// while `blocks_total` is derived inside and back-filled via
+// `Span::current().record(...)` once known.
+//
+// #3317 — `page_title` used to be a third span field here. It is user content:
+// the title is derived from the imported filename, so it is a real name (often
+// a real vault path) out of the user's notes. A span attribute has NO redaction
+// boundary in front of it — `agaric_observability::exporter::format_span`
+// writes attributes verbatim into `traces/*.log`, and the opt-in OTLP exporter
+// ships them to the collector — while SECURITY.md promises spans carry "opaque
+// ids / counts / enums / durations / booleans only, never note content". The
+// title is still logged as a `tracing::info!` FIELD below, where the
+// bug-report redactor's deny-by-default pass covers it in both `agaric.log`
+// (JSON path) and `otel-logs/` (key=value path). Enforced by
+// `commands::observability::tests::span_fields_stay_on_the_pii_allowlist`.
 #[instrument(
     skip(pool, device_id, materializer, content, progress, app_data_dir, vault_files),
-    fields(page_title = tracing::field::Empty, blocks_total = tracing::field::Empty, space = %space_id),
+    fields(blocks_total = tracing::field::Empty, space = %space_id),
     err
 )]
 #[allow(clippy::too_many_arguments)]
@@ -1796,11 +1808,11 @@ pub async fn import_markdown_with_progress(
     // no `Complete` and treats it as failed.
     let blocks_total = parse_output.blocks.len() as u64;
 
-    // #1934 — back-fill the identifying span fields now that the page title
-    // and block count are known, so every event emitted within this span (and
-    // the `err` line on failure) carries them.
+    // #1934 — back-fill the identifying span field now that the block count is
+    // known, so every event emitted within this span (and the `err` line on
+    // failure) carries it. #3317 removed the `page_title` back-fill from here;
+    // see the note on the `#[instrument]` attribute above.
     let span = tracing::Span::current();
-    span.record("page_title", page_title.as_str());
     span.record("blocks_total", blocks_total);
 
     // #1932 — start-of-import log line. Until now the entire backend import

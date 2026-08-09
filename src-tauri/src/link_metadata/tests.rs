@@ -1576,3 +1576,108 @@ fn detect_auth_required_title_keyword_with_length_changing_char_2958() {
         "auth title keyword must still match with a length-changing char present (#2958)"
     );
 }
+
+// ======================================================================
+// #3317 — the SSRF guard must not be routable around via a system proxy
+// ======================================================================
+
+/// Minimal HTTP stub on an ephemeral loopback port.
+///
+/// Returns its `host:port` and a receiver yielding one item per accepted
+/// connection — the observation channel the egress guard asserts on. Every
+/// connection is answered `200` so a client that reaches the stub completes
+/// promptly instead of sitting on the 10 s client timeout.
+fn spawn_http_stub() -> (String, std::sync::mpsc::Receiver<()>) {
+    use std::io::{Read as _, Write as _};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind stub listener");
+    let addr = listener.local_addr().expect("stub local_addr");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            if tx.send(()).is_err() {
+                return;
+            }
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+            let mut buf = [0_u8; 4096];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+            let _ = stream.flush();
+        }
+    });
+    (addr.to_string(), rx)
+}
+
+/// #3317: an ambient `HTTP_PROXY` must not intercept the link-preview fetch.
+///
+/// A proxy replaces the connect target, so `SsrfGuardResolver` — which only
+/// runs on the client's own DNS path — is never consulted and the proxy
+/// dereferences the URL on the app's behalf. Structured like the sync
+/// transport's DNS guards: a NEGATIVE CONTROL proves the fake proxy is
+/// observable in this process (the same builder MINUS `.no_proxy()` does get
+/// routed there) before the guard asserts that `shared_client` is not.
+///
+/// Deleting `.no_proxy()` from `shared_client` turns the guard assertion red.
+///
+/// Mutates process env, so it relies on nextest's per-test process isolation.
+#[tokio::test]
+#[allow(unsafe_code)] // `std::env::set_var` is `unsafe` on edition 2024.
+async fn link_fetch_client_never_uses_the_system_proxy() {
+    let (proxy_addr, proxy_hits) = spawn_http_stub();
+    let (origin_addr, origin_hits) = spawn_http_stub();
+    let proxy_url = format!("http://{proxy_addr}");
+    // An IP-literal target keeps the request off DNS entirely, so the only
+    // thing under test is whether a proxy is interposed.
+    let target = format!("http://{origin_addr}/page");
+
+    // SAFETY: single-threaded test setup, before any client is built; the
+    // stub threads never read the environment. Clearing NO_PROXY stops an
+    // ambient wildcard bypass (nextest sets one for the sync guards) from
+    // making the negative control pass vacuously.
+    unsafe {
+        std::env::set_var("HTTP_PROXY", &proxy_url);
+        std::env::set_var("http_proxy", &proxy_url);
+        std::env::set_var("ALL_PROXY", &proxy_url);
+        std::env::set_var("all_proxy", &proxy_url);
+        std::env::remove_var("NO_PROXY");
+        std::env::remove_var("no_proxy");
+    }
+
+    // -- Negative control: the same builder MINUS `.no_proxy()` -------------
+    let unguarded = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .user_agent("Agaric/1.0")
+        .build()
+        .expect("control client builds");
+    let _ = unguarded.get(&target).send().await;
+    assert!(
+        proxy_hits
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .is_ok(),
+        "NEGATIVE CONTROL FAILED: a client without `.no_proxy()` did not reach the fake \
+         proxy, so the guard below is not observable and must not pass. Either reqwest \
+         stopped honouring HTTP_PROXY/ALL_PROXY by default or the stub is not accepting."
+    );
+
+    // -- Guard: the production client must connect to the host in the URL ---
+    let guarded = super::shared_client().expect("shared client builds");
+    let response = guarded.get(&target).send().await;
+    assert!(
+        proxy_hits
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .is_err(),
+        "link-preview fetch was routed through the system proxy — that bypasses \
+         SsrfGuardResolver entirely (#3317). Restore `.no_proxy()` in `shared_client`."
+    );
+    assert!(
+        response.is_ok(),
+        "the guarded client must reach the target host directly: {response:?}"
+    );
+    assert!(
+        origin_hits
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .is_ok(),
+        "the guarded request never arrived at the target host"
+    );
+}
