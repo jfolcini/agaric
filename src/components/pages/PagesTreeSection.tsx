@@ -49,13 +49,15 @@ interface PageRef {
 /**
  * Characters that would change how the backend parses a glob entry:
  * `prepare_globs` splits an entry on top-level commas, brace-expands
- * `{a,b}`, treats `[...]` as a character class, and REJECTS unbalanced
- * brackets / nested braces / escapes with a `Validation` error. A page
- * title is arbitrary user text, so interpolating it verbatim would make
- * `Notes, drafts` silently match two unrelated globs and `Notes [2026]`
- * fail the IPC outright.
+ * `{a,b}`, treats `[...]` as a character class, REJECTS unbalanced
+ * brackets / nested braces / escapes with a `Validation` error, and
+ * TRIMS each entry. A page title is arbitrary user text, so
+ * interpolating it verbatim would make `Notes, drafts` silently match
+ * two unrelated globs, `Notes [2026]` fail the IPC outright, and a
+ * leading-space title lose the space the real row still carries.
+ * Whitespace is in the set for that last reason: `?` is not trimmed.
  */
-const GLOB_SIGNIFICANT = /[,{}[\]\\*?]/g
+const GLOB_SIGNIFICANT = /[\s,{}[\]\\*?]/g
 
 /**
  * A glob matching AT LEAST every page under `pageTitle`'s namespace.
@@ -67,15 +69,21 @@ const GLOB_SIGNIFICANT = /[,{}[\]\\*?]/g
  * through `filterDescendantPages`, the exact prefix test this component
  * already applied to the whole-space list; the glob is a server-side
  * pre-filter, not the predicate.
+ *
+ * One case the widening does not cover: a title longer than
+ * `MAX_GLOB_LEN` (1024 bytes) is rejected by `prepare_globs`, so the
+ * fetch rejects and the panel stays hidden — the same outcome any other
+ * IPC failure has always produced here.
  */
 function descendantGlob(pageTitle: string): string {
   return `${pageTitle.replace(GLOB_SIGNIFICANT, '?')}/*`
 }
 
 /**
- * Runaway guard for the cursor drain. A namespace deep enough to exceed
- * 2000 descendants is past the point where a flat tree panel is usable,
- * and the cap keeps a non-advancing cursor from spinning forever.
+ * Runaway guard for the cursor drain: 10 pages x the 200-row page limit,
+ * so the tree is TRUNCATED past 2000 descendants. A namespace that deep
+ * is well past the point where a flat tree panel is usable, and the cap
+ * keeps a non-advancing cursor from spinning forever.
  */
 const MAX_DESCENDANT_PAGES = 10
 
@@ -89,7 +97,7 @@ async function fetchDescendantPages(spaceId: string, pageTitle: string): Promise
         {
           spaceId,
           filters: [{ type: 'PathGlob', pattern: descendantGlob(pageTitle), exclude: false }],
-        } as Parameters<typeof commands.listPagesWithMetadata>[0],
+        },
         cursor,
         paginationLimit(200),
       )

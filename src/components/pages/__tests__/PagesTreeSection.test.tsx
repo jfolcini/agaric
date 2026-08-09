@@ -132,28 +132,30 @@ describe('PagesTreeSection', () => {
     )
   })
 
-  // `prepare_globs` splits an entry on top-level commas and rejects
-  // unbalanced brackets, so a page title carrying either would silently
-  // widen the match or fail the IPC. Neutralising them to `?` keeps the
-  // pattern a superset; the exact prefix test still narrows it.
+  // `prepare_globs` splits an entry on top-level commas, rejects unbalanced
+  // brackets, and TRIMS the entry — so a page title carrying any of those
+  // would silently widen the match, fail the IPC, or lose a leading space.
+  // Neutralising them to `?` (which is not trimmed) keeps the pattern a
+  // superset; the exact prefix test still narrows it.
   it('neutralises glob-significant characters in the page title', async () => {
     mockedListPagesWithMetadata.mockResolvedValue(
       onePage([
-        makeRow('CHILD', 'Notes, [2026]/plan'),
+        makeRow('CHILD', ' Notes, [2026]/plan'),
         // Matched by the widened glob but NOT a real descendant — the exact
         // prefix test must still drop it.
-        makeRow('DECOY', 'Notes? x2026x/plan'),
+        makeRow('DECOY', 'xNotes? x2026x/plan'),
       ]),
     )
 
     render(
-      <PagesTreeSection pageId="PARENT" pageTitle="Notes, [2026]" onNavigateToPage={vi.fn()} />,
+      <PagesTreeSection pageId="PARENT" pageTitle=" Notes, [2026]" onNavigateToPage={vi.fn()} />,
     )
     await screen.findByTestId('pages-tree-section')
 
+    // Leading whitespace survives as `?` rather than being trimmed away.
     expect(mockedListPagesWithMetadata).toHaveBeenCalledWith(
       expect.objectContaining({
-        filters: [{ type: 'PathGlob', pattern: 'Notes? ?2026?/*', exclude: false }],
+        filters: [{ type: 'PathGlob', pattern: '?Notes???2026?/*', exclude: false }],
       }),
       null,
       200,
