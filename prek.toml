@@ -1547,7 +1547,10 @@ language = "system"
 pass_filenames = false
 stages = ["pre-commit"]
 
-# shellcheck: lint shell scripts under scripts/ and src-tauri/scripts/.
+# shellcheck: lint shell scripts under scripts/, src-tauri/scripts/, and
+# .claude/hooks/ — keep this list in step with the `files` pattern below
+# (#3637: it said "scripts/ and src-tauri/scripts/" long after the pattern
+# was broadened to cover the Claude hooks too).
 # `--severity=warning`
 # skips the `info` / `style` notices (e.g. SC2012 "use find instead
 # of ls", SC2001 "use ${var//pat/repl} instead of sed") which are

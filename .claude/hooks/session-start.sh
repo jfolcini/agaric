@@ -25,7 +25,11 @@
 #
 # Everything is idempotent and best-effort: re-running on each remote session
 # start only fills gaps — already-installed tools are skipped — so even if a
-# detached install is cut short, the next session start completes it.
+# detached install is cut short, the next session start completes it. That
+# now holds for the apt step too: a SIGKILL at the 600s cap landing mid-
+# `apt-get install` used to leave dpkg interrupted, which made the NEXT
+# session's apt-get fail hard instead of resuming, so scripts/setup-system-
+# deps.sh runs `dpkg --configure -a` before it installs anything (#3637).
 
 set -euo pipefail
 

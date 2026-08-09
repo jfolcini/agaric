@@ -33,12 +33,38 @@ case "$name" in
     printf '%s\n' "${FAKE_UID:-0}"
     ;;
   dpkg-query)
+    # Faithful in the one respect that matters (#3637): dpkg-query renders
+    # the -f format ONCE PER RECORD and adds no separator of its own, so a
+    # format string without a trailing newline runs the records together.
+    # FAKE_DPKG_MULTIARCH=1 models a host with `dpkg --add-architecture
+    # i386` where the package is installed for both — two records, exactly
+    # what made a present package read as missing under the old bare
+    # `${Status}` compare.
     package="${*: -1}"
-    if grep -Fxq "$package" "$FAKE_STATE"; then
-      printf 'install ok installed'
-      exit 0
+    format=''
+    for arg in "$@"; do
+      case "$arg" in
+        -f=*) format="${arg#-f=}" ;;
+      esac
+    done
+    grep -Fxq "$package" "$FAKE_STATE" || exit 1
+    architectures=(amd64)
+    if [ "${FAKE_DPKG_MULTIARCH:-0}" = 1 ]; then
+      architectures=(amd64 i386)
     fi
-    exit 1
+    for architecture in "${architectures[@]}"; do
+      rendered="${format//'${Status}'/install ok installed}"
+      rendered="${rendered//'${binary:Package}'/$package:$architecture}"
+      printf '%b' "$rendered"
+    done
+    exit 0
+    ;;
+  dpkg)
+    printf 'dpkg|%s\n' "$*" >>"$FAKE_LOG"
+    if [ "${FAKE_DPKG_CONFIGURE_FAIL:-0}" = 1 ]; then
+      exit 1
+    fi
+    exit 0
     ;;
   apt-get)
     printf 'apt-get|%s|DEBIAN_FRONTEND=%s\n' "$*" "${DEBIAN_FRONTEND:-}" >>"$FAKE_LOG"
@@ -79,7 +105,7 @@ case "$name" in
 esac
 FAKE
 chmod +x "$fake_bin/fake-command"
-for command_name in uname id dpkg-query apt-get sudo; do
+for command_name in uname id dpkg dpkg-query apt-get sudo; do
   ln -s fake-command "$fake_bin/$command_name"
 done
 
@@ -87,7 +113,7 @@ done
 # REAL apt-get/sudo/dpkg-query. If PATH construction ever regressed, the tests
 # would quietly start driving the host's package manager. Assert the shadowing
 # before anything privileged-looking runs, and fail closed if it does not hold.
-for command_name in uname id dpkg-query apt-get sudo; do
+for command_name in uname id dpkg dpkg-query apt-get sudo; do
   resolved="$(PATH="$fake_bin:$PATH" command -v "$command_name" || true)"
   case "$resolved" in
     "$fake_bin/$command_name") ;;
@@ -139,6 +165,8 @@ run_helper() {
       FAKE_APT_UPDATE_FAIL="${FAKE_APT_UPDATE_FAIL:-0}" \
       FAKE_APT_INSTALL_FAIL="${FAKE_APT_INSTALL_FAIL:-0}" \
       FAKE_APT_INSTALL_NOOP="${FAKE_APT_INSTALL_NOOP:-0}" \
+      FAKE_DPKG_MULTIARCH="${FAKE_DPKG_MULTIARCH:-0}" \
+      FAKE_DPKG_CONFIGURE_FAIL="${FAKE_DPKG_CONFIGURE_FAIL:-0}" \
       bash "$helper"
   } 2>&1)" || status=$?
   helper_status=$status
@@ -152,6 +180,28 @@ run_helper
 assert_contains "$output" 'already installed — skipping apt'
 assert_empty_log
 echo 'ok - installed packages skip every privileged/network command'
+
+# 1b. The same, on a MULTI-ARCH host (#3637). `dpkg --add-architecture i386`
+# plus a package installed for both architectures makes dpkg-query emit TWO
+# records; with a format string carrying no trailing newline they arrive
+# concatenated ("install ok installedinstall ok installed"), so the old exact
+# compare against `install ok installed` read a PRESENT package as missing.
+# The visible damage was not a redundant apt run: the post-install
+# re-verification (test 6b) then reported "apt reported success but N
+# package(s) are still missing" and setup.sh raised its "will not compile or
+# test" advisory on a fully provisioned box — a false negative from the
+# script whose job is to catch false negatives.
+#
+# Same fixture as test 1 (everything installed), only the dpkg-query record
+# count differs, so any failure here is attributable to the multi-arch shape
+# alone.
+printf '%s\n' "${expected_packages[@]}" >"$state"
+: >"$log"
+FAKE_DPKG_MULTIARCH=1 run_helper
+[ "$helper_status" -eq 0 ] || fail 'multi-arch host: an installed package read as missing (THIS IS THE #3637 NOTE-1 REGRESSION)'
+assert_contains "$output" 'already installed — skipping apt'
+assert_empty_log
+echo 'ok - a multi-arch dpkg-query record pair still reads as installed'
 
 # 2. Root installs the exact compile/test set, then a rerun is a no-op.
 : >"$state"
@@ -171,6 +221,39 @@ FAKE_UID=0 run_helper
 [ "$helper_status" -eq 0 ] || fail 'idempotent rerun failed'
 assert_empty_log
 echo "ok - root installs the exact ${#expected_packages[@]}-package set and reruns idempotently"
+
+# 2b. The interrupted-dpkg self-heal (#3637). This installer runs
+# synchronously inside .claude/hooks/session-start.sh's hard ~600s cap; a
+# SIGKILL mid-`apt-get install` leaves dpkg half-configured, and from then on
+# every apt-get aborts with "dpkg was interrupted…" — so the one bootstrap
+# step that exists to make a sandbox build-ready was also the only one a
+# timeout could wedge permanently. Assert both that it runs and that it runs
+# BEFORE apt: after apt-get has already failed on the interrupted state, a
+# repair is worth nothing.
+: >"$state"
+: >"$log"
+FAKE_UID=0 run_helper
+[ "$helper_status" -eq 0 ] || fail 'install with dpkg self-heal failed'
+grep -Fq 'dpkg|--configure -a' "$log" \
+  || fail 'no dpkg --configure -a self-heal before apt (THIS IS THE #3637 NOTE-2 REGRESSION)'
+dpkg_line="$(grep -n 'dpkg|--configure -a' "$log" | head -1 | cut -d: -f1)"
+apt_line="$(grep -n 'apt-get|' "$log" | head -1 | cut -d: -f1)"
+[ "$dpkg_line" -lt "$apt_line" ] \
+  || fail "dpkg --configure -a ran at log line $dpkg_line, after the first apt-get at $apt_line — a repair after the failure is useless"
+echo 'ok - an interrupted dpkg is self-healed before apt-get runs'
+
+# 2c. …and a self-heal that itself fails is not fatal: apt-get still runs and
+# reports the real problem with far better context than "dpkg exited 1".
+# Without this arm the self-heal could be hardened into a hard abort and
+# nothing would notice.
+: >"$state"
+: >"$log"
+FAKE_UID=0 FAKE_DPKG_CONFIGURE_FAIL=1 run_helper
+[ "$helper_status" -eq 0 ] || fail 'a failed dpkg self-heal wrongly aborted provisioning'
+assert_contains "$output" 'interrupted-install self-heal'
+grep -Fq 'apt-get|-o Acquire::Retries=3 install -y' "$log" \
+  || fail 'a failed dpkg self-heal skipped the apt install entirely'
+echo 'ok - a failed dpkg self-heal warns but never blocks the install'
 
 # 3. A non-root remote uses noninteractive sudo for every privileged call.
 : >"$state"
@@ -242,9 +325,30 @@ FAKE_UID=0 FAKE_APT_INSTALL_FAIL=1 run_helper
 [ "$helper_status" -ne 0 ] || fail 'patchelf-only apt install failure falsely succeeded'
 [ "$helper_status" -eq 42 ] || fail "patchelf-only apt install failure did not classify as exit 42 (got $helper_status)"
 assert_contains "$output" 'patchelf'
-assert_contains "$output" 'is the only package still missing — the compile/test package set installed fine'
+assert_contains "$output" 'is the only package still missing — the compile/test package set is present'
 if [[ "$output" == *'dependencies installed.'* ]]; then fail 'patchelf-only failure printed success'; fi
 echo 'ok - a patchelf-only install failure is classified separately (exit 42) from a compile-set failure (exit 1)'
+
+# 6e. The same exit-42 classification is reached from paths where NOTHING was
+# installed — here the no-privilege bail-out, which returns before apt is
+# touched at all. The classification is correct there; the WORDING was not
+# (#3637 note 3): it claimed "the compile/test package set installed fine" on
+# a run that installed nothing. Assert the claim this script can actually
+# support — that the set is present — and assert the false one is gone, since
+# the only thing this script sells is that its messages can be trusted.
+: >"$state"
+: >"$log"
+for package in "${expected_packages[@]}"; do
+  [ "$package" = 'patchelf' ] || printf '%s\n' "$package" >>"$state"
+done
+FAKE_UID=1000 FAKE_SUDO_OK=0 run_helper
+[ "$helper_status" -eq 42 ] || fail "patchelf-only + no privilege did not classify as exit 42 (got $helper_status)"
+assert_contains "$output" 'is the only package still missing — the compile/test package set is present'
+if [[ "$output" == *'installed fine'* ]]; then
+  fail 'a path that installed nothing still claims the compile/test set "installed fine"'
+fi
+if grep -Fq 'apt-get|' "$log"; then fail 'no-privilege patchelf-only path ran apt'; fi
+echo 'ok - the patchelf-only message claims presence, not an install that never happened'
 
 # 6b. The other half of #6: apt exits 0 yet the packages are still absent. The
 # exit code alone is not evidence of a working build, so the helper re-queries
@@ -288,7 +392,7 @@ done
 # from the restricted PATH too. An interpreter is not a package manager: the
 # safety property asserted below is specifically that apt/dpkg/sudo are gone.
 ln -s "$BASH" "$nodebian_bin/bash"
-for command_name in apt-get dpkg-query sudo; do
+for command_name in apt-get dpkg dpkg-query sudo; do
   [ -z "$(PATH="$nodebian_bin" command -v "$command_name" || true)" ] \
     || fail "non-Debian probe is unsafe: '$command_name' is still reachable"
 done
