@@ -69,9 +69,12 @@ to derive:
 
 - **zstd wire compression is gone with them (#3512).** It lived in the retired
   `sync_daemon::wire` module, deleted with the rest of the old transport in
-  #3544. `HeadExchange.wire_compression` is still on the wire and
-  still advertised as `true` by `start()`, and is now **ignored by both ends** —
-  see the field's entry under [`SyncMessage::HeadExchange`](#syncmessageheadexchange).
+  #3544. The `HeadExchange.wire_compression` capability that gated it was then
+  **removed from the wire in #3543**, once it was established that no surviving
+  code path read the received value — see
+  [`SyncMessage::HeadExchange`](#syncmessageheadexchange) for the compatibility
+  argument. The `compressed: bool` on the two retired chunked variants remains,
+  permanently `false`.
 - **The 4× JSON expansion is now paid in full**, against a 256 MB frame cap
   instead of a 10 MB message cap. That is a much larger budget than before, but
   it makes a single space past roughly 64 MB of Loro state a hard offer failure
@@ -116,13 +119,12 @@ HeadExchange { heads: Vec<DeviceHead>,
                loro_vvs: Vec<SpaceVersionVector>,   // #[serde(default)]
                engine_format_version: u32,           // #[serde(default)]
                op_log_replication: bool,             // #[serde(default)] capability
-               wire_compression: bool,               // #[serde(default)] capability
                op_log_batch_chunked: bool,           // #[serde(default)] capability
                pairing_proof: Option<String> }       // #[serde(default)]
 ```
 
 Every field after `heads` is `#[serde(default)]`, so a peer predating any of
-them deserializes the zero value and degrades to the older behaviour. The three
+them deserializes the zero value and degrades to the older behaviour. The two
 `bool`s are **additive capability advertisements** — see the variants they gate
 below.
 
@@ -151,21 +153,37 @@ incompatible peer up front, before any raw-byte Loro merge (#2130). Also
 `#[serde(default)]`: a legacy peer deserializes as `0`, which falls through
 to the import-time format guards.
 
-`wire_compression` (#2200) advertised that the sender could decompress
-zstd-compressed chunked `LoroSync` payloads. **It is still sent as `true` and is
-now ignored by both ends (#3512).** Compression lived in the chunking layer of the
-retired `sync_daemon::wire` module (deleted in #3544), which the QUIC transport has
-no counterpart for, so nothing reads
-the flag. It is documented here rather than quietly left in place because a
-protocol field that does nothing is a trap for the next reader; the open decision
-is whether to remove it or honour it at the frame layer.
+**Removed field: `wire_compression` (#2200, deleted in #3543).** It advertised
+that the sender could decompress zstd-compressed chunked `LoroSync` payloads.
+Compression lived in the chunking layer of the retired `sync_daemon::wire` module
+(deleted in #3544), which the QUIC transport has no counterpart for, so the flag
+became write-only: `start()` set it to `true` and the receiving orchestrator
+destructured it to `_`. #3543 removed it rather than leaving a protocol field
+that does nothing.
 
-`op_log_batch_chunked` (#2593) has the same fate for the chunked frame it gated —
-nothing emits `OpLogBatchChunked` any more — but the *threshold* it pairs with is
-still live: a batch over `OP_LOG_BATCH_INLINE_MAX_BYTES` is skipped when the peer
-did not advertise the capability, and one over `MAX_OP_LOG_BATCH_PAYLOAD_SIZE` is
-skipped unconditionally. State still converges via `LoroSync`; only the audit tail
-is dropped.
+Removing it is safe in both directions:
+
+- **This build meets a peer shipped between #2200 and #3543.** That peer still
+  sends `wire_compression: true`. `SyncMessage` carries no
+  `#[serde(deny_unknown_fields)]`, so serde ignores the extra key and the
+  `HeadExchange` parses normally.
+- **That peer meets this build.** This build omits the key; the peer's
+  `#[serde(default)]` yields `false`. On any build that could reach the QUIC
+  handshake, `false` changes nothing — the received value is discarded there too.
+- **A pre-cutover peer cannot be reached at all.** It speaks
+  WebSocket-over-mTLS and cannot complete an iroh QUIC handshake on
+  `transport::service::SYNC_ALPN`, so the old "`false` means stream me raw
+  bytes" semantics has no session in which to be observed.
+
+`op_log_batch_chunked` (#2593) was **not** removed with it, despite the two being
+introduced as mirror images. The chunked *encoding* it named is gone — nothing
+emits `OpLogBatchChunked` any more — but the flag still gates a live send
+decision, so unlike `wire_compression` its received value is read: a batch over
+`OP_LOG_BATCH_INLINE_MAX_BYTES` is skipped when the peer did not advertise the
+capability, and one over `MAX_OP_LOG_BATCH_PAYLOAD_SIZE` is skipped
+unconditionally. What the flag now promises is "I can survive a payload above the
+inline bound, however it arrives" rather than "I can decode chunked frames".
+State still converges via `LoroSync`; only the audit tail is dropped.
 
 `pairing_proof: Option<String>` (#855) is present only while the initiator is
 mid-pairing (its pending-pairing marker holds the proof). It is the
@@ -323,8 +341,8 @@ Update   { protocol_version: u8, space_id: SpaceId,
 
 ```text
 LoroSyncChunked { header: LoroSyncChunkedHeader, is_last: bool,
-                  compressed: bool }   // #[serde(default)], zstd when the
-                                       // peer advertised wire_compression
+                  compressed: bool }   // #[serde(default)], permanently false
+                                       // since #3543 retired the capability
 
 LoroSyncChunkedHeader (serde tag "kind", snake_case):
   Snapshot { protocol_version: u8, space_id: SpaceId, size_bytes: u64 }
@@ -434,8 +452,9 @@ via `LoroSync`. This is essential: sending such a peer an `OpLogBatchChunked`
 frame it cannot deserialize would fault the session, and because the oversized
 record persists, every subsequent session too, breaking *all* state sync. A batch
 exceeding `MAX_OP_LOG_BATCH_PAYLOAD_SIZE` (256 MB) is skipped regardless of
-capability (unshippable even chunked). This mirrors the #2200 `wire_compression`
-capability gate.
+capability (unshippable even chunked). This once mirrored the #2200
+`wire_compression` capability gate; that flag was deleted in #3543 because
+nothing read it, whereas this one is still consulted on every send.
 
 **Capability-gated (back-compat).** The streamer appends `OpLogBatch` only when
 the puller advertised `HeadExchange { op_log_replication: true }` — an older
@@ -456,8 +475,9 @@ OpLogBatchChunked { size_bytes: u64, is_last: bool, compressed: bool }   // stre
 chunked-binary transport encoding of `OpLogBatch` (#2593): a batch whose
 `serde_json`-encoded `records` exceeded `OP_LOG_BATCH_INLINE_MAX_BYTES` travelled
 as this envelope (announcing `size_bytes` of follow-up binary frames,
-`compressed` set when the peer advertised `wire_compression` and zstd shrank the
-payload) followed by the records' bytes. The producer and reassembler lived in
+`compressed` set when the peer advertised the since-retired `wire_compression`
+capability and zstd shrank the payload) followed by the records' bytes. The
+producer and reassembler lived in
 `sync_daemon::wire`, deleted in #3544; the orchestrator still rejects the variant
 loudly if one arrives.
 

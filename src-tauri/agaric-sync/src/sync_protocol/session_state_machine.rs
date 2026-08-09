@@ -181,7 +181,12 @@ pub struct SyncOrchestrator {
     /// build) has the oversized record skipped instead, so it never receives an
     /// `OpLogBatchChunked` frame it cannot deserialize (which would fault the
     /// session, and — since the record persists — every subsequent session).
-    /// Mirrors the #2200 `wire_compression` capability gate.
+    ///
+    /// This once mirrored the #2200 `wire_compression` gate; that flag was
+    /// deleted in #3543 because nothing read it. This one is **not** dead: it
+    /// still gates [`Self::collect_op_batches_for_peer`]'s
+    /// oversized-batch `retain`, so the promise it carries ("I can survive a
+    /// payload above the inline bound") is still consulted on every send.
     peer_op_log_batch_chunked: bool,
     /// #2481 phase 1: the peer's advertised per-device op-log frontiers
     /// (`HeadExchange.heads`), stashed so the streamer can compute which op
@@ -333,11 +338,6 @@ impl SyncOrchestrator {
             // replication so a capable peer may stream us `OpLogBatch`. An
             // older peer omits/ignores this flag and never sends the variant.
             op_log_replication: true,
-            // #2200: advertise that we can decompress zstd-compressed
-            // chunked LoroSync payloads. The responder (which streams
-            // `LoroSync` back to us) reads this flag and only then
-            // compresses; an older responder ignores it and streams raw.
-            wire_compression: true,
             // #2593: advertise that we can decode the chunked `OpLogBatchChunked`
             // transport, so a streamer may ship us an oversized op batch. A
             // shipped #2481 peer omits this (→ `false`) and the streamer skips
@@ -491,11 +491,6 @@ impl SyncOrchestrator {
                 // gates whether we append `OpLogBatch` messages to the
                 // streaming reply below (stashed at `peer_op_log_replication`).
                 op_log_replication,
-                // #2200: the peer's compression capability is consumed by
-                // the transport session layer, which reads it off the
-                // received `HeadExchange` and records it on the session.
-                // Ignored by this core.
-                wire_compression: _,
                 // #2593: the peer's chunked-OpLogBatch capability gates whether
                 // we ship it an oversized (over-inline-bound) op batch — stashed
                 // at `peer_op_log_batch_chunked` and honoured by

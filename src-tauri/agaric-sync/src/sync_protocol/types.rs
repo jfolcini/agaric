@@ -269,6 +269,20 @@ pub enum SyncMessage {
     /// unknown-variant message an older peer cannot deserialize. Both sides
     /// gate their op-log audit exchange on having observed this flag from the
     /// other side.
+    ///
+    /// **Removed field: `wire_compression` (#2200, deleted in #3543).** It
+    /// advertised that the sender could zstd-inflate a compressed
+    /// `LoroSyncChunked` payload. The compressor and the chunked framing both
+    /// went with the WebSocket transport at the iroh cutover (#3464), leaving
+    /// the flag write-only: every build set it to `true` on send and discarded
+    /// it on receive. Dropping it is wire-safe in both directions because this
+    /// enum does **not** carry `deny_unknown_fields`: a build that still sends
+    /// the key has it ignored here, and this build's omission deserializes on
+    /// such a peer as its `#[serde(default)]` `false`, which no surviving code
+    /// path reads. It cannot reach a *pre*-cutover peer at all — that build
+    /// speaks WebSocket-over-mTLS and cannot complete an iroh QUIC handshake on
+    /// `transport::service::SYNC_ALPN`, so no session exists in which the old
+    /// `false`-means-send-raw-bytes semantics could be observed.
     HeadExchange {
         heads: Vec<DeviceHead>,
         #[serde(default)]
@@ -277,21 +291,6 @@ pub enum SyncMessage {
         engine_format_version: u32,
         #[serde(default)]
         op_log_replication: bool,
-        /// #2200 — additive capability handshake for zstd-compressed
-        /// chunked LoroSync payloads. `#[serde(default)]` (→ `false`) for
-        /// wire back-compat: a peer predating this field omits it and
-        /// deserializes as `false`, and an older peer that receives it
-        /// ignores the unknown field. The responder only ships a
-        /// `LoroSyncChunked { compressed: true, .. }` frame after the
-        /// initiator advertised `wire_compression: true` here — a peer
-        /// that understands the #611 chunked framing but not compression
-        /// never advertises the flag and so is never sent compressed
-        /// bytes it would misread as raw Loro. The initiator advertises
-        /// `true` (it can always decompress on receive); the compression
-        /// decision is taken solely on the responder → initiator
-        /// streaming direction (the only side that emits `LoroSync`).
-        #[serde(default)]
-        wire_compression: bool,
         /// #2593 — additive capability handshake for the chunked
         /// [`SyncMessage::OpLogBatchChunked`] transport. `#[serde(default)]`
         /// (→ `false`) for wire back-compat: a peer predating this field (a
@@ -304,8 +303,19 @@ pub enum SyncMessage {
         /// via `LoroSync`) instead of receiving a frame it cannot deserialize —
         /// which would fault the session and, because the record persists, every
         /// subsequent one. The initiator advertises `true` (it can always decode
-        /// the chunked form on receive). Mirrors the #2200 `wire_compression`
-        /// capability gate exactly.
+        /// the chunked form on receive).
+        ///
+        /// **Still live after the iroh cutover (#3464), unlike the sibling
+        /// `wire_compression` flag this once mirrored.** The chunked *encoding*
+        /// went with the WebSocket transport, so an over-inline-bound batch now
+        /// travels as one oversized inline `OpLogBatch` under QUIC's frame cap.
+        /// The flag survives because what it actually promises is "I can survive
+        /// a payload above [`OP_LOG_BATCH_INLINE_MAX_BYTES`], however it
+        /// arrives", and that promise still gates a real send decision in
+        /// `SyncOrchestrator::collect_op_batches_for_peer`. Do not delete it as
+        /// vestigial alongside `wire_compression` — see #3543.
+        ///
+        /// [`OP_LOG_BATCH_INLINE_MAX_BYTES`]: crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES
         #[serde(default)]
         op_log_batch_chunked: bool,
         /// #855 — proof that the initiator knows the pairing passphrase,
@@ -367,11 +377,12 @@ pub enum SyncMessage {
         /// bytes on the wire (what `receive_binary_chunked` consumes);
         /// after decompression the receiver holds the raw payload.
         ///
-        /// `#[serde(default)]` (→ `false`) for wire back-compat: the sender
-        /// only sets `true` when the peer advertised
-        /// `HeadExchange { wire_compression: true }`, so a #611-only peer
-        /// that ignores this field always receives raw bytes
-        /// (`compressed: false`) and decodes them unchanged.
+        /// `#[serde(default)]` (→ `false`) for wire back-compat. Nothing sets
+        /// it any more: the compressor retired with the WebSocket transport
+        /// (#3464) and the `HeadExchange.wire_compression` capability that used
+        /// to gate it was deleted in #3543, so every sender that can still
+        /// reach this variant emits raw bytes (`compressed: false`), which is
+        /// exactly what a #611-only peer always received.
         #[serde(default)]
         compressed: bool,
     },
@@ -443,9 +454,11 @@ pub enum SyncMessage {
         size_bytes: u64,
         is_last: bool,
         /// #2200-style wire compression. `#[serde(default)]` (→ `false`) for
-        /// wire back-compat and set only when the peer advertised
-        /// `HeadExchange { wire_compression: true }`; the receiver zstd-inflates
-        /// the payload (re-bounded by `MAX_OP_LOG_BATCH_PAYLOAD_SIZE`) before
+        /// wire back-compat. Nothing sets it any more: the compressor retired
+        /// with the WebSocket transport (#3464) and the
+        /// `HeadExchange.wire_compression` capability that gated it was deleted
+        /// in #3543. A `true` would mean the receiver must zstd-inflate the
+        /// payload (re-bounded by `MAX_OP_LOG_BATCH_PAYLOAD_SIZE`) before
         /// deserialising the records.
         #[serde(default)]
         compressed: bool,

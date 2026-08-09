@@ -103,7 +103,6 @@ fn head_exchange(heads: Vec<DeviceHead>, pairing_proof: Option<String>) -> SyncM
         loro_vvs: vec![],
         engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
-        wire_compression: false,
         op_log_batch_chunked: false,
         pairing_proof,
     }
@@ -4358,7 +4357,6 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             }],
             engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
-            wire_compression: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
         },
@@ -6586,7 +6584,6 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             }],
             engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
-            wire_compression: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
         })
@@ -6642,7 +6639,6 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             loro_vvs: vec![],
             engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
-            wire_compression: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
         })
