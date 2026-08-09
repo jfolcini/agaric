@@ -681,8 +681,14 @@ describe('PairingDialog', () => {
     // Unmount the component
     cleanup()
 
-    // cancelPairing should be called by the cleanup effect
-    expect(mockedInvoke).toHaveBeenCalledWith('cancel_pairing')
+    // cancelPairing should be called by the cleanup effect. #3628 — awaited
+    // rather than asserted synchronously: the clear now goes through the
+    // pairing-mutation queue, so it is dispatched a microtask after the
+    // cleanup function runs instead of inside it. (The sibling close test
+    // above already had this shape.)
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('cancel_pairing')
+    })
   })
 
   it('does not call cancelPairing again on unmount on the joiner path (the host session was already cancelled by the role switch)', async () => {
@@ -2060,6 +2066,123 @@ describe('PairingDialog', () => {
     })
   })
 
+  // -----------------------------------------------------------------------
+  // #3628 — an arm that is IN FLIGHT is still an arm.
+  //
+  // `backendArmedRef` used to be set when an arming IPC RESOLVED, which left
+  // the round-trip itself unguarded: close the dialog between `start_pairing`
+  // being dispatched and its reply landing, and the close cleanup found the
+  // ref false, tore nothing down, and then watched the reply arm a
+  // device-global pending-pairing marker with no dialog behind it. That
+  // marker is what `get_pending_pairing_proof` reads to admit an unpaired
+  // device, and it holds the sync daemon awake and announcing for its full
+  // 5-minute TTL — a live pairing window for a passphrase the user never even
+  // saw, with nothing on screen to cancel.
+  //
+  // Both tests assert the SAME two-part construction, on the host arm and on
+  // the joiner's mirror of it:
+  //  1. no `cancel_pairing` while the arm is still in flight — the clear is
+  //     queued behind the arm, because a DELETE that overtakes the upsert it
+  //     is meant to undo deletes nothing and leaves the arm standing; and
+  //  2. exactly one `cancel_pairing`, after the arm lands.
+  // Either half alone passes against a half-fix, so both are asserted.
+  // -----------------------------------------------------------------------
+  describe('#3628 an arm in flight is still an arm', () => {
+    it('host: closing while start_pairing is in flight disarms the window that arm creates', async () => {
+      let resolveStart: () => void = () => {}
+      const mutations: string[] = []
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing' || cmd === 'cancel_pairing') mutations.push(cmd)
+        if (cmd === 'start_pairing') {
+          return new Promise((resolve) => {
+            resolveStart = () => resolve(mockPairingInfo)
+          })
+        }
+        if (cmd === 'list_peer_refs') return []
+        return undefined
+      })
+
+      const { rerender } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await flushMicrotasks()
+
+      // The arm is dispatched but unanswered: the dialog is still on its
+      // loading skeleton, so nothing has been shown that could be cancelled
+      // from the UI. This is the whole window the bug lived in.
+      expect(countInvokes('start_pairing')).toBe(1)
+      expect(screen.queryByText('alpha bravo charlie delta')).not.toBeInTheDocument()
+
+      // Close inside it — the interleaving #3628 is about. A parent flipping
+      // `open` is the documented escape hatch past the close guard, and is
+      // how a route change or an app-level dismiss closes this dialog.
+      rerender(<PairingDialog open={false} onOpenChange={vi.fn()} />)
+      await flushMicrotasks()
+
+      // Not yet: `cancel_pairing` deletes the same single row `start_pairing`
+      // upserts, so a clear that runs first would delete a row that does not
+      // exist and let the arm behind it stand — the bug wearing a different
+      // hat.
+      expect(countInvokes('cancel_pairing')).toBe(0)
+
+      // The arm lands. The marker is now live on the backend...
+      resolveStart()
+      await waitFor(() => {
+        expect(countInvokes('cancel_pairing')).toBe(1)
+      })
+      // ...and the close that already happened is what tore it down, in that
+      // order.
+      expect(mutations).toEqual(['start_pairing', 'cancel_pairing'])
+    })
+
+    it('joiner: closing while confirm_pairing is in flight disarms the marker that arm creates', async () => {
+      const user = userEvent.setup()
+      let resolveConfirm: () => void = () => {}
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'confirm_pairing') {
+          return new Promise((resolve) => {
+            resolveConfirm = () => resolve(undefined)
+          })
+        }
+        return undefined
+      })
+
+      const { rerender } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('alpha bravo charlie delta')
+
+      // Switching to the joiner path tears down this device's host session —
+      // that is the one `cancel_pairing` on the clock before the interesting
+      // part starts.
+      await selectJoinerRole(user)
+      await screen.findByLabelText('Passphrase word 1')
+      await waitFor(() => {
+        expect(countInvokes('cancel_pairing')).toBe(1)
+      })
+
+      const inputs = screen.getAllByRole('textbox')
+      await user.type(inputs[0] as HTMLElement, 'echo')
+      await user.type(inputs[1] as HTMLElement, 'foxtrot')
+      await user.type(inputs[2] as HTMLElement, 'golf')
+      await user.type(inputs[3] as HTMLElement, 'hotel')
+      await user.click(screen.getByRole('button', { name: /^Pair$/i }))
+
+      await waitFor(() => {
+        expect(countInvokes('confirm_pairing')).toBe(1)
+      })
+
+      // Close while `confirm_pairing` is unanswered — the joiner's mirror of
+      // the host window above.
+      rerender(<PairingDialog open={false} onOpenChange={vi.fn()} />)
+      await flushMicrotasks()
+      expect(countInvokes('cancel_pairing')).toBe(1)
+
+      resolveConfirm()
+      await waitFor(() => {
+        expect(countInvokes('cancel_pairing')).toBe(2)
+      })
+    })
+  })
+
   it('shows toast error when cancelPairing fails on host dialog close', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -2265,9 +2388,6 @@ describe('PairingDialog', () => {
     // #3463 (review): opening the dialog started a host session, and
     // selectJoinerRole already cancelled it once when switching roles —
     // before this click, cancel_pairing has already fired exactly once.
-    // Click "Cancel pairing" — should close the dialog, and must NOT fire
-    // cancel_pairing a SECOND time: the joiner has no live session of its
-    // own left for this guard action to cancel.
     const cancelCallsBeforeGuardClick = mockedInvoke.mock.calls.filter(
       ([cmd]) => cmd === 'cancel_pairing',
     ).length
@@ -2275,16 +2395,35 @@ describe('PairingDialog', () => {
 
     await user.click(screen.getByRole('button', { name: /^Cancel pairing$/i }))
 
+    // The dialog closes on the click, NOT on the backend answering. #3628 —
+    // this device armed its marker the moment `confirm_pairing` was
+    // dispatched, so the Cancel now does have a real teardown to perform;
+    // making the close wait for it would hold the dialog open for as long as
+    // the (here permanently) hung IPC.
     await waitFor(() => {
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
+
+    // ...and that teardown has not fired yet, because it is queued behind
+    // the arm it is meant to undo: a DELETE that overtook the upsert would
+    // delete nothing and leave the marker armed for its full TTL.
     const cancelCallsAfterGuardClick = mockedInvoke.mock.calls.filter(
       ([cmd]) => cmd === 'cancel_pairing',
     ).length
     expect(cancelCallsAfterGuardClick).toBe(1)
 
-    // Resolve hung promise so test cleanup runs
+    // Once `confirm_pairing` answers, the marker it armed is torn down —
+    // where before #3628 the guard's Cancel was a pure UI act and the marker
+    // survived. (Two clears land: the explicit Cancel's, and the
+    // close/unmount cleanup's unconditional retry behind it — the mock
+    // `onOpenChange` above never flips `open`, so only the former runs here.)
     resolveConfirm(undefined)
+    await waitFor(() => {
+      const cancelCallsAfterConfirmLands = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'cancel_pairing',
+      ).length
+      expect(cancelCallsAfterConfirmLands).toBe(2)
+    })
   })
 
   it('closes immediately without guard when not mid-pair', async () => {
