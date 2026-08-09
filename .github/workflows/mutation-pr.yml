@@ -32,17 +32,33 @@ name: Mutation (diff-scoped, informational)
 on:
   pull_request:
     branches: [main]
-    # Only the trees a mutation module can live in, plus the config that
-    # decides which modules exist. Everything else can never select a module,
-    # so there is nothing to run.
+    # ALL frontend source, not just the two trees a module can live in
+    # (#3691). The narrow filter was right while this lane only answered
+    # "which enrolled modules ran": a diff touching nothing enrolled could
+    # select nothing, so there was nothing to say.
+    #
+    # It is wrong now that the lane also reports what drew NO mutation signal.
+    # 21 modules are enrolled and they all live under `src/lib` and
+    # `src/stores`, so a PR confined to `src/hooks` or `src/components` — the
+    # shape #3691 is most about, and literally the shape of #3685's
+    # `usePropertySave.ts` change — never started this workflow and therefore
+    # got total silence, which reads as "nothing to report" rather than "no
+    # mutation signal exists for this change".
+    #
+    # Cost, measured rather than assumed: on a diff that selects nothing the
+    # job is checkout + setup-node + one `node` invocation. `npm ci`, Stryker
+    # and the summary renderer are all behind `count != '0'` and do not run.
+    # The comment step is behind `count != '0' || unmutated != '0'`, so a
+    # CSS-, asset- or generated-file-only diff still posts nothing. What this
+    # buys is that the honest sentence can reach the PRs that need it.
     paths:
-      - 'src/lib/**'
-      - 'src/stores/**'
+      - 'src/**'
       - 'stryker.modules.mjs'
       - 'stryker.config.mjs'
       - 'stryker.vitest.config.mjs'
       - 'scripts/run-mutation.mjs'
       - 'scripts/select-mutation-modules.mjs'
+      - 'scripts/render-mutation-summary.mjs'
       - '.github/workflows/mutation-pr.yml'
 
 concurrency:

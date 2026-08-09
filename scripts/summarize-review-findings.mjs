@@ -185,35 +185,123 @@ function isBotAuthor(entry) {
 }
 
 /**
+ * The bot reviews OF ONE COMMIT.
+ *
+ * The commit is the whole point. `GET /pulls/{n}/reviews` returns every review
+ * the PR ever received, across every push, and a review dismissed by
+ * `dismiss_stale_reviews_on_push` stays in that list. So "the last bot review"
+ * is the review of THIS push only when the reviewer actually produced one for
+ * this push. When it does not — a model error, a denied tool, a cancelled run,
+ * a fork PR — the previous push's review is attributed to the new head, and if
+ * that older review was clean the check reports SUCCESS on a commit nobody
+ * reviewed.
+ *
+ * That is precisely the conflation this file exists to remove ("did not run"
+ * rendering identically to "found nothing"), reintroduced one level up. So the
+ * filter is on `commit_id`, never on recency. A review with no `commit_id`, or
+ * a run with no `headSha` to compare against, matches nothing and therefore
+ * reports `neutral`: unattributable evidence is not evidence.
+ *
+ * @param {object[]} reviews
+ * @param {string} headSha
+ */
+export function reviewsForCommit(reviews, headSha) {
+  if (typeof headSha !== 'string' || headSha.length === 0) return []
+  return reviews.filter(
+    (r) => isBotAuthor(r) && r.commit_id === headSha && (r.body ?? '').trim().length > 0,
+  )
+}
+
+/**
+ * The bot comments that belong to THIS push.
+ *
+ * Issue comments carry no commit id — GitHub does not stamp one — so the only
+ * available key is time. A comment written after the PREVIOUS review was
+ * submitted was written for this push; anything older described code that has
+ * since been replaced.
+ *
+ * Without this, a 7-finding comment from push 1 holds the count at 7 forever:
+ * the check stays neutral on every later push, including the one that fixed all
+ * seven. A check that cannot go back to green is a check that gets ignored,
+ * which is the same end state as the always-green one it replaces — the
+ * argument this file already makes for reviews, left open on the comment path.
+ *
+ * The anchor is the PREVIOUS review, not the current one, because the
+ * code-review plugin posts its comment before casting its verdict, so this
+ * push's comment predates this push's review by seconds.
+ *
+ * @param {object[]} comments
+ * @param {object[]} reviews every bot review, any commit
+ * @param {object|null} review the review of the head commit
+ */
+export function commentsForPush(comments, reviews, review) {
+  const bots = comments.filter((c) => isBotAuthor(c) && (c.body ?? '').trim().length > 0)
+  const at = (x) => Date.parse(x?.submitted_at ?? x?.created_at ?? '')
+  const current = at(review)
+  if (!Number.isFinite(current)) return bots
+  const anchor = reviews
+    .filter(isBotAuthor)
+    .map(at)
+    .filter((t) => Number.isFinite(t) && t < current)
+    .toSorted((a, b) => a - b)
+    .at(-1)
+  if (anchor === undefined) return bots
+  return bots.filter((c) => {
+    const t = at(c)
+    // An undated comment cannot be excluded on evidence, and the loud direction
+    // is to keep it: a spurious `neutral` costs a read, a dropped finding costs
+    // the thing this check exists for.
+    return !Number.isFinite(t) || t > anchor
+  })
+}
+
+/**
  * The whole verdict, from the raw API payloads.
  *
  * @param {{reviews?: object[], comments?: object[], headSha?: string}} opts
  */
 export function summarize({ reviews = [], comments = [], headSha = '' }) {
-  // The reviewer re-reviews on every push (`dismiss_stale_reviews_on_push`),
-  // so only the LAST bot review describes the code being merged. An older
-  // review's findings may already be fixed; counting them would train the
-  // reader to ignore the check.
-  const botReviews = reviews.filter((r) => isBotAuthor(r) && (r.body ?? '').trim().length > 0)
-  const review = botReviews.at(-1) ?? null
-  const botComments = comments.filter((c) => isBotAuthor(c) && (c.body ?? '').trim().length > 0)
+  // The reviewer re-reviews on every push, so the review that describes the
+  // code being merged is the one submitted AGAINST THIS COMMIT — not merely the
+  // most recent one on the PR. See `reviewsForCommit`.
+  const forCommit = reviewsForCommit(reviews, headSha)
+  const review = forCommit.at(-1) ?? null
+  const botComments = commentsForPush(comments, reviews.filter(isBotAuthor), review)
 
-  if (review === null && botComments.length === 0) {
-    // NOT success. "The reviewer never posted" and "the reviewer found
-    // nothing" are different facts and must not render identically — that
-    // equivalence is #3702 itself, one level up.
+  if (review === null) {
+    // NOT success, and NOT a count taken from whatever else is lying around on
+    // the PR. "The reviewer never posted for this commit" and "the reviewer
+    // found nothing" are different facts and must not render identically —
+    // that equivalence is #3702 itself, one level up.
+    const stale = reviews.filter(isBotAuthor).length > 0
+    // Bot comments carry no commit id, and with no review of this commit there
+    // is no anchor to date them against — so they are NOT counted here. Said
+    // out loud rather than dropped: an uncounted comment that the reader is
+    // told about is a pointer, an uncounted comment they are not told about is
+    // this issue again.
+    const orphanComments = comments.filter(isBotAuthor).length
     return {
       conclusion: 'neutral',
       findings: 0,
-      title: 'No review found — the reviewer posted nothing on this commit',
+      title: stale
+        ? 'No review of this commit — the newest review is of an earlier push'
+        : 'No review found — the reviewer posted nothing on this commit',
       summary: [
         `### ${CHECK_NAME}`,
         '',
-        'No review body from the reviewer app was found on this pull request.',
+        stale
+          ? `No review submitted against \`${headSha.slice(0, 8)}\` was found. The reviews on this pull request belong to earlier pushes and describe code that has since changed, so none of them can vouch for this commit.`
+          : 'No review body from the reviewer app was found on this pull request.',
         '',
         'This is reported as **neutral**, not success: a review that did not run',
         'and a review that found nothing are different facts, and a green check',
         'would make them indistinguishable (#3702).',
+        ...(orphanComments > 0
+          ? [
+              '',
+              `> ${orphanComments} bot comment(s) exist on this pull request but carry no commit id, and with no review of this commit there is nothing to date them against — they are **not** counted above. Read them before merging.`,
+            ]
+          : []),
       ].join('\n'),
       headSha,
       details: null,
@@ -351,6 +439,44 @@ function readList(file) {
   }
 }
 
+/**
+ * What to publish when the analysis itself blew up.
+ *
+ * NOT nothing, and not `success`. An unhandled throw used to leave the payload
+ * file unwritten, so the `gh api --input` that follows failed and NO check run
+ * was created at all — green by omission, with nothing on the PR marking that
+ * the signal was supposed to be there. That is the same defect as the one this
+ * script exists to fix, wearing "the tooling broke" instead of "the review was
+ * clean".
+ *
+ * @param {string} headSha
+ * @param {unknown} err
+ */
+export function failureResult(headSha, err) {
+  const message = err instanceof Error ? err.message : String(err)
+  return {
+    conclusion: 'neutral',
+    findings: 0,
+    title: 'Findings summariser failed — the review was NOT checked',
+    summary: [
+      `### ${CHECK_NAME}`,
+      '',
+      'This check could not be computed: the summariser threw before it could read',
+      'the review.',
+      '',
+      '```',
+      message.slice(0, 2000),
+      '```',
+      '',
+      '**Read the review manually before merging.** This is reported as `neutral`',
+      'rather than omitted, because a missing check is indistinguishable from a',
+      'passing one in the rollup — which is the failure #3702 is about.',
+    ].join('\n'),
+    headSha,
+    details: null,
+  }
+}
+
 function main(argv) {
   let args
   try {
@@ -360,11 +486,20 @@ function main(argv) {
     process.exit(2)
   }
 
-  const result = summarize({
-    reviews: readList(args.reviews),
-    comments: readList(args.comments),
-    headSha: args.headSha,
-  })
+  // Every path below this point must still produce a payload. The caller
+  // POSTs `--check-payload` unconditionally; a throw that skipped writing it
+  // published no check at all.
+  let result
+  try {
+    result = summarize({
+      reviews: readList(args.reviews),
+      comments: readList(args.comments),
+      headSha: args.headSha,
+    })
+  } catch (err) {
+    console.error(`summarize-review-findings: ${err instanceof Error ? err.stack : err}`)
+    result = failureResult(args.headSha, err)
+  }
   console.log(JSON.stringify({ ...result, details: undefined }, null, 2))
 
   if (args.checkPayload) {
@@ -439,10 +574,23 @@ function runSelfTest() {
   }
   const expect = (name, cond, detail) => (cond ? ok(name) : fail(name, detail))
 
-  const review = (body, state = 'APPROVED') => ({
+  // Every fixture review carries a `commit_id` and a `submitted_at`, because
+  // both are load-bearing: the first decides whether the review describes the
+  // commit under test at all, the second dates the comments against it. A
+  // fixture without them would pass while the live payload (which always has
+  // them) took a different path.
+  const HEAD = 'abc'
+  const review = (body, state = 'APPROVED', commit = HEAD, submitted = '2026-08-09T12:00:00Z') => ({
     user: { login: 'agaric-reviewer[bot]', type: 'Bot' },
     state,
     body,
+    commit_id: commit,
+    submitted_at: submitted,
+  })
+  const comment = (body, created = '2026-08-09T12:00:00Z') => ({
+    user: { login: 'agaric-reviewer[bot]', type: 'Bot' },
+    body,
+    created_at: created,
   })
 
   // 1. THE #3694 CASE. Seven observations, two of them correctness defects,
@@ -519,7 +667,14 @@ function runSelfTest() {
       JSON.stringify(r),
     )
     const humanOnly = summarize({
-      reviews: [{ user: { login: 'jfolcini', type: 'User' }, state: 'APPROVED', body: 'lgtm' }],
+      reviews: [
+        {
+          user: { login: 'jfolcini', type: 'User' },
+          state: 'APPROVED',
+          body: 'lgtm',
+          commit_id: 'abc',
+        },
+      ],
       headSha: 'abc',
     })
     expect(
@@ -529,17 +684,69 @@ function runSelfTest() {
     )
   }
 
-  // 5. Only the LATEST bot review counts: the ruleset dismisses stale reviews
-  //    on push, so an older review's findings may already be fixed. Counting
-  //    them would keep the check yellow forever and train the reader to
-  //    ignore it.
+  // 4b. THE SAME CONFLATION ONE LEVEL UP (found reviewing this PR). A review
+  //     exists, but it is a PREVIOUS push's — the reviewer produced nothing for
+  //     this head, so `.at(-1)` handed a clean older review to a commit nobody
+  //     looked at and the check went GREEN. Attribution is by `commit_id`, not
+  //     by recency, and a head with no review of its own is neutral.
   {
-    const r = summarize({
-      reviews: [review(PR_3694_BODY), review(CLEAN_BODY)],
-      headSha: 'abc',
+    const older = review(CLEAN_BODY, 'APPROVED', 'push1', '2026-08-09T10:00:00Z')
+    const r = summarize({ reviews: [older], comments: [], headSha: 'push2' })
+    expect(
+      'a clean review of an EARLIER push does not go green on this commit',
+      r.conclusion === 'neutral' && /No review of this commit/.test(r.title),
+      JSON.stringify({ conclusion: r.conclusion, title: r.title }),
+    )
+    // …and the findings of an earlier push are not attributed to this one
+    // either: the count would be a fact about code that no longer exists.
+    const noisyOlder = review(PR_3694_BODY, 'APPROVED', 'push1', '2026-08-09T10:00:00Z')
+    const r2 = summarize({ reviews: [noisyOlder], comments: [], headSha: 'push2' })
+    expect(
+      'the findings of an earlier push are not attributed to this commit',
+      r2.conclusion === 'neutral' && r2.findings === 0,
+      JSON.stringify({ conclusion: r2.conclusion, findings: r2.findings, title: r2.title }),
+    )
+    // A dismissed review stays in the API payload; the commit filter is what
+    // keeps it out, so the rule holds without a state allowlist.
+    const dismissed = review(CLEAN_BODY, 'DISMISSED', 'push1', '2026-08-09T10:00:00Z')
+    expect(
+      'a DISMISSED review of an earlier push cannot vouch for this commit',
+      summarize({ reviews: [dismissed], headSha: 'push2' }).conclusion === 'neutral',
+      'a dismissed review went green',
+    )
+    // Missing head sha = nothing to attribute against. Green here would mean
+    // "the workflow forgot to pass the sha" renders as "the code is fine".
+    expect(
+      'an empty head sha attributes nothing and reports neutral',
+      summarize({ reviews: [review(CLEAN_BODY)], headSha: '' }).conclusion === 'neutral',
+      'an unattributable run went green',
+    )
+    // Uncounted comments are named rather than dropped.
+    const withOrphan = summarize({
+      reviews: [older],
+      comments: [comment(PR_3694_BODY)],
+      headSha: 'push2',
     })
     expect(
-      'the latest bot review supersedes the earlier one',
+      'bot comments that cannot be dated to this commit are reported, not silently dropped',
+      withOrphan.conclusion === 'neutral' && /not\*\* counted/.test(withOrphan.summary),
+      withOrphan.summary,
+    )
+  }
+
+  // 5. A re-review of the SAME commit supersedes the earlier attempt: the
+  //    reviewer can post twice for one head (a retried run), and the later
+  //    verdict is the one that describes it.
+  {
+    const r = summarize({
+      reviews: [
+        review(PR_3694_BODY, 'APPROVED', HEAD, '2026-08-09T11:00:00Z'),
+        review(CLEAN_BODY, 'APPROVED', HEAD, '2026-08-09T12:00:00Z'),
+      ],
+      headSha: HEAD,
+    })
+    expect(
+      'the latest review OF THIS COMMIT supersedes an earlier one of the same commit',
       r.conclusion === 'success',
       JSON.stringify({ conclusion: r.conclusion, findings: r.findings }),
     )
@@ -550,13 +757,44 @@ function runSelfTest() {
   {
     const r = summarize({
       reviews: [review(CLEAN_BODY)],
-      comments: [{ user: { login: 'agaric-reviewer[bot]', type: 'Bot' }, body: PR_3694_BODY }],
-      headSha: 'abc',
+      comments: [comment(PR_3694_BODY, '2026-08-09T11:59:00Z')],
+      headSha: HEAD,
     })
     expect(
       'findings in a bot comment are counted, not just those in the review body',
       r.conclusion === 'neutral' && r.findings === 7,
       JSON.stringify({ conclusion: r.conclusion, findings: r.findings }),
+    )
+  }
+
+  // 6a. …but only this push's comment (found reviewing this PR). Reviews were
+  //     narrowed and comments were not, so a 7-finding comment from push 1 held
+  //     the count at 7 for the whole life of the PR — the check could never go
+  //     back to green, including on the push that fixed all seven. A check that
+  //     cries wolf gets ignored, which is where the always-green one already
+  //     was.
+  {
+    const push1 = review(PR_3694_BODY, 'CHANGES_REQUESTED', 'push1', '2026-08-09T10:00:00Z')
+    const push1Comment = comment(PR_3694_BODY, '2026-08-09T09:59:00Z')
+    const push2 = review(CLEAN_BODY, 'APPROVED', 'push2', '2026-08-09T12:00:00Z')
+    const r = summarize({ reviews: [push1, push2], comments: [push1Comment], headSha: 'push2' })
+    expect(
+      "an earlier push's findings comment does not hold this push's check yellow",
+      r.conclusion === 'success' && r.findings === 0,
+      JSON.stringify({ conclusion: r.conclusion, findings: r.findings, title: r.title }),
+    )
+    // The sibling acceptance: a comment written FOR this push still counts, so
+    // the rule is "date it", not "ignore comments".
+    const fresh = comment(PR_3694_BODY, '2026-08-09T11:58:00Z')
+    const r2 = summarize({
+      reviews: [push1, push2],
+      comments: [push1Comment, fresh],
+      headSha: 'push2',
+    })
+    expect(
+      "this push's own findings comment is still counted",
+      r2.conclusion === 'neutral' && r2.findings === 7,
+      JSON.stringify({ conclusion: r2.conclusion, findings: r2.findings }),
     )
   }
 
@@ -590,7 +828,12 @@ function runSelfTest() {
   //    or a missing `head_sha` would silently leave the check uncreated and
   //    restore the original green-by-omission state.
   {
-    const p = checkPayload(summarize({ reviews: [review(PR_3694_BODY)], headSha: 'deadbeef' }))
+    const p = checkPayload(
+      summarize({
+        reviews: [review(PR_3694_BODY, 'APPROVED', 'deadbeef')],
+        headSha: 'deadbeef',
+      }),
+    )
     expect(
       'the check payload carries the name, head sha, neutral conclusion and title',
       p.name === CHECK_NAME &&
@@ -599,6 +842,22 @@ function runSelfTest() {
         p.conclusion === 'neutral' &&
         /7 finding\(s\)/.test(p.output.title) &&
         p.output.title.length <= 255,
+      JSON.stringify(p),
+    )
+  }
+
+  // 8b. A THROW must still publish something. The step that calls this runs
+  //     without `set -e` and with `continue-on-error`, so an unwritten payload
+  //     meant the POST failed and NO check run was created — green by
+  //     omission, which is this issue committed by its own fix.
+  {
+    const p = checkPayload(failureResult('deadbeef', new Error('boom')))
+    expect(
+      'a summariser failure still yields a neutral payload, never nothing and never success',
+      p.conclusion === 'neutral' &&
+        p.head_sha === 'deadbeef' &&
+        /NOT checked/.test(p.output.title) &&
+        /boom/.test(p.output.summary),
       JSON.stringify(p),
     )
   }

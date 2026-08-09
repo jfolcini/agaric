@@ -201,6 +201,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -uo pipefail
+          rm -f check-run.json findings.md
           gh api "repos/$REPO/pulls/$PR_NUMBER/reviews?per_page=100" > reviews.json || echo '[]' > reviews.json
           gh api "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" > comments.json || echo '[]' > comments.json
           node scripts/summarize-review-findings.mjs \
@@ -208,6 +209,42 @@ jobs:
             --comments comments.json \
             --head-sha "$HEAD_SHA" \
             --check-payload check-run.json \
-            --summary-file findings.md
+            --summary-file findings.md || true
+
+          # The step runs without `-e` and with `continue-on-error`, so a
+          # non-zero exit above used to leave `check-run.json` unwritten, the
+          # POST failing, and NO check run published — green by omission, with
+          # nothing marking that the signal was meant to be there. That is this
+          # workflow committing the exact defect it exists to fix, so the
+          # fallback is mandatory rather than defensive.
+          if [ ! -s check-run.json ]; then
+            {
+              echo "### claude-review findings"
+              echo
+              echo "The findings summariser did not produce a payload, so **the review was"
+              echo "not checked**. Read it manually before merging. Reported as \`neutral\`"
+              echo "rather than omitted: a missing check is indistinguishable from a passing"
+              echo "one in the rollup, which is the failure #3702 is about."
+            } > findings.md
+            jq -n --arg sha "$HEAD_SHA" --rawfile body findings.md \
+              '{name: "claude-review findings", head_sha: $sha, status: "completed",
+                conclusion: "neutral",
+                output: {title: "Findings summariser produced no result — the review was NOT checked",
+                         summary: $body}}' > check-run.json
+          fi
+
           cat findings.md >> "$GITHUB_STEP_SUMMARY"
-          gh api -X POST "repos/$REPO/check-runs" --input check-run.json > /dev/null
+
+          # A failed POST (fork PRs get a read-only token) leaves no check run
+          # either. Nothing can be done about that here, but it must not pass
+          # unremarked — the step summary is then the only copy and has to say
+          # so out loud.
+          if ! gh api -X POST "repos/$REPO/check-runs" --input check-run.json > /dev/null; then
+            {
+              echo
+              echo "> **The \`claude-review findings\` check run could NOT be published**"
+              echo "> (the Checks API POST failed — expected on a fork PR, where the token is"
+              echo "> read-only). No findings check exists on this commit; the block above is"
+              echo "> the only copy."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
