@@ -70,11 +70,23 @@
 //!   * `ORDER BY created_at DESC, seq DESC` on `fetch_prior_text_batch` —
 //!     the parity oracle (B3_BLK1 has two local candidates) and
 //!     `compute_reverse_batch_chunks_large_edit_batch_c5`.
-//!   * NOT COVERED: the `device_id DESC` tie-break (#382). No fixture seeds
-//!     two rows colliding on an identical `(created_at, seq)` across
-//!     devices, so dropping `, device_id DESC` from any copy here is
-//!     currently invisible to the whole suite. Seed that collision before
-//!     relying on the tie-break.
+//!   * the `, device_id DESC` tie-break (#382) —
+//!     `reverse_*_tie_breaks_on_device_id_3646` in `super::tests`, one per
+//!     copy. Each seeds two op_log rows from different devices colliding on
+//!     an identical `(created_at, seq)` and asserts BOTH kernels return the
+//!     higher-`device_id` row, under BOTH write orders. Until #3646 seeded
+//!     that collision no fixture anywhere produced one, so dropping
+//!     `, device_id DESC` was invisible to the entire suite. Deleting it now
+//!     reddens `fetch_prior_text_batch`, `fetch_prior_position_batch` and
+//!     `fetch_prior_attachment_batch` (verified by mutation).
+//!     `fetch_prior_property_batch` is the exception and NOT a gap: its
+//!     predicate is served by `idx_op_log_block_key_created`
+//!     (`block_id, json_extract(payload,'$.key'), created_at, seq,
+//!     device_id`), whose own key order already ends in `device_id`, so the
+//!     mutated statement returns the identical row — an equivalent mutant
+//!     under today's schema, confirmed by `EXPLAIN QUERY PLAN`. The clause
+//!     stays because it is the SPECIFICATION: change or drop that index and
+//!     it becomes the only thing keeping the property scan deterministic.
 
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use std::str::FromStr;
@@ -245,11 +257,12 @@ pub async fn compute_reverse_batch(
     // kernel can honour the same #1526 precedence as the single-op kernel
     // instead of implementing only the timestamp fallback. `edit_prior`
     // stays: it IS that fallback, used whenever the pointer does not
-    // resolve.
+    // resolve — and #3650 made the pointer fetch run FIRST so the fallback
+    // scan can be narrowed to the ops that actually need it.
     let edit_prev: Vec<Option<(String, String)>> =
         fetch_prev_edit_rows_batch(pool, ops, &edit_idxs).await?;
     let edit_prior: Vec<Option<(String, String)>> =
-        fetch_prior_text_batch(pool, ops, &edit_idxs).await?;
+        fetch_prior_text_fallback_only(pool, ops, &edit_idxs, &edit_prev).await?;
     let move_prior: Vec<Option<(String, String)>> =
         fetch_prior_position_batch(pool, ops, &move_idxs).await?;
     let set_prior: Vec<Option<String>> =
@@ -398,6 +411,59 @@ async fn fetch_prev_edit_rows_batch(
                 out[i] = Some((op_type, payload));
             }
         }
+    }
+    Ok(out)
+}
+
+/// [`fetch_prior_text_batch`], restricted to the ops whose causal
+/// `prev_edit` pointer did NOT resolve. #3650.
+///
+/// # Perf short-circuit ONLY
+///
+/// [`block_ops::resolve_prior_text`] IGNORES the timestamp fallback whenever
+/// the causal pointer resolved, so not fetching it for those ops cannot
+/// change the answer — it just avoids a UNION-ALL round trip the batch path
+/// would otherwise pay on every restore. This mirrors the identical
+/// short-circuit the single-op kernel already carries in
+/// [`block_ops::reverse_edit_block`], and rests on the same invariant: a
+/// resolved pointer WINS, and the discarded fallback is unobservable.
+///
+/// If the batch fallback is ever made load-bearing when a pointer resolves —
+/// e.g. a future "compare the two sources and prefer X" policy — this
+/// optimisation becomes a CORRECTNESS bug, not a perf regression. Change
+/// `resolve_prior_text` and this function together, and the single-op
+/// short-circuit with them.
+///
+/// `find_prev_edit_in_tx` stamps a pointer on every local edit, so the
+/// common case is that every pointer resolves, `fallback_at` is empty and
+/// the query is skipped entirely. The residue is the shapes
+/// `resolve_prior_text` documents: no pointer at all (pre-#1526 ops) or a
+/// pointer whose target is gone to op-log compaction.
+///
+/// Output is aligned with `idxs`, exactly as [`fetch_prior_text_batch`]'s
+/// is. The positions that were not fetched stay `None` — the value
+/// `resolve_prior_text` would have discarded for them anyway.
+async fn fetch_prior_text_fallback_only(
+    pool: &SqlitePool,
+    ops: &[OpRecord],
+    idxs: &[usize],
+    prev_rows: &[Option<(String, String)>],
+) -> Result<Vec<Option<(String, String)>>, AppError> {
+    let mut out: Vec<Option<(String, String)>> = vec![None; idxs.len()];
+    // Positions WITHIN `idxs` (equivalently within `out`) whose pointer did
+    // not resolve — the only ops the fallback scan is asked about.
+    let fallback_at: Vec<usize> = prev_rows
+        .iter()
+        .enumerate()
+        .filter_map(|(j, prev)| prev.is_none().then_some(j))
+        .collect();
+    if fallback_at.is_empty() {
+        return Ok(out);
+    }
+    let fallback_idxs: Vec<usize> = fallback_at.iter().map(|&j| idxs[j]).collect();
+    let fetched = fetch_prior_text_batch(pool, ops, &fallback_idxs).await?;
+    for (&j, row) in fallback_at.iter().zip(fetched) {
+        out[j] = row;
     }
     Ok(out)
 }

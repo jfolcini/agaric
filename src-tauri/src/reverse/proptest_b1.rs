@@ -76,6 +76,49 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 // law: apply(O) then apply(reverse(O)) == prior observable state.
 // ---------------------------------------------------------------------------
 
+/// Can `compute_reverse` legitimately be expected to reconstruct a prior for
+/// this op? #3655.
+///
+/// The two kernel-refusal arms in [`assert_inverse_law`] used to answer this
+/// by listing three op variants and citing, in prose, the generator's
+/// guarantee that Edit follows a Create, Move follows a placement and
+/// SetProperty follows the block's existence. That restated the generator's
+/// CONCLUSION; nothing checked it. Extend the generator so a `move_block` can
+/// land on a create with no position and the arms would have called a
+/// legitimate refusal a bug, surfacing as an intermittently-red proptest
+/// rather than as a signal about the generator.
+///
+/// This asks the question of the CHAIN instead, through the harness's own
+/// replay oracles — the same `observe_prior_*` functions the inverse-law
+/// assertions below compare the kernel against. So the arms and the oracle
+/// agree by construction, and a generator change moves this predicate with
+/// it instead of stranding a stale comment.
+///
+/// `SetProperty` is unconditional and deliberately so: its reverse is TOTAL —
+/// `property_ops::reverse_set_property` maps an absent prior to
+/// `DeleteProperty` rather than refusing — so a refusal is a bug whether or
+/// not a prior value exists. That is a property of the kernel, not of the
+/// generator, which is why it does not consult the chain.
+fn prior_is_reconstructable(
+    chain: &AppliedChain,
+    rec: &agaric_store::op_log::OpRecord,
+    payload: &OpPayload,
+) -> bool {
+    match payload {
+        OpPayload::EditBlock(p) => {
+            observe_prior_text(chain, p.block_id.as_str(), rec.seq).is_some()
+        }
+        OpPayload::MoveBlock(p) => {
+            observe_prior_position(chain, p.block_id.as_str(), rec.seq).is_some()
+        }
+        OpPayload::SetProperty(_) => true,
+        // Every other variant's reverse is either structural (needs no prior)
+        // or legitimately refusable, so a refusal is never attributable to a
+        // broken prior lookup.
+        _ => false,
+    }
+}
+
 /// Assert the inverse law for a single (record, payload) pair against the
 /// independent oracle. Returns a `TestCaseError` on violation so the
 /// proptest shrinker can minimise.
@@ -85,6 +128,30 @@ async fn assert_inverse_law(
     rec: &agaric_store::op_log::OpRecord,
     payload: &OpPayload,
 ) -> Result<(), TestCaseError> {
+    // #3655: make the generator invariant the refusal arms depend on FAIL AT
+    // THE SOURCE. `prior_is_reconstructable` is what those arms consult, so
+    // they can never mis-attribute a legitimate refusal — but a generator
+    // change that quietly stops guaranteeing a prior would only make this
+    // property weaker, silently. Checking the invariant here, before any
+    // kernel call, turns that into a red test whose message names the
+    // generator. Relaxing the invariant on purpose means deleting this
+    // assertion deliberately; the arms below already handle the relaxed world
+    // correctly.
+    if matches!(
+        payload,
+        OpPayload::EditBlock(_) | OpPayload::MoveBlock(_) | OpPayload::SetProperty(_)
+    ) {
+        prop_assert!(
+            prior_is_reconstructable(chain, rec, payload),
+            "proptest_db_harness's generator no longer guarantees a reconstructable prior for \
+             {:?} at seq {} (Edit only after a Create, Move only after a placement). If that is \
+             intentional, drop this assertion — assert_inverse_law's kernel-refusal arms consult \
+             `prior_is_reconstructable` and already treat a refusal here as legitimate.",
+            std::mem::discriminant(payload),
+            rec.seq
+        );
+    }
+
     let reverse = match compute_reverse(pool, HARNESS_DEVICE, rec.seq).await {
         Ok(r) => r,
         Err(AppError::NonReversible { .. }) => {
@@ -98,48 +165,43 @@ async fn assert_inverse_law(
             // no position — the generator always sets a position, so this
             // arm should not fire for it in practice).
             //
-            // The generator guarantees a legitimate prior always exists
-            // for Edit/Move/SetProperty (Edit only emitted after Create,
-            // Move only after a block has a known position, SetProperty
-            // only after the block exists) — and this harness is
-            // single-device, so the "first local edit of a
-            // peer-originated block" legitimate-NonReversible case
-            // (#3645's rationale for the batch kernel) cannot arise here
-            // either. So for those three variants a NonReversible means
-            // the prior lookup is broken — a real bug, not a legitimate
-            // refusal — and we fail so the shrinker can minimise. Other
-            // variants (Create/Delete/Restore/Tag/PurgeBlock/Attachment
-            // etc.) get a legitimate pass, matching the NotFound arm
-            // below.
-            match payload {
-                OpPayload::EditBlock(_) | OpPayload::MoveBlock(_) | OpPayload::SetProperty(_) => {
-                    return Err(TestCaseError::fail(format!(
-                        "unexpected NonReversible for {:?} — prior should always exist",
-                        std::mem::discriminant(payload)
-                    )));
-                }
-                _ => return Ok(()),
+            // #3655: ask `prior_is_reconstructable` — which consults the
+            // harness's replay oracles — rather than restating the
+            // generator's guarantee as a variant list. When the chain really
+            // does hold a prior, a refusal means the prior lookup is broken:
+            // a real bug, so fail and let the shrinker minimise. When it does
+            // not, the refusal is legitimate and passes, exactly as it does
+            // for the variants whose reverse is structural
+            // (Create/Delete/Restore/Tag/PurgeBlock/Attachment).
+            //
+            // This harness is single-device, so the "first local edit of a
+            // peer-originated block" legitimate-NonReversible case (#3645's
+            // rationale for the batch kernel) cannot arise here — a refusal
+            // for an edit with a prior in the chain has no innocent reading.
+            if prior_is_reconstructable(chain, rec, payload) {
+                return Err(TestCaseError::fail(format!(
+                    "unexpected NonReversible for {:?} at seq {} — the chain holds a \
+                     reconstructable prior",
+                    std::mem::discriminant(payload),
+                    rec.seq
+                )));
             }
+            return Ok(());
         }
         Err(AppError::NotFound(_)) => {
-            // For Edit/Move/SetProperty the generator guarantees a prior
-            // always exists (Edit is only emitted after a Create, Move
-            // only after a block has a known position, SetProperty only
-            // after the block exists).  A NotFound here means the prior
-            // lookup is broken — that is a real bug, not a legitimate
-            // refusal.  Fail so the shrinker can minimise the case.
-            // For other variants (Create/Delete/Restore/Tag etc.) a
-            // NotFound can be a legitimate refusal from an unexpected
-            // chain shape; skip those.
-            match payload {
-                OpPayload::EditBlock(_) | OpPayload::MoveBlock(_) | OpPayload::SetProperty(_) => {
-                    return Err(TestCaseError::fail(format!(
-                        "unexpected NotFound for {:?} — prior should always exist",
-                        std::mem::discriminant(payload)
-                    )));
-                }
-                _ => return Ok(()),
+            // #3655: same predicate as the NonReversible arm above — see
+            // `prior_is_reconstructable`. A NotFound where the chain holds a
+            // prior means the lookup is broken; anywhere else it can be a
+            // legitimate refusal from an unexpected chain shape.
+            if prior_is_reconstructable(chain, rec, payload) {
+                return Err(TestCaseError::fail(format!(
+                    "unexpected NotFound for {:?} at seq {} — the chain holds a \
+                     reconstructable prior",
+                    std::mem::discriminant(payload),
+                    rec.seq
+                )));
             }
+            return Ok(());
         }
         Err(e) => {
             return Err(TestCaseError::fail(format!(

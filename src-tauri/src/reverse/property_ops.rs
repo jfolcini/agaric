@@ -112,6 +112,17 @@ async fn find_prior_property(
     // order used by `commands/history.rs` and `pagination/history.rs`).
     // Omitting `device_id` leaves the bound ambiguous when two devices
     // share a `(created_at, seq)` pair.
+    // #3646 seeded that collision (`reverse_set_property_tie_breaks_on_device_id_3646`)
+    // and found this one scan's `ORDER BY … device_id DESC` to be an
+    // EQUIVALENT MUTANT today: the plan is
+    // `SEARCH op_log USING INDEX idx_op_log_block_key_created`, whose key is
+    // `(block_id, json_extract(payload,'$.key'), created_at, seq, device_id)`,
+    // so the index already yields the `device_id` tie-break and deleting the
+    // clause returns the same row (verified with `EXPLAIN QUERY PLAN`). Do
+    // NOT read that as "the clause is dead code": the index is free to change,
+    // and the ORDER BY is what states the required order independently of it.
+    // The three sibling scans (block text, block position, attachment) have no
+    // such covering index and DO redden when the tie-break is removed.
     // #2549: `AND is_replicated = 0` — the prior value of a property must be
     // reconstructed from locally-applied set/delete ops only. #2495 audit-only
     // replicated rows (`is_replicated = 1`) were never applied to local state,
