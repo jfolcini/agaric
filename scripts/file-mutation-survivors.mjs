@@ -24,6 +24,10 @@
 //     [--require-rust]              (#3364: FAIL if missed.txt is absent)
 //     [--require-frontend]          (#3364: FAIL if the frontend dir holds no
 //                                    mutation.json at all)
+//     [--children]                  (also open/update/close ONE child issue per
+//                                    AREA — see § Parent/child below)
+//     [--max-children N]            (blast-radius cap on child CREATES in a
+//                                    single run; default DEFAULT_MAX_CHILDREN)
 //     [--repo owner/repo]           (default: $GITHUB_REPOSITORY)
 //     [--run-url <url>]             (default: derived from $GITHUB_SERVER_URL
 //                                    /$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
@@ -65,11 +69,67 @@
 // The rendered body is clamped to MAX_BODY_CHARS so a large survivor batch
 // cannot 422 `gh issue edit` and wedge this weekly job red indefinitely.
 //
+// ── Parent/child (#3667) ──────────────────────────────────────────────────
+//
+// The rolling issue above is a good NOTIFICATION and a bad WORKTOP. Measured
+// on 2026-08-09, issue #3142 carried 261 tracked survivors across 9 areas in a
+// 40 756-character body — two thirds of the way to the MAX_BODY_CHARS clamp,
+// with the whole backlog in one thread. Nothing in it can be assigned, closed,
+// or referenced by a PR: the triage convention is "hand-edit your line out of
+// a 40 KB machine-readable block", which is why the block still held every
+// survivor the run that first populated it produced.
+//
+// `--children` adds the layer that was missing: one CHILD issue per AREA
+// (`survivorArea` — a Stryker module for the frontend lane, a source file for
+// the rust lane), carrying that area's survivor lines. An area is the unit a
+// maintainer actually acts on — one sitting, one PR, one set of tests — and it
+// is a unit this script already computes, ranks and renders (#3350).
+//
+//   parent  = rolling status + the ONE machine-readable survivor block
+//   child   = the individual fix, one per area, linked both ways
+//
+// State stays single-copy in the PARENT. A child's survivor list is a pure
+// projection re-rendered from the parent's block every run, so a child that a
+// human closes, edits or deletes costs nothing: the next run rebuilds it. The
+// alternative — giving each child its own marker block — would scatter the
+// filer's only cross-run memory across N issues, where one hand-deleted child
+// silently drops that area's whole tracked set and re-reports it as new.
+//
+// DEDUPLICATION, which is the part that goes wrong. Two tiers, both reusing
+// mechanisms already in this repo rather than inventing a third:
+//   1. The parent's body carries a SECOND marker block (`mutation-children`)
+//      mapping `#<number>` -> area. That is the primary record, it is written
+//      by the same run that made the `gh` calls, and it needs no network.
+//   2. When tier 1 has no number for an area (first run, hand-edited block, a
+//      run that created a child and then died before it could rewrite the
+//      parent), the area's child is looked up by VERBATIM TITLE via
+//      `gh issue list --state all` — exactly how `findTrackingIssue` finds the
+//      parent. So an orphaned child is adopted, never duplicated.
+// Child titles are therefore load-bearing in the same way the parent's is:
+// `childIssueTitle(area)` is a pure function of the area, and renaming a child
+// makes the next run adopt-or-file a fresh one.
+//
+// Children are opened/updated only where a comment would not do. The split
+// follows what the sibling filers already established: an EDIT is state and
+// notifies nobody, a COMMENT is the notification. So a child is created when
+// its area first appears, its body is re-rendered every run it survives, and
+// it is COMMENTED on only when that area gained a survivor this run. When the
+// area's last survivor is killed the child is commented and CLOSED — a
+// permanently-open "these mutants survive" issue is the same lie
+// `file-scheduled-failures.mjs` refuses to leave open.
+//
+// `--max-children` caps CHILD CREATES IN ONE RUN and throws past it, in the
+// same spirit as the `--require-*` gates: refuse with a diagnosis rather than
+// do something unrecoverable. The default is the MEASURED size of the area
+// universe (see DEFAULT_MAX_CHILDREN), so it cannot bite on real data and can
+// only bite if `survivorArea` starts fragmenting.
+//
 // Exit codes: 0 on success (including the no-op case), 1 on a real error
 // (bad args, a `gh` call failing).
 
 import { execFileSync } from 'node:child_process'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -90,6 +150,35 @@ export const TRACKING_ISSUE_LABELS = ['testing', 'github-actions']
 
 const MARKER_START = '<!-- mutation-survivors:begin -->'
 const MARKER_END = '<!-- mutation-survivors:end -->'
+
+// The parent's SECOND marker block: area -> child issue number. Distinct
+// prefix from the survivor block above (no substring collision), and rendered
+// after it, so `parseKnownSurvivors` — which slices between the survivor
+// markers — cannot see it and the tracked set is unaffected.
+const CHILD_MARKER_START = '<!-- mutation-children:begin -->'
+const CHILD_MARKER_END = '<!-- mutation-children:end -->'
+
+// GitHub rejects an issue title over 256 characters. A rust area is a source
+// path, so this is reachable in principle; failing here beats a bare 422 from
+// `gh issue create` that nobody can act on.
+export const MAX_TITLE_CHARS = 256
+
+// Blast-radius cap on child CREATES in a single run — MEASURED, not chosen.
+// The area universe these two lanes can produce, as of 2026-08-09:
+//   frontend  21  `MODULE_NAMES.length` in `stryker.modules.mjs` (one area per
+//                 enrolled Stryker module)
+//   rust      22  non-test `.rs` files under the four `examine_globs` in
+//                 `src-tauri/.cargo/mutants.toml` (`agaric-store/src/op.rs`
+//                 plus `op_log/**`, `src/reverse/**`,
+//                 `agaric-engine/src/loro/engine/**`, minus the `exclude_globs`
+//                 test/proptest files) — one area per source FILE, which is
+//                 the only grouping cargo-mutants' ids expose.
+// So 43 is the whole universe: a run asking to create more children than that
+// cannot be reporting real areas, it is `survivorArea` fragmenting (an id shape
+// change collapsing everything into `(unparsed)`, say). Raising this is a
+// deliberate, reviewed step — the same posture as the repo's baseline files —
+// and enrolling more Stryker modules is exactly when to do it.
+export const DEFAULT_MAX_CHILDREN = 43
 
 // #3257 — a GitHub issue body maxes out at 65536 characters; past that
 // `gh issue edit` 422s, node exits non-zero, and this weekly non-gating job
@@ -289,6 +378,174 @@ export function diffSurvivors(current, known) {
 }
 
 // ---------------------------------------------------------------------------
+// Child issues, one per area
+// ---------------------------------------------------------------------------
+
+/**
+ * A child's title is a PURE FUNCTION of its area and is the tier-2 dedup key
+ * (see § Parent/child in the header): the run that cannot find a recorded
+ * number for an area searches for this exact string before it files anything.
+ * Same contract as the parent's `TRACKING_ISSUE_TITLE`, and the same warning —
+ * rename one and the next run adopts-or-files a fresh child.
+ */
+export function childIssueTitle(area) {
+  const title = `Mutation survivors — ${area} (auto-filed, do not rename)`
+  if (title.length > MAX_TITLE_CHARS) {
+    throw new Error(
+      `the child issue title for area "${area}" is ${title.length} chars, over GitHub's ${MAX_TITLE_CHARS}-char limit — \`gh issue create\` would 422. Shorten the area key in survivorArea().`,
+    )
+  }
+  return title
+}
+
+/** Reads the parent's `area -> child number` block. Absent/blank block ⇒ empty map. */
+export function parseChildLinks(body) {
+  const out = new Map()
+  if (!body) return out
+  const start = body.indexOf(CHILD_MARKER_START)
+  const end = body.indexOf(CHILD_MARKER_END)
+  if (start === -1 || end === -1 || end < start) return out
+  for (const raw of body.slice(start + CHILD_MARKER_START.length, end).split('\n')) {
+    const m = /^\s*#(\d+)\t(.+?)\s*$/.exec(raw)
+    // Keyed by AREA, not by number: the area is what the next run computes and
+    // looks up. A duplicate area line (hand-edit) keeps the first number, which
+    // is the one the earlier run actually wrote.
+    if (m && !out.has(m[2])) out.set(m[2], Number(m[1]))
+  }
+  return out
+}
+
+function renderChildBlock(childLinks) {
+  if (childLinks.size === 0) return []
+  const lines = [
+    '### Child issues (one per area)',
+    '_Machine-readable — do not hand-edit the marker lines below. Deleting a line does not lose any survivor state (the child is a projection of the block above); the next run re-adopts the child by its title, or files a fresh one._',
+    CHILD_MARKER_START,
+    '```',
+  ]
+  for (const [area, number] of [...childLinks.entries()].toSorted((a, b) =>
+    a[0].localeCompare(b[0]),
+  )) {
+    lines.push(`#${number}\t${area}`)
+  }
+  lines.push('```', CHILD_MARKER_END)
+  return lines
+}
+
+/**
+ * The per-area state machine, kept pure for the same reason
+ * `file-scheduled-failures.mjs` keeps `decideAction` pure — it is the part with
+ * real branches worth pinning:
+ *
+ *   'create' — the area has no known child.
+ *   'notify' — the area gained a survivor this run: re-render the child's body
+ *              AND comment (and reopen it if a human closed it).
+ *   'sync'   — the area is unchanged or only shrank: re-render the body, do not
+ *              comment, do not reopen. A partial recovery is not news, exactly
+ *              as in the sibling reporter.
+ *   'close'  — the area's last survivor is gone: comment and close.
+ *
+ * `maxChildren` caps CREATES only. An update or a close cannot run away — they
+ * are bounded by what is already recorded — so capping the total would just
+ * wedge the job on a backlog it did not create.
+ */
+export function decideChildActions({
+  groups,
+  newOnes = [],
+  knownChildren = new Map(),
+  maxChildren = DEFAULT_MAX_CHILDREN,
+}) {
+  const newSet = new Set(newOnes)
+  const live = new Set(groups.map((g) => g.area))
+  const actions = []
+  for (const g of groups) {
+    const number = knownChildren.get(g.area)
+    const hasNew = g.members.some((m) => newSet.has(m))
+    actions.push({
+      area: g.area,
+      members: g.members,
+      hasNew,
+      number,
+      action: number === undefined ? 'create' : hasNew ? 'notify' : 'sync',
+    })
+  }
+  for (const [area, number] of knownChildren) {
+    if (!live.has(area)) actions.push({ area, members: [], hasNew: false, number, action: 'close' })
+  }
+  const creates = actions.filter((a) => a.action === 'create').length
+  if (creates > maxChildren) {
+    throw new Error(
+      `refusing to open ${creates} child issues in one run (cap: ${maxChildren}). The measured area universe of both lanes is ${DEFAULT_MAX_CHILDREN} (see DEFAULT_MAX_CHILDREN), so a batch this large means survivorArea() is fragmenting rather than grouping — check the survivor id shapes before raising --max-children.`,
+    )
+  }
+  return actions.toSorted((a, b) => a.area.localeCompare(b.area))
+}
+
+/**
+ * A child's body: the area's survivor lines, dated, plus the way back to the
+ * parent. It carries NO marker block — the parent holds all state — so a plain
+ * truncation is safe when a pathological area outgrows the body limit.
+ */
+export function buildChildBody({ area, members, firstSeen = new Map(), parentNumber, runUrl }) {
+  const parentRef = parentNumber ? `#${parentNumber}` : `"${TRACKING_ISSUE_TITLE}"`
+  const head = [
+    `Mutation survivors in **${area}** — the ${members.length} mutant(s) below survived the weekly \`scheduled-deep-checks.yml\` mutation lanes, i.e. no test failed when the code was changed.`,
+    '',
+    `Parent: ${parentRef} (the rolling tracking issue). This child is filed, re-rendered and closed automatically by \`scripts/file-mutation-survivors.mjs\` — **do not rename the title**, the filer matches on it verbatim to re-find this issue instead of opening a duplicate.`,
+    '',
+    `Fix them the same way the parent asks: add or strengthen a test that kills the mutant, or record it as an accepted gap. The list below is re-rendered from the parent's machine-readable block on every run and holds no state of its own — remove a survivor's line **in the parent**, not here. This issue closes itself once ${area} has no survivors left.`,
+    '',
+    `### Survivors (${members.length})`,
+    '```',
+  ]
+  const tail = ['```']
+  if (runUrl) tail.push('', `_Last updated by [this run](${runUrl})._`)
+
+  const dated = members.map((id) => {
+    const seen = firstSeen.get(id)
+    return seen ? `${seen}\t${id}` : id
+  })
+  const render = (body) => [...head, ...body, ...tail].join('\n')
+  const full = render(dated)
+  if (full.length <= MAX_BODY_CHARS) return full
+
+  // No state here, so truncating the list is safe — unlike the parent, whose
+  // block must never be cut mid-way.
+  const note = `…(${dated.length} survivors do not fit in one issue body — see the parent's machine-readable block for the full list)`
+  const budget = MAX_BODY_CHARS - render([note]).length
+  const kept = []
+  let used = 0
+  for (const line of dated) {
+    used += line.length + 1
+    if (used > budget) break
+    kept.push(line)
+  }
+  return render([...kept, note])
+}
+
+export function buildChildComment({ area, newMembers, runUrl }) {
+  const lines = [
+    `${newMembers.length} new mutation survivor${newMembers.length === 1 ? '' : 's'} in **${area}** this run:`,
+    '```',
+    ...newMembers,
+    '```',
+  ]
+  if (runUrl) lines.push('', `Run: ${runUrl}`)
+  const text = lines.join('\n')
+  if (text.length <= MAX_BODY_CHARS) return text
+  const footer = '\n…(truncated — the full list is in this issue’s body)'
+  return text.slice(0, MAX_BODY_CHARS - footer.length) + footer
+}
+
+export function buildChildCloseComment({ area, runUrl }) {
+  const lines = [
+    `No mutants survive in **${area}** any more — closing. If a survivor reappears there, the next run reopens this issue rather than filing a new one.`,
+  ]
+  if (runUrl) lines.push('', `Run: ${runUrl}`)
+  return lines.join('\n')
+}
+
+// ---------------------------------------------------------------------------
 // Issue body / comment rendering
 // ---------------------------------------------------------------------------
 
@@ -322,6 +579,7 @@ export function buildIssueBody({
   firstSeen = new Map(),
   today,
   newOnes = [],
+  childLinks = new Map(),
 }) {
   const newSet = new Set(newOnes)
   const head = []
@@ -354,8 +612,16 @@ export function buildIssueBody({
   if (groups.length > 0) {
     areaSection.push(`### Where the survivors are (${groups.length} area(s), worst first)`)
     areaSection.push('')
-    areaSection.push('| Area | Survivors | Oldest first seen |')
-    areaSection.push('|---|--:|---|')
+    // The `Fix in` column appears only once children exist. A column of `—`
+    // on every row for a repo running without `--children` is noise, and its
+    // absence is the honest rendering of "this area has no child issue yet".
+    const withChildren = childLinks.size > 0
+    areaSection.push(
+      withChildren
+        ? '| Area | Survivors | Oldest first seen | Fix in |'
+        : '| Area | Survivors | Oldest first seen |',
+    )
+    areaSection.push(withChildren ? '|---|--:|---|---|' : '|---|--:|---|')
     for (const g of groups) {
       const dates = g.members.map(dateOf).filter(Boolean).toSorted()
       // An UNDATED member is not a missing value to be skipped — it means the
@@ -364,7 +630,12 @@ export function buildIssueBody({
       // print a recent date for an area whose real oldest entry is ancient,
       // which is the opposite of the fact this column exists to carry.
       const oldest = dates.length === g.members.length ? dates[0] : '_unknown_'
-      areaSection.push(`| ${g.area} | ${g.members.length} | ${oldest} |`)
+      const child = childLinks.get(g.area)
+      areaSection.push(
+        withChildren
+          ? `| ${g.area} | ${g.members.length} | ${oldest} | ${child ? `#${child}` : '—'} |`
+          : `| ${g.area} | ${g.members.length} | ${oldest} |`,
+      )
     }
     areaSection.push('')
   }
@@ -404,6 +675,10 @@ export function buildIssueBody({
   )
   state.push('```')
   state.push(MARKER_END)
+  // Part of STATE, not of the presentational sections: it is bounded by the
+  // area count (one short line each, capped by DEFAULT_MAX_CHILDREN) and it is
+  // the primary dedup record, so the clamp ladder below must never drop it.
+  state.push(...renderChildBlock(childLinks))
 
   const tail = []
   if (runUrl) {
@@ -539,12 +814,150 @@ function withTempFile(content, fn) {
   return fn(file)
 }
 
+function gh(args) {
+  execFileSync('gh', args, { stdio: 'inherit' })
+}
+
+/** Tier-2 dedup: adopt an existing child by VERBATIM title (see the header). */
+function findChildByTitle(repo, title) {
+  const results = ghJson([
+    'issue',
+    'list',
+    '--repo',
+    repo,
+    '--search',
+    `in:title "${title}"`,
+    '--state',
+    'all',
+    '--json',
+    'number,title,state',
+    '--limit',
+    '20',
+  ])
+  const exact = results.filter((i) => i.title === title)
+  if (exact.length === 0) return null
+  return exact.find((i) => i.state === 'OPEN') ?? exact.toSorted((a, b) => b.number - a.number)[0]
+}
+
+/**
+ * A recorded child's current state. Queried rather than assumed so `reopen` and
+ * `close` are only issued when they will actually do something — both exit
+ * non-zero against an issue already in the target state, and a `|| true` there
+ * would swallow a genuine permission failure along with the harmless case.
+ */
+function childState(repo, number) {
+  try {
+    return ghJson(['issue', 'view', String(number), '--repo', repo, '--json', 'state']).state
+  } catch {
+    // A deleted/transferred child is not a reason to fail the whole run: fall
+    // through to the title lookup path, which files a fresh one.
+    return null
+  }
+}
+
+function createChild(repo, title, body) {
+  const out = withTempFile(body, (f) =>
+    execFileSync(
+      'gh',
+      ['issue', 'create', '--repo', repo, '--title', title, '--body-file', f].concat(
+        TRACKING_ISSUE_LABELS.flatMap((l) => ['--label', l]),
+      ),
+      { encoding: 'utf8' },
+    ),
+  )
+  const m = /\/issues\/(\d+)/.exec(out)
+  if (!m) {
+    throw new Error(
+      `gh issue create did not print an issue URL for child "${title}" (got: ${out.trim() || '(empty)'}), so its number could not be recorded in the parent. The next run will adopt it by title rather than duplicate it.`,
+    )
+  }
+  return Number(m[1])
+}
+
+/**
+ * Performs the plan `decideChildActions` produced and returns the `area ->
+ * number` map the parent body must record.
+ *
+ * Children are written BEFORE the parent on purpose: the parent's block is the
+ * record of what exists, so it must be written from numbers that already do. If
+ * this throws half-way, the parent keeps the previous (smaller) block and the
+ * orphaned children are adopted by title next run — the reason tier 2 exists.
+ */
+function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, newSet }) {
+  const links = new Map()
+  for (const a of actions) {
+    let { number, action } = a
+    if (action === 'create') {
+      const title = childIssueTitle(a.area)
+      const adopted = findChildByTitle(repo, title)
+      if (adopted === null) {
+        const created = createChild(
+          repo,
+          title,
+          buildChildBody({ ...a, firstSeen, parentNumber, runUrl }),
+        )
+        links.set(a.area, created)
+        console.log(`  child #${created} filed for ${a.area} (${a.members.length} survivor(s))`)
+        continue
+      }
+      // Adopted: an earlier run filed it and died before recording the number,
+      // or a human renamed nothing and simply closed it. Fall through as a
+      // normal update so the body is refreshed either way.
+      number = adopted.number
+      action = a.hasNew ? 'notify' : 'sync'
+      console.log(`  adopted existing child #${number} for ${a.area} (was not recorded)`)
+    }
+
+    const state = childState(repo, number)
+    if (state === null) {
+      // The recorded child no longer exists (deleted, or transferred to
+      // another repo). Editing it would throw and take the whole run — and the
+      // parent — down over one child. Forget the record instead: the area has
+      // no number next run, so it goes down the `create` path and is adopted
+      // by title or filed fresh. This is exactly the hole tier 2 exists for.
+      console.log(`  recorded child #${number} for ${a.area} is gone — dropping the record`)
+      continue
+    }
+    if (action === 'close') {
+      withTempFile(buildChildCloseComment({ area: a.area, runUrl }), (f) =>
+        gh(['issue', 'comment', String(number), '--repo', repo, '--body-file', f]),
+      )
+      if (state !== 'CLOSED') gh(['issue', 'close', String(number), '--repo', repo])
+      console.log(`  child #${number} closed (${a.area} has no survivors left)`)
+      continue
+    }
+
+    // Reopening is a notification-class action, so only a genuinely new
+    // survivor does it — same rule the sibling reporter applies to the parent.
+    if (action === 'notify' && state === 'CLOSED') {
+      gh(['issue', 'reopen', String(number), '--repo', repo])
+    }
+    withTempFile(buildChildBody({ ...a, firstSeen, parentNumber, runUrl }), (f) =>
+      gh(['issue', 'edit', String(number), '--repo', repo, '--body-file', f]),
+    )
+    if (action === 'notify') {
+      const newMembers = a.members.filter((m) => newSet.has(m))
+      withTempFile(buildChildComment({ area: a.area, newMembers, runUrl }), (f) =>
+        gh(['issue', 'comment', String(number), '--repo', repo, '--body-file', f]),
+      )
+    }
+    links.set(a.area, number)
+  }
+  return links
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { dryRun: false, requireRust: false, requireFrontend: false }
+  const args = {
+    dryRun: false,
+    requireRust: false,
+    requireFrontend: false,
+    children: false,
+    maxChildren: DEFAULT_MAX_CHILDREN,
+  }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     switch (a) {
@@ -562,6 +975,19 @@ function parseArgs(argv) {
       }
       case '--require-frontend': {
         args.requireFrontend = true
+        break
+      }
+      case '--children': {
+        args.children = true
+        break
+      }
+      case '--max-children': {
+        const raw = argv[++i]
+        const n = Number(raw)
+        if (!Number.isInteger(n) || n < 0) {
+          throw new Error(`--max-children expects a non-negative integer, got "${raw}"`)
+        }
+        args.maxChildren = n
         break
       }
       case '--repo': {
@@ -677,7 +1103,29 @@ export function main(argv = process.argv.slice(2)) {
   const today = new Date().toISOString().slice(0, 10)
   const { newOnes, resolvedOnes, all } = diffSurvivors(current, known)
 
-  if (newOnes.length === 0) {
+  // The child bookkeeping (#3667). The recorded `area -> #number` map is READ
+  // unconditionally and ACTED ON only under `--children`: parsing it only when
+  // the flag is on would make a single run without the flag silently delete
+  // the block on its next body rewrite, losing the tier-1 dedup record and
+  // making the run after that re-file every child that already exists.
+  const knownChildren = parseChildLinks(existingIssue?.body)
+  // The plan is computed BEFORE the no-op check because it can itself be a
+  // reason to act: an area whose LAST survivor was killed leaves a child issue
+  // standing that claims mutants survive there, and that is the same lie
+  // `file-scheduled-failures.mjs` refuses to leave open on the lane tracker.
+  const childActions = args.children
+    ? decideChildActions({
+        groups: groupByArea(all),
+        newOnes,
+        knownChildren,
+        maxChildren: args.maxChildren,
+      })
+    : []
+  // A 'sync' re-renders a child body that is identical to what is already
+  // there, so an unchanged week still writes nothing and never spams.
+  const childWork = childActions.filter((a) => a.action !== 'sync')
+
+  if (newOnes.length === 0 && childWork.length === 0) {
     console.log('no new mutation survivors — no-op (tracking issue left untouched)')
     if (resolvedOnes.length > 0) {
       console.log(
@@ -687,87 +1135,128 @@ export function main(argv = process.argv.slice(2)) {
     return
   }
 
-  const body = buildIssueBody({ all, resolvedOnes, runUrl, firstSeen, today, newOnes })
   const comment = buildNewSurvivorComment({ newOnes, runUrl })
 
   if (args.dryRun) {
-    // Compare to null explicitly — issue #0 is not a real GitHub issue
-    // number, but the `--known-body-file` test stub uses 0 as a placeholder
-    // and 0 is falsy, so a `existingIssue.number` truthiness check here
-    // would misreport an existing issue as "not found".
-    if (existingIssue !== null) {
-      console.log(
-        `[dry-run] would ${existingIssue.state === 'CLOSED' ? 'REOPEN + ' : ''}edit issue #${existingIssue.number}`,
-      )
-    } else {
-      console.log(`[dry-run] would CREATE a new issue titled "${TRACKING_ISSUE_TITLE}"`)
-    }
-    console.log(
-      `[dry-run] new survivors: ${newOnes.length}, resolved: ${resolvedOnes.length}, total known: ${all.length}`,
-    )
-    console.log('[dry-run] --- issue body ---')
-    console.log(body)
-    console.log('[dry-run] --- new-survivor comment ---')
-    console.log(comment)
+    // Rendered against the ALREADY-RECORDED links only: a dry run files no
+    // child, so no new number exists, and inventing one would misdescribe what
+    // the real run would write. The planned actions are printed separately.
+    const body = buildIssueBody({
+      all,
+      resolvedOnes,
+      runUrl,
+      firstSeen,
+      today,
+      newOnes,
+      childLinks: knownChildren,
+    })
+    printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, comment, childActions })
     return
   }
 
   if (!repo) throw new Error('--repo (or $GITHUB_REPOSITORY) is required to file/update an issue')
 
-  if (existingIssue !== null) {
-    if (existingIssue.state === 'CLOSED') {
-      execFileSync('gh', ['issue', 'reopen', String(existingIssue.number), '--repo', repo], {
-        stdio: 'inherit',
+  // Children FIRST — the parent records their numbers, so they have to exist.
+  const childLinks = args.children
+    ? applyChildActions({
+        actions: childActions,
+        repo,
+        runUrl,
+        firstSeen,
+        parentNumber: existingIssue?.number,
+        newSet: new Set(newOnes),
       })
-    }
-    withTempFile(body, (bodyFile) => {
-      execFileSync(
-        'gh',
-        ['issue', 'edit', String(existingIssue.number), '--repo', repo, '--body-file', bodyFile],
-        {
-          stdio: 'inherit',
-        },
-      )
-    })
-    withTempFile(comment, (commentFile) => {
-      execFileSync(
-        'gh',
-        [
-          'issue',
-          'comment',
-          String(existingIssue.number),
-          '--repo',
-          repo,
-          '--body-file',
-          commentFile,
-        ],
-        { stdio: 'inherit' },
-      )
-    })
-    console.log(
-      `updated tracking issue #${existingIssue.number} (${newOnes.length} new survivor(s))`,
-    )
-  } else {
+    : knownChildren
+
+  const body = buildIssueBody({ all, resolvedOnes, runUrl, firstSeen, today, newOnes, childLinks })
+  writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
+}
+
+/**
+ * The parent write. Split from `main` both for its cyclomatic complexity and
+ * because it now has two callers' worth of policy in it: a run with NEW
+ * survivors notifies (reopen + comment), while a run that only had CHILD work
+ * to do — an area resolved, a child adopted — syncs the body silently. That is
+ * the same "an edit is state, a comment is news" split the sibling reporter's
+ * `sync` branch makes, and it is what keeps the child bookkeeping from turning
+ * every quiet week into a notification.
+ */
+function writeParent({ existingIssue, repo, body, comment, newOnes, childWork }) {
+  if (existingIssue === null) {
     withTempFile(body, (bodyFile) => {
       const labelArgs = TRACKING_ISSUE_LABELS.flatMap((l) => ['--label', l])
-      execFileSync(
-        'gh',
-        [
-          'issue',
-          'create',
-          '--repo',
-          repo,
-          '--title',
-          TRACKING_ISSUE_TITLE,
-          '--body-file',
-          bodyFile,
-          ...labelArgs,
-        ],
-        { stdio: 'inherit' },
-      )
+      gh([
+        'issue',
+        'create',
+        '--repo',
+        repo,
+        '--title',
+        TRACKING_ISSUE_TITLE,
+        '--body-file',
+        bodyFile,
+        ...labelArgs,
+      ])
     })
     console.log(`filed a new tracking issue (${newOnes.length} survivor(s))`)
+    return
   }
+
+  const number = String(existingIssue.number)
+  if (newOnes.length === 0) {
+    withTempFile(body, (f) => gh(['issue', 'edit', number, '--repo', repo, '--body-file', f]))
+    console.log(
+      `synced tracking issue #${number} body (${childWork.length} child action(s); no new survivors, so no comment — a partial recovery is not news)`,
+    )
+    return
+  }
+
+  if (existingIssue.state === 'CLOSED') {
+    gh(['issue', 'reopen', number, '--repo', repo])
+  }
+  withTempFile(body, (f) => gh(['issue', 'edit', number, '--repo', repo, '--body-file', f]))
+  withTempFile(comment, (f) => gh(['issue', 'comment', number, '--repo', repo, '--body-file', f]))
+  console.log(`updated tracking issue #${number} (${newOnes.length} new survivor(s))`)
+}
+
+function printDryRun({
+  args,
+  existingIssue,
+  newOnes,
+  resolvedOnes,
+  all,
+  body,
+  comment,
+  childActions,
+}) {
+  // Compare to null explicitly — issue #0 is not a real GitHub issue
+  // number, but the `--known-body-file` test stub uses 0 as a placeholder
+  // and 0 is falsy, so a `existingIssue.number` truthiness check here
+  // would misreport an existing issue as "not found".
+  if (existingIssue !== null) {
+    console.log(
+      `[dry-run] would ${existingIssue.state === 'CLOSED' && newOnes.length > 0 ? 'REOPEN + ' : ''}edit issue #${existingIssue.number}`,
+    )
+  } else {
+    console.log(`[dry-run] would CREATE a new issue titled "${TRACKING_ISSUE_TITLE}"`)
+  }
+  console.log(
+    `[dry-run] new survivors: ${newOnes.length}, resolved: ${resolvedOnes.length}, total known: ${all.length}`,
+  )
+  if (args.children) {
+    console.log(`[dry-run] child issues (cap ${args.maxChildren}):`)
+    for (const a of childActions) {
+      console.log(
+        `[dry-run]   ${a.action.padEnd(6)} ${a.number ? `#${a.number}` : '(new)'} ${a.area} — ${a.members.length} survivor(s)`,
+      )
+      if (a.action === 'create') {
+        console.log(`[dry-run]     title: ${childIssueTitle(a.area)}`)
+      }
+    }
+  }
+  console.log('[dry-run] --- issue body ---')
+  console.log(body)
+  console.log('[dry-run] --- new-survivor comment ---')
+  console.log(comment)
 }
 
 // ---------------------------------------------------------------------------
@@ -1194,6 +1683,513 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
   }
 }
 
+/**
+ * Parent/child fixtures, pure half. The invariant that matters most is the
+ * FIRST one: the child block lives in the same body as the survivor block, so a
+ * botched marker would either swallow survivor lines into the child map or
+ * leak `#12\tarea` lines into the tracked survivor set — and either way the
+ * next run reads a corrupted set and re-reports the difference as "new".
+ */
+function selfTestChildPlanning({ check, survivor }) {
+  const rust = (line) => `[rust] agaric-store/src/op.rs:${line}:5: replace foo with bar in x`
+  const FE = 'frontend: glob-validate'
+  const RS = 'rust: agaric-store/src/op.rs'
+
+  // 10a. The two blocks must not see each other's lines, in either direction.
+  {
+    const all = [survivor(1), survivor(2), rust(10)]
+    const links = new Map([
+      [FE, 41],
+      [RS, 42],
+    ])
+    const body = buildIssueBody({
+      all,
+      resolvedOnes: [],
+      today: '2026-08-09',
+      newOnes: all,
+      childLinks: links,
+    })
+    const survivors = parseKnownSurvivors(body)
+    const children = parseChildLinks(body)
+    check(
+      survivors.size === 3 &&
+        all.every((s) => survivors.has(s)) &&
+        ![...survivors].some((s) => s.startsWith('#')),
+      'the child block does not leak into the tracked survivor set',
+      [...survivors].join(' | '),
+    )
+    check(
+      children.size === 2 && children.get(FE) === 41 && children.get(RS) === 42,
+      'the child block round-trips area -> issue number',
+      JSON.stringify([...children]),
+    )
+    check(
+      parseFirstSeen(body).size === 3,
+      'the child block does not disturb first-seen parsing',
+      String(parseFirstSeen(body).size),
+    )
+    // …and the area table names where to go.
+    check(
+      body.includes(`| ${FE} | 2 | 2026-08-09 | #41 |`),
+      'the area table carries the child link when children exist',
+      body.slice(body.indexOf('| Area'), body.indexOf('### All currently-known')),
+    )
+  }
+
+  // 10b. …and with NO children the table keeps its old three-column shape, so
+  //      a repo running without `--children` sees exactly what it saw before.
+  {
+    const body = buildIssueBody({ all: [survivor(1)], resolvedOnes: [], today: '2026-08-09' })
+    check(
+      body.includes('| Area | Survivors | Oldest first seen |') &&
+        !body.includes('Fix in') &&
+        !body.includes(CHILD_MARKER_START),
+      'without children the body is unchanged (no column, no block)',
+      body.slice(body.indexOf('| Area'), body.indexOf('### All currently-known')),
+    )
+  }
+
+  // 10c. The state machine. `create` on an unknown area, `notify` only when
+  //      that area gained a survivor, `sync` otherwise (a quiet week must not
+  //      comment on nine children), `close` when the area is gone.
+  {
+    const groups = groupByArea([survivor(1), survivor(2), rust(10)])
+    const actions = decideChildActions({
+      groups,
+      newOnes: [survivor(2)],
+      knownChildren: new Map([
+        [FE, 41],
+        ['frontend: date-utils', 43],
+      ]),
+    })
+    const byArea = new Map(actions.map((a) => [a.area, a]))
+    check(
+      byArea.get(FE).action === 'notify' &&
+        byArea.get(RS).action === 'create' &&
+        byArea.get('frontend: date-utils').action === 'close' &&
+        byArea.get('frontend: date-utils').number === 43,
+      'child state machine: notify on new, create on unknown, close on vanished',
+      actions.map((a) => `${a.area}=${a.action}`).join(' '),
+    )
+    const quiet = decideChildActions({
+      groups,
+      newOnes: [],
+      knownChildren: new Map([
+        [FE, 41],
+        [RS, 42],
+      ]),
+    })
+    check(
+      quiet.every((a) => a.action === 'sync'),
+      'an unchanged week plans only syncs (no child comment, no reopen)',
+      quiet.map((a) => `${a.area}=${a.action}`).join(' '),
+    )
+  }
+
+  // 10d. The blast-radius cap. Refusing loudly beats opening N issues nobody
+  //      asked for, and it must count CREATES only — a large existing backlog
+  //      of updates/closes is not a runaway.
+  {
+    const groups = groupByArea([survivor(1), rust(10)])
+    let threw = null
+    try {
+      decideChildActions({ groups, newOnes: [], knownChildren: new Map(), maxChildren: 1 })
+    } catch (err) {
+      threw = err
+    }
+    check(threw !== null, 'the child cap throws rather than opening the batch', 'no throw')
+    const manyCloses = decideChildActions({
+      groups: [],
+      newOnes: [],
+      knownChildren: new Map(Array.from({ length: 50 }, (_, i) => [`area-${i}`, i + 1])),
+      maxChildren: 1,
+    })
+    check(
+      manyCloses.length === 50 && manyCloses.every((a) => a.action === 'close'),
+      'the cap counts creates only — 50 closes are not a runaway',
+      `${manyCloses.length} action(s)`,
+    )
+  }
+
+  // 10e. A title is a pure function of the area and must fit GitHub's limit;
+  //      an over-long one throws HERE rather than as a 422 from `gh`.
+  {
+    check(
+      childIssueTitle(FE) === childIssueTitle(FE) && childIssueTitle(FE).includes(FE),
+      'a child title is derived from the area verbatim (the tier-2 dedup key)',
+      childIssueTitle(FE),
+    )
+    let threw = null
+    try {
+      childIssueTitle('x'.repeat(MAX_TITLE_CHARS))
+    } catch (err) {
+      threw = err
+    }
+    check(threw !== null, 'an over-long child title throws instead of 422ing `gh`', 'no throw')
+  }
+
+  // 10f. The clamp ladder must never drop the child block — it is the primary
+  //      dedup record, so losing it would make the next run re-file every
+  //      child it already has.
+  {
+    const wide = Array.from(
+      { length: 430 },
+      (_, a) =>
+        `[frontend] module-${String(a).padStart(3, '0')}-with-a-long-descriptive-name: a.ts:1 [X]`,
+    )
+    const links = new Map([['frontend: module-000-with-a-long-descriptive-name', 77]])
+    const body = buildIssueBody({
+      all: wide,
+      resolvedOnes: [],
+      today: '2026-08-09',
+      newOnes: wide,
+      childLinks: links,
+      runUrl: 'https://example/run',
+    })
+    check(
+      body.length <= MAX_BODY_CHARS &&
+        !body.includes('Where the survivors are') &&
+        parseChildLinks(body).get('frontend: module-000-with-a-long-descriptive-name') === 77 &&
+        parseKnownSurvivors(body).size === 430,
+      'the clamp drops the area table but never the child block',
+      `len=${body.length} children=${parseChildLinks(body).size} state=${parseKnownSurvivors(body).size}`,
+    )
+  }
+
+  // 10g. A child body is a projection: bounded, dated, pointing back at the
+  //      parent, and carrying NO marker block of its own (state stays single
+  //      copy, so a hand-mangled child costs nothing).
+  {
+    const members = Array.from({ length: 1200 }, (_, i) => survivor(i))
+    const child = buildChildBody({
+      area: FE,
+      members,
+      firstSeen: new Map([[survivor(0), '2026-01-15']]),
+      parentNumber: 3142,
+      runUrl: 'https://example/run',
+    })
+    check(
+      child.length <= MAX_BODY_CHARS &&
+        child.includes('Parent: #3142') &&
+        child.includes('2026-01-15\t') &&
+        !child.includes(MARKER_START) &&
+        !child.includes(CHILD_MARKER_START) &&
+        child.includes('do not fit in one issue body'),
+      'an oversized child body truncates safely and links back to the parent',
+      `len=${child.length}`,
+    )
+    const small = buildChildBody({ area: FE, members: [survivor(1)], parentNumber: 3142 })
+    check(
+      !small.includes('do not fit') && small.includes(survivor(1)),
+      'a small child body is not truncated',
+      small,
+    )
+  }
+}
+
+/**
+ * What `main()` ACTUALLY writes when `--children` is on, driven end to end
+ * against a stub `gh` placed first on `$PATH` — the same technique
+ * `file-scheduled-failures.mjs` uses, and for the same reason: every fixture
+ * above is a pure-function assertion, so deleting the `gh issue close` from the
+ * resolved path, or the child-number recording from the parent edit, leaves
+ * them all green while reintroducing exactly the bugs they describe.
+ *
+ * The single most important assertion here is the last one: an unchanged week
+ * must issue NO `gh` call at all. This layer multiplies every write by the
+ * number of areas, so a filer that "just refreshes" nine children every Monday
+ * is nine notifications a week and the end of anyone reading them.
+ */
+function selfTestChildGh({ check }) {
+  const dir = mkdtempSync(join(tmpdir(), 'mutation-children-gh-'))
+  const log = join(dir, 'gh.log')
+  const listFixture = join(dir, 'list.json')
+  const stateFixture = join(dir, 'state.txt')
+  const counter = join(dir, 'counter.txt')
+  const stub = join(dir, 'gh')
+  // Extensionless + CommonJS on purpose: `execFileSync('gh', …)` resolves the
+  // name verbatim through `$PATH`, and a file under `tmpdir()` has no
+  // `package.json` above it, so Node parses it as CJS.
+  writeFileSync(
+    stub,
+    [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs')",
+      'const a = process.argv.slice(2)',
+      'const sub = a[1]',
+      "const bi = a.indexOf('--body-file')",
+      "const ti = a.indexOf('--title')",
+      `fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({`,
+      '  sub,',
+      "  title: ti === -1 ? '' : a[ti + 1],",
+      "  target: /^\\d+$/.test(a[2] || '') ? a[2] : '',",
+      "  body: bi === -1 ? '' : fs.readFileSync(a[bi + 1], 'utf8'),",
+      "}) + '\\n')",
+      `if (sub === 'list') process.stdout.write(fs.readFileSync(${JSON.stringify(listFixture)}, 'utf8'))`,
+      "else if (sub === 'view') {",
+      `  const s = fs.readFileSync(${JSON.stringify(stateFixture)}, 'utf8').trim()`,
+      // 'MISSING' stands in for a child that was deleted or transferred: `gh`
+      // exits non-zero and prints nothing.
+      "  if (s === 'MISSING') process.exit(1)",
+      '  process.stdout.write(JSON.stringify({ state: s }))',
+      '}',
+      "else if (sub === 'create') {",
+      `  const n = Number(fs.readFileSync(${JSON.stringify(counter)}, 'utf8')) + 1`,
+      `  fs.writeFileSync(${JSON.stringify(counter)}, String(n))`,
+      "  process.stdout.write('https://github.com/owner/repo/issues/' + n + '\\n')",
+      '}',
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+  chmodSync(stub, 0o755)
+
+  const missed = join(dir, 'missed.txt')
+  const knownBody = join(dir, 'known-body.md')
+  const opId = '[rust] agaric-store/src/op.rs:10:5: replace foo with bar in x'
+  const revId = '[rust] src/reverse/mod.rs:20:1: replace baz with qux in y'
+  const OP = 'rust: agaric-store/src/op.rs'
+  const REV = 'rust: src/reverse/mod.rs'
+
+  const drive = ({ missedLines, body, list = [], state = 'OPEN' }) => {
+    writeFileSync(missed, missedLines.join('\n'), 'utf8')
+    writeFileSync(knownBody, body, 'utf8')
+    writeFileSync(listFixture, JSON.stringify(list), 'utf8')
+    writeFileSync(stateFixture, state, 'utf8')
+    writeFileSync(counter, '100', 'utf8')
+    writeFileSync(log, '', 'utf8')
+    const prevPath = process.env.PATH
+    const prevLog = console.log
+    process.env.PATH = `${dir}:${prevPath}`
+    console.log = () => {}
+    let threw = null
+    try {
+      main([
+        '--rust-missed',
+        missed,
+        '--children',
+        '--known-body-file',
+        knownBody,
+        '--repo',
+        'owner/repo',
+        '--run-url',
+        'https://example/run',
+      ])
+    } catch (err) {
+      threw = err
+    } finally {
+      console.log = prevLog
+      process.env.PATH = prevPath
+    }
+    const calls = readFileSync(log, 'utf8')
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l))
+    if (threw) calls.push({ sub: `THREW(${threw.message})`, body: '' })
+    return calls
+  }
+
+  const parentWith = (all, childLinks) =>
+    buildIssueBody({ all, resolvedOnes: [], today: '2026-08-09', newOnes: [], childLinks })
+
+  // 11a. BOOTSTRAP. A parent that already tracks both survivors but has no
+  //      children yet: nothing is NEW, yet the children must still be filed —
+  //      and the parent must record their numbers, or next week files them
+  //      again. No parent COMMENT: there is no news, only bookkeeping.
+  {
+    const calls = drive({
+      missedLines: [opId.replace('[rust] ', ''), revId.replace('[rust] ', '')],
+      body: parentWith([opId, revId], new Map()),
+    })
+    const seq = calls.map((c) => c.sub).join(',')
+    const created = calls.filter((c) => c.sub === 'create')
+    const parentEdit = calls.findLast((c) => c.sub === 'edit')
+    const recorded = parseChildLinks(parentEdit?.body ?? '')
+    check(
+      seq === 'list,create,list,create,edit',
+      'bootstrap: each area is looked up, then filed, then the parent is edited once',
+      `gh sequence was: ${seq || '(no gh calls at all)'}`,
+    )
+    check(
+      created.length === 2 &&
+        created
+          .map((c) => c.title)
+          .toSorted()
+          .join(' | ') === [childIssueTitle(OP), childIssueTitle(REV)].toSorted().join(' | '),
+      'bootstrap files one child per area, under the derived titles',
+      created.map((c) => c.title).join(' | '),
+    )
+    check(
+      recorded.get(OP) === 101 && recorded.get(REV) === 102,
+      'the parent body main() writes records every child number (tier-1 dedup)',
+      JSON.stringify([...recorded]),
+    )
+    check(
+      !calls.some((c) => c.sub === 'comment'),
+      'bootstrap posts no comment — filing children is bookkeeping, not news',
+      seq,
+    )
+  }
+
+  // 11b. ADOPTION (tier 2). A child exists under the derived title but the
+  //      parent has no record of it — the state left behind by a run that
+  //      created it and then died. It must be adopted, never duplicated.
+  {
+    const calls = drive({
+      missedLines: [opId.replace('[rust] ', '')],
+      body: parentWith([opId], new Map()),
+      list: [{ number: 555, title: childIssueTitle(OP), state: 'OPEN' }],
+      state: 'OPEN',
+    })
+    const seq = calls.map((c) => c.sub).join(',')
+    const recorded = parseChildLinks(calls.findLast((c) => c.sub === 'edit')?.body ?? '')
+    check(
+      !calls.some((c) => c.sub === 'create') && recorded.get(OP) === 555,
+      'an orphaned child is adopted by title, not duplicated (tier-2 dedup)',
+      `${seq} recorded=${JSON.stringify([...recorded])}`,
+    )
+  }
+
+  // 11c. RESOLVED. The area's last survivor is gone: the child is told why and
+  //      CLOSED, the parent body is synced, and still nobody is spammed with a
+  //      parent comment.
+  {
+    const calls = drive({
+      missedLines: [],
+      body: parentWith([opId], new Map([[OP, 101]])),
+      state: 'OPEN',
+    })
+    const seq = calls.map((c) => c.sub).join(',')
+    const closeComment = calls.find((c) => c.sub === 'comment')?.body ?? ''
+    check(
+      seq === 'view,comment,close,edit' && closeComment.includes(OP),
+      'a resolved area comments on and closes its child, then syncs the parent',
+      `gh sequence was: ${seq || '(no gh calls at all)'}`,
+    )
+    check(
+      parseChildLinks(calls.findLast((c) => c.sub === 'edit')?.body ?? '').size === 0,
+      'the closed child is dropped from the parent’s child block',
+      calls.findLast((c) => c.sub === 'edit')?.body ?? '',
+    )
+  }
+
+  // 11d. QUIET WEEK. Same survivors, same children, nothing new: not one `gh`
+  //      call. This layer multiplies writes by the area count, so a filer that
+  //      re-renders every child every Monday is the notification fatigue the
+  //      rolling-issue design exists to avoid.
+  {
+    const calls = drive({
+      missedLines: [opId.replace('[rust] ', ''), revId.replace('[rust] ', '')],
+      body: parentWith(
+        [opId, revId],
+        new Map([
+          [OP, 101],
+          [REV, 102],
+        ]),
+      ),
+    })
+    check(
+      calls.length === 0,
+      'an unchanged week issues no `gh` write at all, children included',
+      calls.map((c) => c.sub).join(','),
+    )
+  }
+
+  // 11e. NEW SURVIVOR in a tracked area: the child is commented on (that is
+  //      the notification) and so is the parent (that is the news).
+  {
+    const calls = drive({
+      missedLines: [opId.replace('[rust] ', ''), 'agaric-store/src/op.rs:99:9: replace a with b'],
+      body: parentWith([opId], new Map([[OP, 101]])),
+      state: 'OPEN',
+    })
+    const seq = calls.map((c) => c.sub).join(',')
+    const childComment = calls.find((c) => c.sub === 'comment' && c.target === '101')
+    check(
+      seq === 'view,edit,comment,edit,comment' && (childComment?.body ?? '').includes('op.rs:99:9'),
+      'a new survivor comments on its child and on the parent',
+      `gh sequence was: ${seq || '(no gh calls at all)'}`,
+    )
+  }
+
+  // 11f. A child a human CLOSED must reopen when its area regresses — and only
+  //      then. A `sync` against a closed child leaves it closed, exactly as the
+  //      sibling reporter leaves a closed parent closed on a partial recovery.
+  {
+    const relapse = drive({
+      missedLines: [opId.replace('[rust] ', ''), 'agaric-store/src/op.rs:99:9: replace a with b'],
+      body: parentWith([opId], new Map([[OP, 101]])),
+      state: 'CLOSED',
+    })
+    const quiet = drive({
+      missedLines: [opId.replace('[rust] ', '')],
+      body: parentWith([opId], new Map([[OP, 101]])),
+      state: 'CLOSED',
+    })
+    check(
+      relapse.map((c) => c.sub).join(',') === 'view,reopen,edit,comment,edit,comment',
+      'a closed child reopens when its area gains a survivor',
+      relapse.map((c) => c.sub).join(','),
+    )
+    check(
+      quiet.length === 0,
+      'a closed child is left closed when nothing changed',
+      quiet.map((c) => c.sub).join(','),
+    )
+  }
+
+  // 11g. A recorded child that no longer exists (deleted, or transferred) must
+  //      not take the whole run down with it — the parent update, and every
+  //      other area, would be lost over one dead issue. The record is dropped
+  //      so the next run re-adopts or re-files it.
+  {
+    const calls = drive({
+      missedLines: [opId.replace('[rust] ', ''), 'agaric-store/src/op.rs:99:9: replace a with b'],
+      body: parentWith([opId], new Map([[OP, 101]])),
+      state: 'MISSING',
+    })
+    const parentEdit = calls.findLast((c) => c.sub === 'edit')
+    check(
+      !calls.some((c) => c.target === '101' && c.sub !== 'view') &&
+        parentEdit !== undefined &&
+        parseChildLinks(parentEdit.body).size === 0 &&
+        calls.some((c) => c.sub === 'comment'),
+      'a vanished child is dropped from the record, and the parent is still updated',
+      calls.map((c) => `${c.sub}${c.target ? `#${c.target}` : ''}`).join(','),
+    )
+  }
+
+  // 11h. Running WITHOUT `--children` against a parent that has them must not
+  //      delete the child block. It is the tier-1 dedup record, and dropping
+  //      it makes the next run with the flag on re-file every child that
+  //      already exists — the one way this layer can produce duplicates.
+  {
+    writeFileSync(missed, [opId.replace('[rust] ', ''), 'a/b.rs:1:1: replace x with y'].join('\n'))
+    writeFileSync(knownBody, parentWith([opId], new Map([[OP, 101]])), 'utf8')
+    writeFileSync(log, '', 'utf8')
+    const prevPath = process.env.PATH
+    const prevLog = console.log
+    process.env.PATH = `${dir}:${prevPath}`
+    console.log = () => {}
+    try {
+      main(['--rust-missed', missed, '--known-body-file', knownBody, '--repo', 'owner/repo'])
+    } finally {
+      console.log = prevLog
+      process.env.PATH = prevPath
+    }
+    const calls = readFileSync(log, 'utf8')
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l))
+    const written = parseChildLinks(calls.find((c) => c.sub === 'edit')?.body ?? '')
+    check(
+      !calls.some((c) => c.sub === 'create' || c.sub === 'view') && written.get(OP) === 101,
+      'a run without --children preserves the child block instead of deleting it',
+      `${calls.map((c) => c.sub).join(',')} recorded=${JSON.stringify([...written])}`,
+    )
+  }
+}
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -1335,6 +2331,11 @@ function runSelfTest() {
   //    `selfTestSurvivorAges` / `selfTestGroupingAndRanking` above.
   selfTestSurvivorAges({ ok, fail, survivor })
   selfTestGroupingAndRanking({ ok, fail, survivor })
+
+  // 10/11. Parent/child issues: the plan, then what `main()` really writes.
+  const check = (cond, name, detail) => (cond ? ok(name) : fail(name, detail))
+  selfTestChildPlanning({ check, survivor })
+  selfTestChildGh({ check })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
