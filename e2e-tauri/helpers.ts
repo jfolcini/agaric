@@ -193,14 +193,20 @@ export async function openJournalBlockEditor(): Promise<void> {
       () => false,
     )
   if (!appeared) {
-    const lastStatic = $$('[data-testid="block-static"]')
-    const count = await lastStatic.length
-    if (count === 0) {
+    // `getElements()` resolves the lazy `$$` chain ONCE, into a plain array.
+    // Reading `.length` off the chainable and then indexing it re-queries the
+    // DOM on each access, so the index could address a different (shorter)
+    // list than the one that was counted; a single snapshot cannot go stale
+    // between the two reads. The empty case is the `undefined` case, so the
+    // count check and the index check are the same check.
+    const statics = await $$('[data-testid="block-static"]').getElements()
+    const lastStatic = statics.at(-1)
+    if (lastStatic === undefined) {
       throw new Error(
         'openJournalBlockEditor: neither a focused block editor nor any block-static appeared after the Add-block CTA',
       )
     }
-    await (await lastStatic[count - 1]).click()
+    await lastStatic.click()
     await $(editorSelector).waitForDisplayed({ timeout: ACTION_TIMEOUT })
   }
   await $(editorSelector).click()
