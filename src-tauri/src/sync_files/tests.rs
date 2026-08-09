@@ -2603,11 +2603,11 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
 
 // ──: attachment path traversal validation ────────────
 //
-// These tests pin down `validate_attachment_fs_path` and its sibling
-// `check_attachment_fs_path_shape` against a malformed `fs_path` —
-// regression coverage so the guard cannot silently regress if a future
-// refactor of `read_attachment_file` / `write_attachment_file` / the
-// attachment command layer removes the call.
+// These tests pin down `validate_attachment_fs_path` and the parse it
+// delegates to against a malformed `fs_path` — regression coverage so the
+// guard cannot silently regress if a future refactor of
+// `read_attachment_file` / `write_attachment_file` / the attachment command
+// layer removes the call.
 
 #[test]
 fn validate_rejects_parent_dir_traversal() {
@@ -2774,13 +2774,14 @@ fn equivalent_spellings_resolve_to_one_canonical_path_3370() {
     }
 }
 
-// ── shape-only helper: same rules, no app_data_dir join ────────────────
+// ── the resolver and the parse agree, join or no join ──────────────────
 
 #[test]
 fn shape_check_matches_full_validator() {
-    // Every case the full validator rejects must also be rejected by
-    // the shape-only helper, and vice versa. Snapshot restore and pre-write
-    // checks use the shape helper before a target file must exist.
+    // Every case the resolving validator rejects must also be rejected by the
+    // parse it delegates to, and vice versa: the trust boundaries that check a
+    // path before its target file exists go straight to `AttachmentFsPath`, so
+    // the two must not be able to disagree.
     let cases = [
         ("", true),
         ("../../etc/passwd", true),
@@ -2800,12 +2801,12 @@ fn shape_check_matches_full_validator() {
 
     let dir = TempDir::new().unwrap();
     for (input, should_fail) in all {
-        let shape = check_attachment_fs_path_shape(input);
+        let shape = agaric_core::attachment_path::AttachmentFsPath::parse(input);
         let full = validate_attachment_fs_path(dir.path(), input);
         assert_eq!(
             shape.is_err(),
             should_fail,
-            "shape check disagreed on {input:?}: {shape:?}"
+            "the parse disagreed on {input:?}: {shape:?}"
         );
         assert_eq!(
             full.is_err(),

@@ -4394,7 +4394,12 @@ async fn shuffled_batch_breaks_the_frontier_and_is_reported_3726() {
     let fault = |r: &OpTransfer| (r.seq == 7).then_some(agaric_core::error::AppError::PoolTimedOut);
 
     // ── ascending: the precondition holds, and #3325's policy works ──
-    let out_of_order_before = audit_ingest_metrics::out_of_order_records();
+    //
+    // The process-global counters are monotonic and shared with every other
+    // test in this binary, so only DELTAS and only lower bounds are asserted on
+    // them — the `snapshot_fallback_metrics` precedent this module follows
+    // (#3740). What this test owns exactly is `BatchIngestOutcome`, which is
+    // per-call.
     let (in_order_pool, _d1) = test_pool().await;
     let in_order = agaric_sync::sync_protocol::ingest_replicated_batch_with_fault(
         &in_order_pool,
@@ -4409,12 +4414,7 @@ async fn shuffled_batch_breaks_the_frontier_and_is_reported_3726() {
         "records emitted by collect_ops_for_peer's ORDER BY are ascending; \
          nothing here violates the precondition"
     );
-    assert_eq!(
-        audit_ingest_metrics::out_of_order_records(),
-        out_of_order_before,
-        "the in-order path must not move the out-of-order counter, or the \
-         counter is noise and a real violation would be indistinguishable"
-    );
+    let out_of_order_after_in_order = audit_ingest_metrics::out_of_order_records();
     let in_order_heads = get_local_heads(&in_order_pool).await.unwrap();
     assert_eq!(
         reoffered_seqs(&ascending, &in_order_heads, device).await,
@@ -4441,11 +4441,14 @@ async fn shuffled_batch_breaks_the_frontier_and_is_reported_3726() {
         "seq 6, 7, 8 and 9 each arrived below the seq 10 already presented for \
          this device — the check must report every one of them"
     );
-    assert_eq!(
-        audit_ingest_metrics::out_of_order_records() - out_of_order_before,
-        4,
+    assert!(
+        audit_ingest_metrics::out_of_order_records() - out_of_order_after_in_order >= 4,
         "#3726: the violations must reach the process-global counter behind \
-         StatusInfo::audit_ingest_out_of_order, not just the local outcome"
+         StatusInfo::audit_ingest_out_of_order, not just the local outcome. \
+         Measured from AFTER the in-order run, whose own `out_of_order == 0` \
+         above is this test's evidence that a clean batch reports nothing — an \
+         equality on the global counter would instead be a bet that no other \
+         test in the binary ran in between"
     );
 
     let shuffled_heads = get_local_heads(&shuffled_pool).await.unwrap();
@@ -4530,21 +4533,32 @@ async fn a_never_clearing_transient_failure_shows_up_as_a_consecutive_stall_3727
         );
     }
 
+    // Lower bounds, not equalities: these counters are process-global and
+    // monotonic, and other tests in this binary stall devices of their own
+    // (`transient_ingest_failure_defers_the_rest_of_that_devices_chain_3325` is
+    // one). The `snapshot_fallback_metrics` precedent this module follows
+    // asserts `>=` for exactly that reason, and an equality here would be a bet
+    // on nextest's per-test process isolation rather than a property of the
+    // code (#3740).
     let deferred_delta = audit_ingest_metrics::deferred_records() - deferred_before;
-    assert_eq!(
-        deferred_delta,
-        u64::from(audit_ingest_metrics::PERSISTENT_STALL_BATCHES) * 5,
+    assert!(
+        deferred_delta >= u64::from(audit_ingest_metrics::PERSISTENT_STALL_BATCHES) * 5,
         "#3727: every deferred record must reach the process-global counter \
          behind StatusInfo::audit_ingest_deferred — the wasted re-download is \
-         proportional to it and was previously visible only as a warn! line"
+         proportional to it and was previously visible only as a warn! line \
+         (delta was {deferred_delta})"
     );
-    assert_eq!(
-        audit_ingest_metrics::stalls() - stalls_before,
-        u64::from(audit_ingest_metrics::PERSISTENT_STALL_BATCHES),
+    assert!(
+        audit_ingest_metrics::stalls() - stalls_before
+            >= u64::from(audit_ingest_metrics::PERSISTENT_STALL_BATCHES),
         "one stall event per batch per stalled device"
     );
 
-    let stall = audit_ingest_metrics::last().expect("a stall must have been recorded");
+    // Keyed by THIS device rather than read off the process-global `last()`,
+    // which any concurrently running test can overwrite between the act and the
+    // assertion (#3740).
+    let stall = audit_ingest_metrics::stall_run(device)
+        .expect("a stall run must be recorded for this device");
     assert_eq!(stall.op_device_id, device);
     assert_eq!(stall.op_seq, 6, "the seq that faulted");
     assert_eq!(
@@ -4585,11 +4599,181 @@ async fn a_never_clearing_transient_failure_shows_up_as_a_consecutive_stall_3727
     )
     .await;
     assert_eq!(
-        audit_ingest_metrics::last()
-            .expect("a stall must have been recorded")
+        audit_ingest_metrics::stall_run(device)
+            .expect("a stall run must be recorded for this device")
             .consecutive,
         1,
         "progress must reset the consecutive count, or a device that stalls \
          once a month eventually reads as permanently stalled"
+    );
+}
+
+/// #3740 — the persistent-stall `error!` asserts the device has been "deferred
+/// N batches running without landing anything". It must not be able to say that
+/// about a device that just landed records.
+///
+/// The reset ran only for `seen.difference(&stalled)`, so a device that ingests
+/// part of its chain and then hits `SQLITE_BUSY` mid-chain kept its whole run:
+/// three such sessions in a row — with the frontier advancing every single time,
+/// the tail shrinking every single time, and nothing at all wrong — fired the
+/// escalation that tells an operator to go looking for a full disk, a read-only
+/// mount or a corrupt page. A diagnostic that states something false about the
+/// system is worse than no diagnostic.
+#[tokio::test]
+async fn a_device_that_lands_before_stalling_is_not_a_persistent_stall_3740() {
+    use agaric_sync::sync_protocol::audit_ingest_metrics;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let device = "device-Z-3740";
+    let records: Vec<OpTransfer> = (6..=10).map(|s| foreign_op_transfer(device, s)).collect();
+    let busy = || {
+        agaric_core::error::AppError::Database(sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "database is locked",
+        )))
+    };
+
+    // Build a run right up to — but not over — the escalation threshold, the
+    // honest way: sessions in which the FIRST record faults, so nothing lands.
+    let stuck = |r: &OpTransfer| (r.seq == 6).then_some(busy());
+    for _ in 1..audit_ingest_metrics::PERSISTENT_STALL_BATCHES {
+        let (pool, _dir) = test_pool().await;
+        agaric_sync::sync_protocol::ingest_replicated_batch_with_fault(
+            &pool,
+            &records,
+            "device-A",
+            "device-peer",
+            &stuck,
+        )
+        .await;
+    }
+    assert_eq!(
+        audit_ingest_metrics::stall_run(device)
+            .expect("the run must exist")
+            .consecutive,
+        audit_ingest_metrics::PERSISTENT_STALL_BATCHES - 1,
+        "precondition: one more stall with nothing landing would escalate"
+    );
+
+    // Now a session that is NOT the #3727 condition: two records land, the
+    // third faults. The frontier moves; next session the peer ships a shorter
+    // tail. Nothing here is stuck.
+    let writer = SpanBufWriter::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(
+            "sync_protocol::audit_ingest=error",
+        ))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false),
+        );
+    let guard = tracing::subscriber::set_default(subscriber);
+
+    let (pool, _dir) = test_pool().await;
+    let outcome = agaric_sync::sync_protocol::ingest_replicated_batch_with_fault(
+        &pool,
+        &records,
+        "device-A",
+        "device-peer",
+        &|r: &OpTransfer| (r.seq == 8).then_some(busy()),
+    )
+    .await;
+    drop(guard);
+
+    assert_eq!(
+        (outcome.ingested, outcome.deferred),
+        (2, 3),
+        "seq 6 and 7 land, seq 8 faults and 9/10 are deferred behind it"
+    );
+    let heads = get_local_heads(&pool).await.unwrap();
+    assert_eq!(
+        heads.iter().find(|h| h.device_id == device).map(|h| h.seq),
+        Some(7),
+        "the frontier advanced — this device is demonstrably landing records"
+    );
+
+    assert_eq!(
+        audit_ingest_metrics::stall_run(device)
+            .expect("the mid-chain stall is still a stall")
+            .consecutive,
+        1,
+        "a device whose frontier moved in this very batch starts a fresh run: \
+         the count means CONSECUTIVE batches that landed nothing, and this batch \
+         landed something"
+    );
+
+    let logged = writer.contents();
+    assert!(
+        !logged.contains("running without landing anything"),
+        "the persistent-stall escalation must not fire for a device that landed \
+         two records in the same batch — that is the claim being made, and it is \
+         false. Captured: {logged}"
+    );
+}
+
+/// #3740 — the out-of-order detector reports once per device per batch, not
+/// once per record.
+///
+/// What it detects is a reordered or parallelised batch: thousands of records
+/// over a handful of devices, all of them violations. One long `error!` line
+/// each buries the finding in its own output — `record_stall` shows the opposite
+/// restraint by staying at `debug!` below its threshold. The count travels in
+/// the single line instead, and the process-global counter still moves once per
+/// record so nothing is lost by throttling the log.
+#[tokio::test]
+async fn out_of_order_records_are_reported_once_per_device_per_batch_3740() {
+    use agaric_sync::sync_protocol::audit_ingest_metrics;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let device = "device-Z-3740-ooo";
+    let shuffled: Vec<OpTransfer> = [10, 6, 7, 8, 9]
+        .iter()
+        .map(|&s| foreign_op_transfer(device, s))
+        .collect();
+
+    let writer = SpanBufWriter::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(
+            "sync_protocol::audit_ingest=error",
+        ))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false),
+        );
+    let guard = tracing::subscriber::set_default(subscriber);
+
+    let before = audit_ingest_metrics::out_of_order_records();
+    let (pool, _dir) = test_pool().await;
+    let outcome = agaric_sync::sync_protocol::ingest_replicated_batch(
+        &pool,
+        &shuffled,
+        "device-A",
+        "device-peer",
+    )
+    .await;
+    drop(guard);
+
+    assert_eq!(
+        outcome.out_of_order, 4,
+        "seq 6, 7, 8 and 9 each arrived below the seq 10 already presented"
+    );
+    assert!(
+        audit_ingest_metrics::out_of_order_records() - before >= 4,
+        "throttling the log must not throttle the metric"
+    );
+
+    let logged = writer.contents();
+    let lines = logged.matches("#3726:").count();
+    assert_eq!(
+        lines, 1,
+        "four violations on one device must produce ONE summarised line, not \
+         four. Captured: {logged}"
+    );
+    assert!(
+        logged.contains("count=4"),
+        "the summarised line must carry how many records violated, or \
+         throttling loses the magnitude. Captured: {logged}"
     );
 }

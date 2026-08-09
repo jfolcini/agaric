@@ -107,4 +107,10 @@
 0100_peer_refs_loro_vv_bytes.sql
 0101_op_log_reverses_columns.sql
 0102_projected_agenda_horizon.sql
+0103_seed_liststyle_property_def.sql
+0104_projected_agenda_cache_date_block_index.sql
+0105_projected_agenda_horizon_rebuild_today.sql
+0106_loro_sync_quarantine.sql
+0107_peer_refs_endpoint_id.sql
 0108_attachments_fs_path_shape.sql
+0109_attachments_fs_path_trailing_dot.sql

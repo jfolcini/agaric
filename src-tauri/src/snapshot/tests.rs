@@ -3511,7 +3511,7 @@ async fn apply_snapshot_coerces_traversal_attachment_fs_path_3370() {
         "a traversal fs_path must be replaced, never stored"
     );
     assert!(
-        agaric_sync::sync_files::check_attachment_fs_path_shape(&stored).is_ok(),
+        agaric_core::attachment_path::AttachmentFsPath::parse(&stored).is_ok(),
         "what restore stored must be a value the resolvers accept"
     );
 
