@@ -4336,3 +4336,260 @@ async fn corrupt_record_does_not_stall_the_device_chain_3325() {
         "the frontier is deliberately allowed past an unusable record"
     );
 }
+
+// ── #3726 — the ascending-seq precondition the defer policy rests on ──
+
+/// Every `device-Z` seq the peer would still offer us, given the frontier we
+/// now advertise. This is the question that actually decides whether a record
+/// is lost: the op log's contents *are* the acknowledgement.
+async fn reoffered_seqs(
+    all_records: &[OpTransfer],
+    heads: &[DeviceHead],
+    device_id: &str,
+) -> Vec<i64> {
+    let (peer_pool, _peer_dir) = test_pool().await;
+    for record in all_records {
+        agaric_sync::sync_protocol::insert_replicated_op(&peer_pool, record)
+            .await
+            .unwrap();
+    }
+    collect_ops_for_peer(&peer_pool, heads)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.device_id == device_id)
+        .map(|r| r.seq)
+        .collect()
+}
+
+/// #3726 — the defer policy is correct only while each device's records are
+/// presented in ascending `seq`, and nothing enforced that.
+///
+/// Two runs over the SAME five records with the SAME injected fault, differing
+/// only in the order they are handed to `ingest_replicated_batch`. In ascending
+/// order the #3325 policy does its job: the frontier stops below the fault and
+/// the peer re-offers the gap. Shuffled — one higher seq presented first, which
+/// is all it takes — the frontier has already stepped past the fault before it
+/// happens, and the peer never offers those records again. That asymmetry is
+/// the coupling this test exists to pin: anyone who parallelises or reorders
+/// the ingest path has to come here and confront it.
+///
+/// It also pins the release-mode check #3726 added. The check does not repair
+/// anything (by the time an out-of-order record arrives the higher seq has
+/// landed and the frontier has moved), it *reports* — through
+/// `BatchIngestOutcome::out_of_order` and the process-global counter behind
+/// `StatusInfo::audit_ingest_out_of_order`.
+#[tokio::test]
+async fn shuffled_batch_breaks_the_frontier_and_is_reported_3726() {
+    use agaric_sync::sync_protocol::audit_ingest_metrics;
+
+    // A device id unique to this test: the ingest metrics are process-global.
+    let device = "device-Z-3726";
+    let ascending: Vec<OpTransfer> = (6..=10).map(|s| foreign_op_transfer(device, s)).collect();
+    // The issue's shape — a HIGHER seq presented before the one that faults.
+    let shuffled: Vec<OpTransfer> = [10, 6, 7, 8, 9]
+        .iter()
+        .map(|&s| foreign_op_transfer(device, s))
+        .collect();
+    let fault = |r: &OpTransfer| (r.seq == 7).then_some(agaric_core::error::AppError::PoolTimedOut);
+
+    // ── ascending: the precondition holds, and #3325's policy works ──
+    let out_of_order_before = audit_ingest_metrics::out_of_order_records();
+    let (in_order_pool, _d1) = test_pool().await;
+    let in_order = agaric_sync::sync_protocol::ingest_replicated_batch_with_fault(
+        &in_order_pool,
+        &ascending,
+        "device-A",
+        "device-peer",
+        &fault,
+    )
+    .await;
+    assert_eq!(
+        in_order.out_of_order, 0,
+        "records emitted by collect_ops_for_peer's ORDER BY are ascending; \
+         nothing here violates the precondition"
+    );
+    assert_eq!(
+        audit_ingest_metrics::out_of_order_records(),
+        out_of_order_before,
+        "the in-order path must not move the out-of-order counter, or the \
+         counter is noise and a real violation would be indistinguishable"
+    );
+    let in_order_heads = get_local_heads(&in_order_pool).await.unwrap();
+    assert_eq!(
+        reoffered_seqs(&ascending, &in_order_heads, device).await,
+        vec![7, 8, 9, 10],
+        "in ascending order the frontier stops below the fault and the peer \
+         re-offers the whole tail next session (#3325)"
+    );
+
+    // ── shuffled: same records, same fault, permanent hole ──
+    let (shuffled_pool, _d2) = test_pool().await;
+    let shuffled_outcome = agaric_sync::sync_protocol::ingest_replicated_batch_with_fault(
+        &shuffled_pool,
+        &shuffled,
+        "device-A",
+        "device-peer",
+        &fault,
+    )
+    .await;
+
+    // seq 10 lands first and lifts MAX(seq) to 10; every later record is below
+    // it, so all four are precondition violations.
+    assert_eq!(
+        shuffled_outcome.out_of_order, 4,
+        "seq 6, 7, 8 and 9 each arrived below the seq 10 already presented for \
+         this device — the check must report every one of them"
+    );
+    assert_eq!(
+        audit_ingest_metrics::out_of_order_records() - out_of_order_before,
+        4,
+        "#3726: the violations must reach the process-global counter behind \
+         StatusInfo::audit_ingest_out_of_order, not just the local outcome"
+    );
+
+    let shuffled_heads = get_local_heads(&shuffled_pool).await.unwrap();
+    let z = shuffled_heads
+        .iter()
+        .find(|h| h.device_id == device)
+        .expect("device frontier");
+    assert_eq!(
+        z.seq, 10,
+        "#3726: seq 10 was ingested BEFORE seq 7 faulted, so the frontier we \
+         advertise already sits above the record we failed to write — deferring \
+         seq 8 and 9 afterwards cannot claw that back"
+    );
+    assert_eq!(
+        reoffered_seqs(&shuffled, &shuffled_heads, device).await,
+        Vec::<i64>::new(),
+        "#3726: with the batch reordered, the peer ships nothing at all next \
+         session — seq 7, 8 and 9 are a permanent hole in this device's \
+         replicated history, which is exactly what ingest_replicated_batch \
+         exists to prevent and what its ascending-seq precondition buys"
+    );
+}
+
+// ── #3727 — a transient failure that never clears ──
+
+/// #3727 — `AppError::Database` is classified as transient unconditionally, so
+/// a failure that will never clear (full disk, read-only mount, corrupt
+/// `op_log` page) turns the defer policy into a permanent stall: every session
+/// the peer re-ships the device's whole tail, the first record faults
+/// identically, the rest are deferred, and nothing lands. The pull still
+/// reports success.
+///
+/// This does not change that classification — rejecting a record because the
+/// disk was briefly full would convert a recoverable stall into the permanent
+/// gap #3325 exists to avoid. It makes the condition *observable*: the run of
+/// consecutive stalls, not the single deferral, is the signal, and it is now
+/// carried on a process-global aggregate surfaced through `StatusInfo`.
+#[tokio::test]
+async fn a_never_clearing_transient_failure_shows_up_as_a_consecutive_stall_3727() {
+    use agaric_sync::sync_protocol::audit_ingest_metrics;
+
+    let device = "device-Z-3727";
+    let records: Vec<OpTransfer> = (6..=10).map(|s| foreign_op_transfer(device, s)).collect();
+    // A `Database` error that is emphatically NOT a busy writer.
+    let disk_full = || {
+        agaric_core::error::AppError::Database(sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::StorageFull,
+            "database or disk is full",
+        )))
+    };
+    let fault = |r: &OpTransfer| (r.seq == 6).then_some(disk_full());
+
+    let deferred_before = audit_ingest_metrics::deferred_records();
+    let stalls_before = audit_ingest_metrics::stalls();
+
+    // Each iteration is one pull session: the peer re-ships the whole tail
+    // because our frontier for this device never advanced.
+    for session in 1..=audit_ingest_metrics::PERSISTENT_STALL_BATCHES {
+        let (pool, _dir) = test_pool().await;
+        let outcome = agaric_sync::sync_protocol::ingest_replicated_batch_with_fault(
+            &pool,
+            &records,
+            "device-A",
+            "device-peer",
+            &fault,
+        )
+        .await;
+        assert_eq!(
+            (outcome.ingested, outcome.deferred, outcome.rejected),
+            (0, 5, 0),
+            "session {session}: the first record faults and the rest are \
+             deferred, so nothing lands — this is the stall, and it repeats"
+        );
+        assert!(
+            get_local_heads(&pool)
+                .await
+                .unwrap()
+                .iter()
+                .all(|h| h.device_id != device),
+            "session {session}: with nothing written the device has no frontier \
+             at all, so the peer re-ships the identical tail next session"
+        );
+    }
+
+    let deferred_delta = audit_ingest_metrics::deferred_records() - deferred_before;
+    assert_eq!(
+        deferred_delta,
+        u64::from(audit_ingest_metrics::PERSISTENT_STALL_BATCHES) * 5,
+        "#3727: every deferred record must reach the process-global counter \
+         behind StatusInfo::audit_ingest_deferred — the wasted re-download is \
+         proportional to it and was previously visible only as a warn! line"
+    );
+    assert_eq!(
+        audit_ingest_metrics::stalls() - stalls_before,
+        u64::from(audit_ingest_metrics::PERSISTENT_STALL_BATCHES),
+        "one stall event per batch per stalled device"
+    );
+
+    let stall = audit_ingest_metrics::last().expect("a stall must have been recorded");
+    assert_eq!(stall.op_device_id, device);
+    assert_eq!(stall.op_seq, 6, "the seq that faulted");
+    assert_eq!(
+        stall.consecutive,
+        audit_ingest_metrics::PERSISTENT_STALL_BATCHES,
+        "#3727: the run is the signal. A single deferral is an ordinary busy \
+         writer; {} in a row with nothing landing in between is a condition \
+         that will not clear on its own, and this is the only place that \
+         distinction is recorded",
+        audit_ingest_metrics::PERSISTENT_STALL_BATCHES
+    );
+    assert!(
+        stall.error.contains("full"),
+        "the classified-as-transient error must travel with the stall for \
+         triage; got {:?}",
+        stall.error
+    );
+
+    // A session in which the device makes progress retires the run, so an
+    // ordinary busy writer can never accumulate its way to the threshold.
+    let (healthy_pool, _healthy_dir) = test_pool().await;
+    let healthy = agaric_sync::sync_protocol::ingest_replicated_batch(
+        &healthy_pool,
+        &records,
+        "device-A",
+        "device-peer",
+    )
+    .await;
+    assert_eq!(healthy.ingested, 5, "the disk cleared; the tail lands");
+
+    let (relapse_pool, _relapse_dir) = test_pool().await;
+    agaric_sync::sync_protocol::ingest_replicated_batch_with_fault(
+        &relapse_pool,
+        &records,
+        "device-A",
+        "device-peer",
+        &fault,
+    )
+    .await;
+    assert_eq!(
+        audit_ingest_metrics::last()
+            .expect("a stall must have been recorded")
+            .consecutive,
+        1,
+        "progress must reset the consecutive count, or a device that stalls \
+         once a month eventually reads as permanently stalled"
+    );
+}

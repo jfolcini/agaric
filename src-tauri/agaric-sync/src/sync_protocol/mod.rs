@@ -21,6 +21,11 @@ pub mod loro_sync_quarantine;
 // surfaced through `StatusInfo`.
 pub mod snapshot_fallback_metrics;
 
+// #3726 / #3727 cross-session aggregate of audit op-log ingest deferrals,
+// per-device stalls and ascending-seq precondition violations, surfaced
+// through `StatusInfo`.
+pub mod audit_ingest_metrics;
+
 mod operations;
 mod session_state_machine;
 pub mod types;

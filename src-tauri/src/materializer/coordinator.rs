@@ -1351,6 +1351,16 @@ impl Materializer {
             // through the status endpoint.
             snapshot_fallback_count: agaric_sync::sync_protocol::snapshot_fallback_metrics::count(),
             snapshot_fallback_last: agaric_sync::sync_protocol::snapshot_fallback_metrics::last(),
+            // #3726 / #3727: surface the audit op-log ingest aggregates
+            // (process-global, monotonic) through the status endpoint, so a
+            // device whose replicated history has silently stopped advancing is
+            // answerable here rather than only from per-record `warn!` lines.
+            audit_ingest_deferred:
+                agaric_sync::sync_protocol::audit_ingest_metrics::deferred_records(),
+            audit_ingest_stalls: agaric_sync::sync_protocol::audit_ingest_metrics::stalls(),
+            audit_ingest_out_of_order:
+                agaric_sync::sync_protocol::audit_ingest_metrics::out_of_order_records(),
+            audit_ingest_last_stall: agaric_sync::sync_protocol::audit_ingest_metrics::last(),
         }
     }
 }
