@@ -884,7 +884,16 @@ export function enumerateGlobalMetrics(raw) {
   while ((m = re.exec(stripped))) {
     if (inAnyRegion(cfgTest, m.index)) continue
     const line = lineOf(m.index)
-    out.push({ name: m[1], line, exemptions: markersAbove(rawLines, line) })
+    out.push({
+      name: m[1],
+      line,
+      // #3707: the initialiser is the seed. Every process-global counter in
+      // the tree starts at 0 today, so this is currently always `zero` — but
+      // a `static LAST_SEEN: AtomicU64 = AtomicU64::new(u64::MAX)` would
+      // otherwise inherit exactly the `> 0` hole the struct fields had.
+      seed: staticSeed(stripped, m.index + m[0].length - 1),
+      exemptions: markersAbove(rawLines, line),
+    })
   }
   return out
 }
@@ -910,6 +919,189 @@ export function isNonZeroExpectation(text) {
 
 function isZeroLiteral(text) {
   return ZERO_RE.test(text.trim())
+}
+
+// ─── seeds: what the metric holds before anything moves it ────────────
+//
+// #3707. Every rule below this point asks "could this assertion have failed
+// if the emit site were deleted?", and until #3707 it answered that question
+// against an ASSUMED starting value of zero. For a counter that is exact —
+// `AtomicU64::new(0)` in `Default`, so `assert!(m > 0)` can only hold if
+// something incremented it. For a GAUGE seeded non-zero at construction it is
+// simply wrong: `fts_last_optimize_ms` is `AtomicU64::new(now_ms)` and
+// `cached_op_log_count` is `AtomicU64::new(u64::MAX)`, so `assert!(m > 0)`
+// passes on a freshly constructed `Materializer` that has never run the code
+// under test, and keeps passing with the production `.store(…)` physically
+// deleted. That is a check that cannot fail wearing the guard's own credit
+// rule — the exact defect this guard exists to reject, one level up.
+//
+// So the credit rule is expressed against the SEED, read out of the
+// `impl Default` block (or the `static … = Atomic…::new(…)` initialiser) that
+// the guard already has in hand:
+//
+//   zero seed     unchanged — `> 0` / `!= 0` / `>= 1` stay exact proofs.
+//   literal seed  a literal expectation must be unreachable FROM THE SEED:
+//                 `> L` needs `L >= seed`, `>= L` needs `L > seed`, `!= L`
+//                 needs `L == seed` (`!= 0` on a metric seeded to 7 is
+//                 vacuous; `!= 7` is the proof), `== L` needs `L != seed`.
+//   dynamic seed  (`now_ms`, or anything not a literal) — no literal
+//                 expectation is credited at all, because the guard cannot
+//                 order it against the seed. Only a comparison against a
+//                 BINDING (`assert!(stamped > seeded)`) proves movement.
+//
+// A comparison against a binding is credited under every seed: it is the
+// shape that reads the metric before and after and can therefore always fail.
+
+/** @typedef {{kind: 'zero'} | {kind: 'literal', value: bigint, text: string} | {kind: 'dynamic', text: string}} Seed */
+
+/** @type {Seed} */
+export const ZERO_SEED = { kind: 'zero' }
+
+const INT_LITERAL_RE = /^(\d[\d_]*)(?:_?[ui](?:8|16|32|64|128|size))?$/
+const INT_MAX_RE = /^(?:u8|u16|u32|u64|u128|usize|i8|i16|i32|i64|i128|isize)::MAX$/
+// Every `…::MAX` is treated as one opaque ceiling. The distinction between
+// `u32::MAX` and `u64::MAX` would only matter for a metric seeded to one and
+// asserted against the other, which is not a shape anyone writes; collapsing
+// them keeps `assert_ne!(m, u64::MAX)` — `cached_op_log_count`'s real
+// "recomputed" proof — creditable without a width table.
+const INT_MAX_VALUE = -1n
+
+/**
+ * The integer value of an operand, or `null` when it is not an integer
+ * literal. `u64::MAX` and friends count as literals: they are the repo's
+ * "never computed" sentinel and a test that pins the metric off the sentinel
+ * is a real proof.
+ *
+ * @param {string} text
+ * @returns {bigint | null}
+ */
+export function literalValue(text) {
+  const t = text.trim()
+  if (INT_MAX_RE.test(t)) return INT_MAX_VALUE
+  const m = INT_LITERAL_RE.exec(t)
+  return m ? BigInt(m[1].replaceAll('_', '')) : null
+}
+
+/**
+ * Classify a `Atomic…::new(<expr>)` initialiser into a {@link Seed}.
+ *
+ * @param {string} text
+ * @returns {Seed}
+ */
+export function classifySeed(text) {
+  const t = text.trim()
+  if (t.length === 0 || isZeroLiteral(t)) return ZERO_SEED
+  const value = literalValue(t)
+  if (value === null) return { kind: 'dynamic', text: t }
+  return value === 0n ? ZERO_SEED : { kind: 'literal', value, text: t }
+}
+
+/** Human-readable seed, for a violation detail. */
+export function describeSeed(seed) {
+  return seed.kind === 'zero' ? '0' : `\`${seed.text}\``
+}
+
+/**
+ * Comparison against `INT_MAX_VALUE`, which is a sentinel (`-1n`) standing for
+ * "the widest value there is" rather than an actual magnitude, so the ordinary
+ * `<`/`>` on the bigint would rank it BELOW every real literal.
+ *
+ * @returns {-1 | 0 | 1}
+ */
+function cmpSeedValues(a, b) {
+  if (a === b) return 0
+  if (a === INT_MAX_VALUE) return 1
+  if (b === INT_MAX_VALUE) return -1
+  return a < b ? -1 : 1
+}
+
+/**
+ * Whether pinning the metric `<metric> op other` can only hold if the metric
+ * MOVED off its seed. `op` is normalised so the metric is conceptually on the
+ * left.
+ *
+ * Exported so #3707's rule can be asserted directly rather than through the
+ * rendered verdict.
+ *
+ * @param {'>'|'>='|'=='|'!='} op
+ * @param {string} other the non-metric operand, raw text
+ * @param {Seed} seed
+ */
+export function provesMovement(op, other, seed = ZERO_SEED) {
+  if (seed.kind === 'zero') {
+    // The #3349/#3384 rule, unchanged. A metric that starts at 0 is above 0
+    // only if something moved it, whatever the right-hand side is.
+    if (op === '>') return true
+    if (op === '>=') return !isZeroLiteral(other)
+    if (op === '!=') return isZeroLiteral(other)
+    return isNonZeroExpectation(other)
+  }
+
+  const value = literalValue(other)
+  if (value === null) {
+    // A binding or an expression: the comparison can fail, so it is a proof
+    // for a seeded gauge exactly as it is for a counter.
+    if (op === '>' || op === '>=') return true
+    if (op === '!=') return false
+    return isNonZeroExpectation(other)
+  }
+
+  // A literal expectation on a seeded metric: credit it only when the seed
+  // itself does not already satisfy it.
+  if (seed.kind === 'dynamic') return false
+  const rel = cmpSeedValues(value, seed.value)
+  if (op === '>') return rel >= 0
+  if (op === '>=') return rel > 0
+  if (op === '!=') return rel === 0
+  return rel !== 0 && isNonZeroExpectation(other)
+}
+
+/**
+ * Per-field seeds read out of `impl Default for <struct>`.
+ *
+ * A `#[derive(Default)]` struct, or a field the block does not initialise
+ * through `Atomic…::new`, is absent from the map and therefore seeded zero —
+ * the conservative direction, because a zero seed is what the pre-#3707 rules
+ * already assumed.
+ *
+ * @param {string} raw
+ * @param {string} struct
+ * @returns {Map<string, Seed>}
+ */
+export function defaultSeeds(raw, struct) {
+  const stripped = stripNoise(raw)
+  /** @type {Map<string, Seed>} */
+  const seeds = new Map()
+  const implRe = new RegExp(`\\bimpl\\s+Default\\s+for\\s+${escapeForRegExp(struct)}\\b`, 'g')
+  let im
+  while ((im = implRe.exec(stripped))) {
+    const open = stripped.indexOf('{', im.index)
+    if (open === -1) continue
+    const body = stripped.slice(open, matchBrace(stripped, open))
+    const fieldRe = /(?:^|[\s,({])([a-z_][a-z0-9_]*)\s*:\s*(?:[\w:]*::)?Atomic\w+\s*::\s*new\s*\(/g
+    let fm
+    while ((fm = fieldRe.exec(body))) {
+      const { args } = readCallArgs(body, fieldRe.lastIndex - 1)
+      seeds.set(fm[1], classifySeed(args[0] ?? ''))
+    }
+  }
+  return seeds
+}
+
+/**
+ * The seed of a `static NAME: Atomic… = Atomic…::new(<expr>);` declaration
+ * whose `=` sits at `eq` in `stripped`.
+ *
+ * @param {string} stripped
+ * @param {number} eq
+ * @returns {Seed}
+ */
+function staticSeed(stripped, eq) {
+  const open = stripped.indexOf('(', eq)
+  const semi = stripped.indexOf(';', eq)
+  if (open === -1 || (semi !== -1 && open > semi)) return ZERO_SEED
+  const { args } = readCallArgs(stripped, open)
+  return classifySeed(args[0] ?? '')
 }
 
 /** Index of the first top-level comparison operator, or -1. */
@@ -940,16 +1132,17 @@ function findComparison(expr) {
  * @param {boolean} ne
  * @param {(text: string) => boolean} mentions
  * @param {(text: string) => boolean} isWitness
+ * @param {Seed} seed
  */
-function isFiringEquality(args, ne, mentions, isWitness) {
+function isFiringEquality(args, ne, mentions, isWitness, seed = ZERO_SEED) {
   if (args.length < 2) return false
   const [a, b] = args
   const aHit = mentions(a)
   const bHit = mentions(b)
   if (!aHit && !bHit) return false
   const other = aHit ? b : a
-  if (ne) return isZeroLiteral(other)
-  if (isNonZeroExpectation(other)) return true
+  if (ne) return provesMovement('!=', other, seed)
+  if (provesMovement('==', other, seed)) return true
   // Both operands derive from the metric — `assert_eq!(after, before)`, the
   // "must not bump" shape. `witnessesIn` already refuses to make a
   // metric-derived binding a witness, so this is belt AND braces; the
@@ -980,19 +1173,25 @@ function isFiringEquality(args, ne, mentions, isWitness) {
  *   bound comparison earns credit, and the condition is that an ASSERTION
  *   reads it, not that anything reads it. See `findFiringAssertions`.
  *
+ * - `seed` (#3707) — what `Default` puts in the metric before anything moves
+ *   it. Defaults to zero, which is what every pre-#3707 caller assumed; a
+ *   non-zero seed withdraws credit from the literal expectations the seed
+ *   already satisfies (`assert!(m > 0)` on a gauge seeded to `now_ms`).
+ *
  * @param {string} macro one of assert, assert_eq, assert_ne, debug_assert…
  * @param {string[]} args raw top-level argument texts
  * @param {(text: string) => boolean} mentions
- * @param {{isWitness?: (text: string) => boolean, isProvenPredicate?: (text: string) => boolean}} ctx
+ * @param {{isWitness?: (text: string) => boolean, isProvenPredicate?: (text: string) => boolean, seed?: Seed}} ctx
  */
 export function isFiringAssertion(macro, args, mentions, ctx = {}) {
   if (args.length === 0) return false
   const isWitness = ctx.isWitness ?? (() => false)
   const isProvenPredicate = ctx.isProvenPredicate ?? (() => false)
+  const seed = ctx.seed ?? ZERO_SEED
   const eq = macro.endsWith('_eq')
   const ne = macro.endsWith('_ne')
 
-  if (eq || ne) return isFiringEquality(args, ne, mentions, isWitness)
+  if (eq || ne) return isFiringEquality(args, ne, mentions, isWitness, seed)
 
   const expr = args[0]
   if (isProvenPredicate(expr)) return true
@@ -1008,11 +1207,8 @@ export function isFiringAssertion(macro, args, mentions, ctx = {}) {
   const flip = { '>': '<', '<': '>', '>=': '<=', '<=': '>=', '==': '==', '!=': '!=' }
   const effective = metricOnLeft ? op : flip[op]
 
-  if (effective === '>') return true
-  if (effective === '>=') return !isZeroLiteral(other)
-  if (effective === '!=') return isZeroLiteral(other)
-  if (effective === '==') return isNonZeroExpectation(other)
-  return false
+  if (effective === '<' || effective === '<=') return false
+  return provesMovement(effective, other, seed)
 }
 
 const ASSERT_RE = /\b((?:debug_)?assert(?:_eq|_ne)?)\s*!\s*\(/g
@@ -1105,14 +1301,17 @@ function witnessesIn(body, mentions) {
  *
  * @param {string} body
  * @param {(text: string) => boolean} mentions
+ * @param {Seed} seed the metric's `Default` seed (#3707) — without it,
+ *   `let ok = m.x.load(..) > 0; assert!(ok)` would launder onto a seeded gauge
+ *   exactly the credit the direct form is denied.
  * @returns {Set<string>}
  */
-function firingPredicatesIn(body, mentions) {
+function firingPredicatesIn(body, mentions, seed = ZERO_SEED) {
   const out = new Set()
   LET_RE.lastIndex = 0
   let lm
   while ((lm = LET_RE.exec(body))) {
-    if (isFiringAssertion('assert', [lm[2]], mentions)) out.add(lm[1])
+    if (isFiringAssertion('assert', [lm[2]], mentions, { seed })) out.add(lm[1])
   }
   return out
 }
@@ -1146,9 +1345,10 @@ function firingPredicatesIn(body, mentions) {
  * @param {string} stripped comment- and string-blanked source
  * @param {{start: number, end: number}[]} testRegions
  * @param {RegExp[]} tokens metric-naming patterns (global flag OFF)
+ * @param {Seed} seed the metric's `Default` seed (#3707)
  * @returns {number[]} character offsets of the firing proofs
  */
-export function findFiringAssertions(stripped, testRegions, tokens) {
+export function findFiringAssertions(stripped, testRegions, tokens, seed = ZERO_SEED) {
   if (testRegions.length === 0) return []
   const spans = functionSpans(stripped)
   const hits = []
@@ -1175,9 +1375,10 @@ export function findFiringAssertions(stripped, testRegions, tokens) {
       aliases.size > 0 ? new RegExp(`(?<![.\\w:])(?:${[...aliases].join('|')})\\b`) : null
     const mentions = (text) => namesMetric(text) || (aliasRe ? aliasRe.test(text) : false)
     const witnesses = witnessesIn(body, mentions)
-    const predicates = firingPredicatesIn(body, mentions)
+    const predicates = firingPredicatesIn(body, mentions, seed)
     const ctx = {
       mentions,
+      seed,
       // A bare identifier only. `i64::from(actual)` is not credited: the
       // wrapper could be anything, and being narrow here costs a baseline
       // entry while being loose costs a rule.
@@ -1311,9 +1512,17 @@ function enumerateMetrics(files, parsed) {
     const { raw, stripped, whole } = parsed.get(rel)
     if (whole) continue
     if (!structHint.test(stripped)) continue
+    /** @type {Map<string, Map<string, Seed>>} */
+    const seedsByStruct = new Map()
     for (const f of enumerateStructMetrics(raw)) {
+      if (!seedsByStruct.has(f.struct)) seedsByStruct.set(f.struct, defaultSeeds(raw, f.struct))
       metrics.push({
         name: f.name,
+        // #3707: what `impl Default` puts in the field before anything moves
+        // it. A gauge seeded non-zero (`fts_last_optimize_ms` → `now_ms`,
+        // `cached_op_log_count` → `u64::MAX`) is above zero from birth, so a
+        // `> 0` assertion on it is not evidence of anything.
+        seed: seedsByStruct.get(f.struct).get(f.name) ?? ZERO_SEED,
         // The owning struct is carried as its own field, not just folded into
         // `id`, because evidence attribution needs it when two structs share
         // a field name (#3439 item 1 — see `ambiguousFieldNames`).
@@ -1482,7 +1691,7 @@ function gatherEvidence(metric, files, parsed, ambiguousNames = new Set()) {
       metric.kind === 'global-static' && rel === metric.file
         ? [...tokens, new RegExp(`\\b(?:${GLOBAL_ACCESSORS.join('|')})\\s*\\(\\s*\\)`)]
         : tokens
-    const hits = findFiringAssertions(stripped, testRegions, localTokens)
+    const hits = findFiringAssertions(stripped, testRegions, localTokens, metric.seed ?? ZERO_SEED)
     if (hits.length > 0) {
       firingTests += hits.length
       firingTestFiles.push(rel)
@@ -1543,9 +1752,16 @@ export function analyze({ root }) {
     }
 
     if (firingTests === 0) {
+      const seed = metric.seed ?? ZERO_SEED
+      // #3707: for a seeded gauge, "above zero" is the WRONG bar and saying it
+      // would send the reader straight to the assertion that cannot fail.
+      const bar =
+        seed.kind === 'zero'
+          ? `no test asserts \`${metric.name}\` above zero`
+          : `no test asserts \`${metric.name}\` past the ${describeSeed(seed)} that \`Default\` seeds it with, so nothing distinguishes a working emit site from a deleted one (\`> 0\` holds from birth — #3707)`
       record(
         'no-firing-test',
-        `no test asserts \`${metric.name}\` above zero (${
+        `${bar} (${
           metric.kind === 'struct-field' ? 'struct field' : 'global static'
         }) — a counter with only "is zero" assertions passes forever after its emit site is deleted`,
       )
@@ -1920,6 +2136,126 @@ function runSelfTest() {
         !isFiringAssertion('assert', ['rose'], withRose),
       'a default context credited a non-literal expectation',
     )
+
+    // ── #3707: the seed the metric starts at ────────────────────────────
+    //
+    // The whole rule in one line: `> 0` is a proof for a counter and a
+    // tautology for a gauge, and until #3707 the guard credited both. Each
+    // seeded rejection below carries its accepted sibling, so the rule cannot
+    // be satisfied by refusing everything.
+    const seeded7 = { seed: { kind: 'literal', value: 7n, text: '7' } }
+    const seededNow = { seed: { kind: 'dynamic', text: 'now_ms' } }
+    const seededMax = { seed: classifySeed('u64::MAX') }
+    const sc = (macro, args, ctx) => isFiringAssertion(macro, args, mentions, ctx)
+    expect(
+      '`assert!(m > 0)` on a metric seeded to 7 is NOT a firing proof (#3707)',
+      !sc('assert', ['m.load() > 0'], seeded7),
+      'wrongly fired — the seed already satisfies it',
+    )
+    expect(
+      '`assert!(m > 7)` on a metric seeded to 7 IS a firing proof',
+      sc('assert', ['m.load() > 7'], seeded7),
+      'not fired',
+    )
+    expect(
+      '`assert!(m >= 7)` on a metric seeded to 7 is NOT a firing proof',
+      !sc('assert', ['m.load() >= 7'], seeded7),
+      'wrongly fired',
+    )
+    expect(
+      '`assert_ne!(m, 0)` on a metric seeded to 7 is NOT a firing proof (#3707)',
+      !sc('assert_ne', ['m.load()', '0'], seeded7),
+      'wrongly fired — seeded 7 is already != 0',
+    )
+    expect(
+      '`assert_ne!(m, 7)` on a metric seeded to 7 IS a firing proof',
+      sc('assert_ne', ['m.load()', '7'], seeded7),
+      'not fired',
+    )
+    expect(
+      '`assert!(after > before)` stays a firing proof on a seeded metric',
+      sc('assert', ['after > before'], seeded7) && sc('assert', ['after > before'], seededNow),
+      'not fired — a comparison against a binding can always fail',
+    )
+    expect(
+      'no literal expectation is credited on a metric seeded to `now_ms` (#3707)',
+      !sc('assert', ['m.load() > 0'], seededNow) &&
+        !sc('assert', ['m.load() > 1'], seededNow) &&
+        !sc('assert', ['m.load() >= 1000'], seededNow) &&
+        !sc('assert_ne', ['m.load()', '0'], seededNow),
+      'wrongly fired — the guard cannot order a literal against `now_ms`',
+    )
+    expect(
+      '`assert_ne!(m, u64::MAX)` IS the proof for a metric seeded to the sentinel',
+      sc('assert_ne', ['m.load()', 'u64::MAX'], seededMax) &&
+        !sc('assert_ne', ['m.load()', '0'], seededMax),
+      'the u64::MAX sentinel is not ordered against literals correctly',
+    )
+    expect(
+      'a zero seed is exactly the pre-#3707 behaviour',
+      sc('assert', ['m.load() > 0'], { seed: ZERO_SEED }) === cls('assert', ['m.load() > 0']) &&
+        sc('assert_ne', ['m.load()', '0'], { seed: ZERO_SEED }) ===
+          cls('assert_ne', ['m.load()', '0']),
+      'the explicit zero seed diverged from the default',
+    )
+  }
+
+  // ─ 2b. #3707 seed parsing ─
+  {
+    expect(
+      'seeds are classified from the `Atomic…::new(…)` initialiser',
+      classifySeed('0').kind === 'zero' &&
+        classifySeed('0u64').kind === 'zero' &&
+        classifySeed('7').kind === 'literal' &&
+        classifySeed('u64::MAX').kind === 'literal' &&
+        classifySeed('now_ms').kind === 'dynamic',
+      'seed classification drifted',
+    )
+    expect(
+      'underscored literals parse (`1_000` is not seed 1)',
+      literalValue('1_000') === 1000n && literalValue('1_000u64') === 1000n,
+      String(literalValue('1_000')),
+    )
+    const src = [
+      'impl Default for QueueMetrics {',
+      '    fn default() -> Self {',
+      '        let now_ms = clock();',
+      '        Self {',
+      '            plain: AtomicU64::new(0),',
+      '            stamped: AtomicU64::new(now_ms),',
+      '            sentinel: std::sync::atomic::AtomicU64::new(u64::MAX),',
+      '            seven: AtomicU64::new(7),',
+      '        }',
+      '    }',
+      '}',
+    ].join('\n')
+    const seeds = defaultSeeds(src, 'QueueMetrics')
+    expect(
+      '`impl Default` is parsed field-by-field, path-qualified types included',
+      seeds.get('plain')?.kind === 'zero' &&
+        seeds.get('stamped')?.kind === 'dynamic' &&
+        seeds.get('sentinel')?.kind === 'literal' &&
+        seeds.get('seven')?.value === 7n,
+      JSON.stringify([...seeds].map(([k, v]) => `${k}=${v.kind}`)),
+    )
+    expect(
+      'a struct with no `impl Default` seeds nothing (and so stays zero-seeded)',
+      defaultSeeds(
+        '#[derive(Default)]\npub struct QueueMetrics { pub a: AtomicU64 }',
+        'QueueMetrics',
+      ).size === 0,
+      'a derive(Default) struct produced seeds',
+    )
+    expect(
+      'a global static carries the seed of its own initialiser',
+      enumerateGlobalMetrics(
+        'static CALLS: AtomicU64 = AtomicU64::new(0);\npub fn count() -> u64 { 0 }\n',
+      )[0]?.seed.kind === 'zero' &&
+        enumerateGlobalMetrics(
+          'static LAST: AtomicU64 = AtomicU64::new(u64::MAX);\npub fn last() -> u64 { 0 }\n',
+        )[0]?.seed.kind === 'literal',
+      'global-static seeds are not read',
+    )
   }
 
   // ─ 3. block heads / panic detection ─
@@ -2055,6 +2391,37 @@ function runSelfTest() {
     live.metrics.length >= 25,
     `only ${live.metrics.length} metric(s) enumerated`,
   )
+  // #3707's seeded set, checked against the LIVE `impl Default` rather than
+  // written down. Two things rot silently without this: a new gauge seeded
+  // non-zero that nobody notices is exempt from the `> 0` bar, and — worse —
+  // a rename or a reshuffle of the `Default` block that makes `defaultSeeds`
+  // parse nothing, which reads as "every metric starts at zero" and restores
+  // the hole with every assertion still green.
+  {
+    const seeded = live.metrics
+      .filter((m) => (m.seed ?? ZERO_SEED).kind !== 'zero')
+      .map((m) => `${m.id}=${m.seed.kind}`)
+      .toSorted()
+    expect(
+      'the live non-zero-seeded metrics are exactly the two `Default` seeds them (#3707)',
+      JSON.stringify(seeded) ===
+        JSON.stringify([
+          'QueueMetrics::cached_op_log_count=literal',
+          'QueueMetrics::fts_last_optimize_ms=dynamic',
+        ]),
+      JSON.stringify(seeded),
+    )
+    const metricsRaw = readFileSync(path.join(ROOT, METRICS_FILE_REL), 'utf8')
+    const seeds = defaultSeeds(metricsRaw, 'QueueMetrics')
+    const unseeded = enumerateStructMetrics(metricsRaw)
+      .filter((f) => f.struct === 'QueueMetrics' && !seeds.has(f.name))
+      .map((f) => f.name)
+    expect(
+      'every live QueueMetrics field is matched in the `Default` block, so no seed is missed',
+      seeds.size > 0 && unseeded.length === 0,
+      `parsed ${seeds.size} seed(s); unmatched: ${JSON.stringify(unseeded)}`,
+    )
+  }
   expect(
     'the live scan reads nothing outside src-tauri/ (so it cannot match its own source)',
     live.files.every((f) => f.startsWith('src-tauri/')),
@@ -2218,6 +2585,101 @@ function runFixtureSelfTest(tmp, expect) {
     'a before/after "must not bump" assertion is NOT a firing proof',
     res.status === 1 && res.stderr.includes('no-firing-test'),
     `status=${res.status} err=${res.stderr}`,
+  )
+
+  // ── rule 1 / #3707: a gauge that is NON-ZERO FROM BIRTH ──
+  //    The live shape of `fts_last_optimize_ms` (`AtomicU64::new(now_ms)`) and
+  //    `cached_op_log_count` (`AtomicU64::new(u64::MAX)`). `assert!(m > 0)`
+  //    passes on a freshly constructed value that has never reached the code
+  //    under test, and keeps passing with the production `.store(…)` deleted —
+  //    so crediting it makes the guard's verdict independent of the thing it
+  //    is checking. Before #3707 this fixture exited 0.
+  const seededMetrics = [
+    'use std::sync::atomic::AtomicU64;',
+    '',
+    '#[derive(Debug)]',
+    'pub struct QueueMetrics {',
+    '    pub stamped: AtomicU64,',
+    '}',
+    '',
+    'impl Default for QueueMetrics {',
+    '    fn default() -> Self {',
+    '        Self { stamped: AtomicU64::new(7) }',
+    '    }',
+    '}',
+  ].join('\n')
+  const seededProd = [
+    'pub fn stamp(m: &QueueMetrics, at: u64) {',
+    '    m.stamped.store(at, Ordering::Relaxed);',
+    '}',
+  ].join('\n')
+  root = build({
+    metricsFile: seededMetrics,
+    extra: {
+      'src-tauri/src/materializer/consumer.rs': seededProd,
+      'src-tauri/src/materializer/tests/mod.rs': [
+        '#[test]',
+        'fn stamped_is_set() {',
+        '    let m = QueueMetrics::default();',
+        '    assert!(m.stamped.load(Ordering::Relaxed) > 0);',
+        '}',
+      ].join('\n'),
+    },
+    baseline: [],
+  })
+  res = run(root)
+  expect(
+    'a `> 0` assertion on a metric seeded non-zero is NOT a firing proof (#3707)',
+    res.status === 1 && res.stderr.includes('no-firing-test'),
+    `status=${res.status} err=${res.stderr}`,
+  )
+  // The same rejection reached through the bound-predicate credit, which is
+  // the obvious way to smuggle the tautology back in.
+  root = build({
+    metricsFile: seededMetrics,
+    extra: {
+      'src-tauri/src/materializer/consumer.rs': seededProd,
+      'src-tauri/src/materializer/tests/mod.rs': [
+        '#[test]',
+        'fn stamped_is_set() {',
+        '    let m = QueueMetrics::default();',
+        '    let set = m.stamped.load(Ordering::Relaxed) > 0;',
+        '    assert!(set);',
+        '}',
+      ].join('\n'),
+    },
+    baseline: [],
+  })
+  res = run(root)
+  expect(
+    'a BOUND `> 0` predicate on a seeded metric is not a proof either (#3707)',
+    res.status === 1 && res.stderr.includes('no-firing-test'),
+    `status=${res.status} err=${res.stderr}`,
+  )
+  // …and the sibling acceptance: read the seed, drive the path, assert PAST
+  // the seed. This is the shape #3382 wrote for `fts_last_optimize_ms`, and it
+  // must keep its credit or the rule is just "seeded gauges are unprovable".
+  root = build({
+    metricsFile: seededMetrics,
+    extra: {
+      'src-tauri/src/materializer/consumer.rs': seededProd,
+      'src-tauri/src/materializer/tests/mod.rs': [
+        '#[test]',
+        'fn stamped_moves_past_its_seed() {',
+        '    let m = QueueMetrics::default();',
+        '    let seeded = m.stamped.load(Ordering::Relaxed);',
+        '    stamp(&m, seeded + 100);',
+        '    assert!(m.stamped.load(Ordering::Relaxed) > seeded);',
+        '}',
+      ].join('\n'),
+    },
+    baseline: [],
+  })
+  res = run(root)
+  expect(
+    'asserting a seeded metric PAST its seed is a firing proof (#3707)',
+    res.status === 0,
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
   )
 
   // ── rule 1: an assertion MESSAGE naming the metric cannot launder a proof ──

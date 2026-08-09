@@ -101,7 +101,12 @@ jobs:
           # base, NOT relative to whatever has since landed on the base branch.
           # A two-dot diff would attribute other people's merges to this PR and
           # select modules the author never touched.
-          git diff --name-only "${base}...HEAD" > changed.txt
+          #
+          # `--numstat` rather than `--name-only` (#3691): the selector needs
+          # changed-line counts to state what fraction of the diff drew no
+          # mutation signal. It parses both formats and keys on the same path,
+          # so the module selection itself is unchanged.
+          git diff --numstat "${base}...HEAD" > changed.txt
           echo "--- changed files ---"
           cat changed.txt
           echo "--- selection ---"
@@ -154,7 +159,14 @@ jobs:
         # and carries the same content. Failing the run over a comment on an
         # informational lane would be exactly the "permanent unactionable red"
         # #3350 argues against.
-        if: always() && steps.select.outputs.count != '0'
+        #
+        # Also posts when NOTHING was selected but the diff changed source
+        # files that belong to no enrolled module (#3691). Silence there is
+        # not neutral: it reads as "nothing to report" on a change for which
+        # no mutation signal exists at all, which is the case a reviewer most
+        # needs to know about.
+        if: >-
+          always() && (steps.select.outputs.count != '0' || steps.select.outputs.unmutated != '0')
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -182,8 +182,17 @@ export function renderMutationSummary({
 
     const totalScored = totals.killed + totals.timeout + totals.survived
     const totalScore = totalScored > 0 ? ((totals.killed + totals.timeout) / totalScored) * 100 : 0
+    // "All MUTATED modules", not "All modules" (#3691). The row totals the
+    // rows above it and nothing else — in the diff-scoped lane those are the
+    // enrolled modules this PR happened to touch, typically one. Labelled
+    // "All modules" it read as a statement about the whole diff, so a PR that
+    // added ~46 lines of unenrolled logic plus a two-line constant carried a
+    // bold **100%** under "All modules" with "No surviving mutants" (#3685).
+    // The label is the cheap half of the fix; `select-mutation-modules.mjs`
+    // renders the fraction of the diff that drew no mutation signal in the
+    // paragraph directly above this table.
     lines.push(
-      `| **All modules** | **${totalScore.toFixed(1)}%** | ${totals.killed} | ${totals.timeout} | ${totals.survived} | ${totals.noCov} | ${totals.errors} |`,
+      `| **All mutated modules** | **${totalScore.toFixed(1)}%** | ${totals.killed} | ${totals.timeout} | ${totals.survived} | ${totals.noCov} | ${totals.errors} |`,
     )
 
     const withSurvivors = rows.filter((r) => r.survivors.length > 0)
@@ -405,6 +414,15 @@ function runSelfTest() {
     if (cleanMd.includes('_No surviving mutants._') && !cleanMd.includes('<details>'))
       ok('a clean run renders an explicit zero, not an empty section')
     else fail('a clean run renders an explicit zero, not an empty section', cleanMd)
+
+    // 8. #3691 — the totals row must not claim a scope it does not have. In
+    //    the diff-scoped lane the rows are the enrolled modules the PR
+    //    happened to touch, so "All modules" read as "all of this diff" and a
+    //    100% off two mutants was taken as "this PR is fully mutation-tested".
+    //    The row totals the rows above it; the label must say only that.
+    if (cleanMd.includes('| **All mutated modules** |') && !cleanMd.includes('| **All modules** |'))
+      ok('the totals row is scoped to the modules actually mutated (#3691)')
+    else fail('the totals row is scoped to the modules actually mutated (#3691)', cleanMd)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }

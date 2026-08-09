@@ -863,12 +863,20 @@ files = "^scripts/check-persist-hooks\\.mjs$"
 # process-global counter idiom — `sql_only_fallback`, `divergence`,
 # `cycle_rejected_metrics`, `snapshot_fallback_metrics`,
 # `descendant_fanout_dropped`). Three rules:
-#   - `no-firing-test` — no test asserts the metric ABOVE zero. A test that
-#     asserts it IS zero is not a proof; it is what `fg_panics`,
+#   - `no-firing-test` — no test asserts the metric ABOVE ITS SEED. A test
+#     that asserts it IS zero is not a proof; it is what `fg_panics`,
 #     `fg_full_waits` and `bg_full_waits` have today, and it would pass
 #     unchanged after the emit site was deleted. String literals are
 #     blanked before matching so an assertion MESSAGE naming the metric
-#     cannot launder a proof onto it.
+#     cannot launder a proof onto it. The bar is the value `impl Default`
+#     seeds the field with, not the constant zero (#3707): two fields are
+#     seeded non-zero at construction — `fts_last_optimize_ms` to `now_ms`
+#     and `cached_op_log_count` to the `u64::MAX` "never computed" sentinel
+#     — so `assert!(m > 0)` on either holds from birth, passes on a value
+#     that never reached the code under test, and keeps passing with the
+#     production `.store(…)` physically deleted. For a seeded field only a
+#     comparison against a BINDING, or a literal the seed does not already
+#     satisfy, is credited.
 #   - `no-production-emit` — nothing outside test code can move it.
 #   - `unreachable-under-panic-abort` — every emit site is inside a
 #     panic-detection branch while the release profile aborts. Inert if
@@ -921,7 +929,13 @@ stages = ["pre-commit"]
 # is `panic = "abort"`, without which rule 3 would be silently inert. Evidence
 # is scoped to test code on both sides: an `assert!` in production code is not
 # a firing test, and a module's own mutator definition is not a production
-# caller of it — both were credited until #3384's review pinned them.
+# caller of it — both were credited until #3384's review pinned them. #3707's
+# seed rule carries the same pairing: `> 0` and `!= 0` on a metric seeded to 7
+# are rejected while `> 7`, `!= 7` and `after > before` are credited; the
+# bound-predicate form (`let ok = m > 0; assert!(ok)`) cannot smuggle the
+# tautology back in; and the live seeded SET is read out of `impl Default`
+# rather than written down, so a rename that makes the parse return nothing
+# fails loudly instead of silently restoring the hole for every field at once.
 [[repos.hooks]]
 id = "metric-provable-selftest"
 name = "Metric-provability guard self-test"
@@ -2066,6 +2080,30 @@ entry = "node scripts/select-mutation-modules.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = '^(scripts/select-mutation-modules\.mjs|stryker\.modules\.mjs)$'
+stages = ["pre-commit"]
+
+# review-findings-selftest (#3702): `claude-review`'s check conclusion used to
+# answer "did the review RUN", not "did it FIND anything" — so #3694 merged on
+# a fully green rollup with seven observations, two of them correctness
+# defects, unread in the approving review's body. This script turns the review
+# body into the check's conclusion (`neutral` with a count when there are
+# findings, `success` when there are none), and its fixtures are the two REAL
+# review bodies that prompted the issue plus their sibling acceptances: a clean
+# review must still go green (or the check is a constant and carries nothing),
+# a MISSING review must not (that equivalence is the original defect one level
+# up), and a review's own "verified" bullets must not be counted as findings (a
+# check that cries wolf ends up ignored, which is the same end state as the
+# green one it replaces). Keyed to the workflow too, so the step that publishes
+# the check cannot drift from the script that builds its payload.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "review-findings-selftest"
+name = "claude-review findings summariser self-test (#3702)"
+entry = "node scripts/summarize-review-findings.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^(scripts/summarize-review-findings\.mjs|\.github/workflows/claude-code-review\.yml)$'
 stages = ["pre-commit"]
 
 # scheduled-failure-reporter-selftest (#3359): `report-scheduled-failures` is
