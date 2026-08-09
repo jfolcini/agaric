@@ -191,20 +191,30 @@ STUB
   #      confined to the temp HOME and only absolute ones (case 1) escape.
   #   4. A payload that re-mutates PATH. `export PATH="…:$PATH"` restores
   #      everything on the next command. This is not hypothetical: it is
-  #      setup-hooks.sh's own line 51, and a runaway window CAN cover it. It is
-  #      inert only because HOME is pinned at an empty temp tree, so the
+  #      setup-hooks.sh's own `export PATH="$HOME/.cargo/bin:…"` line (grep for
+  #      it rather than trusting a line number — this cited "line 51" until the
+  #      number rotted), and a runaway window CAN cover it. It is inert only
+  #      because HOME is pinned at an empty temp tree, so the
   #      `$HOME/.cargo/bin` / `$HOME/.local/bin` it prepends do not exist. That
   #      makes the HOME pin load-bearing for PATH INTEGRITY, not just for
   #      environment privacy — do not "simplify" it away. A future
-  #      setup-hooks.sh that prepends a non-$HOME directory would defeat this.
+  #      setup-hooks.sh that prepends a non-$HOME directory would defeat this,
+  #      which is what block (9) below now executes and asserts rather than
+  #      leaving to this comment (#3578 item 2, #3635).
   #
-  # Within that boundary the guarantee holds and is tested: a deliberately
-  # unbounded extraction that hands the whole provisioner to the payload
-  # produces only SANDBOX-VIOLATIONs and a red assertion, where the same
-  # payload under a plain `bash -c` reaches 10x `cargo install`, a `curl` to
-  # github.com, `tar -xz`, `rm -rf` and `prek install-hooks` (#3559).
+  # Within that boundary the guarantee holds, and block (8) below is what
+  # tests it rather than asserting it here: a deliberately runaway extraction
+  # that hands setup-hooks.sh's whole provisioner to the payload is seen being
+  # intercepted 28 times — including 10x `cargo install --locked`, `sudo
+  # apt-get install`, `prek install-hooks` and a `curl` to github.com, every
+  # one of which the same payload under a plain `bash -c` runs for real
+  # (#3559) — and leaves nothing behind in the sandbox HOME.
   sandbox="$tmp/sandbox"
   sandbox_home="$tmp/sandbox-home"
+  # Where the poisoned shims record every interception. sandbox_bash truncates
+  # it per call, so it always holds exactly the LAST payload's violations and
+  # never an accumulation across blocks (#3635).
+  sandbox_violations="$tmp/sandbox-violations.log"
   mkdir -p "$sandbox" "$sandbox_home"
   # `$BASH` is this interpreter's own absolute path. The payload's interpreter
   # must NOT be resolved through the stub PATH — `bash` is poisoned on it.
@@ -240,8 +250,21 @@ STUB
     cat > "$sandbox/$sbx_tool" <<'POISON'
 #!/bin/sh
 # Poisoned shim — see scripts/zizmor-hook.sh's self-test sandbox (#3559).
-printf 'SANDBOX-VIOLATION: self-test payload tried to run `%s %s`\n' \
-  "${0##*/}" "$*" >&2
+sbx_msg="$(printf 'SANDBOX-VIOLATION: self-test payload tried to run `%s %s`' \
+  "${0##*/}" "$*")"
+printf '%s\n' "$sbx_msg" >&2
+# …and append the same line to the sandbox's own log, which the payload cannot
+# redirect away (#3635). The captured stderr is NOT a record of what was
+# blocked: setup-hooks.sh runs nearly every installer as `cmd >/dev/null 2>&1`,
+# so the interceptions that matter most — `cargo install --locked`, `sudo
+# apt-get install`, `prek install-hooks` — are swallowed by the PAYLOAD's own
+# redirections and never reach the harness. Measured on block (8)'s canary: 4
+# of 28 violations visible on stderr, and none of those 4 an installer. A
+# canary counting the visible 4 would report the sandbox proven while saying
+# nothing about the ten `cargo install`s it exists to stop.
+if [ -n "${SANDBOX_VIOLATION_LOG:-}" ]; then
+  printf '%s\n' "$sbx_msg" >> "$SANDBOX_VIOLATION_LOG" 2>/dev/null || true
+fi
 exit 97
 POISON
     chmod +x "$sandbox/$sbx_tool"
@@ -288,8 +311,17 @@ note() { :; }
   # instead of the installer (#3559). Line 79's real constant is now the only
   # column-0 occurrence in this file, which is what every one of those patterns
   # intends to find.
+  #
+  # SANDBOX_VIOLATION_LOG is the one other variable `env -i` lets through, and
+  # it carries only the path of a file inside this run's own $tmp — nothing
+  # about the session. The shims append to it because stderr is not a reliable
+  # record of what they blocked (see the shim body above). Truncated on every
+  # call so a block reading it after a `sandbox_bash` sees that payload's
+  # violations and not the previous one's (#3635).
   sandbox_bash() { # <payload> <argv0>
+    : > "$sandbox_violations"
     env -i "PATH=$sandbox" "HOME=$sandbox_home" ZIZMOR_VERSION_AWK= \
+      "SANDBOX_VIOLATION_LOG=$sandbox_violations" \
       "$sandbox_bash_bin" -c "cd \"\$HOME\" || exit 98
 $sandbox_prelude
 $1" "$2"
@@ -689,6 +721,191 @@ fi' "$setup_hooks" 2>&1
     echo "  ✓ setup-hooks.sh defines have() exactly once, in any form (the one sourced above)"
   else
     echo "  ✗ setup-hooks.sh has ${have_def_count:-0} have() definitions, not 1 — bash runs the LAST one defined, while the sed extraction above silently prefers the first, and this count is the only thing that would notice (#3578)" >&2
+    fails=$((fails + 1))
+  fi
+
+  # (8) #3635 — the sandbox is PROVEN load-bearing, not assumed to be.
+  #
+  # Everything above bounds WHAT gets executed: fail-closed extraction windows
+  # that come back empty rather than swallowing the file. This block is about
+  # what executing the wrong thing can DO. It hands the payload a deliberately
+  # runaway window over setup-hooks.sh's REAL provisioner and requires the
+  # sandbox to be SEEN intercepting the installers that window reaches.
+  #
+  # Why the window is anchored at `^OS=` rather than at an extractor's own
+  # anchor. A runaway from the real `^ZIZMOR_VERSION_AWK=` anchor swallows 569
+  # lines and reads like the honest canary to write. It is vacuous. `OS` is
+  # assigned ABOVE that anchor, the prelude runs under `set -u`, and the
+  # payload dies inside setup-hooks.sh's `echo "Setting up the prek hook
+  # toolchain (OS: $OS)…"` with `OS: unbound variable`, exit 127 and ZERO
+  # SANDBOX-VIOLATIONs — before reaching a single installer. It reddens for a
+  # reason that has nothing to do with containment, and a reader would take
+  # that red as proof the sandbox fired. `set -u` on `$OS` is a SECOND,
+  # ACCIDENTAL line of defence: the same accident-of-layout the sandbox exists
+  # to replace, one screen further down the file, and it evaporates the day
+  # `OS=` moves below that anchor (#3635, split out of #3578 item 3).
+  #
+  # So the window starts at setup-hooks.sh's first top-level assignment
+  # (`OS="$(uname -s)"`) and runs to EOF: every function definition and every
+  # top-level statement the file has. That is a CONSTRUCTED worst case rather
+  # than one today's extractors can produce, deliberately — the property under
+  # test here is "the sandbox contains a whole provisioner", not "this
+  # extractor's line budget holds" (the budgets have their own assertions
+  # above, and they are the first line of defence; this is the second).
+  #
+  # An earlier note here warned that "moving the window up changes the
+  # scenario". It does, and that is the point: the scenario it changes to is
+  # the only one that exercises the thing being claimed.
+  runaway_stmt="$(
+    awk '/^OS=/ && !grab { grab = 1 } grab { print }' "$setup_hooks" 2>/dev/null
+  )"
+  runaway_out="$(sandbox_bash "$runaway_stmt" "$setup_hooks" 2>"$tmp/runaway.err")"
+  runaway_err="$(cat "$tmp/runaway.err" 2>/dev/null)"
+  # Counted from the shims' own log rather than from $runaway_err — see the
+  # shim body: setup-hooks.sh redirects nearly every installer's stderr to
+  # /dev/null, so the capture holds 4 of the 28 and none of the decisive ones.
+  runaway_violations="$(grep -c 'SANDBOX-VIOLATION' "$sandbox_violations" 2>/dev/null || true)"
+  runaway_log="$(cat "$sandbox_violations" 2>/dev/null)"
+  # The assertion is on the COUNT OF INTERCEPTIONS, deliberately, and not on
+  # the payload's exit status. The broken form of this canary exited 127, so a
+  # `[ "$rc" -ne 0 ]` check would have called it a pass while it proved
+  # nothing. Any early abort — the #3635 one, or a new one further down the
+  # file — collapses this count to near zero, so this is the assertion that
+  # notices. Floor of 20 against 28 measured (2026-08): dropping a crate from
+  # setup-hooks.sh's list costs 2 interceptions and must not redden a working
+  # sandbox, while an abort costs all of them.
+  if [ "${runaway_violations:-0}" -ge 20 ]; then
+    echo "  ✓ a runaway extraction of setup-hooks.sh's whole provisioner is intercepted by the sandbox (${runaway_violations} violations)"
+  else
+    echo "  ✗ the runaway payload produced only ${runaway_violations:-0} SANDBOX-VIOLATIONs, expected at least 20 — either the sandbox stopped intercepting, or the payload died before it reached the installers and this canary is proving nothing (#3635). window: $([ -n "$runaway_stmt" ] && echo "found" || echo "EMPTY — no '^OS=' line in $setup_hooks"), payload stderr: '$(sanitize "$runaway_err")'" >&2
+    fails=$((fails + 1))
+  fi
+  # Name the specific calls, not just the count: a count alone stays green if
+  # the payload aborts halfway and racks up its 20 on `mktemp`/`rm` while every
+  # installer goes unreached. These four are the ones a real runaway would have
+  # run against the developer's box.
+  assert_out "the runaway's from-source crate installs are intercepted" \
+    'tried to run `cargo install --locked' "$runaway_log"
+  # `pkg_install` branches on `$OS`, and the window now assigns `$OS` for real
+  # from `uname -s` — so the spelling of the intercepted call depends on the
+  # box: `sudo apt-get install` on Linux, `brew install` on macOS. Accept
+  # either rather than pinning the Linux one and reddening this file on a
+  # macOS dev box (CI is ubuntu-24.04, the pre-commit hook is not). The
+  # dnf/pacman arms cannot be reached from here whatever the host: `apt-get` is
+  # always present inside the sandbox as a poisoned shim, so `have apt-get`
+  # takes the apt branch on every Linux.
+  pkg_install_intercepted=no
+  case "$runaway_log" in
+    *'tried to run `sudo apt-get install'*|*'tried to run `brew install'*)
+      pkg_install_intercepted=yes ;;
+  esac
+  if [ "$pkg_install_intercepted" = yes ]; then
+    echo "  ✓ the runaway's system-package installs are intercepted"
+  else
+    echo "  ✗ the runaway's system-package installs are NOT intercepted (expected a violation naming \`sudo apt-get install\` or \`brew install\` in the sandbox log)" >&2
+    fails=$((fails + 1))
+  fi
+  assert_out "the runaway's hook-environment provisioning is intercepted" \
+    'tried to run `prek install-hooks' "$runaway_log"
+  assert_out "the runaway's network fetch is intercepted" \
+    'tried to run `curl ' "$runaway_log"
+  # Reaching the END of the provisioner is what rules out the #3635 shape
+  # returning somewhere new: an abort anywhere in those 843 lines drops this
+  # line, whatever the violation count happened to be by then.
+  assert_out "the runaway payload ran the provisioner to completion (nothing aborted it early)" \
+    "Hook toolchain setup complete" "$runaway_out"
+  refute_out "the runaway payload did not die on an unbound variable before reaching the installers (#3635)" \
+    "unbound variable" "$runaway_err"
+  # The other half of the claim: intercepted AND inert. `mkdir`, `install`,
+  # `mktemp` and `tar` are all shims, so a provisioner that ran end-to-end must
+  # still have created nothing. A file here means something mutating got
+  # through by a route the PATH shims do not cover (an absolute path, or a
+  # shell redirection — boundary cases 1 and 3 above). No `| head` on the
+  # `find`: `head` closing the pipe early is the same pipefail/SIGPIPE trap
+  # documented on assert_out, and `sanitize` already bounds the message.
+  runaway_spill="$(find "$sandbox_home" -mindepth 1 2>/dev/null)"
+  if [ -z "$runaway_spill" ]; then
+    echo "  ✓ the runaway payload created nothing in the sandbox HOME"
+  else
+    echo "  ✗ the runaway payload wrote into the sandbox HOME: '$(sanitize "$runaway_spill")' — every mutating call is supposed to become a violation instead (#3635)" >&2
+    fails=$((fails + 1))
+  fi
+
+  # (9) #3578 item 2 / #3635 — the HOME pin is load-bearing for PATH
+  # INTEGRITY, and now something executes it instead of a comment asserting it.
+  #
+  # setup-hooks.sh re-prepends two directories to PATH near its top, and the
+  # sandboxed payload runs that line for real (block (8)'s window covers it).
+  # It is inert only because HOME is pinned at an empty temp tree, so the
+  # `$HOME/.cargo/bin` / `$HOME/.local/bin` it prepends do not exist and the
+  # poisoned shims keep winning the lookup. That was verified by hand in both
+  # directions — pinned HOME: `cargo` resolves to the shim; HOME pointed at a
+  # tree containing a real `~/.cargo/bin/cargo`: the real binary wins the PATH
+  # race and runs uncontained — and then documented as a known boundary with
+  # nothing exercising it, because the line sits ABOVE both of block (6)'s
+  # extraction windows. This makes the first direction automatic.
+  #
+  # setup-hooks.sh's OWN line is lifted and executed, not retyped here — the
+  # same discipline as every other check in this file. A retyped copy tests
+  # this file against itself and stays green through any change over there.
+  #
+  # Three separate properties, because "cargo exited 97" on its own would also
+  # hold on a box that simply has no real cargo anywhere:
+  #   * the export does not displace the shim — `command -v cargo` still
+  #     resolves INSIDE the sandbox directory after it has run;
+  #   * executing it is still intercepted (exit 97 plus a logged violation);
+  #   * and every element of the resulting PATH is either the sandbox or under
+  #     the pinned HOME. That third one is the actual guarantee: a future
+  #     setup-hooks.sh prepending an absolute `/usr/local/bin` reddens here on
+  #     EVERY box, including the ones where that directory is empty today and
+  #     the first two checks would happily stay green.
+  path_export_count="$(grep -cE '^export PATH=' "$setup_hooks" 2>/dev/null || true)"
+  path_export_stmt="$(sed -n '/^export PATH=/{p;q;}' "$setup_hooks" 2>/dev/null)"
+  if [ "${path_export_count:-0}" = 1 ] && [ -n "$path_export_stmt" ]; then
+    echo "  ✓ setup-hooks.sh has exactly one top-level 'export PATH=' (the one executed below)"
+  else
+    echo "  ✗ setup-hooks.sh has ${path_export_count:-0} top-level 'export PATH=' lines, not 1 — the check below only executes the first, so a second one could prepend a directory outside \$HOME with nothing to notice (#3578 item 2)" >&2
+    fails=$((fails + 1))
+  fi
+  # `cargo --version`'s own stderr is discarded inside the payload on purpose:
+  # it makes this block depend on the violation LOG the way the real installer
+  # call sites do, rather than on a redirection setup-hooks.sh does not use.
+  home_pin_probe="$(
+    sandbox_bash "$path_export_stmt"'
+printf "HOME_PIN_PATH=%s\n" "$PATH"
+printf "HOME_PIN_CARGO_RESOLVES_TO=%s\n" "$(command -v cargo || echo NONE)"
+cargo --version >/dev/null 2>&1
+printf "HOME_PIN_CARGO_RC=%s\n" "$?"' "$setup_hooks" 2>&1
+  )"
+  home_pin_log="$(cat "$sandbox_violations" 2>/dev/null)"
+  assert_out "setup-hooks.sh's PATH export does not displace the poisoned cargo shim (the HOME pin holds)" \
+    "HOME_PIN_CARGO_RESOLVES_TO=$sandbox/cargo" "$home_pin_probe"
+  assert_out "running cargo after that export is still intercepted (exit 97)" \
+    "HOME_PIN_CARGO_RC=97" "$home_pin_probe"
+  assert_out "…and that interception is recorded as a violation" \
+    'tried to run `cargo --version' "$home_pin_log"
+  # Split on `:` with `read -ra`, not an unquoted `for` over an IFS-split
+  # expansion: `read` does not glob, so a PATH element containing `*` or `?`
+  # cannot expand into something else on its way to the comparison. It also
+  # PRESERVES empty elements, which matters — an empty element is bash's
+  # spelling of "the current directory", the same silent cwd-on-PATH hazard the
+  # empty-$tmp guard at the top of this self-test exists for, and dropping it
+  # here would let exactly that case pass unnoticed.
+  home_pin_path="${home_pin_probe#*HOME_PIN_PATH=}"
+  home_pin_path="${home_pin_path%%$'\n'*}"
+  home_pin_foreign=""
+  IFS=: read -r -a home_pin_elems <<< "$home_pin_path"
+  for path_elem in "${home_pin_elems[@]}"; do
+    case "$path_elem" in
+      "$sandbox"|"$sandbox_home"|"$sandbox_home"/*) : ;;
+      "") home_pin_foreign="$home_pin_foreign <empty element: bash reads that as the current directory>" ;;
+      *) home_pin_foreign="$home_pin_foreign $path_elem" ;;
+    esac
+  done
+  if [ -n "$home_pin_path" ] && [ -z "$home_pin_foreign" ]; then
+    echo "  ✓ every PATH element after setup-hooks.sh's export is the sandbox itself or under the pinned HOME"
+  else
+    echo "  ✗ setup-hooks.sh's PATH export leaves element(s) outside the pinned sandbox HOME on PATH:$(sanitize "${home_pin_foreign:-<no PATH reported by the payload>}") — the sandbox's PATH guarantee rests on every prepended directory living under \$HOME (#3578 item 2)" >&2
     fails=$((fails + 1))
   fi
 

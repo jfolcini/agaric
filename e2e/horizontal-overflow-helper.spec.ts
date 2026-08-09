@@ -420,6 +420,218 @@ test('container-type does NOT establish a containing block, so a marked query co
   )
 })
 
+// ---------------------------------------------------------------------------
+// Independent transform properties and content-visibility (#3625).
+//
+// `establishesContainingBlock` used to ask only `transform !== 'none'`. The
+// independent transform properties (`translate` / `scale` / `rotate`, CSS
+// Transforms 2) establish a containing block while leaving computed
+// `transform` at `none`, and `content-visibility: auto | hidden` does the same
+// while leaving computed `contain` at `none`. Neither was visible to the
+// predicate.
+//
+// Live in this repo, not theoretical: Tailwind v4 emits the LONGHANDS for its
+// transform utilities and never `transform:`. Counted on this branch,
+// `src/**` uses ~39 `scale-*`, ~18 `rotate-*`, ~18 `translate-x-*` and ~15
+// `translate-y-*` utilities. A marked clip styled with any of them was
+// invisible to the walk, so a genuinely clipped abs descendant under it was
+// reported as a PHANTOM offender.
+//
+// Measured in Chromium 151 with the displacement probe (shift the clip by
+// 30px, see whether the abs child moves with it) rather than read off prose,
+// because the naive left-edge probe misreads a rotated containing block:
+//
+//   translate: 12px               child moves with the box  → IS a CB
+//   scale: 0.95                   child moves with the box  → IS a CB
+//   rotate: 45deg / 180deg        child moves with the box  → IS a CB
+//   content-visibility: auto      child moves with the box  → IS a CB
+//   content-visibility: hidden    child moves with the box  → IS a CB
+//   will-change: translate        child moves with the box  → IS a CB
+//   will-change: scale            child moves with the box  → IS a CB
+//   will-change: rotate           child moves with the box  → IS a CB
+//   will-change: contain          child moves with the box  → IS a CB
+//   translate|scale|rotate: none  child resolves vs the ICB → NOT a CB
+//   content-visibility: visible   child resolves vs the ICB → NOT a CB
+//   will-change: content-visibility  child resolves vs ICB  → NOT a CB
+//   will-change: opacity          child resolves vs the ICB → NOT a CB
+//
+// The last four are the must-still-flag companions below. They matter because
+// each of these computed values is the NON-EMPTY string `'none'` / `'visible'`
+// / `'auto'` on an unstyled element, so a predicate written as
+// `if (style.translate)` would treat every element as a containing block and
+// silently swallow real overflow — the exact bug the `backdrop-filter: none`
+// fixture already guards against for its own property.
+// ---------------------------------------------------------------------------
+
+/**
+ * Marked hard clip near the root's right edge with an abs child that spills
+ * past it. `clipDecl` is the ONLY thing that can make `clip` a containing
+ * block — it is `position: static` with no transform/filter/contain otherwise.
+ * `clipMarginLeft` exists so a case that shifts the clip's own box (translate)
+ * can keep the clip itself inside the root; a clip that escapes the root is
+ * flagged in its own right (see "marked clip container itself remains
+ * measurable"), which would make the fixture red for the wrong reason.
+ */
+async function installContainingBlockFixture(
+  page: Parameters<typeof expectNoHorizontalOverflow>[0],
+  clipDecl: string,
+  clipMarginLeft = 150,
+): Promise<void> {
+  await page.setContent(`
+    <main
+      data-testid="overflow-root"
+      style="position:relative;width:200px;height:100px;overflow:hidden;background:white"
+    >
+      <section
+        data-testid="clip"
+        data-overflow-clip="intentional"
+        style="position:static;margin-left:${clipMarginLeft}px;width:50px;height:50px;overflow-x:hidden;${clipDecl}"
+      >
+        <div
+          data-testid="offender"
+          style="position:absolute;left:0;top:0;width:100px;height:20px"
+        >
+          overflow probe
+        </div>
+      </section>
+    </main>
+  `)
+}
+
+for (const { label, decl, margin } of [
+  { label: 'translate', decl: 'translate:12px', margin: 130 },
+  { label: 'scale', decl: 'scale:0.95', margin: 150 },
+  { label: 'content-visibility: auto', decl: 'content-visibility:auto', margin: 150 },
+  { label: 'content-visibility: hidden', decl: 'content-visibility:hidden', margin: 150 },
+  { label: 'will-change: translate', decl: 'will-change:translate', margin: 150 },
+  { label: 'will-change: scale', decl: 'will-change:scale', margin: 150 },
+  { label: 'will-change: rotate', decl: 'will-change:rotate', margin: 150 },
+  { label: 'will-change: contain', decl: 'will-change:contain', margin: 150 },
+] as const) {
+  test(`marked clip whose containing block comes only from ${label} suppresses its abs descendant`, async ({
+    page,
+  }) => {
+    await installContainingBlockFixture(page, decl, margin)
+    const root = page.getByTestId('overflow-root')
+
+    // Ground truth 0: there is a real overflow here for the guard to suppress
+    // (and the offender has non-zero area, so the walk does not skip it).
+    expect(await offenderEscapesRoot(page)).toBe(true)
+    // Ground truth 1: Chromium really does place the abs child against `clip`,
+    // i.e. `clip` really is its containing block. Without this the test would
+    // prove nothing about the guard's reasoning.
+    expect(await offenderIsPlacedByClip(page)).toBe(true)
+    // Ground truth 2: and it is genuinely invisible past `clip`'s edge, so
+    // suppressing it is the correct answer rather than a convenient one.
+    expect(await paintedAtOffenderRightEdge(page)).not.toBe('offender')
+
+    await expectNoHorizontalOverflow(page, root, `${label} containing block`)
+  })
+}
+
+test('marked clip whose containing block comes only from a non-identity rotate suppresses its abs descendant', async ({
+  page,
+}) => {
+  // `rotate` gets its own fixture because a real rotation moves the abs child
+  // out from under the left-edge ground truth used above. Geometry, with the
+  // root spanning [0, 200]: `clip` occupies [150, 200] (centre 175) and the
+  // child is laid out at local x ∈ [-100, 0] → [50, 150]. A 180° rotation
+  // about `clip`'s centre maps x ↦ 350 − x, so the child lands at [200, 300]:
+  // 100px past the root's right edge, and fully outside `clip`'s own
+  // `overflow-x: hidden` box, hence painted nowhere.
+  //
+  // Reusing the identity value `rotate: 0deg` would have been simpler and
+  // still exercises the predicate (measured: `rotate: 0deg` computes to the
+  // non-`none` string `'0deg'` and does establish a containing block), but the
+  // utilities actually in `src/**` are `rotate-90` and `rotate-180`, so the
+  // realistic value is the one worth pinning.
+  await page.setContent(`
+    <main
+      data-testid="overflow-root"
+      style="position:relative;width:200px;height:100px;overflow:hidden;background:white"
+    >
+      <section
+        data-testid="clip"
+        data-overflow-clip="intentional"
+        style="position:static;rotate:180deg;margin-left:150px;width:50px;height:50px;overflow-x:hidden"
+      >
+        <div
+          data-testid="offender"
+          style="position:absolute;left:-100px;top:0;width:100px;height:20px"
+        >
+          overflow probe
+        </div>
+      </section>
+    </main>
+  `)
+  const root = page.getByTestId('overflow-root')
+
+  expect(await offenderEscapesRoot(page)).toBe(true)
+  // Rotation-aware stand-in for `offenderIsPlacedByClip`: after a 180° turn
+  // about `clip`'s box, a child laid out flush against `clip`'s LEFT edge from
+  // the outside lands flush against its RIGHT edge. That coincidence is only
+  // possible if the child resolved against `clip`; had it escaped to the
+  // initial containing block it would sit at viewport x = −100 and never be
+  // rotated at all.
+  const placedByRotatedClip = await page.evaluate(() => {
+    const clip = document.querySelector('[data-testid="clip"]') as Element
+    const offender = document.querySelector('[data-testid="offender"]') as Element
+    return (
+      Math.abs(offender.getBoundingClientRect().left - clip.getBoundingClientRect().right) < 0.5
+    )
+  })
+  expect(placedByRotatedClip).toBe(true)
+  expect(await paintedAtOffenderRightEdge(page)).not.toBe('offender')
+
+  await expectNoHorizontalOverflow(page, root, 'rotate containing block')
+})
+
+for (const { label, decl } of [
+  { label: 'translate: none', decl: 'translate:none' },
+  { label: 'scale: none', decl: 'scale:none' },
+  { label: 'rotate: none', decl: 'rotate:none' },
+  { label: 'content-visibility: visible', decl: 'content-visibility:visible' },
+  { label: 'will-change: content-visibility', decl: 'will-change:content-visibility' },
+  { label: 'will-change: opacity', decl: 'will-change:opacity' },
+] as const) {
+  test(`${label} does not make a marked clip suppress an escaping abs descendant`, async ({
+    page,
+  }) => {
+    // Must-still-flag companions. `clip` is static and carries only the inert
+    // value under test, so `offender` escapes to the initial containing block
+    // and is genuinely painted on the page — flagging it is correct, and any
+    // predicate that reads these computed strings as truthy (or treats
+    // `will-change` as a blanket promotion) turns this red.
+    await page.setContent(`
+      <main
+        data-testid="overflow-root"
+        style="position:static;width:200px;height:100px;overflow:visible;background:white;margin-left:20px"
+      >
+        <section
+          data-testid="clip"
+          data-overflow-clip="intentional"
+          style="position:static;overflow-x:hidden;width:50px;height:50px;${decl}"
+        >
+          <div
+            data-testid="offender"
+            style="position:absolute;left:400px;top:0;width:100px;height:20px"
+          >
+            overflow probe
+          </div>
+        </section>
+      </main>
+    `)
+    const root = page.getByTestId('overflow-root')
+
+    expect(await offenderIsPlacedByClip(page)).toBe(false)
+    expect(await paintedAtOffenderRightEdge(page)).toBe('offender')
+
+    await expect(expectNoHorizontalOverflow(page, root, `inert ${label}`)).rejects.toThrow(
+      new RegExp(`Horizontal overflow on inert ${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+    )
+  })
+}
+
 test('contain: layout marked clip still suppresses its abs descendant', async ({ page }) => {
   // Contrast case for the fixture above: real `contain` values DO establish a
   // containing block (measured: the abs child resolves against this box), and

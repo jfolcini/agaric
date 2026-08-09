@@ -27,6 +27,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e-tauri": "wdio run wdio.conf.ts",
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json",
     "typecheck:e2e-tauri": "tsc -p tsconfig.wdio.json",
     "mutation": "node scripts/run-mutation.mjs",
     "android:dev": "cargo tauri android dev",

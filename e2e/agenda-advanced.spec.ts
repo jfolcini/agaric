@@ -340,8 +340,6 @@ test.describe('Date navigation', () => {
     await expect(duePanel.locator('[data-testid="due-panel-item"]').first()).toBeVisible({
       timeout: 5000,
     })
-    const _todayCount = await duePanel.locator('[data-testid="due-panel-item"]').count()
-
     // Capture today's date text so we can deterministically detect the transition
     // to yesterday (rather than polling with an arbitrary timeout).
     const dateDisplay = page.locator('[data-testid="date-display"]')

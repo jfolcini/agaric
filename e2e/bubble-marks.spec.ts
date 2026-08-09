@@ -117,7 +117,12 @@ test.describe('Selection bubble menu — mark toggles persist through reopen (#1
       // Click the mark toggle INSIDE the bubble — the load-bearing distinction
       // from the toolbar-and-blocks.spec.ts coverage, which clicks the
       // always-visible FormattingToolbar / uses keyboard shortcuts.
-      await bubble.getByRole('button', { name: mark.button, exact: mark.exact }).click()
+      // `?? false` rather than `mark.exact`: `exact` is optional on both
+      // `MarkCase` and Playwright's `getByRole` options, and under
+      // `exactOptionalPropertyTypes` an explicit `undefined` is NOT the same as
+      // an absent key. `false` is `getByRole`'s own default, so this is
+      // behaviour-preserving.
+      await bubble.getByRole('button', { name: mark.button, exact: mark.exact ?? false }).click()
 
       // The selected word now carries the mark in the LIVE editor.
       const liveMark = editor.locator(mark.tag)
