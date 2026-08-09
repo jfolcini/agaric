@@ -77,6 +77,15 @@ interface BacklinkRowProps {
   domId?: string | undefined
   /** Whether this row holds the roving keyboard focus (drives aria-current). */
   isFocused?: boolean
+  /**
+   * #3316 item 3 — virtualization context for this row. `style` positions it at
+   * its virtual offset, `measureRef` reports its real height back to the
+   * virtualizer, and `dataIndex` is the `data-index` attribute `measureElement`
+   * reads. All three are absent on the (unvirtualized) legacy path.
+   */
+  style?: React.CSSProperties | undefined
+  measureRef?: ((el: HTMLElement | null) => void) | undefined
+  dataIndex?: number | undefined
 }
 
 /**
@@ -103,6 +112,9 @@ function BacklinkRowInner({
   emptyLabel,
   domId,
   isFocused,
+  style,
+  measureRef,
+  dataIndex,
 }: BacklinkRowProps): React.ReactElement {
   const onBlockClickRef = useRef(onBlockClick)
   onBlockClickRef.current = onBlockClick
@@ -149,6 +161,9 @@ function BacklinkRowInner({
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- keyboard-navigable reference row; click/keydown drive roving focus and block activation, the row is the interactive unit
     <li
       id={domId}
+      ref={measureRef}
+      style={style}
+      data-index={dataIndex}
       data-backlink-item={block.id}
       // Roving focus is exposed to AT via the container's aria-activedescendant
       // (pointing at this row's `id`) plus aria-current here. #2263.
@@ -218,9 +233,19 @@ export function BacklinkGroupRenderer({
         {...(onNavigateToPage && {
           onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
         })}
-        renderBlock={(block, _group) => (
+        // #3316 item 3 — window each expanded group's rows.
+        virtualizeRows
+        activeBlockId={focusedBlockId ?? null}
+        renderBlock={(block, _group, virtualRow) => (
           <BacklinkRow
             key={block.id}
+            {...(virtualRow
+              ? {
+                  style: virtualRow.style,
+                  measureRef: virtualRow.measureRef,
+                  dataIndex: virtualRow.index,
+                }
+              : {})}
             block={block}
             onBlockClick={handleBlockClick}
             onBlockKeyDown={handleBlockKeyDown}

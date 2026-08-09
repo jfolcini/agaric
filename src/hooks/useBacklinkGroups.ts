@@ -47,6 +47,20 @@ export interface UseBacklinkGroupsParams {
 export interface UseBacklinkGroupsResult {
   groups: BacklinkGroup[]
   totalCount: number
+  /**
+   * #3316 item 1 — the POST-filter `COUNT(DISTINCT bl.source_id)` the backend
+   * already returns next to `total_count`. It equals `totalCount` when no
+   * filter is active (the backend reuses the pre-filter count in that case),
+   * so "Showing N of M backlinks" only diverges once a filter narrows the set.
+   * This was previously dropped, forcing the call site to pass
+   * `filteredCount={totalCount}` and making that line self-identical forever.
+   *
+   * Read from the FIRST page for the same reason `totalCount` is: the backend
+   * only computes both counts on the first page and returns `0` for them on
+   * every subsequent page (`is_first_page` in
+   * `agaric-store/src/backlink/grouped.rs`).
+   */
+  filteredCount: number
   /** Initial load only (`isLoading`); load-more is surfaced via `isFetchingMore`. */
   loading: boolean
   hasMore: boolean
@@ -156,6 +170,9 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
   // backend returns `total_count: 0` on non-first pages by design, so read it
   // from the FIRST page only.
   const totalCount = data?.pages[0]?.total_count ?? 0
+  // #3316 item 1: same first-page rule as `totalCount` above — the backend
+  // zeroes BOTH counts on non-first pages.
+  const filteredCount = data?.pages[0]?.filtered_count ?? 0
 
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
@@ -164,6 +181,7 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
   return {
     groups,
     totalCount,
+    filteredCount,
     loading: isLoading,
     hasMore: hasNextPage,
     isFetchingMore: isFetchingNextPage,

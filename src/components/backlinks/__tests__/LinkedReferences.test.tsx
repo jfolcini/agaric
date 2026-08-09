@@ -27,6 +27,16 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+
+// #3316 item 3 — the reference panels now window each expanded group's rows
+// through `@tanstack/react-virtual`. jsdom gives the group's scroll container
+// zero height, so the real virtualizer collapses the window to zero rows and
+// every row assertion below would find nothing. The shared mock lays out all
+// rows, keeping these tests about behaviour rather than about jsdom layout.
+// The windowing itself is pinned by `LinkedReferences.virtualization.test.tsx`.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
+
 import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import type { LinkedReferencesProps } from '@/components/backlinks/LinkedReferences'
 import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
@@ -90,9 +100,15 @@ vi.mock('@/components/filters/SourcePageFilter', () => ({
 vi.mock('@/components/BacklinkFilterBuilder', () => ({
   BacklinkFilterBuilder: (props: {
     onFiltersChange: (filters: Array<{ type: string; [k: string]: unknown }>) => void
+    // #3316 item 1 — echo the two count props so a call-site test can assert
+    // that the panel forwards the backend's POST-filter count, not the
+    // pre-filter total twice.
+    totalCount: number
+    filteredCount: number
   }) => (
     <div data-testid="backlink-filter-builder">
       Advanced Filters
+      <span data-testid="mock-filter-counts">{`${props.filteredCount}/${props.totalCount}`}</span>
       <button
         type="button"
         data-testid="mock-add-filter"
@@ -1834,5 +1850,27 @@ describe('LinkedReferences', () => {
     // Cancellation flag short-circuits the catch — no toast fires for the
     // dead component.
     expect(toast.error).not.toHaveBeenCalledWith('Failed to load tags')
+  })
+
+  // #3316 item 1 — the panel used to hand BacklinkFilterBuilder
+  // `filteredCount={totalCount}`, so "Showing N of M backlinks" was
+  // structurally incapable of showing two different numbers: a user with a
+  // filter that excluded 36 of 40 backlinks read "Showing 40 of 40" above four
+  // rows. The backend has always returned both counts.
+  it('#3316 item 1: forwards the backend post-filter count, not the pre-filter total twice', async () => {
+    mockInvokeWith({
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'ref' }])],
+      next_cursor: null,
+      has_more: false,
+      // 40 backlinks before the filter; 4 survive it.
+      total_count: 40,
+      filtered_count: 4,
+      truncated: false,
+    })
+
+    renderLinkedReferences({ pageId: 'PAGE1' })
+
+    // `filtered/total` as forwarded to the filter builder.
+    expect(await screen.findByTestId('mock-filter-counts')).toHaveTextContent('4/40')
   })
 })

@@ -16,6 +16,16 @@ export const properties: Record<string, string> = {
   'query.resultCount_other': '{{count}} results',
   'query.resultCountPartial_one': 'first {{count}} loaded',
   'query.resultCountPartial_other': 'first {{count}} loaded',
+  // #3315 item 3 — an inline `table:true` query sorts CLIENT-SIDE over the
+  // pages already loaded (`useQuerySorting` has no pagination notion), while
+  // `useQueryExecution` pages at 50 with a Load-more button below the table. So
+  // a column sort answers "what is the top one?" over the loaded prefix only,
+  // not the whole result set. Say so next to the existing partial-count label
+  // rather than letting the affordance imply a full-column sort.
+  'query.sortPartialNotice_one':
+    'Sorted within the {{count}} loaded row only — load more to sort the full result set.',
+  'query.sortPartialNotice_other':
+    'Sorted within the {{count}} loaded rows only — load more to sort the full result set.',
   // Label for a structured (`v2:`) inline query, whose payload is opaque
   // base64 — show the condition count rather than the raw expression.
   'query.advancedQueryLabel_one': 'Advanced query · {{count}} condition',
@@ -349,6 +359,9 @@ export const properties: Record<string, string> = {
   'query.resultsListLabel': 'Query results',
   'propertiesView.optionsJsonPlaceholder': 'Options JSON',
   'queryResult.sortBy': 'Sort by {{column}}',
+  // #3315 item 3 — accessible name for the same header when more pages remain
+  // unloaded: the sort is over the loaded rows, not the column.
+  'queryResult.sortByPartial': 'Sort by {{column}} (loaded rows only)',
   'filter.dimension.status.description': 'Task workflow state — TODO, DOING, DONE, CANCELLED',
   'filter.dimension.priority.description': 'Priority level — A (highest) through C',
   'filter.dimension.dueDate.description': 'Hard due date — overdue if past',

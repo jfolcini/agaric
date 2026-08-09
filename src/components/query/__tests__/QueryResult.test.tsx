@@ -804,6 +804,85 @@ describe('QueryResult – table mode', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // ── #3315 item 3: the column sort covers only the loaded pages ───────────
+  //
+  // `useQuerySorting` is a `toSorted` over `results`, which holds only the
+  // pages `useQueryExecution` has fetched (50 per page, with Load-more below
+  // the table). "Click Priority to see the top task" therefore answers over the
+  // loaded prefix: a P3 row can sit at the top while P0 rows wait in pages 2-4.
+  // The affordance offered a full-column sort with nothing saying otherwise.
+
+  /** As `mockTagResults`, but reports a further page as available. */
+  function mockTagResultsWithMore(items: ReturnType<typeof makeBlock>[]) {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
+        return { rows: items, nextCursor: 'CURSOR_PAGE_2', hasMore: true, totalCount: null }
+      }
+      if (cmd === 'batch_resolve') {
+        return [{ id: 'P1', title: 'Project Page', block_type: 'page', deleted: false }]
+      }
+      if (cmd === 'get_batch_properties') return {}
+      return null
+    })
+  }
+
+  const partialRows = [
+    makeBlock({
+      id: 'B1',
+      content: 'Task A',
+      parent_id: 'P1',
+      page_id: 'P1',
+      todo_state: 'TODO',
+      priority: '3',
+    }),
+    makeBlock({
+      id: 'B2',
+      content: 'Task B',
+      parent_id: 'P1',
+      page_id: 'P1',
+      todo_state: 'TODO',
+      priority: '1',
+    }),
+  ]
+
+  it('#3315 item 3: sorting a partial table says the sort covers loaded rows only', async () => {
+    const user = userEvent.setup()
+    mockTagResultsWithMore(partialRows)
+
+    render(<QueryResult expression={TABLE_EXPRESSION} />)
+
+    const table = await screen.findByRole('table')
+    // Unsorted: the existing partial-count label already covers that case.
+    expect(screen.queryByTestId('query-sort-partial-notice')).toBeNull()
+
+    // The header advertises what it can actually do, before it is clicked.
+    const priorityHeader = within(table).getByRole('button', {
+      name: 'Sort by Priority (loaded rows only)',
+    })
+    await user.click(priorityHeader)
+
+    const notice = await screen.findByTestId('query-sort-partial-notice')
+    expect(notice).toHaveTextContent(
+      'Sorted within the 2 loaded rows only — load more to sort the full result set.',
+    )
+  })
+
+  it('#3315 item 3: a fully-loaded table keeps the plain full-column sort affordance', async () => {
+    const user = userEvent.setup()
+    // Same rows, but the backend reports no further page.
+    mockTagResults(partialRows)
+
+    render(<QueryResult expression={TABLE_EXPRESSION} />)
+
+    const table = await screen.findByRole('table')
+    const priorityHeader = within(table).getByRole('button', { name: 'Sort by Priority' })
+    await user.click(priorityHeader)
+
+    // Nothing is withheld, so no caveat.
+    expect(screen.queryByTestId('query-sort-partial-notice')).toBeNull()
+  })
 })
 
 /* ------------------------------------------------------------------ */

@@ -18,6 +18,16 @@ import { Component, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+
+// #3316 item 3 — the reference panels now window each expanded group's rows
+// through `@tanstack/react-virtual`. jsdom gives the group's scroll container
+// zero height, so the real virtualizer collapses the window to zero rows and
+// every row assertion below would find nothing. The shared mock lays out all
+// rows, keeping these tests about behaviour rather than about jsdom layout.
+// The windowing itself is pinned by `LinkedReferences.virtualization.test.tsx`.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
+
 import { makeBlock } from '@/__tests__/fixtures'
 import { BacklinkGroupRenderer } from '@/components/backlinks/BacklinkGroupRenderer'
 import { renderRichContent } from '@/components/RichContentRenderer'
@@ -96,6 +106,40 @@ describe('BacklinkGroupRenderer', () => {
 
     expect(screen.getByText('Page One (1)')).toBeInTheDocument()
     expect(screen.queryByText('hidden block')).not.toBeInTheDocument()
+  })
+
+  // #3316 item 3 — the panel must drive its rows through the shared windowed
+  // list, not the eager `<ul>`. The virtualization contract is visible on each
+  // row: an absolute offset from the virtualizer plus the `data-index` that
+  // `measureElement` reads back. Without the wiring these are absent and every
+  // row of every expanded group is committed (up to 20 groups x
+  // MAX_BLOCKS_PER_GROUP = 200 for a hub page).
+  it('#3316 item 3: rows carry the virtualization contract (offset + data-index)', () => {
+    const groups = [
+      makeGroup('P1', 'Page One', [
+        makeBlock({ id: 'B1', content: 'row one' }),
+        makeBlock({ id: 'B2', content: 'row two' }),
+      ]),
+    ]
+
+    const { container } = render(
+      <BacklinkGroupRenderer
+        groups={groups}
+        expandedGroups={{ P1: true }}
+        onToggleGroup={vi.fn()}
+        handleBlockClick={vi.fn()}
+        handleBlockKeyDown={vi.fn()}
+        {...defaultResolvers}
+      />,
+    )
+
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-backlink-item]'))
+    expect(rows).toHaveLength(2)
+    expect(rows.map((r) => r.dataset['index'])).toEqual(['0', '1'])
+    for (const row of rows) {
+      expect(row.style.position).toBe('absolute')
+      expect(row.style.transform).toMatch(/^translateY\(\d+px\)$/)
+    }
   })
 
   it('renders expanded group with blocks visible', () => {

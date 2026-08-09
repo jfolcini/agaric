@@ -125,6 +125,48 @@ function QueryExpressionPills({ expression }: { expression: string }): React.Rea
   )
 }
 
+/**
+ * #3315 item 3 — a column sort in an inline query table is a `toSorted` over
+ * `results` (`useQuerySorting`), which holds only the pages loaded so far,
+ * while `useQueryExecution` pages at 50 with a Load-more button below the
+ * table. "Click Priority to see the top task" therefore answers over the loaded
+ * prefix: a P3 row can sit at the top while P0 rows wait in pages 2-4. Until
+ * the sort is pushed into the query, say what the sort actually covers, next to
+ * the existing partial-count label (`query.resultCountPartial`) in the header.
+ *
+ * Only rendered once a sort is applied — an unsorted partial table is already
+ * labelled by that count. Extracted as its own component so the guard chain
+ * does not add decision points to `QueryResult`'s cyclomatic complexity.
+ */
+function SortPartialNotice({
+  loading,
+  error,
+  tableMode,
+  hasMore,
+  sortKey,
+  loadedCount,
+}: {
+  loading: boolean
+  error: string | null
+  tableMode: boolean
+  hasMore: boolean
+  sortKey: string | null
+  loadedCount: number
+}): React.ReactElement | null {
+  const { t } = useTranslation()
+  if (loading || error || !tableMode || !hasMore || sortKey == null) return null
+  return (
+    <p
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- announced as a status update when the user applies a sort; <output> would tie it to a form control that does not exist here
+      role="status"
+      data-testid="query-sort-partial-notice"
+      className="px-3 pb-1 text-xs text-muted-foreground"
+    >
+      {t('query.sortPartialNotice', { count: loadedCount })}
+    </p>
+  )
+}
+
 export interface QueryResultProps {
   /** The raw query expression, e.g. "type:tag expr:project" */
   expression: string
@@ -344,8 +386,18 @@ export function QueryResult({
               onNavigate={onNavigate}
               resolveBlockTitle={resolveBlockTitle}
               customProps={customProps}
+              // #3315 item 3 — the sort is client-side over the loaded pages.
+              partial={hasMore}
             />
           )}
+          <SortPartialNotice
+            loading={loading}
+            error={error}
+            tableMode={tableMode}
+            hasMore={hasMore}
+            sortKey={sortKey}
+            loadedCount={results.length}
+          />
           {!loading && !error && (
             <LoadMoreButton
               hasMore={hasMore}

@@ -229,4 +229,57 @@ describe('useBacklinkGroups', () => {
       expect(callsAfter).toBeGreaterThan(callsBefore)
     })
   })
+
+  // #3316 item 1 — the hook read `total_count` only and dropped the backend's
+  // `filtered_count`, so `LinkedReferences` had nothing to pass but
+  // `filteredCount={totalCount}` and the "Showing N of M backlinks" line could
+  // never show two different numbers. Both counts are first-page-only: the
+  // backend zeroes them on every subsequent page.
+  it('#3316 item 1: surfaces filtered_count separately, from the FIRST page', async () => {
+    const page1 = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: 40,
+      filtered_count: 4,
+    }
+    // Non-first pages report 0/0 by design — the merged view must keep the
+    // first page's numbers, not adopt the zeroes.
+    const page2 = {
+      groups: [makeGroup('P2', 'Page Two', [{ id: 'B2', content: 'block 2' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 0,
+      filtered_count: 0,
+    }
+    let callCount = 0
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_backlinks_grouped: () => {
+          callCount++
+          return callCount === 1 ? page1 : page2
+        },
+      }),
+    )
+
+    const { result } = renderHook(() =>
+      useBacklinkGroups(baseParams({ filters: [{ type: 'TodoState', state: 'TODO' }] })),
+    )
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    expect(result.current.totalCount).toBe(40)
+    expect(result.current.filteredCount).toBe(4)
+
+    await act(async () => {
+      result.current.loadMore()
+    })
+    await waitFor(() => {
+      expect(result.current.isFetchingMore).toBe(false)
+    })
+
+    expect(result.current.totalCount).toBe(40)
+    expect(result.current.filteredCount).toBe(4)
+  })
 })
