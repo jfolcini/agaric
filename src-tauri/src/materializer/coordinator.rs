@@ -1307,8 +1307,6 @@ impl Materializer {
             bg_high_water: self.metrics.bg_high_water.load(Ordering::Relaxed),
             fg_errors: self.metrics.fg_errors.load(Ordering::Relaxed),
             bg_errors: self.metrics.bg_errors.load(Ordering::Relaxed),
-            fg_panics: self.metrics.fg_panics.load(Ordering::Relaxed),
-            bg_panics: self.metrics.bg_panics.load(Ordering::Relaxed),
             fg_apply_dropped: self.metrics.fg_apply_dropped.load(Ordering::Relaxed),
             fg_apply_dropped_persisted: self
                 .metrics

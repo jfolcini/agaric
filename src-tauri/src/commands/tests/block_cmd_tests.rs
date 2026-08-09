@@ -23,12 +23,19 @@ async fn add_attachment_for_test(
     let source_path = app_data_dir.join(fs_path);
     let bytes = tokio::fs::read(&source_path).await?;
     let actual_size = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
-    if actual_size != size_bytes {
-        return Err(AppError::validation(format!(
-            "attachment size mismatch: expected {size_bytes} bytes, on disk is {} bytes",
-            bytes.len()
-        )));
-    }
+    // #3435: this is a FIXTURE consistency assertion, not a guard. It used to
+    // return an `AppError::Validation` carrying production's exact "attachment
+    // size mismatch" wording, which meant a future size-mismatch test routed
+    // through this helper would have asserted against the helper's own copy and
+    // passed with the production guard deleted. Panicking with harness-specific
+    // wording makes that impossible: the only way to observe a size-mismatch
+    // *error* is to reach the real `verify_written_attachment`.
+    assert_eq!(
+        actual_size,
+        size_bytes,
+        "add_attachment_for_test fixture bug: {} declares {size_bytes} bytes but holds {actual_size}",
+        source_path.display()
+    );
     let result = add_attachment_with_bytes_inner(
         pool,
         device_id,
@@ -5009,6 +5016,159 @@ async fn add_attachment_with_bytes_verifies_stored_size_against_disk() {
     )
     .await
     .expect("a committed row must satisfy the post-write guards");
+
+    mat.shutdown();
+}
+
+// ----------------------------------------------------------------------
+// Guard INVOCATION (#3435)
+//
+// The three tests above call `verify_written_attachment` themselves, so they
+// prove the guard bodies are correct and nothing more: delete the
+// `verify_written_attachment(...)` call from `add_attachment_with_bytes_inner`
+// and every one of them — including the happy-path wiring test — stays green,
+// because a successful upload behaves identically whether or not the guard ran.
+// An uncalled guard is exactly as absent as a deleted one.
+//
+// The two tests below close that gap. Each arms the `write_fault` seam so the
+// bytes on disk stop matching the buffer the caller handed in, then drives the
+// REAL public entry point and demands a rejection. A rejection can only come
+// from the production call site: with the call removed, `persist_attachment`
+// commits a row for a blob that is missing or the wrong length and the entry
+// point returns `Ok`. They are therefore mutation tests for the call, not for
+// the function — and they equally kill the "guard body replaced by `Ok(())`"
+// mutant.
+// ----------------------------------------------------------------------
+
+/// Size-mismatch guard, through the public entry point: when storage ends up
+/// holding a different number of bytes than the caller supplied, the upload
+/// must be rejected, no row may be committed, and the bytes must be unlinked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_with_bytes_rejects_when_stored_length_diverges() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "diverging".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    crate::commands::attachments::write_fault::arm_truncate(_dir.path());
+
+    let result = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        block.id.clone(),
+        "short.png".into(),
+        "image/png".into(),
+        vec![5u8; 128],
+    )
+    .await;
+
+    match result {
+        Err(AppError::Validation { message: msg, .. }) => assert!(
+            msg.contains("size mismatch") && msg.contains("128") && msg.contains("1 bytes"),
+            "rejection must report both the recorded and the on-disk length: {msg}"
+        ),
+        other => panic!(
+            "the bytes-ingest path must reject a blob whose stored length diverges — is \
+             `verify_written_attachment` still CALLED by `add_attachment_with_bytes_inner`? \
+             got: {other:?}"
+        ),
+    }
+
+    let count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM attachments WHERE block_id = ?",
+        block.id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 0,
+        "a row must never be committed for bytes whose on-disk length disagrees with it"
+    );
+
+    let leftovers: Vec<_> = std::fs::read_dir(_dir.path().join("attachments"))
+        .expect("the attachments dir must exist after a write")
+        .map(|entry| entry.expect("read attachments dir entry").path())
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "the rejected upload must unlink its bytes, found: {leftovers:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// Stat guard, through the public entry point: when the freshly written blob is
+/// gone by the time it is read back, the upload must fail rather than commit a
+/// row pointing at storage that does not exist (which the sync layer would
+/// later surface as `MissingAttachment`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_with_bytes_rejects_when_stored_bytes_vanish() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "vanishing".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    crate::commands::attachments::write_fault::arm_unlink(_dir.path());
+
+    let result = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        block.id.clone(),
+        "gone.png".into(),
+        "image/png".into(),
+        vec![6u8; 64],
+    )
+    .await;
+
+    match result {
+        Err(AppError::Io(err)) => assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::NotFound,
+            "the stat guard must surface the underlying NotFound: {err:?}"
+        ),
+        other => panic!(
+            "the bytes-ingest path must reject an upload whose stored bytes vanished — is \
+             `verify_written_attachment` still CALLED by `add_attachment_with_bytes_inner`? \
+             got: {other:?}"
+        ),
+    }
+
+    let count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM attachments WHERE block_id = ?",
+        block.id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 0,
+        "a row must never be committed for a blob that is not on disk"
+    );
 
     mat.shutdown();
 }

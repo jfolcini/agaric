@@ -30,10 +30,14 @@ import {
   addBlockWithMarker,
   blockStaticByMarker,
   navigateTo,
+  runScopedMarker,
   waitForAppReady,
 } from './helpers'
 
-const MARKER = 'wdio-block-persist-reload'
+// #3334 — scoped to this run. `blockStaticByMarker` matches by SUBSTRING, so a
+// fixed marker would let a leftover row from an earlier run satisfy the durable
+// read below and turn a regression in `create_block` into a green pass.
+const MARKER = runScopedMarker('wdio-block-persist-reload')
 
 describe('Agaric real-backend block durability (#3085)', () => {
   it('re-renders a committed block after a full Journal teardown and remount', async () => {

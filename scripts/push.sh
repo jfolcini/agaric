@@ -65,7 +65,26 @@
 #      custom remote/refspec push it can't confidently attribute to a
 #      branch skips the check with a note rather than guessing.
 #
-# `--self-test` exercises both functions against a stubbed `git` — no
+# THE DESTINATION IS CHECKED FIRST (#3683)
+# ----------------------------------------
+# Whether the refspec is pushable is knowable in zero seconds and has
+# nothing to do with whether the tree is good — but it used to be
+# discovered by `git push` itself, i.e. after the whole gate. A branch
+# made with `git worktree add -b <new> origin/main` carries an upstream
+# pointing at `origin/main`; a bare `git push` resolves the destination
+# from it, sees `main` != the branch name, and refuses. Correctly — but
+# ~8 minutes late, reported as "the PUSH FAILED", with the one
+# explanatory `fatal:` line ~7700 lines up the log, above the entire
+# nextest transcript.
+#
+# So `preflight_push_target` resolves and validates the destination
+# BEFORE the verifier runs, and fails in under a second naming the
+# branch, the upstream it found, and the one-line fix. And when a push
+# does fail, the message distinguishes a LOCAL refusal (nothing left the
+# machine; look at branch config) from a failure on the wire (look at the
+# connection), and echoes git's own last words at the bottom.
+#
+# `--self-test` exercises these functions against a stubbed `git` — no
 # network, no repo mutation — wired as a prek pre-commit hook so a
 # regression here is caught before it reaches the push path every push
 # depends on.
@@ -77,10 +96,31 @@ set -euo pipefail
 # PUSH_MAX_ATTEMPTS / PUSH_RETRY_SLEEP (used by --self-test to run fast).
 PUSH_TRANSIENT_RE='Connection.*closed by remote host|Could not read from remote repository|remote end hung up unexpectedly|early EOF|RPC failed|unexpected disconnect while reading sideband packet'
 
+# ── Did the push leave the machine, or was it refused here? (#3683) ──
+# `git push` fails for two categorically different reasons and the script
+# used to report both as "the PUSH FAILED", which reads as network or
+# permissions — the failure mode this wrapper exists to route around —
+# and sends you to look at the connection. A refspec/upstream problem is
+# refused BEFORE anything is sent: nothing touched the remote, and the
+# fix is one line of local branch config. Name which one it was.
+PUSH_LOCAL_REFUSAL_RE='The upstream branch of your current branch does not match|has no upstream branch|src refspec .* does not match any|dst refspec .* matches more than one|matches more than one|does not appear to be a git repository|--set-upstream-to|You are pushing to remote .* which is not the upstream'
+
+classify_push_failure() {
+    # $1 = path to the captured git-push output. Echoes `local-refusal`
+    # (git refused before opening/using the connection) or `remote`.
+    if grep -qE "$PUSH_LOCAL_REFUSAL_RE" "$1"; then
+        echo "local-refusal"
+    else
+        echo "remote"
+    fi
+}
+
 push_with_retry() {
     local max_attempts="${PUSH_MAX_ATTEMPTS:-3}"
     local retry_sleep="${PUSH_RETRY_SLEEP:-3}"
     local attempt=1 rc=1 log
+    PUSH_FAILURE_KIND=""
+    PUSH_FAILURE_TAIL=""
 
     while [ "$attempt" -le "$max_attempts" ]; do
         log="$(mktemp -t push-sh-git-push.XXXXXX)"
@@ -109,11 +149,149 @@ push_with_retry() {
             continue
         fi
 
+        # Failing for good: keep WHY, so the caller can say which kind of
+        # failure it was and echo git's own words at the BOTTOM of the log
+        # rather than leaving the one explanatory `fatal:` line thousands
+        # of lines up, above the whole verify transcript (#3683).
+        PUSH_FAILURE_KIND="$(classify_push_failure "$log")"
+        # `|| true`: with `set -e` and `pipefail`, a grep that matches
+        # nothing fails the whole substitution and would abort the
+        # function outright — precisely when the fallback below is the
+        # thing that should run. It survives today only because every
+        # caller sits in an `if !` condition, where -e is suspended;
+        # that is luck, not design.
+        PUSH_FAILURE_TAIL="$(grep -E '^(fatal|error|remote:|hint):?' "$log" | tail -5 || true)"
+        [ -z "$PUSH_FAILURE_TAIL" ] && PUSH_FAILURE_TAIL="$(tail -5 "$log" || true)"
         rm -f "$log"
         return "$rc"
     done
 
     return "$rc"
+}
+
+# ── Preflight: where would this push land? (#3683) ──────────────────
+# Whether the refspec is pushable is knowable in ZERO seconds and is
+# completely independent of whether the tree is good — yet it used to be
+# discovered after the full gate (Phase A..D, a whole nextest run, ~8
+# minutes), and then reported as though the push had failed on the wire.
+#
+# The canonical way in: `git worktree add -b <new> origin/main` sets the
+# new branch's upstream to `origin/main`. The branch has never been
+# pushed, so an argument-less `git push` resolves its destination from
+# that upstream, finds `main`, sees it does not match the current branch
+# name, and refuses — correctly. Cheap precondition, expensive discovery.
+#
+# Runs BEFORE the verifier. Builds PUSH_ARGS (the list handed to `git
+# push`, also read back by resolve_push_target for the postcondition) and
+# returns 1 with a named cause + remedy when the destination cannot
+# resolve. Explicit args are the caller's business: forwarded verbatim.
+preflight_push_target() {
+    PUSH_ARGS=()
+    local branch upstream upstream_branch push_default
+
+    if [ "$#" -gt 0 ]; then
+        PUSH_ARGS=("$@")
+        echo "→ Push destination: as given — git push ${PUSH_ARGS[*]}"
+        return 0
+    fi
+
+    branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then
+        echo "✗ push.sh: cannot resolve a push destination — HEAD is detached." >&2
+        echo "  A bare \`git push\` has no branch to push from here." >&2
+        echo "  Fix: check out a branch, or name the destination explicitly:" >&2
+        echo "    scripts/push.sh origin HEAD:refs/heads/<branch>" >&2
+        echo "  (Detected before the verify gate — no verification time spent.)" >&2
+        return 1
+    fi
+
+    if ! upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"; then
+        # Never pushed: name the destination ourselves rather than letting
+        # a bare `git push` abort with "no upstream branch".
+        PUSH_ARGS=(--set-upstream origin "$branch")
+        echo "→ Push destination: origin/$branch (first push — will set upstream)"
+        return 0
+    fi
+
+    upstream_branch="${upstream#*/}"
+    if [ "$upstream_branch" = "$branch" ]; then
+        echo "→ Push destination: $upstream"
+        return 0
+    fi
+
+    # Upstream names a DIFFERENT branch. Whether that is fatal is entirely
+    # a question of push.default — and a preflight that refuses a working
+    # configuration is a worse bug than the one it was written for, so
+    # every value git accepts is modelled explicitly and only the ones
+    # that genuinely cannot land are refused.
+    push_default="$(git config --get push.default 2>/dev/null || true)"
+    case "${push_default:-simple}" in
+        current | matching)
+            # The destination comes from the branch NAME, not the
+            # upstream: `current` pushes this branch to the same-named
+            # remote branch, and `matching` pushes every same-named pair
+            # (naming the refspec narrows that to the branch push.sh is
+            # actually about, and creates it if the remote lacks it —
+            # `matching` would otherwise push nothing at all, silently,
+            # and exit 0). Name the refspec rather than leaving
+            # PUSH_ARGS empty: an empty list sends resolve_push_target
+            # back to @{u} for the postcondition, i.e. it would compare
+            # HEAD against 'origin/$upstream_branch' — the branch that was
+            # NOT pushed — and report "postcondition check FAILED" for a
+            # push that landed perfectly. A false "it did not land" is the
+            # same class of lie #3683 is about, pointing the other way.
+            PUSH_ARGS=(origin "$branch")
+            echo "→ Push destination: origin/$branch (push.default=$push_default; upstream '$upstream' is not the destination)"
+            return 0
+            ;;
+        upstream | tracking)
+            # Deliberately configured to push to the tracking branch,
+            # whatever it is named. This WORKS, so it is not refused —
+            # but the destination is not the obvious one, so say it out
+            # loud. PUSH_ARGS stays empty on purpose: the bare push
+            # follows @{u}, and resolve_push_target reads @{u} too, so
+            # the postcondition already checks the right ref.
+            echo "→ Push destination: $upstream (push.default=$push_default)"
+            echo "  NOTE: that is NOT this branch's name. '$branch' will land on"
+            echo "  '$upstream_branch'. If that is not what you meant, push explicitly:"
+            echo "    scripts/push.sh -u origin $branch"
+            return 0
+            ;;
+        nothing)
+            echo "✗ push.sh: push.default=nothing — a bare \`git push\` refuses to guess a destination." >&2
+            echo "  Name it explicitly:" >&2
+            echo "    scripts/push.sh -u origin $branch" >&2
+            echo "  (Detected before the verify gate — no verification time spent.)" >&2
+            return 1
+            ;;
+        simple) ;;
+        *)
+            # A value git will reject itself. Not our failure to invent a
+            # diagnosis for — pass it through and let git speak.
+            echo "→ Push destination: unmodelled push.default='$push_default'; deferring to git."
+            return 0
+            ;;
+    esac
+
+    echo "✗ push.sh: this branch cannot be pushed as invoked — refusing BEFORE the verify gate." >&2
+    echo "" >&2
+    echo "    branch            : $branch" >&2
+    echo "    upstream (@{u})   : $upstream" >&2
+    echo "    push.default      : ${push_default:-simple (unset)}" >&2
+    echo "" >&2
+    echo "  A bare \`git push\` resolves its destination from the upstream, finds" >&2
+    echo "  '$upstream_branch', sees it does not match the branch name, and refuses —" >&2
+    echo "  rather than push '$branch' onto '$upstream_branch'. That refusal is right; only its" >&2
+    echo "  TIMING was wrong (it used to surface after the ~8-minute gate)." >&2
+    echo "" >&2
+    echo "  This is what \`git worktree add -b $branch origin/main\` leaves behind." >&2
+    echo "  Fix — any one of:" >&2
+    echo "    bash scripts/seed-worktree.sh            # unsets the bogus upstream (+ the other worktree prereqs)" >&2
+    echo "    git branch --unset-upstream              # then re-run scripts/push.sh" >&2
+    echo "    scripts/push.sh -u origin $branch" >&2
+    echo "" >&2
+    echo "  (Detected in under a second — the verify gate has NOT been run.)" >&2
+    return 1
 }
 
 # ── Attribute the postcondition to the ACTUAL push target ───────────
@@ -368,6 +546,22 @@ case "$cmd" in
                 ;;
         esac
         ;;
+    config)
+        # Only `--get push.default` is consulted (preflight_push_target).
+        # Unset config exits 1 with no output, like the real thing.
+        case "$*" in
+            *push.default*)
+                if [ -n "${FAKE_PUSH_DEFAULT:-}" ]; then
+                    echo "$FAKE_PUSH_DEFAULT"
+                    exit 0
+                fi
+                exit 1
+                ;;
+            *)
+                exit 1
+                ;;
+        esac
+        ;;
     ls-remote)
         case "${FAKE_LSREMOTE_BEHAVIOR:-ok}" in
             ok)
@@ -399,7 +593,293 @@ FAKEGIT
     export PUSH_RETRY_SLEEP=0
 
     unset FAKE_PUSH_BEHAVIOR FAKE_SUCCEED_ON_ATTEMPT FAKE_PUSH_ATTEMPT_FILE \
-        FAKE_UPSTREAM FAKE_LOCAL_SHA FAKE_LSREMOTE_BEHAVIOR FAKE_REMOTE_SHA
+        FAKE_UPSTREAM FAKE_LOCAL_SHA FAKE_LSREMOTE_BEHAVIOR FAKE_REMOTE_SHA \
+        FAKE_PUSH_DEFAULT
+
+    # ── preflight_push_target (#3683) ────────────────────────────────
+    # The property under test: an unpushable destination is refused in
+    # zero seconds, by name — never after the gate, and never dressed up
+    # as a failed push.
+
+    # P1. The live #3683 shape: `git worktree add -b <new> origin/main`
+    #     leaves the upstream on origin/main. A bare `git push` cannot
+    #     work here (push.default=simple refuses the name mismatch), and
+    #     that is knowable before any verification runs.
+    rc=0
+    out="$(FAKE_CURRENT_BRANCH="claude/3647-repeat-grammar" FAKE_UPSTREAM="origin/main" \
+        preflight_push_target 2>&1)" || rc=$?
+    if [ "$rc" -ne 0 ] \
+        && printf '%s' "$out" | grep -q 'origin/main' \
+        && printf '%s' "$out" | grep -q 'claude/3647-repeat-grammar' \
+        && printf '%s' "$out" | grep -qi 'seed-worktree.sh'; then
+        st_ok "mismatched upstream: refused up front, naming branch + upstream + remedy"
+    else
+        st_bad "mismatched upstream: refused up front, naming branch + upstream + remedy" \
+            "rc=$rc out=$out"
+    fi
+
+    # P2. Same mismatch, but push.default=current — git resolves the
+    #     destination from the branch NAME there, so the push works and
+    #     the preflight must NOT block it. A preflight that fires on a
+    #     working configuration is a new failure, not a fix.
+    rc=0
+    PUSH_ARGS=()
+    FAKE_CURRENT_BRANCH="feature-x" FAKE_UPSTREAM="origin/main" \
+        FAKE_PUSH_DEFAULT="current" preflight_push_target >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ] && [ "${PUSH_ARGS[*]}" = "origin feature-x" ]; then
+        st_ok "mismatched upstream under push.default=current: allowed, destination named explicitly"
+    else
+        st_bad "mismatched upstream under push.default=current: allowed, destination named explicitly" \
+            "rc=$rc args=${PUSH_ARGS[*]-}"
+    fi
+
+    # P2b. …and the postcondition must then check the branch that was
+    #      actually pushed. With PUSH_ARGS left empty here,
+    #      resolve_push_target falls back to @{u} — origin/main — and
+    #      verify_landed reports "postcondition check FAILED" for a push
+    #      that landed on origin/feature-x perfectly. A false "it did not
+    #      land" is the same class of lie #3683 is about, aimed the other
+    #      way. (Demonstrated: with the old empty PUSH_ARGS this case
+    #      failed while the push was fine.)
+    rc=0
+    PUSH_ARGS=()
+    FAKE_CURRENT_BRANCH="feature-x" FAKE_UPSTREAM="origin/main" \
+        FAKE_PUSH_DEFAULT="current" preflight_push_target >/dev/null 2>&1 || rc=$?
+    out="$(FAKE_CURRENT_BRANCH="feature-x" FAKE_UPSTREAM="origin/main" \
+        FAKE_LOCAL_SHA_feature_x="4444000000000000000000000000000000000a" \
+        FAKE_REMOTE_SHA_feature_x="4444000000000000000000000000000000000a" \
+        FAKE_REMOTE_SHA_main="9999000000000000000000000000000000000b" \
+        verify_landed 2>&1)" || rc=$?
+    unset PUSH_ARGS
+    if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'origin/feature-x'; then
+        st_ok "push.default=current: the postcondition checks origin/feature-x, not the unrelated @{u}"
+    else
+        st_bad "push.default=current: the postcondition checks origin/feature-x, not the unrelated @{u}" \
+            "rc=$rc out=$out"
+    fi
+
+    # P2c. push.default=upstream/tracking: the upstream deliberately names
+    #      a different branch and git will push there. That is a WORKING
+    #      configuration — refusing it would turn a fine push into a hard
+    #      failure and hand out a remedy (`-u origin <branch>`) aimed at
+    #      the wrong ref. Allowed, with the destination said out loud, and
+    #      PUSH_ARGS left empty so both the push and the postcondition
+    #      follow @{u}.
+    rc=0
+    PUSH_ARGS=(sentinel)
+    out="$(FAKE_CURRENT_BRANCH="feature-x" FAKE_UPSTREAM="origin/main" \
+        FAKE_PUSH_DEFAULT="upstream" preflight_push_target 2>&1)" || rc=$?
+    FAKE_CURRENT_BRANCH="feature-x" FAKE_UPSTREAM="origin/main" \
+        FAKE_PUSH_DEFAULT="upstream" preflight_push_target >/dev/null 2>&1 || true
+    if [ "$rc" -eq 0 ] && [ "${#PUSH_ARGS[@]}" -eq 0 ] \
+        && printf '%s' "$out" | grep -q 'origin/main'; then
+        st_ok "push.default=upstream: a working mismatched-upstream config is NOT refused"
+    else
+        st_bad "push.default=upstream: a working mismatched-upstream config is NOT refused" \
+            "rc=$rc args=${PUSH_ARGS[*]-} out=$out"
+    fi
+
+    # P2d. push.default=nothing: a bare push really does refuse, so this
+    #      one IS a preflight failure — with its own diagnosis, not the
+    #      worktree-upstream one.
+    rc=0
+    PUSH_ARGS=()
+    out="$(FAKE_CURRENT_BRANCH="feature-x" FAKE_UPSTREAM="origin/main" \
+        FAKE_PUSH_DEFAULT="nothing" preflight_push_target 2>&1)" || rc=$?
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'push.default=nothing'; then
+        st_ok "push.default=nothing: refused with its own diagnosis"
+    else
+        st_bad "push.default=nothing: refused with its own diagnosis" "rc=$rc out=$out"
+    fi
+
+    # P2e. A push.default value this script does not model must not be
+    #      invented into a failure — git is the authority on it.
+    rc=0
+    PUSH_ARGS=()
+    FAKE_CURRENT_BRANCH="feature-x" FAKE_UPSTREAM="origin/main" \
+        FAKE_PUSH_DEFAULT="some-future-value" preflight_push_target >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        st_ok "unmodelled push.default: deferred to git, not refused"
+    else
+        st_bad "unmodelled push.default: deferred to git, not refused" "rc=$rc"
+    fi
+
+    # P3. Healthy tracking branch: allowed, and PUSH_ARGS stays empty so
+    #     the bare `git push` path is preserved verbatim.
+    rc=0
+    PUSH_ARGS=(sentinel)
+    out="$(FAKE_CURRENT_BRANCH="stub-branch" FAKE_UPSTREAM="origin/stub-branch" \
+        preflight_push_target 2>&1)" || rc=$?
+    FAKE_CURRENT_BRANCH="stub-branch" FAKE_UPSTREAM="origin/stub-branch" \
+        preflight_push_target >/dev/null 2>&1 || true
+    if [ "$rc" -eq 0 ] && [ "${#PUSH_ARGS[@]}" -eq 0 ]; then
+        st_ok "matching upstream: allowed, PUSH_ARGS left empty (bare git push)"
+    else
+        st_bad "matching upstream: allowed, PUSH_ARGS left empty (bare git push)" \
+            "rc=$rc args=${PUSH_ARGS[*]-}"
+    fi
+
+    # P4. Never pushed (no upstream at all): the destination is named
+    #     explicitly, exactly as before this change.
+    rc=0
+    PUSH_ARGS=()
+    FAKE_CURRENT_BRANCH="brand-new" FAKE_UPSTREAM="" \
+        preflight_push_target >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ] && [ "${PUSH_ARGS[*]}" = "--set-upstream origin brand-new" ]; then
+        st_ok "no upstream: preflight sets the destination (--set-upstream origin <branch>)"
+    else
+        st_bad "no upstream: preflight sets the destination" "rc=$rc args=${PUSH_ARGS[*]-}"
+    fi
+
+    # P5. Explicit args are the caller's business: forwarded verbatim,
+    #     even from a branch whose upstream is mismatched (this is the
+    #     documented workaround, and it must keep working).
+    rc=0
+    PUSH_ARGS=()
+    FAKE_CURRENT_BRANCH="claude/x" FAKE_UPSTREAM="origin/main" \
+        preflight_push_target -u origin claude/x >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ] && [ "${PUSH_ARGS[*]}" = "-u origin claude/x" ]; then
+        st_ok "explicit args: forwarded verbatim, not second-guessed"
+    else
+        st_bad "explicit args: forwarded verbatim, not second-guessed" \
+            "rc=$rc args=${PUSH_ARGS[*]-}"
+    fi
+
+    # P6. Detached HEAD with no args: there is no branch to push, and the
+    #     gate must not be spent finding that out either.
+    rc=0
+    PUSH_ARGS=()
+    out="$(FAKE_CURRENT_BRANCH="HEAD" FAKE_UPSTREAM="" preflight_push_target 2>&1)" || rc=$?
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qi 'detached'; then
+        st_ok "detached HEAD: refused up front, by name"
+    else
+        st_bad "detached HEAD: refused up front, by name" "rc=$rc out=$out"
+    fi
+
+    # P7. ORDERING ratchet — the whole point of #3683. The preflight must
+    #     be invoked BEFORE the verifier; a preflight that runs after the
+    #     gate reports the same thing eight minutes later, which is the
+    #     bug. P1-P6 all stay green under that regression, so assert the
+    #     call order in the script body directly.
+    #
+    #     The lookup lives in a function called from a condition context,
+    #     and each capture carries `|| true`. Both matter, because this
+    #     ratchet used to defeat its own diagnostics: written inline as
+    #     `st_x="$(grep -n … | head -1 | cut -d: -f1)"` under `set -euo
+    #     pipefail`, a grep that matched nothing failed the substitution
+    #     and aborted the whole self-test with a bare exit 1 — no FAIL
+    #     line, no diagnosis — exactly when the anchor had gone missing,
+    #     i.e. exactly the regression being ratcheted. The `<not wired>`
+    #     message was unreachable. (Demonstrated: deleting the call line
+    #     used to end the suite silently mid-run; it now names it.) The
+    #     `|| true` is what keeps that true if a future caller stops using
+    #     a condition context, where `set -e` would apply again.
+    st_line_of() {
+        # $1 = anchor regex, $2 = file. Echoes the 1-based line number of
+        # the first match, or nothing. Never fails the caller.
+        grep -n "$1" "$2" 2>/dev/null | head -1 | cut -d: -f1 || true
+    }
+    st_order_check() {
+        # $1 file, $2 anchor that must come FIRST, $3 anchor that must
+        # come after. Echoes a human diagnosis; returns non-zero on any
+        # violation, including a MISSING anchor (unwired is a failure, not
+        # an excuse to skip).
+        local f="$1" first="$2" second="$3" a b
+        a="$(st_line_of "$first" "$f")"
+        b="$(st_line_of "$second" "$f")"
+        if [ -z "$a" ]; then
+            echo "<not wired>: no line matching /$first/"
+            return 1
+        fi
+        if [ -z "$b" ]; then
+            echo "<anchor missing>: no line matching /$second/"
+            return 1
+        fi
+        if [ "$a" -lt "$b" ]; then
+            echo "ok (line $a < $b)"
+            return 0
+        fi
+        echo "<out of order>: /$first/ at line $a is not before /$second/ at line $b"
+        return 1
+    }
+
+    ST_PRE_ANCHOR='^if ! preflight_push_target'
+    ST_VERIFY_ANCHOR='^bash "\$ROOT/scripts/verify-ci-equivalent.sh"'
+    rc=0
+    out="$(st_order_check "${BASH_SOURCE[0]}" "$ST_PRE_ANCHOR" "$ST_VERIFY_ANCHOR")" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        st_ok "preflight runs BEFORE the verify gate — $out"
+    else
+        st_bad "preflight runs BEFORE the verify gate" "$out"
+    fi
+
+    # P7b. The ratchet's own diagnostics must survive the failure they
+    #      describe. Two fixture copies of this script — one with the call
+    #      line removed, one with the two anchors swapped — must produce a
+    #      NAMED message, not a silent abort. Asserting the message, not
+    #      just a non-zero status: a bare exit 1 is what the bug looked
+    #      like.
+    st_fix_dir="$(mktemp -d -t push-sh-st-ratchet.XXXXXX)"
+    grep -v "$ST_PRE_ANCHOR" "${BASH_SOURCE[0]}" >"$st_fix_dir/unwired.sh" || true
+    rc=0
+    out="$(st_order_check "$st_fix_dir/unwired.sh" "$ST_PRE_ANCHOR" "$ST_VERIFY_ANCHOR")" || rc=$?
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'not wired'; then
+        st_ok "ratchet names an UNWIRED preflight instead of aborting silently"
+    else
+        st_bad "ratchet names an UNWIRED preflight instead of aborting silently" \
+            "rc=$rc out=$out"
+    fi
+
+    printf 'bash "$ROOT/scripts/verify-ci-equivalent.sh"\nif ! preflight_push_target "$@"; then\n' \
+        >"$st_fix_dir/swapped.sh"
+    rc=0
+    out="$(st_order_check "$st_fix_dir/swapped.sh" "$ST_PRE_ANCHOR" "$ST_VERIFY_ANCHOR")" || rc=$?
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'out of order'; then
+        st_ok "ratchet names a preflight moved BELOW the gate, with both line numbers"
+    else
+        st_bad "ratchet names a preflight moved BELOW the gate, with both line numbers" \
+            "rc=$rc out=$out"
+    fi
+    rm -rf "$st_fix_dir"
+
+    # ── classify_push_failure (#3683) ────────────────────────────────
+    # "verification passed but the PUSH FAILED" read as a network or
+    # permissions problem for a failure that never opened a connection.
+
+    # P8. The local refusal.
+    st_log="$(mktemp -t push-sh-st-classify.XXXXXX)"
+    printf 'fatal: The upstream branch of your current branch does not match\n       the name of your current branch.\n' >"$st_log"
+    if [ "$(classify_push_failure "$st_log")" = "local-refusal" ]; then
+        st_ok "upstream-name-mismatch failure classified as a LOCAL refusal"
+    else
+        st_bad "upstream-name-mismatch failure classified as a LOCAL refusal" \
+            "$(classify_push_failure "$st_log")"
+    fi
+
+    # P9. A genuine remote failure must NOT be relabelled as local — the
+    #     misdirection this fixes cuts both ways.
+    printf 'remote: Permission to org/repo.git denied to user.\nfatal: unable to access repository: 403\n' >"$st_log"
+    if [ "$(classify_push_failure "$st_log")" = "remote" ]; then
+        st_ok "permission/transport failure still classified as remote"
+    else
+        st_bad "permission/transport failure still classified as remote" \
+            "$(classify_push_failure "$st_log")"
+    fi
+    rm -f "$st_log"
+
+    # P10. push_with_retry must hand the caller BOTH the kind and git's
+    #      own last words, so the explanation is at the bottom of the log
+    #      instead of ~7700 lines up, above the nextest transcript.
+    rc=0
+    FAKE_PUSH_BEHAVIOR=fail_hard push_with_retry >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ] && [ -n "${PUSH_FAILURE_KIND:-}" ] \
+        && printf '%s' "${PUSH_FAILURE_TAIL:-}" | grep -q 'denied'; then
+        st_ok "push_with_retry exports the failure kind and git's own error tail"
+    else
+        st_bad "push_with_retry exports the failure kind and git's own error tail" \
+            "rc=$rc kind=${PUSH_FAILURE_KIND:-} tail=${PUSH_FAILURE_TAIL:-}"
+    fi
+    unset PUSH_ARGS
 
     # ── push_with_retry ──────────────────────────────────────────────
 
@@ -686,6 +1166,14 @@ fi
 
 ROOT="$(git rev-parse --show-toplevel)"
 
+# Resolve (and validate) the destination FIRST — it costs a git config
+# read, and an unpushable refspec is not worth an ~8-minute gate to
+# discover (#3683). PUSH_ARGS is built here and used unchanged below.
+if ! preflight_push_target "$@"; then
+    exit 1
+fi
+
+echo ""
 echo "▶ Verifying (CI-equivalent) BEFORE opening any push connection…"
 bash "$ROOT/scripts/verify-ci-equivalent.sh"
 
@@ -703,25 +1191,27 @@ export SKIP_CI_VERIFY="$SKIP_REASON"
 # GitHub's idle timeout. Respects any GIT_SSH_COMMAND the caller already set.
 export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o ServerAliveInterval=15 -o ServerAliveCountMax=60 -o TCPKeepAlive=yes"
 
-# Build the git-push argument list: forward explicit args verbatim if the
-# caller passed any; otherwise push the current branch, setting the
-# upstream on first push (a brand-new branch has no tracking ref, and a
-# bare `git push` aborts with "no upstream branch").
-PUSH_ARGS=()
-if [ "$#" -gt 0 ]; then
-    PUSH_ARGS=("$@")
-else
-    branch="$(git rev-parse --abbrev-ref HEAD)"
-    if ! git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-        PUSH_ARGS=(--set-upstream origin "$branch")
-    fi
-fi
+# PUSH_ARGS was built (and validated) by preflight_push_target, above the
+# verifier — an unpushable destination never gets this far (#3683).
 
 echo ""
 if ! push_with_retry "${PUSH_ARGS[@]+"${PUSH_ARGS[@]}"}"; then
     echo "" >&2
-    echo "✗ verification passed but the PUSH FAILED — the branch was NOT updated." >&2
-    echo "  git push did not succeed (after retries where applicable); nothing landed on the remote." >&2
+    if [ "${PUSH_FAILURE_KIND:-}" = "local-refusal" ]; then
+        echo "✗ the push was REFUSED LOCALLY — it never left this machine." >&2
+        echo "  Nothing was sent to the remote and nothing there changed. This is a" >&2
+        echo "  branch/refspec configuration problem, NOT a network or permissions one:" >&2
+        echo "  look at the local branch config below, not at the connection." >&2
+    else
+        echo "✗ verification passed but the PUSH FAILED on the wire — the branch was NOT updated." >&2
+        echo "  git push reached the remote and did not succeed (after retries where" >&2
+        echo "  applicable); nothing landed." >&2
+    fi
+    if [ -n "${PUSH_FAILURE_TAIL:-}" ]; then
+        echo "" >&2
+        echo "  git said:" >&2
+        printf '%s\n' "$PUSH_FAILURE_TAIL" | sed 's/^/    /' >&2
+    fi
     exit 1
 fi
 

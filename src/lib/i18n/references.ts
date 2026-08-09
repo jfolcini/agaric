@@ -214,6 +214,14 @@ export const references: Record<string, string> = {
   'search.recentTitle': 'Recent',
   'search.noResultsHeadline': 'No results',
   'search.noResultsFound': 'No results found. Try different keywords or check your spelling.',
+  // #3315 item 1 — regex mode scans only a bounded window of the newest blocks,
+  // so an empty regex result set does NOT mean the pattern is absent from the
+  // vault. Deliberately quotes no row count: the bound is a backend constant
+  // (`REGEX_PRE_FILTER_CAP`) and a number duplicated here would drift.
+  'search.noResultsRegexScope':
+    'No matches in the scanned range. Regex search only scans your most recent blocks, so older matches are not looked at — add a tag: or path: filter to narrow the scan.',
+  'search.regexScopeNotice':
+    'Regex search scans only your most recent blocks. Matches in older blocks are not included — add a tag: or path: filter to narrow the scan.',
   'search.clearFilters': 'Clear filters',
   'search.loadingMessage': 'Loading...',
   'search.loadMoreButton': 'Load more',

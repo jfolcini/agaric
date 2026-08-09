@@ -45,6 +45,11 @@ jobs:
       pull-requests: write # submit the approving / request-changes review
       issues: read
       id-token: write
+      # #3702: publish the "claude-review findings" check run, which is how the
+      # review's findings become visible to a checks-based merge decision. The
+      # grant is on the default GITHUB_TOKEN, not on the reviewer app token —
+      # the reviewer itself has no tool that can reach the Checks API.
+      checks: write
 
     steps:
       - name: Checkout repository
@@ -113,6 +118,16 @@ jobs:
             - Otherwise, request changes and list what must be fixed:
                 gh pr review ${{ github.event.pull_request.number }} --request-changes --body "<what to fix>"
             Only approve when you are confident the change is safe to merge.
+
+            FINDINGS MUST BE RECOVERABLE (#3702). Enumerate every non-blocking
+            note in the review body itself, under a line ending in a colon such
+            as "Non-blocking notes:". Do NOT write that notes were "filed
+            separately" or "tracked elsewhere" unless you cite each issue
+            number (#NNNN) in the same body — on #3701 that sentence was
+            emitted with nothing filed and three of six notes named, so the
+            other three were unrecoverable, and it is the sentence a merger
+            relies on to conclude nothing was lost. Either cite the numbers or
+            keep the findings inline; an uncited claim is worse than no claim.
           # Least-privilege tool grant. The code-review plugin must READ the
           # PR (gh pr view/diff/checks) and inspect the checkout
           # (Read/Grep/Glob — local, no network), then POST its review
@@ -156,3 +171,80 @@ jobs:
           allowed_bots: 'dependabot[bot]'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
+
+      # ── #3702: make the findings reachable from the check status ────────
+      #
+      # The step above answers "did the review run". This one answers "did the
+      # review find anything", which is the only question that matters at merge
+      # time and the one a green `claude-review` could not distinguish: #3694
+      # merged on a fully green rollup with seven observations — two of them
+      # correctness defects — sitting unread in the approving review's body.
+      #
+      # It publishes a SECOND check run, `claude-review findings`, whose
+      # conclusion is `neutral` when the review said something and `success`
+      # when it did not, with the count in the title. `neutral` does not fail a
+      # required check, so the deliberately non-blocking policy is unchanged —
+      # but non-blocking stops meaning invisible to the merge path.
+      #
+      # Uses the default GITHUB_TOKEN (the reviewer app token is scoped to
+      # contents:read + pull-requests:write and cannot reach the Checks API).
+      - name: Publish the review's findings as a check status
+        if: always()
+        # A fork PR's GITHUB_TOKEN is read-only, so the POST fails there; the
+        # step summary written below is the durable copy. This step must never
+        # be what fails the review job.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          rm -f check-run.json findings.md
+          gh api "repos/$REPO/pulls/$PR_NUMBER/reviews?per_page=100" > reviews.json || echo '[]' > reviews.json
+          gh api "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" > comments.json || echo '[]' > comments.json
+          node scripts/summarize-review-findings.mjs \
+            --reviews reviews.json \
+            --comments comments.json \
+            --head-sha "$HEAD_SHA" \
+            --check-payload check-run.json \
+            --summary-file findings.md || true
+
+          # The step runs without `-e` and with `continue-on-error`, so a
+          # non-zero exit above used to leave `check-run.json` unwritten, the
+          # POST failing, and NO check run published — green by omission, with
+          # nothing marking that the signal was meant to be there. That is this
+          # workflow committing the exact defect it exists to fix, so the
+          # fallback is mandatory rather than defensive.
+          if [ ! -s check-run.json ]; then
+            {
+              echo "### claude-review findings"
+              echo
+              echo "The findings summariser did not produce a payload, so **the review was"
+              echo "not checked**. Read it manually before merging. Reported as \`neutral\`"
+              echo "rather than omitted: a missing check is indistinguishable from a passing"
+              echo "one in the rollup, which is the failure #3702 is about."
+            } > findings.md
+            jq -n --arg sha "$HEAD_SHA" --rawfile body findings.md \
+              '{name: "claude-review findings", head_sha: $sha, status: "completed",
+                conclusion: "neutral",
+                output: {title: "Findings summariser produced no result — the review was NOT checked",
+                         summary: $body}}' > check-run.json
+          fi
+
+          cat findings.md >> "$GITHUB_STEP_SUMMARY"
+
+          # A failed POST (fork PRs get a read-only token) leaves no check run
+          # either. Nothing can be done about that here, but it must not pass
+          # unremarked — the step summary is then the only copy and has to say
+          # so out loud.
+          if ! gh api -X POST "repos/$REPO/check-runs" --input check-run.json > /dev/null; then
+            {
+              echo
+              echo "> **The \`claude-review findings\` check run could NOT be published**"
+              echo "> (the Checks API POST failed — expected on a fork PR, where the token is"
+              echo "> read-only). No findings check exists on this commit; the block above is"
+              echo "> the only copy."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

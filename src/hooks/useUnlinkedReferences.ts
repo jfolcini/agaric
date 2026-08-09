@@ -12,7 +12,10 @@
  * deliberate and called out inline:
  *  - NO `invalidationKey` in the query key (the old `fetchGroups` deps were
  *    `[pageId, filters, sort, t, currentSpaceId]` — no `useBlockPropertyEvents`),
- *    so there is no monotonic-key growth and no custom `gcTime` is needed.
+ *    so there is no monotonic-key growth. #3316 item 2: that is NOT a reason to
+ *    skip a bounded `gcTime` — `pageId` is in the key, so a session that visits
+ *    N pages mints N entries. The hook now sets the same finite `gcTime` as
+ *    `useBacklinkGroups`.
  *  - `totalCount`/`truncated` derive from the LAST page, not the first — the old
  *    component set BOTH unconditionally on every fetch (outside the cursor
  *    branch), unlike LinkedReferences' first-page-only rule.
@@ -35,16 +38,57 @@ import type {
 } from '@/lib/tauri'
 import { listUnlinkedReferences, paginationLimit } from '@/lib/tauri'
 
+/**
+ * Groups requested per page once the panel is open. Unchanged from the value
+ * this hook has always sent (`paginationLimit(20)`).
+ */
+const EXPANDED_GROUP_LIMIT = paginationLimit(20)
+/**
+ * #3316 item 2 — groups requested while the panel is collapsed. One, not zero:
+ * the backend rejects a limit of 0, and the counts the panel needs
+ * (`total_count` / `filtered_count`) are computed over the whole match set
+ * before pagination, so a single group is enough to keep the header label and
+ * the `return null` decision exact.
+ */
+const COLLAPSED_GROUP_LIMIT = paginationLimit(1)
+
 export interface UseUnlinkedReferencesParams {
   pageId: string
   filters: BacklinkFilter[]
   sort: BacklinkSort | null
   spaceId: string | null
+  /**
+   * #3316 item 2 — whether the panel is currently collapsed. `UnlinkedReferences`
+   * is mounted for EVERY page (PageEditor) and starts collapsed (and re-collapses
+   * on every `pageId` change), so the full 20-group page was fetched on every
+   * page open for a list nobody had opened. The panel still needs `totalCount`
+   * to decide whether to render at all, and the backend computes
+   * `total_count` / `filtered_count` over the WHOLE FTS match set *before*
+   * pagination (`eval_unlinked_references` steps 5 and 7a in
+   * `agaric-store/src/backlink/grouped.rs`), so a collapsed panel can ask for a
+   * single group and still receive exact counts. That skips `sort_ids` +
+   * `fetch_block_rows_by_ids` for 19 of the 20 groups — each up to
+   * `MAX_BLOCKS_PER_GROUP = 200` rows — plus their JSON IPC serialization. The
+   * FTS scan and root-page resolve are unavoidable (they produce the count).
+   *
+   * Part of the query key, so expanding the panel refetches with the full page.
+   * Defaults to `false`, leaving any other caller on the full page.
+   */
+  collapsed?: boolean | undefined
 }
 
 export interface UseUnlinkedReferencesResult {
   groups: BacklinkGroup[]
   totalCount: number
+  /**
+   * #3316 item 1 — the POST-filter block count the backend already returns
+   * next to `total_count` (`filtered_count`: the post-filter, post-grouping
+   * sum in `eval_unlinked_references`). Previously dropped by this hook, which
+   * forced the call site to pass `filteredCount={totalCount}` so the
+   * "Showing N of M backlinks" line could never show two different numbers.
+   * Derived from the LAST page, for the same reason `totalCount` is.
+   */
+  filteredCount: number
   truncated: boolean
   /** Initial load only (`isLoading`); load-more is surfaced via `isFetchingMore`. */
   loading: boolean
@@ -63,15 +107,22 @@ export interface UseUnlinkedReferencesResult {
 export function useUnlinkedReferences(
   params: UseUnlinkedReferencesParams,
 ): UseUnlinkedReferencesResult {
-  const { pageId, filters, sort, spaceId } = params
+  const { pageId, filters, sort, spaceId, collapsed = false } = params
+
+  // #3316 item 2: a collapsed panel only needs the counts, so ask for a single
+  // group instead of the full 20-group page. See `collapsed` on the params type
+  // for why the counts survive a smaller limit.
+  const groupLimit = collapsed ? COLLAPSED_GROUP_LIMIT : EXPANDED_GROUP_LIMIT
 
   // Exported so the optimistic "Link it" removal can target this exact cache
   // entry. NOTE: unlike `useBacklinkGroups`, there is NO `invalidationKey`
   // here — the old `fetchGroups` never depended on `useBlockPropertyEvents`, so
-  // the key is stable across property changes and needs no bounded `gcTime`.
+  // the key is stable across property changes. `groupLimit` IS part of the key
+  // so expanding the panel refetches the full page rather than showing the
+  // single group the collapsed fetch returned.
   const queryKey = useMemo(
-    () => ['unlinkedReferences', spaceId, pageId, filters, sort],
-    [spaceId, pageId, filters, sort],
+    () => ['unlinkedReferences', spaceId, pageId, filters, sort, groupLimit],
+    [spaceId, pageId, filters, sort, groupLimit],
   )
 
   const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, isError } =
@@ -85,7 +136,7 @@ export function useUnlinkedReferences(
               filters: filters.length > 0 ? filters : null,
               sort,
               cursor: pageParam ?? null,
-              limit: paginationLimit(20),
+              limit: groupLimit,
               spaceId,
             })
           } catch (err) {
@@ -107,6 +158,15 @@ export function useUnlinkedReferences(
         // the client's `staleTime: Infinity` (no time-based refetch) but force a
         // fresh fetch whenever the panel mounts.
         refetchOnMount: 'always',
+        // #3316 item 2: override the client's `gcTime: Infinity` for THIS hook,
+        // matching `useBacklinkGroups.ts` and `useSearchResults.ts`. The module
+        // header used to argue no bound was needed because there is no
+        // `invalidationKey` in the key — but `pageId` (and now `groupLimit`) are
+        // in the key too, so a session that visits N pages mints N entries that
+        // an infinite `gcTime` would never collect. `staleTime: Infinity` is
+        // still inherited, so this changes nothing about refetch timing: only
+        // the eviction of superseded, observer-less entries.
+        gcTime: 5 * 60 * 1000,
       },
       queryClient,
     )
@@ -142,6 +202,11 @@ export function useUnlinkedReferences(
   // `setTruncated(resp.truncated)` sit OUTSIDE the cursor branch), so the value
   // shown is always the most-recently-fetched page's — i.e. the last page.
   const totalCount = data?.pages.at(-1)?.total_count ?? 0
+  // #3316 item 1: `filtered_count` follows the same last-page rule. Unlike the
+  // linked-backlink path it is recomputed in full on EVERY page (it is derived
+  // from the whole post-filter match set, not the paginated slice), so the last
+  // page carries the same value as the first.
+  const filteredCount = data?.pages.at(-1)?.filtered_count ?? 0
   const truncated = data?.pages.at(-1)?.truncated ?? false
 
   const loadMore = useCallback(() => {
@@ -151,6 +216,7 @@ export function useUnlinkedReferences(
   return {
     groups,
     totalCount,
+    filteredCount,
     truncated,
     loading: isLoading,
     hasMore: hasNextPage,

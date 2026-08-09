@@ -37,6 +37,85 @@ pub(super) const CLEANUP_BATCH_SLEEP_MS: u64 = 10;
 ///   separate boot-time sweep of its own.
 const GC_QUARANTINE_PREFIX: &str = ".agaric-gc-";
 
+/// #3325 — the filename shape both attachment-bytes writers leave on disk
+/// while a write is still in flight: `<final name>.tmp-<32 lower-case hex>`.
+///
+/// `agaric_sync::sync_files::write_attachment_streaming` (the sync receive
+/// path) and `write_attachment_file` (the local `add_attachment` path) both
+/// build their temp as a SIBLING of the final path — which they must, so the
+/// publishing `rename` is same-filesystem and therefore atomic. Since every
+/// attachment's `fs_path` is `attachments/<storage_id>`, that sibling lands
+/// *inside* this GC's walk root, and it is unreferenced by construction: no
+/// `attachments` row will ever name a temp, so neither the bulk snapshot nor
+/// the write-pool re-check can vouch for one. Walking them as ordinary
+/// candidates therefore misclassifies every in-flight write as an orphan.
+const TRANSFER_TEMP_MARKER: &str = ".tmp-";
+
+/// Length of the hex suffix in [`TRANSFER_TEMP_MARKER`]'s shape — a
+/// `u128::from(Ulid)` rendered `{:032x}`.
+const TRANSFER_TEMP_HEX_LEN: usize = 32;
+
+/// How stale a transfer temp must be before the GC will reclaim it.
+///
+/// Skipping temps outright would trade one leak for another: `Drop` on
+/// `TempAttachmentWriter` unlinks the temp on every ordinary exit path, but
+/// never on `SIGKILL` / OOM-kill / power loss, and nothing else on the system
+/// reclaims one. (Contrast `sweep_orphaned_snapshot_temps`, which can delete
+/// its own temps unconditionally *because* it runs once at boot before the
+/// daemon accepts connections — a luxury this GC does not have: it is enqueued
+/// at boot, every 24 h, and after compaction, all of them concurrent with live
+/// sync.) So we age-gate instead.
+///
+/// The bound comes from the protocol, not from taste. Every receive on the
+/// file-transfer path is wrapped in `transport::RECV_TIMEOUT`, so an in-flight
+/// temp cannot go longer than that without a frame arriving (which retouches
+/// its mtime) or the transfer erroring out and `Drop` unlinking it. A live
+/// temp's mtime is therefore always younger than `RECV_TIMEOUT`. Twenty times
+/// that is the margin for a slow or coarse-granularity filesystem clock, and
+/// costs only that a crash-stranded temp is reclaimed by a later pass rather
+/// than the very next one.
+const TRANSFER_TEMP_REAP_AFTER: std::time::Duration =
+    std::time::Duration::from_secs(agaric_sync::transport::RECV_TIMEOUT.as_secs() * 20);
+
+/// Does this file name have the in-flight-transfer temp shape?
+///
+/// Deliberately exact rather than a loose `contains(".tmp")`: the GC's own
+/// [`GC_QUARANTINE_PREFIX`] files also end in `.tmp`, and #3519 depends on a
+/// stranded quarantine file being walked and reclaimed as an orphan by the
+/// next pass. Requiring the marker to be followed by exactly
+/// [`TRANSFER_TEMP_HEX_LEN`] lower-case hex digits — the `{:032x}` the writers
+/// emit — keeps the two schemes disjoint, and keeps a user-named file like
+/// `notes.tmp-draft` out of the exemption.
+fn is_transfer_temp(file_name: &str) -> bool {
+    let Some((stem, suffix)) = file_name.rsplit_once(TRANSFER_TEMP_MARKER) else {
+        return false;
+    };
+    !stem.is_empty()
+        && suffix.len() == TRANSFER_TEMP_HEX_LEN
+        && suffix
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Has this transfer temp been sitting untouched long enough that no live
+/// writer can still own it?
+///
+/// Answers conservatively — an unreadable mtime, or one the clock places in
+/// the future, yields `false` (keep the file). Being wrong in this direction
+/// costs one abandoned temp's disk until a later pass; being wrong in the
+/// other destroys a transfer in flight.
+async fn transfer_temp_is_abandoned(path: &Path) -> bool {
+    let Ok(meta) = tokio::fs::metadata(path).await else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        return false;
+    };
+    modified
+        .elapsed()
+        .is_ok_and(|age| age >= TRANSFER_TEMP_REAP_AFTER)
+}
+
 /// Build the quarantine sibling for `full_path`. The ULID makes the name
 /// unique per candidate, so two files quarantined in the same directory (even
 /// across concurrent passes) cannot collide and clobber each other's bytes.
@@ -220,6 +299,25 @@ async fn gc_race_rendezvous(relative_str: &str) {
 /// file — and, on the failure path, orphan bytes surviving one extra pass.
 /// Nothing is serialised, and the writer is never held across I/O.
 ///
+/// # In-flight transfer temps (#3325)
+///
+/// Everything above reasons about a file that either is or is not referenced
+/// by a row. A `*.tmp-<hex>` being written right now is neither: it is a file
+/// whose row does not exist *yet* and, by design, will never name it — the
+/// `attachments` row points at the final path, and the temp only becomes that
+/// path via `rename` once the last byte has landed. So no query this pass can
+/// run vouches for it, the bulk snapshot misses it, the write-pool re-check
+/// misses it, and even the #3519 post-quarantine confirmation misses it. The
+/// pass would take the bytes out from under an active writer — on Unix the
+/// writer keeps filling the now-unreachable inode, so the whole transfer is
+/// silently discarded and its publishing `rename` fails.
+///
+/// Such names are therefore skipped in the walk, subject to
+/// [`TRANSFER_TEMP_REAP_AFTER`] so a temp stranded by a process kill is still
+/// reclaimed. See [`is_transfer_temp`] for why the match is exact rather than
+/// a loose `.tmp` test — the quarantine files above end in `.tmp` too, and
+/// #3519 depends on those *being* collected.
+///
 /// Semantics are preserved exactly: the old query had **no**
 /// `deleted_at IS NULL` predicate, so it matched soft-deleted rows too;
 /// the bulk `SELECT fs_path FROM attachments` likewise loads every row
@@ -295,6 +393,11 @@ pub(crate) async fn cleanup_orphaned_attachments(
     // `CLEANUP_BATCH_SIZE` so a vault with thousands of attachments
     // does not block the materializer for seconds.
     let mut files: Vec<PathBuf> = Vec::new();
+    // #3325: in-flight transfer temps skipped by the walk. Counted, not just
+    // logged, because "no files to consider" and "the only files here are
+    // being written right now" are different states and the pass must not
+    // report the second as the first.
+    let mut exempted_temps: u64 = 0;
     let mut dir_stack: Vec<PathBuf> = vec![attachments_root.clone()];
     while let Some(dir) = dir_stack.pop() {
         let mut rd = match tokio::fs::read_dir(&dir).await {
@@ -326,7 +429,25 @@ pub(crate) async fn cleanup_orphaned_attachments(
                     if file_type.is_dir() {
                         dir_stack.push(path);
                     } else if file_type.is_file() {
-                        files.push(path);
+                        // #3325: an in-flight `*.tmp-<hex>` is a write in
+                        // progress, not an orphan. It can never be referenced
+                        // — the row naming it is committed only after the
+                        // publishing rename — so every check this pass makes
+                        // would classify it as garbage and destroy a transfer
+                        // mid-flight. Exempt it unless it is old enough that
+                        // no live writer could still own it, which is how a
+                        // temp stranded by a process kill still gets reclaimed.
+                        if is_transfer_temp(&entry.file_name().to_string_lossy())
+                            && !transfer_temp_is_abandoned(&path).await
+                        {
+                            exempted_temps += 1;
+                            tracing::debug!(
+                                path = %path.display(),
+                                "cleanup_orphaned_attachments: skipping an in-flight transfer temp (#3325)"
+                            );
+                        } else {
+                            files.push(path);
+                        }
                     }
                     // Symlinks and other entry types are intentionally
                     // ignored: the attachment writer only
@@ -345,26 +466,6 @@ pub(crate) async fn cleanup_orphaned_attachments(
             }
         }
     }
-
-    // Safety check: even if the directory exists, it may be empty
-    // (e.g. all attachments were already deleted). Treat as no-op so
-    // a pathological "vault never seeded" install never accidentally
-    // touches anything.
-    if files.is_empty() {
-        tracing::debug!(
-            path = %attachments_root.display(),
-            "cleanup_orphaned_attachments: attachments directory empty — no-op"
-        );
-        return Ok(());
-    }
-
-    let mut scanned: u64 = 0;
-    let mut unlinked: u64 = 0;
-    let mut errors: u64 = 0;
-    // #3519: candidates whose bytes were quarantined and then handed back
-    // because a reference appeared after the orphan decision. A non-zero
-    // value is the scheme earning its keep, not a fault.
-    let mut restored: u64 = 0;
 
     // #1993 Phase 1 — refcount-aware blob reconciliation. The file walk below
     // already implements the refcount-on-demand contract for BYTES: a blob
@@ -393,6 +494,14 @@ pub(crate) async fn cleanup_orphaned_attachments(
     // unreferenced) after this sweep; this bulk pass additionally covers rows
     // whose `on_disk_path` is not on disk at all and therefore never walked.
     //
+    // #3325 — it also runs BEFORE the "nothing to walk" early return, not
+    // after. Rows whose path is not on disk at all are exactly the rows an
+    // empty walk leaves behind, so the case where this sweep is the ONLY thing
+    // that can help is the case the early return used to skip. The #3325 temp
+    // exemption gave that hole a second entrance (a directory holding only
+    // in-flight temps now walks to zero candidates), which is what made it
+    // worth closing rather than noting.
+    //
     // The attachment_blobs table (migration 0094) is not yet in the offline
     // .sqlx cache, so use the runtime form here.
     // dynamic-sql: static SQL; attachment_blobs is absent from the .sqlx cache.
@@ -412,6 +521,29 @@ pub(crate) async fn cleanup_orphaned_attachments(
             0
         }
     };
+
+    // Safety check: even if the directory exists, there may be nothing to
+    // consider — every attachment already deleted, or (since #3325) every file
+    // present being written right now. Either way there is no candidate to
+    // walk, so return; the blob sweep above has already run, which is the part
+    // that still had work to do.
+    if files.is_empty() {
+        tracing::debug!(
+            path = %attachments_root.display(),
+            exempted_temps,
+            pruned_blobs,
+            "cleanup_orphaned_attachments: no walkable candidates — no-op"
+        );
+        return Ok(());
+    }
+
+    let mut scanned: u64 = 0;
+    let mut unlinked: u64 = 0;
+    let mut errors: u64 = 0;
+    // #3519: candidates whose bytes were quarantined and then handed back
+    // because a reference appeared after the orphan decision. A non-zero
+    // value is the scheme earning its keep, not a fault.
+    let mut restored: u64 = 0;
 
     for chunk in files.chunks(CLEANUP_BATCH_SIZE) {
         for full_path in chunk {
@@ -657,7 +789,8 @@ pub(crate) async fn cleanup_orphaned_attachments(
         restored,
         errors,
         pruned_blobs,
-        "cleanup_orphaned_attachments: scanned {scanned} files, unlinked {unlinked} orphans, restored {restored} raced, {errors} errors, pruned {pruned_blobs} blob rows"
+        exempted_temps,
+        "cleanup_orphaned_attachments: scanned {scanned} files, unlinked {unlinked} orphans, restored {restored} raced, {errors} errors, pruned {pruned_blobs} blob rows, skipped {exempted_temps} in-flight temps"
     );
 
     Ok(())

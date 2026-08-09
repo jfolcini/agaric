@@ -3575,10 +3575,19 @@ export type StatusInfo = {
 	 *  `fg_high_water`.
 	 */
 	bg_high_water: number,
+	/**
+	 *  Foreground tasks that exhausted their in-memory retry budget without
+	 *  succeeding. #3382 folded the former `fg_panics` field in here: under
+	 *  `panic = "abort"` a handler panic aborts the process, so a separate
+	 *  panic counter reads zero in every shipped build regardless of what
+	 *  happened.
+	 */
 	fg_errors: number,
+	/**
+	 *  Background twin of `fg_errors`, likewise inclusive of the panic arm
+	 *  that only debug/test builds can reach.
+	 */
 	bg_errors: number,
-	fg_panics: number,
-	bg_panics: number,
 	/**
 	 *  Foreground `ApplyOp` / `BatchApplyOps` tasks dropped after the
 	 *  100ms in-memory retry exhausted (C-2a). Surfaces

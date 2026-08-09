@@ -116,10 +116,6 @@ export const block: Record<string, string> = {
   'status.foregroundErrorsMessage_other': '{{count}} foreground errors',
   'status.backgroundErrorsMessage_one': '{{count}} background error',
   'status.backgroundErrorsMessage_other': '{{count}} background errors',
-  'status.foregroundPanicsMessage_one': '{{count}} foreground panic',
-  'status.foregroundPanicsMessage_other': '{{count}} foreground panics',
-  'status.backgroundPanicsMessage_one': '{{count}} background panic',
-  'status.backgroundPanicsMessage_other': '{{count}} background panics',
   'status.cacheStaleHint': 'Cache data may be stale. Restart the app to retry.',
   'status.bgStaleMessage_one':
     '{{count}} background cache rebuild pending — search, agenda, and counts may be briefly stale.',

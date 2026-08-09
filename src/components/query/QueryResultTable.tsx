@@ -38,6 +38,15 @@ export interface QueryResultTableProps {
   /** Per-block custom-property values (blockId → key → display value), used to
    * fill custom-property columns. Defaults to empty. */
   customProps?: Map<string, Map<string, string>> | undefined
+  /**
+   * #3315 item 3 — `true` when more pages of the result set remain unloaded.
+   * The sort is client-side over `results` (see `useQuerySorting`, which has no
+   * pagination notion), so while this is set a header click does NOT sort the
+   * column: it sorts the loaded prefix. Reflected in each header's accessible
+   * name so a screen-reader user is not told "Sort by Priority" for an
+   * operation that cannot see rows 51+.
+   */
+  partial?: boolean | undefined
 }
 
 export function QueryResultTable({
@@ -50,6 +59,7 @@ export function QueryResultTable({
   onNavigate,
   resolveBlockTitle,
   customProps,
+  partial = false,
 }: QueryResultTableProps): React.ReactElement {
   const { t } = useTranslation()
   return (
@@ -68,7 +78,11 @@ export function QueryResultTable({
                 <button
                   type="button"
                   className="touch-target flex w-full items-center gap-1 px-3 py-1.5 text-left select-none hover:bg-muted/40 transition-colors focus-ring-visible"
-                  aria-label={t('queryResult.sortBy', { column: col.label })}
+                  aria-label={
+                    partial
+                      ? t('queryResult.sortByPartial', { column: col.label })
+                      : t('queryResult.sortBy', { column: col.label })
+                  }
                   onClick={() => onColumnSort(col.key)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {

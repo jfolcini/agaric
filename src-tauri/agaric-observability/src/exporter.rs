@@ -29,6 +29,16 @@
 //! decision has already been made. The format below faithfully serializes the
 //! attribute keys/values it is given.
 //!
+//! #3317 — "enforced at the instrumentation sites" was a convention with no
+//! mechanism behind it until that issue, and it had already been broken
+//! (`import_markdown_with_progress` recorded the user's page title into a
+//! `page_title` attribute, which this exporter duly wrote to `traces/*.log`).
+//! The mechanism now exists: `agaric::commands::observability`'s
+//! `span_fields_stay_on_the_pii_allowlist` test scans every `#[instrument]`
+//! field and `Span::record` key in the workspace against an opaque-only
+//! allowlist. It does NOT cover the bridged log records below, whose
+//! attributes are arbitrary `tracing` event fields.
+//!
 //! # Graceful degradation
 //!
 //! [`build_file_exporter`] returns `None` when `<log_dir>/traces/` cannot be
@@ -280,8 +290,21 @@ pub(crate) fn sanitize_inline(s: &str) -> String {
 /// `target=<module-path>\tbody=<message>\t<attr-key>=<attr-val>…`. `trace` /
 /// `span` are the active span's ids (`-` when the event fired outside any span)
 /// — this is the log↔trace correlation. Bodies/attributes mirror what already
-/// goes to `agaric.log`; the same redaction pass that covers the human log
-/// (M7) covers this file, for defense-in-depth.
+/// goes to `agaric.log`.
+///
+/// # Redaction (#3317 — this doc used to be wrong)
+///
+/// It previously claimed "the same redaction pass that covers the human log
+/// (M7) covers this file, for defense-in-depth". It did not. The bug-report
+/// redactor dispatched per line on "does this parse as JSON?": `agaric.log` is
+/// JSON so it took the deny-by-default path, while these tab-separated
+/// `key=value` records fell through to a four-needle allow-list that passes all
+/// other text verbatim. A `tracing::info!(page = %page_title, …)` that became
+/// `[REDACTED]` in `agaric.log` was bundled here in the clear. The bundle now
+/// declares this format (`LineFormat::OtelSignal` in `commands::bug_report`)
+/// and applies a deny-by-default pass over every VALUE on the line, so the
+/// claim holds — but note the file itself is still written verbatim: redaction
+/// is a property of the BUNDLE, not of this sink.
 fn format_log_record(record: &SdkLogRecord) -> String {
     use std::fmt::Write as _;
 

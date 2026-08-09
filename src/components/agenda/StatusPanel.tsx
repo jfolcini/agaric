@@ -36,19 +36,20 @@ function queueHealthClasses(depth: number): string {
 }
 
 /**
- * Assemble the comma-joined error/panic summary line. Pure helper so the
- * component body doesn't carry the four-way `&&` chain (keeps its
- * cyclomatic complexity under the lint ceiling).
+ * Assemble the comma-joined error summary line. Pure helper so the component
+ * body doesn't carry the `&&` chain (keeps its cyclomatic complexity under
+ * the lint ceiling).
+ *
+ * #3382: the former `fgPanics` / `bgPanics` terms are gone with the counters
+ * that fed them. `panic = "abort"` in the release profile means a handler
+ * panic aborts the process, so those two numbers were zero in every shipped
+ * build no matter what happened — a panel that reassured rather than reported.
+ * A panic that a debug build can still observe now arrives as an error.
  */
-function errorSummaryText(
-  counts: { fgErrors: number; bgErrors: number; fgPanics: number; bgPanics: number },
-  t: TFunction,
-): string {
+function errorSummaryText(counts: { fgErrors: number; bgErrors: number }, t: TFunction): string {
   return [
     counts.fgErrors > 0 && t('status.foregroundErrorsMessage', { count: counts.fgErrors }),
     counts.bgErrors > 0 && t('status.backgroundErrorsMessage', { count: counts.bgErrors }),
-    counts.fgPanics > 0 && t('status.foregroundPanicsMessage', { count: counts.fgPanics }),
-    counts.bgPanics > 0 && t('status.backgroundPanicsMessage', { count: counts.bgPanics }),
   ]
     .filter(Boolean)
     .join(', ')
@@ -256,9 +257,7 @@ export function StatusPanel(): React.ReactElement {
 
   const fgErrors = status?.fg_errors ?? 0
   const bgErrors = status?.bg_errors ?? 0
-  const fgPanics = status?.fg_panics ?? 0
-  const bgPanics = status?.bg_panics ?? 0
-  const hasErrors = fgErrors > 0 || bgErrors > 0 || fgPanics > 0 || bgPanics > 0
+  const hasErrors = fgErrors > 0 || bgErrors > 0
 
   const syncState = useSyncStore((s) => s.state)
   const syncError = useSyncStore((s) => s.error)
@@ -373,7 +372,7 @@ export function StatusPanel(): React.ReactElement {
                 <div className="status-panel-errors mt-4 flex flex-col gap-1 rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
                   <div className="flex items-start gap-2">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <p>{errorSummaryText({ fgErrors, bgErrors, fgPanics, bgPanics }, t)}</p>
+                    <p>{errorSummaryText({ fgErrors, bgErrors }, t)}</p>
                   </div>
                   {bgErrors > 0 && (
                     <p className="ml-6 text-xs text-muted-foreground">

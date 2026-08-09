@@ -21,6 +21,16 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+
+// #3316 item 3 — the reference panels now window each expanded group's rows
+// through `@tanstack/react-virtual`. jsdom gives the group's scroll container
+// zero height, so the real virtualizer collapses the window to zero rows and
+// every row assertion below would find nothing. The shared mock lays out all
+// rows, keeping these tests about behaviour rather than about jsdom layout.
+// The windowing itself is pinned by `LinkedReferences.virtualization.test.tsx`.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
+
 import { t } from '@/lib/i18n'
 
 // `usePropertyKeysCache` resolves through `propertyKeysQueryFn`
@@ -419,6 +429,41 @@ describe('UnlinkedReferences', () => {
     expect(screen.getByText('second block content')).toBeInTheDocument()
   })
 
+  // #3316 item 3 — this panel default-expands EVERY group, so before windowing
+  // a hub page committed 20 groups x up to MAX_BLOCKS_PER_GROUP (200) rows in
+  // one synchronous render, directly above the page editor. The rows must now
+  // flow through the shared windowed list; the contract is visible on each row
+  // as an absolute virtual offset plus the `data-index` `measureElement` reads.
+  it('#3316 item 3: rows carry the virtualization contract (offset + data-index)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [
+        makeGroup('P1', 'Page One', [
+          { id: 'B1', content: 'first block content' },
+          { id: 'B2', content: 'second block content' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('first block content')
+
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-backlink-item]'))
+    expect(rows).toHaveLength(2)
+    expect(rows.map((r) => r.dataset['index'])).toEqual(['0', '1'])
+    for (const row of rows) {
+      expect(row.style.position).toBe('absolute')
+      expect(row.style.transform).toMatch(/^translateY\(\d+px\)$/)
+    }
+  })
+
   // 6. "Link it" button calls editBlock with correct content
   it('"Link it" calls editBlock with correct content', async () => {
     const user = userEvent.setup()
@@ -559,11 +604,11 @@ describe('UnlinkedReferences', () => {
       filtered_count: 2,
       truncated: false,
     }
-    let callCount = 0
-    mockedListUnlinked.mockImplementation(async () => {
-      callCount++
-      return callCount === 1 ? page1 : page2
-    })
+    // #3316 item 2: key the stub on the CURSOR, not on the call count. A
+    // collapsed panel now issues its own cheap counts-only fetch (limit 1), and
+    // expanding re-keys the query, so "page 1" is no longer literally the first
+    // call.
+    mockedListUnlinked.mockImplementation(async (args) => (args.cursor == null ? page1 : page2))
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
@@ -623,11 +668,8 @@ describe('UnlinkedReferences', () => {
       filtered_count: 2,
       truncated: false,
     }
-    let callCount = 0
-    mockedListUnlinked.mockImplementation(async () => {
-      callCount++
-      return callCount === 1 ? page1 : page2
-    })
+    // #3316 item 2: cursor-keyed, not call-count-keyed — see the load-more test.
+    mockedListUnlinked.mockImplementation(async (args) => (args.cursor == null ? page1 : page2))
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 

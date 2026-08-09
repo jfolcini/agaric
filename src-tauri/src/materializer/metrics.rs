@@ -42,10 +42,21 @@ pub struct QueueMetrics {
     /// last metrics-snapshot dump. Same windowed-reset semantics as
     /// `fg_high_water`.
     pub bg_high_water: AtomicU64,
+    /// Foreground tasks that exhausted their in-memory retry budget
+    /// without succeeding — including the ones that failed by panicking.
+    ///
+    /// #3382: there is deliberately NO `fg_panics` companion. `[profile.release]`
+    /// sets `panic = "abort"`, so a handler panic tears the process down before
+    /// any counter can be written; a dedicated panic counter could only ever
+    /// read zero in a shipped build, and an operator auditing panic rates would
+    /// read that zero as health. The unwind arm still exists for debug/test
+    /// builds (`panic = "unwind"`), and a panic there is counted here, as the
+    /// failure it is. See #3295 for the separate question of whether the
+    /// panic-isolation machinery itself should survive `panic = "abort"`.
     pub fg_errors: AtomicU64,
+    /// Background twin of [`Self::fg_errors`] — see there for why panics are
+    /// folded in rather than counted separately.
     pub bg_errors: AtomicU64,
-    pub fg_panics: AtomicU64,
-    pub bg_panics: AtomicU64,
     /// Foreground `ApplyOp` / `BatchApplyOps` tasks dropped after the
     /// 100ms in-memory retry exhausted (C-2a).
     ///
@@ -307,8 +318,6 @@ impl Default for QueueMetrics {
             bg_high_water: AtomicU64::new(0),
             fg_errors: AtomicU64::new(0),
             bg_errors: AtomicU64::new(0),
-            fg_panics: AtomicU64::new(0),
-            bg_panics: AtomicU64::new(0),
             fg_apply_dropped: AtomicU64::new(0),
             fg_apply_dropped_persisted: AtomicU64::new(0),
             bg_dropped: AtomicU64::new(0),
@@ -344,10 +353,15 @@ pub struct StatusInfo {
     /// metrics-snapshot window. Same windowed-reset semantics as
     /// `fg_high_water`.
     pub bg_high_water: u64,
+    /// Foreground tasks that exhausted their in-memory retry budget without
+    /// succeeding. #3382 folded the former `fg_panics` field in here: under
+    /// `panic = "abort"` a handler panic aborts the process, so a separate
+    /// panic counter reads zero in every shipped build regardless of what
+    /// happened.
     pub fg_errors: u64,
+    /// Background twin of `fg_errors`, likewise inclusive of the panic arm
+    /// that only debug/test builds can reach.
     pub bg_errors: u64,
-    pub fg_panics: u64,
-    pub bg_panics: u64,
     /// Foreground `ApplyOp` / `BatchApplyOps` tasks dropped after the
     /// 100ms in-memory retry exhausted (C-2a). Surfaces
     /// silent materializer divergence: a non-zero value means an

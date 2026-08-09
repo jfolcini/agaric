@@ -241,14 +241,16 @@ describe('StatusPanel', () => {
     vi.useRealTimers()
   })
 
-  describe('error/panic section', () => {
-    it('renders when error and panic counts are non-zero', async () => {
+  // #3382: the panel used to carry `fg_panics` / `bg_panics` alongside the
+  // error counts. Those counters were deleted — `panic = "abort"` in the
+  // release profile guarantees they read zero in a shipped build — so a panic
+  // that a debug build can still observe now surfaces as an error here.
+  describe('error section', () => {
+    it('renders when error counts are non-zero', async () => {
       mockedInvoke.mockResolvedValue({
         ...mockStatus,
         fg_errors: 2,
-        bg_errors: 0,
-        fg_panics: 1,
-        bg_panics: 3,
+        bg_errors: 3,
         fg_high_water: 0,
         bg_high_water: 0,
       })
@@ -256,7 +258,7 @@ describe('StatusPanel', () => {
       render(<StatusPanel />)
 
       expect(
-        await screen.findByText('2 foreground errors, 1 foreground panic, 3 background panics'),
+        await screen.findByText('2 foreground errors, 3 background errors'),
       ).toBeInTheDocument()
     })
 
@@ -264,25 +266,21 @@ describe('StatusPanel', () => {
       mockedInvoke.mockResolvedValue({
         ...mockStatus,
         fg_errors: 1,
-        bg_errors: 0,
-        fg_panics: 0,
-        bg_panics: 1,
+        bg_errors: 1,
         fg_high_water: 0,
         bg_high_water: 0,
       })
 
       render(<StatusPanel />)
 
-      expect(await screen.findByText('1 foreground error, 1 background panic')).toBeInTheDocument()
+      expect(await screen.findByText('1 foreground error, 1 background error')).toBeInTheDocument()
     })
 
-    it('is hidden when all error and panic counts are zero', async () => {
+    it('is hidden when all error counts are zero', async () => {
       mockedInvoke.mockResolvedValue({
         ...mockStatus,
         fg_errors: 0,
         bg_errors: 0,
-        fg_panics: 0,
-        bg_panics: 0,
         fg_high_water: 0,
         bg_high_water: 0,
       })
@@ -292,12 +290,10 @@ describe('StatusPanel', () => {
       await screen.findByText('Foreground Queue')
       expect(screen.queryByText(/foreground error/)).not.toBeInTheDocument()
       expect(screen.queryByText(/background error/)).not.toBeInTheDocument()
-      expect(screen.queryByText(/foreground panic/)).not.toBeInTheDocument()
-      expect(screen.queryByText(/background panic/)).not.toBeInTheDocument()
     })
 
     it('is hidden when error fields are undefined (legacy mock)', async () => {
-      // mockStatus has no error/panic fields — component defaults to 0
+      // mockStatus has no error fields — component defaults to 0
       mockedInvoke.mockResolvedValue(mockStatus)
 
       render(<StatusPanel />)
@@ -311,8 +307,6 @@ describe('StatusPanel', () => {
         ...mockStatus,
         fg_errors: 0,
         bg_errors: 3,
-        fg_panics: 0,
-        bg_panics: 0,
         fg_high_water: 0,
         bg_high_water: 0,
       })
@@ -406,8 +400,6 @@ describe('StatusPanel', () => {
         bg_high_water: 22,
         fg_errors: 0,
         bg_errors: 0,
-        fg_panics: 0,
-        bg_panics: 0,
       })
 
       render(<StatusPanel />)
@@ -438,8 +430,6 @@ describe('StatusPanel', () => {
         bg_high_water: 0,
         fg_errors: 0,
         bg_errors: 0,
-        fg_panics: 0,
-        bg_panics: 0,
       })
 
       const { container } = render(<StatusPanel />)
@@ -476,8 +466,6 @@ describe('StatusPanel', () => {
         bg_high_water: 25,
         fg_errors: 0,
         bg_errors: 0,
-        fg_panics: 0,
-        bg_panics: 0,
       })
 
       const { container } = render(<StatusPanel />)

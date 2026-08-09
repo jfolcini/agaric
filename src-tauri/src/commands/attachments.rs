@@ -5,7 +5,6 @@ use std::path::Path;
 use sqlx::SqlitePool;
 use tracing::instrument;
 
-use tauri::Manager;
 use tauri::State;
 
 use crate::db::now_ms;
@@ -332,6 +331,67 @@ pub(crate) async fn verify_written_attachment(
     Ok(())
 }
 
+/// Test-only fault-injection seam for the post-write verification guards
+/// (#3435).
+///
+/// [`verify_written_attachment`]'s two rejections are directly unit-tested, but
+/// those tests call the function, so they stay green if someone deletes the
+/// `verify_written_attachment(...)` **call** from
+/// [`add_attachment_with_bytes_inner`] and leaves the function itself intact —
+/// and an uncalled guard is exactly as absent as a deleted one. Detecting a
+/// missing call site needs a rejection provoked through the real entry point,
+/// which production alone cannot produce: `size_bytes` is derived from
+/// `bytes.len()` and the storage path is a freshly generated ULID, so storage
+/// and the recorded length can never legitimately disagree.
+///
+/// This seam supplies the one thing production cannot — a blob whose on-disk
+/// bytes stop matching the buffer that was hashed — by damaging the file
+/// *inside* the write step, immediately after `write_attachment_file` returns
+/// and before anything reads it back. It therefore models storage failing to
+/// hold what was written, not a guard being called with bad arguments.
+///
+/// Arming is a marker file under the caller's app-data directory rather than a
+/// process global: every test owns a private `TempDir`, so two tests can arm
+/// different faults concurrently under both `cargo nextest` (process per test)
+/// and plain `cargo test` (threads in one process) without a shared registry,
+/// a lock, or cross-talk. The whole module is `#[cfg(test)]`, so no release
+/// binary contains either the markers or the stat that looks for them.
+#[cfg(test)]
+pub(crate) mod write_fault {
+    use std::path::Path;
+
+    /// Arms "storage kept a different number of bytes than we wrote".
+    const TRUNCATE_MARKER: &str = ".inject-attachment-truncate";
+    /// Arms "storage lost the blob between the write and the read-back".
+    const UNLINK_MARKER: &str = ".inject-attachment-unlink";
+
+    /// Make every subsequent attachment write under `app_data_dir` leave a
+    /// one-byte file on disk, so the recorded `size_bytes` cannot match it.
+    pub(crate) fn arm_truncate(app_data_dir: &Path) {
+        std::fs::write(app_data_dir.join(TRUNCATE_MARKER), b"")
+            .expect("arm the truncate write fault");
+    }
+
+    /// Make every subsequent attachment write under `app_data_dir` vanish
+    /// before the read-back, so the stat guard cannot find it.
+    pub(crate) fn arm_unlink(app_data_dir: &Path) {
+        std::fs::write(app_data_dir.join(UNLINK_MARKER), b"").expect("arm the unlink write fault");
+    }
+
+    /// Apply whichever fault is armed for `app_data_dir` to the blob just
+    /// written at `full_path`. A no-op when nothing is armed, which is every
+    /// test but the two that opt in.
+    pub(crate) fn apply(app_data_dir: &Path, full_path: &Path) {
+        if app_data_dir.join(TRUNCATE_MARKER).exists() {
+            // One byte, not zero: the guard must be comparing lengths, not
+            // testing emptiness.
+            std::fs::write(full_path, b"x").expect("inject the truncate write fault");
+        } else if app_data_dir.join(UNLINK_MARKER).exists() {
+            std::fs::remove_file(full_path).expect("inject the unlink write fault");
+        }
+    }
+}
+
 /// Add an attachment by passing the raw file bytes over IPC.
 ///
 /// The frontend reads the file into bytes (a browser `ArrayBuffer`) and hands
@@ -393,6 +453,12 @@ pub async fn add_attachment_with_bytes_inner(
         let path = fs_path.clone();
         tokio::task::spawn_blocking(move || {
             agaric_sync::sync_files::write_attachment_file(&dir, &path, &bytes)?;
+            // #3435: test-only seam (compiled out of every release binary) that
+            // makes storage disagree with the buffer we are about to hash — the
+            // one fault this path cannot otherwise produce, and the only way to
+            // prove the post-write verification below is actually CALLED.
+            #[cfg(test)]
+            write_fault::apply(&dir, &dir.join(&path));
             Ok::<String, AppError>(blake3::hash(&bytes).to_hex().to_string())
         })
         .await
@@ -768,10 +834,11 @@ pub async fn add_attachment_with_bytes(
     mime_type: String,
     bytes: Vec<u8>,
 ) -> Result<AttachmentRow, AppError> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    // #3334 — via the `app_paths` seam so attachment bytes land in the SAME
+    // directory boot opened `notes.db` in. A direct `app.path().app_data_dir()`
+    // here would write into the real vault while a sandboxed run's database
+    // lived elsewhere: rows pointing at files nobody sandboxed.
+    let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     add_attachment_with_bytes_inner(
         ctx.pool(),
         ctx.device_id(),
@@ -810,10 +877,11 @@ pub async fn read_attachment(
     pool: State<'_, ReadPool>,
     attachment_id: AttachmentId,
 ) -> Result<tauri::ipc::Response, AppError> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    // #3334 — via the `app_paths` seam so attachment bytes land in the SAME
+    // directory boot opened `notes.db` in. A direct `app.path().app_data_dir()`
+    // here would write into the real vault while a sandboxed run's database
+    // lived elsewhere: rows pointing at files nobody sandboxed.
+    let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     let bytes = read_attachment_inner(&pool.0, &app_data_dir, attachment_id)
         .await
         .map_err(sanitize_internal_error)?;
@@ -843,10 +911,11 @@ pub async fn delete_attachment(
     ctx: State<'_, WriteCtx>,
     attachment_id: AttachmentId,
 ) -> Result<(), AppError> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    // #3334 — via the `app_paths` seam so attachment bytes land in the SAME
+    // directory boot opened `notes.db` in. A direct `app.path().app_data_dir()`
+    // here would write into the real vault while a sandboxed run's database
+    // lived elsewhere: rows pointing at files nobody sandboxed.
+    let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
     delete_attachment_inner(
         ctx.pool(),
         ctx.device_id(),

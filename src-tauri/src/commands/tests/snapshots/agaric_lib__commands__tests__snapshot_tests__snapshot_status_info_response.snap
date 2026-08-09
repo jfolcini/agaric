@@ -11,8 +11,6 @@ fg_high_water: 0
 bg_high_water: 1
 fg_errors: 0
 bg_errors: 0
-fg_panics: 0
-bg_panics: 0
 fg_apply_dropped: 0
 fg_apply_dropped_persisted: 0
 bg_dropped: 0

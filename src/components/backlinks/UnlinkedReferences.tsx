@@ -120,6 +120,7 @@ export function UnlinkedReferences({
   const {
     groups,
     totalCount,
+    filteredCount,
     truncated,
     loading,
     hasMore,
@@ -127,7 +128,10 @@ export function UnlinkedReferences({
     loadMore,
     isError,
     queryKey,
-  } = useUnlinkedReferences({ pageId, filters, sort, spaceId: currentSpaceId })
+    // #3316 item 2 — `collapsed` gates the fetch size: while the panel is shut
+    // it asks for one group instead of twenty, which is all the header count
+    // needs. Expanding re-keys the query and pulls the full page.
+  } = useUnlinkedReferences({ pageId, filters, sort, spaceId: currentSpaceId, collapsed })
 
   // Bug 2 — pre-warm the resolve cache for source-page IDs. Without this,
   // `useBlockResolve.resolveTitle` falls back to the `[[ULID-prefix...]]`
@@ -430,7 +434,7 @@ export function UnlinkedReferences({
             onFiltersChange={setFilters}
             onSortChange={setSort}
             totalCount={totalCount}
-            filteredCount={totalCount}
+            filteredCount={filteredCount}
             propertyKeys={propertyKeys}
             tags={tags}
           />
@@ -496,10 +500,20 @@ export function UnlinkedReferences({
                       onPageTitleClick: (clickedPageId: string, title: string) =>
                         onNavigateToPage(clickedPageId, title),
                     })}
-                    renderBlock={(block, _group) => (
+                    // #3316 item 3 — window each expanded group's rows. This
+                    // panel default-expands EVERY group, so without windowing a
+                    // hub page committed 20 groups x up to
+                    // `MAX_BLOCKS_PER_GROUP` (200) rows in one synchronous
+                    // render, directly above the page editor.
+                    virtualizeRows
+                    activeBlockId={focusedBlockId}
+                    renderBlock={(block, _group, virtualRow) => (
                       <li
                         key={block.id}
                         id={unlinkedRowDomId(block.id)}
+                        ref={virtualRow?.measureRef}
+                        style={virtualRow?.style}
+                        data-index={virtualRow?.index}
                         data-backlink-item={block.id}
                         // #2263 — roving position exposed to AT (container hosts
                         // aria-activedescendant → this row's id).

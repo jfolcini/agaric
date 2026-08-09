@@ -971,3 +971,65 @@ async fn apply_op_purge_block_removes_block_tag_inherited_when_block_is_tag() {
         "no block_tag_inherited row may reference the purged tag in any column"
     );
 }
+
+/// #3382: `fts_last_optimize_ms` firing proof.
+///
+/// This gauge is seeded to `now_ms` in `QueueMetrics::default`, so unlike a
+/// counter it is non-zero from birth and "did it fire" really means "did it
+/// ever advance past its seed". The three tests above `.store()` a value into
+/// it as *setup* for the adaptive-threshold assertions and none reads it back,
+/// so an optimize that silently stopped re-stamping would keep reporting
+/// process-start time as though an optimize had just run. Drive the real
+/// threshold crossing and require the stamp to move.
+#[tokio::test]
+async fn fts_optimize_restamps_fts_last_optimize_ms() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    insert_block_direct(&pool, "FTS_STAMP", "content", "stamp me").await;
+    // The constructor's block-count refresh must land before we reason about
+    // the adaptive threshold (see `adaptive_fts_threshold_small_corpus`).
+    mat.wait_for_initial_block_count_cache().await;
+
+    // Seed the stamp 10 s in the past: old enough that a stopped writer is
+    // visible, recent enough that the hourly time-based trigger stays out of
+    // it, so the 500-edit count threshold is what fires below.
+    // Millis since epoch fits in u64 for millions of years; saturate on overflow.
+    let now_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX);
+    let seeded = now_ms - 10_000;
+    mat.metrics()
+        .fts_last_optimize_ms
+        .store(seeded, AtomicOrdering::Relaxed);
+    mat.metrics()
+        .fts_edits_since_optimize
+        .store(499, AtomicOrdering::Relaxed);
+
+    let r = make_op_record(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("FTS_STAMP"),
+            to_text: "edited-500".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+    mat.dispatch_edit_background(&r, "content")
+        .expect("the 500th edit must dispatch");
+
+    let stamped = mat
+        .metrics()
+        .fts_last_optimize_ms
+        .load(AtomicOrdering::Relaxed);
+    assert!(
+        stamped > seeded,
+        "crossing the FTS-optimize threshold must re-stamp fts_last_optimize_ms; \
+         it still reads the seeded {seeded}"
+    );
+
+    mat.flush_background().await.unwrap();
+}

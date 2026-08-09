@@ -12,8 +12,8 @@
  *. SVG rendering, zoom, and drag are owned by the hook.
  */
 
-import { AlertCircle, Maximize2, Minus, Network, Plus } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertCircle, Maximize2, Minus, Network, Plus, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -26,6 +26,7 @@ import {
 } from '@/components/graph/GraphView.helpers'
 import { LocalGraphControl } from '@/components/graph/LocalGraphControl'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
@@ -174,6 +175,17 @@ export function GraphView(): React.ReactElement {
   const lastInvalidationRef = useRef(invalidationKey)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // #3315 item 4 — the error branch rendered an `EmptyState` with no `action`,
+  // and it early-returns ABOVE the branch that mounts GraphFilterBar /
+  // LocalGraphControl, so a failed fetch left the user with no on-screen
+  // control able to re-trigger it: recovery depended on an unrelated CRUD op or
+  // an applied sync batch bumping `invalidationKey`, or on navigating away and
+  // back — neither discoverable. This nonce is a dependency of the fetch effect
+  // AND bypasses the fresh-cache early-exit, so Retry always re-runs the
+  // fan-out. Every sibling surface (SearchPanel, AdvancedQueryView,
+  // QueryResult, SavedViews, HistoryView, DeviceManagement) already has one.
+  const [retryNonce, setRetryNonce] = useState(0)
+  const lastRetryRef = useRef(0)
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
   // #2298 — true edge count + cap-fired flag from the latest fetch (or the
@@ -250,6 +262,12 @@ export function GraphView(): React.ReactElement {
     const mutated = invalidationKey !== lastInvalidationRef.current
     lastInvalidationRef.current = invalidationKey
 
+    // #3315 item 4: an explicit Retry must bypass the fresh-cache early-exit
+    // below, exactly as a mutation does — otherwise the button would be a no-op
+    // whenever a stale-but-fresh-enough cache entry exists for this tag key.
+    const retried = retryNonce !== lastRetryRef.current
+    lastRetryRef.current = retryNonce
+
     // Serve cached data immediately if available
     if (graphCache) {
       setNodes(graphCache.nodes)
@@ -269,6 +287,7 @@ export function GraphView(): React.ReactElement {
       // entry wasn't invalidated by a mutation during unmount, skip the refetch.
       if (
         !mutated &&
+        !retried &&
         !cacheStaleByMutation &&
         Date.now() - graphCache.timestamp < GRAPH_CACHE_TTL_MS
       )
@@ -313,7 +332,16 @@ export function GraphView(): React.ReactElement {
     // real dependency — the `mutated` check above reads it to bypass the
     // fresh-cache early-exit so graph-structure mutations (and property changes)
     // refetch the graph (stale-while-revalidate).
-  }, [t, tagCacheKey, tagFilterIds, currentSpaceId, invalidationKey])
+  }, [t, tagCacheKey, tagFilterIds, currentSpaceId, invalidationKey, retryNonce])
+
+  // #3315 item 4 — re-run the fetch effect from the error EmptyState's action
+  // slot. `setLoading(true)` swaps the error screen for the skeleton
+  // immediately so the click has visible feedback even on a slow fan-out; the
+  // effect clears `error` itself on entry.
+  const handleRetry = useCallback(() => {
+    setLoading(true)
+    setRetryNonce((n) => n + 1)
+  }, [])
 
   // Client-side filtering (status, priority, has-date, has-backlinks, exclude-templates).
   // Tag filter is pass-through here because tag_ids is not populated on nodes
@@ -384,7 +412,25 @@ export function GraphView(): React.ReactElement {
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
         {headerNode}
-        <EmptyState icon={AlertCircle} message={error} />
+        {/* #3315 item 4 — use EmptyState's existing `action` slot so the
+            failure is recoverable in place, mirroring SearchPanel's
+            `search-error-retry`. */}
+        <EmptyState
+          icon={AlertCircle}
+          message={error}
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3 mx-auto flex items-center gap-1"
+              onClick={handleRetry}
+              data-testid="graph-error-retry"
+            >
+              <RefreshCw className="h-4 w-4" />
+              {t('action.retry')}
+            </Button>
+          }
+        />
       </div>
     )
   if (nodes.length === 0)

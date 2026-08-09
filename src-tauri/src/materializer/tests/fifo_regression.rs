@@ -482,12 +482,9 @@ async fn dispatch_bg_empty_block_id_release_mode_l15() {
     assert_eq!(
         m.bg_errors.load(AtomicOrdering::Relaxed),
         0,
-        "empty-block_id fallback must not produce any background errors"
-    );
-    assert_eq!(
-        m.bg_panics.load(AtomicOrdering::Relaxed),
-        0,
-        "empty-block_id fallback must not panic any background task"
+        "empty-block_id fallback must not produce any background errors — \
+         since #3382 folded the panic arm into this counter, a zero here also \
+         means no background task panicked"
     );
 
     mat.shutdown();

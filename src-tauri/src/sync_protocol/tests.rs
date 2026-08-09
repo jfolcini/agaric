@@ -4156,3 +4156,183 @@ async fn op_log_batch_before_handshake_fails_2481() {
     assert!(matches!(orch.session().state, SyncState::Failed(_)));
     materializer.shutdown();
 }
+
+// ── #3325 — the advertised frontier must not step over a dropped record ──
+
+/// A hash-valid replicated audit record for a foreign device.
+fn foreign_op_transfer(device_id: &str, seq: i64) -> OpTransfer {
+    let payload = format!(
+        r#"{{"block_id":"FGN{seq}","block_type":"content","parent_id":null,"position":0,"content":"foreign {seq}"}}"#
+    );
+    let hash = agaric_core::hash::compute_op_hash(device_id, seq, None, "create_block", &payload);
+    OpTransfer {
+        device_id: device_id.into(),
+        seq,
+        parent_seqs: None,
+        hash,
+        op_type: "create_block".into(),
+        payload,
+        created_at: FIXED_TS,
+        origin: "user".into(),
+    }
+}
+
+/// #3325 — a TRANSIENT ingest failure must not let the frontier we advertise
+/// step over the record it dropped.
+///
+/// There is no replication cursor on this path: `get_local_heads` derives the
+/// frontier from `MAX(seq)` per device, and the peer ships exactly `seq >`
+/// that. So landing seq 8, 9, 10 after seq 7 faulted *is* an acknowledgement
+/// of seq 7 — the next `HeadExchange` advertises 10 and the peer never offers
+/// 7 again. Since replicated records are what the History view shows for edits
+/// made on another device, the user is left with a hole in that device's
+/// history on this machine, permanently, while the originating device still
+/// holds the full chain.
+#[tokio::test]
+async fn transient_ingest_failure_defers_the_rest_of_that_devices_chain_3325() {
+    let (pool, _dir) = test_pool().await;
+
+    // Our own device has authored something, so we can also see that its
+    // frontier is untouched by any of this.
+    append_local_op_at(&pool, "device-A", test_create_payload("LOCAL1"), FIXED_TS)
+        .await
+        .unwrap();
+
+    // The peer streams two foreign devices, in the `(device_id, seq)` order
+    // `collect_ops_for_peer` emits.
+    let mut records: Vec<OpTransfer> = (1..=2)
+        .map(|s| foreign_op_transfer("device-Y", s))
+        .collect();
+    records.extend((6..=10).map(|s| foreign_op_transfer("device-Z", s)));
+
+    // device-Z seq 7 hits a busy writer — the exact case the old code named
+    // ("a rebuild task the flush did not fully settle") and mishandled.
+    let outcome = agaric_sync::sync_protocol::ingest_replicated_batch_with_fault(
+        &pool,
+        &records,
+        "device-A",
+        "device-peer",
+        &|r| {
+            (r.device_id == "device-Z" && r.seq == 7)
+                .then_some(agaric_core::error::AppError::PoolTimedOut)
+        },
+    )
+    .await;
+
+    assert_eq!(
+        outcome.ingested, 3,
+        "device-Y's two records plus device-Z seq 6 must land"
+    );
+    assert_eq!(
+        outcome.deferred, 4,
+        "device-Z seq 7..=10 must all be left for the peer to re-ship"
+    );
+    assert_eq!(outcome.rejected, 0, "nothing here is corrupt");
+
+    let heads = get_local_heads(&pool).await.unwrap();
+
+    let z = heads
+        .iter()
+        .find(|h| h.device_id == "device-Z")
+        .expect("device-Z must still advertise the part of its chain we hold");
+    assert_eq!(
+        z.seq, 6,
+        "#3325: the frontier advertised for device-Z stepped over seq 7 — the \
+         peer will only ever offer seq > {}, so seq 7 is lost for good",
+        z.seq
+    );
+
+    let y = heads
+        .iter()
+        .find(|h| h.device_id == "device-Y")
+        .expect("device-Y's records must be unaffected");
+    assert_eq!(
+        y.seq, 2,
+        "one device's stalled write must not cost every other device its records"
+    );
+
+    let a = heads
+        .iter()
+        .find(|h| h.device_id == "device-A")
+        .expect("our own frontier must survive");
+    assert_eq!(
+        a.seq, 1,
+        "our own frontier is not derived from ingest at all"
+    );
+
+    // The property that actually matters: ask a peer holding the whole chain
+    // what it would ship us next session against the frontier we now advertise.
+    let (peer_pool, _peer_dir) = test_pool().await;
+    for record in &records {
+        agaric_sync::sync_protocol::insert_replicated_op(&peer_pool, record)
+            .await
+            .unwrap();
+    }
+    let reshipped: Vec<i64> = collect_ops_for_peer(&peer_pool, &heads)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.device_id == "device-Z")
+        .map(|r| r.seq)
+        .collect();
+    assert_eq!(
+        reshipped,
+        vec![7, 8, 9, 10],
+        "the gap must be re-offered on the next session; anything short of \
+         this leaves a permanent hole in device-Z's replicated history (#3325)"
+    );
+}
+
+/// #3325 companion — a CORRUPT record must NOT stall its device's chain.
+///
+/// The asymmetry is deliberate and this pins it. Corrupt bytes fail
+/// identically every time they are re-shipped, so deferring the device would
+/// re-fetch and re-reject the same record every session forever while
+/// permanently blocking everything behind it — the "permanent backoff over
+/// non-state data" the ingest path already warns about. The frontier is
+/// allowed past it instead; the resulting gap is a state the Audit ingest
+/// profile already tolerates, since peer-side compaction produces gaps too.
+///
+/// This test uses real corruption rather than the injected fault, so it also
+/// pins the classification itself: a tampered payload must land in the
+/// "reject" arm, not the "defer" one.
+#[tokio::test]
+async fn corrupt_record_does_not_stall_the_device_chain_3325() {
+    let (pool, _dir) = test_pool().await;
+
+    let mut records: Vec<OpTransfer> = (6..=10)
+        .map(|s| foreign_op_transfer("device-Z", s))
+        .collect();
+    // Tamper with seq 7's payload, leaving its hash behind — exactly what the
+    // blake3 verification inside `insert_replicated_op` exists to catch.
+    records[1].payload = r#"{"block_id":"FGN7","block_type":"content","parent_id":null,"position":0,"content":"tampered"}"#.into();
+
+    let outcome = agaric_sync::sync_protocol::ingest_replicated_batch(
+        &pool,
+        &records,
+        "device-A",
+        "device-peer",
+    )
+    .await;
+
+    assert_eq!(outcome.rejected, 1, "seq 7 must be rejected as corrupt");
+    assert_eq!(
+        outcome.ingested, 4,
+        "seq 6, 8, 9 and 10 must still land — they are not implicated"
+    );
+    assert_eq!(
+        outcome.deferred, 0,
+        "a corrupt record must not defer its device's chain, or the peer \
+         re-ships and re-rejects it every session forever"
+    );
+
+    let heads = get_local_heads(&pool).await.unwrap();
+    let z = heads
+        .iter()
+        .find(|h| h.device_id == "device-Z")
+        .expect("device-Z frontier");
+    assert_eq!(
+        z.seq, 10,
+        "the frontier is deliberately allowed past an unusable record"
+    );
+}

@@ -221,10 +221,10 @@ pub fn mcp_set_enabled_inner(
 fn app_data_dir_from_handle<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<PathBuf, AppError> {
-    use tauri::Manager;
-    app.path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))
+    // #3334 — the `app_paths` seam. The MCP sockets and their enable markers
+    // live in the app-data directory, so an agent connecting to a sandboxed
+    // run must reach that run's socket, not the developer's.
+    crate::app_paths::resolve_app_data_dir(app).map_err(AppError::Io)
 }
 
 /// Serialise rapid `mcp_set_enabled` calls so the marker write +
