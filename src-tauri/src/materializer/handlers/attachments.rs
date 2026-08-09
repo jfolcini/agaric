@@ -21,6 +21,74 @@ pub(super) const CLEANUP_BATCH_SIZE: usize = 1000;
 /// pathologically large vaults.
 pub(super) const CLEANUP_BATCH_SLEEP_MS: u64 = 10;
 
+/// #3519 — filename prefix for a GC *quarantine* file.
+///
+/// An orphan's bytes are `rename`d aside under this name while the GC asks,
+/// one last time, whether anything has come to reference the original path.
+/// The quarantine sibling deliberately lives in the SAME directory as the file
+/// it shelters, which buys two properties for free:
+///
+/// * the rename is same-filesystem, hence atomic — the bytes are never in a
+///   state where neither name resolves to them;
+/// * a quarantine file stranded by a crash (or by a failed restore) sits
+///   inside `attachments/`, so the NEXT pass walks it, finds no
+///   `attachments` row referencing it — true by construction, since no writer
+///   can mint this name — and reclaims it. The scheme therefore needs no
+///   separate boot-time sweep of its own.
+const GC_QUARANTINE_PREFIX: &str = ".agaric-gc-";
+
+/// Build the quarantine sibling for `full_path`. The ULID makes the name
+/// unique per candidate, so two files quarantined in the same directory (even
+/// across concurrent passes) cannot collide and clobber each other's bytes.
+fn gc_quarantine_path(full_path: &Path) -> PathBuf {
+    let parent = full_path.parent().unwrap_or_else(|| Path::new(""));
+    parent.join(format!(
+        "{GC_QUARANTINE_PREFIX}{}.tmp",
+        ulid::Ulid::generate().to_string().to_uppercase()
+    ))
+}
+
+/// #3519 test-only rendezvous, fired at the exact instant that used to be
+/// unrecoverable: the authoritative write-pool re-check has just classified a
+/// file as an orphan, and not a single byte has moved yet.
+///
+/// A test installs a sender here, commits a racing `attachments` row when the
+/// GC reaches the point, releases the GC, and then asserts on the outcome.
+/// That is the only way to observe this window deterministically — it is
+/// microseconds wide in production, so a timing-based test would assert
+/// nothing on most runs.
+#[cfg(test)]
+pub(crate) type GcRaceRendezvous =
+    tokio::sync::mpsc::UnboundedSender<(String, tokio::sync::oneshot::Sender<()>)>;
+
+/// Installed sender for [`GcRaceRendezvous`]. `None` in every test that does
+/// not opt in, so the hook costs one uncontended mutex acquisition per
+/// *orphan candidate* (not per walked file) in the test build and nothing at
+/// all in a release build.
+#[cfg(test)]
+pub(crate) static GC_RACE_RENDEZVOUS: std::sync::Mutex<Option<GcRaceRendezvous>> =
+    std::sync::Mutex::new(None);
+
+/// Pause the GC at the rendezvous, if a test has installed one, until the test
+/// acknowledges. A closed channel or an unheard message is not an error: the
+/// GC simply proceeds.
+#[cfg(test)]
+async fn gc_race_rendezvous(relative_str: &str) {
+    let sender = {
+        let guard = GC_RACE_RENDEZVOUS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.clone()
+    };
+    let Some(sender) = sender else {
+        return;
+    };
+    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+    if sender.send((relative_str.to_string(), ack_tx)).is_ok() {
+        let _ = ack_rx.await;
+    }
+}
+
 /// C-3c — reconcile the `attachments/` directory under
 /// `app_data_dir` against the rows of the `attachments` table.
 ///
@@ -47,6 +115,10 @@ pub(super) const CLEANUP_BATCH_SLEEP_MS: u64 = 10;
 ///      cannot lag the writer the way a read-replica snapshot can). The
 ///      file is unlinked only if it is STILL unreferenced per that
 ///      write-pool read.
+///   3. #3519: that re-check and the removal of the bytes are nonetheless
+///      two operations with nothing serialising a writer against the gap
+///      between them, so the removal is not allowed to be destructive —
+///      see the quarantine section below.
 ///
 /// Robustness guarantees:
 /// - Missing or empty `attachments/` directory is a no-op (early
@@ -100,6 +172,53 @@ pub(super) const CLEANUP_BATCH_SLEEP_MS: u64 = 10;
 /// candidate's write-pool re-check. If the per-file prune fails, the
 /// unlink is skipped — bytes are never removed while a mapping to them
 /// may still resolve.
+///
+/// # Quarantine-before-destroy (#3519)
+///
+/// The write-pool re-check above answers "is this path referenced?" at an
+/// instant, and the unlink acts on that answer at a later instant. Between
+/// them a writer carrying an *explicit* `fs_path` — a replicated peer
+/// `AddAttachment`, or the undo of a local `DeleteAttachment`, both of which
+/// re-insert a row straight from an op payload — can commit a reference to the
+/// path we are about to empty. (The ordinary local `add_attachment` can no
+/// longer get in: #3371 destroys the `attachment_blobs` mapping *before* the
+/// re-check, so no dedup can mint a fresh reference to the path afterwards.)
+///
+/// It is worth being precise about what can and cannot be fixed here, because
+/// the obvious remedies do not work. Neither a global write mutex nor an
+/// `IMMEDIATE` transaction spanning the check and the unlink closes anything:
+/// those writers do not *derive* their reference from any database state this
+/// pass mutates, they carry it in the payload. Mutual exclusion only decides
+/// whether such a writer commits just before the gap or just after it, and
+/// "just after" produces exactly the same row-pointing-at-deleted-bytes
+/// outcome. A lock would buy a stall of the single SQLite writer across
+/// filesystem I/O and close nothing.
+///
+/// What is genuinely fixable is the GC's *self-consistency*: it must never
+/// destroy bytes that were referenced at any point during its own decision
+/// procedure. So the unlink is made non-destructive and the decision is
+/// re-confirmed after the fact:
+///
+///   1. `rename` the candidate to a [`GC_QUARANTINE_PREFIX`] sibling. Atomic,
+///      same directory, bytes preserved under a name no writer can name.
+///   2. Re-run the write-pool reference query. Any writer that committed at
+///      any point up to here is now visible.
+///   3. If a reference appeared, `rename` the bytes back and keep them.
+///      Otherwise unlink the quarantined copy.
+///
+/// A writer that commits *after* step 2 still ends up with a row whose bytes
+/// are absent — but that is not this window. It is indistinguishable from a
+/// writer that commits after the pass has ended entirely, and it is an
+/// already-first-class state: `find_missing_attachments` detects a row whose
+/// file is absent (or whose length disagrees) and re-requests the bytes from a
+/// peer on the next sync. This function's contract is the one it can actually
+/// keep — it never contradicts its own answer — and the doc no longer implies
+/// a race-freedom it cannot have.
+///
+/// The cost is one extra `rename` and one extra write-pool `SELECT` per
+/// *orphan candidate* — files that miss the bulk snapshot, not every walked
+/// file — and, on the failure path, orphan bytes surviving one extra pass.
+/// Nothing is serialised, and the writer is never held across I/O.
 ///
 /// Semantics are preserved exactly: the old query had **no**
 /// `deleted_at IS NULL` predicate, so it matched soft-deleted rows too;
@@ -242,6 +361,10 @@ pub(crate) async fn cleanup_orphaned_attachments(
     let mut scanned: u64 = 0;
     let mut unlinked: u64 = 0;
     let mut errors: u64 = 0;
+    // #3519: candidates whose bytes were quarantined and then handed back
+    // because a reference appeared after the orphan decision. A non-zero
+    // value is the scheme earning its keep, not a fault.
+    let mut restored: u64 = 0;
 
     // #1993 Phase 1 — refcount-aware blob reconciliation. The file walk below
     // already implements the refcount-on-demand contract for BYTES: a blob
@@ -413,9 +536,92 @@ pub(crate) async fn cleanup_orphaned_attachments(
                 }
             }
 
-            // Orphan: unlink. Errors are logged but never propagated, so
-            // the rest of the pass continues.
-            match tokio::fs::remove_file(&full_path).await {
+            // #3519 — the re-check above and the destruction of the bytes are
+            // still two operations, and nothing serialises a writer against
+            // the gap between them. So do not make the second operation
+            // destructive: QUARANTINE, confirm, and only then destroy.
+            #[cfg(test)]
+            gc_race_rendezvous(&relative_str).await;
+
+            let quarantine = gc_quarantine_path(full_path);
+            match tokio::fs::rename(full_path, &quarantine).await {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    tracing::info!(
+                        path = %full_path.display(),
+                        "cleanup_orphaned_attachments: orphan already missing; skipping"
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    // Could not shelter the bytes, so do not remove them.
+                    // The next pass retries; an orphan that outlives one
+                    // sweep costs disk, which is the cheap failure.
+                    errors += 1;
+                    tracing::warn!(
+                        path = %full_path.display(),
+                        error = %e,
+                        "cleanup_orphaned_attachments: failed to quarantine orphan; leaving bytes for the next pass"
+                    );
+                    continue;
+                }
+            }
+
+            // The bytes now live under a name no writer can reference, and
+            // the original path resolves to nothing. Ask the write pool once
+            // more. Anything that committed a reference at any point during
+            // this candidate's evaluation — including inside the old
+            // check-to-unlink gap — is visible here, and its bytes are still
+            // intact, one rename away.
+            //
+            // dynamic-sql: static SQL; kept off the offline `.sqlx` cache.
+            let confirmed_orphan = match sqlx::query("SELECT 1 FROM attachments WHERE fs_path = ?")
+                .bind(&relative_str)
+                .fetch_optional(pool)
+                .await
+            {
+                Ok(None) => true,
+                Ok(Some(_)) => {
+                    tracing::info!(
+                        path = %full_path.display(),
+                        "cleanup_orphaned_attachments: a reference appeared after the orphan decision; restoring quarantined bytes (#3519)"
+                    );
+                    false
+                }
+                Err(e) => {
+                    errors += 1;
+                    tracing::warn!(
+                        path = %full_path.display(),
+                        error = %e,
+                        "cleanup_orphaned_attachments: post-quarantine confirmation failed; restoring bytes rather than guessing"
+                    );
+                    false
+                }
+            };
+
+            if !confirmed_orphan {
+                match tokio::fs::rename(&quarantine, full_path).await {
+                    Ok(()) => restored += 1,
+                    Err(e) => {
+                        // The bytes are intact but parked under the
+                        // quarantine name, where the next pass will reclaim
+                        // them as an orphan. Loud, because this is the one
+                        // branch of the scheme that can still lose data.
+                        errors += 1;
+                        tracing::error!(
+                            path = %full_path.display(),
+                            quarantine = %quarantine.display(),
+                            error = %e,
+                            "cleanup_orphaned_attachments: failed to restore quarantined bytes for a newly-referenced attachment"
+                        );
+                    }
+                }
+                continue;
+            }
+
+            // Confirmed orphan: destroy the quarantined bytes. Errors are
+            // logged but never propagated, so the rest of the pass continues.
+            match tokio::fs::remove_file(&quarantine).await {
                 Ok(()) => {
                     unlinked += 1;
                     tracing::debug!(
@@ -433,8 +639,9 @@ pub(crate) async fn cleanup_orphaned_attachments(
                     errors += 1;
                     tracing::warn!(
                         path = %full_path.display(),
+                        quarantine = %quarantine.display(),
                         error = %e,
-                        "cleanup_orphaned_attachments: failed to unlink orphan"
+                        "cleanup_orphaned_attachments: failed to unlink quarantined orphan"
                     );
                 }
             }
@@ -447,9 +654,10 @@ pub(crate) async fn cleanup_orphaned_attachments(
     tracing::info!(
         scanned,
         unlinked,
+        restored,
         errors,
         pruned_blobs,
-        "cleanup_orphaned_attachments: scanned {scanned} files, unlinked {unlinked} orphans, {errors} errors, pruned {pruned_blobs} blob rows"
+        "cleanup_orphaned_attachments: scanned {scanned} files, unlinked {unlinked} orphans, restored {restored} raced, {errors} errors, pruned {pruned_blobs} blob rows"
     );
 
     Ok(())

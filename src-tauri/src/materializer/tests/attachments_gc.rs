@@ -541,3 +541,145 @@ async fn cleanup_orphaned_attachments_unlink_error_is_non_fatal() {
         "removable orphan must still be unlinked even if another file failed",
     );
 }
+
+/// #3519 — a row committed in the gap between the write-pool orphan re-check
+/// and the destruction of the bytes must not lose those bytes.
+///
+/// The window is microseconds wide in production, so this drives it directly:
+/// the GC pauses at a test rendezvous placed immediately after it has decided
+/// the file is an orphan and before any byte has moved, the test commits an
+/// `attachments` row referencing that exact path — standing in for the two
+/// writers that can still do this, a replicated peer `AddAttachment` and the
+/// undo of a local `DeleteAttachment`, both of which insert an explicit
+/// payload `fs_path` — and then releases the GC.
+///
+/// Pre-fix the GC unlinks straight through and the row is left pointing at
+/// deleted bytes. Post-fix the bytes are quarantined rather than destroyed,
+/// the post-quarantine confirmation sees the new row, and the bytes are handed
+/// back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_restores_bytes_referenced_inside_the_unlink_window_3519() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    // An orphan by every measure the GC has: on disk, referenced by nothing.
+    let rel = "attachments/raced.bin";
+    tokio::fs::write(dir.path().join(rel), b"bytes worth keeping")
+        .await
+        .unwrap();
+
+    let (hook_tx, mut hook_rx) = tokio::sync::mpsc::unbounded_channel();
+    *super::super::handlers::GC_RACE_RENDEZVOUS.lock().unwrap() = Some(hook_tx);
+
+    let gc = tokio::spawn({
+        let pool = pool.clone();
+        let root = dir.path().to_path_buf();
+        async move { super::super::handlers::cleanup_orphaned_attachments(&pool, None, &root).await }
+    });
+
+    // The GC has classified `rel` as an orphan and has not touched it yet.
+    let (paused_on, release) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), hook_rx.recv())
+            .await
+            .expect("GC never reached the in-window rendezvous")
+            .expect("rendezvous channel closed before the GC reached it");
+    assert_eq!(
+        paused_on, rel,
+        "the rendezvous must fire for the orphan under test"
+    );
+
+    // Commit the reference INSIDE the window.
+    insert_attachment_row(&pool, "ATT_3519", "01HZ0000000000000000003519", rel).await;
+
+    release
+        .send(())
+        .expect("GC stopped listening for the release");
+    gc.await.expect("GC task panicked").expect("GC pass");
+
+    *super::super::handlers::GC_RACE_RENDEZVOUS.lock().unwrap() = None;
+
+    // The row is live…
+    let referenced: Option<String> =
+        sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = ?")
+            .bind("ATT_3519")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        referenced.as_deref(),
+        Some(rel),
+        "test precondition: the racing row must have committed"
+    );
+
+    // …so its bytes must still be there.
+    assert!(
+        dir.path().join(rel).exists(),
+        "GC destroyed bytes a row committed inside the check-to-unlink window \
+         references (#3519)"
+    );
+
+    // And nothing may be stranded under a quarantine name.
+    let mut leftovers = Vec::new();
+    let mut rd = tokio::fs::read_dir(&attachments).await.unwrap();
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(".agaric-gc-") {
+            leftovers.push(name);
+        }
+    }
+    assert!(
+        leftovers.is_empty(),
+        "restored bytes must return to their original path, not linger in quarantine: {leftovers:?}"
+    );
+}
+
+/// #3519 companion — the quarantine detour must not make the GC stop
+/// collecting. Same rendezvous, but the test commits nothing while the GC is
+/// paused, so the confirmation still finds no reference and the bytes go.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_still_collects_when_nothing_races_3519() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    let rel = "attachments/uncontested.bin";
+    tokio::fs::write(dir.path().join(rel), b"nobody wants these")
+        .await
+        .unwrap();
+
+    let (hook_tx, mut hook_rx) = tokio::sync::mpsc::unbounded_channel();
+    *super::super::handlers::GC_RACE_RENDEZVOUS.lock().unwrap() = Some(hook_tx);
+
+    let gc = tokio::spawn({
+        let pool = pool.clone();
+        let root = dir.path().to_path_buf();
+        async move { super::super::handlers::cleanup_orphaned_attachments(&pool, None, &root).await }
+    });
+
+    let (_paused_on, release) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), hook_rx.recv())
+            .await
+            .expect("GC never reached the in-window rendezvous")
+            .expect("rendezvous channel closed before the GC reached it");
+    release
+        .send(())
+        .expect("GC stopped listening for the release");
+    gc.await.expect("GC task panicked").expect("GC pass");
+
+    *super::super::handlers::GC_RACE_RENDEZVOUS.lock().unwrap() = None;
+
+    assert!(
+        !dir.path().join(rel).exists(),
+        "an uncontested orphan must still be reclaimed through the quarantine path"
+    );
+    let mut rd = tokio::fs::read_dir(&attachments).await.unwrap();
+    let mut remaining = Vec::new();
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        remaining.push(entry.file_name().to_string_lossy().into_owned());
+    }
+    assert!(
+        remaining.is_empty(),
+        "the quarantined copy must be destroyed too, leaving nothing behind: {remaining:?}"
+    );
+}

@@ -65,6 +65,10 @@ use sql_only::*;
 // External re-exports — preserve the pre-split paths so callers outside
 // this module (materializer/mod.rs, consumer.rs, tests.rs) do not change.
 pub(crate) use attachments::cleanup_orphaned_attachments;
+// #3519 test-only: the GC's in-window rendezvous, so the race test can commit
+// a reference at the one instant that used to be unrecoverable.
+#[cfg(test)]
+pub(crate) use attachments::GC_RACE_RENDEZVOUS;
 // #2110 M6 — the two process-global counter accessors, re-exported with
 // disambiguating names (both submodules name their getter `count()`) so
 // `materializer/mod.rs` can surface them to the OTel metrics pipeline.
