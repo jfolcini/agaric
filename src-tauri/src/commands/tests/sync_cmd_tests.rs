@@ -756,6 +756,76 @@ async fn sync_cancel_pairing_disarms_row_after_joiner_confirm_already_cleared_se
     );
 }
 
+/// #3547 — a user-initiated pairing act clears the per-peer backoff, so the one
+/// wake it fires cannot be swallowed by it.
+///
+/// # The interaction, and why `notify_change` alone is not enough
+///
+/// Both pairing commands end with a single `notify_change()`, and Branch B is
+/// parked on exactly that `Notify`. It is *one* wake: if it lands inside an
+/// accumulated backoff window, `may_retry` skips the peer and nothing retries
+/// until the next scheduled round — the #3502 symptom (pairing appears to hang)
+/// reached by a different route.
+///
+/// Backoff accumulates in that window for a reason that is not the peer's
+/// fault. Every pre-confirm dial is doomed by construction: both dialogs arm on
+/// open, so both devices dial and refuse each other before either user has
+/// typed. #3505 stops those particular refusals being booked at all; this covers
+/// the rest — a connect timeout while the other device was still booting, say —
+/// and it is the fix #3547 actually asks for, because it makes the post-confirm
+/// dial deterministic rather than probabilistic.
+///
+/// Asserted on `may_retry` rather than on `failure_count`, because `may_retry`
+/// is the gate the daemon consults: a counter reset that left the wall-clock
+/// deadline in place would satisfy the weaker assertion and change nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_pairing_commands_clear_the_backoff_that_would_swallow_their_wake_3547() {
+    // The host half.
+    let (pool, _dir) = test_pool().await;
+    let pairing_state = Mutex::new(None);
+    let scheduler = SyncScheduler::new();
+    scheduler.record_failure("peer-1");
+    assert!(
+        !scheduler.may_retry("peer-1"),
+        "precondition: the peer must actually be in backoff, or this test asserts \
+         nothing"
+    );
+
+    start_pairing_armed_inner(&pool, &pairing_state, &scheduler, "device-host")
+        .await
+        .unwrap();
+    assert!(
+        scheduler.may_retry("peer-1"),
+        "#3547: arming a pairing window is new information — the dial it wakes must \
+         not be gated by failures that predate it"
+    );
+
+    // The joiner half, and the one that matters most: this is the moment the two
+    // markers finally agree, and the dial it wakes is the one the whole #3502 fix
+    // exists to make.
+    let (joiner_pool, _joiner_dir) = test_pool().await;
+    let joiner_state = Mutex::new(None);
+    let joiner_scheduler = SyncScheduler::new();
+    joiner_scheduler.record_failure("peer-1");
+    assert!(!joiner_scheduler.may_retry("peer-1"), "precondition");
+
+    confirm_pairing_inner(
+        &joiner_pool,
+        &joiner_state,
+        &joiner_scheduler,
+        "device-joiner",
+        "correct horse battery staple".into(),
+        String::new(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        joiner_scheduler.may_retry("peer-1"),
+        "#3547: the post-confirm dial must not be gated by the pre-confirm \
+         failures, which were about a proof the user had not entered yet"
+    );
+}
+
 // ======================================================================
 // Sync — start_sync (#278: backoff integration)
 // ======================================================================

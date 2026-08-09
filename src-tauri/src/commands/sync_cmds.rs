@@ -190,6 +190,12 @@ pub async fn start_pairing_armed_inner(
     // before we TOFU-pin it (closes the CN-spoof window).
     peer_refs::set_pending_pairing(pool, &agaric_sync::pairing::pairing_proof(&info.passphrase))
         .await?;
+    // #3547: the wake below is a SINGLE wake, and it is what Branch B turns into
+    // the dial a first-ever pair depends on. Backoff standing against a peer
+    // would let `may_retry` skip it, and nothing would retry until the next
+    // scheduled round. See `SyncScheduler::clear_backoff` for why a user-initiated
+    // pairing act is new information, and why it clears every peer.
+    scheduler.clear_backoff();
     scheduler.notify_change();
     Ok(info)
 }
@@ -300,6 +306,14 @@ pub async fn confirm_pairing_inner(
     // Clear the local offer session: this device is a joiner, and leaving its
     // own competing passphrase on display invites the role confusion of #3463.
     *lock_pairing_state(pairing_state)? = None;
+
+    // #3547: this is the confirm the whole #3502 fix exists to serve — the
+    // moment the two markers finally agree — and the wake below is the single
+    // wake that turns it into a dial. Every pre-confirm dial in this window was
+    // doomed by construction (the user had not typed yet), so any backoff they
+    // left behind is not evidence about *this* dial; it would just make the one
+    // that matters probabilistic. See `SyncScheduler::clear_backoff`.
+    scheduler.clear_backoff();
 
     // Wake a dormant daemon (if any). Harmless if the daemon is
     // already active — `notify_change` is debounced by

@@ -115,21 +115,42 @@ pub async fn dispatch_with_handshake_timeout<T>(
         })?
 }
 
-/// The rejection text for [`Rejection::PairingProofMissing`] — the one rejection
-/// string in this file with a **machine** consumer as well as a human one.
+/// The rejection text for [`Rejection::PairingProofMissing`] — the first of the
+/// two strings in this file with a **machine** consumer as well as a human one.
 ///
+/// `src/lib/pairing-rejections.ts` re-declares it, and
 /// `src/components/dialogs/PairingDialog.tsx` matches on it
-/// (`syncError.includes(PAIRING_PROOF_REQUIRED_MESSAGE)`, its own re-declaration of
-/// this same text) to turn a waiting joiner's dialog into an immediate "wrong code"
-/// straight away, instead of letting it sit out the full pairing TTL and then blame
-/// an *expired* code for what was a *wrong* one.
+/// (`syncError.includes(PAIRING_PROOF_REQUIRED_MESSAGE)`) to turn a waiting
+/// joiner's dialog into an immediate "wrong code" straight away, instead of
+/// letting it sit out the full pairing TTL and then blame an *expired* code for
+/// what was a *wrong* one.
 ///
 /// Nothing in the type system connects the two declarations: this is a prose string
 /// crossing a process boundary as free text. Reword it here and every Rust and
 /// TypeScript test stays green while the dialog silently loses its failure path
 /// (#3492). `scripts/check-pairing-rejection-contract.mjs`, wired into `prek.toml`
-/// so it fires when EITHER side changes, is what makes that reword red.
+/// so it fires when ANY of the three files changes, is what makes that reword red.
 pub const PAIRING_PROOF_REQUIRED_MESSAGE: &str = "pairing passphrase proof required";
+
+/// The rejection text for [`Rejection::Unpaired`] — the *second* rejection
+/// string a device can meet while it is mid-pairing, and the second with a
+/// machine consumer.
+///
+/// #3504: a joiner whose own window is still open dials a host whose window has
+/// already lapsed (the host armed at dialog-open, the joiner at confirm-time, so
+/// the joiner's window outlives the host's by however long the user spent
+/// walking over and typing). The host has no marker left, S-1 falls to its
+/// `Unpaired` arm, and *this* is what comes back — not
+/// [`PAIRING_PROOF_REQUIRED_MESSAGE`], which was the only string the frontend
+/// knew.
+///
+/// It is declared, and re-declared in `src/lib/pairing-rejections.ts`, for the
+/// same reason as the proof message and under the same guard. What the frontend
+/// does with the two is deliberately **not** the same, and the asymmetry is the
+/// whole content of #3504's review — see `isPairingWindowRejection` in that
+/// module for why matching this one as a *terminal* pairing failure would break
+/// pairing a third device into an existing pair.
+pub const PEER_NOT_PAIRED_MESSAGE: &str = "peer not paired with this device";
 
 /// Why a connection was turned away before it became a session.
 ///
@@ -160,11 +181,59 @@ impl Rejection {
     pub fn peer_message(&self) -> &'static str {
         match self {
             Self::NotHeadExchange => "HeadExchange expected as the first message",
-            Self::Unpaired => "peer not paired with this device",
+            Self::Unpaired => PEER_NOT_PAIRED_MESSAGE,
             Self::PairingProofMissing => PAIRING_PROOF_REQUIRED_MESSAGE,
             Self::Self_ => "cannot sync with self",
             Self::Busy => "peer is busy with another sync session",
         }
+    }
+
+    /// Every variant, as data.
+    ///
+    /// The closure is not dead weight: a `match` with no wildcard stops
+    /// compiling the moment a variant is added, so this list cannot silently
+    /// fall behind the enum — which is the failure mode that would make
+    /// [`from_peer_message`](Self::from_peer_message) quietly stop recognising
+    /// a rejection, and with it turn a pairing-window outcome back into a
+    /// "sync failure" (#3505).
+    #[must_use]
+    pub fn all() -> [Self; 5] {
+        let _exhaustive = |r: &Self| match r {
+            Self::NotHeadExchange
+            | Self::Unpaired
+            | Self::PairingProofMissing
+            | Self::Self_
+            | Self::Busy => (),
+        };
+        [
+            Self::NotHeadExchange,
+            Self::Unpaired,
+            Self::PairingProofMissing,
+            Self::Self_,
+            Self::Busy,
+        ]
+    }
+
+    /// Read a rejection back out of the text a peer sent — the inverse of
+    /// [`peer_message`](Self::peer_message), and `None` for anything else.
+    ///
+    /// #3505/#3547: the initiator needs to know *whether the session ended
+    /// because the peer turned it away*, and the only thing it has to go on is
+    /// the string the responder put on the wire, which arrives as
+    /// `SyncState::Failed(message)`. Doing that comparison here — against the
+    /// same `match` that produced the string — is what stops the recognition
+    /// from becoming a third, drifting copy of the prose in
+    /// `session_supervisor`.
+    ///
+    /// Exact equality, not `contains`: `peer_message` is what the responder
+    /// sends verbatim, and a substring test would also match the daemon's own
+    /// `format!("Sync failed: {e}")` wrapper and any future message that quotes
+    /// a rejection.
+    #[must_use]
+    pub fn from_peer_message(message: &str) -> Option<Self> {
+        Self::all()
+            .into_iter()
+            .find(|r| r.peer_message() == message)
     }
 
     /// The text this device shows **its own** user, or `None` for a rejection the
@@ -933,6 +1002,50 @@ mod tests {
     /// raises for itself and the message it sends the peer ever diverge, one of the
     /// two roles silently stops being handled — which is the #3491 bug re-created
     /// one level down, inside the fix for it.
+    /// #3505: every rejection must be readable back off the wire, or the
+    /// initiator cannot tell "the peer turned me away" from "the network broke"
+    /// — and it books the first as the second, which is the whole defect.
+    ///
+    /// Round-tripping ALL of them rather than the two the pairing window
+    /// produces: the classification in `session_supervisor` is written against
+    /// `from_peer_message`, not against a list of interesting variants, so a
+    /// variant this cannot read back is a variant that silently re-acquires the
+    /// old behaviour.
+    #[test]
+    fn every_rejection_can_be_read_back_off_the_wire() {
+        for rejection in Rejection::all() {
+            assert_eq!(
+                Rejection::from_peer_message(rejection.peer_message()),
+                Some(rejection.clone()),
+                "{rejection:?} must round-trip through the text it puts on the wire"
+            );
+        }
+    }
+
+    /// …and nothing else may be, or an ordinary session failure would be
+    /// excused from the backoff that exists for it.
+    ///
+    /// The `format!` case is the one with teeth: `session_supervisor` wraps a
+    /// terminal failure as `"Sync failed: {e}"`, and a `contains`-based reading
+    /// would match that wrapper — so a real failure whose message merely quoted
+    /// a rejection would stop being recorded.
+    #[test]
+    fn only_the_exact_wire_texts_are_read_as_rejections() {
+        for not_a_rejection in [
+            "",
+            "connection reset by peer",
+            PAIRING_PROOF_REQUIRED_MESSAGE.to_uppercase().as_str(),
+            &format!("Sync failed: {PAIRING_PROOF_REQUIRED_MESSAGE}"),
+            &format!("{PEER_NOT_PAIRED_MESSAGE} (and then the socket died)"),
+        ] {
+            assert_eq!(
+                Rejection::from_peer_message(not_a_rejection),
+                None,
+                "{not_a_rejection:?} is not a rejection this responder ever sent"
+            );
+        }
+    }
+
     #[test]
     fn the_local_and_wire_rejection_texts_are_the_same_string() {
         assert_eq!(

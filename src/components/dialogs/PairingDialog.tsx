@@ -53,6 +53,12 @@ import type { PairingInfo, PeerRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { notify } from '@/lib/notify'
+// #3492/#3504 — the rejection strings the Rust responder puts on the wire, in
+// the one module both this dialog and `useSyncEvents` read them from. Keep the
+// matcher below referring to the BINDING: a re-inlined literal would satisfy
+// the cross-language guard's value comparison while the matcher itself drifted,
+// so the guard checks for the reference too.
+import { PAIRING_PROOF_REQUIRED_MESSAGE } from '@/lib/pairing-rejections'
 import { useSyncStore } from '@/stores/sync'
 
 interface PairingDialogProps {
@@ -62,25 +68,6 @@ interface PairingDialogProps {
 }
 
 const PAIRING_TIMEOUT_SECONDS = 300 // 5 minutes
-
-// #3492 — the rejection text a device raises when a pairing proof does not
-// match, matched below to turn a waiting joiner's dialog into an immediate
-// "wrong code" instead of a five-minute wait that then blames an *expired* one.
-//
-// This is a SECOND declaration of a string whose original is
-// `PAIRING_PROOF_REQUIRED_MESSAGE` in
-// `src-tauri/agaric-sync/src/sync_daemon/server.rs`. It arrives here as free
-// prose inside a generic `sync:error` payload, so nothing in either language's
-// type system notices when the two stop agreeing — reword the Rust side and
-// every test on both sides stays green while this dialog silently loses its
-// failure path. `scripts/check-pairing-rejection-contract.mjs` (wired into
-// prek.toml, firing on a change to EITHER file) is what makes that reword red.
-//
-// Keep it byte-identical to the Rust constant, and keep the match below
-// referring to THIS binding: a re-inlined literal would satisfy the guard's
-// value comparison while the matcher itself drifted, so the guard checks for
-// the reference too.
-export const PAIRING_PROOF_REQUIRED_MESSAGE = 'pairing passphrase proof required'
 
 // #3469 — how often the joiner polls `list_peer_refs` while waiting for the
 // peer to appear (TOFU-pin on first authenticated connection). There is no
@@ -561,6 +548,15 @@ export function PairingDialog({
   // even begins — so any stale error is already neutralised before this
   // effect can see it, and the ref was dead code. By the time `joinerPhase`
   // is 'waiting', a non-null `syncError` can only be a fresh rejection.
+  //
+  // #3504 asked for this to widen to "any terminal rejection", on the reasoning
+  // that a joiner whose window outlives its host's gets `PEER_NOT_PAIRED_MESSAGE`
+  // back and cannot resolve. It deliberately does NOT widen: during a pairing
+  // window the daemon dials every discovered *unpaired* peer, so that message is
+  // the ordinary reply from every third device on the LAN — and pairing a third
+  // device into an existing pair would then report a failure while the real host
+  // was still answering correctly. See `isPairingWindowRejection` for the full
+  // asymmetry; the noise half of #3504 is handled there instead.
   useEffect(() => {
     if (joinerPhase !== 'waiting' || !syncError) return
     if (!syncError.includes(PAIRING_PROOF_REQUIRED_MESSAGE)) return

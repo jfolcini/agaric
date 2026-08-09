@@ -70,7 +70,7 @@ use agaric_store::peer_refs::{self, PeerRef};
 
 use super::SharedEventSink;
 use super::discovery::{peers_for_change_round, process_discovery_event, resolve_peer_address};
-use super::server::handle_incoming_sync;
+use super::server::{Rejection, handle_incoming_sync};
 use super::snapshot_transfer;
 
 // ---------------------------------------------------------------------------
@@ -797,6 +797,73 @@ impl Drop for CancelGuard<'_> {
     }
 }
 
+/// Did this session end because the peer *turned it away while this device was
+/// mid-pairing*?
+///
+/// # Why this is not "a sync failure" (#3505, #3547)
+///
+/// A pairing window is the one period in which a refusal is the protocol
+/// working. Both dialogs arm their marker on open and each device dials the
+/// other before either user has typed anything, so the #855 proof gate refuses
+/// both dials by construction (#3502 step 3); a joiner dials *every* discovered
+/// unpaired peer, so every third device on the LAN refuses it as `Unpaired`;
+/// and a joiner whose window outlives its host's gets the same `Unpaired` back
+/// from the host (#3504). None of these is evidence that the peer is flaky, and
+/// none of them is a sentence for a user.
+///
+/// Booking them as failures cost two distinct things, which is why they were
+/// filed as two issues:
+///
+/// * a red "Sync failed: …" toast on both devices before either had typed a
+///   passphrase (#3505), at the exact moment the user is being asked to trust
+///   the pairing flow;
+/// * per-peer exponential backoff (2 s → 4 s → … → 60 s) accumulated by dials
+///   that could not have succeeded — which then gates the *one* post-confirm
+///   dial that #3502's fix exists to make, because `confirm_pairing`'s
+///   `notify_change()` is a single wake and `may_retry` simply skips it
+///   (#3547).
+///
+/// # Why both conditions, and not either
+///
+/// The message alone is not enough: `Unpaired` is the ordinary answer to every
+/// stranger's probe on a healthy LAN, and outside a pairing window a peer that
+/// says we are not paired is exactly the peer we should stop hammering. The
+/// pairing window alone is not enough either: a connect timeout or a torn
+/// stream during a pairing window is a real failure and must still back off, or
+/// a device that cannot be reached at all would be dialled flat out for the
+/// full five minutes.
+///
+/// The read is on the failure path only, so the extra query costs nothing on
+/// the success path. A read *error* answers "no" — the conservative direction,
+/// because the fallback is today's behaviour rather than a silently unbounded
+/// retry.
+async fn peer_rejection_during_pairing_window(
+    pool: &SqlitePool,
+    orch: &SyncOrchestrator,
+) -> Option<Rejection> {
+    // The verbatim text the responder sent, taken from the orchestrator rather
+    // than from the `AppError` the caller holds: `run_sync_session` wraps a
+    // terminal state as `"sync ended in terminal state: {reason:?}"`, and
+    // re-parsing prose out of that wrapper would be a third copy of the
+    // rejection strings.
+    let SyncState::Failed(ref reason) = orch.session().state else {
+        return None;
+    };
+    let rejection = Rejection::from_peer_message(reason)?;
+    match peer_refs::is_pending_pairing(pool).await {
+        Ok(true) => Some(rejection),
+        Ok(false) => None,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "could not read the pending-pairing marker while classifying a peer \
+                 rejection; treating it as an ordinary sync failure (#3505)"
+            );
+            None
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // try_sync_with_peer — single sync session with backoff
 // ---------------------------------------------------------------------------
@@ -1193,6 +1260,27 @@ pub async fn try_sync_with_peer(
                     remote_device_id: peer_id.clone(),
                 });
                 tracing::info!(peer_id, error = %e, "sync session cancelled by user");
+            } else if let Some(rejection) =
+                peer_rejection_during_pairing_window(ctx.pool, &orch).await
+            {
+                // #3505/#3547: a refusal received while this device is mid-pairing
+                // is the handshake working, not a failed sync — see the helper for
+                // the full reasoning. Neither the backoff nor the generic
+                // `Sync failed: …` event is right for it.
+                //
+                // The rejection itself has ALREADY reached the UI, verbatim:
+                // `session_state_machine`'s `SyncMessage::Error` arm emits a
+                // `SyncEvent::Error` carrying the responder's own words, which is
+                // the signal `PairingDialog` matches to say "wrong code". What is
+                // suppressed here is only this layer's second, generic wrapper
+                // around the same event — a wrapper that says "Sync failed" about
+                // something that did not fail.
+                tracing::info!(
+                    peer_id,
+                    ?rejection,
+                    "peer refused a connection made during a pairing window; not \
+                     recording it as a sync failure (#3505)"
+                );
             } else {
                 ctx.scheduler.record_failure(peer_id);
                 ctx.event_sink.on_sync_event(SyncEvent::Error {

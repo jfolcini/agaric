@@ -798,6 +798,68 @@ describe('useSyncEvents', () => {
 
       unmount()
     })
+
+    // ---------------------------------------------------------------------
+    // #3505 — a pairing-window refusal is the handshake working, not a
+    // failed sync.
+    //
+    // Both dialogs arm their pending-pairing marker the moment they open, so
+    // the two devices dial and refuse each other BEFORE either user has typed
+    // a passphrase. Both users then read a red "Sync failed: pairing
+    // passphrase proof required" at the exact moment they are being asked to
+    // trust the pairing flow — and since #3491 the device that *detects* the
+    // mismatch raises the same string locally, so one doomed cross-dial
+    // toasted on both ends.
+    //
+    // The store write is asserted alongside the missing toast in every case,
+    // because suppressing the event outright would be the wrong fix: that
+    // store value is the signal `PairingDialog` reads to say "wrong code",
+    // and losing it costs the joiner a five-minute timeout that then blames
+    // an expired code.
+    // ---------------------------------------------------------------------
+    describe('#3505 pairing-window rejections are not sync failures', () => {
+      it.each([
+        ['pairing passphrase proof required', 'the #855 proof gate refusing a mistyped code'],
+        ['peer not paired with this device', "S-1 refusing a stranger's probe, or a lapsed host"],
+        [
+          'Sync failed: sync ended in terminal state: Failed("pairing passphrase proof required")',
+          "the daemon's own generic wrapper, should one ever reach the UI again",
+        ],
+      ])('%s: sets the store error but raises no toast', async (message) => {
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')({
+          payload: { type: 'error', message, remote_device_id: 'device-42' },
+        })
+
+        expect(mockSetState).toHaveBeenCalledWith('error', message)
+        expect(mockedToastError).not.toHaveBeenCalled()
+        expect(mockedAnnounce).not.toHaveBeenCalledWith('Sync failed')
+
+        unmount()
+      })
+
+      it('still toasts an ordinary sync failure that merely mentions pairing', async () => {
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        // The suppression keys on the responder's exact wire texts. A failure
+        // whose prose happens to be *about* pairing is still a failure, and a
+        // `pairing`-anywhere heuristic would have swallowed it.
+        const message = 'Connection failed: peer did not answer within 30s while pairing'
+        getListenerCallback('sync:error')({
+          payload: { type: 'error', message, remote_device_id: 'device-42' },
+        })
+
+        expect(mockedToastError).toHaveBeenCalledWith(
+          `Sync failed: ${message}`,
+          expect.objectContaining({ id: 'sync-error' }),
+        )
+
+        unmount()
+      })
+    })
   })
 
   describe('listen rejection (#447)', () => {

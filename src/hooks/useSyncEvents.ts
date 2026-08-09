@@ -25,6 +25,7 @@ import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { isPairingWindowRejection } from '@/lib/pairing-rejections'
 import { forEachPageStore } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -199,7 +200,30 @@ export function useSyncEvents(): void {
     (event) => {
       try {
         const { message } = event.payload
+        // The store update is unconditional: it is the signal `PairingDialog`
+        // reads to turn a waiting joiner into an immediate "wrong code", and
+        // it is also what the status panel reflects. Only the *toast* is
+        // conditional below.
         useSyncStore.getState().setState('error', message)
+        // #3505 — a pairing-window refusal is the handshake working, not a
+        // failed sync, and shouting "Sync failed" about it is worst exactly
+        // where it happens: both dialogs arm their marker on open, so both
+        // devices dial and refuse each other BEFORE either user has typed a
+        // passphrase. Both users then got a red "Sync failed: pairing
+        // passphrase proof required" at the precise moment they were being
+        // asked to trust the pairing flow. Since #3491 the device that
+        // *detects* the mismatch raises the same string locally, so the toast
+        // fired on both ends for a single doomed cross-dial.
+        //
+        // Suppressed here rather than by not emitting the event, because the
+        // event is load-bearing — see the store write above. The dialog is the
+        // surface the user is looking at during a pairing window, and it owns
+        // the story: "wrong code" on the proof rejection, its own countdown
+        // otherwise.
+        if (isPairingWindowRejection(message)) {
+          logger.debug('useSyncEvents', 'suppressed a pairing-window rejection toast', { message })
+          return
+        }
         notify.error(i18n.t('sync.failed', { message }), { id: 'sync-error' })
         announce(i18n.t('announce.syncFailed'))
       } catch (err: unknown) {
