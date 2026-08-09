@@ -1016,6 +1016,31 @@ proptest! {
                 "pages_cache must hold the seeded pages for the oracle to observe anything, got {:?}",
                 coverage
             );
+            // #3654 row membership: the key-set diff is only meaningful if the
+            // from-base rebuild actually produced a non-empty set. Three live
+            // page blocks were seeded (space, rooting page, link target); the
+            // chain's ops are all `content`-typed, so production's
+            // `RebuildPagesCache` is narrowed out of their task sets (#2037
+            // pt2) and membership must hold with NO settle — a stray cache-row
+            // delete (an over-broad FK cascade, a bad orphan sweep) fires here.
+            prop_assert!(
+                coverage.live_page_blocks >= 3,
+                "the row-membership rebuild folded fewer than the 3 seeded live page \
+                 blocks, so the key-set diff compared near-empty sets, got {:?}",
+                coverage
+            );
+            // #3654 page ownership: every page owns itself by DB CHECK, so a
+            // fixture where nothing is owned by ANOTHER page makes the
+            // parent_id walk a no-op and the ownership diff self-evident. A
+            // chain that created blocks must leave at least one block whose
+            // owner the walk had to climb to.
+            prop_assert!(
+                chain_creates == 0 || coverage.blocks_owned_by_another_page > 0,
+                "chain created {} blocks under PAGE_ID but no block is structurally owned \
+                 by another page — the ownership walk never climbed, so the oracle \
+                 compared self-ownership against a DB CHECK",
+                chain_creates
+            );
             // Rows alone are not enough: both audited columns must actually
             // leave their DEFAULT 0 at some point in a chain that can move
             // them, or the oracle is diffing 0 against 0. This is what stops
