@@ -823,7 +823,21 @@ interface MetaResp {
 function invokePages(
   page: Page,
   args: { sort: string; cursor: string | null; limit: number },
-): Promise<MetaResp | { __error: { kind?: string; code?: string; message?: string } }> {
+  // The `| undefined` on each optional member is load-bearing under
+  // `exactOptionalPropertyTypes`: the catch below builds the object by copying
+  // `e.kind`/`e.code`/`e.message` through, so the keys are always PRESENT and
+  // may hold `undefined`. `kind?: string` alone means "absent or a string",
+  // which that value is not.
+): Promise<
+  | MetaResp
+  | {
+      __error: {
+        kind?: string | undefined
+        code?: string | undefined
+        message?: string | undefined
+      }
+    }
+> {
   return page.evaluate(async (a) => {
     const invoke = (
       window as unknown as {

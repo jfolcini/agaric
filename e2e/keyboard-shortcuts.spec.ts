@@ -1,3 +1,5 @@
+import type { Locator } from '@playwright/test'
+
 import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 
 /**
@@ -17,6 +19,25 @@ import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
  *     QN_1: contains [[PAGE_GETTING_STARTED]] backlink
  *     QN_2: contains *italic* text
  */
+
+/**
+ * `locator.textContent()` is typed `string | null` — null when the element is
+ * absent. Every caller below feeds the result straight back into
+ * `toHaveText()`, which accepts no null, so the null has to be resolved rather
+ * than assumed away. Resolving it loudly is the useful choice: a null here
+ * means the element the whole assertion is anchored to never existed, and a
+ * named failure beats `not.toHaveText(null)` quietly comparing against
+ * something Playwright never documented accepting.
+ */
+async function textOf(locator: Locator): Promise<string> {
+  const text = await locator.textContent()
+  if (text === null) {
+    throw new Error(
+      'expected the locator to resolve to an element with text content, but textContent() was null',
+    )
+  }
+  return text
+}
 
 // ===========================================================================
 // 1. Formatting shortcuts (in focused editor)
@@ -240,7 +261,7 @@ test.describe('Block organization', () => {
     await openPage(page, 'Getting Started')
 
     // Get text of the first two blocks in static view
-    const secondBlockText = await page.locator('[data-testid="block-static"]').nth(1).textContent()
+    const secondBlockText = await textOf(page.locator('[data-testid="block-static"]').nth(1))
 
     // Focus the first block
     await focusBlock(page, 0)
@@ -518,7 +539,7 @@ test.describe('Global shortcuts', () => {
 
   test('Alt+Left navigates journal back', async ({ page }) => {
     // We start on the journal view, get the current date display
-    const initialDate = await page.locator('[data-testid="date-display"]').textContent()
+    const initialDate = await textOf(page.locator('[data-testid="date-display"]'))
 
     // Press Alt+Left to go to previous day
     await page.keyboard.down('Alt')
@@ -531,7 +552,7 @@ test.describe('Global shortcuts', () => {
 
   test('Alt+Right navigates journal forward', async ({ page }) => {
     // Capture today's date before navigating
-    const todayDate = await page.locator('[data-testid="date-display"]').textContent()
+    const todayDate = await textOf(page.locator('[data-testid="date-display"]'))
 
     // First go back a day so we can go forward
     await page.keyboard.down('Alt')
@@ -541,7 +562,7 @@ test.describe('Global shortcuts', () => {
     // Wait for the date to change from today
     await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(todayDate)
 
-    const backDate = await page.locator('[data-testid="date-display"]').textContent()
+    const backDate = await textOf(page.locator('[data-testid="date-display"]'))
 
     // Blur any editor that stole focus from the auto-created block for the
     // new (empty) journal page. The product's `isTypingInField()` guard in
@@ -562,7 +583,7 @@ test.describe('Global shortcuts', () => {
 
   test('Alt+T goes to today', async ({ page }) => {
     // Get today's date display
-    const todayDate = await page.locator('[data-testid="date-display"]').textContent()
+    const todayDate = await textOf(page.locator('[data-testid="date-display"]'))
 
     // Navigate back a day first
     await page.keyboard.down('Alt')

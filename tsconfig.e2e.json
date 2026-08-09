@@ -1,0 +1,25 @@
+{
+  "//": "Typecheck project for the Playwright browser-mock e2e suite (#3606). Before this existed, `e2e/**` belonged to NO project: tsconfig.app.json claims `src`, tsconfig.node.json the three config files, tsconfig.wdio.json `e2e-tauri/**` — the near-identical directory name being what made the hole easy to miss. Unlike tsconfig.wdio.json this one IS referenced from tsconfig.json, deliberately: `tsc -b` is the only typecheck any gate runs (prek's `tsc` hook and _validate.yml's node-matrix `Typecheck (tsc -b)` step), so a project outside it is a project nothing checks. That is precisely the failure mode `typecheck:e2e-tauri` still has — a script that exists but that no gate invokes. `noEmit` keeps this out of `vite build`'s bundle. Run standalone: `npm run typecheck:e2e`.",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo",
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true
+  },
+  "include": ["e2e/**/*.ts"]
+}

@@ -201,8 +201,9 @@ export async function expectNoHorizontalOverflow(
     //
     // Whether `el` establishes a CSS containing block for a `position:
     // absolute` descendant (CSS Position spec, "Fixed/Absolute positioning
-    // layout model" — `contain`/`filter`/`backdrop-filter`/`perspective`/
-    // `transform`/`will-change` all establish one in addition to
+    // layout model" — `contain`/`content-visibility`/`filter`/
+    // `backdrop-filter`/`perspective`/`transform`/`translate`/`scale`/
+    // `rotate`/`will-change` all establish one in addition to
     // `position !== static`).
     // `position: fixed`'s containing-block rules differ slightly, but fixed
     // nodes are never evaluated here (skipped as noise below), so that
@@ -218,6 +219,24 @@ export async function expectNoHorizontalOverflow(
     const establishesContainingBlock = (style: CSSStyleDeclaration): boolean => {
       if (style.position !== 'static') return true
       if (style.transform !== 'none') return true
+      // The independent transform properties (CSS Transforms 2). These are NOT
+      // reflected in computed `transform` — an element with `translate: 12px`
+      // still reads `transform: none` — so the check above cannot see them.
+      // That gap is live rather than theoretical here: the project is on
+      // Tailwind v4, whose `translate-*` / `scale-*` / `rotate-*` utilities emit
+      // the LONGHANDS and never `transform:` (#3625). Compare against `'none'`
+      // for the same reason as `backdrop-filter` below: the computed value on an
+      // untransformed element is the non-empty string `'none'`, so a truthiness
+      // test would make every element a containing block.
+      if (style.translate !== 'none') return true
+      if (style.scale !== 'none') return true
+      if (style.rotate !== 'none') return true
+      // `content-visibility: auto | hidden` applies layout/paint containment to
+      // the box, which establishes a containing block — but, unlike `contain:`,
+      // it does NOT surface in computed `contain` (measured: a
+      // `content-visibility: auto` box reads `contain: none`), so the regex
+      // below never sees it. `visible` is the only value that does not contain.
+      if (style.contentVisibility === 'auto' || style.contentVisibility === 'hidden') return true
       if (style.filter !== 'none') return true
       // Filter Effects 2 gives a non-`none` `backdrop-filter` the same
       // containing-block powers as `filter`, and Chromium implements it. The
@@ -234,10 +253,23 @@ export async function expectNoHorizontalOverflow(
           .split(',')
           .map((v) => v.trim())
           // `'backdrop-filter'` is its own token — a `v === 'filter'` check
-          // does not match it.
-          .some(
-            (v) =>
-              v === 'transform' || v === 'filter' || v === 'backdrop-filter' || v === 'perspective',
+          // does not match it. Same for `translate`/`scale`/`rotate`, which are
+          // separate properties from `transform` (#3625), and for `contain`.
+          // This list is NOT "any will-change": measured in Chromium 151,
+          // `will-change: content-visibility` and `will-change: opacity` do NOT
+          // establish a containing block, and the must-still-flag fixtures in
+          // `horizontal-overflow-helper.spec.ts` hold that line.
+          .some((v) =>
+            [
+              'transform',
+              'translate',
+              'scale',
+              'rotate',
+              'filter',
+              'backdrop-filter',
+              'perspective',
+              'contain',
+            ].includes(v),
           )
       )
         return true

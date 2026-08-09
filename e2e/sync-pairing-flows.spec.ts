@@ -107,8 +107,12 @@ async function fillPassphrase(
 ) {
   const wordInputs = dialog.locator('input[aria-label*="Passphrase word"]')
   await expect(wordInputs).toHaveCount(4)
-  for (let i = 0; i < 4; i++) {
-    await wordInputs.nth(i).fill(words[i])
+  // `words.entries()` rather than an index loop: indexing the 4-tuple with a
+  // `number` widens each element to `string | undefined` under
+  // `noUncheckedIndexedAccess`, while `entries()` keeps the tuple's element
+  // type. Same four iterations, no cast.
+  for (const [i, word] of words.entries()) {
+    await wordInputs.nth(i).fill(word)
   }
 }
 
