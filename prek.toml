@@ -54,7 +54,12 @@ hooks = [
     ], stages = [
         "pre-push",
     ] },
-    { id = "detect-private-key", exclude = "^src-tauri/(agaric-sync/src/sync_cert\\.rs|src/sync_net/tests\\.rs|src/sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$|^docs/session-log/", stages = [
+    # The `src-tauri/...` alternation is deliberately narrow: `exclude` is a regex
+    # filter, not an existence assertion, so an alternation naming a deleted file
+    # silently stops matching and nobody notices. The two mTLS-era entries
+    # (`agaric-sync/src/sync_cert.rs`, `src/sync_net/tests.rs`) were dropped in
+    # #3510 when the iroh cutover deleted those files; keep this list pruned.
+    { id = "detect-private-key", exclude = "^src-tauri/src/sync_daemon/tests\\.rs$|^SESSION-LOG\\.md$|^docs/session-log/", stages = [
         "pre-commit",
     ] },
     # Catch the "I added a script but forgot chmod +x" / "I marked a non-executable as +x" class of mistake.
