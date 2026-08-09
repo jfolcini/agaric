@@ -54,11 +54,23 @@ rules:
     # cache. Every release lane that builds, signs, attests or uploads an
     # artefact is therefore cache-free. Verified with an empty ignore list:
     # exactly the four ci.yml findings below fire, with none in release.yml.
+    #
+    # Re-anchored 2026-08-09 (#3672), +18 lines each: `273/296/426/458` →
+    # `291/314/444/476`. No cache step moved and none was added — the comment
+    # block above ci.yml's `concurrency:` grew by eighteen lines and every
+    # anchor below it drifted, turning four suppressed findings into four
+    # `high` failures on a diff that touched no cache at all. Re-derived by the
+    # procedure this comment prescribes (empty ignore list, re-run, re-anchor)
+    # and then checked line-for-line: each new anchor names the same
+    # `Swatinem/rust-cache` / `actions/setup-node` step as the old one, and the
+    # count is still four. That check is the point — re-anchoring blind is how
+    # a dead anchor becomes a blanket file-wide suppression, which is the
+    # failure the 2026-07-16 note above describes.
     ignore:
-      - ci.yml:273
-      - ci.yml:296
-      - ci.yml:426
-      - ci.yml:458
+      - ci.yml:291
+      - ci.yml:314
+      - ci.yml:444
+      - ci.yml:476
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot

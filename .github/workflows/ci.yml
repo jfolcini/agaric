@@ -16,20 +16,38 @@ on:
   pull_request:
     branches: [main]
 
-# Cancel an in-flight CI run when a new push lands on the same ref. Saves
-# minutes on rapid push-then-fix cycles AND on rapid stacked merges to main:
-# when several PRs land back-to-back, each merge otherwise kicks a full main
-# CI (linux smoke + android) and none supersede each other, so N merges burn
-# N full runs. Cancelling superseded main runs keeps only the latest main
-# HEAD validated. This is safe here because main CI is a post-merge sanity
-# check — its artifacts are NOT consumed downstream (tag/release builds run
-# through release.yml), and the PR merge gates (validate-all, dco) already
-# validated each commit before it landed. Trade-off: an intermediate commit
-# in a rapid merge stack is not independently re-validated on main; the
-# latest state always is.
+# Cancel an in-flight CI run when a new push lands on the same ref. On a PR
+# branch that is unambiguously right: a push-then-fix cycle supersedes its own
+# earlier run and only the latest head is interesting.
+#
+# ─── Why `main` is excluded (#3672) ─────────────────────────────────────────
+#
+# The paragraph that used to be here argued the same cancellation was safe on
+# `main`, on the grounds that main CI is a post-merge sanity check and "the
+# latest state always is" validated. The second half of that sentence is the
+# part that stopped being true, and it is measurable: on 2026-08-09, five PRs
+# merged in about 45 minutes and the run history shows FOUR consecutive
+# cancelled main runs — 91022aaeb, a650ab4de, 4ccac145b, 23776e853 — with the
+# last main CI to actually COMPLETE being 4f2efb1bf, before all of them. Across
+# the whole day, 31 of 47 main CI runs were cancelled. `main` was not
+# "validated at its latest state"; it was unvalidated across five commits, and
+# while merges keep arriving at that rate the latest state is cancelled too, so
+# main CI never completes at all.
+#
+# That is the sharpest form of #3672. That issue is that nothing verifies a
+# merge RESULT before it becomes `main`; this made it worse, because the
+# post-merge run which is the last thing that could have caught it was being
+# cancelled by the next merge. A break introduced by merge #2 and masked in
+# merge #5's tree would never have been attributed to anything.
+#
+# So: cancel on PR refs, never on `main`. The cost this reinstates is the one
+# the original note described — N back-to-back merges burn N full main runs —
+# and it buys a completed verdict per merged commit, which is what makes a red
+# main attributable to the merge that caused it. Push-mode CI is not a merge
+# gate either way: `validate-all` and `dco` still gate the PR.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Default to read-only for the workflow's GITHUB_TOKEN. Individual jobs do
 # not need to write back to the repo (artifact uploads use separate scopes

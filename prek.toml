@@ -972,13 +972,23 @@ stages = ["pre-commit"]
 # tautology back in; and the live seeded SET is read out of `impl Default`
 # rather than written down, so a rename that makes the parse return nothing
 # fails loudly instead of silently restoring the hole for every field at once.
+#
+# Keyed to `metrics.rs` as well as to the guard's own source (#3728). The
+# self-test's live-tree assertions READ that file — that the non-zero-seeded
+# set is exactly `fts_last_optimize_ms` and `cached_op_log_count`, and that
+# every `QueueMetrics` field is matched inside `impl Default` — so a
+# `metrics.rs`-only edit was precisely the commit where they did not run. The
+# `metric-provable` hook is keyed to `metrics.rs` and still catches a real
+# violation; what was skipped is the ENUMERATION pin, which is what catches a
+# `Default` block the parser stopped understanding — the failure that silently
+# zeroes every seed and re-opens #3707's hole for every field at once.
 [[repos.hooks]]
 id = "metric-provable-selftest"
 name = "Metric-provability guard self-test"
 entry = "node scripts/check-metric-provable.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-metric-provable\\.mjs$"
+files = "^(scripts/check-metric-provable\\.mjs|src-tauri/src/materializer/metrics\\.rs)$"
 stages = ["pre-commit"]
 
 # snapshot-redaction: scan every `*.snap` file under `src/` and
@@ -2166,6 +2176,33 @@ entry = "node scripts/summarize-review-findings.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = '^(scripts/summarize-review-findings\.mjs|\.github/workflows/claude-code-review\.yml)$'
+stages = ["pre-commit"]
+
+# pr-file-overlap-selftest (#3672): two PRs green in isolation can land a red
+# `main`, and nothing in the pipeline knows the two exist at once — on
+# 2026-08-09 the overlap between six simultaneously-open PRs had to be computed
+# by hand, and before that table existed a baseline re-anchored from a stale
+# base was one merge away from making `main` red for a change neither PR made
+# incorrectly. This script computes that table. Its fixtures ARE the live
+# six-PR situation, so the assertion is that it reproduces the answer a human
+# derived; each carries its sibling — a genuinely disjoint PR must still be
+# told so (silence and "nothing overlaps" are different facts), a PR missing
+# from the payload must render as "not computed" rather than as "no overlap",
+# and a shared RATCHET file must sort and read differently from an ordinary
+# shared file, because both branches holding a self-consistent baseline is the
+# case the whole thing was built for. The rendered comment is pinned to state
+# what the signal does NOT measure: a path intersection cannot see the
+# semantic coupling that started the issue (#3666's canary executing #3657's
+# script), and an empty table must never read as "safe to merge".
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "pr-file-overlap-selftest"
+name = "Open-PR file overlap self-test (#3672)"
+entry = "node scripts/pr-file-overlap.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^(scripts/pr-file-overlap\.mjs|\.github/workflows/pr-overlap\.yml)$'
 stages = ["pre-commit"]
 
 # scheduled-failure-reporter-selftest (#3359): `report-scheduled-failures` is

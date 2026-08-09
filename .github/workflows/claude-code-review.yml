@@ -199,6 +199,14 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # #3728: which identity's comments count as review findings. Empty
+          # before the reviewer app is configured, in which case the summariser
+          # infers it from the author of the review of this commit and falls
+          # back to "any bot" only when there is no review to learn from.
+          # Interpolated into `env:` rather than into `run:` — the whole step
+          # already follows that rule, and a `${{ }}` inside the script body is
+          # a template-injection surface.
+          REVIEWER_LOGIN: ${{ steps.app-token.outputs.app-slug }}
         run: |
           set -uo pipefail
           rm -f check-run.json findings.md
@@ -208,6 +216,7 @@ jobs:
             --reviews reviews.json \
             --comments comments.json \
             --head-sha "$HEAD_SHA" \
+            --reviewer-login "$REVIEWER_LOGIN" \
             --check-payload check-run.json \
             --summary-file findings.md || true
 
@@ -235,11 +244,40 @@ jobs:
 
           cat findings.md >> "$GITHUB_STEP_SUMMARY"
 
+          # #3728: UPDATE this commit's findings check rather than adding a
+          # second one. This workflow triggers on
+          # `[opened, synchronize, ready_for_review, reopened]`, and
+          # `ready_for_review` / `reopened` fire on the SAME head sha as the
+          # earlier `opened` — so an unconditional POST leaves several
+          # identically named `claude-review findings` entries on one commit,
+          # possibly with different conclusions and no way to tell which is
+          # current. A rollup carrying two contradictory copies of this check
+          # is exactly as unreadable as the green one it replaced.
+          #
+          # The lookup is filtered to this workflow's own runs: the token can
+          # only PATCH check runs its own app created, and PATCHing is skipped
+          # rather than attempted for anything else. `head_sha` is dropped
+          # because it is a POST-only field.
+          existing=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" -X GET \
+            -f check_name='claude-review findings' -f per_page=100 \
+            --jq '[.check_runs[] | select(.app.slug == "github-actions") | .id] | .[-1] // empty' \
+            2>/dev/null | tail -1)
+          published=no
+          if [ -n "$existing" ]; then
+            jq 'del(.head_sha)' check-run.json > check-run-patch.json
+            if gh api -X PATCH "repos/$REPO/check-runs/$existing" --input check-run-patch.json > /dev/null; then
+              published=yes
+              echo "updated existing check run $existing"
+            fi
+          fi
+
           # A failed POST (fork PRs get a read-only token) leaves no check run
           # either. Nothing can be done about that here, but it must not pass
           # unremarked — the step summary is then the only copy and has to say
           # so out loud.
-          if ! gh api -X POST "repos/$REPO/check-runs" --input check-run.json > /dev/null; then
+          if [ "$published" = yes ]; then
+            :
+          elif ! gh api -X POST "repos/$REPO/check-runs" --input check-run.json > /dev/null; then
             {
               echo
               echo "> **The \`claude-review findings\` check run could NOT be published**"

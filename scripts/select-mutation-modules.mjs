@@ -356,7 +356,14 @@ function main(argv) {
   const result = selectModules(args)
   console.log(args.markdown ? renderSelection(result) : JSON.stringify(result))
 
-  const out = process.env.GITHUB_OUTPUT
+  // `--markdown` is a pure RENDERING mode and writes no step outputs (#3728).
+  // `mutation-pr.yml`'s "Render report" step re-invokes this script to draw the
+  // report paragraph, from a step with no `id:` — so the second run appended a
+  // duplicate `modules=`/`count=`/`unmutated=` triple to `$GITHUB_OUTPUT` that
+  // nothing could ever read, under a step nothing could reference. Harmless in
+  // effect, but it makes the output file a misleading record of what the job
+  // decided, and the decision belongs to the `select` step alone.
+  const out = args.markdown ? null : process.env.GITHUB_OUTPUT
   if (out) {
     // Space-separated so the workflow can pass it straight to
     // `scripts/run-mutation.mjs`, which takes module names as argv.
