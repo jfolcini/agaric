@@ -190,8 +190,6 @@ beforeEach(() => {
         bg_high_water: 0,
         fg_errors: 0,
         bg_errors: 0,
-        fg_panics: 0,
-        bg_panics: 0,
       }
     return emptyPage
   })
