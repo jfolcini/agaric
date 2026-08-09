@@ -60,6 +60,23 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # so `regex` is a regular dependency (#2621, wave S4c). Version mirrors the app
 # crate's `regex = "1"`.
 regex = "1"
+# `peer_refs::validate_endpoint_id` parses the `endpoint_id` column's value into
+# an `EndpointId` before writing it (#3561). This is the same relationship
+# `ulid` has with `space::SpaceId` above: a dependency taken purely so the store
+# can check that an identifier column holds a value of the type it claims to.
+#
+# `iroh-base`, NOT `iroh`: this is iroh's type-definition crate — key types and
+# `RelayUrl`, no QUIC, no tokio, no networking. The edge the sync seam
+# deliberately avoids is the *app* crate reaching `iroh` (which is why
+# `agaric_sync::sync_daemon::peer_lock_key_from_stored` exists); that edge is
+# untouched here.
+#
+# Pinned EXACTLY, matching `agaric-sync`'s `iroh = "=1.0.3"`. Two independent
+# ranges could resolve two `iroh-base` builds, and then the store's `EndpointId`
+# would be a *different type* from the transport's, validating against a second
+# copy of the parser. `default-features = false` drops `relay`'s share of the
+# surface; `key` is the feature `FromStr` lives on.
+iroh-base = { version = "=1.0.3", default-features = false, features = ["key"] }
 # `test_support` (temp-file WAL `test_pool`) needs `tempfile` for its `TempDir`.
 # Optional + gated by the `test-util` feature so downstream test builds
 # (agaric-engine) can compile it; the store's own `cargo test` reaches the same

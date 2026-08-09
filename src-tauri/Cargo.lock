@@ -199,6 +199,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "insta",
+ "iroh-base",
  "proptest",
  "regex",
  "rustc-hash",
