@@ -28,7 +28,8 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 // zero height, so the real virtualizer collapses the window to zero rows and
 // every row assertion below would find nothing. The shared mock lays out all
 // rows, keeping these tests about behaviour rather than about jsdom layout.
-// The windowing itself is pinned by `LinkedReferences.virtualization.test.tsx`.
+// The windowing itself is pinned by
+// `src/components/common/__tests__/CollapsibleGroupList.virtualization.test.tsx`.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 import { t } from '@/lib/i18n'

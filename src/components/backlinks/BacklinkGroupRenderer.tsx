@@ -29,6 +29,7 @@ import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import type { BacklinkGroup, BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 
 export interface BacklinkGroupRendererProps {
@@ -86,6 +87,13 @@ interface BacklinkRowProps {
   style?: React.CSSProperties | undefined
   measureRef?: ((el: HTMLElement | null) => void) | undefined
   dataIndex?: number | undefined
+  /**
+   * Note 4 (#3732/#3733) — whether this row is the last of the WHOLE group.
+   * Only supplied on the windowed path, where the `last:` CSS variant would
+   * match the last MOUNTED row instead and drop the divider mid-list.
+   * `undefined` means "unvirtualized", where `:last-child` is correct.
+   */
+  isLast?: boolean | undefined
 }
 
 /**
@@ -115,6 +123,7 @@ function BacklinkRowInner({
   style,
   measureRef,
   dataIndex,
+  isLast,
 }: BacklinkRowProps): React.ReactElement {
   const onBlockClickRef = useRef(onBlockClick)
   onBlockClickRef.current = onBlockClick
@@ -168,7 +177,10 @@ function BacklinkRowInner({
       // Roving focus is exposed to AT via the container's aria-activedescendant
       // (pointing at this row's `id`) plus aria-current here. #2263.
       aria-current={isFocused ? true : undefined}
-      className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 last:border-b-0 cursor-pointer hover:bg-muted/50"
+      className={cn(
+        'linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 cursor-pointer hover:bg-muted/50',
+        isLast === undefined ? 'last:border-b-0' : isLast && 'border-b-0',
+      )}
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- li needs tabIndex for keyboard navigation
       tabIndex={0}
       onClick={() => onBlockClickRef.current(block)}
@@ -244,6 +256,7 @@ export function BacklinkGroupRenderer({
                   style: virtualRow.style,
                   measureRef: virtualRow.measureRef,
                   dataIndex: virtualRow.index,
+                  isLast: virtualRow.isLast,
                 }
               : {})}
             block={block}

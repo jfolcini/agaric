@@ -283,13 +283,27 @@ export function UnlinkedReferences({
               const blocks = g.blocks.filter((b) => b.id !== blockId)
               if (blocks.length > 0) nextGroups.push({ ...g, blocks })
             }
-            // `totalCount` derives from the LAST page (see `useUnlinkedReferences`),
-            // so decrement there so the header count drops by exactly one —
-            // matching the old `setTotalCount(prev => prev - 1)`.
+            // `totalCount`/`filteredCount` both derive from the LAST page (see
+            // `useUnlinkedReferences`), so decrement there so the counts drop by
+            // exactly one — matching the old `setTotalCount(prev => prev - 1)`.
+            //
+            // Note 1 (#3733): `filtered_count` used to be left alone here, so
+            // with a filter active the "Showing {filtered} of {total}" line
+            // kept counting the row this update had just removed — "Showing 4
+            // of 39" above 3 rows, until the next refetch healed it. That is
+            // the same "the number contradicts the rows" defect #3316 item 1
+            // set out to fix, in a state it did not cover. The clamp is
+            // belt-and-braces: a double-click can only ever remove a row once
+            // (the second call finds no matching block), but a count must never
+            // render negative.
+            const isLastPage = idx === lastIdx
             pages.push({
               ...page,
               groups: nextGroups,
-              total_count: idx === lastIdx ? page.total_count - 1 : page.total_count,
+              total_count: isLastPage ? Math.max(0, page.total_count - 1) : page.total_count,
+              filtered_count: isLastPage
+                ? Math.max(0, page.filtered_count - 1)
+                : page.filtered_count,
             })
           })
           return { ...old, pages }
@@ -519,7 +533,13 @@ export function UnlinkedReferences({
                         // aria-activedescendant → this row's id).
                         aria-current={block.id === focusedBlockId ? true : undefined}
                         className={cn(
-                          'unlinked-reference-item flex items-center gap-3 border-b py-1.5 px-2 last:border-b-0',
+                          'unlinked-reference-item flex items-center gap-3 border-b py-1.5 px-2',
+                          // Note 4 — under windowing `last:border-b-0` matches
+                          // the last MOUNTED row, so the divider vanishes from
+                          // a row mid-list and the gap migrates as the window
+                          // slides. `virtualRow.isLast` is the real end of the
+                          // group; the unvirtualized path keeps the CSS variant.
+                          virtualRow ? virtualRow.isLast && 'border-b-0' : 'last:border-b-0',
                           block.id === focusedBlockId && UNLINKED_FOCUS_CLASSES,
                         )}
                       >

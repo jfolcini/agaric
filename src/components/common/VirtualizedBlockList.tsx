@@ -30,11 +30,14 @@
  *     row so its real height corrects the estimate after first paint.
  *   - `ctx.index` is the row's index within `blocks`, for the `data-index`
  *     attribute `measureElement` reads.
+ *   - `ctx.isLast` says whether the row is the last of the WHOLE group, so a
+ *     caller can draw the "no divider under the final row" rule without the
+ *     `last:` CSS variant, which under windowing matches the last MOUNTED row.
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type React from 'react'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -103,6 +106,28 @@ export interface VirtualRowContext {
   measureRef: (el: HTMLElement | null) => void
   /** Index within `blocks` — set as `data-index` for `measureElement`. */
   index: number
+  /**
+   * Whether this row is the last of the WHOLE group (`index === blocks.length -
+   * 1`), not merely the last one currently mounted.
+   *
+   * #3732/#3733 note 4: the panels' rows carry `border-b last:border-b-0`, and
+   * under windowing the CSS `:last-child` matches the last row of the *window*.
+   * The divider therefore disappears from a row in the middle of the list and
+   * the gap migrates as the user scrolls. Callers on the windowed path must
+   * branch on this flag instead of the `last:` variant; the unvirtualized path
+   * (no context at all) keeps `last:border-b-0`, where `:last-child` and "last
+   * row" coincide.
+   */
+  isLast: boolean
+}
+
+/** One row this render commits: a windowed row, or the off-window focus anchor. */
+interface WindowedRow<B> {
+  block: B
+  index: number
+  start: number
+  /** Anchor rows are transient and off-screen — see `NOOP_MEASURE_REF`. */
+  measured: boolean
 }
 
 export interface VirtualizedBlockListProps<B extends { id: string }> {
@@ -128,6 +153,37 @@ export function VirtualizedBlockList<B extends { id: string }>({
   renderBlock,
 }: VirtualizedBlockListProps<B>): React.ReactElement {
   const scrollRef = useRef<HTMLUListElement>(null)
+
+  // #3732 note 3 — `BacklinkRow` is `memo`'d precisely so the panel
+  // re-rendering on every arrow-key / focus change does not rebuild every
+  // mounted row's element tree (#2193). A fresh `style` object literal per
+  // render makes that memo compare unequal every single time, so the
+  // optimization was silently lost for exactly the rows that are mounted.
+  // The style is a pure function of the row's `start` offset, so caching by
+  // offset hands back a stable reference for as long as a row does not move.
+  // Bounded by the number of distinct offsets in the list (<= `blocks.length`,
+  // itself capped at `MAX_BLOCKS_PER_GROUP`); the guard below drops the cache
+  // wholesale if re-measuring ever churns it past that.
+  const styleCacheRef = useRef(new Map<number, React.CSSProperties>())
+  const rowCount = blocks.length
+  const styleForOffset = useCallback(
+    (start: number): React.CSSProperties => {
+      const cache = styleCacheRef.current
+      const hit = cache.get(start)
+      if (hit) return hit
+      if (cache.size > rowCount * 2) cache.clear()
+      const style: React.CSSProperties = {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        transform: `translateY(${start}px)`,
+      }
+      cache.set(start, style)
+      return style
+    },
+    [rowCount],
+  )
 
   const virtualizer = useVirtualizer({
     count: blocks.length,
@@ -166,6 +222,40 @@ export function VirtualizedBlockList<B extends { id: string }>({
   const activeIsWindowed = virtualItems.some((vi) => vi.index === activeIndex)
   const anchorBlock = activeIndex >= 0 && !activeIsWindowed ? blocks[activeIndex] : undefined
 
+  // The anchor is spliced into the SAME keyed array as the windowed rows, in
+  // index order — it is deliberately not a second child slot of the `<ul>`.
+  //
+  // #3733 note 3: React scopes reconciliation keys to the child slot they were
+  // produced in (`.0:$B29` inside the mapped array vs `.$B29` for a standalone
+  // second child). With the anchor in its own slot, the moment `scrollToIndex`
+  // lands and the window catches up to it, the row's key moves slots: React
+  // unmounts the anchor `<li>` and mounts a fresh one. `useFocusedRowEffect`
+  // applies `LinkedReferences`' focus ring imperatively (`classList.add`) to
+  // the node it looked up, and its deps are keyed on `focusedRowId`, which has
+  // not changed — so the effect does not re-run and the ring is left on a
+  // detached node. Keeping one array keeps the key stable, so React MOVES the
+  // existing DOM node instead of replacing it and the imperative classes ride
+  // along. `measureRef`/`style`/`data-index` are then just prop updates on the
+  // surviving element.
+  const rows: WindowedRow<B>[] = []
+  for (const vi of virtualItems) {
+    const block = blocks[vi.index]
+    if (block) rows.push({ block, index: vi.index, start: vi.start, measured: true })
+  }
+  if (anchorBlock) {
+    const anchorRow: WindowedRow<B> = {
+      block: anchorBlock,
+      index: activeIndex,
+      start: activeIndex * ESTIMATED_ROW_HEIGHT,
+      measured: false,
+    }
+    const at = rows.findIndex((r) => r.index > activeIndex)
+    if (at === -1) rows.push(anchorRow)
+    else rows.splice(at, 0, anchorRow)
+  }
+
+  const lastIndex = blocks.length - 1
+
   return (
     <ul
       ref={scrollRef}
@@ -187,38 +277,20 @@ export function VirtualizedBlockList<B extends { id: string }>({
       // give the spacer a per-render dynamic height without injecting CSS.
       style={{ '--vbl-total-size': `${totalSize}px` } as React.CSSProperties}
     >
-      {virtualItems.map((vi) => {
-        const block = blocks[vi.index]
-        if (!block) return null
-        return renderBlock(block, {
-          style: {
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            transform: `translateY(${vi.start}px)`,
-          },
-          measureRef: virtualizer.measureElement,
-          index: vi.index,
-        })
-      })}
-      {anchorBlock
-        ? renderBlock(anchorBlock, {
-            style: {
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              transform: `translateY(${activeIndex * ESTIMATED_ROW_HEIGHT}px)`,
-            },
-            // No `measureRef`: this row is transient and off-screen, and
-            // reporting a measurement for it would perturb the virtualizer's
-            // size cache from outside the window it is currently tracking. The
-            // real measurement is taken when the row enters the window.
-            measureRef: NOOP_MEASURE_REF,
-            index: activeIndex,
-          })
-        : null}
+      {rows.map((row) =>
+        renderBlock(row.block, {
+          style: styleForOffset(row.start),
+          // The anchor gets no real `measureRef`: it is transient and
+          // off-screen, and reporting a measurement for it would perturb the
+          // virtualizer's size cache from outside the window it is currently
+          // tracking. The real measurement is taken when the row enters the
+          // window — at which point this prop flips to `measureElement` on the
+          // same, surviving DOM node.
+          measureRef: row.measured ? virtualizer.measureElement : NOOP_MEASURE_REF,
+          index: row.index,
+          isLast: row.index === lastIndex,
+        }),
+      )}
     </ul>
   )
 }
