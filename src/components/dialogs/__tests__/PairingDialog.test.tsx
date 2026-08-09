@@ -227,7 +227,19 @@ function countInvokes(cmd: string): number {
   return mockedInvoke.mock.calls.filter(([c]) => c === cmd).length
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  // #3715 — drain before clearing the counters, not after.
+  //
+  // Every test here ends with a live pairing window, so RTL's `cleanup()`
+  // unmounts an armed dialog and its cleanup effect dispatches a
+  // `cancel_pairing`. That dispatch reaches `invoke` a few microtasks later —
+  // it is queued, and the queue is a promise chain — which can be after this
+  // hook's `vi.clearAllMocks()`. The stray call is then recorded against a
+  // test that never made it (`invoke` records under whatever implementation is
+  // current when it is finally called), and any test asserting a count of zero
+  // fails intermittently. Draining first lets the leftover land while it still
+  // belongs to the previous test, and the clear below wipes it.
+  for (let i = 0; i < 20; i++) await Promise.resolve()
   vi.clearAllMocks()
   // Default to the desktop path so existing test bodies keep their semantics.
   mockedUseIsMobile.mockReturnValue(false)
@@ -2211,6 +2223,23 @@ describe('PairingDialog', () => {
      * swallowed by a spy. Without this the cleanup effect never fires and
      * only the first of the two clears is observable (#3714).
      */
+    /**
+     * Unmount and let the close/unmount cleanup's `cancel_pairing` be
+     * DISPATCHED inside the test that armed it.
+     *
+     * Every test here ends with a live pairing window, so RTL's `afterEach`
+     * `cleanup()` fires that clear — and `pairingMutations.cancel()` reaches
+     * `invoke` a microtask later, which can be after the NEXT test's
+     * `vi.clearAllMocks()`. The stray call is then counted against a test that
+     * never made it (it is the current `mockImplementation` that records it),
+     * which is a real flake: it passed in isolation and failed in the full
+     * suite. Draining it here keeps each test's counts its own.
+     */
+    async function unmountAndDrain(unmount: () => void) {
+      unmount()
+      await flushMicrotasks()
+    }
+
     function PairingDialogHarness() {
       const [open, setOpen] = useState(true)
       return (
@@ -2239,7 +2268,7 @@ describe('PairingDialog', () => {
         return undefined
       })
 
-      render(<PairingDialogHarness />)
+      const { unmount } = render(<PairingDialogHarness />)
       await screen.findByText('alpha bravo charlie delta')
       expect(countInvokes('start_pairing')).toBe(1)
 
@@ -2286,6 +2315,8 @@ describe('PairingDialog', () => {
         'start_pairing',
       ])
       expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
+
+      await unmountAndDrain(unmount)
     })
 
     it('a remount cannot arm a window ahead of the previous instance’s in-flight clear (#3715)', async () => {
@@ -2316,7 +2347,7 @@ describe('PairingDialog', () => {
       })
 
       // A brand-new instance — empty queue, if the queue were its own.
-      render(<PairingDialog open onOpenChange={vi.fn()} />)
+      const second = render(<PairingDialog open onOpenChange={vi.fn()} />)
       await flushMicrotasks()
       expect(countInvokes('start_pairing')).toBe(1)
 
@@ -2326,6 +2357,8 @@ describe('PairingDialog', () => {
       })
       expect(mutations).toEqual(['start_pairing', 'cancel_pairing', 'start_pairing'])
       expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
+
+      await unmountAndDrain(second.unmount)
     })
 
     it('a start_pairing that never answers surfaces the bound through the error banner (#3715)', async () => {
@@ -2337,7 +2370,7 @@ describe('PairingDialog', () => {
           return undefined
         })
 
-        render(<PairingDialog open onOpenChange={vi.fn()} />)
+        const { unmount } = render(<PairingDialog open onOpenChange={vi.fn()} />)
         await flushMicrotasks()
         expect(countInvokes('start_pairing')).toBe(1)
         // Before the bound: the dialog is on its loading skeleton with
@@ -2352,6 +2385,12 @@ describe('PairingDialog', () => {
         expect(screen.getByRole('alert')).toHaveTextContent(
           'Failed to start pairing: the device stopped responding',
         )
+
+        // The arm is still an arm even though it never answered, so the
+        // unmount still tears it down — and draining it here keeps the stray
+        // call out of the next test (see `unmountAndDrain`).
+        await unmountAndDrain(unmount)
+        expect(countInvokes('cancel_pairing')).toBe(1)
       } finally {
         vi.useRealTimers()
       }
