@@ -32,7 +32,22 @@
 //      real files, so even a perfectly healthy run reported no coverage and
 //      no survivors (the #3387 blocker).
 //
-// All three are checked here, statically, with no cargo invocation, so the
+//   4. The CONSUMER half of (3), which #3386 left unguarded: the
+//      `file-mutation-survivors` job downloads this lane's artifact and reads
+//      `missed.txt` FLAT off the download directory. Two independent values
+//      have to agree for that to work — the download step's `path:` and the
+//      filer's `--rust-missed` argument — and nothing checked they did. When
+//      they disagree, `--require-rust` throws and the RED lands on the filer
+//      lane with a message about the filer, while the `mutants` lane it is
+//      actually reporting on stays green (run 30794686024, 2026-08-03, is
+//      what that looks like). Checked here because it is the same plumbing,
+//      and because the filer lane has no failure mode of its own to guard.
+//      Also checked: that lane must stay reachable from a `workflow_dispatch`
+//      (#3394) — schedule-gating it made a fix to `mutants` unverifiable for
+//      a week — and, given it is reachable, must pass `--dry-run` off the
+//      schedule so a smoke run cannot rewrite the real tracking issue.
+//
+// All of it is checked here, statically, with no cargo invocation, so the
 // hook is cheap enough to run on every commit that touches the config, the
 // workflow, or the invariant-core sources it names.
 //
@@ -64,6 +79,10 @@ const WORKSPACE_DIR = 'src-tauri'
 const WORKSPACE_MANIFEST = 'src-tauri/Cargo.toml'
 const WORKFLOW_PATH = '.github/workflows/scheduled-deep-checks.yml'
 const JOB_ID = 'mutants'
+/** The downstream consumer of `JOB_ID`'s artifact — see header note 4. */
+const FILER_JOB_ID = 'file-mutation-survivors'
+/** The artifact name the two jobs hand off through. */
+const ARTIFACT_NAME = 'mutants-out'
 
 // ---------------------------------------------------------------------------
 // Minimal TOML / YAML readers (see the header note on dependencies)
@@ -334,6 +353,103 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
 }
 
 /**
+ * The consumer half of the same plumbing (#3394): `file-mutation-survivors`
+ * downloads this lane's artifact and reads `missed.txt` FLAT off the download
+ * directory, so the download step's `path:` and the filer's `--rust-missed`
+ * argument are two independent values that must agree. Nothing checked that
+ * they did, and when they disagree the symptom is misleading: `--require-rust`
+ * throws, the FILER lane goes red with a message about the filer, and the
+ * `mutants` lane it reports on stays green.
+ *
+ * Two reachability rules ride along, because they are the difference between
+ * "this lane can be verified" and "wait a week":
+ *
+ *   * the job must NOT be gated on `github.event_name == 'schedule'`. It has no
+ *     failure mode of its own — every red it has had was downstream of
+ *     `mutants` — so schedule-gating it means a `mutants` fix cannot be
+ *     confirmed to have un-blocked it until the next cron. That is exactly how
+ *     #3394 kept listing this lane as failing for a week after #3392 fixed its
+ *     upstream.
+ *   * …and BECAUSE it is reachable from a dispatch, the step must select
+ *     `--dry-run` off the schedule. Otherwise a smoke run rewrites the real
+ *     tracking issue — the #2947 rule the schedule gate used to enforce.
+ *     Removing the gate without adding the dry run trades one bug for a worse
+ *     one, so the two are checked as a pair.
+ */
+export function checkFilerPlumbing({ lines, push }) {
+  if (!lines) {
+    push(
+      'filer-job-missing',
+      `no \`${FILER_JOB_ID}\` job in ${WORKFLOW_PATH}. That job is the only thing that turns this lane's survivors into a notification; without it the \`${JOB_ID}\` lane is back to "signal nobody reads" (#2947).`,
+    )
+    return
+  }
+
+  const jobIf = lines.find((l) => /^ {4}if:/.test(l)) ?? ''
+  if (/event_name\s*==\s*'schedule'/.test(jobIf)) {
+    push(
+      'filer-schedule-gated',
+      `the \`${FILER_JOB_ID}\` job is gated on \`github.event_name == 'schedule'\` (${jobIf.trim()}), so a \`workflow_dispatch\` skips it entirely. This lane has no failure mode of its own — it goes red only when \`${JOB_ID}\` fails to hand it a missed.txt — so gating it this way means a fix to \`${JOB_ID}\` cannot be verified end-to-end until the next weekly cron (#3394). Keep the job reachable and put the schedule-only behaviour on the step as \`--dry-run\` instead.`,
+    )
+  } else if (
+    !(lines.some((l) => l.includes('--dry-run')) && lines.some((l) => /EVENT_NAME/.test(l)))
+  ) {
+    push(
+      'filer-dispatch-writes',
+      `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from \`$EVENT_NAME\`, so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-on-schedule go together; this has one without the other.`,
+    )
+  }
+
+  const downloads = []
+  let current
+  for (const line of lines) {
+    if (/^\s*-\s+(name|uses):/.test(line)) current = undefined
+    if (/uses:\s*actions\/download-artifact/.test(line)) {
+      current = { name: undefined, path: undefined }
+      downloads.push(current)
+    }
+    if (!current) continue
+    // No leading `-`: these are `with:` keys, not the step's own `name:`.
+    const artifact = /^\s*name:\s*(\S+)\s*$/.exec(line)
+    if (artifact && current.name === undefined) current.name = artifact[1]
+    const path = /^\s*path:\s*(\S+)\s*$/.exec(line)
+    if (path && current.path === undefined) current.path = path[1]
+  }
+
+  const download = downloads.find((d) => d.name === ARTIFACT_NAME)
+  if (!download) {
+    push(
+      'filer-download-missing',
+      `the \`${FILER_JOB_ID}\` job downloads no \`${ARTIFACT_NAME}\` artifact, so it can never see this lane's survivors. With \`--require-rust\` it throws every run; without it, it silently reports "no rust survivors" and deletes every tracked one (#3364).`,
+    )
+    return
+  }
+  if (download.path === undefined) {
+    push(
+      'filer-download-path-missing',
+      `the \`${FILER_JOB_ID}\` job's \`${ARTIFACT_NAME}\` download has no \`path:\`, so it lands in the workspace root while \`--rust-missed\` reads a subdirectory.`,
+    )
+    return
+  }
+
+  const read = lines.map((l) => /--rust-missed\s+(\S+)/.exec(l)).find(Boolean)?.[1]
+  if (read === undefined) {
+    push(
+      'filer-input-missing',
+      `the \`${FILER_JOB_ID}\` job passes no \`--rust-missed\`, so the rust half of the survivor set is dropped without \`--require-rust\` ever being able to notice (#3364).`,
+    )
+    return
+  }
+  const expected = `${download.path.replace(/\/$/, '')}/missed.txt`
+  if (read !== expected) {
+    push(
+      'filer-input-mismatch',
+      `the \`${FILER_JOB_ID}\` job downloads \`${ARTIFACT_NAME}\` into '${download.path}' but reads \`--rust-missed ${read}\`; the artifact is cargo-mutants' output directory itself, so missed.txt sits flat at '${expected}'. A mismatch makes \`--require-rust\` throw and reds the FILER lane with a message about the filer, while the \`${JOB_ID}\` lane it reports on stays green (#3387/#3394).`,
+    )
+  }
+}
+
+/**
  * Pure analysis. Returns every problem found, plus the counts that make a
  * clean result meaningful rather than vacuous.
  *
@@ -371,9 +487,8 @@ export function analyzeMutantsScope({ root, overrideArgv }) {
 
   const workspace = readWorkspace(root)
   const workflowAbs = resolve(root, WORKFLOW_PATH)
-  const lines = existsSync(workflowAbs)
-    ? jobLines(readFileSync(workflowAbs, 'utf8'), JOB_ID)
-    : undefined
+  const workflow = existsSync(workflowAbs) ? readFileSync(workflowAbs, 'utf8') : undefined
+  const lines = workflow ? jobLines(workflow, JOB_ID) : undefined
   const invocation = overrideArgv
     ? { argv: overrideArgv, span: [-1, -1] }
     : lines && findInvocation(lines)
@@ -394,6 +509,10 @@ export function analyzeMutantsScope({ root, overrideArgv }) {
 
   const matched = checkGlobReachability({ root, globs, excludes, examinedDirs, workspace, push })
   if (invocation && lines) checkOutputPlumbing({ lines, invocation, push })
+  // Only when the workflow is readable at all — a root without one (the
+  // self-test's `scripts/` case) already reports `no-invocation`, and piling a
+  // second "the filer job is missing" on top of that would be noise.
+  if (workflow) checkFilerPlumbing({ lines: jobLines(workflow, FILER_JOB_ID), push })
 
   return { problems, globs, matched, examinedDirs: examinedDirs ?? [] }
 }
@@ -407,7 +526,7 @@ function main(root = REPO_ROOT) {
   if (problems.length > 0) {
     for (const p of problems) console.error(`✗ mutants scope [${p.kind}]: ${p.detail}`)
     console.error(
-      `\n${problems.length} problem(s) with the Rust mutation lane's scope or plumbing. Each one makes the lane produce zero coverage while still exiting 0 from \`cargo mutants ... || true\` (#3386, #3057).`,
+      `\n${problems.length} problem(s) with the Rust mutation lane's scope or plumbing. A scope/output problem makes the lane produce zero coverage while still exiting 0 from \`cargo mutants ... || true\` (#3386, #3057); a \`filer-*\` problem lands the red on \`${FILER_JOB_ID}\` instead, or makes that lane unverifiable outside the weekly cron (#3387, #3394).`,
     )
     process.exit(1)
   }
@@ -516,6 +635,73 @@ function selfTestPlumbing(ok, fail) {
   else fail('missing upload step is flagged', JSON.stringify(deleted))
 }
 
+/**
+ * The consumer-side checks (#3394), driven through synthetic job lines. All
+ * five fired GREEN before they were added — the guard stopped at the producer.
+ */
+function selfTestFilerPlumbing(ok, fail) {
+  const kinds = (lines) => {
+    const found = []
+    checkFilerPlumbing({ lines, push: (kind) => found.push(kind) })
+    return found
+  }
+  const job = ({ gate = '    if: always()', path = 'mutants-artifact', read, dryRun = true }) => [
+    `  ${FILER_JOB_ID}:`,
+    gate,
+    '    steps:',
+    '      - name: Download cargo-mutants survivor list',
+    '        uses: actions/download-artifact@0000',
+    '        with:',
+    `          name: ${ARTIFACT_NAME}`,
+    ...(path === undefined ? [] : [`          path: ${path}`]),
+    '      - name: File or update the single mutation-survivor tracking issue',
+    '        env:',
+    '          EVENT_NAME: ${{ github.event_name }}',
+    '        run: |',
+    '          extra=()',
+    ...(dryRun ? ['          if [ "$EVENT_NAME" != "schedule" ]; then extra=(--dry-run); fi'] : []),
+    ...(read === undefined ? [] : [`          node x.mjs --rust-missed ${read} "\${extra[@]}"`]),
+  ]
+
+  const clean = kinds(job({ read: 'mutants-artifact/missed.txt' }))
+  if (clean.length === 0) ok('a correctly plumbed filer job reports no problem')
+  else fail('clean filer job is clean', JSON.stringify(clean))
+
+  // The exact #3386 shape, seen from the consumer end: the producer's output
+  // moved and the reader did not, or vice versa.
+  const mismatch = kinds(job({ read: 'mutants-artifact/mutants.out/missed.txt' }))
+  if (mismatch.includes('filer-input-mismatch'))
+    ok('a --rust-missed one level away from the download path is flagged')
+  else fail('filer input mismatch is flagged', JSON.stringify(mismatch))
+
+  const noDownload = kinds(
+    job({ read: 'mutants-artifact/missed.txt' }).filter(
+      (l) => !/download-artifact|name: mutants-out|path: mutants-artifact/.test(l),
+    ),
+  )
+  if (noDownload.includes('filer-download-missing'))
+    ok('a filer job that stopped downloading the artifact is flagged')
+  else fail('missing filer download is flagged', JSON.stringify(noDownload))
+
+  // #3394 itself: the gate that made this lane unverifiable outside cron.
+  const gated = kinds(
+    job({
+      gate: "    if: always() && github.event_name == 'schedule'",
+      read: 'mutants-artifact/missed.txt',
+    }),
+  )
+  if (gated.includes('filer-schedule-gated'))
+    ok('schedule-gating the filer job (unverifiable outside cron) is flagged')
+  else fail('schedule-gated filer job is flagged', JSON.stringify(gated))
+
+  // …and its mirror image: ungated but writing on every event, which is the
+  // #2947 regression the gate used to prevent.
+  const writes = kinds(job({ read: 'mutants-artifact/missed.txt', dryRun: false }))
+  if (writes.includes('filer-dispatch-writes'))
+    ok('an ungated filer job that would write on a dispatch is flagged')
+  else fail('dispatch-writing filer job is flagged', JSON.stringify(writes))
+}
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -571,6 +757,7 @@ function runSelfTest() {
 
   selfTestReaders(ok, fail)
   selfTestPlumbing(ok, fail)
+  selfTestFilerPlumbing(ok, fail)
 
   // 5. End-to-end on a root with no config at all → config-missing.
   const empty = analyzeMutantsScope({ root: resolve(REPO_ROOT, 'scripts') })

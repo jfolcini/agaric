@@ -873,6 +873,19 @@ jobs:
         # The dispatch input rides via `env:` (not inline `${{ }}`) so it
         # can't expand into the shell as code (zizmor template-injection).
         #
+        # Both numbers above were sized against the PRE-#3386 baseline, which
+        # ran `cargo test` because the config file was inert. What the first
+        # healthy run actually measured (run 30981051402, 2026-08-05, the first
+        # one where `.cargo/mutants.toml` was live and the baseline therefore
+        # ran `cargo nextest run`) — record real values here rather than the
+        # predictions, and re-check them if this lane ever goes red on a
+        # Timeout baseline:
+        #   * baseline BUILD 350s against the 600s `--build-timeout` (1.7x),
+        #   * baseline TEST 604s against the 900s `--timeout` (1.49x — NOT the
+        #     3x above, which is 900 measured against the 300 that failed, not
+        #     against what the phase now costs). The `agaric` suite grows every
+        #     week; 1.49x is the headroom that will bite first.
+        #
         # #3386, three further corrections:
         #
         #   a. `--workspace`. The four `examine_globs` are the invariant core,
@@ -937,6 +950,15 @@ jobs:
         #      rather than merely disclosed as a ratio.
         #      90 min leaves ~25 min of the 120 for setup, install and upload
         #      (observed: ~2 min of setup before cargo-mutants starts).
+        #      What the budget bought in practice, from the same first healthy
+        #      run (30981051402): 13 of 607 mutants tested — the ~26s/mutant
+        #      local figure above is ~415s/mutant on the 4-vCPU runner, because
+        #      each mutant re-runs the WHOLE `agaric` nextest suite (the same
+        #      suite the 604s baseline measures) after a ~119s rebuild. The
+        #      truncation therefore stops inside `src/reverse/` — positions
+        #      1-13 of 137 — and the whole job took 91m of its 120m cap. Those
+        #      are the numbers any right-sizing work should start from; the
+        #      lane is green and honest at that size, not useful.
         env:
           MUTANTS_TIMEOUT: ${{ github.event.inputs.mutants_timeout || '900' }}
           MUTANTS_BUILD_TIMEOUT: '600'
@@ -1174,13 +1196,28 @@ jobs:
   # `if: always()`: runs even if `mutants` / `mutants-frontend` failed outright
   # (both lanes are non-blocking and best-effort already) — a missing/absent
   # artifact just contributes zero survivors from that lane (see the script's
-  # own doc comment). Scheduled-event-only per #2947: a `workflow_dispatch`
-  # smoke run (e.g. testing a `mutants_timeout` tweak) must never file/update
-  # the real tracking issue.
+  # own doc comment).
+  #
+  # #3394 — this lane is NO LONGER gated on `github.event_name == 'schedule'`.
+  # The write must still be schedule-only (a `workflow_dispatch` smoke run must
+  # never file/update the real tracking issue — the #2947 requirement), but that
+  # belongs on the STEP as `--dry-run`, not on the job: this lane has no failure
+  # mode of its own. Every red it has ever gone was DOWNSTREAM of `mutants` —
+  # `--require-rust` throwing because no `missed.txt` reached it (run
+  # 30794686024, 2026-08-03). Gating the whole job on `schedule` meant the only
+  # way to check that a `mutants` fix had actually un-blocked this lane was to
+  # wait for the next weekly cron: #3392 fixed `mutants` on 2026-08-04, the
+  # 2026-08-05 dispatch (run 30981051402) proved the `mutants` half green — and
+  # left THIS lane `skipped`, so #3394 kept listing it as failing for a week
+  # with nobody able to confirm otherwise. A dispatch now exercises the whole
+  # path (artifact download, both `--require-*` gates, the `gh issue list`
+  # lookup, the body render) and writes nothing. `report-scheduled-failures`
+  # already dry-runs itself on non-schedule events, so a dispatch still cannot
+  # touch #3394's marker block either.
   # ---------------------------------------------------------------------------
   file-mutation-survivors:
     needs: [mutants, mutants-frontend]
-    if: always() && github.event_name == 'schedule'
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -1227,14 +1264,30 @@ jobs:
         # a skipped one (`needs.<lane>.result == 'success'` would skip it):
         # `report-scheduled-failures` below `needs:` this job, so the failure
         # is reported through the ordinary path instead of vanishing as a skip.
+        #
+        # #3394: `--dry-run` off the schedule, mirroring the identical shape in
+        # `report-scheduled-failures`. The dry run still performs every read —
+        # including the real `gh issue list` lookup (only `--known-body-file`
+        # stubs that out, and this never passes it) — and only skips the
+        # `gh issue edit` / `gh issue comment` writes. That is what makes a
+        # manual dispatch a real end-to-end check of this lane instead of a
+        # skip. `EVENT_NAME` rides via `env:` rather than inline `${{ }}` per
+        # the same zizmor template-injection rule the reporter follows.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
+          set -euo pipefail
+          extra=()
+          if [ "$EVENT_NAME" != "schedule" ]; then
+            extra=(--dry-run)
+          fi
           node scripts/file-mutation-survivors.mjs \
             --rust-missed mutants-artifact/missed.txt \
             --frontend-dir mutation-artifact \
             --require-rust \
-            --require-frontend
+            --require-frontend \
+            "${extra[@]}"
 
   # ---------------------------------------------------------------------------
   # fuzz (#650/#2590) — short coverage-guided fuzz of the raw-input parsers. The
