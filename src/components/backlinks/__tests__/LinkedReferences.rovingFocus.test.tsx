@@ -22,6 +22,16 @@
  * suites lay out every row, which cannot reproduce an off-window focus target).
  * The mock's `scrollToIndex` is inert, which faithfully models the same-commit
  * problem: the fix must make the active row exist WITHOUT waiting for a scroll.
+ *
+ * #3733 note 3 — because that `scrollToIndex` is inert, the window never
+ * actually catches up here, so the ANCHOR-TO-WINDOW TRANSITION went untested.
+ * `virtualWindow.size` below is the missing lever: growing it and re-rendering
+ * is exactly the commit in which the scroll lands and the anchored row becomes
+ * a windowed one. That transition used to swap the row's React child slot
+ * (standalone anchor -> mapped array), which changes its reconciliation key and
+ * makes React unmount the `<li>` and mount a fresh one — dropping the focus
+ * ring `useFocusedRowEffect` had applied imperatively, with no re-run of the
+ * effect (its deps are keyed on the unchanged `focusedRowId`) to repaint it.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -34,7 +44,13 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 
 /** Rows the virtualizer lays out, well below `GROUP_SIZE`. */
 const WINDOW_SIZE = 5
-vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: 5 }))
+/**
+ * Mutable so a test can model the moment `scrollToIndex` lands and the window
+ * grows to include the row the panel had anchored. Read lazily by the mock on
+ * every `useVirtualizer` call. Reset in `beforeEach`.
+ */
+const virtualWindow = vi.hoisted(() => ({ size: 5 }))
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: () => virtualWindow.size }))
 
 import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -93,6 +109,7 @@ function makeGroupedResponse() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  virtualWindow.size = WINDOW_SIZE
   queryClient.clear()
   _resetPropertyKeysCacheForTest()
   useNavigationStore.setState({ currentView: 'journal', selectedBlockId: null })
@@ -113,14 +130,19 @@ function rovingContainer(container: HTMLElement): HTMLElement {
   return el
 }
 
-async function renderPanel() {
-  const utils = render(
+/** Fresh element each call: React bails out of a re-render given the same one. */
+function panelElement() {
+  return (
     <TooltipProvider>
       <LinkedReferences pageId="PAGE1" />
-    </TooltipProvider>,
+    </TooltipProvider>
   )
+}
+
+async function renderPanel() {
+  const utils = render(panelElement())
   await screen.findByText('reference 0')
-  return utils
+  return { ...utils, rerenderPanel: () => utils.rerender(panelElement()) }
 }
 
 describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () => {
@@ -175,6 +197,68 @@ describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () 
       // LinkedReferences has no declarative fallback for the ring.
       expect(active).toHaveClass('ring-2')
     })
+  })
+
+  // #3733 note 3 — the half the original #3730 tests could not reach: what
+  // happens once `scrollToIndex` LANDS. The anchored row becomes a windowed
+  // row, and if that swap remounts the `<li>`, the focus ring goes with the old
+  // node — `useFocusedRowEffect` applied it imperatively and does not re-run.
+  it('keeps the focus ring when the window catches up to the anchored row', async () => {
+    const user = userEvent.setup()
+    const { container, rerenderPanel } = await renderPanel()
+
+    const list = rovingContainer(container)
+    list.focus()
+    await user.keyboard('{ArrowUp}')
+
+    const lastSelector = `[data-backlink-item="B${GROUP_SIZE - 1}"]`
+    await waitFor(() => {
+      expect(container.querySelector(lastSelector)).toHaveClass('ring-2')
+    })
+    const anchored = container.querySelector(lastSelector)
+
+    // The scroll lands: the virtualizer's window now covers the whole group, so
+    // the row is no longer an off-window anchor.
+    virtualWindow.size = GROUP_SIZE
+    rerenderPanel()
+
+    const windowed = container.querySelector(lastSelector)
+    expect(windowed).not.toBeNull()
+    // The user-visible symptom first: the ring must still be painted.
+    expect(windowed).toHaveClass('ring-2', 'ring-inset', 'bg-accent/30')
+    // …and the mechanism: same DOM node. A remount is what dropped the ring,
+    // since `useFocusedRowEffect` applied it imperatively and does not re-run.
+    expect(windowed).toBe(anchored)
+    // …and it is mounted exactly once (not duplicated by the transition).
+    expect(container.querySelectorAll(lastSelector)).toHaveLength(1)
+    expect(list.getAttribute('aria-activedescendant')).toBe(windowed?.getAttribute('id') as string)
+  })
+
+  // #3732/#3733 note 4 — `last:border-b-0` matches the last MOUNTED row under
+  // windowing, so the divider vanishes from a row in the middle of the group.
+  // jsdom computes no Tailwind, so the class string is the assertion.
+  it('drops the row divider only on the real last row of the group, not the window', async () => {
+    const user = userEvent.setup()
+    const { container } = await renderPanel()
+
+    const lastWindowed = container.querySelector(`[data-backlink-item="B0${WINDOW_SIZE - 1}"]`)
+    expect(lastWindowed).not.toBeNull()
+    // Mid-group: it must keep its divider, and must not defer to `:last-child`.
+    expect(lastWindowed).toHaveClass('border-b')
+    expect(lastWindowed).not.toHaveClass('border-b-0')
+    expect(lastWindowed?.className).not.toMatch(/(?:^|\s)last:border-b-0(?:\s|$)/)
+
+    // Anchor the true last row so it mounts, and only it drops the divider.
+    const list = rovingContainer(container)
+    list.focus()
+    await user.keyboard('{ArrowUp}')
+
+    await waitFor(() => {
+      expect(container.querySelector(`[data-backlink-item="B${GROUP_SIZE - 1}"]`)).not.toBeNull()
+    })
+    expect(container.querySelector(`[data-backlink-item="B${GROUP_SIZE - 1}"]`)).toHaveClass(
+      'border-b-0',
+    )
   })
 
   it('has no a11y violations after a wrap-around', async () => {

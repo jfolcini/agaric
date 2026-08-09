@@ -24,6 +24,7 @@ import { axe } from 'vitest-axe'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import type { GroupItem } from '@/components/common/CollapsibleGroupList'
 import { CollapsibleGroupList } from '@/components/common/CollapsibleGroupList'
+import type { VirtualRowContext } from '@/components/common/VirtualizedBlockList'
 
 /** Rows the virtualizer is allowed to lay out, out of `GROUP_SIZE`. */
 const WINDOW_SIZE = 12
@@ -58,14 +59,18 @@ function makeBigGroup(pageId: string): TestGroup {
   }
 }
 
-function renderList(props: {
+interface RenderListProps {
   virtualizeRows: boolean
   groups: TestGroup[]
   listClassName?: string
   activeBlockId?: string
-}) {
+  /** Called with every row's virtualization context, in render order. */
+  onRow?: (blockId: string, ctx: VirtualRowContext | undefined) => void
+}
+
+function listElement(props: RenderListProps) {
   const expandedGroups = Object.fromEntries(props.groups.map((g) => [g.page_id, true]))
-  return render(
+  return (
     <CollapsibleGroupList<TestGroup>
       groups={props.groups}
       expandedGroups={expandedGroups}
@@ -74,20 +79,33 @@ function renderList(props: {
       virtualizeRows={props.virtualizeRows}
       {...(props.listClassName === undefined ? {} : { listClassName: props.listClassName })}
       {...(props.activeBlockId === undefined ? {} : { activeBlockId: props.activeBlockId })}
-      renderBlock={(block, _group, virtualRow) => (
-        <li
-          key={block.id}
-          data-testid="row"
-          data-backlink-item={block.id}
-          ref={virtualRow?.measureRef}
-          style={virtualRow?.style}
-          data-index={virtualRow?.index}
-        >
-          {block.id}
-        </li>
-      )}
-    />,
+      renderBlock={(block, _group, virtualRow) => {
+        props.onRow?.(block.id, virtualRow)
+        return (
+          <li
+            key={block.id}
+            data-testid="row"
+            data-backlink-item={block.id}
+            ref={virtualRow?.measureRef}
+            style={virtualRow?.style}
+            data-index={virtualRow?.index}
+            data-is-last={virtualRow === undefined ? undefined : String(virtualRow.isLast)}
+          >
+            {block.id}
+          </li>
+        )
+      }}
+    />
   )
+}
+
+function renderList(props: RenderListProps) {
+  const utils = render(listElement(props))
+  return {
+    ...utils,
+    /** Re-render with a fresh element (fresh `renderBlock`, so `memo` yields). */
+    rerenderList: (next: RenderListProps = props) => utils.rerender(listElement(next)),
+  }
 }
 
 describe('CollapsibleGroupList — #3316 item 3 windowing', () => {
@@ -180,6 +198,61 @@ describe('CollapsibleGroupList — #3316 item 3 windowing', () => {
 
     expect(container.querySelectorAll('[data-backlink-item]')).toHaveLength(WINDOW_SIZE)
     expect(container.querySelectorAll(`[data-backlink-item="${firstId}"]`)).toHaveLength(1)
+  })
+
+  // #3732/#3733 note 4 — the panels draw their row divider with `border-b
+  // last:border-b-0`. Under windowing `:last-child` is the last MOUNTED row, so
+  // the divider disappears from a row in the MIDDLE of the group and the gap
+  // migrates as the window slides; with a focus anchor present the anchor was
+  // the last DOM child and took the rule instead. `ctx.isLast` is the group's
+  // real end, which is what the callers must branch on.
+  it('reports isLast for the last row of the GROUP, never the last row of the window', () => {
+    const group = makeBigGroup('P1')
+    const lastId = group.blocks[GROUP_SIZE - 1]?.id as string
+
+    const { container } = renderList({
+      virtualizeRows: true,
+      groups: [group],
+      // Anchored on the true last row, so it is mounted alongside the window.
+      activeBlockId: lastId,
+    })
+
+    const flagged = container.querySelectorAll('[data-is-last="true"]')
+    expect(flagged).toHaveLength(1)
+    expect(flagged[0]?.getAttribute('data-backlink-item')).toBe(lastId)
+
+    // The last row of the WINDOW (index WINDOW_SIZE - 1) is mid-group and must
+    // keep its divider.
+    const lastWindowed = container.querySelector(`[data-index="${WINDOW_SIZE - 1}"]`)
+    expect(lastWindowed?.getAttribute('data-is-last')).toBe('false')
+  })
+
+  // #3732 item 3 — `BacklinkRow` is `memo`'d so the panel re-rendering on every
+  // arrow-key / focus change does not rebuild every mounted row's element tree
+  // (#2193). A fresh `style` object literal per render made that comparison
+  // fail every time, so the memo protected nothing for the mounted window.
+  it('hands renderBlock a stable style reference while a row has not moved', () => {
+    const seen: Array<Map<string, React.CSSProperties | undefined>> = []
+    let current = new Map<string, React.CSSProperties | undefined>()
+    const onRow = (blockId: string, ctx: VirtualRowContext | undefined) => {
+      current.set(blockId, ctx?.style)
+    }
+    const props = { virtualizeRows: true, groups: [makeBigGroup('P1')], onRow }
+
+    const { rerenderList } = renderList(props)
+    seen.push(current)
+    current = new Map()
+    rerenderList(props)
+    seen.push(current)
+
+    const [first, second] = seen
+    expect(first?.size).toBe(WINDOW_SIZE)
+    expect(second?.size).toBe(WINDOW_SIZE)
+    for (const [blockId, style] of first ?? []) {
+      expect(style).toBeDefined()
+      // Identity, not deep equality: `memo` compares by reference.
+      expect(second?.get(blockId)).toBe(style)
+    }
   })
 
   it('has no a11y violations while windowed', async () => {

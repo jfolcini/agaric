@@ -26,7 +26,7 @@
  */
 
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
@@ -201,13 +201,49 @@ export function useUnlinkedReferences(
   // BOTH unconditionally on EVERY fetch (`setTotalCount(resp.total_count)` /
   // `setTruncated(resp.truncated)` sit OUTSIDE the cursor branch), so the value
   // shown is always the most-recently-fetched page's — i.e. the last page.
-  const totalCount = data?.pages.at(-1)?.total_count ?? 0
+  const lastPage = data?.pages.at(-1)
+  const truncated = lastPage?.truncated ?? false
+
+  // #3733 note 2 — the counts must SURVIVE the `groupLimit` re-key.
+  //
+  // `groupLimit` is part of the query key (deliberately: expanding must refetch
+  // the full page). Expanding therefore switches the observer to a cache entry
+  // that has no data yet, `data` is `undefined` for that render, and both counts
+  // fell back to 0 — so `UnlinkedReferences` rendered "No Unlinked References"
+  // over a panel it had just told the user held 12, then flipped back when the
+  // limit-20 fetch resolved. The count was never unknown; only the key change
+  // discarded it.
+  //
+  // The carry is deliberately narrower than `placeholderData: keepPreviousData`,
+  // which would also carry data across a `pageId` / `filters` / `sort` change
+  // and briefly show ANOTHER page's references. `countIdentity` is the query key
+  // MINUS `groupLimit`, so the counts survive an expand/collapse toggle and
+  // nothing else: any change to what is being counted drops the carry on the
+  // spot. Only the counts are carried — `groups`, `loading` and `hasMore` still
+  // report the real state of the new key, so the list itself still shows its
+  // loading state rather than a stale single group.
+  const countIdentity = useMemo(
+    () => JSON.stringify([spaceId, pageId, filters, sort]),
+    [spaceId, pageId, filters, sort],
+  )
+  const carriedRef = useRef<{ identity: string; total: number; filtered: number } | null>(null)
+  if (lastPage) {
+    carriedRef.current = {
+      identity: countIdentity,
+      total: lastPage.total_count,
+      filtered: lastPage.filtered_count,
+    }
+  } else if (carriedRef.current && carriedRef.current.identity !== countIdentity) {
+    carriedRef.current = null
+  }
+  const carried = carriedRef.current?.identity === countIdentity ? carriedRef.current : null
+
+  const totalCount = lastPage?.total_count ?? carried?.total ?? 0
   // #3316 item 1: `filtered_count` follows the same last-page rule. Unlike the
   // linked-backlink path it is recomputed in full on EVERY page (it is derived
   // from the whole post-filter match set, not the paginated slice), so the last
   // page carries the same value as the first.
-  const filteredCount = data?.pages.at(-1)?.filtered_count ?? 0
-  const truncated = data?.pages.at(-1)?.truncated ?? false
+  const filteredCount = lastPage?.filtered_count ?? carried?.filtered ?? 0
 
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
