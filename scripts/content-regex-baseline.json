@@ -9,7 +9,7 @@
     "file": "src/lib/block-clipboard.ts",
     "rule": "incomplete-boundary-class",
     "count": 1,
-    "reason": "REAL, UNFIXED. `HUMAN_TAG_RE = /(^|[^\\p{L}\\p{N}_])#([\\p{L}\\p{N}_][\\p{L}\\p{N}_/-]*)/gu` rewrites pasted user content, and its boundary/name classes exclude combining marks, so `#café` in NFD form splits mid-grapheme. It must stay byte-identical to its Rust twins (HUMAN_TAG_RE in src-tauri/src/commands/pages/markdown.rs and the same literal in src-tauri/src/commands/pages/inline_query_md.rs), so the fix is a coordinated FE/BE change plus conformance vectors — tracked as follow-up."
+    "reason": "FIXED in #3367, residual is DELIBERATE and cannot shrink. `HUMAN_TAG_RE` now reads `/(^|[^\\p{L}\\p{N}\\p{M}_])#([\\p{L}\\p{N}_][\\p{L}\\p{N}\\p{M}_/-]*)/gu`: the boundary class and the name's CONTINUATION class both carry `\\p{M}`, so no grapheme cluster is split any more. The one class still reported is the name's FIRST-char class `[\\p{L}\\p{N}_]`, and `\\p{M}` must NOT go in it — a `#` followed directly by a combining mark is itself a grapheme cluster, so admitting a leading mark would split THAT cluster instead. Rule 3 dedupes per LINE and the regex is one line, so this entry stays at 1 whichever classes are complete; the cross-language contract is enforced by the NFD + Devanagari vectors in conformance/reference-tokens.vectors.json, which both the TS and Rust parity suites drive."
   },
   {
     "file": "src/lib/in-page-find/matcher.ts",

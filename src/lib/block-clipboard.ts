@@ -155,14 +155,38 @@ export const HUMAN_MULTIWORD_TAG_RE = /#\[\[([^\]\n]+?)\]\]/g
 
 /**
  * Human-readable tag on the way IN: `#tag` / `#nested/tag`. The name is a run of
- * tag-name chars (Unicode letters/digits plus `_`, `-`, `/` for nested tags),
- * mirroring the hashtag + nested-namespace convention. A `#` immediately
- * followed by `[` is the CANONICAL `#[ULID]` form and is deliberately NOT
- * matched here (the `[^[\W]`-style first-char guard via the class excludes `[`),
- * so canonical tags survive an internal round-trip untouched. The leading
- * boundary (`(^|[^\w])`) stops `a#b` / `word#frag` from being read as a tag.
+ * tag-name chars (Unicode letters/digits plus combining marks, `_`, `-`, `/` for
+ * nested tags), mirroring the hashtag + nested-namespace convention. A `#`
+ * immediately followed by `[` is the CANONICAL `#[ULID]` form and is
+ * deliberately NOT matched here (the `[^[\W]`-style first-char guard via the
+ * class excludes `[`), so canonical tags survive an internal round-trip
+ * untouched. The leading boundary (`(^|[^\w])`) stops `a#b` / `word#frag` from
+ * being read as a tag.
+ *
+ * #3367 — the three classes are NOT interchangeable, and the asymmetry is the
+ * whole fix. `\p{M}` (combining marks) belongs in the BOUNDARY class and in the
+ * name's CONTINUATION class, because a mark is part of the grapheme cluster its
+ * base char starts: without it the name run stops at the base letter, so `#café`
+ * in NFD (`caf` + `e` + U+0301) minted a tag `cafe` and stranded the acute in the
+ * surrounding prose — and `café#tag` in NFD read the acute as a word boundary and
+ * spliced a tag into the middle of a word that plain `cafe#tag` is protected
+ * from. This is not an NFD-only curiosity: Devanagari, Arabic and Hebrew have no
+ * precomposed forms at all, so `#हिन्दी` was truncated to `#ह` in ordinary text.
+ *
+ * `\p{M}` deliberately stays OUT of the name's FIRST-char class. A `#` followed
+ * directly by a combining mark is itself a grapheme cluster (the mark renders on
+ * the `#`), so consuming the `#` as a sigil and the mark as the name's first char
+ * would split THAT cluster — the very defect this fixes, mirrored. A tag name
+ * must start on a base character; marks may only follow one. This also keeps the
+ * regex exactly aligned with the Rust `neutralize_ref_name`, whose "is this `#`
+ * tag-initial?" test is likewise a base-character test.
+ *
+ * Mirrored byte-for-byte by the canonical Rust `HUMAN_TAG_RE` in
+ * `src-tauri/src/commands/pages/markdown.rs`; the shared
+ * `conformance/reference-tokens.vectors.json` fixture pins both to the same
+ * boundaries, including the NFD and Devanagari vectors above.
  */
-const HUMAN_TAG_RE = /(^|[^\p{L}\p{N}_])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu
+const HUMAN_TAG_RE = /(^|[^\p{L}\p{N}\p{M}_])#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)/gu
 
 /** A half-open `[start, end)` offset range within a block's content. */
 type Span = [number, number]

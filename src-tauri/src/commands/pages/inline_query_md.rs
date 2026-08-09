@@ -842,18 +842,58 @@ mod tests {
             !out.contains("tag:#urgent"),
             "adversarial #tag survived unneutralized: {out}"
         );
-        // Mirrors the importer's own bare-tag regex (`HUMAN_TAG_RE` in
-        // markdown.rs, duplicated here to avoid a cross-module dependency on a
-        // private static): the neutralized description must not re-parse as
-        // an inline tag (which would spawn a spurious orphan tag on import).
-        let human_tag_re =
-            Regex::new(r"(^|[^\p{L}\p{N}_])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)").unwrap();
+        // #3367 — the importer's OWN bare-tag regex, not a hand-copy of it.
+        // This assertion is only worth anything if it uses the grammar the
+        // importer actually applies; the copy that used to live here silently
+        // went stale when `HUMAN_TAG_RE` gained `\p{M}`, so it was asserting a
+        // neutralized name against a grammar no importer ran. The static is
+        // `pub(super)` for exactly this.
         assert!(
-            !human_tag_re.is_match(&out),
+            !super::super::markdown::HUMAN_TAG_RE.is_match(&out),
             "description re-parses as an inline tag: {out}"
         );
         // Still legible: the name's text survives, just de-fanged.
         assert!(out.contains("urgent"));
+    }
+
+    /// #3367 — `neutralize_ref_name` and `HUMAN_TAG_RE` must agree on where a
+    /// tag NAME can start, and this pins the one place they could silently
+    /// stop agreeing.
+    ///
+    /// Neutralization asks "is the char after `#` a base word char?"
+    /// (`is_alphanumeric() || '_'`, a superset of `\p{L}\p{N}_`), so a `#`
+    /// followed by a COMBINING MARK is left alone — no space is inserted. That
+    /// is correct only for as long as `HUMAN_TAG_RE`'s name still has to START
+    /// on a base character. Widening its FIRST-char class to `\p{M}` (the
+    /// tempting "make all three classes uniform" edit, which #3367 deliberately
+    /// did not make — a `#` plus a mark is itself one grapheme cluster) would
+    /// open a real hole here: the title below would sail through
+    /// neutralization and re-parse as a tag on re-import, minting a spurious
+    /// orphan. That regression fails THIS assertion and nothing else.
+    #[test]
+    fn export_neutralization_holds_for_a_combining_mark_after_the_hash_3367() {
+        // U+0301 COMBINING ACUTE directly after the `#`: it renders on the `#`
+        // itself, so `#` + mark is a single grapheme cluster and the `#` is not
+        // a tag sigil at all.
+        let adversarial = "#\u{0301}urgent";
+        let content = stored_v2(tag_leaf(ADVERSARIAL_TAG_ULID));
+        let tag_names =
+            HashMap::from([(ADVERSARIAL_TAG_ULID.to_string(), adversarial.to_string())]);
+        let out = rewrite_inline_queries_for_export(&content, &tag_names, &HashMap::new());
+
+        // NON-TAUTOLOGY: the name really does reach the plaintext description
+        // verbatim — neutralization deliberately leaves it untouched, so the
+        // assertion below is carrying the whole load.
+        assert!(
+            out.contains(adversarial),
+            "adversarial name is not in the description at all, so the \
+             re-parse assertion would be vacuous: {out}"
+        );
+        assert!(
+            !super::super::markdown::HUMAN_TAG_RE.is_match(&out),
+            "a `#` + combining mark re-parses as an inline tag, which \
+             neutralization does not defend against: {out}"
+        );
     }
 
     #[test]
