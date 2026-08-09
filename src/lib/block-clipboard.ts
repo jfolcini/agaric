@@ -224,11 +224,25 @@ const BULLET_LINE_RE = /^-(?: |$)/
  *     fence state. The #2866 recovery point is the special case where the
  *     bullet also force-closes a dangling fence, not a separate mechanism.
  *
- * KNOWN, BOUNDED DIVERGENCE: the importer's `fence_open_depth` for a bare
- * opener is the depth of the previously emitted block; inside a single block's
- * content there is no such block, so the opener line's own indent depth stands
- * in. The two agree whenever the fence opens at the content's base indent,
- * which is the shape the copy path produces.
+ *   * #3627 — the OPEN FENCE'S DEPTH, which the #2866 recovery above compares
+ *     a later bullet against, is the depth of the block that OWNS the fence,
+ *     not the delimiter line's own indent. A bulleted opener (`- ```rust`) IS
+ *     a block, so it owns its own depth; a BARE ```` ``` ```` opener is a
+ *     continuation line folded into the preceding block, so it owns THAT
+ *     block's depth (`blocks.last()` in the importer, the run tracking below
+ *     here). A bare delimiter has no standing of its own in the outline — its
+ *     leading whitespace is interior formatting of the code, and Logseq's
+ *     exporter indents a bullet's continuation lines under it — so keying
+ *     recovery on that indent would let the code's own indentation decide
+ *     which sibling can close a dangling fence.
+ *
+ * RESIDUAL, BOUNDED DIVERGENCE: the importer does not push a block for a
+ * `key:: value` PROPERTY line, and this helper has no notion of properties at
+ * all (a property line reads as an ordinary continuation line). A bare opener
+ * whose only predecessor is an INDENTED orphan property line therefore takes
+ * that line's depth here and the delimiter's own depth there. Modelling the
+ * property alphabet just to place a fence would be a third parser; the shapes
+ * that reach this helper (one block's copied content) never contain one.
  *
  * OUT OF SCOPE: external markdown pasted as raw lines is split by
  * {@link parseIndentedMarkdown} into one block per line, so a three-line fence
@@ -237,6 +251,22 @@ const BULLET_LINE_RE = /^-(?: |$)/
  * has no counterpart. Closing that shape needs fence tracking in the line
  * splitter itself, not here.
  */
+/**
+ * #3627 — the depth the importer records for a fence it is OPENING
+ * (`owner_depth` in `parse_logseq_markdown`), which the #2866 recovery check
+ * compares a later bullet against.
+ *
+ * A delimiter that opens a bullet (`- ```rust`) IS a block, so it owns its own
+ * depth. A bare ```` ``` ```` delimiter is a continuation line folded into the
+ * preceding block, so it owns THAT block's depth — `lastBlockDepth`, the
+ * importer's `blocks.last()`. `null` (no block pushed yet) falls back to the
+ * line's own depth, mirroring `.unwrap_or(depth)`.
+ */
+function fenceOwnerDepth(trimmed: string, depth: number, lastBlockDepth: number | null): number {
+  if (BULLET_LINE_RE.test(trimmed)) return depth
+  return lastBlockDepth ?? depth
+}
+
 function fencedCodeSpans(content: string): Span[] {
   if (!content.includes('```')) return []
   const lines = content.split('\n')
@@ -257,6 +287,11 @@ function fencedCodeSpans(content: string): Span[] {
   let runStart = 0
   let runEnd = 0
   let runHasCode = false
+  // #3627 — depth of the most recently PUSHED block, the importer's
+  // `blocks.last().map(|b| b.depth)`. `null` until the first block exists, at
+  // which point a bare opener falls back to its own depth exactly as the
+  // importer's `.unwrap_or(depth)` does.
+  let lastBlockDepth: number | null = null
   const flushRun = (): void => {
     if (runHasCode && runEnd > runStart) spans.push([runStart, runEnd])
   }
@@ -285,7 +320,9 @@ function fencedCodeSpans(content: string): Span[] {
 
     const lineIsCode = inFence || isDelim
     if (isDelim) {
-      if (!inFence) openDepth = depth
+      // #3627 — read BEFORE the run bookkeeping below, matching the importer
+      // computing `owner_depth` before it pushes this line's block.
+      if (!inFence) openDepth = fenceOwnerDepth(trimmed, depth, lastBlockDepth)
       inFence = !inFence
     }
 
@@ -301,6 +338,12 @@ function fencedCodeSpans(content: string): Span[] {
       runStart = lineStart
       runEnd = lineStart
       runHasCode = false
+      lastBlockDepth = depth
+    } else if (lastBlockDepth === null) {
+      // #3627 — the importer's LAST resort: a non-bullet line with no block to
+      // fold into becomes a standalone block at its own depth. Only the first
+      // such line can take this branch, which is exactly when `blocks` is empty.
+      lastBlockDepth = depth
     }
 
     if (lineIsCode) runHasCode = true
@@ -378,6 +421,13 @@ export interface RefInternalizers {
  *   `#[[Tag Name]]`  → `#[ULID]`     (multi-word tag; trim Unicode White_Space)
  *   `((Block Name))` → left as plain text (no by-name block-ref creation path)
  *
+ * #3605 — EVERY one of these passes is now off inside a protected code range
+ * (a fenced region or an inline-code span). Code is literal: nothing inside it
+ * is resolved (so no page/tag is created as a side effect) and nothing inside
+ * it is rewritten. #3599 established that for the tag passes; the page pass
+ * had been left eager, which both minted a page for quoted syntax and pasted
+ * the resulting ULID into the user's code.
+ *
  * A token already in canonical form (`[[ULID]]`, `#[ULID]`) is left untouched so
  * an internal duplicate→paste round-trip stays ULID-canonical. A name the
  * resolver returns `null` for (unresolvable / ambiguous duplicate title /
@@ -398,7 +448,7 @@ export async function internalizeRefTokens(
     HUMAN_PAGE_LINK_RE,
     resolvers.page,
     (ulid) => `[[${ulid}]]`,
-    { skipCanonicalBody: true, skipPagePrefixes: true, trimName: true },
+    { skipCanonicalBody: true, skipPagePrefixes: true, trimName: true, skipCodeSpans: true },
   )
   const tagCache = new Map<string, string | null>()
   const withMultiwordTags = await replaceRefs(
@@ -431,6 +481,16 @@ interface ReplaceRefOptions {
    * inline-code span) alone: not resolved, not rewritten. Set on both tag
    * passes so they match the Rust importer, which skips `is_code` blocks
    * wholesale and inline-code spans within a block.
+   *
+   * #3605 — and on the PAGE pass. The tag guard's premise (code is literal, so
+   * content inside it must not produce resolver side effects) never stopped at
+   * tags; the page pass merely never got it. The consequence was worse than a
+   * phantom page: the token was also REWRITTEN, so a documentation snippet
+   * reading `` `[[My Page]]` `` came back as `` `[[01J…]]` `` — a raw ULID
+   * pasted into the user's literal code. And it could never render as a link
+   * anyway: `scanCodeSpan` in the editor's markdown parser takes a code span's
+   * content RAW and never runs the `[[ULID]]` token scanner, so a page ref
+   * inside inline code is literal text in the editor by construction.
    */
   skipCodeSpans?: boolean
 }

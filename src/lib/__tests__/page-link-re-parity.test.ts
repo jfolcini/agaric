@@ -41,6 +41,12 @@ interface HumanizeTagCase {
 interface CodeFenceCase {
   name: string
   input: string
+  /**
+   * #3605 — the page-link resolver's side effects, on the same footing as the
+   * tag ones. Optional: an omitted list asserts ZERO page requests, which is
+   * the truth for every vector that predates the field.
+   */
+  requestedPageNames?: string[]
   requestedTagNames: string[]
 }
 
@@ -82,9 +88,13 @@ describe('reference-token cross-language parity (#1920, #3261)', () => {
 
   for (const vector of vectors.codeFenceCases) {
     it(`code fence: ${vector.name}`, async () => {
+      const requestedPageNames: string[] = []
       const requestedTagNames: string[] = []
       await internalizeRefTokens(vector.input, {
-        page: async (name) => vectors.pageResolutions[name] ?? null,
+        page: async (name) => {
+          requestedPageNames.push(name)
+          return vectors.pageResolutions[name] ?? null
+        },
         tag: async (name) => {
           requestedTagNames.push(name)
           return vectors.tagResolutions[name] ?? null
@@ -92,6 +102,9 @@ describe('reference-token cross-language parity (#1920, #3261)', () => {
       })
       // Same set-plus-count contract as below: the count still catches a
       // duplicate create-if-missing round trip.
+      const expectedPageNames = vector.requestedPageNames ?? []
+      expect(requestedPageNames).toHaveLength(expectedPageNames.length)
+      expect(new Set(requestedPageNames)).toEqual(new Set(expectedPageNames))
       expect(requestedTagNames).toHaveLength(vector.requestedTagNames.length)
       expect(new Set(requestedTagNames)).toEqual(new Set(vector.requestedTagNames))
     })
