@@ -683,3 +683,182 @@ async fn cleanup_orphaned_attachments_still_collects_when_nothing_races_3519() {
         "the quarantined copy must be destroyed too, leaving nothing behind: {remaining:?}"
     );
 }
+
+// ============================================================================
+// #3325 — in-flight transfer temps live inside the GC's own walk root
+// ============================================================================
+
+/// A well-formed in-flight temp name for `storage_id`, matching what
+/// `write_attachment_streaming` / `write_attachment_file` emit:
+/// `<final name>.tmp-<32 lower-case hex>`.
+fn transfer_temp_name(storage_id: &str, hex: &str) -> String {
+    assert_eq!(hex.len(), 32, "the writers render a u128 as {{:032x}}");
+    format!("{storage_id}.tmp-{hex}")
+}
+
+/// #3325 — a sync receive streaming into `attachments/<id>.tmp-<hex>` must
+/// survive a GC pass that runs alongside it.
+///
+/// The temp is a sibling of the final path by necessity (the publishing
+/// `rename` has to be same-filesystem), so it sits inside the walk root; and
+/// it is unreferenced by construction, because the `attachments` row names the
+/// final path and is only committed after the rename. Every check the pass
+/// makes therefore votes "orphan". Unlinking it on Unix leaves the writer
+/// filling an unreachable inode: the received bytes are discarded and
+/// `TempAttachmentWriter::commit` fails, aborting the rest of the round.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_keeps_in_flight_transfer_temps_3325() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    let temp = attachments.join(transfer_temp_name(
+        "01JQ8ZC0DE5T0RAG31D",
+        "0123456789abcdef0123456789abcdef",
+    ));
+    tokio::fs::write(&temp, b"first 5 MB frame of a large attachment")
+        .await
+        .unwrap();
+
+    // A genuine orphan alongside it, so a pass that simply stopped working
+    // could not make this test pass.
+    let orphan = attachments.join("nobody-references-this.bin");
+    tokio::fs::write(&orphan, b"junk").await.unwrap();
+
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+
+    assert!(
+        temp.exists(),
+        "#3325: the GC unlinked an in-flight transfer temp — the receiving \
+         writer keeps filling an unreachable inode and its commit rename fails"
+    );
+    assert!(
+        !orphan.exists(),
+        "the temp exemption must not stop the GC collecting real orphans"
+    );
+}
+
+/// #3325 companion — the exemption is an age gate, not an amnesty.
+///
+/// `TempAttachmentWriter::Drop` unlinks the temp on every ordinary exit path
+/// but never on `SIGKILL` / OOM-kill / power loss, and nothing else on the
+/// system reclaims one. A temp older than any live writer could hold is
+/// therefore collected exactly like any other orphan.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_reclaims_abandoned_transfer_temps_3325() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    let stranded = attachments.join(transfer_temp_name(
+        "01JQ8ZC0DE5T0RAG31E",
+        "fedcba9876543210fedcba9876543210",
+    ));
+    tokio::fs::write(&stranded, b"half a transfer, killed mid-flight")
+        .await
+        .unwrap();
+
+    // Backdate it well past the reap threshold (20 × the 180 s RECV_TIMEOUT).
+    let backdated = std::time::SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60);
+    std::fs::File::options()
+        .write(true)
+        .open(&stranded)
+        .unwrap()
+        .set_modified(backdated)
+        .unwrap();
+
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+
+    assert!(
+        !stranded.exists(),
+        "a transfer temp older than any live writer must still be reclaimed, \
+         or a process kill leaks it forever (#3325)"
+    );
+}
+
+/// #3325 / #3519 — the exemption must be exact, not a loose `.tmp` test.
+///
+/// The GC's own quarantine files also end in `.tmp`, and #3519 relies on the
+/// NEXT pass walking a quarantine file stranded by a crash or a failed restore
+/// and reclaiming it as an orphan. Exempting it would turn that self-healing
+/// property into a permanent leak.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_still_collects_stranded_quarantine_files_3325() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    // Freshly written, so only an exact name match can tell it apart from an
+    // in-flight transfer temp.
+    let stranded_quarantine = attachments.join(".agaric-gc-01JQ8ZC0DE5QUARANT1NE01.tmp");
+    tokio::fs::write(&stranded_quarantine, b"bytes parked by a crashed pass")
+        .await
+        .unwrap();
+
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+
+    assert!(
+        !stranded_quarantine.exists(),
+        "#3519 depends on a stranded quarantine file being collected by the \
+         next pass; the #3325 temp exemption must not swallow it"
+    );
+}
+
+/// #3325 — a directory holding nothing but in-flight temps must still get its
+/// dangling `attachment_blobs` rows pruned.
+///
+/// The temp exemption gave the "nothing to walk" early return a second
+/// entrance, and that return used to sit *above* the #3371 bulk blob sweep. So
+/// a vault mid-transfer would skip the one piece of work it still had — and
+/// the sweep's whole purpose is rows whose `on_disk_path` is not on disk at
+/// all, which is exactly the state an empty walk describes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_prunes_blobs_when_only_temps_are_present_3325() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    // The only file present is a receive in progress, so the walk yields no
+    // candidates and the pass takes the early return.
+    let temp = attachments.join(transfer_temp_name(
+        "01JQ8ZC0DE5T0RAG31F",
+        "abcdef0123456789abcdef0123456789",
+    ));
+    tokio::fs::write(&temp, b"streaming right now")
+        .await
+        .unwrap();
+
+    // A blob mapping whose bytes are long gone and which no `attachments` row
+    // references — dangling, and reclaimable only by the bulk sweep.
+    sqlx::query(
+        "INSERT INTO attachment_blobs (content_hash, on_disk_path, size_bytes, created_at) \
+         VALUES ('deadbeef', 'attachments/vanished.bin', 4, 1735689600000)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "#3325: the dangling blob row survived because a directory of only \
+         in-flight temps took the early return above the bulk prune"
+    );
+    assert!(
+        temp.exists(),
+        "and the in-flight temp must still be there afterwards"
+    );
+}
