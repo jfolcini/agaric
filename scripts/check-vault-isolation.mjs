@@ -49,9 +49,19 @@ const WDIO_CONF = 'wdio.conf.ts'
  * parsed: the pattern we look for is a method-call chain, which never
  * appears inside a literal in this codebase, and a false positive here
  * fails loudly rather than silently.
+ *
+ * LINE COUNT IS PRESERVED. Violations are located by counting newlines in
+ * the STRIPPED source, so a block comment must be replaced by something of
+ * the same height, not by a single space — otherwise every violation below
+ * a multi-line comment is reported at a line it does not occupy, and the
+ * developer goes looking at innocent code. A guard that names the wrong
+ * line is the same species of unreliable report this whole change exists to
+ * remove. Each non-newline character becomes a space; newlines survive.
  */
 export function stripRustComments(source) {
-  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 }
 
 /**
@@ -203,6 +213,43 @@ function selfTest() {
     'the seam module itself is exempt',
     findDirectResolves(SEAM_FILE, 'app.path().app_data_dir()').length === 0,
   )
+
+  // The reported LINE must survive comment stripping. A block comment used
+  // to collapse to one space, so the violation below this four-line comment
+  // was reported at line 3 instead of line 7 — pointing the reader at
+  // `fn helper()`. The fixture pins the number, not merely the count.
+  {
+    const withBlockComment = [
+      'fn helper() {}', // 1
+      '', // 2
+      '/* a block comment', // 3
+      ' * spanning', // 4
+      ' * several lines', // 5
+      ' */', // 6
+      'let d = app.path().app_data_dir()?;', // 7  <- the violation
+    ].join('\n')
+    const hits = findDirectResolves('src-tauri/src/commands/x.rs', withBlockComment)
+    check(
+      'a violation below a multi-line block comment is reported at its REAL line',
+      hits.length === 1 && hits[0]?.line === 7,
+    )
+  }
+
+  // Same invariant for a run of line comments, which never had the bug but
+  // would regress silently if the line-comment branch ever ate newlines.
+  {
+    const withLineComments = [
+      '// one', // 1
+      '// two', // 2
+      '// three', // 3
+      'let d = app.path().app_data_dir()?;', // 4  <- the violation
+    ].join('\n')
+    const hits = findDirectResolves('src-tauri/src/commands/x.rs', withLineComments)
+    check(
+      'a violation below line comments is reported at its REAL line',
+      hits.length === 1 && hits[0]?.line === 4,
+    )
+  }
   check(
     'a line comment is not a violation',
     findDirectResolves('src-tauri/src/lib.rs', '// use app.path().app_data_dir() here').length ===

@@ -141,9 +141,16 @@ export async function navigateTo(label: NavLabel): Promise<void> {
 }
 
 /**
- * Suffix unique to this WDIO process. Every spec file in a run imports the same
- * module instance, so all of them share one value — distinct across runs,
- * stable within one.
+ * Suffix unique to this WDIO WORKER PROCESS.
+ *
+ * WDIO forks a worker — and `wdio.conf.ts` therefore starts a fresh session,
+ * `tauri-driver`, app boot and sandbox vault — PER SPEC FILE, so each spec file
+ * gets its own module instance and its own value here. That is more uniqueness
+ * than `runScopedMarker` needs, not less: the pid disambiguates spec files
+ * within a run and the timestamp disambiguates runs, so no two markers collide
+ * either way. (The same per-spec-file forking is why every spec now starts from
+ * a virgin vault, which is what `typeInputVerified` and `openJournalBlockEditor`
+ * are defending against.)
  */
 const RUN_ID = `${Date.now().toString(36)}-${process.pid.toString(36)}`
 
@@ -261,8 +268,43 @@ export async function openJournalBlockEditor(): Promise<void> {
  * handle. Does NOT commit — the caller presses Enter/Escape after this resolves.
  */
 export async function typeMarkerVerified(text: string): Promise<void> {
+  await typeVerified(
+    '[data-testid="block-editor"] [contenteditable="true"]',
+    text,
+    (selector) => $(selector).getText(),
+    'block editor',
+  )
+}
+
+/**
+ * `typeMarkerVerified` for a plain `<input>` (#3334).
+ *
+ * Same dropped-keystroke hazard, same retry-and-verify loop; the only
+ * difference is that an input's content is read with `getValue()` rather than
+ * `getText()`. Split out because the tag spec types a run-scoped name into the
+ * TagList form and then asserts on `[data-testid="tag-item-<name>"]` — an
+ * EXACT-match selector, which a single dropped character turns into a
+ * guaranteed, and thoroughly misleading, timeout.
+ */
+export async function typeInputVerified(selector: string, text: string): Promise<void> {
+  await typeVerified(selector, text, (sel) => $(sel).getValue(), 'input')
+}
+
+/**
+ * Shared implementation behind `typeMarkerVerified` / `typeInputVerified`.
+ *
+ * `readBack` is what makes the typed text an asserted invariant rather than a
+ * best-effort stream, and is the only thing that differs between a
+ * contenteditable and an `<input>`.
+ */
+async function typeVerified(
+  selector: string,
+  text: string,
+  readBack: (selector: string) => Promise<string>,
+  what: string,
+): Promise<void> {
   const MAX_TYPE_ATTEMPTS = 3
-  const editorSelector = '[data-testid="block-editor"] [contenteditable="true"]'
+  const editorSelector = selector
   let lastSeen = ''
   for (let attempt = 1; attempt <= MAX_TYPE_ATTEMPTS; attempt++) {
     const editor = $(editorSelector)
@@ -287,7 +329,7 @@ export async function typeMarkerVerified(text: string): Promise<void> {
     try {
       await browser.waitUntil(
         async () => {
-          lastSeen = (await $(editorSelector).getText()).trim()
+          lastSeen = (await readBack(editorSelector)).trim()
           return lastSeen === text
         },
         { timeout: 3_000, interval: 200 },
@@ -305,7 +347,7 @@ export async function typeMarkerVerified(text: string): Promise<void> {
     }
   }
   throw new Error(
-    `block editor text never matched the marker after ${MAX_TYPE_ATTEMPTS} attempts — ` +
+    `${what} text never matched the expected value after ${MAX_TYPE_ATTEMPTS} attempts — ` +
       `keystrokes were dropped by the live WebKit editor. ` +
       `expected=${JSON.stringify(text)} lastSeen=${JSON.stringify(lastSeen)}`,
   )

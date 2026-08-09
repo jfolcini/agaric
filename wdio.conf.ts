@@ -22,7 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -101,10 +101,25 @@ function sanitizeForFilename(value: string): string {
 // it did not.
 // ---------------------------------------------------------------------------
 
-// Parent of every per-run sandbox. Deliberately under the OS temp dir, not the
-// repo: nothing here should ever be committable, and a killed run leaves litter
-// somewhere the OS already reaps.
-const SANDBOX_ROOT = path.join(os.tmpdir(), 'agaric-wdio-vault')
+// Filename prefix of every per-session sandbox, created directly under the OS
+// temp dir. There is deliberately NO fixed parent directory:
+//
+//   - A shared parent would have to be swept, and any sweep of it deletes a
+//     CONCURRENTLY RUNNING invocation's live vault out from under its open
+//     SQLite handle. `mkdtempSync` exists precisely to isolate concurrent runs;
+//     a `rm -rf` of their common parent gives that isolation straight back.
+//   - A fixed name under a world-writable `$TMPDIR` is predictable, so another
+//     local user can pre-create it and thereby choose where this suite's data
+//     lands. `mkdtempSync` picks the random suffix itself and creates the
+//     directory with mode 0700, which is neither pre-creatable nor readable by
+//     anyone else.
+const SANDBOX_PREFIX = 'agaric-wdio-vault-'
+
+// Litter from a run that was killed before `afterSession` could clean up is
+// swept by age, never wholesale: a live sandbox is minutes old, so a day-old
+// floor cannot reach one. This is the only reason the prefix needs to be
+// recognisable at all.
+const SANDBOX_STALE_AFTER_MS = 24 * 60 * 60 * 1000
 
 // Set once per session in `beforeSession`, read by `before` and `afterSession`.
 // All three run in the SAME worker process, so this needs no cross-process
@@ -114,7 +129,36 @@ let sandboxRunDir: string | undefined
 let sandboxVaultDir: string | undefined
 
 /**
- * Create this run's throwaway directory tree and return the environment the
+ * Delete sandboxes left behind by runs that were killed, without touching one
+ * that is still in use. Age is the discriminator: anything older than
+ * `SANDBOX_STALE_AFTER_MS` cannot be a live session, since the whole suite is
+ * bounded by `mochaOpts.timeout`. Best-effort throughout — a temp directory we
+ * cannot stat or remove (another user's, or one racing its own owner's
+ * cleanup) is skipped, never fatal.
+ */
+function sweepStaleSandboxes(): void {
+  const tmp = os.tmpdir()
+  let entries: string[]
+  try {
+    entries = readdirSync(tmp)
+  } catch {
+    return
+  }
+  const staleBefore = Date.now() - SANDBOX_STALE_AFTER_MS
+  for (const entry of entries) {
+    if (!entry.startsWith(SANDBOX_PREFIX)) continue
+    const full = path.join(tmp, entry)
+    try {
+      if (statSync(full).mtimeMs >= staleBefore) continue
+      rmSync(full, { recursive: true, force: true })
+    } catch {
+      // Not ours, or vanished under us. Either way: not our business.
+    }
+  }
+}
+
+/**
+ * Create this session's throwaway directory tree and return the environment the
  * app must be launched with.
  *
  * The vault directory itself is deliberately NOT created here: the app's boot
@@ -123,8 +167,7 @@ let sandboxVaultDir: string | undefined
  * rather than something this config could have faked.
  */
 function createSandboxEnv(): NodeJS.ProcessEnv {
-  mkdirSync(SANDBOX_ROOT, { recursive: true })
-  const runDir = mkdtempSync(path.join(SANDBOX_ROOT, 'run-'))
+  const runDir = mkdtempSync(path.join(os.tmpdir(), SANDBOX_PREFIX))
   sandboxRunDir = runDir
   sandboxVaultDir = path.join(runDir, 'vault')
 
@@ -233,10 +276,9 @@ export const config: WebdriverIO.Config = {
   // -------------------------------------------------------------------------
   onPrepare: () => {
     installShutdownGuard()
-    // Sweep sandboxes a previous run was killed before it could clean up. The
-    // per-run directory is what specs are isolated by, so this is only litter
-    // control — never the isolation itself.
-    rmSync(SANDBOX_ROOT, { recursive: true, force: true })
+    // Litter control only, and age-filtered so it cannot reach a sandbox a
+    // concurrent invocation is still using. Never the isolation itself.
+    sweepStaleSandboxes()
     if (process.env['WDIO_SKIP_TAURI_BUILD']) return
     const result = spawnSync('npm', ['run', 'tauri', '--', 'build', '--debug', '--no-bundle'], {
       cwd: rootDir,
@@ -316,13 +358,10 @@ export const config: WebdriverIO.Config = {
     removeSandbox()
   },
 
-  onComplete: () => {
-    // The per-run directory is removed in `afterSession` (worker process); this
-    // clears the launcher-side root so a crashed worker leaves nothing behind.
-    if (!process.env['WDIO_KEEP_VAULT']) {
-      rmSync(SANDBOX_ROOT, { recursive: true, force: true })
-    }
-  },
+  // No sandbox cleanup here on purpose. Each session's directory is removed by
+  // its own `afterSession` (and by the worker's shutdown guard if it dies), so
+  // the launcher has nothing left to delete — and anything it COULD delete from
+  // here would belong to a different, possibly still-running, invocation.
 
   // -------------------------------------------------------------------------
   // On-failure diagnostics (issue #155 harness hardening).

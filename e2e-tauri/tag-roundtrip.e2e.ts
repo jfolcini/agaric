@@ -19,6 +19,7 @@ import {
   NAV_TIMEOUT,
   navigateTo,
   runScopedMarker,
+  typeInputVerified,
   waitForAppReady,
 } from './helpers'
 
@@ -41,10 +42,17 @@ describe('Agaric real-backend tag round-trip (#3085 / #3081)', () => {
     //    name is `tagList.newTagLabel` ("New tag name"); the submit button's
     //    visible text is `tag.addTag` ("Add Tag"). (TagList.tsx: the <Input>
     //    aria-label + the <Button type="submit">.)
-    const nameInput = $('[aria-label="New tag name"]')
-    await nameInput.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-    await nameInput.click()
-    await browser.keys(TAG_NAME.split(''))
+    //
+    //    #3334 — typed through the read-back-and-retry loop, not a bare
+    //    `browser.keys`. `helpers.ts` documents dropped keystrokes as an
+    //    OBSERVED failure on a janky first render, and every spec now boots a
+    //    virgin vault (one session per spec file), so the jankiest render is
+    //    the only render this spec ever sees. The name is also ~31 characters
+    //    now that it carries the run suffix, and step 3 asserts on the
+    //    EXACT-match `tag-item-<name>` testid: a single dropped character
+    //    cannot degrade the assertion, only turn it into a timeout that blames
+    //    the backend for a lost keystroke.
+    await typeInputVerified('[aria-label="New tag name"]', TAG_NAME)
 
     const addTag = $('button*=Add Tag')
     await addTag.waitForClickable({ timeout: ACTION_TIMEOUT })
