@@ -270,6 +270,46 @@ POISON
     chmod +x "$sandbox/$sbx_tool"
   done
 
+  # `mktemp` is shimmed like the rest — running it IS a violation and is
+  # recorded as one — but unlike the rest it must still SUCCEED. A shim's job
+  # is to block the side effect while leaving the payload's control flow
+  # intact. A shim that also fails truncates the run, and the canary then
+  # covers a shorter provisioner than the one it claims to.
+  #
+  # Not hypothetical: #3622 added a guard at both download sites, because a
+  # failed `mktemp -d` yields an empty STRING (neither `set -u` nor an absent
+  # `set -e` stops it) and the old code curled into `-o /cb.tgz`. With a plain
+  # `exit 97` shim that guard now fires every time, the payload skips both
+  # downloads, and `curl` — the interception proving the network is closed —
+  # is never reached. Measured: 25 violations and no `curl` line, against 28
+  # with the downloads live. The count floor still passed while the fetch
+  # silently stopped being covered, which is #3635's failure mode arriving
+  # from the other direction. So the fix belongs in the shim, not in the
+  # assertion.
+  rm -f "$sandbox/mktemp"
+  cat > "$sandbox/mktemp" <<'MKTEMP_SHIM'
+#!/bin/sh
+# Poisoned-but-succeeding shim — see scripts/zizmor-hook.sh's self-test sandbox.
+sbx_msg="$(printf 'SANDBOX-VIOLATION: self-test payload tried to run `%s %s`' \
+  "${0##*/}" "$*")"
+printf '%s\n' "$sbx_msg" >&2
+if [ -n "${SANDBOX_VIOLATION_LOG:-}" ]; then
+  printf '%s\n' "$sbx_msg" >> "$SANDBOX_VIOLATION_LOG" 2>/dev/null || true
+fi
+# Absolute paths below: `mkdir` is itself poisoned on the sandbox PATH. The
+# scratch lives under the sandbox root, so nothing the payload writes escapes
+# it, and the provisioner proceeds to the download it would really attempt —
+# straight into `curl`'s shim.
+sbx_out="${SANDBOX_MKTEMP_ROOT:?sandbox mktemp root not set}/mktemp.$$.${RANDOM:-0}"
+case "$*" in
+  *-d*) /bin/mkdir -p "$sbx_out" 2>/dev/null || exit 1 ;;
+  *)    : > "$sbx_out" 2>/dev/null || exit 1 ;;
+esac
+printf '%s\n' "$sbx_out"
+exit 0
+MKTEMP_SHIM
+  chmod +x "$sandbox/mktemp"
+
   # setup-hooks.sh defines warn/ok/note/have at its top — ABOVE both extraction
   # windows — so neither payload ever carries them. Provide all four, not just
   # `warn` (#3559): with only `warn` defined, anything future work adds inside
@@ -318,10 +358,21 @@ note() { :; }
   # record of what they blocked (see the shim body above). Truncated on every
   # call so a block reading it after a `sandbox_bash` sees that payload's
   # violations and not the previous one's (#3635).
+  # SANDBOX_MKTEMP_ROOT is passed for the same reason and with the same
+  # exposure: a path inside this run's own $tmp. It is where the succeeding
+  # `mktemp` shim puts its scratch, so the provisioner's download paths stay
+  # reachable without anything landing outside the sandbox.
+  # Deliberately a SIBLING of $sandbox_home, not a child: block (8) asserts the
+  # payload created nothing under the pinned HOME, and scratch the harness
+  # hands out is not the payload escaping — but putting it inside HOME would
+  # make that assertion unable to tell the two apart.
+  sandbox_mktemp_root="$tmp/sandbox-mktemp"
+  mkdir -p "$sandbox_mktemp_root"
   sandbox_bash() { # <payload> <argv0>
     : > "$sandbox_violations"
     env -i "PATH=$sandbox" "HOME=$sandbox_home" ZIZMOR_VERSION_AWK= \
       "SANDBOX_VIOLATION_LOG=$sandbox_violations" \
+      "SANDBOX_MKTEMP_ROOT=$sandbox_mktemp_root" \
       "$sandbox_bash_bin" -c "cd \"\$HOME\" || exit 98
 $sandbox_prelude
 $1" "$2"
@@ -809,6 +860,14 @@ fi' "$setup_hooks" 2>&1
     'tried to run `prek install-hooks' "$runaway_log"
   assert_out "the runaway's network fetch is intercepted" \
     'tried to run `curl ' "$runaway_log"
+  # The fetch above is only reachable because the `mktemp` shim SUCCEEDS while
+  # still recording itself (#3622's guard falls back to `cargo install` on a
+  # failed `mktemp -d`, and then no download is attempted at all). Dropping
+  # `mktemp` from the poisoned set would also restore the fetch — and would
+  # silently stop observing every temp directory the provisioner creates. This
+  # pins the half that the curl assertion cannot see.
+  assert_out "the runaway's temp-directory creation is still recorded as a violation" \
+    'tried to run `mktemp ' "$runaway_log"
   # Reaching the END of the provisioner is what rules out the #3635 shape
   # returning somewhere new: an abort anywhere in those 843 lines drops this
   # line, whatever the violation count happened to be by then.
