@@ -523,4 +523,74 @@ describe('SearchPanel history dropdown aria parity (FE-A13)', () => {
     expect(input).toHaveAttribute('aria-expanded', 'false')
     expect(input).not.toHaveAttribute('aria-controls')
   })
+
+  // ── #3315 item 1: regex-mode scan-window discoverability ──────────────────
+  //
+  // `regex_mode_query` post-filters only the newest `REGEX_PRE_FILTER_CAP`
+  // structurally-filtered rows and then returns `has_more: false` with NO
+  // cursor, so the panel hides Load-more and announces the truncated count as
+  // the complete answer; when nothing in that window matches it rendered the
+  // generic "No results found" empty state, telling the user the text is not in
+  // their vault when it may simply be older than the scan window. The bound
+  // itself is intentional and documented — the gap was that no frontend
+  // affordance distinguished "no matches in the scan window" from "no matches
+  // in the vault".
+
+  it('#3315 item 1: regex mode shows a standing scan-scope notice', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+    render(<SearchPanel />)
+
+    // No notice in plain FTS mode, even with a query in flight.
+    const plainInput = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(plainInput, 'invoice')
+    await waitFor(() => {
+      expect(lastFilter()).not.toBeNull()
+    })
+    expect(screen.queryByTestId('search-regex-scope-notice')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('search-toggle-regex'))
+    const regexInput = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
+    typeAndSubmit(regexInput, '^TODO.*invoice')
+
+    const notice = await screen.findByTestId('search-regex-scope-notice')
+    expect(notice).toHaveTextContent(t('search.regexScopeNotice'))
+    // Announced, not merely decorative.
+    expect(notice).toHaveAttribute('role', 'status')
+  })
+
+  it('#3315 item 1: an empty regex result set says the scan window was bounded', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+    render(<SearchPanel />)
+
+    fireEvent.click(screen.getByTestId('search-toggle-regex'))
+    const regexInput = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
+    typeAndSubmit(regexInput, '^TODO.*invoice')
+
+    expect(await screen.findByText(t('search.noResultsRegexScope'))).toBeInTheDocument()
+    // The generic copy — which asserts the text is not in the vault — must not
+    // be what a regex user is shown.
+    expect(screen.queryByText(t('search.noResultsFound'))).toBeNull()
+  })
+
+  it('#3315 item 1: the scan-scope notice is suppressed while the pattern is invalid', async () => {
+    // Unterminated group — the backend rejects it with an `InvalidRegex`
+    // validation error and the header renders that inline. There is no scan to
+    // describe, so the scope notice must stay out of the way.
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'search_blocks') {
+        throw { kind: 'validation', code: 'InvalidRegex', message: 'unclosed group' }
+      }
+      return emptyPage
+    })
+    render(<SearchPanel />)
+
+    fireEvent.click(screen.getByTestId('search-toggle-regex'))
+    const regexInput = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
+    typeAndSubmit(regexInput, '([a-z')
+
+    // The inline regex alert appears…
+    await screen.findByTestId('search-inline-error')
+    // …and the scope notice does not.
+    expect(screen.queryByTestId('search-regex-scope-notice')).toBeNull()
+  })
 })

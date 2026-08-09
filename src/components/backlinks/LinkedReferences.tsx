@@ -66,7 +66,7 @@ export function LinkedReferences({
   // TanStack `useInfiniteQuery` (see `useBacklinkGroups`). TanStack owns the
   // page list, cursor, loading and error state; `invalidationKey` sits in the
   // query key so a property-change event refetches (F-39).
-  const { groups, totalCount, loading, hasMore, isFetchingMore, loadMore, isError } =
+  const { groups, totalCount, filteredCount, loading, hasMore, isFetchingMore, loadMore, isError } =
     useBacklinkGroups({
       pageId,
       filters,
@@ -360,7 +360,7 @@ export function LinkedReferences({
                   onFiltersChange={setFilters}
                   onSortChange={setSort}
                   totalCount={totalCount}
-                  filteredCount={totalCount}
+                  filteredCount={filteredCount}
                   propertyKeys={propertyKeys}
                   tags={tags}
                   tagResolver={resolveTagName}

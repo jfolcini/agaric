@@ -584,6 +584,48 @@ describe('GraphView', () => {
     expect(screen.queryByTestId('graph-view')).not.toBeInTheDocument()
   })
 
+  // #3315 item 4 — the error branch rendered an `EmptyState` with NO `action`,
+  // and it early-returns above the branch that mounts GraphFilterBar /
+  // LocalGraphControl, so a failed load left no on-screen control able to
+  // re-trigger the fetch: recovery required an unrelated CRUD op or applied
+  // sync batch to bump `invalidationKey`, or navigating away and back — neither
+  // discoverable. Every sibling data surface already offers a retry.
+  it('#3315 item 4: the graph load failure offers a retry that re-runs the fetch', async () => {
+    let failNext = true
+    const pages = [
+      { id: 'page-1', content: 'Page One', block_type: 'page' },
+      { id: 'page-2', content: 'Page Two', block_type: 'page' },
+    ]
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space')
+        return failNext ? Promise.reject(new Error('network failure')) : Promise.resolve(pages)
+      if (cmd === 'list_page_links')
+        return failNext
+          ? Promise.reject(new Error('network failure'))
+          : Promise.resolve(linksOf([{ source_id: 'page-1', target_id: 'page-2' }]))
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    await screen.findByRole('heading', { level: 2, name: t('graph.loadFailed') })
+
+    // The failure screen must expose an interactive recovery control.
+    const retry = screen.getByTestId('graph-error-retry')
+    expect(retry).toBeInTheDocument()
+
+    // Clicking it re-runs the fan-out — which now succeeds, so the graph chrome
+    // replaces the failure screen with no navigation or unrelated mutation.
+    failNext = false
+    fireEvent.click(retry)
+
+    expect(await screen.findByTestId('graph-view')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { level: 2, name: t('graph.loadFailed') }),
+    ).not.toBeInTheDocument()
+  })
+
   it('has no a11y violations with empty state', async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space') return Promise.resolve([])

@@ -10,6 +10,10 @@ import type React from 'react'
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import {
+  VirtualizedBlockList,
+  type VirtualRowContext,
+} from '@/components/common/VirtualizedBlockList'
 import { PageLink } from '@/components/pages/PageLink'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { getPageDisplayName, type PageDisplay } from '@/lib/page-display'
@@ -52,8 +56,18 @@ export interface CollapsibleGroupListProps<G extends GroupItem> {
   onToggleGroup: (pageId: string) => void
   /** Label for untitled groups (null page_title) */
   untitledLabel: string
-  /** Render each block in a group — must return a <li> with a key */
-  renderBlock: (block: G['blocks'][number], group: G) => React.ReactNode
+  /**
+   * Render each block in a group — must return a `<li>` with a key.
+   *
+   * #3316 item 3: when `virtualizeRows` is set, the third argument carries the
+   * per-row virtualization context (`style` / `measureRef` / `index`) and the
+   * returned `<li>` MUST apply it, or every row stacks at offset 0.
+   */
+  renderBlock: (
+    block: G['blocks'][number],
+    group: G,
+    virtualRow?: VirtualRowContext,
+  ) => React.ReactNode
   /** Fallback expand state when a group is not in expandedGroups (default: false) */
   defaultExpanded?: boolean
   /** CSS class for the group container div */
@@ -114,6 +128,26 @@ export interface CollapsibleGroupListProps<G extends GroupItem> {
    * unset and keep the eager `<ul>` path unchanged.
    */
   renderGroupList?: (group: G, title: string) => React.ReactNode
+  /**
+   * #3316 item 3 — window each expanded group's rows instead of mounting all
+   * of them. The default path used to map over every block of every expanded
+   * group with no virtualizer and no cap, and both reference panels use it: a
+   * hub page with 20 source groups x `MAX_BLOCKS_PER_GROUP` (200) commits
+   * ~4,000 `<li>`s in one synchronous render (UnlinkedReferences
+   * default-expands every group), with each Load-more appending up to 4,000
+   * more. Off by default so the search surface — which supplies its own
+   * `renderGroupList` — and any small consumer are untouched.
+   *
+   * Requires `renderBlock` to apply the `VirtualRowContext` it is handed.
+   */
+  virtualizeRows?: boolean
+  /**
+   * The block currently holding roving keyboard focus. Only meaningful with
+   * `virtualizeRows`: the owning group scrolls it into view so it is MOUNTED,
+   * keeping the panel's `aria-activedescendant` target and the
+   * `useFocusedRowEffect` DOM lookup resolvable.
+   */
+  activeBlockId?: string | null | undefined
 }
 
 function CollapsibleGroupListInner<G extends GroupItem>({
@@ -135,6 +169,8 @@ function CollapsibleGroupListInner<G extends GroupItem>({
   listDataTestId,
   formatCount,
   renderGroupList,
+  virtualizeRows = false,
+  activeBlockId,
 }: CollapsibleGroupListProps<G>): React.ReactElement {
   const { t } = useTranslation()
   return (
@@ -218,6 +254,18 @@ function CollapsibleGroupListInner<G extends GroupItem>({
                 // search-result listbox where the virtualizer hook must
                 // live in a per-group child component.
                 renderGroupList(group, title)
+              ) : virtualizeRows ? (
+                // #3316 item 3 — windowed default path. The `list*` props are
+                // deliberately NOT forwarded here: they exist for the search
+                // surface's per-group listbox, and search supplies its own
+                // `renderGroupList` above, so no consumer combines the two.
+                <VirtualizedBlockList
+                  blocks={group.blocks}
+                  className={listClassName ?? 'ml-4 mt-1'}
+                  ariaLabel={listAriaLabel?.(title)}
+                  activeBlockId={activeBlockId}
+                  renderBlock={(block, ctx) => renderBlock(block, group, ctx)}
+                />
               ) : (
                 // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- keyboard-event delegation gated on the same runtime listRole: when `listRole="listbox"` the <ul> is interactive and owns listbox arrow-key navigation; otherwise `listOnKeyDown` is unset and no handler is attached. The handler routes keys to the option children, so the <ul> must not claim a static interactive role here.
                 <ul

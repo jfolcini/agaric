@@ -143,6 +143,55 @@ function comboboxControlAttrs(args: {
   return {}
 }
 
+/**
+ * #3315 item 1 — regex mode scans a BOUNDED window: `regex_mode_query`
+ * post-filters only the newest `REGEX_PRE_FILTER_CAP` structurally-filtered
+ * rows (`agaric-store/src/fts/toggle_filter.rs`). "No results found" therefore
+ * is not the statement it is in FTS mode — the pattern may well occur in older
+ * blocks that were never looked at — so the empty state must not tell the user
+ * the text is absent from their vault.
+ */
+function noResultsDescriptionKey(regexMode: boolean): string {
+  return regexMode ? 'search.noResultsRegexScope' : 'search.noResultsFound'
+}
+
+/**
+ * #3315 item 1 — regex mode is the one search path whose result set is bounded
+ * by an INVISIBLE scan window: `regex_mode_query` post-filters only the newest
+ * `REGEX_PRE_FILTER_CAP` structurally-filtered rows and then reports
+ * `has_more: false` with no cursor, so `LoadMoreButton` is hidden and the
+ * announced count reads as the complete answer. Until a truncation flag exists
+ * on the wire (explicitly deferred in `toggle_filter.rs`), the only honest
+ * signal is a standing notice that the scan is scoped. Rendered in the same
+ * slot as the 5000-item cap notice, and suppressed while the pattern itself is
+ * invalid since the header already carries that inline error.
+ *
+ * Extracted as its own component so the guard chain does not add decision
+ * points to `SearchPanel`'s cyclomatic complexity.
+ */
+function RegexScopeNotice({
+  regexMode,
+  queryLength,
+  regexError,
+}: {
+  regexMode: boolean
+  queryLength: number
+  regexError: string | null
+}): React.ReactElement | null {
+  const { t } = useTranslation()
+  if (!regexMode || queryLength === 0 || regexError) return null
+  return (
+    <div
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
+      role="status"
+      data-testid="search-regex-scope-notice"
+      className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground"
+    >
+      {t('search.regexScopeNotice')}
+    </div>
+  )
+}
+
 export function SearchPanel(): React.ReactElement {
   const { t } = useTranslation()
 
@@ -657,7 +706,7 @@ export function SearchPanel(): React.ReactElement {
         <EmptyState
           icon={Search}
           message={t('search.noResultsHeadline')}
-          description={t('search.noResultsFound')}
+          description={t(noResultsDescriptionKey(toggles.isRegex))}
           // #1103 — when filter chips over-constrain to zero, offer a one-click
           // recovery instead of forcing a scroll back up to the chip row. No
           // active filters → no action (behavior identical to before).
@@ -717,6 +766,12 @@ export function SearchPanel(): React.ReactElement {
           {t('search.cappedNotice')}
         </div>
       )}
+
+      <RegexScopeNotice
+        regexMode={toggles.isRegex}
+        queryLength={query.trim().length}
+        regexError={regexError}
+      />
 
       {aliasMatch && (
         // Expose the alias-match card as a labelled region so it is

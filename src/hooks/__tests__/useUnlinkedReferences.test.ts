@@ -98,8 +98,9 @@ describe('useUnlinkedReferences', () => {
     expect(result.current.truncated).toBe(true)
     expect(result.current.hasMore).toBe(true)
     expect(result.current.isError).toBe(false)
-    // The exported query key mirrors the hook's read location exactly.
-    expect(result.current.queryKey).toEqual(['unlinkedReferences', null, 'PAGE1', [], null])
+    // The exported query key mirrors the hook's read location exactly. The
+    // trailing element is the #3316 item-2 group limit (20 = panel expanded).
+    expect(result.current.queryKey).toEqual(['unlinkedReferences', null, 'PAGE1', [], null, 20])
   })
 
   it('load-more: appends + merges by page_id without mutating prior objects', async () => {
@@ -245,5 +246,99 @@ describe('useUnlinkedReferences', () => {
     // After load-more, the LAST page's values win (7, false) — not the first.
     expect(result.current.totalCount).toBe(7)
     expect(result.current.truncated).toBe(false)
+  })
+
+  // #3316 item 1 — the hook used to read `total_count` only and drop
+  // `filtered_count`, so the component had no post-filter number to render and
+  // passed `filteredCount={totalCount}`: "Showing 40 of 40" above 4 rows.
+  it('#3316 item 1: surfaces the backend filtered_count separately from totalCount', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      // Pre-filter total is 40; the active filter leaves 4.
+      total_count: 40,
+      filtered_count: 4,
+      truncated: false,
+    }
+    mockedInvoke.mockImplementation(mockInvokeCommands({ list_unlinked_references: () => resp }))
+
+    const { result } = renderHook(() =>
+      useUnlinkedReferences(baseParams({ filters: [{ type: 'TodoState', state: 'TODO' }] })),
+    )
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    expect(result.current.totalCount).toBe(40)
+    expect(result.current.filteredCount).toBe(4)
+  })
+
+  // #3316 item 2 — `UnlinkedReferences` is mounted for every page and starts
+  // collapsed, so the full 20-group page (up to 20 x MAX_BLOCKS_PER_GROUP block
+  // rows, fetched + JSON-serialised over IPC) was paid for on every page open
+  // for a list nobody had opened. A collapsed panel needs only the counts, which
+  // the backend computes over the whole match set before pagination.
+  it('#3316 item 2: a collapsed panel requests one group, an expanded one the full page', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 40,
+      filtered_count: 40,
+      truncated: false,
+    }
+    mockedInvoke.mockImplementation(mockInvokeCommands({ list_unlinked_references: () => resp }))
+
+    const { result, rerender } = renderHook(
+      ({ collapsed }: { collapsed: boolean }) => useUnlinkedReferences(baseParams({ collapsed })),
+      { initialProps: { collapsed: true } },
+    )
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    const limitOf = (call: unknown[]): unknown => (call[1] as { limit?: unknown }).limit
+    const unlinkedCalls = () =>
+      mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unlinked_references')
+
+    // Collapsed: one group only — but the counts are still exact.
+    expect(unlinkedCalls().map(limitOf)).toEqual([1])
+    expect(result.current.totalCount).toBe(40)
+
+    // Expanding re-keys the query and pulls the real page size.
+    rerender({ collapsed: false })
+    await waitFor(() => {
+      expect(unlinkedCalls()).toHaveLength(2)
+    })
+    expect(unlinkedCalls().map(limitOf)).toEqual([1, 20])
+  })
+
+  // #3316 item 2 (b) — `pageId` is part of the query key, so under the client's
+  // inherited `gcTime: Infinity` a session that visits N pages leaves N
+  // observer-less cache entries that are never collected. The hook must
+  // override it, as `useBacklinkGroups` already does.
+  it('#3316 item 2: overrides the client default gcTime so per-pageId entries are collectable', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedInvoke.mockImplementation(mockInvokeCommands({ list_unlinked_references: () => resp }))
+
+    const { result } = renderHook(() => useUnlinkedReferences(baseParams()))
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    const entry = queryClient.getQueryCache().find({ queryKey: result.current.queryKey })
+    expect(entry).toBeDefined()
+    expect(entry?.gcTime).toBe(5 * 60 * 1000)
+    expect(entry?.gcTime).toBeLessThan(Number.POSITIVE_INFINITY)
   })
 })
