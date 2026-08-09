@@ -44,6 +44,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { useBootStore } from '@/stores/boot'
 import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
@@ -54,6 +55,100 @@ const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 /** No-op boot function to prevent side-effects. */
 const noopBoot = vi.fn(async () => {})
+
+/** Stands in for the real tabs-store navigation so the success path is observable. */
+const navigateToPageSpy = vi.fn()
+
+/**
+ * #3308 — a stateful fake of the sample-pages IPC surface.
+ *
+ * `createSamplePages` is idempotent now: it sweeps the space with
+ * `list_all_pages_in_space` first, reuses a page whose title already
+ * matches, and (for a reused page) reads its children via `list_blocks` so
+ * only the missing bodies are re-created. A stateless per-command mock
+ * cannot express that, so this helper keeps the created pages/blocks in
+ * memory and serves them back, exactly like the backend would across a
+ * failed-then-retried run.
+ *
+ * `failCreateBlockCall: n` makes the n-th `create_block` reject, which is
+ * the mid-sequence failure the duplicate-prevention regression turns on.
+ */
+function installSampleIpcMock(opts: { failCreateBlockCall?: number } = {}): {
+  pages: { id: string; content: string }[]
+  blocks: { id: string; content: string; parent_id: string }[]
+} {
+  const pages: { id: string; content: string }[] = []
+  const blocks: { id: string; content: string; parent_id: string }[] = []
+  let createBlockCalls = 0
+
+  mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+    if (cmd === 'list_all_pages_in_space') {
+      return pages.map((page) => ({
+        id: page.id,
+        content: page.content,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      }))
+    }
+    if (cmd === 'create_page_in_space') {
+      const content = (args as { content: string }).content
+      const id = `page-${pages.length + 1}`
+      pages.push({ id, content })
+      return id
+    }
+    if (cmd === 'list_blocks') {
+      const parentId = (args as { request: { parentId: string | null } }).request.parentId
+      return {
+        items: blocks
+          .filter((block) => block.parent_id === parentId)
+          .map((block) => ({
+            id: block.id,
+            block_type: 'content',
+            content: block.content,
+            parent_id: block.parent_id,
+            position: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            deleted_at: null,
+          })),
+        next_cursor: null,
+        has_more: false,
+        total: null,
+      }
+    }
+    if (cmd === 'create_block') {
+      createBlockCalls += 1
+      if (opts.failCreateBlockCall === createBlockCalls) {
+        throw new Error('database is locked')
+      }
+      const { content, parentId } = args as { content: string; parentId: string }
+      const id = `block-${blocks.length + 1}`
+      blocks.push({ id, content, parent_id: parentId })
+      return {
+        id,
+        block_type: 'content',
+        content,
+        parent_id: parentId,
+        position: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        deleted_at: null,
+      }
+    }
+    return {}
+  })
+
+  return { pages, blocks }
+}
+
+/** Titles passed to `create_page_in_space`, in call order. */
+function createdPageTitles(): string[] {
+  return mockedInvoke.mock.calls
+    .filter(([cmd]) => cmd === 'create_page_in_space')
+    .map(([, args]) => (args as { content: string }).content)
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -72,6 +167,10 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
+  // #3308 — the success path navigates to the Getting Started page. Stub
+  // the store action so the assertion is direct and the real cross-store
+  // navigation cascade stays out of these component tests.
+  useTabsStore.setState({ navigateToPage: navigateToPageSpy })
 })
 
 describe('WelcomeModal', () => {
@@ -176,32 +275,12 @@ describe('WelcomeModal', () => {
   // `create_block`. So the sequence is:
   //   2× `create_page_in_space` (Getting Started + Quick Tips)
   // + 6× `create_block` (3 content children for each page)
-  // = 8 IPC invocations total.
+  // = 8 IPC invocations, plus the #3308 idempotence sweep
+  // (`list_all_pages_in_space`) that runs first = 9 total.
   it('"Create sample pages" calls create_page_in_space + create_block and dismisses', async () => {
     const user = userEvent.setup()
 
-    let pageCount = 0
-    let blockCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_page_in_space') {
-        pageCount++
-        return `page-${pageCount}`
-      }
-      if (cmd === 'create_block') {
-        blockCount++
-        return {
-          id: `block-${blockCount}`,
-          block_type: 'content',
-          content: '',
-          parent_id: null,
-          position: 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          deleted_at: null,
-        }
-      }
-      return {}
-    })
+    installSampleIpcMock()
 
     render(<WelcomeModal />)
 
@@ -209,8 +288,8 @@ describe('WelcomeModal', () => {
     await user.click(sampleBtn)
 
     await waitFor(() => {
-      // 2 page creates + 6 child block creates = 8 total IPCs.
-      expect(mockedInvoke).toHaveBeenCalledTimes(8)
+      // 1 existing-page sweep + 2 page creates + 6 child block creates.
+      expect(mockedInvoke).toHaveBeenCalledTimes(9)
     })
 
     // Verify it created the two pages via the new IPC — assert via i18n
@@ -250,34 +329,13 @@ describe('WelcomeModal', () => {
   it('"Create sample pages" uses i18n strings for every block content', async () => {
     const user = userEvent.setup()
 
-    let pageCount = 0
-    let blockCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'create_page_in_space') {
-        pageCount++
-        return `page-${pageCount}`
-      }
-      if (cmd === 'create_block') {
-        blockCount++
-        return {
-          id: `block-${blockCount}`,
-          block_type: 'content',
-          content: '',
-          parent_id: null,
-          position: 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          deleted_at: null,
-        }
-      }
-      return {}
-    })
+    installSampleIpcMock()
 
     render(<WelcomeModal />)
     await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledTimes(8)
+      expect(mockedInvoke).toHaveBeenCalledTimes(9)
     })
 
     // Page titles ride on `create_page_in_space`.
@@ -320,19 +378,165 @@ describe('WelcomeModal', () => {
 
     // First create_page_in_space call (Getting Started page) rejects —
     // the remaining calls are short-circuited by the try/catch.
-    mockedInvoke.mockRejectedValueOnce(new Error('database is locked'))
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') return []
+      throw new Error('database is locked')
+    })
 
     render(<WelcomeModal />)
     await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith(i18n.t('welcome.samplePagesFailed'))
+      // #3308 — the message is unchanged; it now rides with a Retry action
+      // (asserted in detail by the dedicated regression below).
+      expect(mockedToastError).toHaveBeenCalledWith(
+        i18n.t('welcome.samplePagesFailed'),
+        expect.objectContaining({ action: expect.anything() }),
+      )
     })
 
     // Modal stays open; onboarding flag NOT set so the user can retry
     // (or pick a different action) on next launch.
     expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
     expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
+  })
+
+  // ----------------------------------------------------------------------
+  // #3308 finding 1 — the onboarding path had no idempotence and no
+  // recovery: a rejection mid-way through the eight-IPC sequence left
+  // half-built pages behind a still-open modal whose still-enabled button
+  // duplicated them on the next click, the error toast offered no retry,
+  // and the success path navigated nowhere.
+  // ----------------------------------------------------------------------
+  describe('sample pages are idempotent and recoverable (#3308)', () => {
+    it('does not create a duplicate Getting Started page on a second click after a mid-sequence failure', async () => {
+      const user = userEvent.setup()
+
+      // The Getting Started page lands, then its SECOND body block rejects
+      // — the classic half-built state.
+      const { pages } = installSampleIpcMock({ failCreateBlockCall: 2 })
+
+      render(<WelcomeModal />)
+      await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalled()
+      })
+      expect(createdPageTitles()).toEqual([i18n.t('welcome.sampleGettingStartedTitle')])
+
+      // The button is re-enabled; the user clicks it again.
+      const sampleBtn = screen.getByRole('button', { name: 'Create sample pages' })
+      expect(sampleBtn).toBeEnabled()
+      await user.click(sampleBtn)
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith(i18n.t('welcome.samplePagesCreated'))
+      })
+
+      // Getting Started was created exactly ONCE across both attempts; the
+      // retry reused it and only added Quick Tips.
+      expect(createdPageTitles()).toEqual([
+        i18n.t('welcome.sampleGettingStartedTitle'),
+        i18n.t('welcome.sampleQuickTipsTitle'),
+      ])
+      expect(
+        pages.filter((page) => page.content === i18n.t('welcome.sampleGettingStartedTitle')),
+      ).toHaveLength(1)
+    })
+
+    it('back-fills only the missing body blocks when reusing a half-built Getting Started page', async () => {
+      const user = userEvent.setup()
+
+      const { blocks } = installSampleIpcMock({ failCreateBlockCall: 2 })
+
+      render(<WelcomeModal />)
+      await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalled()
+      })
+
+      await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalled()
+      })
+
+      // Every body exists exactly once — no duplicated block 1.
+      for (const key of [
+        'welcome.sampleGettingStartedBody1',
+        'welcome.sampleGettingStartedBody2',
+        'welcome.sampleGettingStartedBody3',
+        'welcome.sampleQuickTipsBody1',
+        'welcome.sampleQuickTipsBody2',
+        'welcome.sampleQuickTipsBody3',
+      ] as const) {
+        expect(blocks.filter((block) => block.content === i18n.t(key))).toHaveLength(1)
+      }
+    })
+
+    // UX.md:113 — "Error states must include a way to retry or recover."
+    it('the sample-pages failure toast carries a working Retry action', async () => {
+      const user = userEvent.setup()
+
+      installSampleIpcMock({ failCreateBlockCall: 2 })
+
+      render(<WelcomeModal />)
+      await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalled()
+      })
+
+      const opts = vi.mocked(toast.error).mock.calls.at(-1)?.[1] as
+        | { action?: { label?: string; onClick?: () => void } }
+        | undefined
+      expect(opts?.action?.label).toBe(i18n.t('action.retry'))
+      expect(typeof opts?.action?.onClick).toBe('function')
+
+      // The action actually re-runs the flow (and, being idempotent, it
+      // completes rather than duplicating).
+      opts?.action?.onClick?.()
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith(i18n.t('welcome.samplePagesCreated'))
+      })
+      expect(createdPageTitles()).toEqual([
+        i18n.t('welcome.sampleGettingStartedTitle'),
+        i18n.t('welcome.sampleQuickTipsTitle'),
+      ])
+    })
+
+    it('navigates to the Getting Started page after creating the sample pages', async () => {
+      const user = userEvent.setup()
+
+      installSampleIpcMock()
+
+      render(<WelcomeModal />)
+      await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+      await waitFor(() => {
+        expect(navigateToPageSpy).toHaveBeenCalledWith(
+          'page-1',
+          i18n.t('welcome.sampleGettingStartedTitle'),
+        )
+      })
+    })
+
+    it('navigates to the REUSED Getting Started page when one already exists', async () => {
+      const user = userEvent.setup()
+
+      const { pages } = installSampleIpcMock()
+      pages.push({ id: 'PAGE_EXISTING', content: i18n.t('welcome.sampleGettingStartedTitle') })
+
+      render(<WelcomeModal />)
+      await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+      await waitFor(() => {
+        expect(navigateToPageSpy).toHaveBeenCalledWith(
+          'PAGE_EXISTING',
+          i18n.t('welcome.sampleGettingStartedTitle'),
+        )
+      })
+      expect(createdPageTitles()).toEqual([i18n.t('welcome.sampleQuickTipsTitle')])
+    })
   })
 
   // Item #2281 — the async submit button must render the app-wide in-flight
@@ -342,6 +546,7 @@ describe('WelcomeModal', () => {
     const user = userEvent.setup()
     let resolveFirstPage: (id: string) => void = () => {}
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') return []
       if (cmd === 'create_page_in_space') {
         return new Promise<string>((resolve) => {
           resolveFirstPage = resolve

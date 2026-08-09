@@ -357,6 +357,26 @@ export function renderGraphElements(
 
 // ── Zoom + keyboard zoom ─────────────────────────────────────────────
 
+/**
+ * Duration for a d3 zoom transition, collapsed to `0` when the user asks for
+ * reduced motion (#3308 finding 3).
+ *
+ * d3 transitions are rAF-driven JS, so the app's global
+ * `@media (prefers-reduced-motion: reduce)` CSS rule cannot suppress them —
+ * per `docs/UX.md`, JS-driven motion must consult `matchMedia` itself. A
+ * zero-duration transition still APPLIES the transform, it just jumps
+ * straight to the end state, so the zoom keeps working.
+ *
+ * The media query is read at CALL time (not cached at module load) so an OS
+ * preference change mid-session takes effect immediately; `matchMedia` is
+ * optional-chained for environments that do not provide it.
+ */
+export function reducedMotionDuration(ms: number): number {
+  const prefersReducedMotion =
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  return prefersReducedMotion ? 0 : ms
+}
+
 export function setupZoomBehavior(
   svg: SVGSVGElement,
   g: GSel,
@@ -388,17 +408,20 @@ export function createZoomKeyHandler(
     const svgSelection = select(svg)
     if (matchesShortcutBinding(e, 'graphZoomIn')) {
       e.preventDefault()
-      zoomBehavior.scaleBy(svgSelection.transition().duration(ZOOM_BUTTON_DURATION_MS), ZOOM_STEP)
+      zoomBehavior.scaleBy(
+        svgSelection.transition().duration(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)),
+        ZOOM_STEP,
+      )
     } else if (matchesShortcutBinding(e, 'graphZoomOut')) {
       e.preventDefault()
       zoomBehavior.scaleBy(
-        svgSelection.transition().duration(ZOOM_BUTTON_DURATION_MS),
+        svgSelection.transition().duration(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)),
         1 / ZOOM_STEP,
       )
     } else if (matchesShortcutBinding(e, 'graphZoomReset')) {
       e.preventDefault()
       zoomBehavior.transform(
-        svgSelection.transition().duration(ZOOM_RESET_DURATION_MS),
+        svgSelection.transition().duration(reducedMotionDuration(ZOOM_RESET_DURATION_MS)),
         zoomIdentity,
       )
     }

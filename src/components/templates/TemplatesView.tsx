@@ -70,6 +70,8 @@ export function TemplatesView(): React.ReactElement {
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [templates, setTemplates] = useState<TemplateItem[]>([])
   const [loading, setLoading] = useState(true)
+  // #3306 — a failed load used to render "No templates yet".
+  const [loadError, setLoadError] = useState(false)
   const [search, setSearch] = useState('')
   const [pendingRemoval, setPendingRemoval] = useState<{ id: string; name: string } | null>(null)
   const [newTemplateName, setNewTemplateName] = useState('')
@@ -77,6 +79,7 @@ export function TemplatesView(): React.ReactElement {
 
   const loadTemplates = useCallback(async () => {
     setLoading(true)
+    setLoadError(false)
     try {
       const pages = await loadTemplatePagesWithPreview(currentSpaceId)
       // `blockType: 'page'` is pushed into SQL via
@@ -104,6 +107,7 @@ export function TemplatesView(): React.ReactElement {
         })),
       )
     } catch (err) {
+      setLoadError(true)
       reportIpcError('TemplatesView', 'slash.templateLoadFailed', err, t)
     }
     setLoading(false)
@@ -231,6 +235,8 @@ export function TemplatesView(): React.ReactElement {
         loading={loading}
         items={templates}
         skeleton={<LoadingSkeleton count={3} height="h-14" data-testid="templates-loading" />}
+        error={loadError && t('slash.templateLoadFailed')}
+        onRetry={loadTemplates}
         empty={<EmptyState icon={LayoutTemplate} message={t('templates.empty')} />}
       >
         {() => (

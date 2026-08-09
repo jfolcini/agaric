@@ -306,6 +306,55 @@ describe('KeyboardTab', () => {
     expect(input.getAttribute('aria-describedby')).toBeNull()
   })
 
+  // #3308 finding 2 — `parseChord` accepts any leftover token as the key, so
+  // `Ctrl + Shift + Esc` used to save an override the matcher can never fire
+  // on (it compares `esc` literally against `KeyboardEvent.key === 'Escape'`),
+  // silently costing the action its working shortcut.
+  it('#3308: unknown key name ("Ctrl + Shift + Esc") disables Save and shows a distinct error', async () => {
+    const user = userEvent.setup()
+    render(<KeyboardTab />)
+
+    const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
+    await user.click(editButtons[0] as HTMLElement)
+
+    const input = screen.getByPlaceholderText('Type new key binding...')
+    await user.clear(input)
+    await user.type(input, 'Ctrl + Shift + Esc')
+
+    const saveButton = screen.getByRole('button', { name: t('keyboard.settings.saveButton') })
+    expect(saveButton).toBeDisabled()
+
+    // The message is the unknown-key one, NOT the modifier-only one.
+    const error = screen.getByRole('alert')
+    expect(error).toHaveTextContent(t('keyboard.settings.validationUnknownKey'))
+    expect(
+      screen.queryByText('Binding must include at least one non-modifier key'),
+    ).not.toBeInTheDocument()
+
+    // Wired to the input for assistive tech, same as the modifier-only error.
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+    expect(input.getAttribute('aria-describedby')).toBe(error.getAttribute('id'))
+
+    expect(mockSetCustomShortcut).not.toHaveBeenCalled()
+  })
+
+  it('#3308: Enter does not save a binding with an unknown key name', async () => {
+    const user = userEvent.setup()
+    render(<KeyboardTab />)
+
+    const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
+    await user.click(editButtons[0] as HTMLElement)
+
+    const input = screen.getByPlaceholderText('Type new key binding...')
+    await user.clear(input)
+    await user.type(input, 'Cmd + Return{Enter}')
+
+    expect(mockSetCustomShortcut).not.toHaveBeenCalled()
+    expect(input).toBeInTheDocument()
+    expect(input).toHaveValue('Cmd + Return')
+    expect(screen.getByRole('alert')).toHaveTextContent(t('keyboard.settings.validationUnknownKey'))
+  })
+
   it(': conflict warning renders inside the keys column, not as a row sibling', () => {
     mockFindConflicts.mockReturnValue([
       {

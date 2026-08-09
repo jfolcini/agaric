@@ -25,7 +25,7 @@ import {
 // #723 — imported from the submodule (not the barrel) so the validator is
 // the SAME tokenizer the matcher parses with; the two previously drifted
 // (validator accepted `Ctrl+E`/`Cmd + K` formats the matcher saved dead).
-import { validateBindingInput } from '@/lib/keyboard-config/parse'
+import { type BindingValidationError, validateBindingInput } from '@/lib/keyboard-config/parse'
 import { renderKeys } from '@/lib/render-keyboard-shortcut'
 
 export function KeyboardTab(): React.ReactElement {
@@ -68,10 +68,13 @@ export function KeyboardTab(): React.ReactElement {
   const conflicts = findConflicts()
 
   // Validate the in-progress edit value (only meaningful while editing).
-  const validationError = useMemo<'empty' | 'modifierOnly' | null>(() => {
+  const validationError = useMemo<BindingValidationError | null>(() => {
     if (!editingId) return null
     return validateBindingInput(editValue)
   }, [editingId, editValue])
+  // #3308 — `'empty'` has its own message below the list; the other two are
+  // blocking errors rendered inline next to the input.
+  const inlineError = validationError === 'modifierOnly' || validationError === 'unknownKey'
 
   const startEdit = useCallback((id: string, currentKeys: string) => {
     setEditingId(id)
@@ -165,7 +168,7 @@ export function KeyboardTab(): React.ReactElement {
                                   aria-describedby={
                                     validationError === 'empty'
                                       ? 'kbd-empty-binding-error'
-                                      : validationError === 'modifierOnly'
+                                      : inlineError
                                         ? `kbd-validation-error-${shortcut.id}`
                                         : undefined
                                   }
@@ -183,7 +186,7 @@ export function KeyboardTab(): React.ReactElement {
                                   variant="ghost"
                                   size="icon-xs"
                                   onClick={saveEdit}
-                                  disabled={!editValue.trim() || validationError === 'modifierOnly'}
+                                  disabled={!editValue.trim() || inlineError}
                                   aria-label={t('keyboard.settings.saveButton')}
                                 >
                                   <Check className="h-3 w-3" />
@@ -197,13 +200,15 @@ export function KeyboardTab(): React.ReactElement {
                                   <X className="h-3 w-3" />
                                 </Button>
                               </div>
-                              {validationError === 'modifierOnly' && (
+                              {inlineError && (
                                 <p
                                   className="text-xs text-destructive mt-1"
                                   role="alert"
                                   id={`kbd-validation-error-${shortcut.id}`}
                                 >
-                                  {t('keyboard.settings.validationModifierOnly')}
+                                  {validationError === 'unknownKey'
+                                    ? t('keyboard.settings.validationUnknownKey')
+                                    : t('keyboard.settings.validationModifierOnly')}
                                 </p>
                               )}
                               <p className="text-xs text-muted-foreground mt-1">

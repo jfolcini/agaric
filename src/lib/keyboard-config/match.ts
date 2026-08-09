@@ -4,33 +4,12 @@
  * binding string regardless of the layout quirks the user is typing on.
  */
 
+// #3308 — `normalizeKey` lives in `keys.ts` so `validateBindingInput` can
+// derive its accepted-token set from the SAME canonicalisation the matcher
+// compares with, instead of guessing at it.
+import { normalizeKey } from '@/lib/keyboard-config/keys'
 import { parseChord } from '@/lib/keyboard-config/parse'
 import { getShortcutKeys } from '@/lib/keyboard-config/storage'
-
-/**
- * Normalize a raw key token (from a binding string or `KeyboardEvent.key`)
- * to a canonical form so arrow symbols, arrow names, and Space all compare
- * equal regardless of which representation appeared on either side.
- */
-function normalizeKey(raw: string): string {
-  // Special-case `' '` BEFORE trimming so the literal space character from
-  // `KeyboardEvent.key` (which is `' '` for the spacebar) normalises to the
-  // same canonical value as the textual binding `Space`. Trimming would
-  // otherwise collapse it to the empty string.
-  const lower = raw.toLowerCase()
-  if (lower === ' ' || lower === 'space' || lower === 'spacebar') return 'space'
-  // Strip internal whitespace so the catalog's spelled-out key names
-  // (`Arrow Up`, `Page Up`) compare equal to the corresponding
-  // `KeyboardEvent.key` values (`ArrowUp`, `PageUp`) — real event keys
-  // never contain spaces (the spacebar is handled above).
-  const k = lower.trim().replace(/\s+/g, '')
-  if (k === '') return ''
-  if (k === '←' || k === 'arrowleft' || k === 'left') return 'arrowleft'
-  if (k === '→' || k === 'arrowright' || k === 'right') return 'arrowright'
-  if (k === '↑' || k === 'arrowup' || k === 'up') return 'arrowup'
-  if (k === '↓' || k === 'arrowdown' || k === 'down') return 'arrowdown'
-  return k
-}
 
 /**
  * True when the canonical key name is a single Shift-produced punctuation

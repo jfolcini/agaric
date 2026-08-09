@@ -47,6 +47,14 @@ interface TrashListViewProps {
   blocks: BlockRow[]
   filteredBlocks: BlockRow[]
   loading: boolean
+  /**
+   * #3306 — translated message when the trash load SETTLED IN FAILURE.
+   * Without it, `list_trash` failing painted "Trash is empty", which a user
+   * can reasonably read as "my deleted items were purged".
+   */
+  loadError?: string | false | undefined
+  /** Re-run the failed trash load. Rendered as the error card's Retry. */
+  onRetryLoad?: (() => void) | undefined
   debouncedFilter: string
   focusedIndex: number
   selectedIds: Set<string>
@@ -72,6 +80,8 @@ export function TrashListView({
   blocks,
   filteredBlocks,
   loading,
+  loadError,
+  onRetryLoad,
   debouncedFilter,
   focusedIndex,
   selectedIds,
@@ -118,6 +128,8 @@ export function TrashListView({
   return (
     <ListViewState
       loading={loading}
+      error={loadError}
+      onRetry={onRetryLoad}
       items={blocks}
       skeleton={<LoadingSkeleton count={2} height="h-14" className="trash-view-loading" />}
       empty={<EmptyState icon={Trash2} message={t('trash.emptyMessage')} />}

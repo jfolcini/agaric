@@ -45,6 +45,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
   const { t } = useTranslation()
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
   const [loading, setLoading] = useState(true)
+  // #3306 — settled failure vs genuinely-empty vocabulary.
+  const [loadError, setLoadError] = useState(false)
   const [searchFilter, setSearchFilter] = useState('')
 
   // Create form state
@@ -74,6 +76,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
 
   const loadDefinitions = useCallback(async () => {
     setLoading(true)
+    setLoadError(false)
     try {
       // `listPropertyDefs` is paginated. The settings panel is
       // single-page-by-design — it surfaces the seeded vocabulary
@@ -85,6 +88,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       // Replace bespoke `String(error)` toast with the unified
       // helper — error detail goes to the structured log; the user sees
       // the localized message.
+      setLoadError(true)
       reportIpcError('PropertyDefinitionsList', 'property.errorLoad', error, t)
     }
     setLoading(false)
@@ -244,6 +248,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
         loading={loading}
         items={definitions}
         skeleton={<LoadingSkeleton count={3} height="h-10" data-testid="properties-loading" />}
+        error={loadError && t('property.loadFailed')}
+        onRetry={loadDefinitions}
         empty={<EmptyState icon={Settings2} message={t('propertiesView.empty')} />}
       >
         {() =>

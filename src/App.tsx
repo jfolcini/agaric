@@ -14,7 +14,7 @@ import {
 import { QuickCaptureFab } from '@/components/mobile/QuickCaptureFab'
 import { SearchSheetTrigger } from '@/components/mobile/SearchSheetTrigger'
 import { BootGate } from '@/components/pages/BootGate'
-import { useHeaderLabel, ViewDispatcher } from '@/components/pages/ViewDispatcher'
+import { shellOwnsHeading, useHeaderLabel, ViewDispatcher } from '@/components/pages/ViewDispatcher'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
@@ -39,12 +39,12 @@ import { useTheme } from '@/hooks/useTheme'
 import { useUndoShortcuts } from '@/hooks/useUndoShortcuts'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
 import { useViewChangeAnnouncer } from '@/hooks/useViewChangeAnnouncer'
+import { useWelcomeGate } from '@/hooks/useWelcomeGate'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands, type PeerRef } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { isOnboardingDone } from '@/lib/onboarding'
 import { cn } from '@/lib/utils'
 import { useNavigationStore, type View } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
@@ -144,6 +144,10 @@ function App() {
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const pageStack = useTabsStore(selectPageStack)
   const headerLabel = useHeaderLabel()
+  // #3308 — promote the shell label to the view's `<h1>` unless the view
+  // renders its own (see `VIEW_HEADING_OWNER`). An empty label must never
+  // become an empty heading, so a blank label stays a `<span>`.
+  const HeaderLabelTag = headerLabel !== '' && shellOwnsHeading(currentView) ? 'h1' : 'span'
   const { theme: currentTheme, isDark, toggleTheme } = useTheme()
   // Apply the editor font-size preference from boot, before Settings mounts.
   useFontSize()
@@ -184,7 +188,11 @@ function App() {
   // session: when onboarding is already done the modal (and its chunk)
   // never mounts; when it isn't, the modal owns its own open/dismiss
   // lifecycle after mount.
-  const [showWelcome] = useState(() => !isOnboardingDone())
+  // #3308 — the gate is STATE now, so Settings → "Show the welcome tour
+  // again" (`resetOnboarding()`) can re-open it mid-session;
+  // `welcomeRemountKey` forces the remount that re-runs the modal's own
+  // `open` initializer. See `useWelcomeGate`.
+  const { show: showWelcome, remountKey: welcomeRemountKey } = useWelcomeGate()
   const mainContentRef = useRef<HTMLDivElement | null>(null)
   // #754 — the scroll viewport as STATE (alongside the ref) so effects
   // that must re-run when the viewport mounts late (it only attaches
@@ -446,9 +454,17 @@ function App() {
                 <JournalControls />
               ) : (
                 <>
-                  <span className="font-medium" data-testid="header-label">
+                  {/* #3308 — the shell label is the `<h1>` for every view that
+                      does not render one of its own (pages / tags / history /
+                      query / search previously had NO heading at all, so
+                      screen-reader heading navigation had nothing to land on).
+                      Views that own an `<h1>` via `FeaturePageHeader` keep a
+                      plain `<span>` here so the same title is not announced as
+                      two separate level-1 headings. `VIEW_HEADING_OWNER` in
+                      ViewDispatcher is the single, exhaustive owner map. */}
+                  <HeaderLabelTag className="font-medium" data-testid="header-label">
                     {headerLabel}
-                  </span>
+                  </HeaderLabelTag>
                   <div className="flex-1" />
                   {DATE_CONTROL_VIEWS.has(currentView) && <GlobalDateControls />}
                 </>
@@ -582,7 +598,7 @@ function App() {
       {showWelcome && (
         <FeatureErrorBoundary name="Welcome" nameKey="errorBoundary.section.welcome">
           <Suspense fallback={null}>
-            <WelcomeModal />
+            <WelcomeModal key={welcomeRemountKey} />
           </Suspense>
         </FeatureErrorBoundary>
       )}

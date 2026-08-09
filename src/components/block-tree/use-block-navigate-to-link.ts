@@ -21,7 +21,9 @@ import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { toSpaceScope } from '@/lib/space-scope'
 import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 type TFn = TFunction
 
@@ -76,6 +78,53 @@ export function useBlockNavigateToLink({
       handleFlushRef.current()
       try {
         const targetBlock = unwrap(await commands.getBlock(targetId))
+
+        // #3306 — space-scope the navigate path.
+        //
+        // `commands.getBlock` delegates to `get_active_block_inner`, whose SQL
+        // carries a soft-delete predicate and NOTHING else: `SELECT … FROM
+        // blocks WHERE id = ? AND deleted_at IS NULL`. It happily returns a row
+        // that lives in another space. Its sibling `batch_resolve` takes a
+        // mandatory `SpaceScope` and is documented as the policy enforcement
+        // point; the single-row path had no equivalent, so a `[[ULID]]` whose
+        // target had since been moved to another space (PageHeader's "Move to
+        // space" is the mainstream way that happens) would fetch the foreign
+        // row and write its title into the ACTIVE space's resolve slice —
+        // `useResolveStore.set` keys by `keyFor(activeSpaceId(), id)`. The
+        // subsequent `loadPageSubtree` did reject with PageNotInSpace and the
+        // #2810 heal bounced the user back, but the foreign title stayed
+        // readable on the chip in this space for the rest of the session. The
+        // locked-in policy is "no live links between spaces, ever".
+        //
+        // So: ask the space-scoped resolver whether the target belongs to the
+        // active space BEFORE the cache write and before any navigation. A
+        // foreign target simply does not come back (`b.space_id = ?`), which is
+        // the same drop-out the picker paths already rely on. Fail closed when
+        // the space store has not hydrated — mirrors the resolve store's
+        // FE-H-22 policy, since an unverifiable target must not be trusted.
+        const spaceId = useSpaceStore.getState().currentSpaceId
+        const inActiveSpace =
+          spaceId != null &&
+          unwrap(await commands.batchResolve([targetId], toSpaceScope(spaceId))).some(
+            (r) => r.id === targetId,
+          )
+        if (!inActiveSpace) {
+          logger.warn(
+            'BlockTree',
+            'Link target is not in the active space — refusing to navigate',
+            {
+              targetId,
+              spaceId,
+            },
+          )
+          // Deliberately NOT `useResolveStore.set(...)`: caching the fetched
+          // title here is the leak. The message matches the one the page-load
+          // heal already shows for this case, and shares its toast id so the
+          // two paths collapse into a single toast.
+          notify.info(t('error.pageNotInCurrentSpace'), { id: 'page-not-in-space' })
+          return
+        }
+
         // Populate cache with the fetched block info
         useResolveStore
           .getState()

@@ -145,6 +145,69 @@ describe('useGraphZoom', () => {
     expect(select).toHaveBeenCalled()
   })
 
+  // #3308 finding 3 — d3 transitions are rAF-driven JS, so the global
+  // reduced-motion CSS rule cannot suppress them; the zoom callbacks must
+  // consult `matchMedia` themselves and collapse the duration to 0.
+  describe('prefers-reduced-motion (#3308)', () => {
+    /** Every `duration(...)` argument passed to any `select()` result. */
+    function durationsPassed(): number[] {
+      return vi.mocked(select).mock.results.flatMap((r) => {
+        const sel = r.value as { duration: { mock: { calls: unknown[][] } } }
+        return sel.duration.mock.calls.map((c) => c[0] as number)
+      })
+    }
+
+    function setReducedMotion(matches: boolean): void {
+      vi.spyOn(window, 'matchMedia').mockImplementation(
+        (query: string) => ({ matches, media: query }) as MediaQueryList,
+      )
+    }
+
+    function attachedZoom() {
+      const ref = React.createRef<SVGSVGElement>()
+      ;(ref as { current: SVGSVGElement | null }).current =
+        makeFakeSvg() as unknown as SVGSVGElement
+      const { result } = renderHook(() => useGraphZoom(ref))
+      result.current.attach(makeFakeSvg() as unknown as SVGSVGElement, {} as any)
+      return result
+    }
+
+    it('#3308: zoomIn/zoomOut/zoomReset use duration 0 under reduced motion', () => {
+      setReducedMotion(true)
+      const result = attachedZoom()
+
+      result.current.zoomIn()
+      result.current.zoomOut()
+      result.current.zoomReset()
+
+      expect(durationsPassed()).toEqual([0, 0, 0])
+    })
+
+    it('#3308: zoom callbacks keep their animated durations when reduced motion is off', () => {
+      setReducedMotion(false)
+      const result = attachedZoom()
+
+      result.current.zoomIn()
+      result.current.zoomOut()
+      result.current.zoomReset()
+
+      // ZOOM_BUTTON_DURATION_MS ×2 then ZOOM_RESET_DURATION_MS.
+      expect(durationsPassed()).toEqual([200, 200, 300])
+    })
+
+    it('#3308: the media query is re-read per call, not cached at module load', () => {
+      setReducedMotion(false)
+      const result = attachedZoom()
+
+      result.current.zoomIn()
+      // OS preference flips mid-session.
+      setReducedMotion(true)
+      result.current.zoomIn()
+
+      expect(durationsPassed()).toEqual([200, 0])
+    })
+  })
+
   it('attach + zoomIn coexist: callbacks remain stable across re-renders', () => {
     const ref = React.createRef<SVGSVGElement>()
     ;(ref as { current: SVGSVGElement | null }).current = makeFakeSvg() as unknown as SVGSVGElement

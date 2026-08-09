@@ -55,6 +55,10 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const { t } = useTranslation()
   const [tags, setTags] = useState<TagCacheRow[]>([])
   const [loading, setLoading] = useState(false)
+  // #3306 — a settled load failure must be distinguishable from an empty
+  // vault. Without this, `listAllTagsInSpace` rejecting left `loading=false`
+  // and `tags=[]`, which rendered "No tags yet" over the failure.
+  const [loadError, setLoadError] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
   const [newTagName, setNewTagName] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
@@ -64,6 +68,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
 
   const loadTags = useCallback(async () => {
     setLoading(true)
+    setLoadError(false)
     try {
       // limit-clamp-followup — was
       // `listTagsByPrefix({ prefix: '', limit: 500 })`, which the
@@ -84,6 +89,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       setTags(resp)
     } catch (error) {
       logger.error('TagList', 'failed to load tags', undefined, error)
+      setLoadError(true)
       notify.error(t('tags.loadFailed'), { id: 'tags-load-failed' })
     }
     setLoading(false)
@@ -257,6 +263,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         loading={loading}
         items={tags}
         skeleton={<LoadingSkeleton count={3} height="h-10" loading />}
+        error={loadError && t('tags.loadFailed')}
+        onRetry={loadTags}
         empty={<EmptyState icon={Tag} message={t('tagList.empty')} />}
       >
         {(items) => (

@@ -2302,6 +2302,16 @@ describe('BlockTree handleNavigate', () => {
         for (const id of args?.blockIds ?? []) result[id] = []
         return result
       }
+      // #3306 — handleNavigate now space-scopes the target through
+      // `batch_resolve` before caching/navigating; echo the requested ids back
+      // as in-space so these same-space navigation assertions still apply.
+      if (cmd === 'batch_resolve')
+        return ((args?.ids ?? []) as string[]).map((id) => ({
+          id,
+          title: null,
+          block_type: 'content',
+          deleted: false,
+        }))
       return emptyPage
     })
 
@@ -2359,7 +2369,26 @@ describe('BlockTree handleNavigate', () => {
         for (const id of args?.blockIds ?? []) result[id] = []
         return result
       }
-      if (cmd === 'batch_resolve') return []
+      // #3306 — handleNavigate now space-scopes the target through
+      // `batch_resolve` before caching/navigating; echo the requested ids back
+      // as in-space so these same-space navigation assertions still apply.
+      if (cmd === 'batch_resolve')
+        return ((args?.ids ?? []) as string[]).map((id) => ({
+          id,
+          title: null,
+          block_type: 'content',
+          deleted: false,
+        }))
+      // #3306 — handleNavigate now space-scopes the target through
+      // `batch_resolve` before caching/navigating; echo the requested ids back
+      // as in-space so these same-space navigation assertions still apply.
+      if (cmd === 'batch_resolve')
+        return ((args?.ids ?? []) as string[]).map((id) => ({
+          id,
+          title: null,
+          block_type: 'content',
+          deleted: false,
+        }))
       return emptyPage
     })
 
@@ -2391,6 +2420,16 @@ describe('BlockTree handleNavigate', () => {
         for (const id of args?.blockIds ?? []) result[id] = []
         return result
       }
+      // #3306 — handleNavigate now space-scopes the target through
+      // `batch_resolve` before caching/navigating; echo the requested ids back
+      // as in-space so these same-space navigation assertions still apply.
+      if (cmd === 'batch_resolve')
+        return ((args?.ids ?? []) as string[]).map((id) => ({
+          id,
+          title: null,
+          block_type: 'content',
+          deleted: false,
+        }))
       return emptyPage
     })
 
@@ -3935,6 +3974,16 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
         for (const id of args?.blockIds ?? []) result[id] = []
         return result
       }
+      // #3306 — handleNavigate now space-scopes the target through
+      // `batch_resolve` before caching/navigating; echo the requested ids back
+      // as in-space so these same-space navigation assertions still apply.
+      if (cmd === 'batch_resolve')
+        return ((args?.ids ?? []) as string[]).map((id) => ({
+          id,
+          title: null,
+          block_type: 'content',
+          deleted: false,
+        }))
       return emptyPage
     })
 
@@ -3985,6 +4034,16 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
         for (const id of args?.blockIds ?? []) result[id] = []
         return result
       }
+      // #3306 — handleNavigate now space-scopes the target through
+      // `batch_resolve` before caching/navigating; echo the requested ids back
+      // as in-space so these same-space navigation assertions still apply.
+      if (cmd === 'batch_resolve')
+        return ((args?.ids ?? []) as string[]).map((id) => ({
+          id,
+          title: null,
+          block_type: 'content',
+          deleted: false,
+        }))
       return emptyPage
     })
 

@@ -150,6 +150,62 @@ describe('PageBrowser', () => {
 
     expect(await screen.findByText(/No pages yet/)).toBeInTheDocument()
   })
+  // #3306 — a settled `list_pages_with_metadata` failure used to be
+  // indistinguishable from an empty space: the hook exposed only `pages` and
+  // `loading`, so the failure rendered "No pages yet" plus a "Create your
+  // first page" CTA. A user with 5,000 pages was told their vault was empty.
+  describe('load failure (#3306)', () => {
+    it('renders an error state with a retry instead of "No pages yet"', async () => {
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') return Promise.reject(new Error('write pool busy'))
+        return pageRowInvokeFallback(cmd)
+      })
+
+      render(<PageBrowser />)
+
+      const errorCard = await screen.findByTestId('page-browser-error-state')
+      expect(errorCard).toHaveAttribute('role', 'alert')
+      expect(screen.queryByText(/No pages yet/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/Create your first page/i)).not.toBeInTheDocument()
+    })
+
+    it('retries the failed load when Retry is clicked', async () => {
+      const user = userEvent.setup()
+      let attempt = 0
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          attempt += 1
+          if (attempt === 1) return Promise.reject(new Error('write pool busy'))
+          return Promise.resolve({
+            items: [makePage({ id: 'P1', content: 'Recovered page' })],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return pageRowInvokeFallback(cmd)
+      })
+
+      render(<PageBrowser />)
+
+      await user.click(await screen.findByTestId('page-browser-error-state-retry'))
+
+      expect(await screen.findByText('Recovered page')).toBeInTheDocument()
+      expect(screen.queryByTestId('page-browser-error-state')).not.toBeInTheDocument()
+    })
+
+    it('still shows the empty state when the load genuinely succeeds with no pages', async () => {
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+
+      expect(await screen.findByText(/No pages yet/)).toBeInTheDocument()
+      expect(screen.queryByTestId('page-browser-error-state')).not.toBeInTheDocument()
+    })
+  })
+
   it('shows skeleton loaders during initial load', () => {
     // Mock that never resolves — keeps loading state
     mockedInvoke.mockReturnValueOnce(new Promise(() => {}))

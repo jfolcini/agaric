@@ -19,6 +19,8 @@
  *   definitionally "what the matcher can honour".
  */
 
+import { isMatchableKeyToken } from '@/lib/keyboard-config/keys'
+
 export interface ParsedChord {
   /** Requires Ctrl (or Cmd — the matcher treats `metaKey` as Ctrl). */
   ctrl: boolean
@@ -132,16 +134,30 @@ export function normalizeBinding(input: string): string {
     .join(' / ')
 }
 
+/** Why a typed binding cannot be saved, or `null` when it is honourable. */
+export type BindingValidationError = 'empty' | 'modifierOnly' | 'unknownKey'
+
 /**
  * Validate a user-typed binding the same way the matcher will read it
  * (semantics, now sharing the matcher's tokenizer). Each ` / `
- * alternative must parse to a chord with a real key.
+ * alternative must parse to a chord with a real key, AND that key must be a
+ * token the matcher can actually compare equal to a `KeyboardEvent.key`.
+ *
+ * #3308 — the key check is the `'unknownKey'` outcome. `parseChord` strips
+ * known modifier prefixes and accepts ANY non-empty leftover as the key, so
+ * `Ctrl + Shift + Esc` / `Cmd + Return` used to validate clean and save a
+ * dead override (`match.normalizeKey` compares `esc` literally against
+ * `escape`, which never matches). Because `getShortcutKeys` prefers the
+ * override over the catalog default, the action lost its working shortcut
+ * with no warning.
  */
-export function validateBindingInput(input: string): 'empty' | 'modifierOnly' | null {
+export function validateBindingInput(input: string): BindingValidationError | null {
   const trimmed = input.trim()
   if (!trimmed) return 'empty'
   for (const alt of trimmed.split(' / ')) {
-    if (parseChord(alt) === null) return 'modifierOnly'
+    const parsed = parseChord(alt)
+    if (parsed === null) return 'modifierOnly'
+    if (!isMatchableKeyToken(parsed.key)) return 'unknownKey'
   }
   return null
 }

@@ -19,6 +19,13 @@ export const settings: Record<string, string> = {
     'Show the spaces onboarding banner again the next time you open Manage Spaces.',
   'settings.resetOnboarding.button': 'Reset',
   'settings.resetOnboarding.success': 'Onboarding will show again on next visit',
+  // #3308 — re-entry into the first-run welcome tour. Distinct from
+  // `settings.resetOnboarding.*` above, which resets the Manage-Spaces hint.
+  'settings.showWelcomeTour.title': 'Show the welcome tour again',
+  'settings.showWelcomeTour.description':
+    'Re-open the first-run welcome window, including the option to create the sample pages.',
+  'settings.showWelcomeTour.button': 'Show tour',
+  'settings.showWelcomeTour.success': 'Welcome tour reopened',
   'settings.tabGeneral': 'General',
   'settings.tabProperties': 'Properties',
   'settings.tabAppearance': 'Appearance',

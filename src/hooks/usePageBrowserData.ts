@@ -107,6 +107,23 @@ interface UsePageBrowserDataResult {
   // `PageBrowserRowRenderer`.
   pages: (BlockRow | PageWithMetadataRow)[]
   loading: boolean
+  /**
+   * #3306 — the last load SETTLED IN FAILURE and there is nothing cached to
+   * fall back on.
+   *
+   * The hook previously exposed only `pages` and `loading`, so a failed
+   * `list_pages_with_metadata` produced exactly the same observable state as an
+   * empty space (`loading === false`, `pages === []`) and `PageBrowser` painted
+   * "No pages yet" with a "Create your first page" CTA over it. A user with
+   * 5,000 pages was told their vault was empty and invited to start over, the
+   * only error signal being a ~4s toast.
+   *
+   * Gated on `!isFetching` for the same reason the toast is: `refetchOnMount:
+   * 'always'` puts a remount straight into `isFetching`, so a stale cached
+   * failure must not paint the error card before the fresh fetch settles
+   * (#2639).
+   */
+  isError: boolean
   hasMore: boolean
   loadMore: () => void
   reload: () => void
@@ -458,6 +475,7 @@ export function usePageBrowserData({
   return {
     pages,
     loading,
+    isError: isError && !isFetching,
     hasMore,
     loadMore,
     reload,

@@ -17,6 +17,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // generated surface instead, resolving the same typed-result envelope `unwrap`
 // expects.
 const mockedGetBlock = vi.hoisted(() => vi.fn())
+// #3306 — the hook now also asks the SPACE-SCOPED resolver whether the target
+// belongs to the active space before caching its title or navigating. These
+// unit tests all exercise same-space targets, so the default stub answers "yes"
+// for whatever was asked. The cross-space refusal is covered end-to-end against
+// the real backend model in `use-block-navigate-to-link.cross-space.test.tsx`.
+const mockedBatchResolve = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -26,6 +32,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       getBlock: (...args: unknown[]) =>
         mockedGetBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
+      batchResolve: (...args: unknown[]) =>
+        mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -113,6 +121,9 @@ beforeEach(async () => {
     isReady: true,
   })
   vi.clearAllMocks()
+  mockedBatchResolve.mockImplementation(async (ids: string[]) =>
+    ids.map((id) => ({ id, title: null, block_type: 'page', deleted: false })),
+  )
 })
 
 describe('useBlockNavigateToLink', () => {

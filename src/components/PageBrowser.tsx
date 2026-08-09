@@ -22,6 +22,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
+import { ListErrorState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { ViewHeader } from '@/components/layout/ViewHeader'
 import { PageBrowserFilterRow } from '@/components/PageBrowser/PageBrowserFilterRow'
@@ -82,6 +83,70 @@ interface PageBrowserProps {
   onPageSelect?: (pageId: string, title?: string) => void
 }
 
+/**
+ * What to paint once the page list has SETTLED with nothing in it.
+ *
+ * #3306 — "settled with nothing in it" used to mean exactly one thing to this
+ * view: an empty vault. A failed `list_pages_with_metadata` produces the same
+ * observable state (`loading === false`, `pages === []`), so the failure
+ * rendered "No pages yet" plus a "Create your first page" CTA — a user with
+ * 5,000 pages was told their vault was empty and invited to start over, the
+ * only error signal being a ~4s toast. The failure branch is checked FIRST and
+ * offers the retry `docs/UX.md` requires of every error state.
+ *
+ * P0-B — the empty-space state is only correct when the view is genuinely
+ * unfiltered. When a chip (or text) narrows the server result to zero,
+ * `isFiltering` is true and we yield to the `noMatches` branch inside the
+ * ScrollArea instead, so a user with a full graph isn't told it's empty and
+ * offered an irrelevant create-first action.
+ *
+ * Extracted from `PageBrowser`'s body so the added branch does not push the
+ * component past its cognitive-complexity budget.
+ */
+function PageBrowserSettledEmptyState({
+  isError,
+  isFiltering,
+  isCreating,
+  onRetry,
+  onCreatePage,
+}: {
+  isError: boolean
+  isFiltering: boolean
+  isCreating: boolean
+  onRetry: () => void
+  onCreatePage: () => void
+}): React.ReactElement | null {
+  const { t } = useTranslation()
+  if (isError) {
+    return (
+      <ListErrorState
+        message={t('pageBrowser.loadFailed')}
+        onRetry={onRetry}
+        testId="page-browser-error-state"
+      />
+    )
+  }
+  if (isFiltering) return null
+  return (
+    <EmptyState
+      icon={FileText}
+      message={t('pageBrowser.noPages')}
+      action={
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mt-3 mx-auto flex items-center gap-1"
+          onClick={onCreatePage}
+          disabled={isCreating}
+        >
+          {isCreating ? <Spinner /> : <Plus className="h-4 w-4" />}
+          {t('pageBrowser.createFirst')}
+        </Button>
+      }
+    />
+  )
+}
+
 export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -126,6 +191,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const {
     pages,
     loading,
+    isError,
     hasMore,
     loadMore,
     reload,
@@ -583,28 +649,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         <LoadingSkeleton count={3} height="h-10" loading className="page-browser-loading" />
       )}
 
-      {/* P0-B — the empty-space "No pages yet / Create your first page"
-          state is only correct when the view is genuinely unfiltered. When
-          a chip (or text) narrows the server result to zero, `isFiltering`
-          is true and we yield to the `noMatches` branch inside the
-          ScrollArea instead, so a user with a full graph isn't told it's
-          empty and offered an irrelevant create-first action. */}
-      {spaceIsReady && !loading && pages.length === 0 && !isFiltering && (
-        <EmptyState
-          icon={FileText}
-          message={t('pageBrowser.noPages')}
-          action={
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-3 mx-auto flex items-center gap-1"
-              onClick={handleCreatePage}
-              disabled={isCreating}
-            >
-              {isCreating ? <Spinner /> : <Plus className="h-4 w-4" />}
-              {t('pageBrowser.createFirst')}
-            </Button>
-          }
+      {spaceIsReady && !loading && pages.length === 0 && (
+        <PageBrowserSettledEmptyState
+          isError={isError}
+          isFiltering={isFiltering}
+          isCreating={isCreating}
+          onRetry={reload}
+          onCreatePage={handleCreatePage}
         />
       )}
 
