@@ -40,7 +40,10 @@ name: Scheduled deep checks
 #                    against a single open tracking issue's last-known set
 #                    and files/updates that ONE issue only on genuinely NEW
 #                    survivors (see `scripts/file-mutation-survivors.mjs`).
-#                    Scheduled-event-only; needs `issues: write`.
+#                    Since #3667 it also keeps one CHILD issue per AREA under
+#                    that parent (`--children`), so the individual fixes are
+#                    assignable/closable work items rather than lines in a
+#                    40 KB body. Scheduled-event-only; needs `issues: write`.
 #   fuzz           — #650/#2590/#2945: short coverage-guided fuzz runs over
 #                    the raw-input parsers (snapshot decode, deeplink parse,
 #                    Markdown/Obsidian import parse, FTS strip/sanitize, HTML
@@ -1273,6 +1276,17 @@ jobs:
         # manual dispatch a real end-to-end check of this lane instead of a
         # skip. `EVENT_NAME` rides via `env:` rather than inline `${{ }}` per
         # the same zizmor template-injection rule the reporter follows.
+        #
+        # `--children`: the rolling parent is the notification, not the
+        # worktop. Measured 2026-08-09, it carried 261 survivors across 9
+        # areas in one 40 756-character body that nothing could assign, close
+        # or reference from a PR. `--children` adds one CHILD issue per area
+        # carrying that area's survivors — the unit a maintainer actually
+        # fixes — while all state stays single-copy in the parent's marker
+        # blocks. Dedup is the parent's recorded `area -> #number` block
+        # first, a verbatim-title lookup second, so repeated weekly runs
+        # update the same children instead of filing new ones. See the
+        # § Parent/child section in the script header.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
@@ -1287,6 +1301,7 @@ jobs:
             --frontend-dir mutation-artifact \
             --require-rust \
             --require-frontend \
+            --children \
             "${extra[@]}"
 
   # ---------------------------------------------------------------------------

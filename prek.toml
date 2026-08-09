@@ -1964,6 +1964,16 @@ stages = ["pre-commit"]
 # `gh issue edit` and wedges the weekly job red with no self-healing path.
 # The fixture suite pins both invariants: exactly one occurrence per
 # survivor, and a clamped body whose marker block is never cut mid-way.
+#
+# It now also pins the PARENT/CHILD layer, which multiplies every mistake by
+# the number of areas: the two marker blocks must not read each other's lines
+# (either direction corrupts the tracked survivor set), a child must be found
+# by its recorded number or adopted by its verbatim title rather than filed
+# twice, the clamp must never drop the child block, and an unchanged week must
+# issue no `gh` write at all — nine children refreshed every Monday is nine
+# notifications a week and the end of anyone reading them. The last group is
+# driven end to end against a stub `gh` on `$PATH`, so it fails if the writing
+# path stops doing what the pure renderers say it does.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
