@@ -262,6 +262,18 @@ const MAX_TAGS_PREFIX: i64 = 200;
 /// the migration-0050 prefix index. Resolves the common case (an ASCII
 /// case-variant query) without a scan. Returns `None` for a non-ASCII
 /// case-variant — the caller then falls back to [`exact_match_normalized`].
+///
+/// `ORDER BY name` is load-bearing, not cosmetic (#3456). This lookup's match
+/// set is a strict subset of the fallback's — the ASCII fold is a restriction
+/// of `normalize_tag_name`'s full-Unicode fold, which
+/// `tag_norm::ascii_fold_matches_sqlite_nocase` pins — so from
+/// [`list_tags_by_prefix`] the *only* observable difference between the two
+/// paths is which row each picks when a transient mid-rebuild duplicate puts
+/// two case-variants in the cache: BINARY-smallest `name` here, smallest
+/// `tag_id` there. `exact_match_nocase_orders_by_name` pins this ordering
+/// directly so a change fails at the source, and
+/// `list_tags_by_prefix_hoists_the_nocase_fast_path_row` asserts up front that
+/// the two answers still differ rather than silently going vacuous.
 async fn exact_match_nocase(
     pool: &SqlitePool,
     prefix: &str,
@@ -285,6 +297,11 @@ async fn exact_match_nocase(
 /// `ORDER BY tag_id` makes the scan pick the smallest-id row — the same winner
 /// the rebuild keeps — if a transient duplicate exists mid-rebuild. Only
 /// reached when the cheap NOCASE path missed.
+///
+/// That `ORDER BY` is also load-bearing for the tests (#3456): its
+/// disagreement with [`exact_match_nocase`]'s `ORDER BY name` is what makes
+/// the two paths tell apart at the caller. `exact_match_normalized_orders_by_tag_id`
+/// pins it directly.
 async fn exact_match_normalized(
     pool: &SqlitePool,
     prefix: &str,
@@ -1097,6 +1114,74 @@ mod tests {
         assert_eq!(defaulted.len(), 1);
     }
 
+    /// Seed the transient mid-rebuild duplicate the two exact-match lookups
+    /// disagree about: `wip` carries the smaller `tag_id` (the normalized
+    /// fallback's `ORDER BY tag_id` winner) and `wiP` the BINARY-smaller name
+    /// (the NOCASE fast path's `ORDER BY name` winner). Returns
+    /// `(fallback_winner_id, nocase_winner_id)`.
+    async fn seed_disagreeing_case_variants(pool: &SqlitePool) -> (&'static str, &'static str) {
+        const FALLBACK_WINNER: &str = "TAGDUPEXACT0000000000000A1"; // `wip`
+        const NOCASE_WINNER: &str = "TAGDUPEXACT0000000000000A2"; // `wiP`
+        insert_block(pool, FALLBACK_WINNER, "tag", "wip").await;
+        insert_tag_cache(pool, FALLBACK_WINNER, "wip", 1).await;
+        insert_block(pool, NOCASE_WINNER, "tag", "wiP").await;
+        insert_tag_cache(pool, NOCASE_WINNER, "wiP", 1).await;
+        (FALLBACK_WINNER, NOCASE_WINNER)
+    }
+
+    /// `exact_match_nocase` answers, and answers with the BINARY-smallest
+    /// name (#3456).
+    ///
+    /// Two assertions doing two different jobs. `is_some` is the kill for a
+    /// fast path that silently stops answering (the
+    /// `exact_match_nocase -> Ok(None)` mutant): it holds no matter what
+    /// either query orders by, so it cannot be defanged by an `ORDER BY`
+    /// change the way a caller-level test can. The `tag_id` assertion pins
+    /// the `ORDER BY name` contract itself, at the source, because that
+    /// ordering is what
+    /// `list_tags_by_prefix_hoists_the_nocase_fast_path_row` leans on to see
+    /// which path answered.
+    #[tokio::test]
+    async fn exact_match_nocase_orders_by_name() {
+        let (pool, _dir) = test_pool().await;
+        let (_, nocase_winner) = seed_disagreeing_case_variants(&pool).await;
+
+        let row = exact_match_nocase(&pool, "wip")
+            .await
+            .unwrap()
+            .expect("the NOCASE fast path must resolve an ASCII case-variant");
+        assert_eq!(
+            row.tag_id, nocase_winner,
+            "`ORDER BY name` must take the BINARY-smallest name (`wiP`), not \
+             the smallest tag_id; got {row:?}"
+        );
+        assert_eq!(row.name, "wiP");
+    }
+
+    /// `exact_match_normalized` answers, and answers with the smallest
+    /// `tag_id` — the winner the cache rebuild keeps (#3456).
+    ///
+    /// Same shape as the NOCASE test above: `is_some` kills an
+    /// `-> Ok(None)` fallback outright, and the `tag_id` assertion pins the
+    /// `ORDER BY tag_id` half of the disagreement that makes the two paths
+    /// tell apart at the caller.
+    #[tokio::test]
+    async fn exact_match_normalized_orders_by_tag_id() {
+        let (pool, _dir) = test_pool().await;
+        let (fallback_winner, _) = seed_disagreeing_case_variants(&pool).await;
+
+        let row = exact_match_normalized(&pool, "wip")
+            .await
+            .unwrap()
+            .expect("the normalized fallback must resolve an ASCII case-variant");
+        assert_eq!(
+            row.tag_id, fallback_winner,
+            "`ORDER BY tag_id` must take the smallest-id row (`wip`), not the \
+             BINARY-smallest name; got {row:?}"
+        );
+        assert_eq!(row.name, "wip");
+    }
+
     /// The NOCASE fast path is what decides the hoisted row; the normalized
     /// scan is a *fallback*, reached only when NOCASE missed.
     ///
@@ -1109,6 +1194,9 @@ mod tests {
     /// served by the migration-0050 index); the fallback takes the smallest
     /// `tag_id`. Seeding the two so they disagree makes a disabled fast path
     /// visible: without it the page hoists the *other* row.
+    ///
+    /// That disagreement is a borrowed contract, so this test states it as a
+    /// precondition instead of assuming it (#3456) — see the guard below.
     #[tokio::test]
     async fn list_tags_by_prefix_hoists_the_nocase_fast_path_row() {
         let (pool, _dir) = test_pool().await;
@@ -1121,13 +1209,7 @@ mod tests {
             insert_block(&pool, &id, "tag", &name).await;
             insert_tag_cache(&pool, &id, &name, 1).await;
         }
-        // Two exact case-variants of `wip`, seeded so the two lookups
-        // disagree: `wip` has the smaller tag_id (the fallback's winner),
-        // `wiP` the BINARY-smaller name (the NOCASE path's winner).
-        insert_block(&pool, "TAGDUPEXACT0000000000000A1", "tag", "wip").await;
-        insert_tag_cache(&pool, "TAGDUPEXACT0000000000000A1", "wip", 1).await;
-        insert_block(&pool, "TAGDUPEXACT0000000000000A2", "tag", "wiP").await;
-        insert_tag_cache(&pool, "TAGDUPEXACT0000000000000A2", "wiP", 1).await;
+        let (_, nocase_winner) = seed_disagreeing_case_variants(&pool).await;
 
         // Fixture invariant: neither exact variant survives the bare page,
         // so the result below can only contain one via the splice path.
@@ -1139,17 +1221,43 @@ mod tests {
         .unwrap();
         assert_eq!(bare, ["WIP-1", "WIP-2", "WIP-3"], "fixture invariant");
 
+        // Anti-vacuity guard. This test can only observe WHICH path answered
+        // for as long as the two paths pick different rows: their match sets
+        // are identical on ASCII, so the tie-break is the entire signal. If
+        // an `ORDER BY` change ever makes them agree, the assertion below
+        // stops discriminating — it would keep passing with the fast path
+        // ripped out, and nothing would say so. Fail here instead, naming the
+        // reason, rather than letting the check quietly become unable to fail.
+        let nocase = exact_match_nocase(&pool, "wip")
+            .await
+            .unwrap()
+            .expect("fixture: the NOCASE fast path must resolve `wip`");
+        let normalized = exact_match_normalized(&pool, "wip")
+            .await
+            .unwrap()
+            .expect("fixture: the normalized fallback must resolve `wip`");
+        assert_ne!(
+            nocase.tag_id, normalized.tag_id,
+            "the two exact-match paths now agree on the winner ({}), so nothing \
+             below can tell which one answered — this test would pass with the \
+             fast path disabled. Their orderings (`ORDER BY name` vs \
+             `ORDER BY tag_id`) are what made them disagree; restore that, or \
+             give this test a discriminator that does not rest on it (#3456)",
+            nocase.tag_id
+        );
+
         let result = list_tags_by_prefix(&pool, "wip", Some(3)).await.unwrap();
         let hoisted = result
             .iter()
             .find(|r| r.name.eq_ignore_ascii_case("wip"))
             .expect("an exact match must be hoisted onto the page");
         assert_eq!(
-            hoisted.tag_id, "TAGDUPEXACT0000000000000A2",
+            hoisted.tag_id, nocase.tag_id,
             "the NOCASE fast path's row (`wiP`, BINARY-smallest name) must be \
              the hoisted one; getting `wip` (smallest tag_id) means the fast \
              path was skipped and the normalized fallback answered instead"
         );
+        assert_eq!(hoisted.tag_id, nocase_winner);
         assert_eq!(hoisted.name, "wiP");
         let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, ["WIP-1", "WIP-2", "wiP"], "page stays name-sorted");
