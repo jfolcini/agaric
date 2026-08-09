@@ -54,11 +54,23 @@ export interface SyncSessionInfo {
   ops_sent: number
 }
 
+// #3715 — the three pairing wrappers below are UNQUEUED, and nothing in the
+// app calls them: every pairing-state mutation goes through
+// `pairingMutations` (`src/lib/pairing-mutations.ts`), which serialises them
+// against each other because they all write the same device-global
+// pending-pairing row. Calling one of these from app code instead re-opens
+// #3620/#3628 — an arm and a clear landing in the wrong order — for every
+// other caller too, not just for itself. They are kept only as thin
+// command-shape wrappers alongside the rest of this façade; add nothing to
+// this list, and reach for `pairingMutations` from the UI.
+
 /** Start the pairing flow — returns a passphrase and QR SVG.
  *
  * The QR carries only the passphrase. mDNS owns discovery and
  * address resolution end-to-end, so there is no `host`/`port` field on
  * the returned payload.
+ *
+ * Unqueued — see the note above; the UI uses `pairingMutations.start()`.
  */
 export async function startPairing(): Promise<{
   passphrase: string
@@ -67,12 +79,18 @@ export async function startPairing(): Promise<{
   return unwrap(await commands.startPairing())
 }
 
-/** Confirm a pairing with the given passphrase and remote device ID. */
+/** Confirm a pairing with the given passphrase and remote device ID.
+ *
+ * Unqueued — see the note above; the UI uses `pairingMutations.confirm()`.
+ */
 export async function confirmPairing(passphrase: string, remoteDeviceId: string): Promise<void> {
   unwrap(await commands.confirmPairing(passphrase, remoteDeviceId))
 }
 
-/** Cancel an in-progress pairing. */
+/** Cancel an in-progress pairing.
+ *
+ * Unqueued — see the note above; the UI uses `pairingMutations.cancel()`.
+ */
 export async function cancelPairing(): Promise<void> {
   unwrap(await commands.cancelPairing())
 }

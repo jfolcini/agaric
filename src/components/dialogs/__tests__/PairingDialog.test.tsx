@@ -35,6 +35,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -42,6 +43,7 @@ import { axe } from '@/__tests__/helpers/axe'
 import { PairingDialog } from '@/components/dialogs/PairingDialog'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { announce } from '@/lib/announcer'
+import { PAIRING_MUTATION_TIMEOUT_MS, resetPairingMutationQueue } from '@/lib/pairing-mutations'
 
 // The dialog swaps to a bottom Sheet via `useDialogOrSheet` (#2665) when
 // `useIsMobile()` is true. Mock the hook so each test can pin the
@@ -225,10 +227,31 @@ function countInvokes(cmd: string): number {
   return mockedInvoke.mock.calls.filter(([c]) => c === cmd).length
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  // #3715 — drain before clearing the counters, not after.
+  //
+  // Every test here ends with a live pairing window, so RTL's `cleanup()`
+  // unmounts an armed dialog and its cleanup effect dispatches a
+  // `cancel_pairing`. That dispatch reaches `invoke` a few microtasks later —
+  // it is queued, and the queue is a promise chain — which can be after this
+  // hook's `vi.clearAllMocks()`. The stray call is then recorded against a
+  // test that never made it (`invoke` records under whatever implementation is
+  // current when it is finally called), and any test asserting a count of zero
+  // fails intermittently. Draining first lets the leftover land while it still
+  // belongs to the previous test, and the clear below wipes it.
+  for (let i = 0; i < 20; i++) await Promise.resolve()
   vi.clearAllMocks()
   // Default to the desktop path so existing test bodies keep their semantics.
   mockedUseIsMobile.mockReturnValue(false)
+  // #3715 — the mutation queue is a module-level promise tail now, scoped to
+  // the DEVICE because the pending-pairing row it serialises is device-global
+  // (see `src/lib/pairing-mutations.ts`). That scope is the fix and it is also
+  // a leak between tests: several tests below deliberately leave an IPC
+  // unanswered, which parks the clear queued behind it, and the next test's
+  // `start_pairing` would inherit that wait (until the mutation bound expires
+  // — a self-healing suite that takes 15 s per affected test to do it). Same
+  // shape as the module-level caches' `_reset*ForTest` helpers.
+  resetPairingMutationQueue()
 })
 
 describe('PairingDialog', () => {
@@ -2180,6 +2203,235 @@ describe('PairingDialog', () => {
       await waitFor(() => {
         expect(countInvokes('cancel_pairing')).toBe(2)
       })
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // #3714/#3715 — the queue's scope and its bound.
+  //
+  // Every other test in this file passes `onOpenChange={vi.fn()}`, so `open`
+  // never flips and the close/unmount cleanup effect never runs: production's
+  // SECOND clear — the one that makes the fire-and-forget teardown safe — is
+  // invisible to them (#3714). And every test drove one component instance,
+  // where a per-instance queue is indistinguishable from a device-scoped one
+  // (#3715).
+  // -----------------------------------------------------------------------
+  describe('#3714/#3715 the queue is device-scoped and bounded', () => {
+    /**
+     * Unmount and let the close/unmount cleanup's `cancel_pairing` be
+     * DISPATCHED inside the test that armed it.
+     *
+     * Every test here ends with a live pairing window, so RTL's `afterEach`
+     * `cleanup()` fires that clear — and `pairingMutations.cancel()` reaches
+     * `invoke` a microtask later, which can be after the NEXT test's
+     * `vi.clearAllMocks()`. The stray call is then counted against a test that
+     * never made it (it is the current `mockImplementation` that records it),
+     * which is a real flake: it passed in isolation and failed in the full
+     * suite. Draining it here keeps each test's counts its own.
+     */
+    async function unmountAndDrain(unmount: () => void) {
+      unmount()
+      await flushMicrotasks()
+    }
+
+    /**
+     * Holds `open` in state the way `DeviceManagement` does, so
+     * `onOpenChange(false)` genuinely closes the dialog instead of being
+     * swallowed by a spy. Without this the cleanup effect never fires and
+     * only the first of the two clears is observable (#3714).
+     */
+    function PairingDialogHarness() {
+      const [open, setOpen] = useState(true)
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Reopen pairing
+          </button>
+          <PairingDialog open={open} onOpenChange={setOpen} />
+        </>
+      )
+    }
+
+    it('an explicit Cancel of an armed window lands BOTH clears, in order, and a reopen arms only behind them (#3714)', async () => {
+      const user = userEvent.setup()
+      const mutations: string[] = []
+      const pendingCancels: Array<() => void> = []
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing' || cmd === 'cancel_pairing') mutations.push(cmd)
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'cancel_pairing') {
+          return new Promise((resolve) => {
+            pendingCancels.push(() => resolve(undefined))
+          })
+        }
+        return undefined
+      })
+
+      const { unmount } = render(<PairingDialogHarness />)
+      await screen.findByText('alpha bravo charlie delta')
+      expect(countInvokes('start_pairing')).toBe(1)
+
+      // Cancel the live host window through the close guard — the explicit
+      // Cancel path, which since #3628 dispatches its clear and closes
+      // without waiting for it.
+      await user.keyboard('{Escape}')
+      await screen.findByText('Cancel pairing?')
+      await user.click(screen.getByRole('button', { name: /^Cancel pairing$/i }))
+
+      await waitFor(() => {
+        expect(countInvokes('cancel_pairing')).toBe(1)
+      })
+      // The close really happened — that is what makes the cleanup effect
+      // run, and it is exactly what `onOpenChange={vi.fn()}` hides.
+      expect(screen.queryByText('alpha bravo charlie delta')).not.toBeInTheDocument()
+
+      // The cleanup's clear is BEHIND the explicit one, not alongside it: it
+      // has been dispatched into the queue, and the queue is still holding it
+      // because the first clear has not answered.
+      await flushMicrotasks()
+      expect(countInvokes('cancel_pairing')).toBe(1)
+
+      pendingCancels[0]?.()
+      await waitFor(() => {
+        expect(countInvokes('cancel_pairing')).toBe(2)
+      })
+
+      // Reopen while the second clear is still in flight. Its arm must not
+      // overtake it — a `start_pairing` that lands first has its row deleted
+      // by the clear behind it, which is #3620 with a passphrase on screen.
+      await user.click(screen.getByRole('button', { name: /Reopen pairing/i }))
+      await flushMicrotasks()
+      expect(countInvokes('start_pairing')).toBe(1)
+
+      pendingCancels[1]?.()
+      await waitFor(() => {
+        expect(countInvokes('start_pairing')).toBe(2)
+      })
+      expect(mutations).toEqual([
+        'start_pairing',
+        'cancel_pairing',
+        'cancel_pairing',
+        'start_pairing',
+      ])
+      expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
+
+      await unmountAndDrain(unmount)
+    })
+
+    it('a remount cannot arm a window ahead of the previous instance’s in-flight clear (#3715)', async () => {
+      const mutations: string[] = []
+      let resolveCancel: () => void = () => {}
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing' || cmd === 'cancel_pairing') mutations.push(cmd)
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'cancel_pairing') {
+          return new Promise((resolve) => {
+            resolveCancel = () => resolve(undefined)
+          })
+        }
+        return undefined
+      })
+
+      const first = render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('alpha bravo charlie delta')
+      expect(countInvokes('start_pairing')).toBe(1)
+
+      // A real unmount, not a `rerender` to `open={false}`: the queue used to
+      // live on the component instance, and an unmount is where a
+      // per-instance queue and a device-scoped one stop agreeing.
+      first.unmount()
+      await waitFor(() => {
+        expect(countInvokes('cancel_pairing')).toBe(1)
+      })
+
+      // A brand-new instance — empty queue, if the queue were its own.
+      const second = render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await flushMicrotasks()
+      expect(countInvokes('start_pairing')).toBe(1)
+
+      resolveCancel()
+      await waitFor(() => {
+        expect(countInvokes('start_pairing')).toBe(2)
+      })
+      expect(mutations).toEqual(['start_pairing', 'cancel_pairing', 'start_pairing'])
+      expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
+
+      await unmountAndDrain(second.unmount)
+    })
+
+    it('a start_pairing that never answers surfaces the bound through the error banner (#3715)', async () => {
+      vi.useFakeTimers()
+      try {
+        mockedInvoke.mockImplementation(async (cmd: string) => {
+          if (cmd === 'start_pairing') return new Promise(() => {})
+          if (cmd === 'list_peer_refs') return []
+          return undefined
+        })
+
+        const { unmount } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+        await flushMicrotasks()
+        expect(countInvokes('start_pairing')).toBe(1)
+        // Before the bound: the dialog is on its loading skeleton with
+        // nothing to tell the user, which is where it used to stay forever.
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(PAIRING_MUTATION_TIMEOUT_MS)
+        })
+        await flushMicrotasks()
+
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Failed to start pairing: the device stopped responding',
+        )
+
+        // The arm is still an arm even though it never answered, so the
+        // unmount still tears it down — and draining it here keeps the stray
+        // call out of the next test (see `unmountAndDrain`).
+        await unmountAndDrain(unmount)
+        expect(countInvokes('cancel_pairing')).toBe(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('a wedged start_pairing cannot hold the close’s clear hostage (#3715)', async () => {
+      vi.useFakeTimers()
+      try {
+        const mutations: string[] = []
+        mockedInvoke.mockImplementation(async (cmd: string) => {
+          if (cmd === 'start_pairing' || cmd === 'cancel_pairing') mutations.push(cmd)
+          if (cmd === 'start_pairing') return new Promise(() => {})
+          if (cmd === 'list_peer_refs') return []
+          return undefined
+        })
+
+        const { rerender } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+        await flushMicrotasks()
+        expect(countInvokes('start_pairing')).toBe(1)
+
+        // Close inside the unanswered arm. The clear is correctly queued
+        // behind it — a DELETE that overtook the upsert would delete a row
+        // that does not exist yet and let the late arm stand (#3628).
+        rerender(<PairingDialog open={false} onOpenChange={vi.fn()} />)
+        await flushMicrotasks()
+        expect(countInvokes('cancel_pairing')).toBe(0)
+
+        // ...but "behind it" must not mean "forever". The arm's bound expires,
+        // the queue drops it, and the clear the close needs runs — instead of
+        // the marker outliving the dialog for its full 5-minute TTL with no UI
+        // behind it.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(PAIRING_MUTATION_TIMEOUT_MS)
+        })
+        await flushMicrotasks()
+
+        expect(countInvokes('cancel_pairing')).toBe(1)
+        expect(mutations).toEqual(['start_pairing', 'cancel_pairing'])
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 

@@ -14,6 +14,11 @@ export const sync: Record<string, string> = {
   'device.unpairConfirmAction': 'Yes, unpair',
   'device.pairedDevice': 'the paired device',
   'pairing.cancelFailed': 'Failed to cancel pairing',
+  // #3715 — a queued pairing mutation that never answered (wedged daemon,
+  // stuck mDNS stack). Interpolated into `pairing.startFailed` /
+  // `pairing.pairFailed` by the dialog's existing error banner, so it reads as
+  // the tail of a sentence rather than as a standalone one.
+  'pairing.mutationTimedOut': 'the device stopped responding',
   'pairing.startFailed': 'Failed to start pairing: {{message}}',
   'pairing.pairFailed': 'Pairing failed: {{message}}',
   'pairing.unpairFailed': 'Failed to unpair device: {{message}}',

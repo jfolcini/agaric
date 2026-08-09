@@ -1,6 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import { computeNextSyncDelay, runWithTimeout } from '@/hooks/useSyncTrigger'
+import { computeNextSyncDelay } from '@/hooks/useSyncTrigger'
+
+// #3715 — `runWithTimeout`'s tests moved with the helper itself to
+// `src/lib/__tests__/promise-timeout.test.ts`.
 
 const BASE_INTERVAL_MS = 60_000
 const MAX_INTERVAL_MS = 600_000
@@ -24,55 +27,5 @@ describe('computeNextSyncDelay', () => {
 
   it('resets to BASE_INTERVAL_MS on success even when current is at the cap', () => {
     expect(computeNextSyncDelay(MAX_INTERVAL_MS, false)).toBe(BASE_INTERVAL_MS)
-  })
-})
-
-describe('runWithTimeout', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-  })
-
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
-  it('resolves with the underlying value when the promise wins the race', async () => {
-    const result = runWithTimeout(Promise.resolve('ok'), 1_000, new Error('timeout'))
-    await expect(result).resolves.toBe('ok')
-  })
-
-  it('rejects with the provided error when the timeout wins the race', async () => {
-    const timeoutError = new Error('Sync timeout')
-    const pending = new Promise<string>(() => {
-      /* never resolves */
-    })
-    const racing = runWithTimeout(pending, 1_000, timeoutError)
-    const assertion = expect(racing).rejects.toBe(timeoutError)
-    await vi.advanceTimersByTimeAsync(1_000)
-    await assertion
-  })
-
-  it('propagates rejection from the underlying promise when it loses the race timer', async () => {
-    const originalError = new Error('underlying failure')
-    const racing = runWithTimeout(Promise.reject(originalError), 1_000, new Error('timeout'))
-    await expect(racing).rejects.toBe(originalError)
-  })
-
-  it('clears the pending timeout when the underlying promise wins', async () => {
-    const racing = runWithTimeout(Promise.resolve('ok'), 1_000, new Error('timeout'))
-    await racing
-    // After the race resolves, no pending setTimeout should remain — if the
-    // timer were still scheduled, vi.getTimerCount() would be ≥ 1.
-    expect(vi.getTimerCount()).toBe(0)
-  })
-
-  it('clears the pending timeout when the underlying promise rejects', async () => {
-    const racing = runWithTimeout(
-      Promise.reject(new Error('underlying failure')),
-      1_000,
-      new Error('timeout'),
-    )
-    await expect(racing).rejects.toThrow('underlying failure')
-    expect(vi.getTimerCount()).toBe(0)
   })
 })
