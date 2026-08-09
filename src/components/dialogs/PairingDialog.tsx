@@ -142,10 +142,20 @@ export function PairingDialog({
   // Tracks the paste-focus setTimeout so we can cancel it on unmount and
   // Avoid focusing a stale DOM node (#).
   const pendingFocusRef = useRef<number | null>(null)
-  // True while this device holds BACKEND-side pairing state that a
+  // True while this device MAY hold BACKEND-side pairing state that a
   // `cancelPairing` would tear down. Gates every `cancelPairing` call
   // (close/unmount cleanup, explicit Cancel, switching to the joiner path)
   // so we never fire one when there is nothing armed.
+  //
+  // #3628 — "may". Both edges are deliberately pessimistic, and for the
+  // same reason: the ref exists to make sure a marker never outlives the
+  // dialog, so every uncertainty resolves towards "assume it is armed".
+  // It is set the moment an arming IPC is DISPATCHED (not when it resolves
+  // — see `initHost` and `executePair`'s `call`), and it is cleared only
+  // once a clear has actually succeeded (#3620.3). The cost of being wrong
+  // in this direction is one redundant `cancel_pairing`, which is an
+  // idempotent DELETE; the cost of being wrong in the other direction is a
+  // live pairing window nothing on this device knows about.
   //
   // #3493 — this used to be `sessionStartedRef`, set only by a successful
   // host-side `startPairing`. That name described the QR session, but the
@@ -158,12 +168,38 @@ export function PairingDialog({
   // able to admit an unpaired device. The ref now tracks "is anything armed
   // on the backend", which is the question the gate is really asking.
   const backendArmedRef = useRef(false)
-  // #3620 — the clear the close/unmount cleanup left in flight, if any. A
-  // reopen awaits it before arming a new window, so the DELETE can never
-  // land after the next `start_pairing` upsert and silently delete the
-  // window the user is being shown. Held as a ref (not state) because it is
-  // read across a close/reopen cycle and must never trigger a render.
-  const pendingClearRef = useRef<Promise<void | undefined> | null>(null)
+  // #3628 — every backend pairing-state mutation this dialog performs
+  // writes the SAME single row: `start_pairing` and `confirm_pairing` upsert
+  // the device-global pending-pairing marker, `cancel_pairing` deletes it.
+  // They are dispatched from places that cannot see each other — an effect
+  // body, a React cleanup function that may not be async, two click
+  // handlers — so nothing but arrival order at the backend decided which
+  // one won. This queue makes DISPATCH order the execution order, for every
+  // pair of mutations, in both directions.
+  //
+  // It replaces #3620's `pendingClearRef`, which ordered exactly one
+  // direction by hand: a reopen's arm behind the close's in-flight clear.
+  // #3628 is the other direction — a close's clear jumping ahead of an arm
+  // still in flight would DELETE a row that does not exist yet and let the
+  // late upsert stand, arming a window with no dialog behind it. Ordering
+  // both directions with a queue means neither call site has to know the
+  // other exists, so no future one can forget to check.
+  //
+  // Held as a ref (not state) because it is read across a close/reopen
+  // cycle and must never trigger a render.
+  const backendMutationsRef = useRef<Promise<unknown>>(Promise.resolve())
+  const runPairingMutation = useCallback(<T,>(op: () => Promise<T>): Promise<T> => {
+    // `.then(op, op)` rather than `.then(op)`: a mutation that rejects must
+    // not sink the queue behind it — a failed `cancel_pairing` still has to
+    // let the next `start_pairing` through, or one DB error would wedge
+    // pairing until the app restarts.
+    const result = backendMutationsRef.current.then(op, op)
+    backendMutationsRef.current = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }, [])
   // #3469 — snapshot of known peer ids taken the instant waiting begins, so
   // the poll below can detect a genuinely NEW peer (the TOFU-pin signal)
   // rather than false-triggering on peers that were already paired before
@@ -228,11 +264,17 @@ export function PairingDialog({
   // the error banner copy stays byte-equivalent regardless of which of the
   // two calls in `initHost` below fails.
   const { execute: executeStartPairing } = useIpcCommand<void, PairingInfo>({
-    call: () => commands.startPairing().then((r) => unwrap(r)),
+    // #3628 — queued at the DEFINITION, not at the call sites, so "this is a
+    // backend pairing-state mutation and therefore ordered" is a property of
+    // the command rather than something each of `initHost` / `handleRetry` /
+    // `handleSwitchToHost` has to remember.
+    call: () => runPairingMutation(() => commands.startPairing().then((r) => unwrap(r))),
     module: 'PairingDialog',
     errorLogMessage: 'Failed to start pairing',
     onSuccess: (info) => {
-      backendArmedRef.current = true
+      // #3628 — `backendArmedRef` is deliberately NOT set here. It is set
+      // in `initHost` before this call is dispatched; arming on resolution
+      // is the race this fix removes.
       setPairingInfo(info)
       setCountdown(PAIRING_TIMEOUT_SECONDS)
     },
@@ -283,6 +325,23 @@ export function PairingDialog({
     // — this is the belt to that braces, for the case where two `initHost`
     // runs overlap and the first one's `setLoading(false)` reopens it.
     knownPeerIdsRef.current = null
+    // #3628 — record the arm HERE, before `start_pairing` is dispatched,
+    // never in its `onSuccess`. Arming on resolution left a window between
+    // the dispatch and the reply in which a close saw `backendArmedRef`
+    // false, tore nothing down, and then watched `onSuccess` arm a
+    // device-global marker for its full 5-minute TTL with no dialog behind
+    // it — a live pairing window admitting unpaired peers that the user
+    // cannot see, let alone cancel. Once the IPC is out, this device owns
+    // whatever it creates, so that is the moment ownership is recorded.
+    //
+    // This runs before `initHost`'s first `await`, so a caller that does
+    // `void initHost()` has the ref set synchronously: even a close in the
+    // very same tick sees it.
+    backendArmedRef.current = true
+    // `executeStartPairing` is queued (see `runPairingMutation`) so a clear
+    // dispatched after this arm — by a close, or by a Cancel — can never
+    // overtake it. `executeLoadPeers` is a read and stays off the queue: it
+    // must neither be delayed by, nor delay, a pending clear.
     const [, peerList] = await Promise.all([executeStartPairing(), executeLoadPeers()])
     // #3615 — the host's baseline for its own success detection, taken from
     // the same authoritative read that fills the paired-devices list. Same
@@ -330,9 +389,11 @@ export function PairingDialog({
   // in-flight joiner.
   const { execute: executeCancelPairingCleanup } = useIpcCommand<void, void>({
     call: () =>
-      commands.cancelPairing().then((r) => {
-        unwrap(r)
-      }),
+      runPairingMutation(() =>
+        commands.cancelPairing().then((r) => {
+          unwrap(r)
+        }),
+      ),
     module: 'PairingDialog',
     errorLogMessage: 'cancelPairing on close/unmount failed',
     logLevel: 'warn',
@@ -365,18 +426,18 @@ export function PairingDialog({
     // flight. `cancel_pairing`'s DELETE and `start_pairing`'s upsert touch
     // the same single pending-pairing row, so an un-awaited clear landing
     // after the new arm deletes the window the user is looking at: QR on
-    // screen, countdown ticking, nothing armed on the backend. Ordering the
-    // arm behind the clear is the whole fix — see `pendingClearRef`.
-    let superseded = false
-    void (async () => {
-      const pendingClear = pendingClearRef.current
-      if (pendingClear) await pendingClear
-      if (superseded) return
-      await initHost()
-    })()
-    return () => {
-      superseded = true
-    }
+    // screen, countdown ticking, nothing armed on the backend.
+    //
+    // #3628 — that ordering used to live here, as an `await pendingClearRef`
+    // plus a `superseded` flag to catch a close that happened during the
+    // wait. Both are gone: `initHost` puts its arm on the shared mutation
+    // queue, which already holds the previous close's clear, so the arm
+    // cannot run before the clear and the effect has nothing left to
+    // sequence. The `superseded` flag went with it — it only ever guarded
+    // the arm side of that hand-rolled ordering, and it guarded the wrong
+    // thing anyway: it stopped the arm being DISPATCHED late but did
+    // nothing about an arm already in flight, which is the whole of #3628.
+    void initHost()
   }, [open, initHost])
 
   // Cancel the pairing session on the backend when the dialog closes or
@@ -388,14 +449,14 @@ export function PairingDialog({
     return () => {
       if (backendArmedRef.current) {
         backendArmedRef.current = false
-        // #3620 — a React cleanup function cannot be async, so this clear
-        // is necessarily fire-and-forget. Publish it so a reopen can wait
-        // for it instead of racing it (see the open effect above).
-        const clear = executeCancelPairingCleanup()
-        pendingClearRef.current = clear
-        void clear.finally(() => {
-          if (pendingClearRef.current === clear) pendingClearRef.current = null
-        })
+        // #3620/#3628 — a React cleanup function cannot be async, so this
+        // clear is necessarily fire-and-forget. The queue inside
+        // `executeCancelPairingCleanup` is what makes "fire-and-forget"
+        // safe: the clear runs after any arm still in flight (so it deletes
+        // the row that arm creates, rather than deleting nothing and letting
+        // the arm stand — #3628) and before any arm a reopen dispatches
+        // next (#3620).
+        void executeCancelPairingCleanup()
       }
     }
   }, [open, executeCancelPairingCleanup])
@@ -661,16 +722,21 @@ export function PairingDialog({
   // that calls this.
   const { execute: executePair } = useIpcCommand<{ passphrase: string }, void>({
     call: async ({ passphrase }) => {
-      // remoteDeviceId is derived from the passphrase in the pairing protocol
-      unwrap(await commands.confirmPairing(passphrase, ''))
-      // #3493 — `confirm_pairing` has just armed this device's DB-side
-      // pending-pairing marker, so from here on a Cancel has something real
-      // to tear down. Set the moment the call resolves rather than in
-      // `onSuccess`, so the baseline read below (which can reject) cannot
-      // leave an armed marker recorded as unarmed. Without this the joiner's
-      // Cancel button — the one on the waiting screen — never reached
-      // `cancel_pairing` at all and the marker stayed live for its full TTL.
+      // #3493 — `confirm_pairing` arms this device's DB-side pending-pairing
+      // marker, so from here on a Cancel has something real to tear down.
+      // Without this the joiner's Cancel button — the one on the waiting
+      // screen — never reached `cancel_pairing` at all and the marker stayed
+      // live for its full TTL.
+      //
+      // #3628 — set BEFORE the call is dispatched, not after it resolves.
+      // The host arm and this one are the same shape seen from the two ends
+      // of one handshake, and #3628 is a window that opens in both: a close
+      // between dispatch and reply saw the ref false, tore nothing down, and
+      // let the arm land behind it. Fixing one arm of a symmetric pair is
+      // what created this family of bugs; both are moved.
       backendArmedRef.current = true
+      // remoteDeviceId is derived from the passphrase in the pairing protocol
+      unwrap(await runPairingMutation(() => commands.confirmPairing(passphrase, '')))
       syncSetState('idle')
       // #3469 (review) — take the "peers we already had" baseline HERE,
       // from an authoritative read at the moment the proof is armed, not
@@ -806,9 +872,11 @@ export function PairingDialog({
   // is a plain idempotent DELETE, so the two calls can never disagree.
   const { execute: executeCancelPairingExplicit } = useIpcCommand<void, void>({
     call: () =>
-      commands.cancelPairing().then((r) => {
-        unwrap(r)
-      }),
+      runPairingMutation(() =>
+        commands.cancelPairing().then((r) => {
+          unwrap(r)
+        }),
+      ),
     module: 'PairingDialog',
     errorLogMessage: 'Failed to cancel pairing',
     onSuccess: () => {
@@ -826,16 +894,27 @@ export function PairingDialog({
     // nothing armed (e.g. the joiner's entry form, before Pair) stays a
     // pure UI act and does not disarm a marker it never owned.
     //
-    // Awaited so `backendArmedRef` only clears once the call has actually
-    // succeeded — see `executeCancelPairingExplicit` above for why, and for
-    // how a failure still gets one retry via the close/unmount cleanup.
-    if (backendArmedRef.current) {
-      await executeCancelPairingExplicit()
-    }
+    // #3628 — dispatched here, but the close below no longer waits for it.
+    // The clear is queued behind any arm still in flight (that queueing is
+    // what makes it delete the row the arm creates, instead of deleting
+    // nothing and letting the arm stand), so awaiting it before closing made
+    // the user's Cancel hostage to a backend round-trip that may be slow or
+    // wedged: cancel a pairing while `confirm_pairing` is unanswered and the
+    // dialog simply never went away.
+    //
+    // Not awaiting costs nothing. `backendArmedRef` still clears only once a
+    // clear has actually SUCCEEDED (#3620.3), so the close/unmount cleanup
+    // that this `onOpenChange(false)` triggers enqueues its own clear behind
+    // this one — a redundant idempotent DELETE when this one succeeds, and
+    // exactly the #3620.3 retry when it doesn't. That retry used to be
+    // conditional on the failure having been observed first; now it is
+    // unconditional, which is the same guarantee with less timing in it.
+    const clear = backendArmedRef.current ? executeCancelPairingExplicit() : null
     resetRoleState()
     onOpenChange(false)
     // #288: Return focus to trigger element
     triggerRef?.current?.focus()
+    if (clear) await clear
   }, [onOpenChange, triggerRef, resetRoleState, executeCancelPairingExplicit])
 
   // #3463 — switching to the joiner path is what DECLARES the joiner role
@@ -953,13 +1032,22 @@ export function PairingDialog({
     // is the non-destructive choice, and the whole point of this family of
     // fixes is that the two roles behave identically. An expired window has
     // nothing left to lose, so it closes without ceremony.
-    const hostWindowLive = role === 'host' && backendArmedRef.current && !isExpired
-    if (pairLoading || joinerPhase === 'waiting' || hostWindowLive) {
+    // #3628 — this gate asks "could a joiner be attempting against something
+    // read off this screen?", so it keys on the passphrase being rendered
+    // (`hostWindowShowing`) rather than on `backendArmedRef`, which since
+    // #3628 is armed from the moment `start_pairing` is dispatched. Keyed on
+    // the ref, an Esc during the opening skeleton — or after a *failed*
+    // `start_pairing`, where the ref stays armed and the banner reads
+    // "Failed to start pairing" — would pop "Cancel pairing?" over a dialog
+    // that never showed a passphrase. Closing those needs no ceremony; the
+    // close still disarms the backend via `handleCancel`, which is keyed on
+    // the ref precisely because that arm may be real.
+    if (pairLoading || joinerPhase === 'waiting' || hostWindowShowing) {
       setConfirmCloseOpen(true)
       return
     }
     handleCancel()
-  }, [pairLoading, joinerPhase, role, isExpired, handleCancel])
+  }, [pairLoading, joinerPhase, hostWindowShowing, handleCancel])
 
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title } = parts
