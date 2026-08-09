@@ -127,6 +127,63 @@ async fn enqueue_full_cache_rebuild_under_backpressure_increments_bg_dropped() {
     mat.shutdown();
 }
 
+/// Fill the bounded background channel to capacity with `filler`, then offer
+/// `shed` to the full channel and assert it lands in the Full arm.
+///
+/// `filler` MUST have a different retry-queue key (`block_id` + `task_kind`)
+/// from `shed`. Both invariants below are #3482:
+///
+/// **One shed, not a thousand.** The old shape pushed `2 * BACKGROUND_CAPACITY`
+/// tasks, so ~1024 of them hit the Full arm and each spawned its own
+/// fire-and-forget `record_failure` UPSERT. The test's own observation SELECT
+/// then queued behind that pile on the shared 5-connection pool: instrumented
+/// under load, the row's `attempts` was 1020-1024 by the time the first SELECT
+/// could see it, up to 13 s after the pushes. Against the 2 s deadline the
+/// test used, that is a bet on SQLite write throughput, not an assertion about
+/// the shed path. Exactly one shed means exactly one write to wait for.
+///
+/// **The filler must not be able to delete the evidence.** The bg consumer
+/// calls `retry_queue::clear_on_success` after every task it completes
+/// durably (`consumer.rs`), DELETEing that task's retry row. The old tests
+/// filled the queue with the very task they then shed, so 1024 queued copies
+/// of it were racing to delete the row the assertion needed: instrumented,
+/// the row was observed present and then gone one statement later. A shed
+/// task by definition never entered the queue, so with a disjoint filler
+/// nothing in flight can clear its key and the row is stable from the moment
+/// the persist commits — the assertion window is open-ended instead of being
+/// squeezed from both sides by the scheduler.
+///
+/// The capacity walk is exact rather than "push plenty": the current-thread
+/// `#[tokio::test]` runtime cannot schedule the consumer inside this fully
+/// synchronous loop, so the channel can only fill. The per-push assert is a
+/// tripwire for the day that stops being true, not a timing assumption.
+fn fill_bg_queue_then_shed(
+    mat: &Materializer,
+    mut filler: impl FnMut() -> MaterializeTask,
+    shed: MaterializeTask,
+) {
+    for i in 0..BACKGROUND_CAPACITY {
+        let outcome = mat
+            .try_enqueue_background(filler())
+            .expect("bg queue must be open");
+        assert_eq!(
+            outcome,
+            BackgroundEnqueueOutcome::Enqueued,
+            "bg channel shed filler task {i} before reaching its BACKGROUND_CAPACITY of \
+             {BACKGROUND_CAPACITY} — the queue is smaller than this test believes"
+        );
+    }
+    let outcome = mat
+        .try_enqueue_background(shed)
+        .expect("bg queue must be open");
+    assert_eq!(
+        outcome,
+        BackgroundEnqueueOutcome::Shed,
+        "the task offered to a channel already holding BACKGROUND_CAPACITY items must hit \
+         the Full arm — something drained the queue and this test no longer controls it"
+    );
+}
+
 /// When the bg queue is full and a global cache rebuild
 /// (`RebuildTagsCache`) is dispatched, three things must happen:
 ///   1. The task is shed (queue stays full, no panic).
@@ -140,44 +197,45 @@ async fn test_global_task_dropped_on_queue_full() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    // Saturate the bg queue first. Push 2x capacity so the Full arm
-    // has plenty of opportunities to fire.
-    for _ in 0..2048 {
-        let _ = mat.try_enqueue_background(MaterializeTask::RebuildPagesCache);
-    }
+    // Fill with a PER-BLOCK task and shed the global one, so the queued
+    // filler cannot `clear_on_success` the `__GLOBAL__/RebuildPagesCache`
+    // row this test asserts on — see `fill_bg_queue_then_shed`.
+    let filler_block: std::sync::Arc<str> = std::sync::Arc::from("BLK-QUEUE-FILLER");
+    fill_bg_queue_then_shed(
+        &mat,
+        || MaterializeTask::UpdateFtsBlock {
+            block_id: filler_block.clone(),
+        },
+        MaterializeTask::RebuildPagesCache,
+    );
 
     let global_drops = mat
         .metrics()
         .bg_dropped_global
         .load(AtomicOrdering::Relaxed);
-    assert!(
-        global_drops > 0,
-        "bg_dropped_global must increment when global tasks are shed under saturation, got {global_drops}"
+    assert_eq!(
+        global_drops, 1,
+        "bg_dropped_global must increment once per global task shed under saturation, got {global_drops}"
     );
 
-    // The persistence side-effect happens via spawn_task. Drain the
-    // pending task set so we observe the row before asserting.
-    // 250ms is enough for the tokio executor to drive the awaiter
-    // through `record_failure` (single SQLite UPSERT in WAL mode).
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        let row = sqlx::query!(
-            "SELECT block_id, task_kind FROM materializer_retry_queue \
-             WHERE block_id = '__GLOBAL__' AND task_kind = 'RebuildPagesCache'",
-        )
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
-        if row.is_some() {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() <= deadline,
-            "dropped global RebuildPagesCache must be persisted to \
-             materializer_retry_queue under '__GLOBAL__'; row never appeared"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    // The persistence side-effect happens via spawn_task. Await it on a
+    // real completion edge (#3482) rather than polling the table against a
+    // wall-clock deadline; once the gate drains, the UPSERT has committed
+    // and one un-retried SELECT is authoritative.
+    mat.wait_for_pending_shed_persists().await;
+
+    let row = sqlx::query!(
+        "SELECT block_id, task_kind FROM materializer_retry_queue \
+         WHERE block_id = '__GLOBAL__' AND task_kind = 'RebuildPagesCache'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        row.is_some(),
+        "dropped global RebuildPagesCache must be persisted to \
+         materializer_retry_queue under '__GLOBAL__'"
+    );
 
     mat.shutdown();
 }
@@ -200,42 +258,44 @@ async fn test_per_block_task_dropped_on_queue_full() {
         .bg_dropped_global
         .load(AtomicOrdering::Relaxed);
 
-    // Saturate the bg queue with a per-block reindex task. Push 2x
-    // capacity so the Full arm fires deterministically (consumer never
-    // gets scheduled between sync pushes).
+    // Fill with a GLOBAL cache rebuild and shed the per-block reindex, so
+    // the queued filler cannot `clear_on_success` the
+    // `BLK-FTS-SAT/UpdateFtsBlock` row this test asserts on — see
+    // `fill_bg_queue_then_shed`.
     let block_id: std::sync::Arc<str> = std::sync::Arc::from("BLK-FTS-SAT");
-    for _ in 0..2048 {
-        let _ = mat.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
+    fill_bg_queue_then_shed(
+        &mat,
+        || MaterializeTask::RebuildTagsCache,
+        MaterializeTask::UpdateFtsBlock {
             block_id: block_id.clone(),
-        });
-    }
-
-    let dropped = mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed);
-    assert!(
-        dropped > 0,
-        "bg_dropped must increment when per-block tasks are shed under saturation, got {dropped}"
+        },
     );
 
-    // The persistence happens via spawn_task; poll for the row.
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        let row = sqlx::query!(
-            "SELECT block_id, task_kind FROM materializer_retry_queue \
-             WHERE block_id = 'BLK-FTS-SAT' AND task_kind = 'UpdateFtsBlock'",
-        )
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
-        if row.is_some() {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() <= deadline,
-            "audit #423: dropped per-block UpdateFtsBlock must be persisted to \
-             materializer_retry_queue keyed by its block_id; row never appeared"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let dropped = mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        dropped, 1,
+        "bg_dropped must increment once per per-block task shed under saturation, got {dropped}"
+    );
+
+    // The persistence happens via spawn_task. #3482: await the spawned
+    // write on a real completion edge instead of polling the table against
+    // a wall-clock deadline — the drain gate is signalled by the RAII guard
+    // the shed path moves into the spawned future, so when it returns the
+    // UPSERT has committed and one SELECT settles the question.
+    mat.wait_for_pending_shed_persists().await;
+
+    let row = sqlx::query!(
+        "SELECT block_id, task_kind FROM materializer_retry_queue \
+         WHERE block_id = 'BLK-FTS-SAT' AND task_kind = 'UpdateFtsBlock'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        row.is_some(),
+        "audit #423: dropped per-block UpdateFtsBlock must be persisted to \
+         materializer_retry_queue keyed by its block_id"
+    );
 
     // A per-block drop must not be miscounted as a global-cache drop.
     let global_after = mat

@@ -182,6 +182,14 @@ pub struct Materializer {
     /// 9 real fields). See [`BlockCountTestHooks`].
     #[cfg(test)]
     pub(super) block_count_test_hooks: BlockCountTestHooks,
+    /// #3482: test-only drain coordination for the fire-and-forget
+    /// `record_failure` write spawned by [`Self::try_enqueue_background`]'s
+    /// Full arm. Production treats that persist as pure fire-and-forget;
+    /// tests asserting the shed task reached `materializer_retry_queue`
+    /// need a real completion edge rather than a wall-clock poll — see
+    /// [`Self::wait_for_pending_shed_persists`].
+    #[cfg(test)]
+    pub(super) shed_persist_test_hooks: PendingTaskGate,
     /// C-3c — OS-correct app data directory used by the
     /// `CleanupOrphanedAttachments` background task to walk the
     /// `attachments/` subtree and reconcile orphaned files against
@@ -298,9 +306,10 @@ impl BlockCountTestHooks {
     }
 }
 
-/// RAII guard that decrements
-/// [`BlockCountTestHooks::pending_block_count_refreshes`] on drop and
-/// fires the matching notify when the counter reaches zero.
+/// RAII guard that decrements a pending-task counter
+/// (e.g. [`BlockCountTestHooks::pending_block_count_refreshes`], or the
+/// shed-persist counter behind [`PendingTaskGate`]) on drop and fires the
+/// matching notify when the counter reaches zero.
 ///
 /// Using a guard (rather than an explicit decrement at the tail of the
 /// spawned future) ensures the counter stays consistent even if the
@@ -311,6 +320,59 @@ impl BlockCountTestHooks {
 struct PendingRefreshGuard {
     counter: Arc<AtomicU32>,
     notify: Arc<Notify>,
+}
+
+/// #3482: counter + notify pair that turns a fire-and-forget
+/// `Self::spawn_task` into something a test can await.
+///
+/// The pattern is the one already used for the block-count refreshes:
+/// [`Self::enter`] bumps the counter *before* the spawn (so a waiter
+/// cannot slip through the window between "we decided to spawn" and "the
+/// spawned future started") and hands back a [`PendingRefreshGuard`] that
+/// moves into the future and decrements on every exit path — completion,
+/// panic, or runtime-shutdown cancellation.
+#[cfg(test)]
+#[derive(Clone)]
+pub(super) struct PendingTaskGate {
+    pending: Arc<AtomicU32>,
+    notify: Arc<Notify>,
+}
+
+#[cfg(test)]
+impl PendingTaskGate {
+    fn new() -> Self {
+        Self {
+            pending: Arc::new(AtomicU32::new(0)),
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    /// Register one in-flight task. Call this on the *spawning* side,
+    /// before `spawn_task`, and move the returned guard into the future.
+    fn enter(&self) -> PendingRefreshGuard {
+        self.pending.fetch_add(1, Ordering::AcqRel);
+        PendingRefreshGuard {
+            counter: self.pending.clone(),
+            notify: self.notify.clone(),
+        }
+    }
+
+    /// Await the counter reaching zero. Double-checked against the
+    /// `Notified` future exactly like
+    /// [`Materializer::wait_for_pending_block_count_refreshes`], so a
+    /// notification fired between the load and the attach cannot be lost.
+    async fn wait_for_drain(&self) {
+        loop {
+            if self.pending.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            let notified = self.notify.notified();
+            if self.pending.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -409,6 +471,8 @@ impl Materializer {
         let reader_pool = reader_pool_for_caches;
         #[cfg(test)]
         let block_count_test_hooks = BlockCountTestHooks::new();
+        #[cfg(test)]
+        let shed_persist_test_hooks = PendingTaskGate::new();
         let app_data_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
         // #2291: shared trailing-debounce state for the inbound-sync
         // cache-rebuild fan-out; the driver task is spawned after `Self` is
@@ -505,6 +569,8 @@ impl Materializer {
             write_pool: write_pool_for_struct,
             #[cfg(test)]
             block_count_test_hooks,
+            #[cfg(test)]
+            shed_persist_test_hooks,
             app_data_dir,
             loro,
             inbound_rebuild_debounce,
@@ -848,6 +914,28 @@ impl Materializer {
         }
     }
 
+    /// #3482: await every `record_failure` write spawned by
+    /// [`Self::try_enqueue_background`]'s Full arm.
+    ///
+    /// The shed path persists the dropped task to
+    /// `materializer_retry_queue` from a spawned, fire-and-forget future.
+    /// A test that shed a task and then wants to assert the row exists has
+    /// no ordering against that future, so the original saturation tests
+    /// polled the table on a 2 s wall-clock deadline. That deadline is a
+    /// bet on SQLite write throughput, and it lost under load (see the
+    /// issue: 2.35 s fail / 0.43 s pass on the same test). This helper is
+    /// the completion edge those tests actually wanted: it returns once
+    /// the in-flight persist count is back to zero, at which point the row
+    /// is committed and a single un-retried `SELECT` is authoritative.
+    ///
+    /// Returns immediately when nothing is in flight (one `Acquire` load).
+    /// Test-only: the backing gate is `#[cfg(test)]`, so production still
+    /// carries no coordination for this path.
+    #[cfg(test)]
+    pub async fn wait_for_pending_shed_persists(&self) {
+        self.shed_persist_test_hooks.wait_for_drain().await;
+    }
+
     pub async fn enqueue_foreground(&self, task: MaterializeTask) -> Result<(), AppError> {
         let tx = self.fg_sender()?;
         // Occupancy BEFORE the send — see `enqueue_background` for why the
@@ -979,7 +1067,16 @@ impl Materializer {
                     let pool = self.write_pool.clone();
                     let task_for_spawn = task.clone();
                     let metrics_for_spawn = self.metrics.clone();
+                    // #3482: register the persist with the test-only drain
+                    // gate BEFORE spawning, so a test that shed a task can
+                    // await the write instead of polling the DB on a
+                    // wall-clock deadline. Production is unchanged: the gate
+                    // and its guard are `#[cfg(test)]`.
+                    #[cfg(test)]
+                    let shed_guard = self.shed_persist_test_hooks.enter();
                     Self::spawn_task(&self.tasks, async move {
+                        #[cfg(test)]
+                        let _shed_guard = shed_guard;
                         use super::retry_queue::{SHED_LAST_ERROR, record_failure};
                         match record_failure(
                             &pool,
