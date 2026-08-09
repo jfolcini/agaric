@@ -138,10 +138,21 @@ rather than only in the warm lane. `export_bench.rs::bench_export_page_markdown`
 is the model: the same `page_id` drift that silently reduced the SLO export
 probe to a heading-only page had reduced this bench too, and neither reported
 anything but a faster number. Because a shape probe is untimed and outside
-`iter_custom`, cold `--test` timings are irrelevant to it — put the assertion
-after the seeder and before `benchmark_group`, where the outer bench function
-runs it unconditionally (Criterion's `--test` and its name filters both still
-invoke that function body).
+`iter_custom`, cold `--test` timings are irrelevant to it.
+
+**Where the probe goes:** in the outer bench function's own body, after the
+seeder that builds the fixture it inspects and outside every
+`bench_function`/`bench_with_input`/`iter_custom` closure. That body is what
+Criterion runs unconditionally — both `--test` and a name filter still invoke
+it — and *that* is what makes the assertion load-bearing. Its position relative
+to `c.benchmark_group(..)` is irrelevant and must not be read as the rule: a
+parameterized group cannot satisfy "before `benchmark_group`" at all, because it
+opens one group and then seeds a fixture per parameter inside the loop. The
+model bench is exactly that case — `bench_export_page_markdown` probes each
+`n_blocks` fixture *after* `benchmark_group` and before that parameter's
+`bench_with_input`, which is correct. The `interactive_slo` probes precede their
+group only because they seed a single fixture up front; that is a consequence of
+their shape, not a placement rule (#3441).
 
 ## Seeding fixtures: match the CURRENT schema (the drift checklist)
 

@@ -110,6 +110,14 @@ const HISTORY_BENCH_DEVICE: &str = "bench-device";
 /// a monotonic per-op offset so ordering matches the old string ordering.
 const SLO_BASE_TS_MS: i64 = 1_736_942_400_000;
 
+/// Shape of the `seed_agenda_blocks` fixture: block `i` gets due date
+/// `AGENDA_SEED_BASE_YMD + (i % AGENDA_SEED_WINDOW_DAYS)` days. Both the seeder
+/// and `bench_count_agenda_batch`'s untimed probe read these, so the probe's
+/// expected per-date count is *derived* from the distribution instead of
+/// restating a literal that only happens to match it (#3441).
+const AGENDA_SEED_WINDOW_DAYS: usize = 30;
+const AGENDA_SEED_BASE_YMD: (i32, u32, u32) = (2025, 7, 1);
+
 /// #2508 scope item 1 — distinct tag count for `bench_tags_cache_direct_query`'s
 /// fixture. Spreading `FIXTURE_SIZE` tagged blocks across this many tags gives
 /// `DESIRED_TAGS_SQL`'s `GROUP BY tag_id` a realistic number of groups (not one
@@ -258,14 +266,24 @@ async fn assign_all_to_slo_space(pool: &SqlitePool) {
         .unwrap();
 }
 
-/// Seed `n` agenda_cache entries spread across a 30-day window from
-/// 2025-07-01. Mirrors `agenda_bench.rs::seed_agenda_blocks`.
+/// First day of the `seed_agenda_blocks` window. `NaiveDate::from_ymd_opt` is
+/// not `const`, so the date itself cannot be a constant; the y/m/d triple is.
+fn agenda_seed_base_date() -> chrono::NaiveDate {
+    let (y, m, d) = AGENDA_SEED_BASE_YMD;
+    chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap()
+}
+
+/// Seed `n` agenda_cache entries spread round-robin across an
+/// `AGENDA_SEED_WINDOW_DAYS`-day window from `AGENDA_SEED_BASE_YMD`. Mirrors
+/// `agenda_bench.rs::seed_agenda_blocks` (which keeps the literals inline; the
+/// constants here exist so the SLO probe can derive its expectation — see
+/// `bench_count_agenda_batch`).
 async fn seed_agenda_blocks(pool: &SqlitePool, n: usize) {
-    let base_date = chrono::NaiveDate::from_ymd_opt(2025, 7, 1).unwrap();
+    let base_date = agenda_seed_base_date();
     let mut tx = pool.begin().await.unwrap();
     for i in 0..n {
         let id = format!("AGD{i:021}");
-        let date = base_date + chrono::Duration::days((i % 30) as i64);
+        let date = base_date + chrono::Duration::days((i % AGENDA_SEED_WINDOW_DAYS) as i64);
         let date_str = date.format("%Y-%m-%d").to_string();
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, position, due_date) \
@@ -1303,10 +1321,12 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
     let pool = rt.block_on(fresh_pool(&dir, "slo_count_agenda"));
     rt.block_on(seed_agenda_blocks(&pool, FIXTURE_SIZE));
 
+    // The probed week starts at the seeding window's first day, so the date at
+    // index `k` is exactly the day of seeding bucket `k` — the correspondence
+    // the expectation below relies on.
     let dates: Vec<String> = (0..7)
         .map(|d| {
-            let date =
-                chrono::NaiveDate::from_ymd_opt(2025, 7, 1).unwrap() + chrono::Duration::days(d);
+            let date = agenda_seed_base_date() + chrono::Duration::days(d);
             date.format("%Y-%m-%d").to_string()
         })
         .collect();
@@ -1323,8 +1343,26 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
         dates.len(),
         "count_agenda_batch @ 100K: untimed probe must return every requested date (#3304)"
     );
-    let expected_per_date = FIXTURE_SIZE.div_ceil(30);
-    for date in &dates {
+    // Derive the per-date count from the seeding distribution rather than
+    // hardcoding it. `seed_agenda_blocks` is round-robin over
+    // `AGENDA_SEED_WINDOW_DAYS`, so bucket `k` holds `FIXTURE_SIZE /
+    // AGENDA_SEED_WINDOW_DAYS` rows, plus one more while
+    // `k < FIXTURE_SIZE % AGENDA_SEED_WINDOW_DAYS`. The
+    // former flat `FIXTURE_SIZE.div_ceil(30)` was right only because
+    // `100_000 % 30 == 10` happens to exceed the seven probed dates. Any
+    // `FIXTURE_SIZE` whose remainder falls below `dates.len()` — 90_003, say,
+    // with a remainder of 3 — would have made the expectation wrong for four of
+    // the seven dates, with nothing on the page explaining why (#3441).
+    assert!(
+        dates.len() <= AGENDA_SEED_WINDOW_DAYS,
+        "count_agenda_batch @ 100K: date index k maps to seeding bucket k only \
+         while the probed window ({}) fits inside the {AGENDA_SEED_WINDOW_DAYS}-day \
+         seeding window",
+        dates.len()
+    );
+    for (bucket, date) in dates.iter().enumerate() {
+        let expected_per_date = FIXTURE_SIZE / AGENDA_SEED_WINDOW_DAYS
+            + usize::from(bucket < FIXTURE_SIZE % AGENDA_SEED_WINDOW_DAYS);
         assert_eq!(
             observed.get(date),
             Some(&expected_per_date),
@@ -1443,6 +1481,22 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
 /// baseline measured only the page heading because the fixture children had
 /// no `page_id`. Corrected-fixture warm means were 13.40/19.45 ms. The scale
 /// parameter is *children of the exported page*.
+///
+/// **This budget's evidence is local-only — do not treat 30 ms as CI-observed
+/// (#3441).** Every corrected-fixture sample so far (13.40 ms, 19.45 ms, and
+/// 19.51 ms from #3427's gate run) comes from a developer box. The last
+/// `bench-slo` lane to run before this note — run 30981051402, job 92225360357,
+/// started 2026-08-05T06:20Z — predates #3427's merge at 08:26Z that day and
+/// still reported the heading-only fixture (`0.21 ms <= budget 10 ms`), so no
+/// CI run has ever timed the real 2K-child path. 30 ms is only 1.54× the worst
+/// local sample while the same box's own spread was already 1.46×
+/// (13.40 → 19.51 ms), which is thin for a lane nobody gates on. Its peers
+/// *were* measured on that CI runner and carry 1.40×–2.32× (list_blocks
+/// 16.35/30, count_agenda_batch 15.78/30, count_backlinks_batch 71.39/100,
+/// list_page_links 86.31/200) — so the peer band neither condemns nor
+/// vindicates 30 ms here. Rebaseline this number from the first post-#3427
+/// `bench-slo` observation, on a quiet box, and state the multiple; do not
+/// widen it by estimate.
 fn bench_export_page_markdown(c: &mut Criterion) {
     const BUDGET_MS: f64 = 30.0;
     // Must be a valid ULID (Crockford base32, no I/L/O/U): export_page_markdown_inner
