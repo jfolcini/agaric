@@ -1,0 +1,9 @@
+---
+source: agaric-engine/src/draft/tests.rs
+expression: draft
+---
+block_id: BLKDRAFT02
+content: a legacy draft body
+updated_at: 1736942400000
+draft_anchor_seq: 0
+draft_anchor_device: ~

@@ -82,6 +82,11 @@ tokio = { version = "1", features = ["time"] }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
 # `engine_proptest.rs` property tests. Version mirrors the app crate.
 proptest = "1.11.0"
+# `import`'s parse-output / IPC-envelope snapshots and `draft`'s durable
+# anchor shape (#3459). Version/features mirror the app crate's,
+# `agaric-core`'s and `agaric-store`'s `[dev-dependencies]` so cargo unifies
+# one insta build across the workspace.
+insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 # One `engine/mod.rs` test captures `tracing::warn!` output via an in-process
 # subscriber (`fmt::MakeWriter`). Version/features mirror the app crate.
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }

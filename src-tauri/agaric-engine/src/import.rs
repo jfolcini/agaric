@@ -2861,6 +2861,204 @@ bare line ((jkl-012)) too";
             "an empty value is not a block-scalar header"
         );
     }
+
+    // ── insta snapshot tests — import output shapes (#3459) ──────────────
+    //
+    // WHY: `parse_logseq_markdown` returns a wide, nested structure, and the
+    // ~60 tests above each pin one or two fields of one or two elements of
+    // it (`output.blocks[1].content`, `output.warnings.len()`). That is
+    // exactly the shape where a change lands unnoticed: a new `ParsedBlock`
+    // field, a re-ordered warning, a block boundary that moves by one line —
+    // all leave every existing assertion green. The snapshots below make the
+    // WHOLE parse product the assertion, for three representative documents.
+    //
+    // EXHAUSTIVENESS: the mirrors below destructure `ParseOutput`,
+    // `ParsedBlock` and `AttachmentRef` WITHOUT a `..` rest pattern, so
+    // adding a field to any of them fails to COMPILE here rather than
+    // silently escaping the snapshot. If a build breaks on one of these,
+    // add the field to the mirror — do not add `..`.
+    //
+    // DETERMINISM: `frontmatter_list_items` is a `HashMap`, whose iteration
+    // order is not stable, so it is collected into a `BTreeMap` before
+    // snapshotting. Everything else is a literal drawn from the input
+    // document — no timestamps, ULIDs or hashes — so nothing needs
+    // redacting.
+
+    /// Serializable mirror of [`ParseOutput`]. See the module note above on
+    /// why this destructures exhaustively and sorts the `HashMap`.
+    fn parse_output_shape(md: &str) -> serde_json::Value {
+        let ParseOutput {
+            blocks,
+            frontmatter,
+            frontmatter_list_items,
+            warnings,
+        } = parse_logseq_markdown(md);
+        let blocks: Vec<serde_json::Value> = blocks
+            .into_iter()
+            .map(|block| {
+                let ParsedBlock {
+                    content,
+                    depth,
+                    properties,
+                    is_code,
+                    block_anchor,
+                } = block;
+                serde_json::json!({
+                    "content": content,
+                    "depth": depth,
+                    "properties": properties,
+                    "is_code": is_code,
+                    "block_anchor": block_anchor,
+                })
+            })
+            .collect();
+        let frontmatter_list_items: std::collections::BTreeMap<String, Vec<String>> =
+            frontmatter_list_items.into_iter().collect();
+        serde_json::json!({
+            "blocks": blocks,
+            "frontmatter": frontmatter,
+            "frontmatter_list_items": frontmatter_list_items,
+            "warnings": warnings,
+        })
+    }
+
+    /// A well-formed multi-block document: YAML frontmatter carrying both a
+    /// plain scalar and a flow sequence, three levels of nesting, a block
+    /// property, a trailing Obsidian `^anchor` marker, and a fenced code
+    /// region. Pins the block segmentation, the depths, where the property
+    /// attaches, and which blocks are flagged `is_code`.
+    #[test]
+    fn snapshot_parse_output_multi_block_document() {
+        let md = concat!(
+            "---\n",
+            "title: Quarterly Review\n",
+            "aliases: [Q3, \"Review, Q3\"]\n",
+            "---\n",
+            "- Top level block\n",
+            "  status:: open\n",
+            "  - Nested child\n",
+            "    - Grandchild ^anchor-1\n",
+            "- ```rust\n",
+            "  let tag = \"#notatag\";\n",
+            "  ```\n",
+            "- Trailing block\n",
+        );
+        insta::assert_yaml_snapshot!(parse_output_shape(md));
+    }
+
+    /// Malformed / partial input — the case a hand-written assertion tends
+    /// to under-specify because the interesting output is the WARNING list
+    /// and the salvaged blocks, not one field. An unclosed frontmatter
+    /// fence (must survive as content rather than be excised), a bare `-`
+    /// empty bullet, and nesting past `MAX_IMPORT_DEPTH` (clamped, with a
+    /// warning). Pins both what survives and what the user is told.
+    #[test]
+    fn snapshot_parse_output_malformed_input() {
+        let md = format!(
+            "---\ntitle: Never closed\n- First\n-\n{}- Way too deep\n",
+            "  ".repeat(25)
+        );
+        insta::assert_yaml_snapshot!(parse_output_shape(&md));
+    }
+
+    /// The attachment side of an import: [`detect_attachment_refs`] over a
+    /// document mixing a markdown image, an Obsidian embed, an
+    /// inline-code-quoted ref (skipped), an empty-alt image, a remote URL
+    /// and an already-canonical `attachment:` ref. `full_match` is what the
+    /// rewrite pass replaces byte-for-byte, so its exact spelling — and
+    /// which refs are omitted entirely — is the contract.
+    ///
+    /// The pinned ORDER is scan order, not source order: `detect_attachment_refs`
+    /// runs the Obsidian-embed scan to completion before the markdown-image
+    /// scan and never sorts, so the `![[embedded.pdf]]` embed leads even
+    /// though `![diagram](…)` appears first in the document. Its docstring
+    /// says "returns the refs in source order", which this snapshot shows is
+    /// only true for single-syntax documents. Pinned as observed behaviour —
+    /// if the ordering is later made genuinely source-ordered, this snapshot
+    /// is the place that says so out loud.
+    #[test]
+    fn snapshot_detect_attachment_refs_document() {
+        let content = concat!(
+            "![diagram](assets/diagram.png) and ![[embedded.pdf]] ",
+            "plus `![incode](assets/skip.png)` and ",
+            "![](assets/no-alt.jpg) and ![remote](https://example.com/x.png) ",
+            "and ![done](attachment:already-canonical)"
+        );
+        let refs: Vec<serde_json::Value> =
+            detect_attachment_refs(content, &inline_code_spans(content))
+                .into_iter()
+                .map(|r| {
+                    let AttachmentRef {
+                        alt,
+                        original_ref,
+                        full_match,
+                    } = r;
+                    serde_json::json!({
+                        "alt": alt,
+                        "original_ref": original_ref,
+                        "full_match": full_match,
+                    })
+                })
+                .collect();
+        insta::assert_yaml_snapshot!(refs);
+    }
+
+    /// The [`ImportResult`] IPC envelope. `ImportResult` is `Serialize +
+    /// Type`: it is the value the import command returns to the frontend,
+    /// which renders `page_title` in the completion toast and `warnings` in
+    /// the lossy-import list. A renamed or retyped field here is a breaking
+    /// frontend change, not a formatting change — re-blessing this snapshot
+    /// means the TypeScript side (`bindings.ts` and its consumers) has to
+    /// move in the same PR.
+    #[test]
+    fn snapshot_import_result_wire_shape() {
+        let result = ImportResult {
+            page_title: "Quarterly Review".into(),
+            blocks_created: 12,
+            properties_set: 3,
+            warnings: vec![
+                "1 block(s) exceeded maximum depth of 19 and were flattened".into(),
+                "stripped 2 unresolvable ((block-ref)) token(s)".into(),
+            ],
+        };
+        insta::assert_yaml_snapshot!(result);
+    }
+
+    /// The [`ImportProgressUpdate`] channel payload — an internally-tagged
+    /// (`kind`, `snake_case`) enum the frontend switches on to drive the
+    /// determinate progress bar. The tag STRINGS are the contract: a variant
+    /// rename makes the bar silently stop updating rather than fail loudly,
+    /// so the discriminant is pinned per variant.
+    #[test]
+    fn snapshot_import_progress_update_wire_shapes() {
+        let cases = [
+            (
+                "started",
+                ImportProgressUpdate::Started {
+                    page_title: "Quarterly Review".into(),
+                    blocks_total: 12,
+                },
+            ),
+            (
+                "progress",
+                ImportProgressUpdate::Progress {
+                    blocks_done: 7,
+                    blocks_total: 12,
+                },
+            ),
+            (
+                "complete",
+                ImportProgressUpdate::Complete {
+                    page_title: "Quarterly Review".into(),
+                    blocks_created: 12,
+                    properties_set: 3,
+                },
+            ),
+        ];
+        for (name, update) in cases {
+            insta::assert_yaml_snapshot!(format!("import_progress_{name}"), update);
+        }
+    }
 }
 
 /// Line-ending normalization in front of the YAML

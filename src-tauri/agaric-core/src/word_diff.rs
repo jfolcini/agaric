@@ -189,6 +189,65 @@ mod tests {
         );
     }
 
+    // ── insta snapshot tests — the exact DiffSpan sequence (#3457) ────────
+    //
+    // WHY a snapshot rather than more assertions: every hand-written test
+    // above checks a *projection* of the output — "some Delete span contains
+    // `world`", "the non-Delete spans rebuild `new`" — and the proptests
+    // below check reconstruction invariants that hold for ANY segmentation.
+    // None of them pins the segmentation itself: how many spans come back,
+    // where the boundaries fall, or whether the trailing space travels with
+    // the word or arrives as its own span.
+    //
+    // That sequence is the contract. `DiffSpan { tag, value }` is `Serialize`
+    // + `specta::Type`, so the list crosses IPC verbatim and the undo/redo
+    // history view renders one element per span. A `similar` upgrade that
+    // re-tokenises, or a change to `compute_word_diff`'s mapping, would
+    // repaint that view while every assertion in this module still passed.
+    //
+    // Re-blessing one of these snapshots therefore means "the rendered
+    // history diff changed shape" — look at the history view, do not just
+    // `cargo insta accept`.
+    //
+    // Determinism: every case is a pair of literal strings. No timestamps,
+    // ULIDs, hashes or map iteration is involved, so nothing needs redacting.
+    #[test]
+    fn snapshot_word_diff_span_sequences() {
+        let cases: [(&str, &str, &str); 6] = [
+            // Pure insertion of an interior run.
+            ("insert", "hello world", "hello brave new world"),
+            // Pure deletion of an interior run.
+            ("delete", "hello brave new world", "hello world"),
+            // Replacement of two separated interior words — the case
+            // `multi_word_diff_preserves_order` only checks by rebuilding.
+            (
+                "replace",
+                "The quick brown fox jumps",
+                "The slow brown cat jumps",
+            ),
+            // Whole-side insert / delete: one side empty.
+            ("insert_from_empty", "", "hello world"),
+            ("delete_to_empty", "hello world", ""),
+            // Unicode boundary: NFD (`e` + U+0301 COMBINING ACUTE ACCENT)
+            // against NFC (`é`). `similar` does not normalise, so the
+            // accented word is a Delete/Insert pair — the segmentation
+            // `decomposed_combining_marks_pinned_behaviour` only reaches
+            // indirectly, via reconstruction. The Delete and Insert values
+            // in that snapshot look IDENTICAL (`café` / `café`) because the
+            // two encodings render the same; they differ by scalar, which is
+            // the whole point. A future `similar` that normalised would
+            // collapse the pair into a single Equal span and redden this.
+            (
+                "unicode_combining_boundary",
+                "cafe\u{0301} latte",
+                "café latte",
+            ),
+        ];
+        for (name, old, new) in cases {
+            insta::assert_yaml_snapshot!(format!("word_diff_{name}"), compute_word_diff(old, new));
+        }
+    }
+
     // Word-diff reconstruction invariants. The spans from
     // `compute_word_diff` must losslessly reconstruct both inputs — dropping
     // the Delete spans yields `new`, dropping the Insert spans yields `old` —

@@ -1,0 +1,42 @@
+---
+source: agaric-engine/src/import.rs
+expression: parse_output_shape(md)
+---
+blocks:
+  - block_anchor: ~
+    content: Top level block
+    depth: 0
+    is_code: false
+    properties:
+      - - status
+        - open
+  - block_anchor: ~
+    content: Nested child
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: anchor-1
+    content: Grandchild
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "```rust\nlet tag = \"#notatag\";\n```"
+    depth: 0
+    is_code: true
+    properties: []
+  - block_anchor: ~
+    content: Trailing block
+    depth: 0
+    is_code: false
+    properties: []
+frontmatter:
+  - - title
+    - Quarterly Review
+  - - aliases
+    - "Q3, Review, Q3"
+frontmatter_list_items:
+  aliases:
+    - Q3
+    - "Review, Q3"
+warnings: []

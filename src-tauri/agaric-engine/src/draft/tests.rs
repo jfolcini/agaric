@@ -936,3 +936,63 @@ async fn content_containing_json_like_strings() {
         "JSON-like content must be properly escaped in the op payload"
     );
 }
+
+// ── insta snapshot tests — the durable draft shape (#3459) ──────────────
+//
+// WHY: `Draft` is two things at once. It is an IPC payload (`Serialize +
+// Deserialize + specta::Type`) handed to the recovery UI, and it is the
+// projection of a `block_drafts` row — so its field set is coupled to the
+// schema, not just to a function signature. The two anchor fields,
+// `draft_anchor_seq` / `draft_anchor_device` (#1256, migration 0092), are
+// the pair the supersession query keys on: recovery treats a draft as
+// superseded iff a block-scoped op exists with `seq > draft_anchor_seq` on
+// the same device.
+//
+// The tests above assert the anchor VALUES the save path computes. These
+// pin the SHAPE those values travel in — the thing #3453 showed can drift
+// unasserted. Re-blessing one of these snapshots means the draft row or its
+// wire form changed: check the supersession query in `draft.rs`, the
+// `block_drafts` schema, and the generated TypeScript binding before
+// accepting, because a rename that lands on all three silently is exactly
+// the failure this pins against.
+//
+// DETERMINISM: both fixtures are built from literals — a `test_id` block id,
+// a fixed epoch-ms `updated_at` — rather than from a live save, so there is
+// no wall-clock timestamp and no generated ULID to redact.
+
+/// Epoch-ms literal (2025-01-15T12:00:00Z), mirroring the `FIXED_TS`
+/// convention used by the op-log snapshots in `agaric-store`.
+const SNAPSHOT_UPDATED_AT: i64 = 1_736_942_400_000;
+
+/// A populated draft: the anchor names a real device and a non-zero
+/// high-water seq.
+#[test]
+fn snapshot_draft_wire_shape() {
+    let draft = Draft {
+        block_id: agaric_core::ulid::BlockId::test_id("BLKDRAFT01"),
+        content: "a draft body".into(),
+        updated_at: SNAPSHOT_UPDATED_AT,
+        draft_anchor_seq: 7,
+        draft_anchor_device: Some("test-device".into()),
+    };
+    insta::assert_yaml_snapshot!(draft);
+}
+
+/// The legacy / backfill row: `draft_anchor_seq` 0 ("no local op preceded
+/// this draft", the `COALESCE(...,0)` floor) and `draft_anchor_device` NULL
+/// ("matches the recovering device"). Both defaults are load-bearing in the
+/// supersession query — a `0` that started serializing as `null`, or a
+/// `None` that started being omitted from the object rather than emitted as
+/// `null`, would change how the frontend and the query read a legacy draft.
+/// Pinned alongside the populated case so both branches are covered.
+#[test]
+fn snapshot_draft_wire_shape_legacy_null_anchor() {
+    let draft = Draft {
+        block_id: agaric_core::ulid::BlockId::test_id("BLKDRAFT02"),
+        content: "a legacy draft body".into(),
+        updated_at: SNAPSHOT_UPDATED_AT,
+        draft_anchor_seq: 0,
+        draft_anchor_device: None,
+    };
+    insta::assert_yaml_snapshot!(draft);
+}
