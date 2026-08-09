@@ -266,7 +266,7 @@ test.describe('Pages compound-filter chip-row', () => {
     await expect.poll(savedKey).toBeNull()
   })
 
-  test('Tag inline editor: Back returns to the menu, Enter applies a chip', async ({ page }) => {
+  test('Tag picker: Back returns to the menu, picking a tag applies a chip', async ({ page }) => {
     await bootPages(page)
     await openAddFilter(page)
     const pop = activePopover(page)
@@ -278,11 +278,10 @@ test.describe('Pages compound-filter chip-row', () => {
     // so anchor on the label prefix rather than matching exactly.
     await expect(pop.getByRole('button', { name: /^Stub/ })).toBeVisible()
 
-    // Re-open, type, and apply with Enter.
+    // Re-open and pick a tag by NAME — the facet is a picker, not a ULID box.
     await pop.getByRole('button', { name: /^Tag/ }).click()
-    const input = pop.getByPlaceholder('Tag id')
-    await input.fill('work')
-    await input.press('Enter')
+    await pop.getByLabel('Search tags').fill('wor')
+    await pop.getByRole('button', { name: 'work', exact: true }).click()
     await expect(page.getByRole('group', { name: /Filter: tag:/ })).toBeVisible()
   })
 

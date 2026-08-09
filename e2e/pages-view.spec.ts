@@ -43,8 +43,6 @@ const axePath = createRequire(import.meta.url).resolve('axe-core')
  * Meeting Notes Template, Meetings, Projects, Quick Notes.
  */
 
-const TAG_WORK_ID = '000000000000000000000TAG01'
-
 interface BootOpts {
   /** Seed N extra "Bulk Page NNN" pages for pagination / virtualization. */
   extraPages?: number
@@ -195,8 +193,8 @@ test.describe('facet narrowing (each facet does the thing)', () => {
     await openAddFilter(page)
     const pop = activePopover(page)
     await pop.getByRole('button', { name: /^Tag/ }).click()
-    await pop.getByPlaceholder('Tag id').fill(TAG_WORK_ID)
-    await pop.getByPlaceholder('Tag id').press('Enter')
+    // #3339 — the facet is a name-searching picker that emits the tag's id.
+    await pop.getByRole('button', { name: 'work', exact: true }).click()
 
     await expect(grid(page).getByText('Facet Fixture', { exact: true })).toBeVisible()
     await expect(visibleTitles(page)).resolves.toEqual(['Facet Fixture'])
