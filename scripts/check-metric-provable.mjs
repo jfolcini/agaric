@@ -855,7 +855,7 @@ export function markersAbove(rawLines, line) {
  * that also exposes `fn count()`.
  *
  * @param {string} raw
- * @returns {{name: string, line: number, exemptions: Record<string,string>}[]}
+ * @returns {{name: string, line: number, seed: Seed, exemptions: Record<string,string>}[]}
  */
 export function enumerateGlobalMetrics(raw) {
   const stripped = stripNoise(raw)
@@ -1053,7 +1053,16 @@ export function provesMovement(op, other, seed = ZERO_SEED) {
   if (op === '>') return rel >= 0
   if (op === '>=') return rel > 0
   if (op === '!=') return rel === 0
-  return rel !== 0 && isNonZeroExpectation(other)
+  // `==` is seed-relative in the same direction as the three above (#3728).
+  // It used to carry the inherited `isNonZeroExpectation(other)` conjunct on
+  // top of `rel !== 0`, which is only meaningful for the ZERO seed: there,
+  // `assert_eq!(m, 0)` proves nothing because the metric already holds 0. On a
+  // metric seeded to 7, `assert_eq!(m, 0)` can only hold if something WROTE
+  // the field, so it is a proof of movement in exactly the sense the other
+  // three arms use — and it was rejected anyway. The rejection failed in the
+  // loud direction (a real proof needed a baseline entry rather than a false
+  // credit), but the asymmetry read as an oversight because it was one.
+  return rel !== 0
 }
 
 /**
@@ -2171,6 +2180,25 @@ function runSelfTest() {
       '`assert_ne!(m, 7)` on a metric seeded to 7 IS a firing proof',
       sc('assert_ne', ['m.load()', '7'], seeded7),
       'not fired',
+    )
+    // #3728: the `==` arm is seed-relative in the same direction as the three
+    // above. Pinning a gauge seeded to 7 AT 0 can only hold if something wrote
+    // the field, so it is a proof; pinning it at its own seed is not.
+    expect(
+      '`assert_eq!(m, 0)` on a metric seeded to 7 IS a firing proof (#3728)',
+      sc('assert_eq', ['m.load()', '0'], seeded7),
+      'not fired — only a write can pin a metric seeded to 7 at 0',
+    )
+    expect(
+      '`assert_eq!(m, 7)` on a metric seeded to 7 is NOT a firing proof',
+      !sc('assert_eq', ['m.load()', '7'], seeded7),
+      'wrongly fired — the seed already satisfies it',
+    )
+    expect(
+      '`assert_eq!(m, 0)` on a ZERO-seeded metric is still NOT a firing proof',
+      !sc('assert_eq', ['m.load()', '0'], { seed: ZERO_SEED }) &&
+        !cls('assert_eq', ['m.load()', '0']),
+      'the zero-seed rule regressed — a metric that starts at 0 is not proven by being 0',
     )
     expect(
       '`assert!(after > before)` stays a firing proof on a seeded metric',

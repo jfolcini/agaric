@@ -972,13 +972,23 @@ stages = ["pre-commit"]
 # tautology back in; and the live seeded SET is read out of `impl Default`
 # rather than written down, so a rename that makes the parse return nothing
 # fails loudly instead of silently restoring the hole for every field at once.
+#
+# Keyed to `metrics.rs` as well as to the guard's own source (#3728). The
+# self-test's live-tree assertions READ that file — that the non-zero-seeded
+# set is exactly `fts_last_optimize_ms` and `cached_op_log_count`, and that
+# every `QueueMetrics` field is matched inside `impl Default` — so a
+# `metrics.rs`-only edit was precisely the commit where they did not run. The
+# `metric-provable` hook is keyed to `metrics.rs` and still catches a real
+# violation; what was skipped is the ENUMERATION pin, which is what catches a
+# `Default` block the parser stopped understanding — the failure that silently
+# zeroes every seed and re-opens #3707's hole for every field at once.
 [[repos.hooks]]
 id = "metric-provable-selftest"
 name = "Metric-provability guard self-test"
 entry = "node scripts/check-metric-provable.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-metric-provable\\.mjs$"
+files = "^(scripts/check-metric-provable\\.mjs|src-tauri/src/materializer/metrics\\.rs)$"
 stages = ["pre-commit"]
 
 # snapshot-redaction: scan every `*.snap` file under `src/` and
@@ -2166,6 +2176,97 @@ entry = "node scripts/summarize-review-findings.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = '^(scripts/summarize-review-findings\.mjs|\.github/workflows/claude-code-review\.yml)$'
+stages = ["pre-commit"]
+
+# pr-file-overlap-selftest (#3672): two PRs green in isolation can land a red
+# `main`, and nothing in the pipeline knows the two exist at once — on
+# 2026-08-09 the overlap between six simultaneously-open PRs had to be computed
+# by hand, and before that table existed a baseline re-anchored from a stale
+# base was one merge away from making `main` red for a change neither PR made
+# incorrectly. This script computes that table. Its fixtures ARE the live
+# six-PR situation, so the assertion is that it reproduces the answer a human
+# derived; each carries its sibling — a genuinely disjoint PR must still be
+# told so (silence and "nothing overlaps" are different facts), a PR missing
+# from the payload must render as "not computed" rather than as "no overlap",
+# and a shared RATCHET file must sort and read differently from an ordinary
+# shared file, because both branches holding a self-consistent baseline is the
+# case the whole thing was built for. The rendered comment is pinned to state
+# what the signal does NOT measure: a path intersection cannot see the
+# semantic coupling that started the issue (#3666's canary executing #3657's
+# script), and an empty table must never read as "safe to merge".
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "pr-file-overlap-selftest"
+name = "Open-PR file overlap self-test (#3672)"
+entry = "node scripts/pr-file-overlap.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^(scripts/pr-file-overlap\.mjs|\.github/workflows/pr-overlap\.yml)$'
+stages = ["pre-commit"]
+
+# pr-overlap-diverged-selftest (#3736's review): the divergence half of that
+# lane was four lines of shell inside the workflow, and it was wrong in a way
+# nothing could see. It derived the merge base from HEAD, which on a
+# `pull_request` checkout is `refs/pull/N/merge` whose FIRST PARENT IS THE BASE
+# TIP — so every run diffed the base branch against itself and rendered the
+# empty result as an affirmative "None of the files this PR changes have
+# changed on `main`". The `pr-file-overlap` fixtures could not catch it because
+# they inject the divergence list straight into `computeOverlap`; the git
+# computation was the untested part. It now lives in a script that builds the
+# real topologies and drives itself end to end. Its fixtures pin the OLD
+# formulation returning nothing on the merge-ref shape, the new one returning
+# the baseline file main moved under the branch, and the sibling rejection that
+# keeps it honest: a branch whose last commit is `git merge origin/main` is
+# ALSO a two-parent HEAD, and taking `HEAD^2` there would compare the base
+# branch with itself — the same bug wearing a different hat. The contract's two
+# exit codes are pinned separately, because "could not compute" and "computed,
+# and nothing diverged" are the two facts this entire lane exists to keep
+# apart.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "pr-overlap-diverged-selftest"
+name = "PR divergence computation self-test (#3672)"
+entry = "bash scripts/pr-overlap-diverged.sh --self-test"
+language = "system"
+pass_filenames = false
+files = '^(scripts/pr-overlap-diverged\.sh|scripts/lib/git-scratch-guard\.sh|\.github/workflows/pr-overlap\.yml)$'
+stages = ["pre-commit"]
+
+# git-scratch-guard-selftest (#3722): the SHARED scrubber that every script
+# building git fixtures must source before its first fixture command. A prek
+# self-test runs inside the pre-commit environment, where git exports
+# GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE pointing at the REAL repository —
+# and those OUTRANK `git -C <fixture>`. Unscrubbed, `git -C "$tmp" init`
+# re-initialises the developer's own repo and never creates the fixture, so
+# every command after it lands on their checkout: identity overwritten,
+# `core.worktree` rewritten to a temp dir about to be deleted (after which
+# every git call in that repo dies with "fatal: Invalid path", including the
+# ones `gh` shells out to), index left claiming every tracked file was
+# deleted. That has now happened three times — #3690, #3722, and #3736, where
+# the offender was a NEW self-test added by the very PR that was fixing signal
+# integrity.
+#
+# Shared, because three scripts already carried private copies of this
+# scrubber and none of them protected the fourth. Its fixtures assert both
+# directions against a throwaway victim repo: WITH the guard the victim's
+# HEAD, index, identity and core.worktree survive a fixture build under a live
+# hook environment; WITHOUT it the fixture repo is never created and the
+# victim's identity is overwritten — so the positive assertions cannot be
+# vacuous. Plus the abort path (a readonly export `unset` cannot remove must
+# exit 3 rather than proceed) and that the scrub and its verification read one
+# list, since a checker with a shorter list than the scrubber reports clean
+# while the variable it forgot is still doing the damage.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "git-scratch-guard-selftest"
+name = "Shared git-scratch guard self-test (#3722)"
+entry = "bash scripts/lib/git-scratch-guard.sh --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/lib/git-scratch-guard\.sh$'
 stages = ["pre-commit"]
 
 # scheduled-failure-reporter-selftest (#3359): `report-scheduled-failures` is

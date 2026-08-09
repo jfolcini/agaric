@@ -21,44 +21,77 @@
 #
 # Threat-model context (AGENTS.md): Agaric is single-user, no cloud,
 # no adversarial peers.
+#
+# ─── WHY THE cache-poisoning HISTORY LIVES UP HERE ────────────────────────
+#
+# It used to sit inline above `ignore:`, and it grew until `check-yaml`
+# rejected the whole file: "too many consecutive comments before resolving
+# collection entry". MEASURED against the parser CI actually runs (prek
+# 0.4.11's Rust check-yaml, binary-searched): the limit is **32 comment lines
+# inside a block before its collection entry resolves**, that block had 42,
+# and BLANK LINES DO NOT RESET THE COUNT — which is why an earlier fix that
+# broke the run into paragraphs passed locally and still failed in CI.
+# Document-level comments, i.e. these, are not counted at all. So the
+# narrative lives here and only the operating procedure stays inline.
+#
+# (The local/CI split is its own trap: CI installs `prek@latest` while a
+# developer has whatever they installed — 0.3.8 locally accepted the file
+# 0.4.11 rejects.)
+#
+# ─── cache-poisoning baseline history ────────────────────────────────────
+#
+# Re-anchored 2026-07-16 (#2736). The previous baseline pinned to
+# ci.yml/release.yml line numbers from 2026-05 that had since drifted onto
+# unrelated content (comment blocks, the AppImage verify step), and two `:3`
+# entries silently anchored on the `on:` block, acting as blanket file-wide
+# suppressions of the whole rule.
+#
+# Narrowed 2026-08-07 (#3542) from 9 entries to 6. The three release.yml
+# entries (`:1039`, `:1071`, `:1330`) covered the caches in
+# `android-build-and-release` and `generate-vex`. Those two jobs SIGN, ATTEST
+# and UPLOAD published artefacts, so the underlying findings were FIXED rather
+# than re-anchored: the `Swatinem/rust-cache` step was deleted outright and
+# both `actions/setup-node` steps now pass `package-manager-cache: false`
+# (which also covers setup-node v7's enabled-by-default npm cache, not just an
+# explicit `cache: npm`). The anchors were then removed instead of being left
+# behind — a dead anchor is not inert, it is a landmine: it silently
+# re-attaches to whatever content drifts onto that line, which is exactly how
+# the `:3` entries above became blanket file-wide suppressions.
+#
+# Narrowed again 2026-08-08 (#3573), from 6 entries to 4. The desktop
+# `build-and-release` matrix is now cache-free too: its restore-only Rust
+# cache was deleted and setup-node explicitly disables its automatic npm
+# cache. Every release lane that builds, signs, attests or uploads an artefact
+# is therefore cache-free. Verified with an empty ignore list: exactly the four
+# ci.yml findings below fire, with none in release.yml.
+#
+# Re-anchored 2026-08-09 (#3672), +18 lines each: `273/296/426/458` →
+# `291/314/444/476`. No cache step moved and none was added — the comment block
+# above ci.yml's `concurrency:` grew by eighteen lines and every anchor below
+# it drifted, turning four suppressed findings into four `high` failures on a
+# diff that touched no cache at all. Re-derived by the procedure below and then
+# checked line-for-line: each new anchor names the same `Swatinem/rust-cache` /
+# `actions/setup-node` step as the old one, and the count is still four. That
+# check is the point — re-anchoring blind is how a dead anchor becomes a
+# blanket file-wide suppression. The line-anchoring itself is #3737.
 
 rules:
   cache-poisoning:
-    # Re-anchored 2026-07-16 (#2736). The previous baseline pinned to
-    # ci.yml/release.yml line numbers from 2026-05 that had since drifted
-    # onto unrelated content (comment blocks, the AppImage verify step),
-    # and two `:3` entries silently anchored on the `on:` block, acting as
-    # blanket file-wide suppressions of the whole rule. Re-derived by
-    # running `zizmor` with an EMPTY cache-poisoning ignore list: exactly
-    # the cache steps listed below (Swatinem/rust-cache + actions/setup-node)
-    # fire, and anchoring to their current lines suppresses them with none
-    # left over. If cache steps move, re-run with an empty ignore list and
-    # re-anchor rather than editing line numbers blind.
+    # PROCEDURE (history and rationale: file header above). These are LINE
+    # ANCHORS, so any edit that adds or removes lines in ci.yml above a cache
+    # step silently invalidates them. Never edit the numbers blind: re-run
+    # `zizmor` with this ignore list EMPTIED, take the lines it reports, and
+    # check line-for-line that each new anchor names the same cache step as
+    # the old one and that the count is unchanged. A dead anchor is not
+    # inert — it re-attaches to whatever drifts onto that line and becomes a
+    # blanket suppression.
     #
-    # Narrowed 2026-08-07 (#3542) from 9 entries to 6. The three release.yml
-    # entries (`:1039`, `:1071`, `:1330`) covered the caches in
-    # `android-build-and-release` and `generate-vex`. Those two jobs SIGN,
-    # ATTEST and UPLOAD published artefacts, so the underlying findings were
-    # FIXED rather than re-anchored: the `Swatinem/rust-cache` step was
-    # deleted outright and both `actions/setup-node` steps now pass
-    # `package-manager-cache: false` (which also covers setup-node v7's
-    # enabled-by-default npm cache, not just an explicit `cache: npm`). The
-    # anchors were then removed instead of being left behind — a dead anchor
-    # is not inert, it is a landmine: it silently re-attaches to whatever
-    # content drifts onto that line, which is exactly how the `:3` entries
-    # above became blanket file-wide suppressions.
-    #
-    # Narrowed again 2026-08-08 (#3573), from 6 entries to 4. The desktop
-    # `build-and-release` matrix is now cache-free too: its restore-only Rust
-    # cache was deleted and setup-node explicitly disables its automatic npm
-    # cache. Every release lane that builds, signs, attests or uploads an
-    # artefact is therefore cache-free. Verified with an empty ignore list:
-    # exactly the four ci.yml findings below fire, with none in release.yml.
+    # Keep this block under 32 comment lines; see the file header.
     ignore:
-      - ci.yml:273
-      - ci.yml:296
-      - ci.yml:426
-      - ci.yml:458
+      - ci.yml:291
+      - ci.yml:314
+      - ci.yml:444
+      - ci.yml:476
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot

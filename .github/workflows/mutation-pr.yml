@@ -51,6 +51,18 @@ on:
     # The comment step is behind `count != '0' || unmutated != '0'`, so a
     # CSS-, asset- or generated-file-only diff still posts nothing. What this
     # buys is that the honest sentence can reach the PRs that need it.
+    #
+    # #3728 asked for that note to be re-measured WITH the term it omitted:
+    # the checkout below is `fetch-depth: 0`, i.e. FULL HISTORY (a 131 MiB
+    # pack today), not the depth-1 default, and "checkout" read as if it were
+    # the cheap kind. Re-measured over six consecutive real runs of this lane
+    # rather than reasoned about (`gh api …/actions/runs/<id>/jobs`, per-step
+    # durations): the full-history checkout is 7–8s, `setup-node` with
+    # `cache: npm` is 3–9s, the selector is 0–1s, and whole-job wall time on a
+    # diff that selects nothing is 15–19s. So the omission was real and the
+    # conclusion it suggested is not: the checkout is about the same size as
+    # `setup-node`, not the dominant term. Recorded with its numbers so the
+    # next person re-measures rather than re-derives.
     paths:
       - 'src/**'
       - 'stryker.modules.mjs'

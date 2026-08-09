@@ -58,7 +58,8 @@
 // Usage:
 //   node scripts/summarize-review-findings.mjs \
 //     --reviews reviews.json [--comments comments.json] \
-//     --head-sha <sha> [--check-payload payload.json] [--summary-file out.md]
+//     --head-sha <sha> [--check-payload payload.json] [--summary-file out.md] \
+//     [--reviewer-login <app-slug>]
 //   node scripts/summarize-review-findings.mjs --self-test
 //
 // `--reviews` / `--comments` take the raw bodies of
@@ -114,29 +115,87 @@ function stripFences(body) {
 
 // The header the reviewer writes above its findings — "Non-blocking notes,
 // none of which need to hold up the merge:", "**Non-blocking, please address
-// in a follow-up:**". It matters because these reviews also enumerate what
-// they VERIFIED, and counting a verification as a finding is a false yellow:
-// #3639's review listed eight verifications and three findings, and without
-// the header the check would have said eleven. Trailing `**` allowed because
-// the header is usually bold.
+// in a follow-up:**". Trailing `**` allowed because the header is usually
+// bold. Since #3728 this is consulted only to OVERRIDE the verification rule
+// below, for the header that names both ("Verified, with three notes:").
+//
+// `blocking|issues|problems|defects|bugs` added on #3736's review. The absence
+// of `issues` is what caused the bug this file was just rewritten to fix, and
+// while the denylist rule no longer depends on this alternation to COUNT, it
+// still depends on it to override: without those words a header naming both a
+// verification verb and a finding word — "Blocking issues I checked:",
+// "Checked the retry path; the problems are:" — matches
+// `VERIFICATION_HEADER_RE`, fails this override, and silently suppresses every
+// item below it. Errs loud on purpose: a header this matches is COUNTED.
 const FINDINGS_HEADER_RE =
-  /^[^\n]*\b(?:non-?blocking|findings?|observations?|notes?|nits?|concerns?|suggestions?|follow-?ups?)\b[^\n]*:\**\s*$/im
+  /^[^\n]*\b(?:non-?blocking|blocking|findings?|issues?|problems?|defects?|bugs?|observations?|notes?|nits?|concerns?|suggestions?|follow-?ups?)\b[^\n]*:\**\s*$/im
+
+// The header above the bullets that say what the reviewer CHECKED rather than
+// what it found. #3639's review listed eight verifications and three findings;
+// counting all eleven is a false yellow, and a check that cries wolf gets
+// ignored just as reliably as an always-green one.
+const VERIFICATION_HEADER_RE = /\b(?:verified|verification|confirmed|checked|validated|sanity)\b/i
+
+/** A line that opens a section: prose ending in a colon, optionally bolded. */
+const SECTION_HEADER_RE = /:\**\s*$/
+
+/** A top-level enumeration marker, at column 0. */
+const LIST_ITEM_RE = /^(?:\d{1,2}[.)]|[-*+])\s+\S/
 
 /**
  * Top-level list items — the shape the reviewer enumerates findings in.
  * Indented continuation lines are NOT items (a sub-bullet of one finding is
  * not a second finding).
  *
- * Scoped to what follows the findings header when the body has one; the whole
- * body when it does not, which errs toward over-counting. That is the safe
+ * ─── #3728: why this is a DENYLIST rather than a scope ────────────────────
+ *
+ * This used to slice the body from the FIRST line matching
+ * `FINDINGS_HEADER_RE` and count only what followed. Everything enumerated
+ * ABOVE that line was dropped, and `issues` is not in that keyword
+ * alternation, so the entirely ordinary shape
+ *
+ *     Blocking issues:
+ *     1. …
+ *     2. …
+ *
+ *     Non-blocking notes:
+ *     (nothing further)
+ *
+ * scoped past the blocking list, counted the empty one, and reported
+ * **0 findings → `success`** on a review that named two blocking defects.
+ * "Found nothing" rendering identically to "did not look there" is the exact
+ * conflation this file exists to remove — it cannot be committed by the
+ * counter itself.
+ *
+ * `max(header-scoped, whole-body)` fixes the degenerate case and re-breaks
+ * #3639 (eleven again); scoping from the LAST header does not help at all
+ * here, because `Blocking issues:` never matched in the first place.
+ *
+ * So the rule is inverted: count every top-level item EXCEPT those under a
+ * header that says they are verifications. The suppression lasts only to the
+ * end of that section — any later unindented, non-list line ends it — so a
+ * findings list further down is counted whether or not its own header matches
+ * a keyword. An unrecognised section header counts, which is the safe
  * direction: an over-count costs a `neutral` whose whole meaning is "go read
  * the review", an under-count costs a green check on a real defect.
  */
 export function enumeratedItems(body) {
-  const stripped = stripFences(body)
-  const header = FINDINGS_HEADER_RE.exec(stripped)
-  const scope = header ? stripped.slice(header.index + header[0].length) : stripped
-  return scope.split('\n').filter((line) => /^(?:\d{1,2}[.)]|[-*+])\s+\S/.test(line))
+  const items = []
+  let inVerificationSection = false
+  for (const line of stripFences(body).split('\n')) {
+    if (LIST_ITEM_RE.test(line)) {
+      if (!inVerificationSection) items.push(line)
+      continue
+    }
+    // Blank lines and indented continuations belong to whatever section is in
+    // force; they neither open a section nor close one.
+    if (line.trim().length === 0 || /^\s+\S/.test(line)) continue
+    inVerificationSection =
+      SECTION_HEADER_RE.test(line) &&
+      VERIFICATION_HEADER_RE.test(line) &&
+      !FINDINGS_HEADER_RE.test(line)
+  }
+  return items
 }
 
 /**
@@ -155,25 +214,78 @@ export function claimedCount(body) {
 }
 
 /**
+ * The sentence (or clause, or line) that makes the filing claim, or null.
+ *
+ * #3728: the backing test used to be "does the body contain `#NNNN`
+ * ANYWHERE", which any incidental reference defeats —
+ *
+ *     …six non-blocking notes filed separately. Verified against the
+ *     contract added in #3350.
+ *
+ * is the #3701 shape exactly, and read as backed. #3723 made this worse by
+ * instructing the reviewer to cite issue numbers, so bodies now routinely
+ * carry refs for unrelated reasons. The reference has to be attached to the
+ * claim to back it.
+ *
+ * @param {string} text already fence-stripped
+ */
+export function filingSentence(text) {
+  return text.split(/(?<=[.!?;])\s+|\n/).find((s) => FILING_RE.test(s)) ?? null
+}
+
+/**
+ * Distinct `#NNNN` references from the filing claim onward.
+ *
+ * The "as many refs as findings claimed" fallback has to read forward only.
+ * A reference written BEFORE the claim was written for some other purpose —
+ * citing a contract, naming a sibling PR — and cannot be where these findings
+ * went. See `analyzeBody`.
+ *
+ * @param {string} text already fence-stripped
+ */
+export function issueRefsFromClaimOnward(text) {
+  const m = FILING_RE.exec(text)
+  if (m === null) return []
+  const tail = text.slice(m.index)
+  return [...new Set([...tail.matchAll(ISSUE_REF_RE)].map((x) => `#${x[1]}`))]
+}
+
+/**
  * Analyse one review/comment body.
  *
  * @param {string} body
  */
 export function analyzeBody(body) {
   const text = body ?? ''
+  const stripped = stripFences(text)
   const enumerated = enumeratedItems(text).length
   const claimed = claimedCount(text)
-  const citedIssues = [...text.matchAll(ISSUE_REF_RE)].map((m) => `#${m[1]}`)
-  const claimsFiling = FILING_RE.test(stripFences(text))
+  const citedIssues = [...new Set([...text.matchAll(ISSUE_REF_RE)].map((m) => `#${m[1]}`))]
+  const claimsFiling = FILING_RE.test(stripped)
+  const sentence = claimsFiling ? filingSentence(stripped) : null
+  const refsWithClaim = sentence === null ? [] : [...sentence.matchAll(ISSUE_REF_RE)]
+  // The claim is only backed if the body says WHERE, in the clause that makes
+  // the claim — or cites at least as many distinct issues as it claims
+  // findings, which is the other shape that leaves nothing unrecoverable.
+  //
+  // #3736's review: that second arm counted references from ANYWHERE in the
+  // body, which reopens a narrower version of the hole the first arm closes.
+  // This repo's review bodies routinely cite six or more unrelated issues —
+  // #3702, #3728, #3672, #3639, #3701 and #3694 all appear in this very PR's
+  // text — so "six non-blocking notes filed separately" with nothing filed
+  // would have been read as backed. Only references AT OR AFTER the filing
+  // clause can back it: a number written before the claim was written for
+  // something else.
+  const refsAfterClaim = claimsFiling ? issueRefsFromClaimOnward(stripped) : []
+  const backed =
+    refsWithClaim.length > 0 ||
+    (claimed !== null && claimed > 0 && refsAfterClaim.length >= claimed)
   return {
     enumerated,
     claimed,
-    citedIssues: [...new Set(citedIssues)],
+    citedIssues,
     claimsFiling,
-    // The claim is only backed if the body says WHERE. `filed separately` with
-    // no number is a promise the reader cannot check without more work than
-    // reading the findings would have been.
-    unbackedFilingClaim: claimsFiling && citedIssues.length === 0,
+    unbackedFilingClaim: claimsFiling && !backed,
     shortfall: claimed !== null && enumerated < claimed ? claimed - enumerated : 0,
   }
 }
@@ -182,6 +294,34 @@ export function analyzeBody(body) {
 function isBotAuthor(entry) {
   const login = entry?.user?.login ?? ''
   return entry?.user?.type === 'Bot' || login.endsWith('[bot]')
+}
+
+/**
+ * An author predicate for THE REVIEWER, not for bots in general.
+ *
+ * #3728: "any bot" is too wide on the comment path. This repo's own
+ * `mutation-pr.yml` posts a sticky `github-actions[bot]` comment on every PR
+ * touching `src/**` — the same PRs this check runs on — and that comment was
+ * being read as review findings. It does not flip the verdict today only by
+ * coincidence: the comment's body is a table, a fenced block and prose, with
+ * no top-level list item and no matching cardinal. One `- ` bullet added to
+ * that template (a survivor summary, a caveat list) turns every
+ * mutation-touching PR's review check yellow for a reason invisible from the
+ * check output — a false finding count is the same defect as a missing one.
+ *
+ * Falls back to "any bot" when no reviewer identity is available, which is the
+ * pre-#3728 behaviour and still the loud direction.
+ *
+ * @param {string} login the reviewer's login, with or without the `[bot]` suffix
+ */
+export function authoredByReviewer(login) {
+  const want = (login ?? '').trim().toLowerCase()
+  if (want.length === 0) return isBotAuthor
+  const bare = want.endsWith('[bot]') ? want.slice(0, -'[bot]'.length) : want
+  return (entry) => {
+    const actual = (entry?.user?.login ?? '').toLowerCase()
+    return actual === bare || actual === `${bare}[bot]`
+  }
 }
 
 /**
@@ -204,11 +344,12 @@ function isBotAuthor(entry) {
  *
  * @param {object[]} reviews
  * @param {string} headSha
+ * @param {(entry: object) => boolean} isAuthor
  */
-export function reviewsForCommit(reviews, headSha) {
+export function reviewsForCommit(reviews, headSha, isAuthor = isBotAuthor) {
   if (typeof headSha !== 'string' || headSha.length === 0) return []
   return reviews.filter(
-    (r) => isBotAuthor(r) && r.commit_id === headSha && (r.body ?? '').trim().length > 0,
+    (r) => isAuthor(r) && r.commit_id === headSha && (r.body ?? '').trim().length > 0,
   )
 }
 
@@ -231,16 +372,17 @@ export function reviewsForCommit(reviews, headSha) {
  * push's comment predates this push's review by seconds.
  *
  * @param {object[]} comments
- * @param {object[]} reviews every bot review, any commit
+ * @param {object[]} reviews every reviewer review, any commit
  * @param {object|null} review the review of the head commit
+ * @param {(entry: object) => boolean} isAuthor
  */
-export function commentsForPush(comments, reviews, review) {
-  const bots = comments.filter((c) => isBotAuthor(c) && (c.body ?? '').trim().length > 0)
+export function commentsForPush(comments, reviews, review, isAuthor = isBotAuthor) {
+  const bots = comments.filter((c) => isAuthor(c) && (c.body ?? '').trim().length > 0)
   const at = (x) => Date.parse(x?.submitted_at ?? x?.created_at ?? '')
   const current = at(review)
   if (!Number.isFinite(current)) return bots
   const anchor = reviews
-    .filter(isBotAuthor)
+    .filter(isAuthor)
     .map(at)
     .filter((t) => Number.isFinite(t) && t < current)
     .toSorted((a, b) => a - b)
@@ -256,30 +398,89 @@ export function commentsForPush(comments, reviews, review) {
 }
 
 /**
+ * The prose body of the check output, below the heading.
+ *
+ * @param {{state: string, findings: number, parts: object[], perBody: number[], shortfall: number, unbacked: boolean}} v
+ */
+function renderVerdict({ state, findings, parts, perBody, shortfall, unbacked }) {
+  const lines = []
+  if (findings > 0) {
+    lines.push(
+      `The reviewer's verdict is **${state}**, and its body carries **${findings} finding(s)**.`,
+      '',
+      'This check is `neutral`, never `failure`: the findings are non-blocking by',
+      'design and this lane gates nothing. It is not `success` either, because a',
+      'green check is what let #3694 merge with two correctness defects sitting',
+      'unread in the review body (#3702).',
+      '',
+      '**Read the review before merging.**',
+    )
+  } else {
+    lines.push(`The reviewer's verdict is **${state}** and its body enumerates no findings.`)
+  }
+  // Where the count came from, whenever more than one body contributed. The
+  // total is a sum, so a reader who sees a number larger than the review body
+  // alone can tell whether the comment added findings or restated them.
+  if (parts.length > 1 && findings > 0) {
+    const [inReview, ...inComments] = perBody
+    lines.push(
+      '',
+      `> Counted across **${parts.length} bodies**: ${inReview} in the review itself, ${inComments.reduce((n, c) => n + c, 0)} across ${inComments.length} reviewer comment(s). These are summed — a comment that restates the review inflates the total, and that is the deliberate direction (#3728).`,
+    )
+  }
+  if (shortfall > 0) {
+    // Quoted from the ONE body that is short, not as maxima across bodies
+    // (#3736's review). `findings` above is a SUM, so a per-body `claimed` max
+    // and a per-body `enumerated` max need not reconcile with it or with each
+    // other, and the sentence would then cite a pair that appears in no single
+    // review.
+    const worst = parts.reduce((a, b) => (b.shortfall > a.shortfall ? b : a))
+    lines.push(
+      '',
+      `> **The review claims more findings than it names** — one body claims ${worst.claimed} and enumerates ${worst.enumerated}, so ${worst.shortfall} of them exist nowhere a reader can get to. On #3701 exactly three of six were recoverable.`,
+    )
+  }
+  if (unbacked) {
+    lines.push(
+      '',
+      '> **The review says findings were filed elsewhere but cites no issue number.** That claim is what a merger would rely on to conclude nothing is lost, and it cannot be checked at the moment of decision. Either cite the issues or keep the findings inline (#3702).',
+    )
+  }
+  return lines
+}
+
+/**
  * The whole verdict, from the raw API payloads.
  *
- * @param {{reviews?: object[], comments?: object[], headSha?: string}} opts
+ * @param {{reviews?: object[], comments?: object[], headSha?: string, reviewerLogin?: string}} opts
  */
-export function summarize({ reviews = [], comments = [], headSha = '' }) {
+export function summarize({ reviews = [], comments = [], headSha = '', reviewerLogin = '' }) {
   // The reviewer re-reviews on every push, so the review that describes the
   // code being merged is the one submitted AGAINST THIS COMMIT — not merely the
   // most recent one on the PR. See `reviewsForCommit`.
-  const forCommit = reviewsForCommit(reviews, headSha)
+  const configured = authoredByReviewer(reviewerLogin)
+  const forCommit = reviewsForCommit(reviews, headSha, configured)
   const review = forCommit.at(-1) ?? null
-  const botComments = commentsForPush(comments, reviews.filter(isBotAuthor), review)
+  // #3728: scope the COMMENT path to the reviewer, not to bots at large. When
+  // no login is configured the reviewer identifies itself — it is the author of
+  // the review of this commit — so the narrowing needs no configuration to
+  // work, and only falls back to "any bot" when there is no review to learn
+  // from (in which case nothing is counted anyway).
+  const isReviewer = authoredByReviewer(reviewerLogin || (review?.user?.login ?? ''))
+  const botComments = commentsForPush(comments, reviews.filter(isReviewer), review, isReviewer)
 
   if (review === null) {
     // NOT success, and NOT a count taken from whatever else is lying around on
     // the PR. "The reviewer never posted for this commit" and "the reviewer
     // found nothing" are different facts and must not render identically —
     // that equivalence is #3702 itself, one level up.
-    const stale = reviews.filter(isBotAuthor).length > 0
+    const stale = reviews.filter(configured).length > 0
     // Bot comments carry no commit id, and with no review of this commit there
     // is no anchor to date them against — so they are NOT counted here. Said
     // out loud rather than dropped: an uncounted comment that the reader is
     // told about is a pointer, an uncounted comment they are not told about is
     // this issue again.
-    const orphanComments = comments.filter(isBotAuthor).length
+    const orphanComments = comments.filter(isReviewer).length
     return {
       conclusion: 'neutral',
       findings: 0,
@@ -312,40 +513,24 @@ export function summarize({ reviews = [], comments = [], headSha = '' }) {
     (b) => b.trim().length > 0,
   )
   const parts = bodies.map(analyzeBody)
-  const findings = Math.max(...parts.map((p) => Math.max(p.enumerated, p.claimed ?? 0)))
+  const perBody = parts.map((p) => Math.max(p.enumerated, p.claimed ?? 0))
+  // #3728: SUM across bodies, not `Math.max`. The review body and the
+  // reviewer's separate comment carry DIFFERENT findings — that is why both
+  // are read — so 2 in one plus 5 in the other is not 5. The max under-stated
+  // the count in the check title, which is the one place a merger reads it
+  // without opening the PR. Summing can double-count when the comment restates
+  // the review, and that is the direction this file has always taken: the
+  // breakdown is printed below so the reader can tell the two apart.
+  const findings = perBody.reduce((n, c) => n + c, 0)
   const unbacked = parts.some((p) => p.unbackedFilingClaim)
   const shortfall = Math.max(...parts.map((p) => p.shortfall))
   const state = review?.state ?? 'COMMENTED'
 
-  const lines = [`### ${CHECK_NAME}`, '']
-  if (findings > 0) {
-    lines.push(
-      `The reviewer's verdict is **${state}**, and its body carries **${findings} finding(s)**.`,
-      '',
-      'This check is `neutral`, never `failure`: the findings are non-blocking by',
-      'design and this lane gates nothing. It is not `success` either, because a',
-      'green check is what let #3694 merge with two correctness defects sitting',
-      'unread in the review body (#3702).',
-      '',
-      '**Read the review before merging.**',
-    )
-  } else {
-    lines.push(`The reviewer's verdict is **${state}** and its body enumerates no findings.`)
-  }
-  if (shortfall > 0) {
-    const claimedMax = Math.max(...parts.map((p) => p.claimed ?? 0))
-    const namedMax = Math.max(...parts.map((p) => p.enumerated))
-    lines.push(
-      '',
-      `> **The review claims more findings than it names** — a count of ${claimedMax} against ${namedMax} enumerated, so ${shortfall} of them exist nowhere a reader can get to. On #3701 exactly three of six were recoverable.`,
-    )
-  }
-  if (unbacked) {
-    lines.push(
-      '',
-      '> **The review says findings were filed elsewhere but cites no issue number.** That claim is what a merger would rely on to conclude nothing is lost, and it cannot be checked at the moment of decision. Either cite the issues or keep the findings inline (#3702).',
-    )
-  }
+  const lines = [
+    `### ${CHECK_NAME}`,
+    '',
+    ...renderVerdict({ state, findings, parts, perBody, shortfall, unbacked }),
+  ]
 
   const flagged = findings > 0 || unbacked || shortfall > 0
   const title = flagged
@@ -387,6 +572,7 @@ function parseArgs(argv) {
     headSha: '',
     checkPayload: null,
     summaryFile: null,
+    reviewerLogin: '',
   }
   for (let i = 0; i < argv.length; i++) {
     const take = () => {
@@ -413,6 +599,10 @@ function parseArgs(argv) {
       }
       case '--summary-file': {
         args.summaryFile = take()
+        break
+      }
+      case '--reviewer-login': {
+        args.reviewerLogin = take()
         break
       }
       default: {
@@ -495,6 +685,7 @@ function main(argv) {
       reviews: readList(args.reviews),
       comments: readList(args.comments),
       headSha: args.headSha,
+      reviewerLogin: args.reviewerLogin,
     })
   } catch (err) {
     console.error(`summarize-review-findings: ${err instanceof Error ? err.stack : err}`)
@@ -562,6 +753,47 @@ const PR_3639_BODY = `Approving: the test change is correct and well-verified.
 3. The \`max_seq\` \`query_scalar!\` runs before the sanity assert, so a zero-row seed panics with a decode error.
 
 No security concerns.`
+
+// #3728's shape. `Blocking issues:` does NOT match `FINDINGS_HEADER_RE`
+// (`issues` is not in the alternation), so the old first-header scope started
+// at `Non-blocking notes:` — below every item — and counted the empty tail.
+// Two blocking defects, reported as 0 findings and `success`.
+const ITEMS_ABOVE_HEADER_BODY = `Reviewed the whole diff.
+
+Blocking issues:
+
+1. **The retry path re-fires the captured id list.** It trashes a stale set.
+2. **The cursor rewinds on an empty replay.** Data loss on restart.
+
+Non-blocking notes:
+
+Nothing further.`
+
+// The same defect without the empty tail: the blocking list above the header
+// vanished from the count while the notes below it were reported, so the check
+// under-stated by exactly the items that mattered most.
+const BLOCKING_AND_NOTES_BODY = `Blocking issues:
+
+1. **The retry path re-fires the captured id list.**
+2. **The cursor rewinds on an empty replay.**
+
+Non-blocking notes:
+
+- The cast is unnecessary.`
+
+// The mutation lane's own sticky comment (#3350), authored by
+// `github-actions[bot]` on every PR touching \`src/**\` — including the PRs
+// this check runs on. It is not a review finding and must not be counted.
+const MUTATION_COMMENT_BODY = `## Mutation testing — diff-scoped (#3350)
+
+_Informational. This lane never gates a merge._
+
+Mutated 1 module: \`blockTree\`.
+
+- 3 mutants survived, listed in the run summary.
+- 2 files in this diff belong to no enrolled module.
+
+<!-- mutation-pr-report -->`
 
 const CLEAN_BODY = `Read the whole diff against the store contracts it touches. The migration is additive, the new index matches the query's leading columns, and every new branch has a test. No blocking correctness or security issues, and nothing worth noting otherwise.`
 
@@ -808,6 +1040,194 @@ function runSelfTest() {
       'verification bullets above the findings header are not counted as findings',
       r.conclusion === 'neutral' && r.findings === 3,
       JSON.stringify({ conclusion: r.conclusion, findings: r.findings }),
+    )
+  }
+
+  // 6c. THE DEGENERATE CASE (#3728). Items enumerated ABOVE the first matching
+  //     header used to be sliced off entirely, and with an empty section below
+  //     the count reached 0 — so a review naming two BLOCKING defects reported
+  //     `success`. "Found nothing" is not "did not look there", and that is the
+  //     one equivalence this whole file exists to refuse.
+  {
+    const r = summarize({ reviews: [review(ITEMS_ABOVE_HEADER_BODY)], headSha: 'abc' })
+    expect(
+      'a blocking list ABOVE the notes header, with an empty section below, is NOT success',
+      r.conclusion === 'neutral' && r.findings === 2,
+      JSON.stringify({ conclusion: r.conclusion, findings: r.findings, title: r.title }),
+    )
+    const both = summarize({ reviews: [review(BLOCKING_AND_NOTES_BODY)], headSha: 'abc' })
+    expect(
+      'both the blocking list and the notes list are counted, not just the second one',
+      both.findings === 3,
+      JSON.stringify({ findings: both.findings }),
+    )
+    // The sibling acceptance, restated at unit level so the two rules cannot
+    // drift apart: suppressing verification bullets must survive the rewrite.
+    expect(
+      'the #3639 verification/findings split is unchanged by the denylist rule',
+      enumeratedItems(PR_3639_BODY).length === 3,
+      JSON.stringify(enumeratedItems(PR_3639_BODY)),
+    )
+    // A header naming BOTH resolves to "findings", so a reviewer cannot lose a
+    // list by putting the word "verified" in the header above it.
+    expect(
+      'a header that says both "verified" and "notes" counts its items',
+      enumeratedItems('Verified, with two notes:\n- a\n- b').length === 2,
+      JSON.stringify(enumeratedItems('Verified, with two notes:\n- a\n- b')),
+    )
+    // Suppression ends with the section, so an unheaded list after a
+    // verification block is still counted.
+    expect(
+      'a list after the verification section ends is counted again',
+      enumeratedItems('**Verified:**\n- x\n\nStill worth flagging.\n\n- a real one').length === 1,
+      JSON.stringify(
+        enumeratedItems('**Verified:**\n- x\n\nStill worth flagging.\n\n- a real one'),
+      ),
+    )
+  }
+
+  // 6d. THE COMMENT AUTHOR (#3728). `github-actions[bot]` posts this repo's own
+  //     mutation comment on every PR touching `src/**` — the same PRs this
+  //     check runs on. Counting it as a review finding attributes another
+  //     lane's output to the reviewer, and the count would be wrong for a
+  //     reason invisible from the check output.
+  {
+    const other = {
+      user: { login: 'github-actions[bot]', type: 'Bot' },
+      body: `${MUTATION_COMMENT_BODY}\n- one more survivor worth a look`,
+      created_at: '2026-08-09T11:59:00Z',
+    }
+    const r = summarize({ reviews: [review(CLEAN_BODY)], comments: [other], headSha: HEAD })
+    expect(
+      "another lane's bot comment is not counted as a review finding",
+      r.conclusion === 'success' && r.findings === 0,
+      JSON.stringify({ conclusion: r.conclusion, findings: r.findings, title: r.title }),
+    )
+    // The sibling acceptance: the REVIEWER's own comment still counts, so the
+    // narrowing is "identify the reviewer", not "stop reading comments".
+    const mine = summarize({
+      reviews: [review(CLEAN_BODY)],
+      comments: [comment(PR_3694_BODY, '2026-08-09T11:59:00Z'), other],
+      headSha: HEAD,
+    })
+    expect(
+      "the reviewer's own comment is still counted alongside another bot's",
+      mine.conclusion === 'neutral' && mine.findings === 7,
+      JSON.stringify({ conclusion: mine.conclusion, findings: mine.findings }),
+    )
+    // An explicitly configured login wins over the inferred one, and a review
+    // by anyone else is then not the reviewer's review at all.
+    expect(
+      'an explicit --reviewer-login that matches nothing reports neutral, not success',
+      summarize({ reviews: [review(CLEAN_BODY)], headSha: HEAD, reviewerLogin: 'someone-else' })
+        .conclusion === 'neutral',
+      'a review by another identity was accepted as the reviewer',
+    )
+    expect(
+      'an explicit --reviewer-login matches with or without the [bot] suffix',
+      summarize({ reviews: [review(CLEAN_BODY)], headSha: HEAD, reviewerLogin: 'agaric-reviewer' })
+        .conclusion === 'success',
+      'the bare app slug did not match its [bot] login',
+    )
+  }
+
+  // 6e. TWO BODIES, DIFFERENT FINDINGS (#3728). `Math.max` reported the larger
+  //     of the two, so 2 in the review plus 5 in the comment read as 5 — the
+  //     count in the title is the one number a merger reads without opening
+  //     the PR, and it understated by the whole review body.
+  {
+    const twoInReview = review('Two things:\n\n- first\n- second', 'APPROVED', HEAD)
+    const fiveInComment = comment('Notes:\n\n- a\n- b\n- c\n- d\n- e', '2026-08-09T11:59:00Z')
+    const r = summarize({ reviews: [twoInReview], comments: [fiveInComment], headSha: HEAD })
+    expect(
+      'findings across the review and its comment are summed, not maxed',
+      r.findings === 7,
+      JSON.stringify({ findings: r.findings, title: r.title }),
+    )
+    expect(
+      'the summary says where the total came from, so a restated comment is legible',
+      /Counted across \*\*2 bodies\*\*: 2 in the review itself, 5 across 1/.test(r.summary),
+      r.summary,
+    )
+  }
+
+  // 6f. THE FILING CLAIM'S BACKING (#3728). The claim used to be backed by ANY
+  //     `#NNNN` anywhere in the body, which the #3723 prompt change actively
+  //     encourages the reviewer to emit for unrelated reasons. The reference
+  //     has to be attached to the claim.
+  {
+    const incidental = PR_3701_BODY.replace(
+      'Note vitest/playwright were still pending at review time.',
+      'Verified against the contract added in #3350.',
+    )
+    const r = summarize({ reviews: [review(incidental)], headSha: 'abc' })
+    expect(
+      'an incidental issue reference elsewhere in the body does not back a filing claim',
+      r.details.unbacked === true,
+      JSON.stringify({ unbacked: r.details.unbacked, parts: r.details.parts }),
+    )
+    // …and citing as many issues as the claim names IS backing, even when the
+    // numbers sit in a later sentence: nothing is unrecoverable then.
+    const enumerated = `Two notes filed separately. They are #3801 and #3802.`
+    expect(
+      'as many distinct references as claimed findings backs the claim',
+      analyzeBody(enumerated).unbackedFilingClaim === false,
+      JSON.stringify(analyzeBody(enumerated)),
+    )
+    // …but only references AT OR AFTER the claim count toward it (#3736's
+    // review). This repo's review bodies routinely cite six unrelated issues,
+    // so a body-wide count re-opens the hole the sentence rule closes.
+    const citedBefore = `Verified against #3702, #3728, #3672, #3639, #3701 and #3694. Six non-blocking notes filed separately.`
+    expect(
+      'issue references written BEFORE the filing claim do not back it',
+      analyzeBody(citedBefore).unbackedFilingClaim === true,
+      JSON.stringify(analyzeBody(citedBefore)),
+    )
+    const citedAfter = `Six non-blocking notes filed separately: #3801, #3802, #3803, #3804, #3805 and #3806.`
+    expect(
+      'six references after the claim, for six claimed findings, does back it',
+      analyzeBody(citedAfter).unbackedFilingClaim === false,
+      JSON.stringify(analyzeBody(citedAfter)),
+    )
+  }
+
+  // 6g. A findings word the alternation lacked would suppress its own list
+  //     (#3736's review). `issues` missing is what caused the original bug;
+  //     with a verification verb in the same header the item list disappears
+  //     entirely, which is the loud-vs-silent distinction the whole file is
+  //     about.
+  {
+    for (const header of [
+      'Blocking issues I checked:',
+      'Checked the retry path; the problems are:',
+      'Verified the fix; remaining defects:',
+    ]) {
+      expect(
+        `a header naming both a verification verb and a finding word counts its items — "${header}"`,
+        enumeratedItems(`${header}\n\n1. one\n2. two`).length === 2,
+        JSON.stringify(enumeratedItems(`${header}\n\n1. one\n2. two`)),
+      )
+    }
+    // The sibling acceptance: a pure verification header still suppresses, or
+    // the denylist has been widened into a no-op.
+    expect(
+      'a pure verification header still suppresses its bullets',
+      enumeratedItems('**Verified independently:**\n- a\n- b').length === 0,
+      JSON.stringify(enumeratedItems('**Verified independently:**\n- a\n- b')),
+    )
+  }
+
+  // 6h. The shortfall sentence quotes ONE body, not maxima across bodies
+  //     (#3736's review): `findings` is a sum, so a claimed-max and an
+  //     enumerated-max need not reconcile with each other or with the title.
+  {
+    const claims6 = review('Six non-blocking notes filed separately.', 'APPROVED', HEAD)
+    const listOf3 = comment('Notes:\n\n- a\n- b\n- c', '2026-08-09T11:59:00Z')
+    const r = summarize({ reviews: [claims6], comments: [listOf3], headSha: HEAD })
+    expect(
+      'the shortfall sentence quotes the body that is short, and the pair reconciles',
+      /one body claims 6 and enumerates 0, so 6 of them/.test(r.summary),
+      r.summary,
     )
   }
 
