@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id as \"id!\", fs_path as \"fs_path!\", size_bytes as \"size_bytes!\", content_hash\n           FROM attachments WHERE deleted_at IS NULL",
+  "query": "SELECT id as \"id!\", fs_path as \"fs_path!\", size_bytes as \"size_bytes!\", content_hash, deleted_at\n           FROM attachments",
   "describe": {
     "columns": [
       {
@@ -46,6 +46,17 @@
             "name": "content_hash"
           }
         }
+      },
+      {
+        "name": "deleted_at",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "deleted_at"
+          }
+        }
       }
     ],
     "parameters": {
@@ -55,8 +66,9 @@
       false,
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "0892e3a2bd5e2900a693c94d79689d906c001666a8921b235146fbe738504ced"
+  "hash": "075cbfcf12de77dd9b468f2d80ab1aa935673c54b9ef1f31bc4dbc13b62b8352"
 }

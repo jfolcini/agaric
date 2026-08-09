@@ -10,11 +10,14 @@
 //! `content_hash`; this pass simply skips rows whose `content_hash` is still
 //! NULL (their file was gone, so the prior pass could not hash them).
 //!
-//! 1. Group live `attachments` rows by their existing `content_hash`. Rows
-//!    whose `content_hash` is still NULL are skipped (the prior hash backfill
-//!    pass populates everything it can; an unhashable row's file is gone).
-//! 2. For each distinct hash, pick ONE canonical surviving file and insert a
-//!    single `attachment_blobs` row pointing at it.
+//! 1. Group `attachments` rows by their existing `content_hash`. Rows whose
+//!    `content_hash` is still NULL are skipped (the prior hash backfill pass
+//!    populates everything it can; an unhashable row's file is gone).
+//!    Soft-deleted rows are INCLUDED — see #3654 and the comment on the
+//!    candidate SELECT: the GC keeps a tombstone's bytes, so the blob store
+//!    must be able to name them.
+//! 2. For each distinct hash, pick ONE canonical surviving file (live rows
+//!    preferred) and insert a single `attachment_blobs` row pointing at it.
 //! 3. Repoint every other row sharing that hash so its `fs_path` equals the
 //!    canonical blob's `on_disk_path`. The now-redundant duplicate files are
 //!    left on disk for the refcount-aware GC pass to reclaim (no row will
@@ -54,12 +57,15 @@ pub struct BlobBackfillReport {
     pub skipped_no_file: u64,
 }
 
-/// One live attachment row relevant to the backfill.
+/// One attachment row relevant to the backfill.
 struct Row {
     id: String,
     fs_path: String,
     size_bytes: i64,
     content_hash: Option<String>,
+    /// `None` = live. Tombstones still count as references (#3654) but are
+    /// picked LAST as a hash group's canonical file.
+    deleted_at: Option<String>,
 }
 
 /// Populate `attachment_blobs` from existing `attachments` rows and repoint
@@ -77,12 +83,29 @@ pub async fn backfill_attachment_blobs(
     pool: &SqlitePool,
     app_data_dir: &Path,
 ) -> Result<BlobBackfillReport, AppError> {
-    // Live rows only (`deleted_at IS NULL`). The blob layer reflects the set
-    // of LIVE references, matching the refcount semantics used by the GC.
+    // #3654: EVERY row, not just the live ones. This pass used to scope with
+    // `WHERE deleted_at IS NULL` under a comment claiming it matched "the
+    // refcount semantics used by the GC" — which was the opposite of what the
+    // GC does. `cleanup_orphaned_attachments` loads `SELECT fs_path FROM
+    // attachments` with NO predicate, so a soft-deleted row keeps its file
+    // alive; this pass then refused to index that file, leaving bytes on disk
+    // that nothing could dedup onto and no `content_hash` could resolve.
+    //
+    // The disagreement is settled in the GC's direction, because a tombstone
+    // is restorable: `history.rs`' `add_attachment` reversal re-inserts the
+    // row with its ORIGINAL `fs_path`, and nothing re-fetches those bytes
+    // (`sync_files`' missing-file scan is live-rows-only). Dropping a
+    // tombstone's bytes therefore turns a restore into a permanently broken
+    // reference, while keeping them costs disk until the row is hard-deleted
+    // — the same asymmetry #3371/#3660 settled for the mapping itself.
+    //
+    // Nothing writes `attachments.deleted_at` in production today, so this is
+    // behaviour-preserving for every existing vault; it decides the semantics
+    // before the first writer arrives rather than after.
     let rows = sqlx::query_as!(
         Row,
-        r#"SELECT id as "id!", fs_path as "fs_path!", size_bytes as "size_bytes!", content_hash
-           FROM attachments WHERE deleted_at IS NULL"#
+        r#"SELECT id as "id!", fs_path as "fs_path!", size_bytes as "size_bytes!", content_hash, deleted_at
+           FROM attachments"#
     )
     .fetch_all(pool)
     .await?;
@@ -94,6 +117,22 @@ pub async fn backfill_attachment_blobs(
         if let Some(h) = r.content_hash.clone() {
             by_hash.entry(h).or_default().push(r);
         }
+    }
+
+    // Canonical-pick order: LIVE rows before tombstones, then by id so the
+    // choice is deterministic (the SELECT has no ORDER BY, so without this the
+    // canonical file was whatever row the query happened to return first).
+    // Preferring a live row keeps the blob's `on_disk_path` — the path
+    // `add_attachment` dedups fresh rows onto — pointing at a file a live row
+    // also references, so a later hard-delete of the tombstone cannot strand
+    // the mapping.
+    for group in by_hash.values_mut() {
+        group.sort_by(|a, b| {
+            a.deleted_at
+                .is_some()
+                .cmp(&b.deleted_at.is_some())
+                .then_with(|| a.id.cmp(&b.id))
+        });
     }
 
     let mut report = BlobBackfillReport::default();

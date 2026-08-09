@@ -21,20 +21,17 @@
 //!
 //! # Contract
 //!
-//! * [`rebuild_pages_cache_counts_from_base`] and
-//!   [`rebuild_attachment_blobs_from_base`] recompute a derived artefact
+//! * Every `rebuild_*_from_base` function recomputes a derived artefact
 //!   from **base tables only**, in Rust, from first principles. They are
 //!   deliberately slow and naive — an oracle, not a fast path.
 //! * They share **no code** with the incremental maintenance path. They do
 //!   not call `recompute_pages_cache_counts_for_pages`, `rebuild_pages_cache`,
-//!   `recompute_all_pages_cache_counts`, `cleanup_orphaned_attachments`, or
-//!   any SQL those functions use. A rebuild that calls the same projection
-//!   helper it is auditing proves nothing, so every aggregate here is folded
-//!   in Rust over a raw row dump. They do share the *specification* — see
-//!   [`rebuild_pages_cache_counts_from_base`] for the one assumption
-//!   (`blocks.page_id` as page ownership) that is therefore outside what this
-//!   oracle can falsify, and where that gap is covered instead.
-//! * [`assert_reconciled`] diffs both artefacts and reports the **first**
+//!   `recompute_all_pages_cache_counts`, `rebuild_page_ids`,
+//!   `cleanup_orphaned_attachments`, or any SQL those functions use. A
+//!   rebuild that calls the same projection helper it is auditing proves
+//!   nothing, so every aggregate, every set difference and every ancestor
+//!   walk here is folded in Rust over a raw row dump.
+//! * [`assert_reconciled`] diffs every artefact and reports the **first**
 //!   divergence in a stable order, naming the artefact, the key, expected
 //!   vs. actual, and the maintenance site that owns the arm — enough to
 //!   identify which op caused it when the caller asserts per-op.
@@ -51,12 +48,26 @@
 //! | Artefact | Base tables | Maintained by |
 //! |---|---|---|
 //! | `attachment_blobs` (blob refcount) | `attachments` | `persist_attachment` (insert arm) / `cleanup_orphaned_attachments` (prune arm) |
+//! | `pages_cache` ROW MEMBERSHIP | `blocks` | `rebuild_pages_cache` (the `RebuildPagesCache` task) |
+//! | `blocks.page_id` (page OWNERSHIP) | `blocks` | `set_block_page_id_from_parent` (create arm) / `rederive_page_and_space_ids` (move arm) / `rebuild_page_ids` (vault-wide arm) |
 //! | `pages_cache.{inbound_link_count,child_block_count}` | `blocks`, `block_links` | `maintain_pages_cache_counts_after_op` (sync arms) / `rebuild_pages_cache_counts` (deferred cohort arm) |
 //!
 //! Deliberately **not** covered here — see the follow-up issues: the agenda
 //! cache, the projected-agenda cache, `page_link_cache`, `block_tag_refs`,
-//! `tags_cache.usage_count`, `blocks.page_id`/`space_id` re-derivation, and
-//! the FTS index.
+//! `tags_cache.usage_count`, `blocks.space_id` re-derivation, and the FTS
+//! index.
+//!
+//! # The counts' page-ownership assumption is no longer unfalsifiable (#3654)
+//!
+//! Both `pages_cache` count rules read the denormalised `blocks.page_id`, and
+//! so does the incremental UPDATE they audit — so on its own the count
+//! artefact cannot see page-ownership drift: both sides read the same drifted
+//! column and agree. [`rebuild_page_ownership_from_base`] closes that by
+//! auditing the column ITSELF against a structural `parent_id` walk, and
+//! [`reconcile`] diffs ownership BEFORE the counts. A drift in `page_id` is
+//! therefore reported at its root (`blocks.page_id`) rather than silently
+//! agreed on, which is what makes the count comparison meaningful rather than
+//! self-confirming.
 //!
 //! # Eventual consistency is part of the contract, not an excuse
 //!
@@ -120,9 +131,28 @@ impl std::fmt::Display for Divergence {
 pub struct OracleCoverage {
     /// Rows in `pages_cache` (the pages whose counts are being audited).
     pub pages_cache_rows: i64,
-    /// Live `attachments` rows carrying a non-NULL `content_hash` — the rows
-    /// that can produce a blob-refcount obligation at all.
+    /// Blocks a from-base rebuild says MUST have a `pages_cache` row — live
+    /// page blocks with a title. The row-membership artefact compares a set
+    /// of this size against `pages_cache`'s key set, so a zero here means the
+    /// membership diff was `{} == {}`.
+    pub live_page_blocks: i64,
+    /// Blocks whose structurally-derived owning page is some OTHER block.
+    ///
+    /// The ownership artefact's trivial default: every page owns itself
+    /// (a DB-level CHECK, `page_id_self_for_pages`, already guarantees that
+    /// half), so a fixture in which no block is owned by a page other than
+    /// itself makes the `parent_id` walk a no-op and the comparison vacuous.
+    /// This counts the blocks for which the walk actually had to climb.
+    pub blocks_owned_by_another_page: i64,
+    /// `attachments` rows carrying a non-NULL `content_hash` — the rows that
+    /// can produce a blob obligation at all. NOT scoped to live rows: a
+    /// soft-deleted row still keeps its bytes and its blob mapping alive
+    /// (see [`rebuild_attachment_blobs_from_base`]).
     pub hashed_attachment_rows: i64,
+    /// `attachments` rows with `deleted_at` set. The tombstone arm of the
+    /// blob rebuild is only exercised when this is non-zero, so tests that
+    /// claim to cover it assert on it.
+    pub soft_deleted_attachment_rows: i64,
     /// Rows in `attachment_blobs`.
     pub attachment_blob_rows: i64,
 }
@@ -135,18 +165,40 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
         .fetch_one(pool)
         .await?;
     // dynamic-sql: static SQL, test-only oracle read-back.
-    let hashed_attachment_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM attachments WHERE content_hash IS NOT NULL AND deleted_at IS NULL",
-    )
-    .fetch_one(pool)
-    .await?;
+    let hashed_attachment_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE content_hash IS NOT NULL")
+            .fetch_one(pool)
+            .await?;
+    // dynamic-sql: static SQL, test-only oracle read-back.
+    let soft_deleted_attachment_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE deleted_at IS NOT NULL")
+            .fetch_one(pool)
+            .await?;
     // dynamic-sql: static SQL, test-only oracle read-back.
     let attachment_blob_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
         .fetch_one(pool)
         .await?;
+
+    // Both page-shaped counters come from the SAME Rust folds the artefacts
+    // use, so "the fixture covers this" and "the oracle audited this" can
+    // never drift apart.
+    let blocks = dump_blocks(pool).await?;
+    let live_page_blocks = i64::try_from(fold_live_page_blocks(&blocks).len()).unwrap_or(i64::MAX);
+    let ownership = fold_page_ownership(&blocks);
+    let blocks_owned_by_another_page = i64::try_from(
+        ownership
+            .iter()
+            .filter(|(id, owner)| owner.as_deref().is_some_and(|p| p != id.as_str()))
+            .count(),
+    )
+    .unwrap_or(i64::MAX);
+
     Ok(OracleCoverage {
         pages_cache_rows,
+        live_page_blocks,
+        blocks_owned_by_another_page,
         hashed_attachment_rows,
+        soft_deleted_attachment_rows,
         attachment_blob_rows,
     })
 }
@@ -160,11 +212,20 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
 // written in the same SQL would be a copy of the thing it audits.
 // ---------------------------------------------------------------------------
 
-/// One `blocks` row, reduced to the columns the derived counts depend on.
+/// One `blocks` row, reduced to the columns the derived artefacts depend on.
 #[derive(Debug, Clone)]
 struct BaseBlock {
     id: String,
+    /// The structural parent. The ONLY input to page ownership — everything
+    /// else about a page is a cache of this edge.
+    parent_id: Option<String>,
+    /// The denormalised ownership cache. Read as an ACTUAL value to diff
+    /// against, never as an input to a rebuild that audits ownership.
     page_id: Option<String>,
+    /// `'page'` / `'content'` / `'tag'` (CHECK `block_type_valid`, 0085).
+    block_type: String,
+    /// A page with no content has no title and therefore no cache row.
+    content: Option<String>,
     /// `None` = live. `blocks.deleted_at` is epoch-ms INTEGER (migration 0080).
     deleted_at: Option<i64>,
 }
@@ -179,22 +240,40 @@ struct BaseAttachment {
     deleted_at: Option<String>,
 }
 
+type BaseBlockRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<i64>,
+);
+
 async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
     // Kept off the offline `.sqlx` cache and deliberately aggregate-free — the
     // fold happens in Rust so this shares nothing with the maintenance path.
+    // In particular there is no recursive CTE here: the ancestor walk that
+    // derives page ownership is the one thing `rebuild_page_ids` expresses as
+    // a `WITH RECURSIVE`, so expressing it the same way would make the oracle
+    // a copy of the code it audits.
     // dynamic-sql: static SQL, test-only oracle base-table dump.
-    let rows = sqlx::query_as::<_, (String, Option<String>, Option<i64>)>(
-        "SELECT id, page_id, deleted_at FROM blocks",
+    let rows = sqlx::query_as::<_, BaseBlockRow>(
+        "SELECT id, parent_id, page_id, block_type, content, deleted_at FROM blocks",
     )
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(id, page_id, deleted_at)| BaseBlock {
-            id,
-            page_id,
-            deleted_at,
-        })
+        .map(
+            |(id, parent_id, page_id, block_type, content, deleted_at)| BaseBlock {
+                id,
+                parent_id,
+                page_id,
+                block_type,
+                content,
+                deleted_at,
+            },
+        )
         .collect())
 }
 
@@ -225,6 +304,159 @@ async fn dump_attachments(pool: &SqlitePool) -> Result<Vec<BaseAttachment>, AppE
         .collect())
 }
 
+/// `blocks.block_type` for a page. A block is a page iff this matches
+/// (CHECK `block_type_valid`, migration 0085, admits only
+/// `content` / `tag` / `page`).
+const PAGE_BLOCK_TYPE: &str = "page";
+
+// ---------------------------------------------------------------------------
+// Artefact 3 — `pages_cache` ROW MEMBERSHIP (#3654 part 1)
+// ---------------------------------------------------------------------------
+
+/// The set of block ids that MUST have a `pages_cache` row.
+///
+/// Transcribed from the column semantics, not from the maintenance SQL: a
+/// `pages_cache` row is the materialised *title* of a page, so it exists for
+/// exactly the blocks that are a live page carrying a title.
+///
+/// A plain `filter` over the raw `blocks` dump — no `NOT IN`, no anti-join,
+/// no `SELECT … FROM blocks` predicate pushed into SQLite. `rebuild_pages_cache`
+/// expresses the same set twice (as the source of an UPSERT and as the
+/// `NOT IN (…)` of a delete-orphans sweep); a rebuild that asked SQLite the
+/// same question would agree with both copies of a bug in it.
+fn fold_live_page_blocks(blocks: &[BaseBlock]) -> BTreeSet<String> {
+    blocks
+        .iter()
+        .filter(|b| {
+            b.block_type == PAGE_BLOCK_TYPE && b.deleted_at.is_none() && b.content.is_some()
+        })
+        .map(|b| b.id.clone())
+        .collect()
+}
+
+/// Recompute which pages must have a `pages_cache` row, from `blocks` alone.
+///
+/// # Why this is a SEPARATE artefact from the counts
+///
+/// [`reconcile`]'s count diff keys **both** sides off the rows that already
+/// exist in `pages_cache`, so it compares two count columns for pages the
+/// cache already knows about. A **missing** row for a live page (its title
+/// never lands, and every count arm below has nothing to maintain) or an
+/// **extra** row for a block that is no longer a live titled page (a stale
+/// title in the Pages list, and a page that keeps being counted after it is
+/// gone) are both invisible to it. The counts are the values; this is the
+/// key set.
+pub async fn rebuild_pages_cache_rows_from_base(
+    pool: &SqlitePool,
+) -> Result<BTreeSet<String>, AppError> {
+    Ok(fold_live_page_blocks(&dump_blocks(pool).await?))
+}
+
+/// Read the key set of `pages_cache` as it stands.
+async fn read_pages_cache_page_ids(pool: &SqlitePool) -> Result<BTreeSet<String>, AppError> {
+    // dynamic-sql: static SQL, test-only oracle read-back of the derived table.
+    let rows: Vec<String> = sqlx::query_scalar("SELECT page_id FROM pages_cache")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// Run production's `pages_cache` ROW pass — the `RebuildPagesCache` task
+/// `materializer::dispatch` enqueues for every op that mutates a page block
+/// (create / edit-title / delete / restore / purge; `#2037 pt2` drops it for
+/// ops whose block-type hint is exactly `content`).
+///
+/// Row membership has **no** synchronous per-op arm at all: this rebuild is
+/// its only maintainer, so a caller that mutates a page and asserts without it
+/// is asserting against an un-settled state. It is production code
+/// (`agaric_store::cache::rebuild_pages_cache`), so breaking it turns the
+/// oracle red. Note it does NOT touch either count column (#417 moved that to
+/// [`settle_deferred_pages_cache_counts`]), so calling it can never repair a
+/// count bug and mask it.
+pub async fn settle_pages_cache_rows(pool: &SqlitePool) -> Result<(), AppError> {
+    agaric_store::cache::rebuild_pages_cache(pool).await
+}
+
+// ---------------------------------------------------------------------------
+// Artefact 4 — `blocks.page_id`, i.e. page OWNERSHIP (#3654 part 2)
+// ---------------------------------------------------------------------------
+
+/// Derive every block's owning page STRUCTURALLY, from `parent_id` alone.
+///
+/// The specification (`cache::page_id::DESIRED_PAGE_ID_SQL` + its R27
+/// fixpoint extension, transcribed — not called, and not re-expressed as a
+/// recursive CTE):
+///
+/// * a page owns itself (also a DB CHECK, `page_id_self_for_pages`);
+/// * any other block is owned by its NEAREST page ancestor, walking `parent_id`
+///   upwards;
+/// * a block with no page ancestor — an orphan, a bare `tag`, or a member of a
+///   `parent_id` cycle — is owned by nothing (`NULL`).
+///
+/// `deleted_at` is deliberately NOT consulted: production derives `page_id`
+/// for tombstones too, and a rebuild that skipped them would report a
+/// divergence on every soft-deleted block.
+///
+/// The walk is bounded by the number of blocks and carries its own `visited`
+/// set, so a corrupted `parent_id` cycle resolves to `None` instead of
+/// hanging — the same outcome production's `depth < 100` cap plus fixpoint
+/// extension produces, reached without borrowing its shape.
+fn fold_page_ownership(blocks: &[BaseBlock]) -> BTreeMap<String, Option<String>> {
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+
+    let mut out = BTreeMap::new();
+    for start in blocks {
+        let mut visited: BTreeSet<&str> = BTreeSet::new();
+        let mut cursor: Option<&BaseBlock> = Some(start);
+        let mut owner: Option<String> = None;
+        while let Some(block) = cursor {
+            if !visited.insert(block.id.as_str()) {
+                // `parent_id` cycle — unresolvable, exactly as the capped CTE
+                // plus its fixpoint extension leave it.
+                break;
+            }
+            if block.block_type == PAGE_BLOCK_TYPE {
+                owner = Some(block.id.clone());
+                break;
+            }
+            cursor = block
+                .parent_id
+                .as_deref()
+                .and_then(|p| by_id.get(p).copied());
+        }
+        out.insert(start.id.clone(), owner);
+    }
+    out
+}
+
+/// Recompute `blocks.page_id` for every block from the `parent_id` tree.
+///
+/// This is the artefact the `pages_cache` count rebuild used to have to
+/// ASSUME. Both count rules read `blocks.page_id` as page ownership and so
+/// does the incremental UPDATE they audit, so ownership drift — the E4 shape,
+/// a cross-page move whose re-derivation is missed — used to be invisible:
+/// both sides read the same drifted column and agreed. Auditing the column
+/// against the tree it is a cache of is what turns that shared input from an
+/// assumption into a checked fact.
+pub async fn rebuild_page_ownership_from_base(
+    pool: &SqlitePool,
+) -> Result<BTreeMap<String, Option<String>>, AppError> {
+    Ok(fold_page_ownership(&dump_blocks(pool).await?))
+}
+
+/// Run production's vault-wide `page_id` re-derivation — the `RebuildPageIds`
+/// task, a member of the create / delete / restore / purge and inbound-sync
+/// rebuild sets in `materializer::dispatch`.
+///
+/// A MOVE deliberately does NOT enqueue it (#2200): the local move command
+/// re-derives the moved subtree synchronously in-transaction via
+/// `commands::block_cleanup::rederive_page_and_space_ids`. A driver that
+/// re-derived after every op would therefore repair exactly the arm most
+/// likely to be wrong, so callers run this only where production does.
+pub async fn settle_derived_page_ids(pool: &SqlitePool) -> Result<(), AppError> {
+    agaric_store::cache::rebuild_page_ids(pool).await
+}
+
 // ---------------------------------------------------------------------------
 // Artefact 1 — `pages_cache.{inbound_link_count, child_block_count}`
 // ---------------------------------------------------------------------------
@@ -252,22 +484,33 @@ pub struct PageCounts {
 /// `JOIN` is delegated to SQLite, so this cannot accidentally inherit a bug
 /// from the correlated-subquery UPDATE it audits.
 ///
-/// # The one assumption this rebuild DOES share with the thing it audits
+/// # The input this rebuild shares with the thing it audits — and why that is
+/// no longer an unfalsifiable assumption (#3654)
 ///
 /// Both count rules above read the denormalised `blocks.page_id` column, and
-/// so does the maintenance UPDATE. Page ownership is therefore **not** the
-/// subject of this oracle: if `page_id` itself drifts from the `parent_id`
-/// tree (the E4 shape — a cross-page move whose re-derivation is missed), the
-/// UPDATE and this rebuild read the same drifted column and agree.
+/// so does the maintenance UPDATE. On its own that would put page ownership
+/// outside what this artefact can falsify: if `page_id` drifts from the
+/// `parent_id` tree (the E4 shape — a cross-page move whose re-derivation is
+/// missed), the UPDATE and this rebuild read the same drifted column and
+/// agree.
 ///
-/// That gap is deliberately covered elsewhere, not left open:
-/// `materializer::tests::pages_cache_parity::canonical_counts` derives
-/// `child_block_count` by walking `parent_id` structurally and never reads
-/// `page_id`. What THIS rebuild adds over that one is not a stronger
-/// definition but a different question — whether the per-`PreOpState`-arm
-/// affected-page resolution refreshed the rows it had to, over *generated* op
-/// interleavings rather than hand-written fixtures. Re-deriving `page_id`
-/// from `parent_id` here as well is the natural next slice.
+/// [`rebuild_page_ownership_from_base`] now audits that column against the
+/// tree it is a cache of, and [`reconcile`] diffs it BEFORE these counts, so a
+/// drift is reported once, at its root, naming `blocks.page_id` and the
+/// re-derivation arm — rather than as an unexplained count difference, or not
+/// at all. The counts are deliberately left keyed on `page_id` rather than
+/// recomputed from the derived ownership: a count divergence then means "the
+/// affected-page resolution missed a row", a distinct failure from "ownership
+/// itself is wrong", and the two report separately instead of one masking the
+/// other.
+///
+/// `materializer::tests::pages_cache_parity::canonical_counts` remains the
+/// other structural view (it derives `child_block_count` by descending the
+/// live `parent_id` tree and stopping at nested page boundaries). It differs
+/// from the pair here on one edge — a live block under a soft-deleted parent
+/// is excluded there but owned here, because production's `page_id`
+/// derivation ignores `deleted_at`. Neither is wrong; they answer different
+/// questions, and this module claims only the one it computes.
 pub async fn rebuild_pages_cache_counts_from_base(
     pool: &SqlitePool,
 ) -> Result<BTreeMap<String, PageCounts>, AppError> {
@@ -373,8 +616,8 @@ pub async fn settle_deferred_pages_cache_counts(pool: &SqlitePool) -> Result<(),
 /// What a from-base rebuild says one content hash's blob entry must look like.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobExpectation {
-    /// Number of LIVE `attachments` rows carrying this hash. Never 0 — a hash
-    /// with no referencing row does not appear in the rebuild at all.
+    /// Number of `attachments` rows carrying this hash. Never 0 — a hash with
+    /// no referencing row does not appear in the rebuild at all.
     pub refcount: usize,
     /// The `fs_path`s those rows point at. Under #1993 dedup this is normally
     /// a single canonical path shared by all of them.
@@ -382,6 +625,11 @@ pub struct BlobExpectation {
     /// The ids of the referencing rows, so a divergence report names the rows
     /// whose bytes are at stake rather than just a hash.
     pub referrer_ids: BTreeSet<String>,
+    /// Which of [`Self::referrer_ids`] are tombstones (`deleted_at` set). A
+    /// hash held up ONLY by tombstones is the interesting case — see
+    /// [`rebuild_attachment_blobs_from_base`] — so a report says so instead of
+    /// leaving the reader to wonder why a "deleted" attachment still matters.
+    pub soft_deleted_referrer_ids: BTreeSet<String>,
 }
 
 /// Recompute the blob store from `attachments` alone.
@@ -391,36 +639,42 @@ pub struct BlobExpectation {
 /// derived truth is therefore purely a fold over `attachments`:
 ///
 /// > a blob row must exist for exactly those content hashes carried by at
-/// > least one live `attachments` row, and its `on_disk_path` must be a path
-/// > one of those rows actually references.
+/// > least one `attachments` row, and its `on_disk_path` must be a path one of
+/// > those rows actually references.
 ///
 /// The second half is the load-bearing one. `cleanup_orphaned_attachments`
 /// decides what to unlink by testing `on_disk_path` membership in
 /// `SELECT fs_path FROM attachments` — it never consults `content_hash`. A
-/// blob whose `on_disk_path` no live referrer uses is therefore a blob whose
-/// bytes the GC will unlink while live rows still resolve that hash to them.
+/// blob whose `on_disk_path` no referrer uses is therefore a blob whose bytes
+/// the GC will unlink while rows still resolve that hash to them.
+///
+/// # Soft-deleted rows ARE references (#3654 part 3)
+///
+/// The two production writers of `attachment_blobs` used to disagree here.
+/// `cleanup_orphaned_attachments` loads `SELECT fs_path FROM attachments` with
+/// NO predicate, so a tombstone keeps both the file and the blob row alive;
+/// `backfill_attachment_blobs` scoped its candidate set with
+/// `WHERE deleted_at IS NULL` while its comment claimed to match "the refcount
+/// semantics used by the GC", which was the opposite of what the GC does.
+/// Benign only because `attachments.deleted_at` still has no production writer
+/// — which is exactly why it had to be settled before one appears rather than
+/// discovered afterwards.
+///
+/// It is settled in the GC's direction, and the backfill was moved to match:
+/// **a tombstone is still a reference.** A tombstone is restorable
+/// (`history.rs`' `add_attachment` reversal re-inserts the row with its
+/// original `fs_path`), and nothing re-fetches its bytes — `sync_files`'
+/// missing-file scan is live-rows-only. So dropping a tombstone's bytes turns
+/// a restore into a permanently broken reference, while keeping them costs
+/// disk until the row is hard-deleted. That is the same asymmetry #3371 and
+/// #3660 already settled for the mapping itself: a reference that outlives its
+/// bytes is unrecoverable, a redundant copy self-heals.
 pub async fn rebuild_attachment_blobs_from_base(
     pool: &SqlitePool,
 ) -> Result<BTreeMap<String, BlobExpectation>, AppError> {
     let attachments = dump_attachments(pool).await?;
     let mut out: BTreeMap<String, BlobExpectation> = BTreeMap::new();
     for a in &attachments {
-        // Soft-deleted rows are not references. `attachments.deleted_at` has no
-        // production writer today (`delete_attachment_inner` hard-deletes the
-        // row), so this arm is unreachable in the current tree.
-        //
-        // It is NOT neutral, though, and the choice is deliberate: the two
-        // production writers of `attachment_blobs` disagree about soft-deleted
-        // rows. `backfill_attachment_blobs` scopes the blob set with
-        // `WHERE deleted_at IS NULL`; `cleanup_orphaned_attachments` loads
-        // `SELECT fs_path FROM attachments` with NO predicate and therefore
-        // treats a soft-deleted row as a live reference that keeps both the
-        // blob row and its bytes alive. This rebuild sides with the backfill,
-        // so the first production writer of `attachments.deleted_at` will turn
-        // this oracle red on that disagreement rather than let it ship silently.
-        if a.deleted_at.is_some() {
-            continue;
-        }
         let Some(hash) = a.content_hash.as_deref() else {
             // Rows written by the op-apply arm (`apply_add_attachment_tx`)
             // carry no hash at all and therefore impose no blob obligation.
@@ -432,10 +686,14 @@ pub async fn rebuild_attachment_blobs_from_base(
                 refcount: 0,
                 referenced_paths: BTreeSet::new(),
                 referrer_ids: BTreeSet::new(),
+                soft_deleted_referrer_ids: BTreeSet::new(),
             });
         entry.refcount += 1;
         entry.referenced_paths.insert(a.fs_path.clone());
         entry.referrer_ids.insert(a.id.clone());
+        if a.deleted_at.is_some() {
+            entry.soft_deleted_referrer_ids.insert(a.id.clone());
+        }
     }
     Ok(out)
 }
@@ -457,9 +715,13 @@ async fn read_attachment_blobs(pool: &SqlitePool) -> Result<BTreeMap<String, Str
 
 /// Diff every covered derived artefact against its from-base rebuild.
 ///
-/// Divergences come back in a stable order (attachment blob store first, then
-/// `pages_cache`, each sorted by key) so `first` is deterministic and a
-/// shrunk proptest counter-example reports the same line every run.
+/// Divergences come back in a stable order, each artefact sorted by key, so
+/// `first` is deterministic and a shrunk proptest counter-example reports the
+/// same line every run. The order is ROOT-CAUSE FIRST within the `pages_cache`
+/// family: ownership (`blocks.page_id`) precedes row membership, which
+/// precedes the counts, because the counts are keyed on both of the others. A
+/// single missed `page_id` re-derivation therefore reports as one ownership
+/// divergence rather than as an unexplained count difference on two pages.
 pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
     let mut out = Vec::new();
 
@@ -472,7 +734,8 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
             None => out.push(Divergence {
                 artefact: "attachment_blobs.refcount",
                 key: hash.clone(),
-                expected: "no blob row (refcount 0 — no live attachments row carries this hash)"
+                expected: "no blob row (refcount 0 — no attachments row, live or \
+                           soft-deleted, carries this hash)"
                     .to_owned(),
                 actual: format!("blob row present, on_disk_path={on_disk_path}"),
                 owner: "cleanup_orphaned_attachments (the only INCREMENTAL prune arm; \
@@ -486,12 +749,14 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
                         artefact: "attachment_blobs.on_disk_path",
                         key: hash.clone(),
                         expected: format!(
-                            "one of the {} live referrers' fs_paths {:?} (rows {:?})",
+                            "one of the {} referrers' fs_paths {:?} (rows {:?}, of which \
+                             soft-deleted: {:?})",
                             expectation.refcount,
                             expectation.referenced_paths,
-                            expectation.referrer_ids
+                            expectation.referrer_ids,
+                            expectation.soft_deleted_referrer_ids
                         ),
-                        actual: format!("{on_disk_path} (referenced by no live row)"),
+                        actual: format!("{on_disk_path} (referenced by no attachments row)"),
                         owner: "persist_attachment (dedup INSERT arm) / \
                                 cleanup_orphaned_attachments (prune arm) — the GC unlinks \
                                 bytes whose path no `attachments.fs_path` matches, so these \
@@ -508,18 +773,84 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
                 artefact: "attachment_blobs.refcount",
                 key: hash.clone(),
                 expected: format!(
-                    "blob row present (refcount {}, referenced_paths {:?}, referrers {:?})",
-                    expectation.refcount, expectation.referenced_paths, expectation.referrer_ids
+                    "blob row present (refcount {}, referenced_paths {:?}, referrers {:?}, \
+                     of which soft-deleted: {:?})",
+                    expectation.refcount,
+                    expectation.referenced_paths,
+                    expectation.referrer_ids,
+                    expectation.soft_deleted_referrer_ids
                 ),
                 actual: "no blob row".to_owned(),
                 owner: "the insert arms — persist_attachment (local ingest), \
-                        sync_files::register_received_blob (INSERT OR IGNORE after a \
-                        verified receive), recovery::backfill_attachment_blobs — a live \
+                        sync_files::register_received_blob (repointing upsert after a \
+                        verified receive), recovery::backfill_attachment_blobs — an \
                         attachments row carries a content_hash with no blob entry, so \
                         the next ingest of those bytes writes a second copy and the \
                         dedup target is lost",
             });
         }
+    }
+
+    // --- Artefact 4: blocks.page_id (page OWNERSHIP) -------------------------
+    //
+    // FIRST of the pages_cache family: the two artefacts below are keyed on
+    // this column, so reporting it first names the root cause once instead of
+    // reporting its consequences on every affected page.
+    let blocks = dump_blocks(pool).await?;
+    let expected_ownership = fold_page_ownership(&blocks);
+    let stored_ownership: BTreeMap<&str, Option<&str>> = blocks
+        .iter()
+        .map(|b| (b.id.as_str(), b.page_id.as_deref()))
+        .collect();
+    for (block_id, expected_owner) in &expected_ownership {
+        let Some(actual_owner) = stored_ownership.get(block_id.as_str()) else {
+            continue;
+        };
+        if expected_owner.as_deref() != *actual_owner {
+            out.push(Divergence {
+                artefact: "blocks.page_id",
+                key: block_id.clone(),
+                expected: expected_owner
+                    .clone()
+                    .unwrap_or_else(|| "NULL (no page ancestor via parent_id)".to_owned()),
+                actual: actual_owner.map_or_else(|| "NULL".to_owned(), str::to_owned),
+                owner: "set_block_page_id_from_parent (the scoped leaf-create arm) / \
+                        commands::block_cleanup::rederive_page_and_space_ids (the in-tx \
+                        move arm — a MOVE deliberately does NOT enqueue the vault-wide \
+                        rebuild, #2200) / cache::rebuild_page_ids (the vault-wide arm \
+                        dispatch enqueues for create/delete/restore/purge and inbound \
+                        sync) — the denormalised owner disagrees with the parent_id \
+                        tree it caches, so every page_id-keyed count, filter and \
+                        backlink below it is computed for the wrong page",
+            });
+        }
+    }
+
+    // --- Artefact 3: pages_cache ROW MEMBERSHIP ------------------------------
+    let expected_rows = fold_live_page_blocks(&blocks);
+    let actual_rows = read_pages_cache_page_ids(pool).await?;
+    for page_id in expected_rows.difference(&actual_rows) {
+        out.push(Divergence {
+            artefact: "pages_cache.row",
+            key: page_id.clone(),
+            expected: "a cache row (live page block carrying a title)".to_owned(),
+            actual: "no row in pages_cache".to_owned(),
+            owner: "rebuild_pages_cache (the RebuildPagesCache task — row membership has \
+                    NO synchronous per-op arm) — the page is missing from the Pages \
+                    list, its title never materialises, and the count arms have no row \
+                    to maintain",
+        });
+    }
+    for page_id in actual_rows.difference(&expected_rows) {
+        out.push(Divergence {
+            artefact: "pages_cache.row",
+            key: page_id.clone(),
+            expected: "no cache row (the block is not a live page block with a title)".to_owned(),
+            actual: "a row in pages_cache".to_owned(),
+            owner: "rebuild_pages_cache (its delete-orphans sweep) — a deleted, purged, \
+                    demoted or title-cleared page still occupies the Pages list and \
+                    still carries counts",
+        });
     }
 
     // --- Artefact 1: pages_cache counts --------------------------------------
