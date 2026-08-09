@@ -565,6 +565,50 @@ describe('internalizeRefTokens (#1484)', () => {
     )
     expect(created.tags).toEqual(['Alpha #b', 'real'])
   })
+
+  // #3605 — the code guard now covers the PAGE pass too. Its absence there was
+  // not merely a phantom page: the token was also rewritten, so a snippet
+  // documenting the `[[Page]]` syntax came back with a raw ULID pasted into
+  // the user's literal code. The editor's own parser (`scanCodeSpan`) takes a
+  // code span's content raw and never scans it for `[[ULID]]`, so that ULID
+  // could never have rendered as a link either.
+  it('leaves a [[Page]] link inside an inline-code span literal and uncreated (#3605)', async () => {
+    const { resolvers, created } = makeResolvers({ pages: { 'Quoted Page': EXISTING_PAGE } })
+    // `Quoted Page` WOULD resolve — so a byte-identical span proves the guard,
+    // not merely an unresolvable name falling back to its plain token.
+    expect(await internalizeRefTokens('see `[[Quoted Page]]` here', resolvers)).toBe(
+      'see `[[Quoted Page]]` here',
+    )
+    expect(created.pages).toEqual([])
+  })
+
+  it('leaves a [[Page]] link inside a fenced code block literal and uncreated (#3605)', async () => {
+    const { resolvers, created } = makeResolvers({})
+    const fenced = '```md\nlink syntax: [[Fenced Page]]\n```'
+    expect(await internalizeRefTokens(fenced, resolvers)).toBe(fenced)
+    expect(created.pages).toEqual([])
+  })
+
+  it('still resolves a [[Page]] link OUTSIDE any code span (#3605)', async () => {
+    // The guard must be a span check, not a blanket off-switch: a block that
+    // merely CONTAINS a code span still resolves the links outside it.
+    const { resolvers, created } = makeResolvers({ pages: { 'Quoted Page': EXISTING_PAGE } })
+    expect(await internalizeRefTokens('`[[Quoted Page]]` vs [[Live Page]]', resolvers)).toBe(
+      `\`[[Quoted Page]]\` vs [[${NEW_PAGE}]]`,
+    )
+    expect(created.pages).toEqual(['Live Page'])
+  })
+
+  it('leaves a canonical [[ULID]] inside a code span byte-identical (#3605)', async () => {
+    // Already covered by `skipCanonicalBody`, but pin it: the new guard must
+    // not be the only thing standing between an internal copy → paste round
+    // trip and a mangled ULID.
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens(`\`[[${EXISTING_PAGE}]]\``, resolvers)).toBe(
+      `\`[[${EXISTING_PAGE}]]\``,
+    )
+    expect(created.pages).toEqual([])
+  })
 })
 
 // Full human-readable → internal → human-readable round-trip (#1440 + #1484):

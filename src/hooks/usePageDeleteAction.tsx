@@ -37,6 +37,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
@@ -141,6 +142,9 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         .then(unwrap)
         .then(() => {
           setResolveDeletedStatus(deletedTarget, false)
+          // #3626 — the page is back; the calendar's cached journal-page
+          // ranges predate the restore and would keep its dot hidden.
+          invalidateCalendarPageDates()
           deletedTarget.onRestored?.(deletedTarget.id)
           notify.success(t('pageDeleteAction.restored'))
         })
@@ -164,6 +168,10 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
     try {
       unwrap(await commands.deleteBlock(id))
       setResolveDeletedStatus(target, true)
+      // #3626 — a deleted page must stop lighting up the calendar. The
+      // journal's own DaySection routes its delete through here too, so this
+      // one call covers every surface that can remove a journal page.
+      invalidateCalendarPageDates()
       notify.success(t('pageDeleteAction.deleted'), {
         action: {
           label: t('pageDeleteAction.undo'),

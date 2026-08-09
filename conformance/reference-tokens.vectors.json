@@ -85,6 +85,39 @@
       "name": "a double-backtick run pairs as two single-backtick spans on both sides",
       "input": "``#code`` and #real",
       "requestedTagNames": ["code", "real"]
+    },
+    {
+      "name": "a bare fence opener owns the PRECEDING block's depth, not its own indent (#3627)",
+      "input": "  - a\n```\n  - b #probe",
+      "requestedTagNames": ["probe"]
+    },
+    {
+      "name": "the mirror shape — a bare opener indented PAST the preceding block still owns that block's depth (#3627)",
+      "input": "- a\n  ```\n  - b #probe",
+      "requestedTagNames": []
+    },
+    {
+      "name": "a bulleted fence opener still owns its own bullet's depth, not the preceding block's (#3627)",
+      "input": "  - a\n- ```\n- b #probe",
+      "requestedTagNames": ["probe"]
+    },
+    {
+      "name": "a [[Page]] link inside an inline-code span asks for no page (#3605)",
+      "input": "see `[[Quoted Page]]` and [[Real Page]]",
+      "requestedPageNames": ["Real Page"],
+      "requestedTagNames": []
+    },
+    {
+      "name": "a [[Page]] link inside a fenced code block asks for no page (#3605)",
+      "input": "```\n[[Fenced Page]]\n```",
+      "requestedPageNames": [],
+      "requestedTagNames": []
+    },
+    {
+      "name": "a [[Page]] link outside any code span is still resolved (#3605 guard is not a blanket off-switch)",
+      "input": "plain [[Real Page]] link",
+      "requestedPageNames": ["Real Page"],
+      "requestedTagNames": []
     }
   ],
   "humanizeCases": [

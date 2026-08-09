@@ -29,6 +29,11 @@ vi.mock('@/components/ui/calendar', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 
+/** Count of `list_journal_pages_in_range` IPC round trips so far. */
+function pageRangeFetchCount(): number {
+  return mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_journal_pages_in_range').length
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   resetAllShortcuts()
@@ -180,6 +185,37 @@ describe('JournalControls', () => {
       ([cmd]) => cmd === 'list_journal_pages_in_range',
     )
     expect(fetchCalls).toHaveLength(1)
+  })
+
+  // #3626 — closing the dropdown UNMOUNTS it (both call sites render it as
+  // `{calendarOpen && <JournalCalendarDropdown …>}`), which is what keeps its
+  // `displayedMonth` state honest across opens (#3340). The dedupe used to be
+  // in-flight only, so that unmount/remount cycle cost a fresh IPC on every
+  // reopen. Pin the COUNT: a fix that re-fetched but rendered identical dots
+  // would be invisible here otherwise.
+  it('re-opening the calendar dropdown does not re-fetch the highlight range (#3626)', async () => {
+    const user = userEvent.setup()
+    render(<JournalControls />)
+    const trigger = screen.getByRole('button', { name: /open calendar picker/i })
+
+    await user.click(trigger)
+    await screen.findByTestId('mock-calendar')
+    await waitFor(() => {
+      expect(pageRangeFetchCount()).toBe(1)
+    })
+
+    await user.click(trigger)
+    // Unmounted, not merely hidden — "fix the refetch by hiding instead of
+    // unmounting" would silently reintroduce the stale month #3340 fixed.
+    await waitFor(() => {
+      expect(screen.queryByTestId('mock-calendar')).not.toBeInTheDocument()
+    })
+    expect(screen.queryByRole('dialog', { name: /date picker/i })).not.toBeInTheDocument()
+
+    await user.click(trigger)
+    await screen.findByTestId('mock-calendar')
+
+    expect(pageRangeFetchCount()).toBe(1)
   })
 
   it('does not fetch the page list when no space is active (b1)', async () => {

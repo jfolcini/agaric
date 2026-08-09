@@ -239,16 +239,33 @@ struct PendingHeading {
 /// canonical `[[ULID]]` ref is skipped (it needs no resolution). Used to drive
 /// the create-if-missing pre-pass before the block-write loop, so each distinct
 /// name is resolved/created exactly once regardless of how many blocks cite it.
+///
+/// #3605 — a link inside CODE is literal text and resolves to nothing. A
+/// `is_code` block (born inside a ```` ``` ```` fence) is skipped wholesale and
+/// inline-code spans are skipped within a block, exactly as
+/// `collect_inbound_tag_names` already does for `#tag`. Before this, the same
+/// fenced block whose `#tag`s were left alone still had its `[[Page]]` links
+/// resolved AND rewritten — so a snippet documenting the wiki-link syntax both
+/// minted a page nobody asked for and came back with a raw ULID pasted into
+/// the code.
 fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
     use std::collections::BTreeSet;
     let mut names: BTreeSet<String> = BTreeSet::new();
     for block in blocks {
+        if block.is_code {
+            continue;
+        }
         // #1921 — skip the regex scan for link-free blocks (the common case).
         if !block.content.contains("[[") {
             continue;
         }
+        let code_spans = inline_code_spans(&block.content);
         for cap in HUMAN_PAGE_LINK_RE.captures_iter(&block.content) {
             let whole = cap.get(0).expect("group 0 always present");
+            // #3605 — inside an inline-code span: literal, never resolved.
+            if is_in_span(whole.start(), &code_spans) {
+                continue;
+            }
             // #1950 — a `[[...]]` immediately preceded by `#` is the multi-word
             // tag form `#[[Tag With Space]]`, NOT a page link. Leave it for the
             // tag pre-pass: do not collect it as a page name (so no page is
@@ -281,6 +298,9 @@ fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String
 /// absent from the map (unresolvable / ambiguous duplicate title / creation
 /// failure) is left as its original plain-text token — nothing is dropped.
 /// Canonical `[[ULID]]` tokens already in the content are left untouched.
+/// Code blocks (`is_code`) are handled by the CALLER (skipped before this
+/// runs); inline-code spans are skipped here (#3605) — the exact split
+/// `rewrite_inbound_tags` uses.
 fn rewrite_inbound_page_links(content: &str, resolved: &HashMap<String, String>) -> String {
     // #1921 fast-path: a block with no `[[` can carry no wiki-link, so skip the
     // regex scan + capture/replace work entirely. Behaviour is identical for
@@ -289,10 +309,16 @@ fn rewrite_inbound_page_links(content: &str, resolved: &HashMap<String, String>)
     if !content.contains("[[") {
         return content.to_string();
     }
+    let code_spans = inline_code_spans(content);
     HUMAN_PAGE_LINK_RE
         .replace_all(content, |caps: &regex::Captures<'_>| {
             let m = caps.get(0).expect("group 0 always present");
             let whole = m.as_str();
+            // #3605 — IDENTICAL guard to `collect_inbound_page_link_names`:
+            // a link inside an inline-code span stays byte-identical.
+            if is_in_span(m.start(), &code_spans) {
+                return whole.to_string();
+            }
             // #1950 — IDENTICAL guard to `collect_inbound_page_link_names`: a
             // `[[...]]` immediately preceded by `#` is the `#[[Tag]]` multi-word
             // tag form. Leave it untouched here so the tag rewrite (which runs
@@ -3056,7 +3082,17 @@ async fn insert_blocks(
             &resolved_page_links,
             &resolved_tag_tokens,
         );
-        let content = rewrite_inbound_page_links(&content, &resolved_page_links);
+        // #3605 — a code block's `[[Page]]` text is literal, so it is skipped
+        // here exactly as the tag rewrite below and the attachment detection
+        // further down already skip it. Leaving it eager meant the SAME block
+        // kept its `#tag`s verbatim while its wiki-links were swapped for
+        // ULIDs — an inconsistency inside one importer, not just across the
+        // two implementations.
+        let content = if block.is_code {
+            content
+        } else {
+            rewrite_inbound_page_links(&content, &resolved_page_links)
+        };
         // #1924 / #1950 — then rewrite inbound inline tags (`#tag`,
         // `#[[Tag With Space]]`) to `#[ULID]` refs using the pre-resolved
         // token→ULID map. A code block (`is_code`, born inside a ```` ``` ````
@@ -3940,8 +3976,8 @@ mod tests {
     /// in its line-oriented importer, the frontend decides it from a single
     /// block's content. These vectors feed the raw text to each side's real
     /// mechanism — `parse_logseq_markdown` here, `fencedCodeSpans` there — and
-    /// compare the one thing both produce: the SET of tag names the resolver is
-    /// asked to create. Rewrite output is not compared, because the importer's
+    /// compare the one thing both produce: the SET of page and tag names the
+    /// resolvers are asked to create. Rewrite output is not compared, because the importer's
     /// parser rewrites block content (stripping bullets and indentation) and the
     /// paste path does not; the `cases` corpus and the unit tests pin that half.
     #[derive(serde::Deserialize)]
@@ -3949,6 +3985,11 @@ mod tests {
     struct CodeFenceCase {
         name: String,
         input: String,
+        /// #3605 — the page-link resolver's side effects, on the same footing
+        /// as the tag ones. `default` so a vector that omits it asserts ZERO
+        /// page requests, which is the truth for every vector predating it.
+        #[serde(default)]
+        requested_page_names: Vec<String>,
         requested_tag_names: Vec<String>,
     }
 
@@ -4022,6 +4063,29 @@ mod tests {
                 !parsed.blocks.is_empty(),
                 "code-fence vector {:?} parsed to no blocks — the assertion below \
                  would be vacuous",
+                vector.name
+            );
+            // #3605 — the page-link resolver is held to the same contract as
+            // the tag one: a link inside a protected code range is never even
+            // looked up, so no page is created for it.
+            let requested_pages = collect_inbound_page_link_names(&parsed.blocks);
+            assert_eq!(
+                requested_pages.len(),
+                vector.requested_page_names.len(),
+                "code-fence requested page count for {:?}: {requested_pages:?}",
+                vector.name
+            );
+            assert_eq!(
+                requested_pages
+                    .iter()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<String>>(),
+                vector
+                    .requested_page_names
+                    .iter()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<String>>(),
+                "code-fence requested page names for {:?}",
                 vector.name
             );
             let requested = collect_inbound_tag_names(&parsed.blocks);
@@ -4476,6 +4540,86 @@ mod tests {
             rewrite_inbound_page_links("see [[Target]] here", &resolved2),
             "see [[01ABC]] here",
             "a resolved name must be rewritten to its ULID ref"
+        );
+    }
+
+    /// #3605 — a `[[Page]]` inside a protected code range is literal on the
+    /// IMPORTER side too: never collected (so never created) and never
+    /// rewritten. The fenced half is a `is_code` block, the inline half an
+    /// `inline_code_spans` range — the same two mechanisms `#tag` has used
+    /// since #3598/#3599.
+    #[test]
+    fn page_links_inside_code_are_literal_3605() {
+        let blocks = vec![
+            import::ParsedBlock {
+                content: "```\nlink syntax: [[Fenced Page]]\n```".to_string(),
+                depth: 0,
+                properties: Vec::new(),
+                is_code: true,
+                block_anchor: None,
+            },
+            import::ParsedBlock {
+                content: "see `[[Quoted Page]]` vs [[Live Page]]".to_string(),
+                depth: 0,
+                properties: Vec::new(),
+                is_code: false,
+                block_anchor: None,
+            },
+        ];
+
+        let names = collect_inbound_page_link_names(&blocks);
+        assert_eq!(
+            names,
+            vec!["Live Page".to_string()],
+            "only the link outside any code range may be resolved/created; got {names:?}"
+        );
+
+        // The rewrite half. `Quoted Page` and `Fenced Page` are BOTH in the
+        // resolved map, so a byte-identical result proves the guard rather than
+        // an unresolvable name falling back to its own token.
+        let mut resolved: HashMap<String, String> = HashMap::new();
+        resolved.insert(
+            "Quoted Page".to_string(),
+            "01QUOTED0000000000000PAGE0".to_string(),
+        );
+        resolved.insert(
+            "Fenced Page".to_string(),
+            "01FENCED0000000000000PAGE0".to_string(),
+        );
+        resolved.insert(
+            "Live Page".to_string(),
+            "01LIVE00000000000000PAGE00".to_string(),
+        );
+
+        let out = rewrite_inbound_page_links(&blocks[1].content, &resolved);
+        assert_eq!(
+            out, "see `[[Quoted Page]]` vs [[01LIVE00000000000000PAGE00]]",
+            "the inline-code link must stay byte-identical while its neighbour rewrites; \
+             got {out:?}"
+        );
+    }
+
+    /// #3605 — the `is_code` half of the guard lives at the CALL SITE (as it
+    /// does for tags), so pin it through the real importer: a fenced block
+    /// whose `#tag`s the importer already leaves literal must keep its
+    /// `[[Page]]` text literal too.
+    #[test]
+    fn parsed_code_block_page_links_are_not_collected_3605() {
+        let parsed =
+            import::parse_logseq_markdown("- ```\n  see [[Fenced Page]] #fencedtag\n  ```");
+        assert!(
+            parsed.blocks.iter().any(|b| b.is_code),
+            "the vector must actually produce a code block: {:?}",
+            parsed.blocks
+        );
+        assert!(
+            collect_inbound_page_link_names(&parsed.blocks).is_empty(),
+            "a fenced block must ask for no page: {:?}",
+            collect_inbound_page_link_names(&parsed.blocks)
+        );
+        assert!(
+            collect_inbound_tag_names(&parsed.blocks).is_empty(),
+            "…and no tag either, which was already true — the two must agree"
         );
     }
 }
