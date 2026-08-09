@@ -599,32 +599,134 @@ mod tests {
     // specta binding is a string-literal union); these tests pin every
     // variant's wire string byte-for-byte against the legacy table so the
     // type-level promotion can never drift the JSON reaching the webview.
+    //
+    // #3674 — the two tables below are EXHAUSTIVE BY CONSTRUCTION. Each is
+    // written once as a list of rows and expanded by a `macro_rules!` into
+    // *two* items: the list the test sweeps, and a WILDCARD-FREE `match` that
+    // supplies that row's expected value. The `match` is what the compiler
+    // checks, so a new variant does not build until it is given a row — and
+    // the row it is given is the same row the sweep visits, so a variant can
+    // never be pinned in the expectation yet missed by the assertion.
+    //
+    // Until #3674 both tables were plain 15-element array literals, and the
+    // comment claiming a 16th variant "fails the match exhaustively" was
+    // describing `kind()`, not these. `kind()` does force an author into this
+    // file (it is a wildcard-free match), but nothing forced the new
+    // variant's WIRE STRING — the thing the frontend switches on — to be
+    // written down and checked.
+    //
+    // What is deliberately NOT done here: snapshotting. The expectations stay
+    // INDEPENDENT of the production mapping — the strings are transcribed
+    // from the pre-#2251 hand-written match, and the envelope is rebuilt from
+    // scratch with `serde_json::json!` — so re-blessing one means editing a
+    // literal and justifying it, not pressing `cargo insta accept`.
+
+    /// Expands the `AppErrorKind` wire-string rows into the sweep list and a
+    /// wildcard-free expectation `match` over the same rows (#3674).
+    macro_rules! kind_wire_rows {
+        ($( $variant:ident => $wire:literal ),+ $(,)?) => {
+            /// Every `AppErrorKind` the sweep visits — one entry per row.
+            const ALL_KINDS: &[AppErrorKind] = &[ $( AppErrorKind::$variant ),+ ];
+
+            /// The legacy wire string for `kind`. Wildcard-free on purpose: a
+            /// new `AppErrorKind` variant does not compile until it has a row.
+            fn expected_kind_wire(kind: AppErrorKind) -> &'static str {
+                match kind { $( AppErrorKind::$variant => $wire ),+ }
+            }
+        };
+    }
+
+    kind_wire_rows! {
+        Database => "database",
+        NotFound => "not_found",
+        // `AppError::PoolTimedOut` keeps the original frontend contract's
+        // `pool_busy` — deliberately NOT `pool_timed_out`.
+        PoolBusy => "pool_busy",
+        Conflict => "conflict",
+        Migration => "migration",
+        Io => "io",
+        Json => "json",
+        Ulid => "ulid",
+        InvalidOperation => "invalid_operation",
+        Channel => "channel",
+        Internal => "internal",
+        Snapshot => "snapshot",
+        Validation => "validation",
+        NonReversible => "non_reversible",
+        Cancelled => "cancelled",
+    }
+
+    /// Expands the `AppError` envelope rows into the sweep list and a
+    /// wildcard-free expectation `match` over the same rows (#3674).
+    ///
+    /// Each row spells the variant's PATTERN, a constructed SAMPLE of it, and
+    /// the legacy `kind` string. The sweep asserts the sample really matches
+    /// its own row's pattern, so a row cannot be satisfied by pasting some
+    /// other variant's value into it (and two rows sharing a pattern trip
+    /// `unreachable_patterns`).
+    macro_rules! envelope_rows {
+        ($( $pattern:pat => ($sample:expr, $wire:literal) ),+ $(,)?) => {
+            /// One constructed sample per row, paired with that row's legacy
+            /// `kind` string.
+            fn envelope_rows() -> Vec<(AppError, &'static str)> {
+                vec![ $( ($sample, $wire) ),+ ]
+            }
+
+            /// The legacy `kind` string for `err`. Wildcard-free on purpose: a
+            /// new `AppError` variant does not compile until it has a row.
+            fn expected_envelope_kind(err: &AppError) -> &'static str {
+                match err { $( $pattern => $wire ),+ }
+            }
+        };
+    }
+
+    envelope_rows! {
+        AppError::Database(_) => (AppError::Database(sqlx::Error::PoolClosed), "database"),
+        AppError::NotFound(_) => (AppError::NotFound(MSG_NOT_FOUND.into()), "not_found"),
+        AppError::PoolTimedOut => (AppError::PoolTimedOut, "pool_busy"),
+        AppError::Conflict(_) => (
+            AppError::Conflict("UNIQUE constraint failed".into()),
+            "conflict"
+        ),
+        AppError::Migration(_) => (
+            AppError::Migration(sqlx::migrate::MigrateError::Execute(
+                sqlx::Error::RowNotFound,
+            )),
+            "migration"
+        ),
+        AppError::Io(_) => (AppError::Io(std::io::Error::other("disk full")), "io"),
+        AppError::Json(_) => (
+            AppError::Json(serde_json::from_str::<()>("{bad").unwrap_err()),
+            "json"
+        ),
+        AppError::Ulid(_) => (AppError::Ulid(MSG_ULID.into()), "ulid"),
+        AppError::InvalidOperation(_) => (
+            AppError::InvalidOperation(MSG_INVALID_OP.into()),
+            "invalid_operation"
+        ),
+        AppError::Channel(_) => (AppError::Channel(MSG_CHANNEL.into()), "channel"),
+        AppError::Internal(_) => (AppError::Internal(MSG_INTERNAL.into()), "internal"),
+        AppError::Snapshot(_) => (AppError::Snapshot(MSG_SNAPSHOT.into()), "snapshot"),
+        // The sample is the UNCODED validation error; coded validation is the
+        // ONE deliberate departure from the legacy two-field envelope and is
+        // pinned separately by
+        // `serialize_coded_validation_carries_code_and_raw_reason` above.
+        AppError::Validation { .. } => (AppError::validation(MSG_VALIDATION.into()), "validation"),
+        AppError::NonReversible { .. } => (
+            AppError::NonReversible {
+                op_type: "purge_block".into(),
+            },
+            "non_reversible"
+        ),
+        AppError::Cancelled => (AppError::Cancelled, "cancelled"),
+    }
 
     #[test]
     fn wire_kind_strings_pinned_for_every_variant() {
-        // Exhaustive: one arm per AppErrorKind variant. Adding an AppError
-        // variant without extending this table fails the match exhaustively.
-        let cases: [(AppErrorKind, &str); 15] = [
-            (AppErrorKind::Database, "database"),
-            (AppErrorKind::NotFound, "not_found"),
-            (AppErrorKind::PoolBusy, "pool_busy"),
-            (AppErrorKind::Conflict, "conflict"),
-            (AppErrorKind::Migration, "migration"),
-            (AppErrorKind::Io, "io"),
-            (AppErrorKind::Json, "json"),
-            (AppErrorKind::Ulid, "ulid"),
-            (AppErrorKind::InvalidOperation, "invalid_operation"),
-            (AppErrorKind::Channel, "channel"),
-            (AppErrorKind::Internal, "internal"),
-            (AppErrorKind::Snapshot, "snapshot"),
-            (AppErrorKind::Validation, "validation"),
-            (AppErrorKind::NonReversible, "non_reversible"),
-            (AppErrorKind::Cancelled, "cancelled"),
-        ];
-        for (kind, expected) in cases {
+        for &kind in ALL_KINDS {
             assert_eq!(
                 serde_json::to_value(kind).expect("kind serializes"),
-                serde_json::Value::String(expected.into()),
+                serde_json::Value::String(expected_kind_wire(kind).into()),
                 "wire string drift for {kind:?}"
             );
         }
@@ -637,41 +739,15 @@ mod tests {
         // (`{"kind":"<legacy kind>","message":"<Display output>"}` with that
         // exact field order). Coded validation is the ONE deliberate
         // exception, pinned separately above.
-        let io_err = AppError::Io(std::io::Error::other("disk full"));
-        let json_err = AppError::Json(serde_json::from_str::<()>("{bad").unwrap_err());
-        let migrate_err = AppError::Migration(sqlx::migrate::MigrateError::Execute(
-            sqlx::Error::RowNotFound,
-        ));
-        let db_err = AppError::Database(sqlx::Error::PoolClosed);
-        let cases: Vec<(AppError, &str)> = vec![
-            (db_err, "database"),
-            (AppError::NotFound(MSG_NOT_FOUND.into()), "not_found"),
-            (AppError::PoolTimedOut, "pool_busy"),
-            (
-                AppError::Conflict("UNIQUE constraint failed".into()),
-                "conflict",
-            ),
-            (migrate_err, "migration"),
-            (io_err, "io"),
-            (json_err, "json"),
-            (AppError::Ulid(MSG_ULID.into()), "ulid"),
-            (
-                AppError::InvalidOperation(MSG_INVALID_OP.into()),
-                "invalid_operation",
-            ),
-            (AppError::Channel(MSG_CHANNEL.into()), "channel"),
-            (AppError::Internal(MSG_INTERNAL.into()), "internal"),
-            (AppError::Snapshot(MSG_SNAPSHOT.into()), "snapshot"),
-            (AppError::validation(MSG_VALIDATION.into()), "validation"),
-            (
-                AppError::NonReversible {
-                    op_type: "purge_block".into(),
-                },
-                "non_reversible",
-            ),
-            (AppError::Cancelled, "cancelled"),
-        ];
-        for (err, legacy_kind) in cases {
+        for (err, legacy_kind) in envelope_rows() {
+            // The row's sample is really the variant the row's pattern names
+            // — otherwise a variant could be "pinned" by a row holding some
+            // other variant's value, and go unexercised.
+            assert_eq!(
+                expected_envelope_kind(&err),
+                legacy_kind,
+                "envelope row for {legacy_kind:?} holds a sample of another variant: {err:?}"
+            );
             let expected = serde_json::to_string(&serde_json::json!({
                 "kind": legacy_kind,
                 "message": err.to_string(),

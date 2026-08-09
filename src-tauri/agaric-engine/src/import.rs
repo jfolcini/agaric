@@ -282,8 +282,27 @@ fn is_skippable_attachment_ref(reference: &str) -> bool {
 ///     `is_code` fenced blocks before calling this (mirroring the #1924
 ///     inline-tag pre-pass), so this function need not re-check `is_code`.
 ///
-/// Returns the refs in source order. The inline-code skip reuses the same
-/// single-backtick pairing the importer's #1924 helpers use.
+/// Returns every Obsidian embed first (in source order), then every markdown
+/// image (in source order) — **not** overall source order (#3675). The embed
+/// scan runs to completion over the whole document before the image scan
+/// starts and nothing sorts afterwards, so an image that appears *before* an
+/// embed still comes back second.
+///
+/// That grouping is a scan artefact rather than a contract, and this docstring
+/// used to promise plain source order instead. The promise was the wrong half:
+/// nothing depends on the ordering. The sole production caller
+/// (`commands::pages::markdown::insert_blocks`) forwards the refs to an
+/// order-independent read-count tally (`ingest_read_counts`, which folds them
+/// into a `HashMap`) and to a rewrite that replaces each ref's OWN
+/// [`AttachmentRef::full_match`] token via `str::replacen`, so which row is
+/// visited first cannot change the rewritten content. [`AttachmentRef`] also
+/// carries no source offset, so a caller could not re-sort by position even if
+/// it wanted to. Pinned by `tests_attachment_ref_order_3675` at the bottom of
+/// this file — do not start relying on the order without first making it a real
+/// contract (merge the two scans, or sort by match start).
+///
+/// The inline-code skip reuses the same single-backtick pairing the importer's
+/// #1924 helpers use.
 pub fn detect_attachment_refs(content: &str, code_spans: &[(usize, usize)]) -> Vec<AttachmentRef> {
     let in_code = |pos: usize| code_spans.iter().any(|&(s, e)| pos >= s && pos < e);
     let mut refs: Vec<AttachmentRef> = Vec::new();
@@ -3069,5 +3088,49 @@ mod parse_proptest {
         fn parse_logseq_markdown_never_panics_on_arbitrary_text(input in ".*") {
             let _ = parse_logseq_markdown(&input);
         }
+    }
+}
+
+/// #3675 — the ordering [`detect_attachment_refs`] actually returns.
+///
+/// Its docstring promised plain source order, which the two-pass scan does not
+/// deliver: the Obsidian-embed sweep runs to completion before the
+/// markdown-image sweep and nothing sorts afterwards. The caller survey on the
+/// issue found no consumer of the ordering — `insert_blocks` feeds the refs to
+/// a `HashMap` tally and to a `str::replacen` rewrite keyed on each ref's own
+/// `full_match`, and [`AttachmentRef`] carries no source offset — so the
+/// DOCSTRING was corrected and the scan order left alone.
+///
+/// These tests pin the behaviour the corrected docstring now describes, so the
+/// two halves cannot drift apart again silently. Own module (like `tests_l9`
+/// above) to keep the regression surface explicit.
+#[cfg(test)]
+mod tests_attachment_ref_order_3675 {
+    use super::detect_attachment_refs;
+
+    /// The issue's own fixture: the markdown image is FIRST in the source and
+    /// still comes back second.
+    #[test]
+    fn embed_precedes_image_even_when_the_image_comes_first_in_source() {
+        let refs = detect_attachment_refs("![](images/a.png)\n![[b.png]]", &[]);
+        let got: Vec<&str> = refs.iter().map(|r| r.original_ref.as_str()).collect();
+        assert_eq!(
+            got,
+            vec!["b.png", "images/a.png"],
+            "embeds are collected before images; this is NOT source order (#3675)"
+        );
+    }
+
+    /// Within each scan the order *is* source order — the grouping is the only
+    /// departure, which is what the docstring now says.
+    #[test]
+    fn each_scan_is_internally_in_source_order() {
+        let refs = detect_attachment_refs("![](i1.png) ![[e1.png]] ![](i2.png) ![[e2.png]]", &[]);
+        let got: Vec<&str> = refs.iter().map(|r| r.original_ref.as_str()).collect();
+        assert_eq!(
+            got,
+            vec!["e1.png", "e2.png", "i1.png", "i2.png"],
+            "both embeds (in source order) then both images (in source order)"
+        );
     }
 }
