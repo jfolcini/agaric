@@ -71,24 +71,40 @@ test.describe('WeeklyView — reschedule by drag (real gesture)', () => {
     await page.getByRole('tab', { name: 'Weekly view' }).click()
 
     const todayStr = localDateStr(new Date())
-    const tomorrow = new Date()
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    const tomorrowStr = localDateStr(tomorrow)
 
     const sourceSelector = `[data-testid="sortable-block"][data-block-id="${BLOCK_DAILY_3}"]`
-    const dropZoneTestId = `reschedule-drop-zone-${tomorrowStr}`
 
     // #2467/#1268 — SortableBlockWrapper renders an ARIA-hidden placeholder
     // `<li>` (no `data-testid="sortable-block"`) for any row `useBlockMountLimit`
     // /`useViewportObserver` currently consider off-screen, independent of
-    // DaySection's own lazy-mount observer above. Today's day (mid-week) sits
-    // below the fold on load, so scroll its section into view FIRST to flip
-    // its rows from placeholders to the real, draggable row before looking
-    // for it.
+    // DaySection's own lazy-mount observer above. Today's section may sit
+    // below the fold on load (wherever in the week it falls), so scroll it
+    // into view FIRST to flip its rows from placeholders to the real,
+    // draggable row before looking for it.
     await page.locator(`#journal-${todayStr}`).scrollIntoViewIfNeeded()
     const sourceRow = page.locator(sourceSelector)
     await expect(sourceRow).toBeVisible({ timeout: 5000 })
     await sourceRow.scrollIntoViewIfNeeded()
+
+    // The drop target has to be a day this week actually renders. Deriving it
+    // from the DOM instead of computing `today + 1` is what keeps that true on
+    // the last day of the week, when tomorrow belongs to the NEXT week and no
+    // drop zone for it exists — and it stays true however `weekStartsOn` moves
+    // that boundary, since the rendered zones are the only authority on which
+    // days are on screen.
+    const renderedDays = (
+      await page
+        .locator('[data-testid^="reschedule-drop-zone-"]')
+        .evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-testid') ?? ''))
+    ).map((id) => id.replace('reschedule-drop-zone-', ''))
+    const targetStr = renderedDays.find((d) => d !== todayStr)
+    if (!targetStr) {
+      throw new Error(
+        `weekly view rendered no day other than today (${todayStr}) to drop onto; ` +
+          `rendered days: [${renderedDays.join(', ')}]`,
+      )
+    }
+    const dropZoneTestId = `reschedule-drop-zone-${targetStr}`
 
     const dropZone = page.getByTestId(dropZoneTestId)
     await dropZone.scrollIntoViewIfNeeded()
@@ -130,14 +146,14 @@ test.describe('WeeklyView — reschedule by drag (real gesture)', () => {
     // (`announce()` in RescheduleDropZone.tsx), so an unscoped `getByText`
     // hits both and trips Playwright's strict-mode duplicate-match check.
     await expect(
-      page.locator('[data-sonner-toast]').getByText(`Task rescheduled to ${tomorrowStr}`),
+      page.locator('[data-sonner-toast]').getByText(`Task rescheduled to ${targetStr}`),
     ).toBeVisible({ timeout: 5000 })
 
     // The real IPC call: BLOCK_DAILY_3 has due_date set and no
     // scheduled_date, so useBlockReschedule picks setDueDate (set_due_date).
     const calls = await getInvokeCalls(page, 'set_due_date')
     expect(calls).toContainEqual(
-      expect.objectContaining({ blockId: BLOCK_DAILY_3, date: tomorrowStr }),
+      expect.objectContaining({ blockId: BLOCK_DAILY_3, date: targetStr }),
     )
 
     // Resulting-state verification (not just the IPC call): rescheduling
