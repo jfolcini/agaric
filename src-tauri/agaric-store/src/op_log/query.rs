@@ -77,6 +77,17 @@ pub enum BlockEditScan<'a> {
     /// the live value when the edit was authored — deliberately NOT the
     /// wall-clock-nearest op, which is what makes the pointer trustworthy
     /// under cross-device clock skew.
+    ///
+    /// #3655: `seq` being PER-DEVICE is also this variant's limit. Ordering
+    /// by `seq DESC` compares counters that are only comparable within a
+    /// device, so across devices the ordering is a convention, not a causal
+    /// fact: a peer's op with a numerically larger `seq` outranks a local one
+    /// authored later. `device_id DESC` then makes an equal-`seq`
+    /// cross-device collision resolve DETERMINISTICALLY (pinned by
+    /// `latest_block_edit_before_latest_causal_tie_breaks_on_device_id_3655`)
+    /// — deterministic, not causally correct. A causally correct answer would
+    /// need a vector clock or a Loro frontier, which is a wire-format change
+    /// and out of scope under AGENTS.md "Architectural Stability".
     LatestCausal,
     /// Strictly before `(created_at, seq, device_id)` in the canonical
     /// `(created_at, seq, device_id)` total order.
@@ -97,6 +108,30 @@ pub enum BlockEditScan<'a> {
     ///
     /// Used to snap to the state PRODUCED by a historical op (rather than
     /// the one before it) — the restore-preview diff.
+    ///
+    /// # The bound is narrower than the sort key (#3646)
+    ///
+    /// Unlike [`StrictlyBefore`](BlockEditScan::StrictlyBefore), the bound
+    /// carries NO `device_id` while the `ORDER BY` still tie-breaks on one.
+    /// That is not an oversight to tidy: the caller
+    /// (`commands::history::compute_block_vs_current_diff_inner`) names a
+    /// point the user picked out of the history list, and an INCLUSIVE bound
+    /// over `(created_at, seq, device_id)` would exclude the very row that
+    /// collides with the selected one — answering with state older than the
+    /// point the user asked about.
+    ///
+    /// The consequence, stated so it is a decision rather than an accident:
+    /// when two rows from different devices collide on an identical
+    /// `(created_at, seq)`, the bound cannot tell them apart, so selecting
+    /// EITHER one previews the higher-`device_id` row. That resolution is
+    /// deterministic (the `ORDER BY` decides it, not SQLite's row order) and
+    /// is pinned by
+    /// `latest_block_edit_before_at_or_before_resolves_collision_on_device_id_3646`
+    /// plus `compute_block_vs_current_diff_tie_breaks_on_device_id_3281`.
+    /// Narrowing the boundary to a single row would need the caller to pass
+    /// the selected op's `device_id` and the bound to become a full
+    /// three-column keyset — a behaviour change, deliberately not made under
+    /// a coverage issue.
     AtOrBefore { created_at: i64, seq: i64 },
 }
 
@@ -114,7 +149,10 @@ pub enum BlockEditScan<'a> {
 /// * **The canonical `(created_at, seq, device_id)` total order** for the
 ///   bounded variants, including the `device_id` tie-break that makes an
 ///   equal-`(created_at, seq)` cross-device collision resolve
-///   deterministically (#382).
+///   deterministically (#382). #3646 seeded that collision — no fixture
+///   anywhere did before — so the tie-break is now load-bearing on every
+///   variant here; see the `*_tie_breaks_on_device_id_*` tests in
+///   `op_log::tests::read`.
 ///
 /// AGENTS.md invariant #8: ULIDs are stored uppercase, so `block_id` is
 /// normalized here rather than at each call site.

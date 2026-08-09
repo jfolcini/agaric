@@ -3395,3 +3395,304 @@ async fn batch_reverse_edit_without_prior_is_skippable_not_fatal_3280() {
         other => panic!("expected EditBlock, got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// #382 / #3646 — the cross-device `(created_at, seq)` collision.
+//
+// `seq` is a PER-DEVICE counter, so two devices' first ops both carry
+// `seq = 1`; append them at the same frozen `created_at` and the canonical
+// `(created_at, seq, device_id)` total order has nothing left to sort on but
+// `device_id`. No fixture anywhere seeded that shape before #3646, so every
+// `, device_id DESC` in the four hand-copied UNION-ALL scans in
+// `super::batch` — and in the four single-op scans they mirror — could be
+// deleted with the whole suite staying green.
+//
+// Each test below drives BOTH kernels over the same fixture, so one mutation
+// reddens whichever copy it was made to: the single-op scan
+// (`agaric_store::op_log::latest_block_edit_before` / `find_prior_position` /
+// `find_prior_property` / `attachment_ops::reverse_delete_attachment`) or the
+// batch copy (`fetch_prior_text_batch` / `fetch_prior_position_batch` /
+// `fetch_prior_property_batch` / `fetch_prior_attachment_batch`).
+//
+// # Why every test runs the fixture TWICE
+//
+// Strip `, device_id DESC` and the `LIMIT 1` winner is left to SQLite's row
+// order — which is not one behaviour but several, because each of these
+// scans gets a different plan. Measured while writing this: the text and
+// position scans returned the LAST-written of the tied pair, the attachment
+// scan (partial index `idx_op_log_attachment_id`) the FIRST. A fixture that
+// fixes one write order therefore catches only some of the mutations — the
+// first pass of this work seeded winner-first and left two of the four batch
+// copies still undetectable.
+//
+// So [`TIE_ORDERS`] runs each fixture under both write orders on a fresh
+// pool, and asserts the SAME winner both times. That is exactly the property
+// at stake — the tie-break decides, not the row order — and it makes the
+// assertion independent of which plan SQLite happens to pick, today or after
+// an index change. (The property scan is the one case where no write order
+// can redden the mutation; see that test's doc for why, and why the clause
+// stays regardless.)
+//
+// `TIE_WINNER` / `TIE_LOSER` collide; `TIE_ANCHOR` authors the op being
+// reversed. It is appended at the SAME `(created_at, seq)` as the pair and
+// sorts ABOVE both, so the bound's `device_id < ?` component is what admits
+// the two candidates at all — the `ORDER BY` then picks between them. One
+// fixture, both halves of the tie-break.
+const TIE_WINNER: &str = "tie-dev-b";
+const TIE_LOSER: &str = "tie-dev-a";
+const TIE_ANCHOR: &str = "tie-dev-z";
+const TIE_ORDERS: [[&str; 2]; 2] = [[TIE_WINNER, TIE_LOSER], [TIE_LOSER, TIE_WINNER]];
+
+/// Reverse `(TIE_ANCHOR, 1)` through both kernels and assert they agree,
+/// returning the payload. Parity is asserted here so each tie-break test
+/// below only has to state the ONE answer the canonical order requires.
+async fn reverse_anchor_both_kernels(pool: &SqlitePool) -> OpPayload {
+    let single = compute_reverse(pool, TIE_ANCHOR, 1)
+        .await
+        .expect("single-op kernel must reverse the anchor op");
+    let refs = vec![agaric_store::op::OpRef {
+        device_id: TIE_ANCHOR.to_string(),
+        seq: 1,
+    }];
+    let records = crate::reverse::get_op_records_batch(pool, &refs)
+        .await
+        .unwrap();
+    let batched = crate::reverse::compute_reverse_batch(pool, &records)
+        .await
+        .expect("batch kernel must not fail at batch level")
+        .pop()
+        .expect("one op in, one result out")
+        .expect("batch kernel must reverse the anchor op");
+    assert_eq!(
+        single, batched,
+        "the two kernels must resolve the cross-device collision identically"
+    );
+    batched
+}
+
+/// #382/#3646: `fetch_prior_text_batch` and the single-op `StrictlyBefore`
+/// scan must both break an equal-`(created_at, seq)` cross-device tie on
+/// `device_id DESC`.
+///
+/// The anchor edit deliberately carries `prev_edit: None` — with a resolving
+/// causal pointer `resolve_prior_text` never consults the timestamp scan at
+/// all (and, since #3650, the batch kernel does not even issue it), so the
+/// tie-break would be unreachable.
+#[tokio::test]
+async fn reverse_edit_tie_breaks_on_device_id_3646() {
+    for write_order in TIE_ORDERS {
+        let (pool, _dir) = test_pool().await;
+        for dev in write_order {
+            append_local_op_at(
+                &pool,
+                dev,
+                OpPayload::EditBlock(EditBlockPayload {
+                    block_id: BlockId::test_id("TIETXT"),
+                    to_text: format!("from {dev}"),
+                    prev_edit: None,
+                }),
+                FIXED_TS,
+            )
+            .await
+            .unwrap();
+        }
+        append_local_op_at(
+            &pool,
+            TIE_ANCHOR,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id("TIETXT"),
+                to_text: "anchor".into(),
+                prev_edit: None,
+            }),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+
+        match reverse_anchor_both_kernels(&pool).await {
+            OpPayload::EditBlock(p) => assert_eq!(
+                p.to_text,
+                format!("from {TIE_WINNER}"),
+                "#382: the prior-text scan must tie-break on device_id DESC \
+                 (write order {write_order:?})"
+            ),
+            other => panic!("expected EditBlock, got {other:?}"),
+        }
+    }
+}
+
+/// #382/#3646: same collision, on the `move_block` prior-placement scan —
+/// `fetch_prior_position_batch` and `block_ops::find_prior_position`.
+#[tokio::test]
+async fn reverse_move_tie_breaks_on_device_id_3646() {
+    // Parent + slot are keyed off the device so the winner is identifiable
+    // from the reverse payload alone.
+    let slot = |dev: &str| if dev == TIE_WINNER { 7_i64 } else { 3 };
+    let parent = |dev: &str| {
+        if dev == TIE_WINNER { "TIEPB" } else { "TIEPA" }
+    };
+    for write_order in TIE_ORDERS {
+        let (pool, _dir) = test_pool().await;
+        for dev in write_order {
+            append_local_op_at(
+                &pool,
+                dev,
+                OpPayload::MoveBlock(MoveBlockPayload {
+                    block_id: BlockId::test_id("TIEMOV"),
+                    new_parent_id: Some(BlockId::test_id(parent(dev))),
+                    new_position: slot(dev),
+                    new_index: None,
+                }),
+                FIXED_TS,
+            )
+            .await
+            .unwrap();
+        }
+        append_local_op_at(
+            &pool,
+            TIE_ANCHOR,
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("TIEMOV"),
+                new_parent_id: Some(BlockId::test_id("TIEPZ")),
+                new_position: 9,
+                new_index: None,
+            }),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+
+        match reverse_anchor_both_kernels(&pool).await {
+            OpPayload::MoveBlock(p) => {
+                assert_eq!(
+                    p.new_parent_id.as_ref().map(|id| id.as_str().to_string()),
+                    Some(BlockId::test_id(parent(TIE_WINNER)).as_str().to_string()),
+                    "#382: the prior-placement scan must tie-break on device_id DESC \
+                     (write order {write_order:?})"
+                );
+                assert_eq!(
+                    p.new_position,
+                    slot(TIE_WINNER),
+                    "must restore the winner's slot (write order {write_order:?})"
+                );
+            }
+            other => panic!("expected MoveBlock, got {other:?}"),
+        }
+    }
+}
+
+/// #382/#3646: same collision, on the property prior-value scan —
+/// `fetch_prior_property_batch` and `property_ops::find_prior_property`.
+///
+/// Unlike its three siblings this test does NOT redden when `, device_id
+/// DESC` is deleted from either copy, and that is a fact about the schema
+/// rather than a hole in the fixture: both statements are served by
+/// `idx_op_log_block_key_created`, whose key ends in `… created_at, seq,
+/// device_id`, so the index supplies the tie-break the `ORDER BY` asked for
+/// and the mutated statement returns the identical row (checked with
+/// `EXPLAIN QUERY PLAN`). The assertion still pins the RESOLUTION — which is
+/// what #3646 asked for — and would catch any change that made the two scans
+/// disagree with each other or with the canonical order.
+#[tokio::test]
+async fn reverse_set_property_tie_breaks_on_device_id_3646() {
+    for write_order in TIE_ORDERS {
+        let (pool, _dir) = test_pool().await;
+        for dev in write_order {
+            append_local_op_at(
+                &pool,
+                dev,
+                OpPayload::SetProperty(SetPropertyPayload {
+                    block_id: BlockId::test_id("TIEPROP"),
+                    key: "priority".into(),
+                    value_text: Some(format!("from {dev}")),
+                    value_num: None,
+                    value_date: None,
+                    value_ref: None,
+                    value_bool: None,
+                }),
+                FIXED_TS,
+            )
+            .await
+            .unwrap();
+        }
+        append_local_op_at(
+            &pool,
+            TIE_ANCHOR,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("TIEPROP"),
+                key: "priority".into(),
+                value_text: Some("anchor".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+
+        match reverse_anchor_both_kernels(&pool).await {
+            OpPayload::SetProperty(p) => assert_eq!(
+                p.value_text,
+                Some(format!("from {TIE_WINNER}")),
+                "#382: the prior-property scan must tie-break on device_id DESC \
+                 (write order {write_order:?})"
+            ),
+            other => panic!("expected SetProperty, got {other:?}"),
+        }
+    }
+}
+
+/// #382/#3646: same collision, on the attachment prior-add scan —
+/// `fetch_prior_attachment_batch` and
+/// `attachment_ops::reverse_delete_attachment`.
+///
+/// Two `add_attachment` rows for one `attachment_id` is a shape production
+/// does not mint; it is the minimal way to put two candidates in front of a
+/// scan whose predicate is `attachment_id` + the strictly-before bound, which
+/// is exactly what the tie-break exists to arbitrate.
+#[tokio::test]
+async fn reverse_delete_attachment_tie_breaks_on_device_id_3646() {
+    for write_order in TIE_ORDERS {
+        let (pool, _dir) = test_pool().await;
+        for dev in write_order {
+            append_local_op_at(
+                &pool,
+                dev,
+                OpPayload::AddAttachment(AddAttachmentPayload {
+                    attachment_id: BlockId::test_id("TIEATT"),
+                    block_id: BlockId::test_id("TIEABLK"),
+                    mime_type: "image/png".into(),
+                    filename: format!("from-{dev}.png"),
+                    size_bytes: 1024,
+                    fs_path: format!("/tmp/from-{dev}.png"),
+                }),
+                FIXED_TS,
+            )
+            .await
+            .unwrap();
+        }
+        append_local_op_at(
+            &pool,
+            TIE_ANCHOR,
+            OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+                attachment_id: BlockId::test_id("TIEATT"),
+                fs_path: "/tmp/anchor.png".into(),
+            }),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+
+        match reverse_anchor_both_kernels(&pool).await {
+            OpPayload::AddAttachment(p) => assert_eq!(
+                p.filename,
+                format!("from-{TIE_WINNER}.png"),
+                "#382: the prior-add scan must tie-break on device_id DESC \
+                 (write order {write_order:?})"
+            ),
+            other => panic!("expected AddAttachment, got {other:?}"),
+        }
+    }
+}
