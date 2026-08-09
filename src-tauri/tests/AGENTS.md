@@ -9,7 +9,7 @@
 | Unit | `src/<module>.rs` → `#[cfg(test)] mod tests` (or `src/<module>/tests.rs`) | Single-module logic |
 | Integration | `src/integration_tests.rs`, `src/command_integration_tests/` (incl. `sync_integration.rs`) | Cross-module pipelines + command API contracts + sync peer-ref/protocol commands |
 | Sync (network) | `src-tauri/agaric-sync/src/mdns.rs` (inline), `src/sync_net/tests.rs`, `src/sync_daemon/tests.rs`, `src/sync_daemon/snapshot_transfer_tests.rs` (+ `_host.rs`) | mDNS announce/parse wire format, TLS/cert + wire protocol, mDNS discovery lifecycle + peer-sync flows, snapshot transfer round-trips |
-| Bench | `benches/*.rs` (`harness = false`) | Criterion microbenchmarks; manual only, never CI |
+| Bench | `benches/*.rs` (`harness = false`) | Criterion microbenchmarks; not a per-PR gate — CI runs them in the **weekly** `bench-smoke` / `bench-slo` lanes (see `benches/AGENTS.md`) |
 
 Plus `src/lib.rs` carries `specta_tests` for TypeScript binding verification.
 
@@ -193,11 +193,11 @@ criterion_main!(benches);
 
 ### Rules
 
-- Never run in CI / pre-commit. Manual only.
+- Not run per-PR or in pre-commit, but **CI does run every bench weekly**: `.github/workflows/scheduled-deep-checks.yml` carries `bench-smoke` (sharded compile + a `--test` smoke run that fails on a drifted seed/fixture) and `bench-slo` (the warm `interactive_slo` budget gate), on the Monday cron plus manual `workflow_dispatch`. Nothing in `ci.yml` / `_validate.yml` gates a PR on a bench, so a break you don't catch locally surfaces up to a week later, attributed to an unrelated PR. `benches/AGENTS.md` is the source of truth for the lanes and the pitfalls.
 - Each bench gets its own temp DB with `TempDir`.
 - Shut down the materializer after each bench group.
 - Parameterise size comparisons via `BenchmarkId::from_parameter`.
-- `cargo check --bench <name>` before committing — visibility on `*_inner` may need `pub` (bench files are separate crates).
+- **Run the bench before committing, don't just compile it.** `cargo check --bench <name>` / `--no-run` proves only that it builds — a hand-seeded raw-SQL fixture that has drifted from the live schema compiles fine and panics the moment it executes (#1233). Mirror CI's smoke gate locally: `cargo bench --no-run` once, then run each prebuilt binary with `--test`; `benches/AGENTS.md` § "Run the smoke gate locally before pushing" has the exact loop (it also dodges the cargo #6313 build-race). Visibility on `*_inner` may still need `pub` — bench files are separate crates.
 
 ## Test file checklist
 
@@ -215,7 +215,7 @@ Before committing:
 - `assert_eq!` for exact counts.
 - ULID fixtures uppercase (Crockford base32 → blake3 determinism).
 - Position values 1-based, not 0.
-- Benchmarks declared `harness = false`, never CI.
+- Benchmarks declared `harness = false`, and actually **run** (not just compiled) before committing — the weekly lane is the only CI that executes them.
 - SQL changes: `just gen-sqlx` run and every regenerated `.sqlx/` file committed.
 
 ## Quality standards

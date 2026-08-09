@@ -40,7 +40,7 @@ How the system is built. Companion to:
 1. **Local-first.** SQLite on disk; no cloud, no accounts.
 2. **Event-sourced.** Every state change is an append-only op log entry. Materialized views are derivable; the op log is the truth.
 3. **CRDT convergence.** The Loro engine fans out every op into per-space CRDT state. Concurrent edits converge automatically; no merge dialog, no conflict UI. One honest boundary: character-level merge applies to edits *committed as ops*, and in-progress typing stays frontend-local until it commits (principle 4). See [`architecture/editor-and-content.md`](architecture/editor-and-content.md) § FE / BE authority boundary.
-4. **Single roving editor.** Exactly one block hosts a TipTap editor at a time; everything else renders static.
+4. **Roving editor, one per mounted tree.** Exactly one block hosts a mounted TipTap editor surface at a time — focus is global — and everything else renders static. The `Editor` objects behind it are per `BlockTree`, not per app: the journal week and stream views mount one tree (and one lazily-constructed editor) per day — the month view is a calendar grid and mounts none — so app-level code reaches the live editor through the focus-published registry `src/editor/active-editor.ts`. See [`architecture/editor-and-content.md`](architecture/editor-and-content.md) § Roving-editor invariant.
 5. **Type-safe IPC.** Every Tauri command flows through specta-generated TypeScript. The `agaric_commands!` macro is the single source of truth — handler and bindings cannot drift.
 6. **Per-space partitioning.** The native, indexed `blocks.space_id` column (migration 0086, #533) is the sole source of truth for space membership — with a `spaces` registry FK (0089), and `space` forbidden as a `block_properties` key (0088 `key_not_reserved` CHECK). An `is_space = 'true'` property still marks a space's own page. Lists, search, agenda, backlinks, history, journals all scope to the active space via the `b.space_id = ?N` filter.
 7. **Offline-first sync.** Local writes commit immediately; sync converges peers over local WiFi via Loro CRDT messages over QUIC (iroh), with each peer named by a handshake-authenticated ed25519 `EndpointId`.
@@ -61,11 +61,13 @@ The Rust side is a Cargo workspace rooted at `src-tauri/`. Its members (see `[wo
 | --- | --- |
 | `.` — the app crate `agaric` (lib target `agaric_lib`) | Tauri commands, materializer, MCP server, deep links, spaces, recovery, the `agaric-mcp` sidecar binary |
 | `agaric-core` | Leaf primitives with no DB dependency — ULIDs, time, errors, text/tag normalisation, diffing |
-| `agaric-store` | SQLite access — op log, caches, FTS, filters, queries, pagination, snapshots |
+| `agaric-store` | SQLite access — op log (incl. the `op_log/bypass.rs` `truncate` / `prune` deletion carve-outs), caches, FTS, filters, queries, pagination |
 | `agaric-engine` | Loro CRDT engine, op apply, merge, drafts, import, recurrence |
-| `agaric-sync` | Peer discovery (mDNS), pairing, the iroh QUIC transport, sync protocol + daemon |
+| `agaric-sync` | Peer discovery (mDNS), pairing, the iroh QUIC transport, sync protocol + daemon — **plus snapshot create/restore and op-log compaction** (`src-tauri/agaric-sync/src/snapshot/`) |
 | `agaric-observability` | Tracing / OTLP / metrics plumbing |
 | `diagnostics` | Read-only DB inspection binaries, kept out of the app crate so `tauri-bundler` doesn't scan them |
+
+> **Snapshots live in `agaric-sync`, but they are not sync-only.** `create_snapshot`, `apply_snapshot` and `compact_op_log` (`src-tauri/agaric-sync/src/snapshot/`) serve two callers, not one. **Compaction is app-crate-only:** `compact_op_log` is reached through the user-facing `compact_op_log_cmd` (`src-tauri/src/commands/compaction.rs`, registered in `src-tauri/src/lib.rs`) and boot recovery, never from the protocol. **Snapshot transfer is not:** `sync_daemon/snapshot_transfer.rs` imports `apply_snapshot` and calls it in the peer catch-up path, and serves the offer side from the rows `create_snapshot` persisted, via `get_latest_snapshot_with_frontier`. So the compaction carve-out to invariant #1 ("the op log is append-only *except compaction*") is reached from `agaric-sync`, not from `agaric-store`, whose own `op_log/bypass.rs` holds only the row-deletion primitives (`truncate` for a snapshot RESET wipe, `prune` for compaction) those paths call. Details in [`architecture/crdt-and-recovery.md`](architecture/crdt-and-recovery.md).
 
 - **Schema / migrations**: `src-tauri/migrations/*.sql` (auto-run; `sqlx` compile-time validated; offline caches in `.sqlx/`, one per crate that holds query macros).
 - **Frontend code**: `src/` (components, editor, hooks, stores, lib).

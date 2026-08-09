@@ -189,6 +189,23 @@ The full inventory lives in [`docs/UI-MAP.md`](../UI-MAP.md). The architecture-r
 - `src/components/` — domain components.
 - `src/components/<Feature>/` — per-feature sub-component directories (FormattingToolbar, SpaceManageDialog, properties/PropertyRowEditor, …).
 
-Only three of these layering rules are mechanically enforced, all as prek hooks: `store-layering` (`scripts/check-store-layering.mjs`, page-block stores → global focus only), `import-cycles` (`scripts/check-import-cycles.mjs`), and `no-ui-store-imports` (`src/components/ui/` primitives may not import stores). The rest are conventions upheld in review.
+Four of these layering rules are mechanically enforced, all as commit-blocking prek hooks: `store-layering` (`scripts/check-store-layering.mjs`, page-block stores → global focus only), `import-cycles` (`scripts/check-import-cycles.mjs`), `no-ui-store-imports` (`src/components/ui/` primitives may not import stores), and `lib-layering` (`scripts/check-lib-layering.mjs`, below). The rest are conventions upheld in review.
+
+### `lib-layering` — the frontend tier ratchet (#3121)
+
+`lib-layering` names four ranked tiers and forbids a lower one importing a higher one:
+
+```text
+lib (0)  ←  stores (1)  ←  hooks (2)  ←  components (3)
+```
+
+Read the arrow as "is depended on by": `src/lib/` may depend only on itself and external packages, `src/stores/` may add `lib/`, `src/hooks/` may add `stores/`, and `src/components/` may depend on all three. This is a strictly different property from the two hooks above — `import-cycles` only proves the graph has no *loop* (a pure util importing a store is perfectly acyclic and still a layering break), and `store-layering` only covers store-to-store edges.
+
+- **Scope.** Only those four directories. `src/editor/`, `src/workers/`, `src/types/` and everything else are out of scope in *both* directions — the guard neither scans them as importers nor treats importing them as a violation, so `src/editor/` is a legal path around the tiers.
+- **Ratchet, not an allowlist.** `scripts/lib-layering-baseline.json` freezes the files that currently violate the rule. The hook fails on a **new** upward import (a file not in the baseline) *and* on a **stale** baseline entry (an entry whose violation is gone) — the count may only go down. Unlike `check-store-layering.mjs` there is no per-edge allowlist.
+- **When you hit it.** Fixing the import is the intended move; removing the file's baseline entry (or `--update-baseline`) is how you record a fix. Adding an entry for a genuinely new, intentional upward edge also goes through `--update-baseline`, and must be justified in the commit message — appending to the baseline to unblock a commit is exactly what the ratchet exists to prevent.
+- A paired `lib-layering-selftest` hook re-runs the guard's own exit-behaviour cases whenever `scripts/check-lib-layering.mjs` changes, so a regression that defangs it cannot land.
+
+Step 2 of #3121 — splitting `src/lib/` by concern to burn the baseline down and carving out a `lib/ipc` leaf — is deliberately not part of this guard; it moves no files.
 
 The decomposition pattern (a "god component" with an `oxlint-disable-next-line eslint/complexity` suppression → orchestrator + per-concern children + a containing hook) is documented in `docs/UX.md § UI primitives`.
