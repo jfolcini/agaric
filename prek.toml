@@ -448,6 +448,41 @@ pass_filenames = false
 files = "^scripts/check-lib-layering\\.mjs$"
 stages = ["pre-commit"]
 
+# strict-invoke-optout ratchet (#3332): `src/test-setup.ts` installs the
+# #3225 strict `invoke` mock — an unstubbed IPC REJECTS and `afterEach`
+# names the command — but a file-level
+# `vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))` replaces
+# the module wholesale, so the fallback never installs and the guard reads
+# an empty record and passes vacuously. Inside such a file an unstubbed
+# command resolves `undefined` → `{ status: 'ok' }` → SUCCESS, which is the
+# #3217 phantom-success inversion verbatim. The rule ("Don't add another")
+# lived only in src/__tests__/AGENTS.md prose; this is its baseline. Keyed
+# to scripts/strict-invoke-optout-baseline.json, fails on a NEW opt-out AND
+# on a STALE entry (so the count ratchets down as files migrate to
+# `mockInvokeCommands`). pass_filenames=false — the script walks src/ itself.
+[[repos.hooks]]
+id = "strict-invoke-optout"
+name = "strict-invoke guard opt-out ratchet"
+entry = "node scripts/check-strict-invoke-optout.mjs"
+language = "system"
+pass_filenames = false
+files = "^(src/.*\\.test\\.(ts|tsx)|scripts/strict-invoke-optout-baseline\\.json)$"
+stages = ["pre-commit"]
+
+# Self-test the strict-invoke-optout ratchet's own exit behavior (baselined
+# opt-out PASSES, new opt-out FAILS, stale baseline entry FAILS, a factory
+# threading `strictInvokeFallback` is clean, a factory-less `vi.mock`
+# counts) whenever the guard script itself changes, so a regression that
+# defangs it can't land.
+[[repos.hooks]]
+id = "strict-invoke-optout-selftest"
+name = "strict-invoke opt-out ratchet self-test"
+entry = "node scripts/check-strict-invoke-optout.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-strict-invoke-optout\\.mjs$"
+stages = ["pre-commit"]
+
 # axe-presence: every `src/components/__tests__/*.test.tsx` must include
 # at least one axe(...) audit, per src/__tests__/AGENTS.md:227. Without
 # this, accessibility regressions slip through component additions

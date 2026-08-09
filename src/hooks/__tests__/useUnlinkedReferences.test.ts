@@ -17,14 +17,16 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   useUnlinkedReferences,
   type UseUnlinkedReferencesParams,
 } from '@/hooks/useUnlinkedReferences'
 import { queryClient } from '@/lib/query-client'
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
-
+// #3332 — the shared strict `invoke` mock from `src/test-setup.ts` stays in
+// place (no per-file module mock), so an IPC this file does not model fails the
+// test by name instead of resolving `undefined` into a phantom success.
 const mockedInvoke = vi.mocked(invoke)
 
 function makeGroup(
@@ -79,10 +81,7 @@ describe('useUnlinkedReferences', () => {
       filtered_count: 5,
       truncated: true,
     }
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_unlinked_references') return resp
-      return undefined
-    })
+    mockedInvoke.mockImplementation(mockInvokeCommands({ list_unlinked_references: () => resp }))
 
     const { result } = renderHook(() => useUnlinkedReferences(baseParams()))
 
@@ -128,13 +127,14 @@ describe('useUnlinkedReferences', () => {
       truncated: false,
     }
     let callCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_unlinked_references') {
-        callCount++
-        return callCount === 1 ? page1 : page2
-      }
-      return undefined
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_unlinked_references: () => {
+          callCount++
+          return callCount === 1 ? page1 : page2
+        },
+      }),
+    )
 
     const { result } = renderHook(() => useUnlinkedReferences(baseParams()))
 
@@ -174,10 +174,13 @@ describe('useUnlinkedReferences', () => {
   })
 
   it('error path: isError true, no throw to the caller', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_unlinked_references') throw new Error('network failure')
-      return undefined
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_unlinked_references: () => {
+          throw new Error('network failure')
+        },
+      }),
+    )
 
     const { result } = renderHook(() => useUnlinkedReferences(baseParams()))
 
@@ -214,13 +217,14 @@ describe('useUnlinkedReferences', () => {
       truncated: false,
     }
     let callCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_unlinked_references') {
-        callCount++
-        return callCount === 1 ? page1 : page2
-      }
-      return undefined
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_unlinked_references: () => {
+          callCount++
+          return callCount === 1 ? page1 : page2
+        },
+      }),
+    )
 
     const { result } = renderHook(() => useUnlinkedReferences(baseParams()))
 

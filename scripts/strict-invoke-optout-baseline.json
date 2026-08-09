@@ -1,0 +1,11 @@
+[
+  "src/components/__tests__/AppShellErrorBoundaries.test.tsx",
+  "src/components/attachments/__tests__/AttachmentRenderer.test.tsx",
+  "src/components/editor/__tests__/StaticBlock.test.tsx",
+  "src/components/query/__tests__/QueryResult.test.tsx",
+  "src/components/query/__tests__/QueryResultList.test.tsx",
+  "src/components/query/__tests__/QueryResultTable.test.tsx",
+  "src/hooks/__tests__/inline-query-equivalence.test.ts",
+  "src/hooks/__tests__/useAndroidBackButton.test.tsx",
+  "src/hooks/__tests__/useQueryExecution.test.ts"
+]

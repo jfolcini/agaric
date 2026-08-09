@@ -46,6 +46,65 @@ function extractBindingsCommandNames(): string[] {
   return [...names].toSorted()
 }
 
+const RUST_COMMANDS_DIR = path.resolve(
+  import.meta.dirname,
+  '..',
+  '..',
+  '..',
+  '..',
+  'src-tauri',
+  'src',
+)
+
+/**
+ * Every `#[tauri::command]` function in the Rust tree, mapped to its literal
+ * argument list. Used to classify by EVIDENCE (does it take a write handle?)
+ * rather than by the verb in its name (#3332).
+ */
+function extractRustCommandSignatures(): Map<string, string> {
+  const out = new Map<string, string>()
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(full)
+      } else if (entry.name.endsWith('.rs')) {
+        const source = readFileSync(full, 'utf8')
+        // `#[tauri::command…]`, any further attributes (`#[instrument…]`), then
+        // the fn header. The arg list is balance-scanned so nested generics /
+        // tuples in a parameter type cannot truncate it.
+        const re =
+          /#\[tauri::command[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*pub\s+(?:async\s+)?fn\s+(\w+)\s*\(/g
+        for (const m of source.matchAll(re)) {
+          let depth = 0
+          let i = (m.index ?? 0) + m[0].length - 1
+          const start = i
+          for (; i < source.length; i++) {
+            const ch = source[i]
+            if (ch === '(') depth++
+            else if (ch === ')') {
+              depth--
+              if (depth === 0) break
+            }
+          }
+          out.set(m[1] as string, source.slice(start, i + 1))
+        }
+      }
+    }
+  }
+  walk(RUST_COMMANDS_DIR)
+  return out
+}
+
+/**
+ * A Rust command MUTATES when its signature takes a write handle. `WritePool`
+ * is bound without `PRAGMA query_only`, so taking it is the backend's own
+ * statement that the command can write; `WriteCtx` wraps it.
+ */
+function takesWriteHandle(signature: string): boolean {
+  return signature.includes('WritePool') || signature.includes('WriteCtx')
+}
+
 // ---------------------------------------------------------------------------
 // Read-only classifier
 // ---------------------------------------------------------------------------
@@ -55,6 +114,18 @@ function extractBindingsCommandNames(): string[] {
  * name begins with one of these query verbs. Everything NOT matched here is a
  * MUTATING candidate and must be covered by a fixture or allowlisted below —
  * so a new command with a mutating-shaped name is caught automatically.
+ *
+ * The verb is a HEURISTIC, not evidence. `it('the read-only classifier agrees
+ * with the Rust signatures', …)` below cross-checks every name classified here
+ * against whether the Rust command actually takes a write handle, so a
+ * `fetch_and_cache_*` / `load_or_create_*` / `resolve_and_pin_*` cannot slip
+ * through on its prefix alone (#3332).
+ *
+ * `'fetch_'` used to sit in this list. Its only member, `fetch_link_metadata`,
+ * takes `State<'_, WritePool>` and upserts into the link-metadata cache — it
+ * was exempt from BOTH the fixture requirement and the honesty audit purely
+ * because of its verb. It is now a mutating candidate carrying an explicit
+ * waiver in `NO_FIXTURE_ALLOWLIST`.
  */
 const READ_ONLY_PREFIXES: readonly string[] = [
   'get_',
@@ -65,7 +136,6 @@ const READ_ONLY_PREFIXES: readonly string[] = [
   'read_',
   'find_',
   'compute_',
-  'fetch_',
   'resolve_',
   'load_',
   'is_',
@@ -86,6 +156,19 @@ function isReadOnly(command: string): boolean {
   return READ_ONLY_PREFIXES.some((p) => command.startsWith(p)) || READ_ONLY_EXACT.has(command)
 }
 
+/**
+ * #3332 — commands that DO take a Rust write handle yet stay classified
+ * read-only, because the only thing they write is a DERIVED cache the
+ * conformance snapshot does not model. Each needs an explicit, reasoned entry:
+ * the classifier cross-check below fails on any other write-handle-taking
+ * command that a read-only verb would otherwise have waved through.
+ */
+const READ_ONLY_CACHE_WRITERS: Readonly<Record<string, string>> = {
+  list_page_links:
+    'lazy `page_link_cache` rebuild on the write pool (list_page_links_inner_split); ' +
+    'the cache is derived from block_links and is outside the conformance snapshot scope',
+}
+
 // ---------------------------------------------------------------------------
 // Allowlist — mutating commands NOT (yet) driven by a conformance fixture
 // ---------------------------------------------------------------------------
@@ -97,6 +180,14 @@ function isReadOnly(command: string): boolean {
  *   - `batch of <op>`      — a bulk variant whose per-item logic IS the single
  *                            op already pinned by a fixture (named in the reason).
  *   - `covered by <test>`  — behavior pinned by a dedicated mock unit test.
+ *   - `NOT cross-checked; regression-guarded by <test>` — the ONLY assertions
+ *     on this command's behaviour are mock-internal unit tests with
+ *     hand-written expectations. Nothing compares them against the Rust
+ *     backend, so this is a regression guard, NOT parity evidence. #3331 is
+ *     why the category exists: the mock's whole `delete_block` reversal
+ *     restored the target row alone while the backend restored the entire
+ *     cohort, and every time-travel command sat behind a `covered by
+ *     revert.test.ts` waiver that read like coverage.
  *   - `<X> outside the conformance snapshot scope` — mutates state (drafts,
  *     attachments, spaces, aliases, peers, property_definitions) that the
  *     blocks/properties/tags/op_log snapshot in `conformance-snapshot.ts` does
@@ -121,13 +212,19 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   restore_all_deleted: 'iterates restore_block over all tombstones (restore_block.json)',
 
   // ── Undo / redo / revert / op-log time-travel (op-log rewrite) ──
-  undo_op: 'covered by revert.test.ts / undo-op-refs.test.ts',
-  undo_ops: 'covered by revert.test.ts',
-  undo_page_op: 'covered by undo-move.test.ts / undo-op-refs.test.ts',
-  undo_page_group: 'covered by undo-op-refs.test.ts',
-  redo_page_op: 'covered by undo-move.test.ts',
-  revert_ops: 'covered by revert.test.ts',
-  restore_page_to_op: 'covered by revert.test.ts (op-log time-travel)',
+  // #3331 — the whole time-travel surface is UNCROSS-CHECKED: the Rust
+  // conformance runner replays raw `OpPayload`s, so no fixture can drive an
+  // undo/revert command, and the mock unit tests below hand-write their own
+  // expectations. Reading these as coverage is what let the cohort divergence
+  // ship. Keep the wording honest until a fixture can drive a reversal.
+  undo_op: 'NOT cross-checked; regression-guarded by revert-cohort.test.ts / undo-op-refs.test.ts',
+  undo_ops: 'NOT cross-checked; regression-guarded by revert.test.ts / undo-op-refs.test.ts',
+  undo_page_op:
+    'NOT cross-checked; regression-guarded by revert-cohort.test.ts / undo-move.test.ts',
+  undo_page_group: 'NOT cross-checked; regression-guarded by undo-op-refs.test.ts',
+  redo_page_op: 'NOT cross-checked; regression-guarded by undo-move.test.ts',
+  revert_ops: 'NOT cross-checked; regression-guarded by revert-cohort.test.ts / revert.test.ts',
+  restore_page_to_op: 'NOT cross-checked; regression-guarded by revert.test.ts',
   compact_op_log_cmd: 'op-log maintenance; rewrites history, not blocks/props/tags',
 
   // ── Draft staging (drafts table, outside the conformance snapshot scope) ──
@@ -151,6 +248,12 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   delete_property_def: 'property_definitions registry (app-layer), not projected block state',
   update_property_def_options:
     'property_definitions registry (app-layer), not projected block state',
+
+  // ── Link metadata cache (#3332) ──
+  // Classified read-only by its `fetch_` verb until #3332; it takes
+  // `State<'_, WritePool>` and `fetch_link_metadata_inner` upserts into the
+  // cache on a stale/miss.
+  fetch_link_metadata: 'link_metadata cache is outside the conformance snapshot scope',
 
   // ── Import / quick capture (composes covered create/edit ops) ──
   import_bibliography: 'covered by import-bibliography.test.ts',
@@ -293,6 +396,56 @@ describe('#3083 conformance-coverage ratchet', () => {
     expect(mutatingCommands.length).toBeGreaterThan(30)
     expect(fixtures.length).toBeGreaterThan(15)
     expect(fixtureOpCommands.size).toBeGreaterThanOrEqual(10)
+  })
+
+  // #3332 — classify by EVIDENCE, not by verb. `READ_ONLY_PREFIXES` is a
+  // name heuristic; the backend signature is the fact. `fetch_link_metadata`
+  // (upserts the link-metadata cache) and `list_page_links` (lazily rebuilds
+  // `page_link_cache`) both took a write handle while the verb heuristic
+  // exempted them from the fixture requirement AND from the honesty audit.
+  it('the read-only classifier agrees with the Rust command signatures', () => {
+    const rustSignatures = extractRustCommandSignatures()
+
+    // Guard the guard: if the extraction regex ever stops matching, the check
+    // below would pass vacuously. Every command in `bindings.ts` is generated
+    // from a `#[tauri::command]` fn, so the two sets must line up exactly.
+    const unlocated = bindingsCommands.filter((c) => !rustSignatures.has(c))
+    expect(
+      unlocated,
+      `extractRustCommandSignatures() could not locate these bindings.ts commands ` +
+        `in src-tauri/src: ${JSON.stringify(unlocated)}. The extraction is broken — ` +
+        `fix it rather than shrinking the expectation, or this check passes vacuously.`,
+    ).toEqual([])
+
+    const writeTakingButReadOnly = bindingsCommands.filter(
+      (c) =>
+        isReadOnly(c) &&
+        takesWriteHandle(rustSignatures.get(c) ?? '') &&
+        !(c in READ_ONLY_CACHE_WRITERS),
+    )
+    expect(
+      writeTakingButReadOnly,
+      `These commands are classified READ-ONLY by their name prefix but take a ` +
+        `Rust write handle (WritePool / WriteCtx): ` +
+        `${JSON.stringify(writeTakingButReadOnly)}. A read-only classification ` +
+        `exempts a command from BOTH the fixture requirement and the honesty ` +
+        `audit, so the verb must not outrank the signature. FIX by EITHER ` +
+        `renaming/reclassifying the command as mutating (then give it a fixture ` +
+        `or a NO_FIXTURE_ALLOWLIST waiver), OR — if the only thing it writes is a ` +
+        `derived cache outside the conformance snapshot scope — adding it to ` +
+        `READ_ONLY_CACHE_WRITERS with that reason.`,
+    ).toEqual([])
+
+    // Shrink-only: an entry whose command stopped taking a write handle is a
+    // stale exemption.
+    const staleCacheWriters = Object.keys(READ_ONLY_CACHE_WRITERS).filter(
+      (c) => !takesWriteHandle(rustSignatures.get(c) ?? ''),
+    )
+    expect(
+      staleCacheWriters,
+      `READ_ONLY_CACHE_WRITERS exempts commands that no longer take a write ` +
+        `handle: ${JSON.stringify(staleCacheWriters)}. Delete the stale entries.`,
+    ).toEqual([])
   })
 
   it('every mutating command has a conformance fixture or a justified allowlist waiver', () => {

@@ -19,6 +19,12 @@
 import type { AppError, PageResponse, commands } from '@/lib/bindings'
 import { asciiLowercase, pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { TASK_STATES } from '@/lib/task-states'
+import {
+  type MockLinkEdge,
+  contentLinksTo,
+  deriveLinkEdges,
+  scanLinkTargets,
+} from '@/lib/tauri-mock/link-scan'
 import { applyRevertForOp } from '@/lib/tauri-mock/revert'
 import {
   blocks,
@@ -224,13 +230,13 @@ export type Handler = (args: unknown) => unknown
 // non-null `deleted_at` to `"DELETED"`, so the exact string is irrelevant to
 // callers — only that distinct cohorts get distinct markers, which the cohort
 // restore walk depends on to leave an independently-deleted descendant deleted.
-let cohortSeq = 0
-export function nextCohortMarker(): string {
-  cohortSeq += 1
-  // ISO-shaped + monotonic suffix → sortable, distinct, and still a truthy
-  // string the rest of the mock treats as "deleted".
-  return `${new Date().toISOString()}#${cohortSeq.toString().padStart(6, '0')}`
-}
+//
+// #3331 — the minting function and the two cohort walks it feeds now live in
+// the state-free leaf module `@/lib/tauri-mock/cohort`, because `revert.ts`
+// needs them too and this module imports `revert.ts` (importing back would
+// close a cycle). Re-exported here so the domain handler modules keep their
+// single "everything shared comes from ./shared" import.
+export { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 
 /**
  * #1472 — the adjacently-tagged `TagExpr` wire shape (`{ type, value }`,
@@ -277,41 +283,30 @@ export const returnEmptyPage = () => ({
   total_count: null,
 })
 
+// #3332 — the `[[ULID]]` scan and the edge derivation it feeds now live in the
+// state-free leaf module `@/lib/tauri-mock/link-scan`, so the conformance
+// snapshot builder can assert on the SAME derivation the handlers run instead
+// of re-declaring the regex. Re-exported here so the domain handler modules
+// keep their single "everything shared comes from ./shared" import.
+export { type MockLinkEdge, contentLinksTo, deriveLinkEdges, scanLinkTargets }
+
 /**
- * A `[[ULID]]`-derived block-link edge — mock stand-in for `block_links`.
- * `sourcePageId` is the owning page of the source block (a page block owns
- * itself, a descendant carries its ancestor `page_id`, an orphan is `null`).
- * It is what the same-page/self/orphan-source exclusion (migration 0070)
- * reads to decide whether an edge counts toward a target page's inbound total.
+ * The space a block's edges belong to: the space property of its OWNING page
+ * (`page_id`, falling back to the block's own id when it IS a page). Mirrors
+ * the backend's `COALESCE(b.page_id, b.id) IN (… space …)` join predicate,
+ * which every space-scoped link handler applies.
  */
-export interface MockLinkEdge {
-  sourceId: string
-  targetId: string
-  sourcePageId: string | null
+export function ownerSpaceOf(b: Record<string, unknown>): string | null {
+  const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
+  return (properties.get(ownerId)?.get('space')?.['value_ref'] as string | null) ?? null
 }
 
 /**
- * Scan every non-deleted block's content for `[[ULID]]` tokens and return the
- * implied block-link edges. The faithful mock stand-in for the backend's
- * `block_links` table — used to evaluate the link facets (`Orphan` /
- * `HasNoInboundLinks`) and the `MostLinked` sort. Mirrors the `get_backlinks`
- * scan. Each edge captures the source block's `page_id` so `pageLinkStats`
- * can apply the same-page/self/orphan-source inbound exclusion (migration
- * 0070 + `recompute_pages_cache_counts_for_pages`).
+ * `SpaceScope` predicate for a link SOURCE block. `spaceId === null` is the
+ * `Global` (unfiltered, legacy cross-space) scope.
  */
-export function deriveLinkEdges(allBlocks: Map<string, Record<string, unknown>>): MockLinkEdge[] {
-  const LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
-  const edges: MockLinkEdge[] = []
-  for (const blk of allBlocks.values()) {
-    if (blk['deleted_at']) continue
-    const content = (blk['content'] as string | null) ?? ''
-    if (!content.includes('[[')) continue
-    const sourcePageId = (blk['page_id'] as string | null) ?? null
-    for (const m of content.matchAll(LINK_RE)) {
-      edges.push({ sourceId: blk['id'] as string, targetId: m[1] as string, sourcePageId })
-    }
-  }
-  return edges
+export function inSpaceScope(b: Record<string, unknown>, spaceId: string | null): boolean {
+  return spaceId === null || ownerSpaceOf(b) === spaceId
 }
 
 /**

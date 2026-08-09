@@ -12,11 +12,14 @@
 import {
   type TypedHandlers,
   applyUndoForTarget,
+  deleteCohort,
   insertAtSlotAndRenumber,
+  nextCohortMarker,
   notFoundRejection,
   refreshDescendantPageIds,
   renumberSiblings,
   resolveUndoTarget,
+  restoreCohort,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import { applyRevertForOp } from '@/lib/tauri-mock/revert'
@@ -186,13 +189,18 @@ export const historyHandlers = {
 
     const payload = JSON.parse(target.payload) as Record<string, unknown>
     let reverseOpType = 'edit_block'
+    // #3331 — the two soft-delete lifecycle arms are COHORT operations on the
+    // backend (`reverse_create_block` → `DeleteBlock` cascades the active
+    // subtree; `reverse_delete_block` → `RestoreBlock { deleted_at_ref }`
+    // restores the whole cohort). They used to name the reverse op correctly
+    // while mutating the target row alone, so undoing a subtree delete here
+    // left the children in Trash. Route both through the same walks the
+    // forward `delete_block` / `restore_block` handlers use.
     if (target.op_type === 'create_block') {
-      const b = blocks.get(payload['block_id'] as string)
-      if (b) b['deleted_at'] = new Date().toISOString()
+      deleteCohort(blocks, payload['block_id'] as string, nextCohortMarker())
       reverseOpType = 'delete_block'
     } else if (target.op_type === 'delete_block') {
-      const b = blocks.get(payload['block_id'] as string)
-      if (b) b['deleted_at'] = null
+      restoreCohort(blocks, payload['block_id'] as string)
       reverseOpType = 'restore_block'
     } else if (target.op_type === 'edit_block') {
       const b = blocks.get(payload['block_id'] as string)

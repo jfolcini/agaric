@@ -16,11 +16,15 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useBacklinkGroups, type UseBacklinkGroupsParams } from '@/hooks/useBacklinkGroups'
 import { queryClient } from '@/lib/query-client'
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
-
+// #3332 — no per-file `vi.mock('@tauri-apps/api/core', …)`. That replaced the
+// module wholesale, so `strictInvokeFallback` never installed and any IPC this
+// file did not model resolved `undefined` → `{ status: 'ok' }` → SUCCESS. The
+// shared strict mock from `src/test-setup.ts` stays in place; stubs below are
+// keyed by COMMAND NAME, so an unmodelled command fails the test by name.
 const mockedInvoke = vi.mocked(invoke)
 
 function makeGroup(
@@ -76,10 +80,7 @@ describe('useBacklinkGroups', () => {
       filtered_count: 5,
       truncated: false,
     }
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_backlinks_grouped') return resp
-      return undefined
-    })
+    mockedInvoke.mockImplementation(mockInvokeCommands({ list_backlinks_grouped: () => resp }))
 
     const { result } = renderHook(() => useBacklinkGroups(baseParams()))
 
@@ -123,13 +124,14 @@ describe('useBacklinkGroups', () => {
       truncated: false,
     }
     let callCount = 0
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_backlinks_grouped') {
-        callCount++
-        return callCount === 1 ? page1 : page2
-      }
-      return undefined
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_backlinks_grouped: () => {
+          callCount++
+          return callCount === 1 ? page1 : page2
+        },
+      }),
+    )
 
     const { result } = renderHook(() => useBacklinkGroups(baseParams()))
 
@@ -172,10 +174,13 @@ describe('useBacklinkGroups', () => {
   })
 
   it('error path: isError true, no throw to the caller', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_backlinks_grouped') throw new Error('network failure')
-      return undefined
-    })
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        list_backlinks_grouped: () => {
+          throw new Error('network failure')
+        },
+      }),
+    )
 
     const { result } = renderHook(() => useBacklinkGroups(baseParams()))
 
@@ -199,10 +204,7 @@ describe('useBacklinkGroups', () => {
       filtered_count: 1,
       truncated: false,
     }
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_backlinks_grouped') return resp
-      return undefined
-    })
+    mockedInvoke.mockImplementation(mockInvokeCommands({ list_backlinks_grouped: () => resp }))
 
     const { result, rerender } = renderHook(
       ({ invalidationKey }) => useBacklinkGroups(baseParams({ invalidationKey })),

@@ -12,6 +12,7 @@
  * effects matching what the real `revert_ops` command would produce.
  */
 
+import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 import type { MockOpLogEntry } from '@/lib/tauri-mock/seed'
 
 type BlockRow = Record<string, unknown>
@@ -101,14 +102,6 @@ function revertBlockRowField(
   b: BlockRow,
 ): boolean {
   switch (opType) {
-    case 'create_block': {
-      b['deleted_at'] = new Date().toISOString()
-      return true
-    }
-    case 'delete_block': {
-      b['deleted_at'] = null
-      return true
-    }
     case 'edit_block': {
       b['content'] = (payload['from_text'] as string | null) ?? null
       return true
@@ -116,10 +109,12 @@ function revertBlockRowField(
     // NOTE: `move_block` is intentionally handled in `applyRevertForOp`
     // (it needs the whole `blocks` map to renumber both sibling groups) and
     // is therefore NOT a case here. See the #958 fix.
-    case 'restore_block': {
-      b['deleted_at'] = new Date().toISOString()
-      return true
-    }
+    //
+    // NOTE: the three SOFT-DELETE lifecycle reverts — `create_block`,
+    // `delete_block` and `restore_block` — are likewise handled in
+    // `applyRevertForOp`: every one of them is a COHORT operation on the
+    // backend and needs the whole `blocks` map to walk the subtree. See the
+    // #3331 fix and `revertLifecycleCohort` below.
     case 'set_todo_state': {
       b['todo_state'] = (payload['from_state'] as string | null) ?? null
       return true
@@ -202,6 +197,56 @@ function revertTagSet(
 }
 
 // ---------------------------------------------------------------------------
+// Soft-delete lifecycle reverts (whole-cohort walks over the `blocks` map)
+// ---------------------------------------------------------------------------
+
+/**
+ * #3331 — reverse a soft-delete lifecycle op the way the backend does: as a
+ * COHORT operation, not a single-row edit.
+ *
+ * `src-tauri/src/reverse/block_ops.rs` reverses these three op types into
+ * exactly two payloads, and both apply arms
+ * (`src-tauri/src/commands/history.rs`, `OpPayload::DeleteBlock` /
+ * `OpPayload::RestoreBlock`) walk a whole subtree:
+ *
+ *   * `delete_block`  → `RestoreBlock { deleted_at_ref: record.created_at }`,
+ *                       applied over `DescendantWalkFilter::Cohort(ref)`.
+ *   * `create_block`  → `DeleteBlock`, applied over
+ *                       `DescendantWalkFilter::Active`.
+ *   * `restore_block` → `DeleteBlock`, same active cascade.
+ *
+ * Before this fix all three cleared/stamped `deleted_at` on the target row
+ * alone. Because the forward `delete_block` handler emits ONE op for the whole
+ * cascade (matching the backend's single-op cascade), there were no
+ * per-descendant ops for a caller's revert loop to walk either — so undoing a
+ * subtree delete left every child stranded in Trash under a live parent, and
+ * every spec written against that flow pinned the wrong post-condition.
+ *
+ * Returns `true` when `opType` was a lifecycle op (handled, cohort walked or
+ * legitimately empty), `false` to let the caller fall through.
+ */
+function revertLifecycleCohort(opType: string, blocks: Blocks, blockId: string): boolean {
+  switch (opType) {
+    case 'delete_block': {
+      restoreCohort(blocks, blockId)
+      return true
+    }
+    // Undo-of-create and undo-of-restore are the same backend payload
+    // (`DeleteBlock`) and therefore the same active-subtree cascade. The marker
+    // is minted, not `Date.now()`-stamped, so two reversals in the same
+    // millisecond cannot share a cohort and restore each other's rows.
+    case 'create_block':
+    case 'restore_block': {
+      deleteCohort(blocks, blockId, nextCohortMarker())
+      return true
+    }
+    default: {
+      return false
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -242,6 +287,12 @@ export function applyRevertForOp(
     }
     return
   }
+
+  // #3331 — soft-delete lifecycle reverts are cohort walks over the whole
+  // `blocks` map, so they run BEFORE (and independently of) the single-row
+  // helper. They deliberately do not require `b`: the walks resolve the seed
+  // themselves and no-op on a missing row, exactly as before.
+  if (revertLifecycleCohort(target.op_type, blocks, blockId)) return
 
   if (b && revertBlockRowField(target.op_type, payload, b)) return
 
