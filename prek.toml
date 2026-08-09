@@ -1701,30 +1701,31 @@ pass_filenames = false
 files = "^scripts/check-zizmor-version-pin\\.mjs$"
 stages = ["pre-commit"]
 
-# pairing-rejection-contract: the #855 pairing-proof rejection message is
-# declared independently in Rust (`PAIRING_PROOF_REQUIRED_MESSAGE` in
-# src-tauri/agaric-sync/src/sync_daemon/server.rs, the text that goes on the
-# wire and — since #3491 — onto the rejecting device's own event sink) and in
-# TypeScript (the same-named constant in src/components/dialogs/
-# PairingDialog.tsx, which substring-matches it out of a generic sync error to
-# say "wrong code"). The message crosses the boundary as free prose inside
+# pairing-rejection-contract: the responder's rejection messages are declared
+# independently in Rust (`PAIRING_PROOF_REQUIRED_MESSAGE` and — since #3504 —
+# `PEER_NOT_PAIRED_MESSAGE` in src-tauri/agaric-sync/src/sync_daemon/server.rs,
+# the texts that go on the wire, the first also onto the rejecting device's own
+# event sink since #3491) and in TypeScript (the same-named constants in
+# src/lib/pairing-rejections.ts). They cross the boundary as free prose inside
 # `SyncEvent::Error { message }`, so neither compiler sees the dependency and
 # neither side's tests notice a reword: the dialog just silently loses its
 # failure path and falls through to a five-minute timeout blaming an expired
-# code (#3492). The guard also asserts each constant is the one actually used
-# (wire arm / `.includes`), so an agreeing pair that nothing reads cannot pass.
+# code (#3492), and the #3505 toast suppression silently stops suppressing.
+# The guard also asserts each constant is the one actually used (wire arm /
+# `.includes` in the suppression predicate / `.includes` in the dialog's
+# failure path), so an agreeing set that nothing reads cannot pass.
 #
-# `files` names BOTH compared files — a cross-check scoped to only one side
-# never fires on a change to the other, which is the #3619 bug.
+# `files` names EVERY compared file — a cross-check scoped to only one side
+# never fires on a change to another, which is the #3619 bug.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
 id = "pairing-rejection-contract"
-name = "pairing: proof-rejection message contract (server.rs vs. PairingDialog.tsx)"
+name = "pairing: rejection-message contract (server.rs vs. pairing-rejections.ts / PairingDialog.tsx)"
 entry = "node scripts/check-pairing-rejection-contract.mjs"
 language = "system"
 pass_filenames = false
-files = "^(src-tauri/agaric-sync/src/sync_daemon/server\\.rs|src/components/dialogs/PairingDialog\\.tsx|scripts/check-pairing-rejection-contract\\.mjs)$"
+files = "^(src-tauri/agaric-sync/src/sync_daemon/server\\.rs|src/lib/pairing-rejections\\.ts|src/components/dialogs/PairingDialog\\.tsx|scripts/check-pairing-rejection-contract\\.mjs)$"
 stages = ["pre-commit", "pre-push"]
 
 [[repos]]

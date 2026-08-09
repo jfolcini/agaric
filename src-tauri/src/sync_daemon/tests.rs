@@ -9406,6 +9406,15 @@ struct PairingOutcome3507 {
     /// difference between "a session ran" and "these two devices are paired and
     /// converged".
     host_block_on_joiner: Option<String>,
+    /// #3505/#3547 — how many consecutive failures the joiner's scheduler booked
+    /// against the host as a result of this run.
+    ///
+    /// Carried out of the driver rather than asserted inside it because the two
+    /// runs want opposite things from it and neither is "don't care": a
+    /// successful pair must leave it at zero because nothing failed, and a
+    /// *rejected* one must leave it at zero because a refusal during a pairing
+    /// window is not a failure.
+    joiner_failures_against_host: u32,
 }
 
 /// Drive one complete two-device pairing and report what both devices hold.
@@ -9414,6 +9423,26 @@ struct PairingOutcome3507 {
 /// success run and the failure run, and it is the only thing a user controls.
 async fn drive_two_device_pairing_3507(
     joiner_types_the_hosts_passphrase: bool,
+) -> PairingOutcome3507 {
+    drive_two_device_pairing_windowed_3507(joiner_types_the_hosts_passphrase, true).await
+}
+
+/// The same run, with control over whether the joiner's own pairing window is
+/// still open at the moment it dials.
+///
+/// `joiner_window_open: false` is not a scenario a user reaches — it exists so
+/// the #3505 classification can be falsified from BOTH sides. "A rejection is
+/// not a failure" is only correct while a pairing window is open; outside one,
+/// a peer telling us we are not paired is exactly the peer the backoff exists
+/// for. A test suite that only ever asserts the suppression would stay green if
+/// the condition were dropped and every rejection excused.
+///
+/// The window is cleared *after* the discovery decision and *before* the dial,
+/// because the decision is what puts the peer in the round at all — closing it
+/// earlier would test nothing, since nothing would dial.
+async fn drive_two_device_pairing_windowed_3507(
+    joiner_types_the_hosts_passphrase: bool,
+    joiner_window_open: bool,
 ) -> PairingOutcome3507 {
     let space = agaric_store::space::SpaceId::from_trusted(SPACE_3507);
 
@@ -9586,6 +9615,12 @@ async fn drive_two_device_pairing_3507(
          names a key, and a peer resolved without one is a peer nothing can reach"
     );
 
+    if !joiner_window_open {
+        peer_refs::clear_pending_pairing(&joiner_pool)
+            .await
+            .expect("the joiner's window closes");
+    }
+
     // ── The responder: production `handle_incoming_sync` on the host ───
     let host_sink_dyn: Arc<dyn SyncEventSink> = host_sink.clone();
     let host_task = spawn_responder(
@@ -9654,6 +9689,7 @@ async fn drive_two_device_pairing_3507(
             .fetch_optional(&joiner_pool)
             .await
             .unwrap(),
+        joiner_failures_against_host: joiner_sched.failure_count(HOST_DEV_3507),
     };
 
     host_mat.shutdown();
@@ -9842,6 +9878,87 @@ async fn a_mistyped_passphrase_pairs_neither_device_3507() {
     assert!(
         out.host_still_pending,
         "#855: a rejected attempt must leave the host's pairing window open"
+    );
+}
+
+/// #3505/#3547: a refusal received while this device is mid-pairing is the
+/// handshake working. It must not be booked as a sync failure — neither as a
+/// "Sync failed" the user reads, nor as backoff the next dial has to wait out.
+///
+/// # Why this is one test and not two
+///
+/// The two issues describe one mis-classification seen from two distances.
+/// `try_sync_with_peer`'s failure arm did exactly two things — emit
+/// `SyncEvent::Error { "Sync failed: …" }` and `record_failure` — and a pairing
+/// rejection reached both. #3505 is the first (a red toast on a device whose
+/// user has not typed anything yet, at the moment they are being asked to trust
+/// the flow); #3547 is the second (the backoff those doomed dials accumulate
+/// then gates the single post-confirm dial that #3502's fix exists to make,
+/// because `confirm_pairing`'s `notify_change()` is one wake and `may_retry`
+/// simply skips it). Asserting them together is what says they are the same
+/// bug.
+///
+/// # What it must NOT suppress, and how that is held
+///
+/// The responder's own words still reach the UI: the assertion in
+/// `a_mistyped_passphrase_pairs_neither_device_3507` that the dialler observes
+/// `PairingProofMissing.peer_message()` verbatim runs against this same driver,
+/// so a fix that suppressed the rejection event itself — rather than only this
+/// layer's generic wrapper around it — turns *that* test red. The two
+/// assertions are deliberately in different tests for that reason: one says
+/// "say this", the other says "and nothing else".
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pairing_window_rejection_is_not_a_sync_failure_3505() {
+    let out = drive_two_device_pairing_3507(false).await;
+
+    assert_eq!(
+        out.joiner_failures_against_host, 0,
+        "#3547: the peer is not flaky, it is not paired yet. A failure booked here \
+         doubles the per-peer backoff (2s → … → 60s), and the very next thing the \
+         user does — typing the code — fires ONE `notify_change` wake that \
+         `may_retry` then skips. Got {} consecutive failures",
+        out.joiner_failures_against_host
+    );
+
+    assert!(
+        !saw_error_containing_3507(&out.joiner_events, "Sync failed"),
+        "#3505: a rejection during a pairing window must not be dressed up as a \
+         failed sync. This is what reaches `notify.error` as a red \"Sync failed: \
+         …\" toast on a device whose user has not typed a passphrase yet. Got {:?}",
+        out.joiner_events
+    );
+}
+
+/// The other half of the classification, and the half with teeth: the SAME
+/// rejection, arriving when this device has no pairing window open, is still an
+/// ordinary sync failure.
+///
+/// Without this, #3505's fix would pass just as well if the pairing-window
+/// condition were dropped and every rejection excused — and the backoff exists
+/// for a real reason (#278). A peer that says we are not paired, when we are not
+/// mid-pairing, is precisely the peer that should not be dialled flat out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_rejection_outside_a_pairing_window_is_still_a_sync_failure_3505() {
+    let out = drive_two_device_pairing_windowed_3507(true, false).await;
+
+    // Precondition: the run really did end in a rejection. Without the joiner's
+    // marker there is no proof to offer, so the host's #855 gate refuses it —
+    // and if that ever stopped being true, the assertions below would pass for
+    // the wrong reason.
+    assert!(
+        out.joiner_row_for_host.is_none() && out.host_row_for_joiner.is_none(),
+        "precondition: a joiner with no marker offers no proof and must be refused"
+    );
+
+    assert_eq!(
+        out.joiner_failures_against_host, 1,
+        "outside a pairing window a refusal is ordinary evidence about a peer, and \
+         must still advance the backoff"
+    );
+    assert!(
+        saw_error_containing_3507(&out.joiner_events, "Sync failed"),
+        "…and must still be surfaced as a failed sync, got {:?}",
+        out.joiner_events
     );
 }
 

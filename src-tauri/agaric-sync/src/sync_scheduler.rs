@@ -384,6 +384,35 @@ impl SyncScheduler {
         state.next_retry_at = Instant::now() + Duration::from_secs_f64(jittered_secs);
     }
 
+    /// Forget every peer's accumulated backoff.
+    ///
+    /// # Why a pairing act clears it, and why for *all* peers (#3547)
+    ///
+    /// `confirm_pairing` (and `start_pairing`) ends with a single
+    /// `notify_change()`, and that one wake is what Branch B turns into the dial
+    /// that a first-ever pair depends on. If it lands inside an accumulated
+    /// backoff window, [`may_retry`](Self::may_retry) skips it and nothing
+    /// retries until the next scheduled round — the original #3502 symptom
+    /// reached by a different route, and one that gets *more* likely the slower
+    /// the user is, which is precisely the user already struggling with pairing.
+    ///
+    /// A user-initiated pairing act is new information: whatever the earlier
+    /// failures were about, they were not about the marker that has just been
+    /// written. Clearing makes the post-confirm dial deterministic instead of
+    /// probabilistic.
+    ///
+    /// It clears *every* peer rather than one because during a first-ever pair
+    /// there is no peer id to name — `peer_refs` is empty and the device this is
+    /// about is whichever unpaired endpoint answers. The blast radius is one
+    /// extra dial round for any peer that happened to be in backoff, bounded to
+    /// the moment a user pressed a button in the pairing dialog.
+    pub fn clear_backoff(&self) {
+        self.backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
+
     /// Record a successful sync, resetting the backoff for `peer_id`.
     pub fn record_success(&self, peer_id: &str) {
         let mut backoff = self
