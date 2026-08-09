@@ -805,3 +805,76 @@ async fn a_replicated_traversal_fs_path_never_reaches_the_row_3370() {
     assert_eq!(stored, "attachments/01HZ3370000000000000000AT3");
     assert!(!stored.contains(".."), "no `..` may survive into the row");
 }
+
+// ============================================================================
+// #3370 review — the coercion fallback must itself be storable
+// ============================================================================
+
+/// The fallback path is built from `attachment_id`, which is as peer-supplied
+/// as `fs_path` is: `BlockId`'s `Deserialize` falls back to a plain
+/// ASCII-uppercase for any non-ULID string with no error, and nothing
+/// constrains `attachments.id` to a ULID.
+///
+/// So an id can carry a character `parse` refuses. `sanitize_attachment_filename`
+/// neutralizes separators and control characters — it has no reason to care
+/// about `:`, which is a drive / NTFS-stream separator and which `parse` and
+/// migration 0108 both reject. The fallback then produced a path that could not
+/// be stored, the INSERT aborted on the trigger, and `apply_add_attachment_tx`
+/// propagated with `?` — one crafted op wedging the apply transaction on every
+/// retry, which is exactly the reject-in-apply DoS coercion exists to avoid.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hostile_attachment_id_cannot_wedge_the_apply_path_3370() {
+    let (pool, dir) = test_pool().await;
+
+    // `C:X` survives `BlockId`'s non-ULID fallback verbatim and survives the
+    // display-name sanitizer verbatim, so it reaches the path unchanged.
+    let stored = apply_peer_add_attachment(&pool, "C:X", "notes.db").await;
+
+    assert!(
+        agaric_core::attachment_path::AttachmentFsPath::parse(&stored).is_ok(),
+        "the coerced path {stored:?} must be one `parse` accepts — an apply that \
+         stores a path the resolvers refuse is the failure this coercion exists \
+         to prevent"
+    );
+    agaric_sync::sync_files::validate_attachment_fs_path(dir.path(), &stored)
+        .expect("the coerced path must resolve");
+}
+
+/// #3370 review — Windows strips a trailing dot (and trailing spaces) from a
+/// path component at create time, so a row spelled `attachments/photo.png.`
+/// has its bytes land at `attachments\photo.png`. The GC walk then derives
+/// `attachments/photo.png`, misses the stored string, and destroys the bytes —
+/// the same membership-test failure as `attachments/./photo.png`, reached by a
+/// spelling `parse` was still accepting verbatim.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_trailing_dot_spelling_keeps_its_bytes_through_a_gc_pass_3370() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+    // Where the bytes land under the platform's own name folding, and where
+    // the GC's directory walk will find them.
+    let full = attachments.join("photo.png");
+    tokio::fs::write(&full, b"bytes").await.unwrap();
+
+    let stored = apply_peer_add_attachment(
+        &pool,
+        "01HZ3370000000000000000AT4",
+        "attachments/photo.png.",
+    )
+    .await;
+    assert_eq!(
+        stored, "attachments/photo.png",
+        "a trailing dot must be folded away before the row is written, or the \
+         GC's walk-derived string cannot match it"
+    );
+
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+
+    assert!(
+        full.exists(),
+        "the GC destroyed the bytes of a live, referenced attachment because the \
+         row carried a trailing-dot spelling (#3370 review)"
+    );
+}

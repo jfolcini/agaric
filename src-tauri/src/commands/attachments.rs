@@ -369,9 +369,14 @@ pub async fn add_attachment_with_bytes_inner(
     // coerce into and the resolvers parse, so there is exactly one definition
     // of what a stored attachment path may look like.
     let storage_id = ulid::Ulid::generate().to_string().to_uppercase();
+    // No re-check follows. `for_storage_id` re-parses its own output and
+    // guarantees the result is a value `parse` accepts, so a
+    // `check_attachment_fs_path_shape` here could only fail if that guarantee
+    // broke — turning a constructor bug into a failed user upload rather than
+    // surfacing it. The type carries the invariant; the call site does not
+    // restate it (#3370 review).
     let fs_path =
         agaric_core::attachment_path::AttachmentFsPath::for_storage_id(&storage_id).into_string();
-    agaric_sync::sync_files::check_attachment_fs_path_shape(&fs_path)?;
 
     // Write the bytes first (creates the attachments dir). `write_attachment_file`
     // is synchronous std::fs; run it on the blocking pool so a large write does

@@ -5041,11 +5041,20 @@ async fn attachments_0108_fs_path_shape_triggers_refuse_unsafe_writes_3370() {
     insert("ATT3370OK2", "attachments/sub/photo.png".into())
         .await
         .expect("a nested canonical path must be accepted");
-    // The coercion fallback for a hostile attachment id — a legal file name,
-    // not a legal path — must also be accepted.
+    // A legal file name that merely looks alarming must still be accepted —
+    // the triggers police path shape, not name aesthetics.
     insert("ATT3370OK3", "attachments/.._.._evil".into())
         .await
-        .expect("the sanitized fallback component must be accepted");
+        .expect("a dotted single component is a legal file name");
+    // The digest fallback `for_storage_id` mints when the id is not a
+    // component `parse` accepts verbatim — hex, so it cannot be refused
+    // (#3370 review).
+    insert(
+        "ATT3370OK4",
+        format!("attachments/id-{}", blake3::hash(b"C:X").to_hex()),
+    )
+    .await
+    .expect("the digest fallback must be accepted");
 
     for (i, bad) in [
         // Unconfined: `app_data_dir` holds the database and its WAL.
@@ -5061,6 +5070,14 @@ async fn attachments_0108_fs_path_shape_triggers_refuse_unsafe_writes_3370() {
         "attachments/sub/../photo.png",
         "attachments/sub/..",
         "attachments/sub/.",
+        // #3370 review / migration 0109: Windows folds a trailing dot or space
+        // away at create time, so these spell the same file as the bare name
+        // and the GC's walk-derived string cannot match them.
+        "attachments/photo.png.",
+        "attachments/photo.png ",
+        "attachments/photo.png..",
+        "attachments/sub./photo.png",
+        "attachments/sub /photo.png",
         // Separator and drive/stream forms.
         "attachments\\photo.png",
         "attachments/C:photo.png",

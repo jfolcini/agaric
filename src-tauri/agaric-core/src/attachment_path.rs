@@ -31,9 +31,11 @@
 //!    the canonical spelling is what keeps that membership test meaningful.
 //!
 //! [`AttachmentFsPath`] is the parsed form: rooted at `attachments/`,
-//! `/`-separated, with no `.`, `..`, empty, or drive/stream components. It can
-//! only be obtained by parsing, so a value of this type is a path the GC can
-//! compare and the resolvers can join.
+//! `/`-separated, with no `.`, `..`, empty, or drive/stream components, and no
+//! component ending in a dot or a space (Windows folds those away at create
+//! time, which is failure mode 2 again by another spelling). It can only be
+//! obtained by parsing, so a value of this type is a path the GC can compare
+//! and the resolvers can join.
 //!
 //! # Reject at the door, coerce on the apply path
 //!
@@ -45,28 +47,92 @@
 //! unusable value is replaced by the deterministic `attachments/<attachment_id>`
 //! path, which is exactly the shape this device's own ingest mints.
 //!
+//! The fallback is built from the attachment id, which is **also** peer-supplied
+//! — `BlockId`'s `Deserialize` accepts any non-ULID string with a plain
+//! ASCII-uppercase and no error — so it cannot be assumed safe either. If the
+//! fallback could itself be a path `parse` refuses, the row would fail to store
+//! and the apply transaction would abort on every retry: the same DoS, reached
+//! through the storage layer instead of through the validator.
+//! [`AttachmentFsPath::for_storage_id`] therefore mints the id into a path only
+//! when [`AttachmentFsPath::parse`] accepts it *unchanged*, and substitutes the
+//! id's blake3 digest otherwise.
+//!
 //! `fs_path` is device-local storage detail, not replicated state — the receive
 //! path already repoints it (`UPDATE attachments SET fs_path = ?` when a local
 //! blob matches by content hash), and each side of a sync resolves bytes
 //! through its *own* row. So a coerced path cannot diverge peers in any sense
 //! that matters: it changes where this device keeps the bytes, nothing else.
 
-use crate::attachment_filename::sanitize_attachment_filename;
 use crate::error::AppError;
 
 /// The single directory under `app_data_dir` that attachment bytes may live
 /// in. Every `attachments.fs_path` names a file inside this subtree.
 pub const ATTACHMENTS_ROOT: &str = "attachments";
 
+/// Marks a storage-id component that had to be replaced by its digest because
+/// the sanitized form was still not a path [`AttachmentFsPath::parse`] accepts.
+/// Visible in the row so an operator can tell a digest apart from an id.
+const OPAQUE_ID_PREFIX: &str = "id-";
+
+/// MS-DOS device names. Windows resolves these as devices in **every**
+/// directory and with any extension (`CON`, `con.png`, `NUL.bin`), so a
+/// component whose stem is one of them cannot be created as a file there. That
+/// is not a traversal or a GC hazard — the write simply fails and the row is
+/// re-requested from a peer forever — but the fallback exists precisely to
+/// produce a path that works, so it is closed here rather than left as a loop.
+const DOS_DEVICE_NAMES: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// True when `id` is a component Windows resolves as a device rather than a
+/// file. Windows does so in **every** directory and with any extension (`CON`,
+/// `con.png`, `NUL.bin`), so such a component cannot be created there. That is
+/// neither a traversal nor a GC hazard — the write simply fails and the row is
+/// re-requested from a peer forever — but a fallback exists precisely to
+/// produce a path that works, so it diverts to the digest instead.
+fn is_dos_device_name(id: &str) -> bool {
+    let stem = id.split('.').next().unwrap_or("");
+    DOS_DEVICE_NAMES
+        .iter()
+        .any(|d| stem.eq_ignore_ascii_case(d))
+}
+
+/// The always-parseable, per-id-unique path `for_storage_id` falls back to.
+///
+/// `id-` plus 64 lowercase hex digits: no separator, no `:`, no control
+/// character, no trailing dot or space, never empty — every reason
+/// [`AttachmentFsPath::parse`] has to refuse a component is absent by the
+/// shape of hex, which is what makes the guarantee provable rather than
+/// enumerated.
+fn digest_component_path(storage_id: &str) -> String {
+    format!(
+        "{ATTACHMENTS_ROOT}/{OPAQUE_ID_PREFIX}{}",
+        blake3::hash(storage_id.as_bytes()).to_hex()
+    )
+}
+
 /// A parsed, canonical, confined attachment path.
 ///
 /// Canonical form is `attachments/<component>[/<component>…]`: forward slashes
 /// only, at least one component below the root, and no component that is
-/// empty, `.`, `..`, all-dots/spaces, or carries a `:`.
+/// empty, `.`, `..`, all-dots/spaces, carries a `:`, or ends in a dot or a
+/// space.
 ///
 /// Construct one with [`AttachmentFsPath::parse`] (rejecting),
 /// [`AttachmentFsPath::coerce_from_peer`] (never fails), or
 /// [`AttachmentFsPath::for_storage_id`] (local ingest).
+///
+/// # The construction invariant
+///
+/// Every non-`parse` constructor returns a value that `parse` accepts, and it
+/// is enforced by construction rather than by inspection: [`Self::for_storage_id`]
+/// re-parses its own output and falls back to a component whose acceptability
+/// is trivially provable (hex digits) if the sanitizer left anything `parse`
+/// refuses. That matters because a constructor that can emit an unparseable
+/// path re-introduces the very DoS coercion exists to avoid — the row fails to
+/// store, the apply transaction aborts, and it aborts identically on every
+/// retry.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AttachmentFsPath(String);
 
@@ -120,23 +186,33 @@ impl AttachmentFsPath {
                 }
                 _ => {}
             }
-            // Windows silently strips trailing dots and spaces from a path
-            // component, which turns `.. .` back into `..` — the same edge
-            // `sanitize_attachment_filename` guards for display names.
-            if component.trim_end_matches(['.', ' ']).is_empty() {
-                return Err(AppError::validation(
-                    "attachment path escapes app data dir".into(),
-                ));
-            }
             // `C:` as a first component is a drive-relative path; `x.png:s` is
             // an NTFS alternate data stream. Neither can occur in a path this
             // app mints (they are ULIDs), so refusing `:` outright is free.
+            // Checked before the fold below, so a `:` cannot hide behind one.
             if component.contains(':') {
                 return Err(AppError::validation(
                     "attachment path must not contain a drive or stream separator".into(),
                 ));
             }
-            components.push(component);
+            // Windows silently strips trailing dots and spaces from a path
+            // component at create time, so `photo.png.` and `photo.png` name
+            // ONE file there and two strings here. Fold rather than merely
+            // reject-if-it-empties: a row spelled `attachments/photo.png.`
+            // would otherwise have its bytes land at `attachments\photo.png`,
+            // whereupon the GC's walk derives `attachments/photo.png`, misses
+            // the stored string, and destroys bytes a live row references —
+            // the same membership-test failure as `attachments/./photo.png`.
+            // Folding here also covers the `.. .` → `..` revival that
+            // `sanitize_attachment_filename` guards for display names, since a
+            // component that folds to nothing (or to `.`/`..`) is refused.
+            let folded = component.trim_end_matches(['.', ' ']);
+            if folded.is_empty() || folded == "." || folded == ".." {
+                return Err(AppError::validation(
+                    "attachment path escapes app data dir".into(),
+                ));
+            }
+            components.push(folded);
         }
 
         if components.first().copied() != Some(ATTACHMENTS_ROOT) {
@@ -153,25 +229,61 @@ impl AttachmentFsPath {
         Ok(Self(components.join("/")))
     }
 
-    /// The canonical path this device mints for a freshly ingested attachment.
+    /// The canonical path this device mints for an attachment with the given
+    /// storage id.
     ///
-    /// `storage_id` is run through [`sanitize_attachment_filename`] so the
-    /// result is a single safe component even if a caller ever passes
-    /// something less disciplined than the ULID the ingest path generates.
+    /// Local ingest passes a freshly generated ULID and gets
+    /// `attachments/<ULID>` back. The coercion fallback passes an
+    /// **attachment id**, which is peer-supplied: `BlockId`'s `Deserialize`
+    /// accepts any non-ULID string with a plain ASCII-uppercase and no error,
+    /// and nothing constrains `attachments.id` to a ULID. So this constructor
+    /// treats `storage_id` as untrusted.
+    ///
+    /// # Two properties, both by construction
+    ///
+    /// **The result always parses.** The id is minted into the path verbatim
+    /// only when [`Self::parse`] accepts the candidate *unchanged* — an
+    /// identity parse. Anything `parse` would have normalized or refused, for
+    /// any reason including one nobody enumerated here, falls to the id's
+    /// blake3 digest, which is hex and therefore cannot be refused. The rules
+    /// are thus read off `parse` itself rather than restated, so the two cannot
+    /// drift apart.
+    ///
+    /// **Distinct ids stay distinct.** `attachments.fs_path` carries a partial
+    /// `UNIQUE` index (migration 0037): two rows sharing a path means the
+    /// second `INSERT OR IGNORE` is silently dropped. A sanitizing fallback
+    /// cannot promise this — `""`, `"."` and `" "` all sanitize to one name —
+    /// but a digest can, and a verbatim id is distinct from other verbatim ids
+    /// by definition. An id spelled like a digest (`id-<hex>`) is diverted to
+    /// the digest branch too, so the two namespaces cannot be made to overlap
+    /// by a peer choosing its own id.
     #[must_use]
     pub fn for_storage_id(storage_id: &str) -> Self {
-        Self(format!(
-            "{ATTACHMENTS_ROOT}/{}",
-            sanitize_attachment_filename(storage_id)
-        ))
+        let candidate = format!("{ATTACHMENTS_ROOT}/{storage_id}");
+        let mintable = !storage_id.contains(['/', '\\'])
+            && !storage_id.starts_with(OPAQUE_ID_PREFIX)
+            && !is_dos_device_name(storage_id)
+            && matches!(Self::parse(&candidate), Ok(ref parsed) if parsed.as_str() == candidate);
+
+        if mintable {
+            Self(candidate)
+        } else {
+            Self(digest_component_path(storage_id))
+        }
     }
 
     /// Parse a peer-supplied path, falling back to `attachments/<attachment_id>`
     /// when it cannot be made safe.
     ///
-    /// Never fails — see the module docs for why the apply path must not reject.
-    /// Compare [`Self::as_str`] against the input to detect that a rewrite
-    /// happened (the callers log a `warn!` when it did).
+    /// Never fails, and — via [`Self::for_storage_id`] — never returns a value
+    /// [`Self::parse`] would refuse, whatever the peer put in *either*
+    /// argument. Both halves matter: a fallback that could not be stored would
+    /// abort the apply transaction just as a reject would, only later and less
+    /// legibly.
+    ///
+    /// See the module docs for why the apply path must not reject. Compare
+    /// [`Self::as_str`] against the input to detect that a rewrite happened
+    /// (the callers log a `warn!` when it did).
     #[must_use]
     pub fn coerce_from_peer(raw: &str, attachment_id: &str) -> Self {
         Self::parse(raw).unwrap_or_else(|_| Self::for_storage_id(attachment_id))
@@ -335,22 +447,210 @@ mod tests {
         }
     }
 
+    /// Peer-controlled strings that have, or plausibly could, reach
+    /// `for_storage_id` as an attachment id. `BlockId`'s `Deserialize` accepts
+    /// any non-ULID string with a plain ASCII-uppercase and no error, so this
+    /// is the real domain, not a pathological one.
+    const HOSTILE_IDS: &[&str] = &[
+        // The one that shipped broken: `:` survives the display sanitizer
+        // untouched and `parse` refuses it.
+        "C:X",
+        "01J0:ATT",
+        "x.png:$DATA",
+        // Separators and traversal.
+        "../../evil",
+        "..\\..\\evil",
+        "a/b",
+        "a\\b",
+        "/",
+        "\\",
+        "..",
+        ".",
+        "...",
+        // Empty / whitespace-only / trailing dot and space.
+        "",
+        " ",
+        "   ",
+        "photo.",
+        "photo ",
+        "photo. . ",
+        ". .",
+        // Control characters, including the path-truncating NUL.
+        "a\0b",
+        "\n",
+        "\u{7f}",
+        // MS-DOS device names, which Windows resolves in every directory.
+        "CON",
+        "con",
+        "NUL.png",
+        "LPT9",
+        "aux.bin",
+        // Length: past the display sanitizer's byte cap, and multi-byte so a
+        // naive cut would split a code point.
+        "ID-01234567890123456789012345678901234567890123456789",
+        "\u{e9}",
+    ];
+
+    /// The invariant the shipped version asserted over a hand-picked id set and
+    /// therefore missed: **whatever** the peer puts in either argument,
+    /// `coerce_from_peer` returns something `parse` accepts. A constructor that
+    /// can emit an unparseable path re-introduces the reject-in-apply DoS
+    /// through the storage layer instead of through the validator.
     #[test]
-    fn the_fallback_is_safe_even_for_a_hostile_attachment_id() {
-        let coerced = AttachmentFsPath::coerce_from_peer("notes.db", "../../evil");
+    fn coercion_always_returns_a_path_parse_accepts() {
+        let hostile_paths = [
+            "notes.db",
+            "notes.db-wal",
+            "../../etc/passwd",
+            "/etc/passwd",
+            "C:\\Windows\\System32",
+            "attachments/../notes.db",
+            "attachments/photo.png:stream",
+            "",
+            ".",
+            "attachments",
+            // Already-good paths, so the loop also covers the accept branch.
+            "attachments/photo.png",
+            "attachments/./photo.png",
+        ];
+        let mut digests = 0usize;
+        for id in HOSTILE_IDS {
+            for path in hostile_paths {
+                let coerced = AttachmentFsPath::coerce_from_peer(path, id);
+                let reparsed = AttachmentFsPath::parse(coerced.as_str());
+                assert!(
+                    reparsed.is_ok(),
+                    "coerce_from_peer({path:?}, {id:?}) produced {coerced:?}, \
+                     which parse refuses: {:?}",
+                    reparsed.err()
+                );
+                // Idempotent as well as accepted: re-parsing must be a no-op,
+                // or the value stored is not the value the GC will compare.
+                assert_eq!(
+                    reparsed.expect("just asserted Ok").as_str(),
+                    coerced.as_str(),
+                    "coerced path {coerced:?} is accepted but not canonical"
+                );
+                if coerced.as_str().contains(OPAQUE_ID_PREFIX) {
+                    digests += 1;
+                }
+            }
+        }
+        // The digest branch must actually be reachable, or this test would keep
+        // passing if `for_storage_id` stopped re-parsing.
         assert!(
-            AttachmentFsPath::parse(coerced.as_str()).is_ok(),
-            "{coerced} must still parse"
+            digests > 0,
+            "no hostile id exercised the digest fallback — the structural \
+             guarantee is untested"
         );
-        // The separators in the hostile id are neutralized rather than
-        // preserved, so it stays one component below the root — `.._.._evil`
-        // is a legal file name, `../../evil` is not a legal path.
-        assert_eq!(coerced.as_str(), "attachments/.._.._evil");
+    }
+
+    /// Distinct ids must not collapse onto one path: `attachments.fs_path`
+    /// carries a partial UNIQUE index (migration 0037), so a constant fallback
+    /// would make the second such row collide.
+    #[test]
+    fn the_fallback_keeps_distinct_ids_distinct() {
+        let mut seen = std::collections::HashSet::new();
+        for id in HOSTILE_IDS {
+            let path = AttachmentFsPath::coerce_from_peer("notes.db", id).into_string();
+            assert!(
+                seen.insert(path.clone()),
+                "two distinct hostile ids share the fallback path {path:?}"
+            );
+        }
+    }
+
+    /// Windows folds a trailing dot or space away at create time, so these
+    /// spell the same file as the bare name and must reach the row as the
+    /// spelling the GC's directory walk produces.
+    #[test]
+    fn trailing_dots_and_spaces_fold_to_the_walk_form() {
+        for spelling in [
+            "attachments/photo.png.",
+            "attachments/photo.png ",
+            "attachments/photo.png..",
+            "attachments/photo.png. .",
+            "attachments/sub./photo.png",
+            "attachments/sub /photo.png",
+        ] {
+            let parsed = AttachmentFsPath::parse(spelling).expect(spelling);
+            assert!(
+                !parsed.as_str().contains(". ") && !parsed.as_str().ends_with(['.', ' ']),
+                "{spelling:?} kept a trailing dot/space: {parsed:?}"
+            );
+            assert!(
+                !parsed.as_str().contains("./") && !parsed.as_str().contains(" /"),
+                "{spelling:?} kept a trailing dot/space on an interior component: {parsed:?}"
+            );
+        }
         assert_eq!(
-            coerced.as_str().split('/').count(),
-            2,
-            "the fallback must be exactly `attachments/<one component>`"
+            AttachmentFsPath::parse("attachments/photo.png.")
+                .unwrap()
+                .as_str(),
+            "attachments/photo.png"
         );
+        assert_eq!(
+            AttachmentFsPath::parse("attachments/sub./photo.png ")
+                .unwrap()
+                .as_str(),
+            "attachments/sub/photo.png"
+        );
+    }
+
+    /// A component that folds away entirely, or folds back to `.`/`..`, is
+    /// still refused rather than silently dropped.
+    #[test]
+    fn a_component_that_folds_to_nothing_is_refused() {
+        for bad in [
+            "attachments/. ./photo.png",
+            "attachments/.. ./photo.png",
+            "attachments/   /photo.png",
+            "attachments/photo.png/. .",
+        ] {
+            assert!(
+                AttachmentFsPath::parse(bad).is_err(),
+                "{bad:?} must be refused"
+            );
+        }
+    }
+
+    /// The digest branch's output, tested directly rather than only through
+    /// whichever ids happen to reach it: every reason `parse` has to refuse a
+    /// component is absent from hex by construction.
+    #[test]
+    fn the_digest_fallback_always_parses_and_is_per_id_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for id in HOSTILE_IDS {
+            let path = digest_component_path(id);
+            assert!(
+                AttachmentFsPath::parse(&path).is_ok(),
+                "digest path {path:?} for {id:?} must parse"
+            );
+            assert!(
+                seen.insert(path.clone()),
+                "two distinct ids share the digest path {path:?}"
+            );
+        }
+    }
+
+    /// A peer cannot steer its own attachment onto another row's digest path by
+    /// naming itself `id-<hex>`: an id spelled like a digest is diverted to the
+    /// digest branch, whose output would have to be a blake3 preimage to match.
+    #[test]
+    fn an_id_spelled_like_a_digest_does_not_collide_with_one() {
+        let victim = AttachmentFsPath::for_storage_id(":");
+        let impostor_id = victim
+            .as_str()
+            .strip_prefix("attachments/")
+            .expect("rooted")
+            .to_owned();
+        let impostor = AttachmentFsPath::for_storage_id(&impostor_id);
+        assert_ne!(
+            victim.as_str(),
+            impostor.as_str(),
+            "an id spelled like a digest must not land on the digest's path"
+        );
+        assert!(AttachmentFsPath::parse(impostor.as_str()).is_ok());
     }
 
     #[test]
