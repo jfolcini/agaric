@@ -139,7 +139,7 @@ Apply-and-advance share one transaction → crash never advances the cursor past
 - **Foreground queue**: small bounded channel (capacity 256). Used for synchronous-feeling user ops.
 - **Background queue**: larger bounded channel (capacity 1024). Used for cache-rebuild fan-out, FTS reindex, agenda projection rebuild, attachment GC.
 - **Dedup**: identical tasks within a flush window collapse via per-task-discriminant hash sets.
-- **Panic isolation**: a panic in one task does not poison the queue; the next task drains.
+- **Panic isolation**: each attempt runs in its own spawned task, so under `panic = "unwind"` (debug/test) a panic in one task does not poison the queue and the next task drains. **This does not hold for the shipped binary**: `[profile.release]` sets `panic = "abort"`, so a handler panic ends the process before the join can report it. That is a deliberate, documented trade; #3382 removed the `fg_panics` / `bg_panics` counters that implied otherwise (a panic now counts on `fg_errors` / `bg_errors` wherever it is observable at all), and #3295 tracks whether the isolation machinery itself should survive the abort posture.
 
 ### Retry semantics
 

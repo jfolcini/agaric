@@ -207,16 +207,6 @@ async fn error_counters_zero() {
         0,
         "bg errors should start at zero"
     );
-    assert_eq!(
-        m.fg_panics.load(AtomicOrdering::Relaxed),
-        0,
-        "fg panics should start at zero"
-    );
-    assert_eq!(
-        m.bg_panics.load(AtomicOrdering::Relaxed),
-        0,
-        "bg panics should start at zero"
-    );
 }
 #[tokio::test]
 async fn status_error_counters() {
@@ -225,8 +215,6 @@ async fn status_error_counters() {
     let s = mat.status().await;
     assert_eq!(s.fg_errors, 0, "status fg_errors should start at zero");
     assert_eq!(s.bg_errors, 0, "status bg_errors should start at zero");
-    assert_eq!(s.fg_panics, 0, "status fg_panics should start at zero");
-    assert_eq!(s.bg_panics, 0, "status bg_panics should start at zero");
 }
 
 #[tokio::test]
@@ -477,4 +465,216 @@ async fn handle_bg_unexpected_batch_apply_returns_validation_err() {
         row.0, 0,
         "BatchApplyOps in bg queue must not mutate state even though it now errors"
     );
+}
+
+// ---------------------------------------------------------------------------
+// #3382: firing proofs for the three counters that only had "must not bump"
+// tests.
+//
+// A counter whose every assertion pins it to zero passes forever after its
+// emit site is deleted — the same false-green shape as a CI check that cannot
+// fail, relocated into the observability layer. The three tests below drive
+// the production path and assert the counter ROSE, so deleting the
+// `fetch_add` / `store` turns each of them red.
+// ---------------------------------------------------------------------------
+
+/// Saturate a bounded queue by holding every free slot as a reserved
+/// `Permit`, and return the permits (dropping them releases the queue).
+///
+/// A permit occupies channel capacity without being a message, which is what
+/// makes this deterministic: the consumer has nothing to drain, so it cannot
+/// race the test back to "capacity available". `try_reserve` never awaits, so
+/// the loop has no timing component either — and each `expect` doubles as an
+/// assertion that the channel's bound really is `capacity`.
+fn saturate<'a>(
+    tx: &'a tokio::sync::mpsc::Sender<MaterializeTask>,
+    capacity: usize,
+    label: &str,
+) -> Vec<tokio::sync::mpsc::Permit<'a, MaterializeTask>> {
+    let permits: Vec<_> = (0..capacity)
+        .map(|i| {
+            tx.try_reserve().unwrap_or_else(|e| {
+                panic!("{label} slot {i} of {capacity} should have been free: {e}")
+            })
+        })
+        .collect();
+    assert!(
+        tx.try_reserve().is_err(),
+        "{label} must be saturated before the enqueue under test"
+    );
+    permits
+}
+
+/// Poll `fut` exactly once and require it to be Pending.
+///
+/// This is what makes the two backpressure tests deterministic rather than a
+/// wall-clock bet: the `Full` arm bumps its counter synchronously, *before*
+/// the awaited `send` yields, so a single poll is enough to observe the
+/// increment — and `Pending` proves the enqueue really did block on the full
+/// channel instead of slipping through.
+fn poll_once_expecting_pending<F: Future>(fut: F, what: &str) {
+    let mut fut = std::pin::pin!(fut);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(
+        fut.as_mut().poll(&mut cx).is_pending(),
+        "{what} must still be awaiting the full channel"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn enqueue_foreground_bumps_fg_full_waits_when_the_channel_is_full() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    // Drain anything in flight so the only thing holding capacity below is
+    // this test's own permits.
+    mat.flush_foreground().await.unwrap();
+
+    let tx = mat
+        .fg_tx
+        .get()
+        .expect("Materializer::build sets the foreground sender")
+        .clone();
+    let permits = saturate(&tx, FOREGROUND_CAPACITY, "the foreground queue");
+
+    let before = mat.metrics().fg_full_waits.load(AtomicOrdering::Relaxed);
+    let n = StdArc::new(tokio::sync::Notify::new());
+    poll_once_expecting_pending(
+        mat.enqueue_foreground(MaterializeTask::Barrier(StdArc::clone(&n))),
+        "enqueue_foreground",
+    );
+    let after = mat.metrics().fg_full_waits.load(AtomicOrdering::Relaxed);
+    assert!(
+        after > before,
+        "fg_full_waits must count the wait enqueue_foreground just performed \
+         on a full channel — the repo's only foreground-backpressure signal \
+         (was {before}, still {after})"
+    );
+
+    drop(permits);
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn enqueue_background_bumps_bg_full_waits_when_the_channel_is_full() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    // `Materializer::new` may leave startup work on the background queue;
+    // drain it so `saturate` sees an empty channel and the `expect` inside it
+    // stays an honest capacity check.
+    mat.flush_background().await.unwrap();
+
+    let tx = mat
+        .bg_tx
+        .get()
+        .expect("Materializer::build sets the background sender")
+        .clone();
+    let permits = saturate(&tx, BACKGROUND_CAPACITY, "the background queue");
+
+    let before = mat.metrics().bg_full_waits.load(AtomicOrdering::Relaxed);
+    let n = StdArc::new(tokio::sync::Notify::new());
+    poll_once_expecting_pending(
+        mat.enqueue_background(MaterializeTask::Barrier(StdArc::clone(&n))),
+        "enqueue_background",
+    );
+    let after = mat.metrics().bg_full_waits.load(AtomicOrdering::Relaxed);
+    assert!(
+        after > before,
+        "bg_full_waits must count the wait the blocking enqueue_background \
+         just performed on a full channel (was {before}, still {after})"
+    );
+
+    drop(permits);
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bg_errors_bumps_when_a_background_task_exhausts_its_retries() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    mat.flush_background().await.unwrap();
+
+    // Deterministic background failure. `RebuildPagesCacheCounts` opens an
+    // IMMEDIATE transaction and immediately UPDATEs `pages_cache`, with no
+    // early return in front of it, so dropping the table makes the first
+    // attempt and both exponential retries fail identically — the
+    // retry-exhaustion arm `bg_errors` lives on. Its foreground twin
+    // `fg_errors` is proven by `retry_metrics.rs`; this is the background
+    // half, which had only `assert_eq!(bg_errors, 0)` before #3382.
+    sqlx::query("DROP TABLE pages_cache")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let before = mat.metrics().bg_errors.load(AtomicOrdering::Relaxed);
+    mat.enqueue_background(MaterializeTask::RebuildPagesCacheCounts)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    let after = mat.metrics().bg_errors.load(AtomicOrdering::Relaxed);
+    assert!(
+        after > before,
+        "bg_errors must count a background task that exhausted its retry \
+         budget (was {before}, still {after})"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn last_materialize_ms_is_stamped_after_a_foreground_batch() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+
+    // The stalled-consumer detector's input. Zero means "never materialized";
+    // the only assertions that existed before #3382 were on that never case,
+    // so nothing proved the stamp is ever written at all.
+    assert_eq!(
+        mat.metrics()
+            .last_materialize_ms
+            .load(AtomicOrdering::Relaxed),
+        0,
+        "nothing has been materialized yet"
+    );
+    let status_before = mat.status().await;
+    assert_eq!(
+        status_before.last_materialize_at, None,
+        "the projection must report the never-materialized case as None"
+    );
+
+    // `flush_foreground` pushes a real `Barrier` through `run_foreground`'s
+    // batch loop, which is the sole production caller of
+    // `record_last_materialize`.
+    //
+    // TWO flushes, and the second one is not belt-and-braces. `run_foreground`
+    // stamps *after* the whole drained batch, while the Barrier arm's
+    // `notify_one()` fires from inside it — so the first `flush_foreground`
+    // returns while its own batch is still being processed and the stamp has
+    // provably not landed yet (asserting after one flush fails ~100% of the
+    // time). The loop is sequential — `recv` → process batch → stamp — and the
+    // second barrier cannot join the first batch, whose task list was frozen
+    // before processing began. So the second flush returning is a completion
+    // edge for the first batch's stamp, with no wall-clock deadline anywhere.
+    mat.flush_foreground().await.unwrap();
+    mat.flush_foreground().await.unwrap();
+
+    let stamped = mat
+        .metrics()
+        .last_materialize_ms
+        .load(AtomicOrdering::Relaxed);
+    assert!(
+        stamped > 0,
+        "run_foreground must stamp last_materialize_ms after a batch, or the \
+         stalled-consumer detector reports None forever"
+    );
+    let status_after = mat.status().await;
+    assert!(
+        status_after.last_materialize_at.is_some(),
+        "StatusInfo::last_materialize_at must project the stamp"
+    );
+    assert!(
+        status_after.time_since_last_materialize_secs.is_some(),
+        "StatusInfo::time_since_last_materialize_secs must project the stamp"
+    );
+
+    mat.shutdown();
 }

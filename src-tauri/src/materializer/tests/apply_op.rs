@@ -388,12 +388,8 @@ async fn fg_retry_success() {
     assert_eq!(
         metrics.fg_errors.load(AtomicOrdering::Relaxed),
         0,
-        "successful task should not increment errors"
-    );
-    assert_eq!(
-        metrics.fg_panics.load(AtomicOrdering::Relaxed),
-        0,
-        "successful task should not increment panics"
+        "successful task should not increment errors (a panic would land \
+         on this counter too since #3382)"
     );
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -438,11 +434,6 @@ async fn fg_retry_bad_payload() {
         metrics.fg_errors.load(AtomicOrdering::Relaxed),
         1,
         "bad payload should increment error counter"
-    );
-    assert_eq!(
-        metrics.fg_panics.load(AtomicOrdering::Relaxed),
-        0,
-        "bad payload should not cause a panic"
     );
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

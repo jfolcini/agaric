@@ -9,7 +9,7 @@
 //! | Tier | Site | Tasks routed here | Retries | Backoff | On exhaustion |
 //! |------|------|-------------------|---------|---------|---------------|
 //! | Foreground (fg) | [`process_single_foreground_task`] | `ApplyOp`, `BatchApplyOps`, `Barrier` | 1 | constant 100 ms | Bump `fg_errors` (and, for Apply / BatchApplyOps, `fg_apply_dropped` plus a divergence warn carrying op coords). the failure is **persisted** to `materializer_retry_queue` (one `ApplyOp` row per record; batches fan out) and re-enqueued by the sweeper on the minute-to-hour schedule. #621: persisted ApplyOp rows are exempt from the give-up triggers — the cursor's MAX-semantics advance has already leapt past the dropped seq, so this row is the only remaining recovery net; the sweeper instead retires a row only when its op_log row is gone or a later `purge_block` supersedes it (re-applying out of order would resurrect purged data). |
-//! | Background (bg) | [`run_background`] | All cache rebuilds, FTS reindex, attachment cleanup | 2 | exponential 150 ms / 300 ms | Bump `bg_errors` / `bg_panics`. Idempotent per-block tasks (`UpdateFtsBlock`, `ReindexBlockLinks`, `ReindexBlockTagRefs`) are persisted to `materializer_retry_queue` for re-enqueue on the much-longer minute-to-hour schedule from [`super::retry_queue::backoff_delay_for`]. extends persistence to global cache rebuilds (`RebuildTagsCache`, …, `RebuildBlockTagRefsCache`) under the `'__GLOBAL__'` sentinel so a failure / saturation drop no longer leaves caches stale until the next user mutation. Truly non-retryable tasks (`RebuildFtsIndex`, `FtsOptimize`, `CleanupOrphanedAttachments`, …) are silently counted on `bg_dropped` without persistence. |
+//! | Background (bg) | [`run_background`] | All cache rebuilds, FTS reindex, attachment cleanup | 2 | exponential 150 ms / 300 ms | Bump `bg_errors` (which, per #3382, subsumes the debug-only panic arm). Idempotent per-block tasks (`UpdateFtsBlock`, `ReindexBlockLinks`, `ReindexBlockTagRefs`) are persisted to `materializer_retry_queue` for re-enqueue on the much-longer minute-to-hour schedule from [`super::retry_queue::backoff_delay_for`]. extends persistence to global cache rebuilds (`RebuildTagsCache`, …, `RebuildBlockTagRefsCache`) under the `'__GLOBAL__'` sentinel so a failure / saturation drop no longer leaves caches stale until the next user mutation. Truly non-retryable tasks (`RebuildFtsIndex`, `FtsOptimize`, `CleanupOrphanedAttachments`, …) are silently counted on `bg_dropped` without persistence. |
 //!
 //! The in-memory backoffs (this module) handle transient WAL-lock
 //! contention; the persistent retry queue handles harder failures
@@ -530,9 +530,14 @@ pub(super) async fn process_single_foreground_task(
         .await
     };
 
-    if outcome.panicked {
-        metrics.fg_panics.fetch_add(1, Ordering::Relaxed);
-    } else if outcome.succeeded {
+    // #3382: no panic arm. `outcome.panicked` implies `!outcome.succeeded`
+    // (see `RetryOutcome`), so a panicked attempt falls through to the error
+    // arm below and is counted as the failure it is. The former `fg_panics`
+    // counter was deleted rather than left reading zero forever: under
+    // `[profile.release]`'s `panic = "abort"` the process is gone before any
+    // counter can be written, so it could only ever be zero in a shipped
+    // build — the false-health signal #3349 exists to remove.
+    if outcome.succeeded {
         // Issue #378: confirmed-durable-success clear for the foreground
         // path. A sweep-driven `ApplyOp` re-run that succeeds here must
         // remove its leased retry row (the sweeper no longer pre-clears
@@ -550,7 +555,7 @@ pub(super) async fn process_single_foreground_task(
                  row will be re-leased and re-cleared on the next sweep"
             );
         }
-    } else if !outcome.succeeded {
+    } else {
         metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
         // C-2a: defense-in-depth observability for
         // materializer divergence. `ApplyOp` / `BatchApplyOps` tasks
@@ -749,11 +754,13 @@ pub(super) async fn run_background(
                     .await
                 };
                 let succeeded = outcome.succeeded;
-                let panicked = outcome.panicked;
                 let last_error_msg = outcome.last_error_msg;
-                if panicked {
-                    metrics.bg_panics.fetch_add(1, Ordering::Relaxed);
-                } else if !succeeded {
+                // #3382: the panic arm folded into `bg_errors`, mirroring the
+                // foreground path — see `process_single_foreground_task`. A
+                // separate `bg_panics` counter was deleted because
+                // `panic = "abort"` makes it structurally incapable of moving
+                // in a release build.
+                if !succeeded {
                     metrics.bg_errors.fetch_add(1, Ordering::Relaxed);
                 }
                 // Issue #378: confirmed-durable-success clear. The
