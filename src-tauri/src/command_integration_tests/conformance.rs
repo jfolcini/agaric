@@ -498,12 +498,49 @@ fn parity_property_key(key: &str) -> bool {
     !matches!(key, "created_at" | "completed_at" | "space")
 }
 
+/// Read the pre-op `parent_id` of a structural op's target block.
+///
+/// #3429: this was inlined in `run_fixture` as
+/// `fetch_one(…).expect("read structural op parent")`, so a fixture whose op
+/// list moves or purges a block that has no `blocks` row at that point — a
+/// double purge, a typo'd `blockId`, an op ordered before the create that makes
+/// its target — failed with a bare sqlx `RowNotFound` that named neither the
+/// fixture, nor the command, nor the block. That is a dead end for exactly the
+/// person it fires on: the author of a brand-new fixture. `fetch_optional`
+/// turns the absence into a diagnostic the reader can act on without opening
+/// the harness.
+async fn read_structural_op_parent(
+    pool: &SqlitePool,
+    fixture_name: &str,
+    command: &str,
+    block_id: &str,
+) -> Result<Option<String>, String> {
+    sqlx::query_as::<_, (Option<String>,)>("SELECT parent_id FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| {
+            format!("fixture '{fixture_name}': read parent of {command} target {block_id}: {error}")
+        })?
+        .map(|row| row.0)
+        .ok_or_else(|| {
+            format!(
+                "fixture '{fixture_name}': op '{command}' targets block {block_id}, which has no \
+                 `blocks` row at that point in the op list — the fixture's ops are inconsistent \
+                 with its seed, or an earlier op already removed the block"
+            )
+        })
+}
+
 async fn verify_fixture_engine_parity(
     pool: &SqlitePool,
     state: &agaric_engine::loro::shared::LoroState,
     fixture_name: &str,
     known_ids: &[String],
-    gapped_parents: &BTreeSet<Option<String>>,
+    // #3429: `&mut` because the guard RE-TIGHTENS this allowance (see the pass
+    // after the order comparison below) instead of letting it stand for the rest
+    // of the fixture.
+    gapped_parents: &mut BTreeSet<Option<String>>,
 ) -> Result<(), String> {
     use agaric_engine::loro::engine::PropertyValue;
 
@@ -625,7 +662,7 @@ async fn verify_fixture_engine_parity(
     // Purge does not re-rank surviving SQL siblings. Only parent groups that a
     // fixture purge actually touched may carry a numeric gap; their relative
     // order must still equal the engine's order exactly.
-    for parent in gapped_parents {
+    for parent in gapped_parents.iter() {
         let mut sql_order: Vec<_> = sql_blocks
             .values()
             .filter(|block| block.parent_id == *parent)
@@ -648,6 +685,46 @@ async fn verify_fixture_engine_parity(
                  Loro={loro_order:?})"
             ));
         }
+    }
+
+    // #3429: RE-TIGHTEN the allowance. A purge grants it for a parent group and,
+    // before this pass, nothing ever took it back — the caller only drops it when
+    // a later create/move happens to name that group, so for every other fixture
+    // shape the group's exact positions went unchecked for the remainder of the
+    // run, and any subsequent SQL/engine position divergence inside it was
+    // invisible (order parity above is strictly weaker: a group can hold the same
+    // sequence at the wrong ranks). An allowance is only ever needed while the
+    // gap is actually there, so drop it the moment the group's SQL positions
+    // agree with the engine's again — including immediately, for a purge that
+    // left no gap at all (an only child, or a trailing sibling). Every later
+    // comparison of that group is then exact again.
+    let healed: Vec<Option<String>> = {
+        let mut healed = Vec::new();
+        for parent in gapped_parents.iter() {
+            let mut agrees = true;
+            for block in sql_blocks
+                .values()
+                .filter(|block| block.parent_id == *parent)
+            {
+                let position = engine.read_position(&block.id).map_err(|error| {
+                    format!(
+                        "fixture '{fixture_name}': read position {}: {error}",
+                        block.id
+                    )
+                })?;
+                if block.position != Some(position) {
+                    agrees = false;
+                    break;
+                }
+            }
+            if agrees {
+                healed.push(parent.clone());
+            }
+        }
+        healed
+    };
+    for parent in healed {
+        gapped_parents.remove(&parent);
     }
 
     // Every surviving SQL property/tag must be in Loro. Engine-only entries
@@ -998,9 +1075,15 @@ async fn run_fixture(path: &PathBuf) {
 
     // Guard setup before fixture ops can remove/overwrite a seeded property or
     // tag and erase evidence that its command took a SQL-only fallback.
-    verify_fixture_engine_parity(&pool, state, &name, &canonical_order, &purge_gapped_parents)
-        .await
-        .unwrap_or_else(|message| panic!("{message}"));
+    verify_fixture_engine_parity(
+        &pool,
+        state,
+        &name,
+        &canonical_order,
+        &mut purge_gapped_parents,
+    )
+    .await
+    .unwrap_or_else(|message| panic!("{message}"));
 
     // 2. Apply ops and guard EACH settled boundary. Structural comparisons use
     // exact raw SQL positions except for the one parent group a successful
@@ -1015,12 +1098,9 @@ async fn run_fixture(path: &PathBuf) {
                         .as_str()
                         .expect("structural op blockId"),
                 );
-                sqlx::query_as::<_, (Option<String>,)>("SELECT parent_id FROM blocks WHERE id = ?")
-                    .bind(block_id)
-                    .fetch_one(&pool)
+                read_structural_op_parent(&pool, &name, command, &block_id)
                     .await
-                    .expect("read structural op parent")
-                    .0
+                    .unwrap_or_else(|message| panic!("{message}"))
             } else {
                 None
             };
@@ -1051,7 +1131,7 @@ async fn run_fixture(path: &PathBuf) {
                 state,
                 &name,
                 &canonical_order,
-                &purge_gapped_parents,
+                &mut purge_gapped_parents,
             )
             .await
             .unwrap_or_else(|message| panic!("{message}"));
@@ -1115,11 +1195,27 @@ async fn conformance_fixtures_match_backend() {
 }
 
 /// #3333 — the engine-path guard must cover a real fixture whose op list has
-/// no `create_block`. Reproduce the observable result of move_dedent taking the
-/// SQL-only arm (the target row changes while this fixture's isolated engine
-/// does not), then drive the SAME state capture + comparator used by
-/// `run_fixture`. The direct SQL update deliberately does not call the fallback
-/// implementation or touch its process-global metric.
+/// no `create_block`: move_dedent taking the SQL-only arm changes the target row
+/// while this fixture's isolated engine does not, and the SAME state capture +
+/// comparator `run_fixture` uses must fail on that.
+///
+/// #3429: the divergence is now produced by CALLING
+/// `apply_move_block_sql_only` — the exact function `apply_move_block_via_loro`
+/// dispatches to when a block's space cannot be resolved — instead of the
+/// hand-rolled `UPDATE blocks SET parent_id = ?, position = ?` this test used
+/// to simulate it with. A simulated write only ever reproduces the effect its
+/// author already had in mind, so the guard was measured against the test's own
+/// model of the fallback rather than against the fallback. The real function
+/// carries behaviour the simulation had no way to express — the shared cycle
+/// probe, the `new_index`-over-`new_position` preference, the
+/// `project_move_block_to_sql` UPDATE shape it shares with the engine arm, and
+/// the tag-inheritance recompute — and if any of that changes such that the
+/// SQL-only arm stops diverging from the engine here, this test now notices.
+///
+/// It drives the fallback IMPLEMENTATION directly, as `move_convergence_tests`'
+/// fallback arm does; the routing decision that reaches it (and the
+/// `sql_only_fallback::record` metric, which lives in the router, not in the
+/// fallback) is that test's subject, not this one's.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn engine_parity_guard_rejects_sql_only_move_dedent_divergence() {
     let path = fixture_paths()
@@ -1166,28 +1262,149 @@ async fn engine_parity_guard_rejects_sql_only_move_dedent_divergence() {
     let new_position = agaric_store::pagination::index_to_provisional_position(
         move_op["args"]["newIndex"].as_i64().expect("move newIndex"),
     );
-    // dynamic-sql: test-only simulation of `project_move_block_to_sql`; using
-    // the fixture's actual args keeps this regression coupled to move_dedent.
-    sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
-        .bind(&new_parent_id)
-        .bind(new_position)
-        .bind(&moved_id)
-        .execute(&pool)
+    // The real engine-less fallback, on the fixture's own args — no simulation.
+    let mut conn = pool
+        .acquire()
         .await
-        .expect("simulate SQL-only move");
+        .expect("acquire a connection for the fallback apply");
+    agaric_engine::apply::sql_only::apply_move_block_sql_only(
+        &mut conn,
+        MoveBlockPayload {
+            block_id: BlockId::from_trusted(&moved_id),
+            new_parent_id: Some(BlockId::from_trusted(&new_parent_id)),
+            new_position,
+            new_index: move_op["args"]["newIndex"].as_i64(),
+        },
+    )
+    .await
+    .expect("apply_move_block_sql_only (the engine-less fallback arm)");
+    drop(conn);
 
     let message = verify_fixture_engine_parity(
         &pool,
         state,
         "move_dedent",
         &canonical_order,
-        &BTreeSet::new(),
+        &mut BTreeSet::new(),
     )
     .await
     .expect_err("move-only SQL/engine divergence must fail the fixture-local guard");
     assert!(
         message.contains("fixture 'move_dedent'") && message.contains(&moved_id),
         "guard diagnostic must identify the real fixture and divergent block: {message}"
+    );
+}
+
+/// #3429 (gap 2) — the purge-gap allowance must be RE-TIGHTENED once the gap it
+/// excuses is gone, not carried for the rest of the fixture.
+///
+/// The allowance suppresses the exact-position comparison for one parent group.
+/// The order comparison that stays behind is strictly weaker: a group can hold
+/// the right SEQUENCE at the wrong RANKS. So while the allowance stands, a
+/// SQL/engine position divergence inside that group is invisible — and it stood
+/// until a later `create_block`/`move_block` happened to name the group, which
+/// for most fixture shapes never happens.
+///
+/// Seed `S1 > {A, B, C}` into SQL and the engine in agreement, then hand the
+/// guard an allowance for `S1` as if an earlier purge had granted it and the
+/// group had since been reprojected. The guard must hand the allowance back.
+/// Then diverge position WITHOUT disturbing order — `apply_move_block_sql_only`
+/// puts C at index 3, so SQL ranks it 4 while the engine still ranks it 3, and
+/// the sequence is `A, B, C` on both sides — which only the exact-position
+/// comparison can see. With a sticky allowance that divergence passes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn engine_parity_guard_retightens_a_healed_purge_gap_allowance() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "GA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "GB", "block_type": "content", "content": "B",    "parent_id": "S1", "position": 2}),
+        json!({"id": "GC", "block_type": "content", "content": "C",    "parent_id": "S1", "position": 3}),
+    ];
+    for block in &seed {
+        insert_seed_block(&pool, block).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for block in &seed {
+        seed_block_into_engine(state, block);
+    }
+    let known: Vec<String> = seed
+        .iter()
+        .map(|block| seed_label_to_id(block["id"].as_str().expect("seed block id")))
+        .collect();
+    let s1 = seed_label_to_id("S1");
+    let c = seed_label_to_id("GC");
+
+    let mut gapped: BTreeSet<Option<String>> = BTreeSet::from([Some(s1.clone())]);
+    verify_fixture_engine_parity(&pool, state, "healed_gap", &known, &mut gapped)
+        .await
+        .expect("a group whose positions already agree must pass the guard");
+    assert!(
+        gapped.is_empty(),
+        "an allowance for a group that is back in exact agreement must be handed back, not held \
+         for the rest of the fixture: {gapped:?}"
+    );
+
+    let mut conn = pool
+        .acquire()
+        .await
+        .expect("acquire a connection for the fallback apply");
+    agaric_engine::apply::sql_only::apply_move_block_sql_only(
+        &mut conn,
+        MoveBlockPayload {
+            block_id: BlockId::from_trusted(&c),
+            new_parent_id: Some(BlockId::from_trusted(&s1)),
+            new_position: 4,
+            new_index: Some(3),
+        },
+    )
+    .await
+    .expect("apply_move_block_sql_only (the engine-less fallback arm)");
+    drop(conn);
+
+    let message = verify_fixture_engine_parity(&pool, state, "healed_gap", &known, &mut gapped)
+        .await
+        .expect_err(
+            "an order-preserving position divergence must fail once the stale allowance is gone",
+        );
+    assert!(
+        message.contains(&c) && message.contains("position differs"),
+        "guard diagnostic must name the divergent block and the position comparison: {message}"
+    );
+
+    mat.shutdown();
+}
+
+/// #3429 (gap 3) — a structural op whose target has no `blocks` row must fail
+/// with a diagnostic naming the fixture, the command and the block, instead of
+/// the bare sqlx `RowNotFound` the previous `fetch_one` produced. The happy path
+/// is asserted alongside it so the helper cannot degenerate into "always Err".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn structural_op_parent_read_names_an_absent_target() {
+    let (pool, _dir) = test_pool().await;
+    let parent = seed_label_to_id("P1");
+    let child = seed_label_to_id("C1");
+    insert_block(&pool, &parent, "page", "Home", None, Some(1)).await;
+    insert_block(&pool, &child, "content", "child", Some(&parent), Some(1)).await;
+
+    assert_eq!(
+        read_structural_op_parent(&pool, "made_up", "move_block", &child)
+            .await
+            .expect("a present block's parent must read back"),
+        Some(parent),
+        "the helper must still return the pre-op parent for a block that exists"
+    );
+
+    let absent = seed_label_to_id("GHOST");
+    let message = read_structural_op_parent(&pool, "made_up", "purge_block", &absent)
+        .await
+        .expect_err("a structural op aimed at an absent block must be an explicit failure");
+    assert!(
+        message.contains("made_up") && message.contains("purge_block") && message.contains(&absent),
+        "the diagnostic must name the fixture, the command and the block: {message}"
     );
 }
 
