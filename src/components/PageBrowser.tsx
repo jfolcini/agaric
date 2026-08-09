@@ -201,8 +201,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // The delete button sits one row-item away from the apply target, and the
   // store is localStorage-only — no Trash, no restore path — so a mis-click
   // used to destroy the whole {name, sort, density, filters} tuple with no way
-  // back (#3339). Undo re-saves the captured tuple; that mints a fresh id, but
-  // the id is internal and the applied-view match is structural.
+  // back (#3339). Undo re-saves the captured tuple; that mints a fresh id and
+  // appends, so a restored view lands at the end of the creation-ordered
+  // picker. The id is internal and the applied-view match is structural, so the
+  // only visible cost of the round trip is that position.
   const handleDeleteSavedView = useCallback(
     (view: SavedPagesView) => {
       deleteView(view.id)

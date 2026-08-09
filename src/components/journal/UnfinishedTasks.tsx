@@ -351,7 +351,11 @@ export function UnfinishedTasks({
 
   // Initial load: show a visible skeleton placeholder so sighted users see the
   // panel reserving space (rather than a blank gap that pops in when ready).
-  if (loading) {
+  // Only while there is NOTHING to frame yet: once the panel exists, expanding
+  // it starts a drain, and swapping the whole section out would unmount the
+  // disclosure button the user just activated and drop focus to <body>. The
+  // in-body skeleton below covers that case instead.
+  if (loading && blocks.length === 0) {
     return (
       <section
         aria-label={t('unfinished.loading')}
@@ -397,14 +401,16 @@ export function UnfinishedTasks({
     <section aria-label={t('unfinished.sectionLabel')} data-testid="unfinished-tasks">
       <CollapsiblePanelHeader isCollapsed={collapsed} onToggle={handleToggle}>
         {t('unfinished.title')}
-        <Badge
-          tone="secondary"
-          className="ml-2"
-          {...(hasNextPage && {
-            'aria-label': t('unfinished.countPartialLabel', { n: blocks.length }),
-          })}
-        >
+        <Badge tone="secondary" className="ml-2">
           {hasNextPage ? t('unfinished.countPartial', { n: blocks.length }) : blocks.length}
+          {/* `Badge` is a plain <span> (implicit role `generic`), which does not
+              take `aria-label` — so the "at least N" qualifier has to be real
+              text for AT rather than an attribute that is silently dropped. */}
+          {hasNextPage && (
+            <span className="sr-only">
+              {t('unfinished.countPartialLabel', { n: blocks.length })}
+            </span>
+          )}
         </Badge>
       </CollapsiblePanelHeader>
 
@@ -428,7 +434,13 @@ export function UnfinishedTasks({
         </div>
       )}
 
-      {!collapsed && (
+      {!collapsed && loading && (
+        <div aria-busy="true" data-testid="unfinished-tasks-body-loading" className="mt-1">
+          <LoadingSkeleton count={3} height="h-10" className="unfinished-tasks-loading" />
+        </div>
+      )}
+
+      {!collapsed && !loading && (
         <div className="mt-1 space-y-3 animate-in fade-in-0 duration-normal">
           {groups.map((group) => {
             const isGroupCollapsed = groupCollapsed[group.key] ?? false

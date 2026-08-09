@@ -222,9 +222,11 @@ export function PageBrowserBatchToolbar({
       })
     } catch (err) {
       logger.error('PageBrowserBatchToolbar', 'bulk trash failed', { count: ids.length }, err)
-      notify.retry(t('pageBrowser.batch.trashFailed'), () => {
-        void handleTrash()
-      })
+      // Retry re-opens the confirm rather than re-firing `ids` directly: the
+      // toast can outlive the selection the user had when it failed, and a
+      // cascade over a set they can no longer see is exactly what the confirm
+      // exists to prevent.
+      notify.retry(t('pageBrowser.batch.trashFailed'), () => setTrashConfirmOpen(true))
     } finally {
       setBusy(false)
     }

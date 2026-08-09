@@ -20,6 +20,7 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { logger } from '@/lib/logger'
+import { queryClient } from '@/lib/query-client'
 import type { BlockRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
@@ -128,6 +129,12 @@ import { UnfinishedTasks } from '@/components/journal/UnfinishedTasks'
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // The panel reads the module-level TanStack singleton, and its query key is
+  // (space, day) — identical across these tests. Without a clear, a prior
+  // test's cached pages satisfy the next render instantly while
+  // `refetchOnMount: 'always'` is still in flight, so the panel is mounted
+  // with stale rows before the fresh ones commit.
+  queryClient.clear()
 })
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -700,8 +707,11 @@ describe('UnfinishedTasks', () => {
       mockInvokeForBlocks(blocks)
       render(<UnfinishedTasks />)
 
+      // The header now stays mounted across the `refetchOnMount: 'always'`
+      // refetch (only the body swaps to a skeleton), so wait for the GROUPS
+      // rather than the section wrapper.
       await waitFor(() => {
-        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+        expect(screen.getByTestId('unfinished-group-yesterday')).toBeInTheDocument()
       })
 
       // Yesterday should be collapsed (expanded=false), older expanded.
