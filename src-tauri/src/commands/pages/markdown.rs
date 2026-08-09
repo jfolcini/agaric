@@ -100,21 +100,48 @@ static HUMAN_PAGE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLo
 
 /// Matches a HUMAN-readable bare/nested/hyphenated inline tag `#tag` on import
 /// (#1924). Group 1 is the leading boundary char (or empty at line start);
-/// group 2 is the tag NAME — a run of `[\p{L}\p{N}_]` then `[\p{L}\p{N}_/-]*`
-/// (Unicode letters/digits/underscore, with `/` and `-` allowed after the
-/// first char for nested + hyphenated tags). This mirrors the frontend
-/// `HUMAN_TAG_RE` in `src/lib/block-clipboard.ts` byte-for-byte.
+/// group 2 is the tag NAME — a run of `[\p{L}\p{N}_]` then
+/// `[\p{L}\p{N}\p{M}_/-]*` (Unicode letters/digits/underscore plus combining
+/// marks, with `/` and `-` allowed after the first char for nested +
+/// hyphenated tags). This mirrors the frontend `HUMAN_TAG_RE` in
+/// `src/lib/block-clipboard.ts` byte-for-byte.
 ///
-/// The leading boundary `(^|[^\p{L}\p{N}_])` prevents matching `# heading`
-/// (the `#` is followed by a space, not a name char), `word#frag` (the `#` is
-/// preceded by a word char), and `a#b`. Because the name's FIRST char must be
-/// a word char and a canonical `#[ULID]` ref's next char is `[` (not a word
-/// char), this regex never matches an already-internal `#[ULID]` token — so
-/// canonical refs survive untouched.
-static HUMAN_TAG_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"(^|[^\p{L}\p{N}_])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)")
-        .expect("invalid human inline-tag regex")
-});
+/// The leading boundary `(^|[^\p{L}\p{N}\p{M}_])` prevents matching
+/// `# heading` (the `#` is followed by a space, not a name char), `word#frag`
+/// (the `#` is preceded by a word char), and `a#b`. Because the name's FIRST
+/// char must be a word char and a canonical `#[ULID]` ref's next char is `[`
+/// (not a word char), this regex never matches an already-internal `#[ULID]`
+/// token — so canonical refs survive untouched.
+///
+/// #3367 — the three classes are NOT interchangeable, and the asymmetry is the
+/// whole fix. `\p{M}` belongs in the BOUNDARY class and in the name's
+/// CONTINUATION class, because a combining mark is part of the grapheme cluster
+/// its base char starts: without it the name run stopped at the base letter, so
+/// `#café` in NFD (`caf` + `e` + U+0301) minted a tag `cafe` and stranded the
+/// acute in the surrounding prose, and `café#tag` in NFD read that acute as a
+/// word boundary and spliced a tag into the middle of a word that plain
+/// `cafe#tag` is protected from. Not an NFD-only curiosity: Devanagari, Arabic
+/// and Hebrew have no precomposed forms at all, so `#हिन्दी` was truncated to
+/// `#ह` in ordinary text.
+///
+/// `\p{M}` deliberately stays OUT of the name's FIRST-char class. A `#`
+/// followed directly by a combining mark is itself a grapheme cluster (the mark
+/// renders on the `#`), so consuming the `#` as a sigil and the mark as the
+/// name's first char would split THAT cluster — the same defect, mirrored. A
+/// tag name must start on a base character; marks may only follow one. That
+/// also keeps this regex aligned with `neutralize_ref_name` in
+/// `inline_query_md.rs`, whose "is this `#` tag-initial?" test is likewise a
+/// base-character test.
+///
+/// `pub(super)` so the sibling `inline_query_md` test that asserts a
+/// neutralized ref name cannot re-parse as a tag consumes THIS definition
+/// instead of a hand-copied literal — a copy is exactly what let the two drift
+/// (#3367).
+pub(super) static HUMAN_TAG_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(^|[^\p{L}\p{N}\p{M}_])#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)")
+            .expect("invalid human inline-tag regex")
+    });
 
 /// Matches a HUMAN-readable multi-word inline tag `#[[Tag With Space]]` on
 /// import (#1950). A `#` immediately followed by a `[[...]]` body. Group 1 is

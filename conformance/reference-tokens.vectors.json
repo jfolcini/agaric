@@ -23,7 +23,10 @@
     "tail": "01BX5ZZKBKACTAV9WEVGEMMVSE",
     "inside": "01BX5ZZKBKACTAV9WEVGEMMVSF",
     "after": "01BX5ZZKBKACTAV9WEVGEMMVSG",
-    "before": "01BX5ZZKBKACTAV9WEVGEMMVSH"
+    "before": "01BX5ZZKBKACTAV9WEVGEMMVSH",
+    "cafe\u0301": "01BX5ZZKBKACTAV9WEVGEMMVSJ",
+    "cafe\u0301/sub": "01BX5ZZKBKACTAV9WEVGEMMVSK",
+    "हिन्दी": "01BX5ZZKBKACTAV9WEVGEMMVSM"
   },
   "codeFenceCases": [
     {
@@ -437,6 +440,61 @@
         "requestedPageNames": [],
         "requestedTagNames": ["Unknown #b", "real"],
         "transformed": "#[[Unknown #b]] #[01BX5ZZKBKACTAV9WEVGEMMVS7]"
+      }
+    },
+    {
+      "name": "#3367 an NFD-decomposed accented tag name is one grapheme run, not a truncated one",
+      "input": "see #cafe\u0301 here",
+      "expected": {
+        "pageCaptures": [],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": ["cafe\u0301"],
+        "transformed": "see #[01BX5ZZKBKACTAV9WEVGEMMVSJ] here"
+      }
+    },
+    {
+      "name": "#3367 the combining mark survives inside a nested tag, before the namespace slash",
+      "input": "#cafe\u0301/sub",
+      "expected": {
+        "pageCaptures": [],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": ["cafe\u0301/sub"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVSK]"
+      }
+    },
+    {
+      "name": "#3367 a trailing combining mark is not a word boundary before the hash",
+      "input": "cafe\u0301#tag",
+      "expected": {
+        "pageCaptures": [],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": [],
+        "transformed": "cafe\u0301#tag"
+      }
+    },
+    {
+      "name": "#3367 control — the same shape with no combining mark is already not a tag",
+      "input": "cafe#tag",
+      "expected": {
+        "pageCaptures": [],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": [],
+        "transformed": "cafe#tag"
+      }
+    },
+    {
+      "name": "#3367 a Devanagari tag keeps its vowel signs and virama — no precomposed form exists",
+      "input": "#हिन्दी",
+      "expected": {
+        "pageCaptures": [],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": ["हिन्दी"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVSM]"
       }
     }
   ]
