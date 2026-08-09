@@ -44,57 +44,72 @@ vi.mock('@/hooks/useStreamDates', async (importOriginal) => {
 
 // ── Mock block creation (no IPC) ──────────────────────────────────────
 const mockHandleAddBlock = vi.hoisted(() => vi.fn())
+// `createdPages` is a `useState` map in the real hook, so its identity is
+// stable across renders; the mock must be too, or every StreamView render
+// would re-mint `entries` and mask the memo bail-outs asserted below.
+const mockCreatedPages = vi.hoisted(() => new Map<string, string>())
 vi.mock('@/hooks/useJournalBlockCreation', () => ({
   useJournalBlockCreation: () => ({
-    createdPages: new Map<string, string>(),
+    createdPages: mockCreatedPages,
     handleAddBlock: mockHandleAddBlock,
   }),
 }))
 
 // ── Mock DaySection to a thin probe carrying its props ────────────────
-// Also surfaces the `mountWindow` prop StreamView wires in (#2670): an
+// Also surfaces the mount-window props StreamView wires in (#2670): an
 // "enter-{dateStr}" button simulates that day's own IntersectionObserver
-// firing (real `DaySection` reports every entry via `markVisible`), and
-// `data-mounted` reflects `mountWindow.isMounted(entry.dateStr)` so tests
-// can assert the bound without re-implementing DaySection's real observer
-// plumbing (that's covered by DaySection.test.tsx's own `mountWindow`
-// suite). The `id` mirrors real DaySection's `journal-${dateStr}` section id
-// — StreamView's focus-eviction guard looks elements up by that id.
-vi.mock('@/components/journal/DaySection', () => ({
-  DaySection: (props: Record<string, unknown>) => {
-    const entry = props['entry'] as DayEntry
-    const mountWindow = props['mountWindow'] as
-      | { isMounted: (key: string) => boolean; markVisible: (key: string) => void }
-      | undefined
-    const mounted = mountWindow ? mountWindow.isMounted(entry.dateStr) : true
-    return (
-      <section
-        id={`journal-${entry.dateStr}`}
-        data-testid={`day-section-${entry.dateStr}`}
-        data-heading-level={props['headingLevel'] as string}
-        data-compact={String(!!props['compact'])}
-        data-mode={props['mode'] as string}
-        data-lazy-mount={String(!!props['lazyMount'])}
-        data-has-page={String(entry.pageId != null)}
-        data-mounted={String(mounted)}
-      >
-        {entry.displayDate}
-        {mountWindow && (
-          <button
-            type="button"
-            data-testid={`enter-${entry.dateStr}`}
-            onClick={() => mountWindow.markVisible(entry.dateStr)}
-          >
-            enter
-          </button>
-        )}
-        {mounted && (
-          <input data-testid={`focusable-${entry.dateStr}`} aria-label={`edit ${entry.dateStr}`} />
-        )}
-      </section>
-    )
-  },
-}))
+// firing (real `DaySection` reports every entry via `onVisible`), and
+// `data-mounted` reflects the `mounted` prop so tests can assert the bound
+// without re-implementing DaySection's real observer plumbing (that's
+// covered by DaySection.test.tsx's own suite). The `id` mirrors real
+// DaySection's `journal-${dateStr}` section id — StreamView's focus-eviction
+// guard looks elements up by that id.
+//
+// The probe is `memo`'d exactly like production `DaySection` so the
+// render-count assertions below measure the real shallow-compare behaviour
+// (#3342): a prop object whose identity churns on every mount-set change
+// defeats the bail-out for every day at once.
+const renderCounts = vi.hoisted(() => new Map<string, number>())
+vi.mock('@/components/journal/DaySection', async () => {
+  const { memo } = await import('react')
+  return {
+    DaySection: memo((props: Record<string, unknown>) => {
+      const entry = props['entry'] as DayEntry
+      const onVisible = props['onVisible'] as ((key: string) => void) | undefined
+      const mounted = onVisible ? props['mounted'] === true : true
+      renderCounts.set(entry.dateStr, (renderCounts.get(entry.dateStr) ?? 0) + 1)
+      return (
+        <section
+          id={`journal-${entry.dateStr}`}
+          data-testid={`day-section-${entry.dateStr}`}
+          data-heading-level={props['headingLevel'] as string}
+          data-compact={String(!!props['compact'])}
+          data-mode={props['mode'] as string}
+          data-lazy-mount={String(!!props['lazyMount'])}
+          data-has-page={String(entry.pageId != null)}
+          data-mounted={String(mounted)}
+        >
+          {entry.displayDate}
+          {onVisible && (
+            <button
+              type="button"
+              data-testid={`enter-${entry.dateStr}`}
+              onClick={() => onVisible(entry.dateStr)}
+            >
+              enter
+            </button>
+          )}
+          {mounted && (
+            <input
+              data-testid={`focusable-${entry.dateStr}`}
+              aria-label={`edit ${entry.dateStr}`}
+            />
+          )}
+        </section>
+      )
+    }),
+  }
+})
 
 vi.mock('@/components/rendering/LoadingSkeleton', () => ({
   LoadingSkeleton: () => <div data-testid="loading-skeleton" />,
@@ -153,6 +168,7 @@ beforeEach(() => {
   mockStream.loading = false
   mockStream.loadingOlder = false
   mockStream.reachedEnd = false
+  renderCounts.clear()
 })
 
 afterEach(() => {
@@ -253,7 +269,29 @@ describe('StreamView', () => {
       )
     }
 
-    it('passes a mountWindow controller to every DaySection', () => {
+    // #3342 — StreamView used to hand each DaySection the whole
+    // `DayMountWindow` object, whose identity is re-minted on every
+    // mount-set mutation, so `memo(DaySectionInner)` could never bail and a
+    // single day entering the viewport re-rendered every rendered day.
+    it('re-renders only the day whose mounted flag changed', () => {
+      const dates = setupDays(20)
+      render(<StreamView />)
+
+      const before = new Map(renderCounts)
+      const [entered, ...untouched] = dates
+      expect(entered).toBeDefined()
+      if (!entered) return
+      act(() => {
+        fireEvent.click(screen.getByTestId(`enter-${formatDate(entered)}`))
+      })
+
+      expect(renderCounts.get(formatDate(entered))).toBe((before.get(formatDate(entered)) ?? 0) + 1)
+      for (const dt of untouched) {
+        expect(renderCounts.get(formatDate(dt))).toBe(before.get(formatDate(dt)))
+      }
+    })
+
+    it('passes a mount-window controller to every DaySection', () => {
       setupDays(3)
       render(<StreamView />)
       for (const dt of mockStream.dates) {

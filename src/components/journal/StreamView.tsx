@@ -159,7 +159,8 @@ export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactEl
               onNavigateToPage={onNavigateToPage}
               onAddBlock={handleAddBlock}
               lazyMount
-              mountWindow={mountWindow}
+              mounted={mountWindow.isMounted(entry.dateStr)}
+              onVisible={mountWindow.markVisible}
             />
           </div>
         )

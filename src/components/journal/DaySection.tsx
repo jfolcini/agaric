@@ -17,7 +17,6 @@ import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
 import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { Button } from '@/components/ui/button'
-import type { DayMountWindow } from '@/hooks/useDayMountWindow'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { getSourceColor, getSourceLabel } from '@/lib/date-property-colors'
@@ -54,19 +53,28 @@ interface DaySectionProps {
    */
   lazyMount?: boolean | undefined
   /**
-   * External LRU mount-window controller (`useDayMountWindow`, #2670). When
-   * provided, this REPLACES the self-managed one-shot `hasEntered` state
-   * below: mount state comes from `mountWindow.isMounted(entry.dateStr)`,
-   * and the section reports EVERY viewport entry (not just the first) via
-   * `mountWindow.markVisible` so the caller's LRU can track recency and
-   * evict the farthest days back to this same placeholder — bounding the
-   * TipTap-editor + document-listener count an unbounded infinite scroll
-   * would otherwise accumulate. Used by `StreamView`; `WeeklyView` and
-   * `MonthlyView` leave this `undefined` and keep the original
-   * mount-forever-once-entered behavior (their day count is already fixed,
-   * see file header). Only meaningful when `lazyMount` is also `true`.
+   * External LRU mount-window entry reporter (`useDayMountWindow.markVisible`,
+   * #2670). When provided, this REPLACES the self-managed one-shot
+   * `hasEntered` state below: mount state comes from the `mounted` prop, and
+   * the section reports EVERY viewport entry (not just the first) through this
+   * callback so the caller's LRU can track recency and evict the farthest days
+   * back to this same placeholder — bounding the TipTap-editor +
+   * document-listener count an unbounded infinite scroll would otherwise
+   * accumulate. Used by `StreamView`; `WeeklyView` and `MonthlyView` leave this
+   * `undefined` and keep the original mount-forever-once-entered behavior
+   * (their day count is already fixed, see file header). Only meaningful when
+   * `lazyMount` is also `true`.
+   *
+   * `mounted`/`onVisible` are two scalar props rather than the whole
+   * `DayMountWindow` object because the object's identity changes on every
+   * mount-set mutation, which defeated `memo(DaySectionInner)` for EVERY day
+   * whenever ANY day was mounted (#3342). A boolean only changes for the one
+   * day whose mount state actually flipped, and `markVisible` is already a
+   * stable `useCallback`.
    */
-  mountWindow?: DayMountWindow | undefined
+  onVisible?: ((key: string) => void) | undefined
+  /** Whether the caller's mount window currently holds this day. See `onVisible`. */
+  mounted?: boolean | undefined
 }
 
 /** Placeholder min-height while a lazy day waits to enter the viewport. */
@@ -180,7 +188,8 @@ function DaySectionInner({
   onNavigateToPage,
   onAddBlock,
   lazyMount = false,
-  mountWindow,
+  onVisible,
+  mounted = false,
 }: DaySectionProps): React.ReactElement {
   const { t } = useTranslation()
   const navigateToDate = useJournalStore((s) => s.navigateToDate)
@@ -222,21 +231,19 @@ function DaySectionInner({
   // is not re-evaluated in this render body on every WeeklyView re-render.
   const prefersReducedMotion = usePrefersReducedMotion()
   const shouldLazyMount = lazyMount && !prefersReducedMotion
-  const isWindowControlled = shouldLazyMount && mountWindow != null
+  const isWindowControlled = shouldLazyMount && onVisible != null
 
-  // Self-managed one-shot path (WeeklyView/MonthlyView, no `mountWindow`) —
+  // Self-managed one-shot path (WeeklyView/MonthlyView, no `onVisible`) —
   // unchanged from before #2670.
   const [selfEntered, selfLazyRef] = useEnteredViewport(shouldLazyMount && !isWindowControlled)
 
   // Externally-controlled LRU path (StreamView, #2670): mount state comes
   // from the caller's window, and every entry (not just the first) reports
   // back so a day evicted by the LRU can remount when scrolled back to.
-  const controlledEntered = isWindowControlled
-    ? (mountWindow?.isMounted(entry.dateStr) ?? false)
-    : false
+  const controlledEntered = isWindowControlled && mounted
   const handleControlledEnter = useCallback(() => {
-    mountWindow?.markVisible(entry.dateStr)
-  }, [mountWindow, entry.dateStr])
+    onVisible?.(entry.dateStr)
+  }, [onVisible, entry.dateStr])
   const controlledRef = useControlledViewportEntry(
     isWindowControlled,
     controlledEntered,

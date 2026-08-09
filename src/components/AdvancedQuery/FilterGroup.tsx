@@ -128,9 +128,15 @@ function LeafChip({
   // it to the page title for the chip label (same resolver the grouped-results
   // headers use, #1447). Non-id facets ignore the resolver.
   const resolveTitle = useResolveStore((s) => s.resolveTitle)
-  // Pass the resolver as the relational `refResolver` (4th arg) only — the
-  // `tagResolver` (3rd) stays unset so non-relational chips render as before.
-  const label = pageFilterSummary(node.primitive, t, undefined, resolveTitle)
+  // #3339 — the Tag facet is now an id-emitting picker, so the tag chip carries
+  // a ULID here too and gets the same resolver (3rd arg) the Pages surface
+  // wires up. Unresolvable ids fall back to the raw string rather than the
+  // store's `[[…]]` placeholder, matching `usePageBrowserFilters.tagResolver`.
+  const tagResolver = (id: string): string => {
+    const title = resolveTitle(id)
+    return title.startsWith('[[') ? id : title
+  }
+  const label = pageFilterSummary(node.primitive, t, tagResolver, resolveTitle)
   const kind = t('advancedQuery.builder.kindLeaf')
   return (
     <li className="inline-flex items-center gap-1" data-testid="filter-group-leaf">

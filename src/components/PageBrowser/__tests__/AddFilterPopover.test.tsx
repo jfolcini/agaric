@@ -97,7 +97,7 @@ describe('AddFilterPopover', () => {
     const user = userEvent.setup()
     render(<AddFilterPopover onAddFilter={vi.fn()} />)
     await openPopover(user)
-    expect(screen.getByText('Pages tagged with a specific tag id.')).toBeInTheDocument()
+    expect(screen.getByText('Pages carrying the tag you pick.')).toBeInTheDocument()
     expect(screen.getByText('Pages whose path matches a glob pattern.')).toBeInTheDocument()
     expect(screen.getByText('Pages with a property matching a condition.')).toBeInTheDocument()
     expect(screen.getByText('Pages edited within the chosen window.')).toBeInTheDocument()
@@ -189,18 +189,50 @@ describe('AddFilterPopover', () => {
     })
   })
 
-  it('emits a Tag primitive through the inline editor', async () => {
+  // #3339 — the Tag facet used to be a free-text box placeholdered "Tag id",
+  // but the primitive compiles to `tag_id = ?` and no surface exposes a tag
+  // ULID, so typing the tag NAME produced a filter that matched nothing. The
+  // facet now searches by name and emits the id.
+  it('emits a Tag primitive carrying the picked tag id, not the typed text', async () => {
     const user = userEvent.setup()
     const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_TAGS' })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_all_tags_in_space') {
+        return [{ tag_id: '01JTAGPROJECT', name: 'project', usage_count: 3, updated_at: null }]
+      }
+      return null
+    })
     render(<AddFilterPopover onAddFilter={onAddFilter} />)
     await openPopover(user)
 
     await user.click(screen.getByText('Tag'))
-    const input = screen.getByLabelText('Tag id')
-    await user.type(input, 'urgent')
-    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    // The picker lists tags by NAME…
+    await user.click(await screen.findByRole('button', { name: 'project' }))
 
-    expect(onAddFilter).toHaveBeenCalledWith({ type: 'Tag', tag: 'urgent' })
+    // …and emits that row's ULID.
+    expect(onAddFilter).toHaveBeenCalledWith({ type: 'Tag', tag: '01JTAGPROJECT' })
+    expect(onAddFilter).not.toHaveBeenCalledWith({ type: 'Tag', tag: 'project' })
+  })
+
+  it('filters the tag picker by name and reports an empty result honestly', async () => {
+    const user = userEvent.setup()
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_TAGS' })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_all_tags_in_space') {
+        return [{ tag_id: '01JTAGPROJECT', name: 'project', usage_count: 3, updated_at: null }]
+      }
+      return null
+    })
+    render(<AddFilterPopover onAddFilter={vi.fn()} />)
+    await openPopover(user)
+
+    await user.click(screen.getByText('Tag'))
+    await screen.findByRole('button', { name: 'project' })
+    await user.type(screen.getByLabelText('Search tags'), 'zzz')
+
+    expect(screen.queryByRole('button', { name: 'project' })).not.toBeInTheDocument()
+    expect(screen.getByText('No matching tags')).toBeInTheDocument()
   })
 
   it('emits a PathGlob primitive (exclude=false) from the path editor', async () => {
@@ -364,42 +396,42 @@ describe('AddFilterPopover', () => {
     render(<AddFilterPopover onAddFilter={vi.fn()} />)
     const trigger = await openPopover(user)
 
-    await user.click(screen.getByText('Tag'))
-    await user.type(screen.getByLabelText('Tag id'), 'urgent')
+    await user.click(screen.getByText('Page path'))
+    await user.type(screen.getByLabelText('e.g. Projects/*'), 'Projects/*')
 
     // Close (onOpenChange(false)) then reopen — the editor + value must reset.
     await user.keyboard('{Escape}')
     await user.click(trigger)
     await screen.findByRole('dialog', { name: 'Add a filter' })
 
-    expect(screen.queryByLabelText('Tag id')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('e.g. Projects/*')).not.toBeInTheDocument()
     expect(screen.getByText('Filters')).toBeInTheDocument()
   })
 
   // --- D14: Apply disabled while the required input is empty ---
-  it('disables Apply while the tag input is empty and enables it once filled', async () => {
+  it('disables Apply while the path input is empty and enables it once filled', async () => {
     const user = userEvent.setup()
     render(<AddFilterPopover onAddFilter={vi.fn()} />)
     await openPopover(user)
 
-    await user.click(screen.getByText('Tag'))
+    await user.click(screen.getByText('Page path'))
     const apply = screen.getByRole('button', { name: 'Apply' })
     expect(apply).toBeDisabled()
     expect(apply).toHaveAttribute('aria-disabled', 'true')
 
-    await user.type(screen.getByLabelText('Tag id'), 'urgent')
+    await user.type(screen.getByLabelText('e.g. Projects/*'), 'Projects/*')
     expect(apply).toBeEnabled()
     expect(apply).toHaveAttribute('aria-disabled', 'false')
   })
 
-  it('does not emit on Enter while the tag input is empty (D14)', async () => {
+  it('does not emit on Enter while the path input is empty (D14)', async () => {
     const user = userEvent.setup()
     const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
     render(<AddFilterPopover onAddFilter={onAddFilter} />)
     await openPopover(user)
 
-    await user.click(screen.getByText('Tag'))
-    const input = screen.getByLabelText('Tag id')
+    await user.click(screen.getByText('Page path'))
+    const input = screen.getByLabelText('e.g. Projects/*')
     input.focus()
     await user.keyboard('{Enter}')
     expect(onAddFilter).not.toHaveBeenCalled()
@@ -722,6 +754,8 @@ describe('AddFilterPopover', () => {
             { id: 'PAGE_A', content: 'Roadmap' },
             { id: 'PAGE_B', content: 'Backlog' },
           ]
+        if (cmd === 'list_all_tags_in_space')
+          return [{ tag_id: '01JTAGURGENT', name: 'urgent', usage_count: 1, updated_at: null }]
         return null
       })
     })
@@ -839,8 +873,7 @@ describe('AddFilterPopover', () => {
       })
       const inner = dialogs.at(-1) as HTMLElement
       await user.click(within(inner).getByText('Tag'))
-      await user.type(within(inner).getByLabelText('Tag id'), 'urgent')
-      await user.click(within(inner).getByRole('button', { name: 'Apply' }))
+      await user.click(await within(inner).findByRole('button', { name: 'urgent' }))
 
       // Now the matcher is non-empty; Apply the has-parent leaf.
       await waitFor(() =>
@@ -860,7 +893,7 @@ describe('AddFilterPopover', () => {
         type: 'HasParentMatching',
         matcher: {
           type: 'And',
-          children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: 'urgent' } }],
+          children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: '01JTAGURGENT' } }],
         },
       })
     })

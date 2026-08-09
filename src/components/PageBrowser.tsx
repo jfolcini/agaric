@@ -198,12 +198,25 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     [saveView, currentViewTuple],
   )
 
+  // The delete button sits one row-item away from the apply target, and the
+  // store is localStorage-only — no Trash, no restore path — so a mis-click
+  // used to destroy the whole {name, sort, density, filters} tuple with no way
+  // back (#3339). Undo re-saves the captured tuple; that mints a fresh id, but
+  // the id is internal and the applied-view match is structural.
   const handleDeleteSavedView = useCallback(
     (view: SavedPagesView) => {
       deleteView(view.id)
-      notify.success(t('pageBrowser.savedViews.deleted', { name: view.name }))
+      notify.success(t('pageBrowser.savedViews.deleted', { name: view.name }), {
+        action: {
+          label: t('action.undo'),
+          onClick: () => {
+            saveView(view.name, view)
+            notify.success(t('pageBrowser.savedViews.restored', { name: view.name }))
+          },
+        },
+      })
     },
-    [deleteView, t],
+    [deleteView, saveView, t],
   )
 
   // One-shot recovery notice: a saved-views payload from an incompatible

@@ -957,18 +957,14 @@ describe('DaySection', () => {
       expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     })
 
-    // ── mountWindow: externally-controlled path (StreamView, #2670) ─────
-    describe('mountWindow (externally-controlled path, #2670)', () => {
-      /** A controllable stand-in for `useDayMountWindow`'s return shape. */
+    // ── mounted/onVisible: externally-controlled path (StreamView, #2670) ─
+    describe('mounted/onVisible (externally-controlled path, #2670)', () => {
+      /** A controllable stand-in for the caller's mount-window plumbing. */
       function makeMountWindow(initialMounted: boolean): {
-        state: { mounted: boolean }
-        isMounted: (key: string) => boolean
+        mounted: boolean
         markVisible: (key: string) => void
       } {
-        const state = { mounted: initialMounted }
-        const isMounted = vi.fn((_key: string) => state.mounted)
-        const markVisible = vi.fn()
-        return { state, isMounted, markVisible }
+        return { mounted: initialMounted, markVisible: vi.fn() }
       }
 
       it('renders the placeholder and reports markVisible on intersection when not yet in the window', () => {
@@ -980,7 +976,14 @@ describe('DaySection', () => {
         const mw = makeMountWindow(false)
 
         render(
-          <DaySection entry={entry} mode="stream" lazyMount mountWindow={mw} onAddBlock={noop} />,
+          <DaySection
+            entry={entry}
+            mode="stream"
+            lazyMount
+            mounted={mw.mounted}
+            onVisible={mw.markVisible}
+            onAddBlock={noop}
+          />,
         )
 
         expect(screen.getByTestId('day-section-lazy-placeholder')).toBeInTheDocument()
@@ -1001,7 +1004,14 @@ describe('DaySection', () => {
         const mw = makeMountWindow(true)
 
         render(
-          <DaySection entry={entry} mode="stream" lazyMount mountWindow={mw} onAddBlock={noop} />,
+          <DaySection
+            entry={entry}
+            mode="stream"
+            lazyMount
+            mounted={mw.mounted}
+            onVisible={mw.markVisible}
+            onAddBlock={noop}
+          />,
         )
 
         expect(screen.getByTestId('block-tree')).toBeInTheDocument()
@@ -1016,35 +1026,32 @@ describe('DaySection', () => {
           dateStr: '2025-06-15',
           displayDate: 'Sun, Jun 15, 2025',
         })
-        // `DaySection` is `React.memo`'d, so a prop-identity change is what
-        // drives the re-render in production too (`useDayMountWindow`
-        // returns a freshly-memoized object whenever its mounted set
-        // changes) — model that here with a NEW object per render rather
-        // than mutating one in place, sharing the `markVisible` spy so calls
-        // across both renders are visible on one assertion target.
+        // `DaySection` is `React.memo`'d, so a prop VALUE change is what
+        // drives the re-render in production too — the caller re-evaluates
+        // `mounted` per day while `markVisible` stays identity-stable.
         const markVisible = vi.fn()
-        const mwMounted = { isMounted: vi.fn(() => true), markVisible }
 
         const { rerender } = render(
           <DaySection
             entry={entry}
             mode="stream"
             lazyMount
-            mountWindow={mwMounted}
+            mounted
+            onVisible={markVisible}
             onAddBlock={noop}
           />,
         )
         expect(screen.getByTestId('block-tree')).toBeInTheDocument()
 
         // The caller's LRU evicts this day (e.g. STREAM_MOUNT_WINDOW other
-        // days were visited since) — isMounted flips to false.
-        const mwEvicted = { isMounted: vi.fn(() => false), markVisible }
+        // days were visited since) — `mounted` flips to false.
         rerender(
           <DaySection
             entry={entry}
             mode="stream"
             lazyMount
-            mountWindow={mwEvicted}
+            mounted={false}
+            onVisible={markVisible}
             onAddBlock={noop}
           />,
         )
@@ -1071,13 +1078,20 @@ describe('DaySection', () => {
         const mw = makeMountWindow(false)
 
         render(
-          <DaySection entry={entry} mode="stream" lazyMount mountWindow={mw} onAddBlock={noop} />,
+          <DaySection
+            entry={entry}
+            mode="stream"
+            lazyMount
+            mounted={mw.mounted}
+            onVisible={mw.markVisible}
+            onAddBlock={noop}
+          />,
         )
 
         expect(mw.markVisible).not.toHaveBeenCalled()
       })
 
-      it('eagerly mounts under prefers-reduced-motion even with a mountWindow set', () => {
+      it('eagerly mounts under prefers-reduced-motion even with a mount window set', () => {
         const originalMatchMedia = window.matchMedia
         try {
           ;(window as any).matchMedia = (query: string) => ({
@@ -1095,7 +1109,14 @@ describe('DaySection', () => {
           const mw = makeMountWindow(false)
 
           render(
-            <DaySection entry={entry} mode="stream" lazyMount mountWindow={mw} onAddBlock={noop} />,
+            <DaySection
+              entry={entry}
+              mode="stream"
+              lazyMount
+              mounted={mw.mounted}
+              onVisible={mw.markVisible}
+              onAddBlock={noop}
+            />,
           )
 
           expect(screen.getByTestId('block-tree')).toBeInTheDocument()
