@@ -80,8 +80,14 @@ interface TabsStore {
   navigateToPage: (pageId: string, title: string, blockId?: string) => void
   /** Pop the last page from the active tab. If stack becomes empty, close tab or switch to 'pages'. */
   goBack: () => void
-  /** Replace the top of the active tab's stack (e.g. after title edit). */
-  replacePage: (pageId: string, title: string) => void
+  /**
+   * #3322 — retitle every stack entry naming `pageId`, across ALL tabs of the
+   * active space (a page can sit in several tabs, and deeper than the top of
+   * a back-stack). No-op when no entry names the page or the title is already
+   * current. Prefer the cross-store `renamePage` in `@/stores/page-rename`,
+   * which also updates the recents strip and the resolve cache.
+   */
+  renamePage: (pageId: string, title: string) => void
   /** Open a page in a new tab and switch to it. */
   openInNewTab: (pageId: string, title: string) => void
   /** Close a tab by index. If last tab closed, switch to 'pages' view. */
@@ -494,23 +500,31 @@ export const useTabsStore = create<TabsStore>()(
         }
       },
 
-      replacePage: (pageId: string, title: string) => {
+      renamePage: (pageId: string, title: string) => {
         const state = get()
         const { tabs, activeTabIndex } = readActiveSlice(state)
-        const activeTab = tabs[activeTabIndex]
-        const pageStack = activeTab?.pageStack ?? []
-        if (pageStack.length === 0) return
 
-        const newStack = [...pageStack]
-        newStack[newStack.length - 1] = { pageId, title }
-        const newTabs = [...tabs]
-        if (activeTab) {
-          newTabs[activeTabIndex] = {
-            ...activeTab,
-            pageStack: newStack,
-            label: tabLabel(newStack),
+        // #3322 — rewrite EVERY stack entry that names this page, in every
+        // tab of the active space. The old `replacePage` overwrote
+        // `pageStack[len-1]` of the ACTIVE tab unconditionally, which meant
+        // (a) the same page open in another tab, or deeper in a back-stack,
+        // kept its pre-rename title forever, and (b) a rename fired while a
+        // DIFFERENT page sat on top (an undo/redo refresh addressed by
+        // pageId, not by position) rewrote that unrelated top entry's id.
+        // Matching on pageId makes both impossible; a rename for a page no
+        // tab holds is simply a no-op.
+        let changed = false
+        const newTabs = tabs.map((tab) => {
+          if (!tab.pageStack.some((entry) => entry.pageId === pageId && entry.title !== title)) {
+            return tab
           }
-        }
+          changed = true
+          const newStack = tab.pageStack.map((entry) =>
+            entry.pageId === pageId ? { pageId, title } : entry,
+          )
+          return { id: tab.id, pageStack: newStack, label: tabLabel(newStack) }
+        })
+        if (!changed) return
         set(spliceTabs(state, newTabs, activeTabIndex))
       },
 

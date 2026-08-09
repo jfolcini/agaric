@@ -495,7 +495,7 @@ describe('useNavigationStore', () => {
   // ---------------------------------------------------------------------------
   // replacePage
   // ---------------------------------------------------------------------------
-  describe('replacePage', () => {
+  describe('renamePage', () => {
     it('replaces the top of the stack', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
@@ -514,7 +514,7 @@ describe('useNavigationStore', () => {
         activeTabIndex: 0,
       })
 
-      useTabsStore.getState().replacePage('P2', 'New Title')
+      useTabsStore.getState().renamePage('P2', 'New Title')
 
       expect(selectPageStack(useTabsStore.getState())).toEqual([
         { pageId: 'P1', title: 'Page 1' },
@@ -523,18 +523,57 @@ describe('useNavigationStore', () => {
       expect(useTabsStore.getState().tabs[0]?.label).toBe('New Title')
     })
 
-    it('can replace both pageId and title', () => {
-      useNavigationStore.setState({
-        currentView: 'page-editor',
-      })
+    // #3322 — the rename is addressed BY PAGE ID, not by stack position. The
+    // former `replacePage` overwrote `pageStack[len-1]` of the active tab
+    // unconditionally, so a rename fired while another page sat on top (the
+    // undo/redo refresh addresses a pageId, not the top slot) rewrote that
+    // unrelated entry's id.
+    it('leaves an unrelated top-of-stack entry alone', () => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
       useTabsStore.setState({
         tabs: [{ id: '0', pageStack: [{ pageId: 'OLD_ID', title: 'Old' }], label: 'Old' }],
         activeTabIndex: 0,
       })
 
-      useTabsStore.getState().replacePage('NEW_ID', 'New')
+      useTabsStore.getState().renamePage('SOME_OTHER_PAGE', 'New')
 
-      expect(selectPageStack(useTabsStore.getState())).toEqual([{ pageId: 'NEW_ID', title: 'New' }])
+      expect(selectPageStack(useTabsStore.getState())).toEqual([{ pageId: 'OLD_ID', title: 'Old' }])
+    })
+
+    // #3322 — a page can be open in more than one tab, and deeper than the top
+    // of a back-stack. Every entry naming it must pick up the new title.
+    it('retitles the page in every tab and at every stack depth', () => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [
+          {
+            id: '0',
+            pageStack: [
+              { pageId: 'P2', title: 'Old Title' },
+              { pageId: 'P1', title: 'Page 1' },
+            ],
+            label: 'Page 1',
+          },
+          {
+            id: '1',
+            pageStack: [{ pageId: 'P2', title: 'Old Title' }],
+            label: 'Old Title',
+          },
+        ],
+        activeTabIndex: 0,
+      })
+
+      useTabsStore.getState().renamePage('P2', 'New Title')
+
+      const { tabs } = useTabsStore.getState()
+      expect(tabs[0]?.pageStack).toEqual([
+        { pageId: 'P2', title: 'New Title' },
+        { pageId: 'P1', title: 'Page 1' },
+      ])
+      // The active tab's label follows its own top entry, which didn't change.
+      expect(tabs[0]?.label).toBe('Page 1')
+      expect(tabs[1]?.pageStack).toEqual([{ pageId: 'P2', title: 'New Title' }])
+      expect(tabs[1]?.label).toBe('New Title')
     })
 
     it('is a no-op when stack is empty', () => {
@@ -546,9 +585,22 @@ describe('useNavigationStore', () => {
         activeTabIndex: 0,
       })
 
-      useTabsStore.getState().replacePage('P1', 'Title')
+      useTabsStore.getState().renamePage('P1', 'Title')
 
       expect(selectPageStack(useTabsStore.getState())).toEqual([])
+    })
+
+    it('does not churn state when the title is already current', () => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'Same' }], label: 'Same' }],
+        activeTabIndex: 0,
+      })
+      const before = useTabsStore.getState().tabs
+
+      useTabsStore.getState().renamePage('P1', 'Same')
+
+      expect(useTabsStore.getState().tabs).toBe(before)
     })
   })
 

@@ -22,9 +22,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import { activeSpaceKey } from '@/lib/active-space'
-import { createSpaceSubscriber } from '@/lib/createSpaceSubscriber'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
+import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 
 export type JournalMode = 'daily' | 'weekly' | 'monthly' | 'agenda' | 'stream'
 export type JournalPanel = 'due' | 'references' | 'done'
@@ -139,6 +138,56 @@ function coercePersistedJournal(
   }
 }
 
+/**
+ * #3322 — the per-space primitive owning `currentDateBySpace` / `modeBySpace`,
+ * the derived flat `currentDate` / `mode` mirror, and the space-change
+ * flush/pull reconcile. Journal used to hand-roll all three (five action
+ * bodies each rewriting map and mirror as two independent object literals,
+ * plus a 62-line bespoke `createSpaceSubscriber` reconcile) — exactly the
+ * shape `createPerSpaceSlice` exists to own once, and exactly the shape whose
+ * hand-rolling produced the two defects its doc comment cites. Routing the
+ * writes through `applyActive` makes mirror-vs-slice drift unrepresentable:
+ * there is no way to write one without the other.
+ *
+ * The slice unit is the `{ date, mode }` composite because the two fields
+ * flush and pull together. It carries a real `Date` (not the ISO string the
+ * map stores) so the mirror keeps the exact `Date` an action was handed —
+ * `setSlice` narrows to `YYYY-MM-DD` for persistence, `getSlice` parses back
+ * to a local-midnight `Date`, which is what the pull path always produced.
+ *
+ * `seedOnSwitch` preserves journal's long-standing divergence from the
+ * primitive's default (see the option's doc): a fresh space's slice IS seeded
+ * with today + `daily` so a later flush round-trips even if the user never
+ * touches the view.
+ */
+const journalSlice = createPerSpaceSlice<JournalStore, { date: Date; mode: JournalMode }>({
+  readMirror: (state) => ({ date: state.currentDate, mode: state.mode }),
+  writeMirror: (value) => ({ currentDate: value.date, mode: value.mode }),
+  getSlice: (state, key) => {
+    const iso = state.currentDateBySpace[key]
+    const mode = state.modeBySpace[key]
+    // A slice counts as absent only when NEITHER field is stored. A blob that
+    // carries just one (a partial coercion drop) keeps that field and takes
+    // the fresh-space default for the other, rather than being discarded.
+    if (iso === undefined && mode === undefined) return undefined
+    return {
+      date: (iso === undefined ? null : parseISODate(iso)) ?? new Date(),
+      mode: mode ?? 'daily',
+    }
+  },
+  setSlice: (state, key, value) => ({
+    currentDateBySpace: { ...state.currentDateBySpace, [key]: dateToISO(value.date) },
+    modeBySpace: { ...state.modeBySpace, [key]: value.mode },
+  }),
+  fallback: () => ({ date: new Date(), mode: 'daily' }),
+  seedOnSwitch: true,
+  // Transient scroll targets belong to the previous space's last navigation
+  // and would confuse the incoming view.
+  onSwitch: () => {
+    useJournalStore.setState({ scrollToDate: null, scrollToPanel: null })
+  },
+})
+
 export const useJournalStore = create<JournalStore>()(
   persist(
     (set) => ({
@@ -149,51 +198,21 @@ export const useJournalStore = create<JournalStore>()(
       scrollToDate: null,
       scrollToPanel: null,
       setMode: (mode) =>
-        set((state) => {
-          const key = activeSpaceKey()
-          return {
-            mode,
-            modeBySpace: { ...state.modeBySpace, [key]: mode },
-          }
-        }),
+        set((state) => journalSlice.applyActive(state, { date: state.currentDate, mode })),
       setCurrentDate: (date) =>
-        set((state) => {
-          const key = activeSpaceKey()
-          return {
-            currentDate: date,
-            currentDateBySpace: { ...state.currentDateBySpace, [key]: dateToISO(date) },
-          }
-        }),
+        set((state) => journalSlice.applyActive(state, { date, mode: state.mode })),
       navigateToDate: (date, mode) =>
-        set((state) => {
-          const key = activeSpaceKey()
-          return {
-            currentDate: date,
-            mode,
-            currentDateBySpace: { ...state.currentDateBySpace, [key]: dateToISO(date) },
-            modeBySpace: { ...state.modeBySpace, [key]: mode },
-          }
-        }),
+        set((state) => journalSlice.applyActive(state, { date, mode })),
       goToDateAndScroll: (date, scrollTarget) =>
-        set((state) => {
-          const key = activeSpaceKey()
-          return {
-            currentDate: date,
-            scrollToDate: scrollTarget,
-            currentDateBySpace: { ...state.currentDateBySpace, [key]: dateToISO(date) },
-          }
-        }),
+        set((state) => ({
+          ...journalSlice.applyActive(state, { date, mode: state.mode }),
+          scrollToDate: scrollTarget,
+        })),
       goToDateAndPanel: (date, panel) =>
-        set((state) => {
-          const key = activeSpaceKey()
-          return {
-            currentDate: date,
-            mode: 'daily' as JournalMode,
-            scrollToPanel: panel,
-            currentDateBySpace: { ...state.currentDateBySpace, [key]: dateToISO(date) },
-            modeBySpace: { ...state.modeBySpace, [key]: 'daily' as JournalMode },
-          }
-        }),
+        set((state) => ({
+          ...journalSlice.applyActive(state, { date, mode: 'daily' }),
+          scrollToPanel: panel,
+        })),
       clearScrollTarget: () => set({ scrollToDate: null, scrollToPanel: null }),
     }),
     {
@@ -237,85 +256,13 @@ export const useJournalStore = create<JournalStore>()(
   ),
 )
 
-// ---------------------------------------------------------------------------
-// Space-switch subscriber
-// ---------------------------------------------------------------------------
-//
-// Mirrors the `tabsBySpace` flush/pull pattern from `useNavigationStore`
-// (Phase 3, session 498). On every `currentSpaceId` change:
-//
-//   1. Flush the outgoing flat `currentDate` + `mode` into the outgoing
-//      space's slice.
-//   2. Pull the incoming space's slice into the flat fields.
-//   3. If the incoming space has no slice yet, default to today +
-//      `daily` (and seed both slices so the user lands somewhere
-//      stable).
-//
-// Subscription mechanics + diff detection live in
-// `createSpaceSubscriber`; this site only owns the journal-specific
-// flush / pull logic. On first fire (`prevKey === newKey`) we pull the
-// active-space slice into the flat fields so a returning user lands on
-// the same date + mode they last had in their active space, even
-// though the flat fields were not persisted.
-createSpaceSubscriber((prevKey, newKey) => {
-  const journal = useJournalStore.getState()
-  if (prevKey === newKey) {
-    // First fire after boot — pull the active-space slice into the flat
-    // fields if it exists. If not, leave the defaults (today + daily)
-    // and seed the slice so the next space switch can flush cleanly.
-    const persistedDate = journal.currentDateBySpace[newKey]
-    const persistedMode = journal.modeBySpace[newKey]
-    const newDate = persistedDate
-      ? (parseISODate(persistedDate) ?? new Date())
-      : journal.currentDate
-    const newMode = persistedMode ?? journal.mode
-    useJournalStore.setState({
-      currentDate: newDate,
-      mode: newMode,
-      currentDateBySpace: {
-        ...journal.currentDateBySpace,
-        [newKey]: dateToISO(newDate),
-      },
-      modeBySpace: {
-        ...journal.modeBySpace,
-        [newKey]: newMode,
-      },
-    })
-    return
-  }
-
-  // 1. Flush outgoing.
-  const flushedDateBySpace = {
-    ...journal.currentDateBySpace,
-    [prevKey]: dateToISO(journal.currentDate),
-  }
-  const flushedModeBySpace = {
-    ...journal.modeBySpace,
-    [prevKey]: journal.mode,
-  }
-
-  // 2. Pull incoming, defaulting to today + daily.
-  const incomingDateStr = flushedDateBySpace[newKey]
-  const incomingMode = flushedModeBySpace[newKey]
-  const incomingDate = incomingDateStr ? (parseISODate(incomingDateStr) ?? new Date()) : new Date()
-  const incomingModeResolved: JournalMode = incomingMode ?? 'daily'
-
-  useJournalStore.setState({
-    currentDate: incomingDate,
-    mode: incomingModeResolved,
-    currentDateBySpace: {
-      ...flushedDateBySpace,
-      // Seed the incoming slice so subsequent flushes round-trip even if
-      // the user doesn't touch anything before switching back.
-      [newKey]: dateToISO(incomingDate),
-    },
-    modeBySpace: {
-      ...flushedModeBySpace,
-      [newKey]: incomingModeResolved,
-    },
-    // Drop transient scroll targets — they belong to the previous
-    // space's last navigation and will confuse the new view.
-    scrollToDate: null,
-    scrollToPanel: null,
-  })
-})
+/**
+ * Flush the outgoing space's `{ date, mode }` into its slice and pull the
+ * incoming space's slice into the flat mirror on a space change. The
+ * flush/pull/first-fire logic lives in the shared `createPerSpaceSlice`
+ * primitive (`journalSlice`); this is the wired reconcile callback,
+ * re-exported because the module-level subscriber fires its first-fire path
+ * once at import, so that path is otherwise unreachable from the test runtime
+ * (same reason `recent-pages` re-exports its own).
+ */
+export const reconcileJournalOnSpaceChange = journalSlice.attach(useJournalStore)

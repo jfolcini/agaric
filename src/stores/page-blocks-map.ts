@@ -51,6 +51,58 @@ export function cloneBlocksByIdWith(
 }
 
 /**
+ * Field-wise equality over two flat block rows.
+ *
+ * `BlockRow` (and therefore `FlatBlock`) is a flat record of primitives, so an
+ * own-key shallow compare is EXACT — not a heuristic. It is written
+ * generically rather than field-by-field on purpose: a future `BlockRow` field
+ * is compared automatically, and if one is ever added that holds an object,
+ * the compare simply reports "not equal" (a fresh row, the pre-#3321
+ * behaviour) instead of silently reusing a stale object.
+ */
+function sameBlockFields(a: FlatBlock, b: FlatBlock): boolean {
+  const recordA = a as unknown as Record<string, unknown>
+  const recordB = b as unknown as Record<string, unknown>
+  const keysA = Object.keys(recordA)
+  if (keysA.length !== Object.keys(recordB).length) return false
+  for (const key of keysA) {
+    if (!Object.hasOwn(recordB, key)) return false
+    if (!Object.is(recordA[key], recordB[key])) return false
+  }
+  return true
+}
+
+/**
+ * #3321 — reconcile a freshly built flat tree against the previous
+ * `blocksById`, reusing the PREVIOUS object reference for every row whose
+ * fields (including `depth`) are all unchanged.
+ *
+ * Why: `buildFlatTree` allocates a fresh object per block from the backend
+ * snapshot (`{ ...child, depth }`), so a `load()` replaced every object
+ * reference even when only one row actually changed. Those objects are the
+ * memo key downstream — `BlockListRenderer` passes `block={block}` into the
+ * `React.memo`-wrapped `SortableBlockWrapper`, where every other prop is a
+ * primitive or deliberately identity-stabilised — so a remote edit to ONE
+ * block on a 1,000-block page memo-missed all ~500 mounted rows, each
+ * re-running `useRowDragState`, the viewport observe-ref, a
+ * `useSyncExternalStore` subscription and the drop-indicator computation.
+ * `load()` is on the remote-write hot path (`reloadChangedPageStores` calls it
+ * per changed page on every `sync:complete` / MCP `blocks:changed` tick), so
+ * with a peer typing this repeated every sync debounce (~3 s).
+ *
+ * Returns a NEW array (Zustand subscribers still see a changed `blocks`
+ * reference); only the ENTRIES are shared with the previous state. One extra
+ * O(n) pass on a path that already does two.
+ */
+export function reuseUnchangedBlocks(next: FlatBlock[], prev: Map<string, FlatBlock>): FlatBlock[] {
+  if (prev.size === 0) return next
+  return next.map((block) => {
+    const previous = prev.get(block.id)
+    return previous !== undefined && sameBlockFields(previous, block) ? previous : block
+  })
+}
+
+/**
  * Clone `prev` and `.delete()` the given ids — counterpart to
  * `cloneBlocksByIdWith` for the `remove` reducer path.
  */

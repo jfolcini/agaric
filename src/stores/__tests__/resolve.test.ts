@@ -238,10 +238,15 @@ describe('preload', () => {
     warnSpy.mockRestore()
   })
 
-  it('bumps version', async () => {
+  it('bumps version when the scan actually changes something', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks')
-        return { items: [], next_cursor: null, has_more: false, total_count: null }
+        return {
+          items: [{ id: 'PAGE_1', content: 'Page One', deleted_at: null }],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }
       if (cmd === 'list_all_tags_in_space') return []
       return null
     })
@@ -251,6 +256,89 @@ describe('preload', () => {
     const versionAfter = useResolveStore.getState().version
 
     expect(versionAfter).toBe(versionBefore + 1)
+  })
+
+  // #3321 — the bulk writer must diff like its two siblings (`set`'s #1073
+  // guard, `batchSet`'s #753 guard). `reloadChangedPageStores` fires
+  // `preload(spaceId, true)` on EVERY `sync:complete` with `ops_received > 0`
+  // and every MCP `blocks:changed`; a remote edit to a block's CONTENT cannot
+  // change a page title or a tag name, so the rescan re-fetches identical
+  // rows. `version` is a load-bearing `useMemo` dep in `useRichContent` /
+  // `BlockListItem`, so an unconditional bump re-parsed markdown for every
+  // mounted row for zero gain.
+  it('does not bump version when every fetched row already matches the cache', async () => {
+    const mockPages = [
+      { id: 'PAGE_1', content: 'Page One', deleted_at: null },
+      { id: 'PAGE_2', content: 'Page Two', deleted_at: null },
+    ]
+    const mockTags = [
+      { tag_id: 'TAG_1', name: 'tag-one', usage_count: 5, updated_at: '2025-01-01' },
+    ]
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
+      if (cmd === 'list_all_tags_in_space') return mockTags
+      return null
+    })
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    const versionAfterFirst = useResolveStore.getState().version
+    expect(versionAfterFirst).toBe(1)
+
+    // A version-subscribed consumer (BlockListItem / useRichContent) counts
+    // its re-render triggers across the second, content-only sync tick.
+    let versionNotifications = 0
+    const unsubscribe = useResolveStore.subscribe((state, prev) => {
+      if (state.version !== prev.version) versionNotifications++
+    })
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true)
+    unsubscribe()
+
+    expect(useResolveStore.getState().version).toBe(versionAfterFirst)
+    expect(versionNotifications).toBe(0)
+    // The cache is still correct — the no-op merge did not drop anything.
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_2'))).toEqual({
+      title: 'Page Two',
+      deleted: false,
+    })
+  })
+
+  it('bumps version once when a single fetched row changed', async () => {
+    let title = 'Page One'
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks')
+        return {
+          items: [
+            { id: 'PAGE_1', content: title, deleted_at: null },
+            { id: 'PAGE_2', content: 'Page Two', deleted_at: null },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'list_all_tags_in_space') return []
+      return null
+    })
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    const versionAfterFirst = useResolveStore.getState().version
+
+    title = 'Page One Renamed'
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true)
+
+    expect(useResolveStore.getState().version).toBe(versionAfterFirst + 1)
+    expect(useResolveStore.getState().resolveTitle('PAGE_1')).toBe('Page One Renamed')
+  })
+
+  it('marks _preloaded even when an empty space fetches nothing', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_all_tags_in_space') return []
+      return null
+    })
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+
+    expect(useResolveStore.getState()._preloaded).toBe(true)
+    expect(useResolveStore.getState().version).toBe(0)
   })
 
   // Perf (#2267) — preload's merge must mutate the existing cache Map in

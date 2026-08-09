@@ -109,6 +109,16 @@ interface RecentPagesState {
    */
   addRecentPage: (id: string, title: string) => void
   /**
+   * #3322 — retitle the active space's entry for `pageId` in place, keeping
+   * its MRU position, `visitedAt` and pinned flag. A no-op when the page is
+   * not in this space's MRU (or already carries `title`). The entry is
+   * PERSISTED, so without this a rename left the recents strip — and the
+   * `navigateToPage(pageId, title)` call it makes on click, which re-stamps
+   * the stale title back onto the tab — showing the old title across
+   * restarts. Prefer the cross-store `renamePage` in `@/stores/page-rename`.
+   */
+  renamePage: (pageId: string, title: string) => void
+  /**
    * #1149 — remove a single entry (any partition). Pin status does not block
    * removal. Returns true if the id was found and removed.
    */
@@ -493,6 +503,20 @@ export const useRecentPagesStore = create<RecentPagesState>()(
           ...(existing?.pinned === true && { pinned: true }),
         }
         const next = applyPinFirstCap([nextEntry, ...filtered])
+        set(recentPagesSlice.applyActive(state, next))
+      },
+      renamePage: (pageId, title) => {
+        const state = get()
+        const key = activeSpaceKey()
+        const current = state.recentPagesBySpace[key] ?? []
+        // No-op unless this space's MRU actually holds a stale title for the
+        // page — a rename must not reorder the MRU or churn state for a page
+        // that was never visited.
+        const idx = current.findIndex((p) => p.pageId === pageId)
+        const entry = idx < 0 ? undefined : current[idx]
+        if (entry === undefined || entry.title === title) return
+        const updated: PageRef = { ...entry, title }
+        const next = [...current.slice(0, idx), updated, ...current.slice(idx + 1)]
         set(recentPagesSlice.applyActive(state, next))
       },
       removeRecentPage: (id) => {
