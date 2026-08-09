@@ -1,0 +1,13 @@
+---
+source: agaric-engine/src/import.rs
+expression: refs
+---
+- alt: ""
+  full_match: "![[embedded.pdf]]"
+  original_ref: embedded.pdf
+- alt: diagram
+  full_match: "![diagram](assets/diagram.png)"
+  original_ref: assets/diagram.png
+- alt: ""
+  full_match: "![](assets/no-alt.jpg)"
+  original_ref: assets/no-alt.jpg

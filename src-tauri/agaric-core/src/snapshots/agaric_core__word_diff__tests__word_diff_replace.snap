@@ -1,0 +1,26 @@
+---
+source: agaric-core/src/word_diff.rs
+expression: "compute_word_diff(old, new)"
+---
+- tag: Equal
+  value: The
+- tag: Equal
+  value: " "
+- tag: Delete
+  value: quick
+- tag: Insert
+  value: slow
+- tag: Equal
+  value: " "
+- tag: Equal
+  value: brown
+- tag: Equal
+  value: " "
+- tag: Delete
+  value: fox
+- tag: Insert
+  value: cat
+- tag: Equal
+  value: " "
+- tag: Equal
+  value: jumps

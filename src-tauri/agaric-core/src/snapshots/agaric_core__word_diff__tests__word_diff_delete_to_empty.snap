@@ -1,0 +1,10 @@
+---
+source: agaric-core/src/word_diff.rs
+expression: "compute_word_diff(old, new)"
+---
+- tag: Delete
+  value: hello
+- tag: Delete
+  value: " "
+- tag: Delete
+  value: world

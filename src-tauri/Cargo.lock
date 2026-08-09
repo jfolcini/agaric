@@ -118,6 +118,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "chrono",
+ "insta",
  "proptest",
  "serde",
  "serde_json",
@@ -151,6 +152,7 @@ dependencies = [
  "agaric-core",
  "agaric-store",
  "chrono",
+ "insta",
  "loro",
  "parking_lot",
  "proptest",

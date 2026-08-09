@@ -59,6 +59,10 @@ chrono = { version = "0.4.44", features = ["serde"] }
 # `word_diff.rs` uses `proptest!`. Versions/features mirror ../Cargo.toml.
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
 proptest = "1.11.0"
+# `word_diff`'s span-sequence snapshots (#3457): the exact `Vec<DiffSpan>`
+# the history view renders. Version/features mirror the app crate's and
+# `agaric-store`'s `[dev-dependencies]` so cargo unifies one insta build.
+insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 
 # Mirror the app crate's lint posture so clippy/rustc behave identically
 # under CI (the app crate declares these as package-level tables, not

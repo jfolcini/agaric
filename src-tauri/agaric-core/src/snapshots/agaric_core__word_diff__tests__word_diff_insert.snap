@@ -1,0 +1,18 @@
+---
+source: agaric-core/src/word_diff.rs
+expression: "compute_word_diff(old, new)"
+---
+- tag: Equal
+  value: hello
+- tag: Equal
+  value: " "
+- tag: Insert
+  value: brave
+- tag: Insert
+  value: " "
+- tag: Insert
+  value: new
+- tag: Insert
+  value: " "
+- tag: Equal
+  value: world
