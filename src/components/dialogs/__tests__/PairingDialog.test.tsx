@@ -2448,6 +2448,43 @@ describe('PairingDialog', () => {
     expect(screen.queryByText('Cancel pairing?')).not.toBeInTheDocument()
   })
 
+  // #3628 (review) — the close guard asks "could a joiner be attempting
+  // against something read off this screen?". `backendArmedRef` cannot
+  // answer that any more: it is armed at dispatch and is never cleared when
+  // `start_pairing` rejects, so keying the guard on it would pop "Cancel
+  // pairing?" over a "Failed to start pairing" banner, where no passphrase
+  // was ever rendered. The guard keys on the passphrase being on screen; the
+  // backend clear stays keyed on the ref, because that arm may well be real.
+  it('closes a failed host start without the guard, and still clears the backend', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_pairing') throw new Error('network error')
+      if (cmd === 'list_peer_refs') return []
+      return undefined
+    })
+
+    const onOpenChange = vi.fn()
+    render(<PairingDialog open onOpenChange={onOpenChange} />)
+    await selectHostRole(user)
+
+    const errorEl = await screen.findByRole('alert')
+    expect(errorEl).toHaveTextContent(/Failed to start pairing/i)
+
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+    expect(screen.queryByText('Cancel pairing?')).not.toBeInTheDocument()
+
+    // The dispatch may still have armed a window on the backend even though
+    // the reply was an error, so the close disarms it rather than assuming.
+    await waitFor(() => {
+      const clears = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'cancel_pairing')
+      expect(clears.length).toBeGreaterThan(0)
+    })
+  })
+
   // -----------------------------------------------------------------------
   // #3463 (review) — the countdown-pause-while-typing mechanism (#294:
   // handleTypingStateChange / pausedByTyping / onTypingStateChange, plus

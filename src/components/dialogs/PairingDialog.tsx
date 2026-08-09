@@ -1032,20 +1032,22 @@ export function PairingDialog({
     // is the non-destructive choice, and the whole point of this family of
     // fixes is that the two roles behave identically. An expired window has
     // nothing left to lose, so it closes without ceremony.
-    // #3628 — `!loading` is new, and it keeps this gate meaning what it
-    // says. `backendArmedRef` is now armed from the moment `start_pairing`
-    // is dispatched, so without it an Esc during the opening skeleton would
-    // pop "Cancel pairing?" over a dialog that has never shown a passphrase
-    // — a window no joiner can possibly be attempting against, since
-    // nothing has been read off the screen yet. Closing it needs no
-    // ceremony; the close still disarms it, which is the point of the fix.
-    const hostWindowLive = role === 'host' && backendArmedRef.current && !loading && !isExpired
-    if (pairLoading || joinerPhase === 'waiting' || hostWindowLive) {
+    // #3628 — this gate asks "could a joiner be attempting against something
+    // read off this screen?", so it keys on the passphrase being rendered
+    // (`hostWindowShowing`) rather than on `backendArmedRef`, which since
+    // #3628 is armed from the moment `start_pairing` is dispatched. Keyed on
+    // the ref, an Esc during the opening skeleton — or after a *failed*
+    // `start_pairing`, where the ref stays armed and the banner reads
+    // "Failed to start pairing" — would pop "Cancel pairing?" over a dialog
+    // that never showed a passphrase. Closing those needs no ceremony; the
+    // close still disarms the backend via `handleCancel`, which is keyed on
+    // the ref precisely because that arm may be real.
+    if (pairLoading || joinerPhase === 'waiting' || hostWindowShowing) {
       setConfirmCloseOpen(true)
       return
     }
     handleCancel()
-  }, [pairLoading, joinerPhase, role, loading, isExpired, handleCancel])
+  }, [pairLoading, joinerPhase, hostWindowShowing, handleCancel])
 
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title } = parts
