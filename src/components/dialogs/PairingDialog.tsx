@@ -12,8 +12,10 @@
  * is no longer showing. The two roles' UI stays mutually exclusive by
  * construction — `role` is a single value, not two booleans, so "both at
  * once" (the #3463 shape) is not representable. Only the host path calls
- * `commands.startPairing()`; only the joiner path renders the entry
- * form/QR-scanner and calls `commands.confirmPairing()`.
+ * `pairingMutations.start()`; only the joiner path renders the entry
+ * form/QR-scanner and calls `pairingMutations.confirm()`. (#3715 — all three
+ * pairing-state mutations go through `@/lib/pairing-mutations`, never through
+ * `commands.*` directly; see that module for the ordering invariant.)
  *
  * Sections (each extracted as a sub-component for testability):
  *  1. QR code + passphrase display (PairingQrDisplay) — host only
@@ -53,6 +55,13 @@ import type { PairingInfo, PeerRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { notify } from '@/lib/notify'
+// #3628/#3715 — the three commands that write this device's pending-pairing
+// marker, wrapped at their definitions in the device-scoped queue that orders
+// them (and bounds them). Nothing here may reach for `commands.startPairing` /
+// `confirmPairing` / `cancelPairing` directly: an unqueued call re-opens
+// #3620/#3628 for every caller, not just its own. Read that module before
+// touching any of the four call sites below.
+import { pairingMutations } from '@/lib/pairing-mutations'
 // #3492/#3504 — the rejection strings the Rust responder puts on the wire, in
 // the one module both this dialog and `useSyncEvents` read them from. Keep the
 // matcher below referring to the BINDING: a re-inlined literal would satisfy
@@ -168,38 +177,6 @@ export function PairingDialog({
   // able to admit an unpaired device. The ref now tracks "is anything armed
   // on the backend", which is the question the gate is really asking.
   const backendArmedRef = useRef(false)
-  // #3628 — every backend pairing-state mutation this dialog performs
-  // writes the SAME single row: `start_pairing` and `confirm_pairing` upsert
-  // the device-global pending-pairing marker, `cancel_pairing` deletes it.
-  // They are dispatched from places that cannot see each other — an effect
-  // body, a React cleanup function that may not be async, two click
-  // handlers — so nothing but arrival order at the backend decided which
-  // one won. This queue makes DISPATCH order the execution order, for every
-  // pair of mutations, in both directions.
-  //
-  // It replaces #3620's `pendingClearRef`, which ordered exactly one
-  // direction by hand: a reopen's arm behind the close's in-flight clear.
-  // #3628 is the other direction — a close's clear jumping ahead of an arm
-  // still in flight would DELETE a row that does not exist yet and let the
-  // late upsert stand, arming a window with no dialog behind it. Ordering
-  // both directions with a queue means neither call site has to know the
-  // other exists, so no future one can forget to check.
-  //
-  // Held as a ref (not state) because it is read across a close/reopen
-  // cycle and must never trigger a render.
-  const backendMutationsRef = useRef<Promise<unknown>>(Promise.resolve())
-  const runPairingMutation = useCallback(<T,>(op: () => Promise<T>): Promise<T> => {
-    // `.then(op, op)` rather than `.then(op)`: a mutation that rejects must
-    // not sink the queue behind it — a failed `cancel_pairing` still has to
-    // let the next `start_pairing` through, or one DB error would wedge
-    // pairing until the app restarts.
-    const result = backendMutationsRef.current.then(op, op)
-    backendMutationsRef.current = result.then(
-      () => undefined,
-      () => undefined,
-    )
-    return result
-  }, [])
   // #3469 — snapshot of known peer ids taken the instant waiting begins, so
   // the poll below can detect a genuinely NEW peer (the TOFU-pin signal)
   // rather than false-triggering on peers that were already paired before
@@ -264,11 +241,12 @@ export function PairingDialog({
   // the error banner copy stays byte-equivalent regardless of which of the
   // two calls in `initHost` below fails.
   const { execute: executeStartPairing } = useIpcCommand<void, PairingInfo>({
-    // #3628 — queued at the DEFINITION, not at the call sites, so "this is a
-    // backend pairing-state mutation and therefore ordered" is a property of
-    // the command rather than something each of `initHost` / `handleRetry` /
-    // `handleSwitchToHost` has to remember.
-    call: () => runPairingMutation(() => commands.startPairing().then((r) => unwrap(r))),
+    // #3628/#3715 — queued at the command's DEFINITION (in
+    // `@/lib/pairing-mutations`), not at the call sites, so "this is a backend
+    // pairing-state mutation and therefore ordered and bounded" is a property
+    // of the command rather than something each of `initHost` / `handleRetry`
+    // / `handleSwitchToHost` has to remember.
+    call: () => pairingMutations.start(),
     module: 'PairingDialog',
     errorLogMessage: 'Failed to start pairing',
     onSuccess: (info) => {
@@ -338,7 +316,7 @@ export function PairingDialog({
     // `void initHost()` has the ref set synchronously: even a close in the
     // very same tick sees it.
     backendArmedRef.current = true
-    // `executeStartPairing` is queued (see `runPairingMutation`) so a clear
+    // `executeStartPairing` is queued (see `@/lib/pairing-mutations`) so a clear
     // dispatched after this arm — by a close, or by a Cancel — can never
     // overtake it. `executeLoadPeers` is a read and stays off the queue: it
     // must neither be delayed by, nor delay, a pending clear.
@@ -388,12 +366,7 @@ export function PairingDialog({
   // you're relying on "host closed the dialog" as harmless to an
   // in-flight joiner.
   const { execute: executeCancelPairingCleanup } = useIpcCommand<void, void>({
-    call: () =>
-      runPairingMutation(() =>
-        commands.cancelPairing().then((r) => {
-          unwrap(r)
-        }),
-      ),
+    call: () => pairingMutations.cancel(),
     module: 'PairingDialog',
     errorLogMessage: 'cancelPairing on close/unmount failed',
     logLevel: 'warn',
@@ -735,8 +708,14 @@ export function PairingDialog({
       // let the arm land behind it. Fixing one arm of a symmetric pair is
       // what created this family of bugs; both are moved.
       backendArmedRef.current = true
-      // remoteDeviceId is derived from the passphrase in the pairing protocol
-      unwrap(await runPairingMutation(() => commands.confirmPairing(passphrase, '')))
+      // remoteDeviceId is derived from the passphrase in the pairing protocol.
+      //
+      // #3715 — queued at the command's DEFINITION like the other two, rather
+      // than wrapped here at the call site. The behaviour was already correct,
+      // but "is this queued?" was answerable only by reading every call site,
+      // and a second one added later would have got no queueing with no test
+      // to notice — the symptom is a rare ordering race, not a failure.
+      await pairingMutations.confirm(passphrase, '')
       syncSetState('idle')
       // #3469 (review) — take the "peers we already had" baseline HERE,
       // from an authoritative read at the moment the proof is armed, not
@@ -871,12 +850,7 @@ export function PairingDialog({
   // clear), one retry attempt if it didn't. `cancel_pairing_inner`'s clear
   // is a plain idempotent DELETE, so the two calls can never disagree.
   const { execute: executeCancelPairingExplicit } = useIpcCommand<void, void>({
-    call: () =>
-      runPairingMutation(() =>
-        commands.cancelPairing().then((r) => {
-          unwrap(r)
-        }),
-      ),
+    call: () => pairingMutations.cancel(),
     module: 'PairingDialog',
     errorLogMessage: 'Failed to cancel pairing',
     onSuccess: () => {

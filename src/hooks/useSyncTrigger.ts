@@ -4,6 +4,9 @@ import { mapBackendState } from '@/hooks/useSyncEvents'
 import { announce } from '@/lib/announcer'
 import { i18n } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
+// #3715 — moved down to `lib` when the pairing mutation queue became its
+// second caller; a lib module may not import a hook (tier layering).
+import { runWithTimeout } from '@/lib/promise-timeout'
 import type { PeerRef } from '@/lib/tauri'
 import { flushAllDrafts, listPeerRefs, startSync } from '@/lib/tauri'
 import type { PeerInfo } from '@/stores/sync'
@@ -63,24 +66,6 @@ export function isOffline(): boolean {
 export function computeNextSyncDelay(current: number, hadFailure: boolean): number {
   if (!hadFailure) return BASE_INTERVAL_MS
   return Math.min(current * 2, MAX_INTERVAL_MS)
-}
-
-/**
- * Races `p` against a timer; rejects with `err` if `ms` elapses first.
- *
- * The timeout's `setTimeout` is cleared in `.finally()` so a winning `p` does
- * not leak a pending timer for the remainder of `ms`.
- */
-export async function runWithTimeout<T>(p: Promise<T>, ms: number, err: Error): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null
-  const timeout = new Promise<T>((_, reject) => {
-    timeoutId = setTimeout(() => reject(err), ms)
-  })
-  try {
-    return await Promise.race<T>([p, timeout])
-  } finally {
-    if (timeoutId !== null) clearTimeout(timeoutId)
-  }
 }
 
 /**
