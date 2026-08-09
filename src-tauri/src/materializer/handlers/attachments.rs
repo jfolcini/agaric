@@ -393,6 +393,11 @@ pub(crate) async fn cleanup_orphaned_attachments(
     // `CLEANUP_BATCH_SIZE` so a vault with thousands of attachments
     // does not block the materializer for seconds.
     let mut files: Vec<PathBuf> = Vec::new();
+    // #3325: in-flight transfer temps skipped by the walk. Counted, not just
+    // logged, because "no files to consider" and "the only files here are
+    // being written right now" are different states and the pass must not
+    // report the second as the first.
+    let mut exempted_temps: u64 = 0;
     let mut dir_stack: Vec<PathBuf> = vec![attachments_root.clone()];
     while let Some(dir) = dir_stack.pop() {
         let mut rd = match tokio::fs::read_dir(&dir).await {
@@ -435,6 +440,7 @@ pub(crate) async fn cleanup_orphaned_attachments(
                         if is_transfer_temp(&entry.file_name().to_string_lossy())
                             && !transfer_temp_is_abandoned(&path).await
                         {
+                            exempted_temps += 1;
                             tracing::debug!(
                                 path = %path.display(),
                                 "cleanup_orphaned_attachments: skipping an in-flight transfer temp (#3325)"
@@ -460,26 +466,6 @@ pub(crate) async fn cleanup_orphaned_attachments(
             }
         }
     }
-
-    // Safety check: even if the directory exists, it may be empty
-    // (e.g. all attachments were already deleted). Treat as no-op so
-    // a pathological "vault never seeded" install never accidentally
-    // touches anything.
-    if files.is_empty() {
-        tracing::debug!(
-            path = %attachments_root.display(),
-            "cleanup_orphaned_attachments: attachments directory empty — no-op"
-        );
-        return Ok(());
-    }
-
-    let mut scanned: u64 = 0;
-    let mut unlinked: u64 = 0;
-    let mut errors: u64 = 0;
-    // #3519: candidates whose bytes were quarantined and then handed back
-    // because a reference appeared after the orphan decision. A non-zero
-    // value is the scheme earning its keep, not a fault.
-    let mut restored: u64 = 0;
 
     // #1993 Phase 1 — refcount-aware blob reconciliation. The file walk below
     // already implements the refcount-on-demand contract for BYTES: a blob
@@ -508,6 +494,14 @@ pub(crate) async fn cleanup_orphaned_attachments(
     // unreferenced) after this sweep; this bulk pass additionally covers rows
     // whose `on_disk_path` is not on disk at all and therefore never walked.
     //
+    // #3325 — it also runs BEFORE the "nothing to walk" early return, not
+    // after. Rows whose path is not on disk at all are exactly the rows an
+    // empty walk leaves behind, so the case where this sweep is the ONLY thing
+    // that can help is the case the early return used to skip. The #3325 temp
+    // exemption gave that hole a second entrance (a directory holding only
+    // in-flight temps now walks to zero candidates), which is what made it
+    // worth closing rather than noting.
+    //
     // The attachment_blobs table (migration 0094) is not yet in the offline
     // .sqlx cache, so use the runtime form here.
     // dynamic-sql: static SQL; attachment_blobs is absent from the .sqlx cache.
@@ -527,6 +521,29 @@ pub(crate) async fn cleanup_orphaned_attachments(
             0
         }
     };
+
+    // Safety check: even if the directory exists, there may be nothing to
+    // consider — every attachment already deleted, or (since #3325) every file
+    // present being written right now. Either way there is no candidate to
+    // walk, so return; the blob sweep above has already run, which is the part
+    // that still had work to do.
+    if files.is_empty() {
+        tracing::debug!(
+            path = %attachments_root.display(),
+            exempted_temps,
+            pruned_blobs,
+            "cleanup_orphaned_attachments: no walkable candidates — no-op"
+        );
+        return Ok(());
+    }
+
+    let mut scanned: u64 = 0;
+    let mut unlinked: u64 = 0;
+    let mut errors: u64 = 0;
+    // #3519: candidates whose bytes were quarantined and then handed back
+    // because a reference appeared after the orphan decision. A non-zero
+    // value is the scheme earning its keep, not a fault.
+    let mut restored: u64 = 0;
 
     for chunk in files.chunks(CLEANUP_BATCH_SIZE) {
         for full_path in chunk {
@@ -772,7 +789,8 @@ pub(crate) async fn cleanup_orphaned_attachments(
         restored,
         errors,
         pruned_blobs,
-        "cleanup_orphaned_attachments: scanned {scanned} files, unlinked {unlinked} orphans, restored {restored} raced, {errors} errors, pruned {pruned_blobs} blob rows"
+        exempted_temps,
+        "cleanup_orphaned_attachments: scanned {scanned} files, unlinked {unlinked} orphans, restored {restored} raced, {errors} errors, pruned {pruned_blobs} blob rows, skipped {exempted_temps} in-flight temps"
     );
 
     Ok(())

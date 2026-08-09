@@ -809,3 +809,56 @@ async fn cleanup_orphaned_attachments_still_collects_stranded_quarantine_files_3
          next pass; the #3325 temp exemption must not swallow it"
     );
 }
+
+/// #3325 — a directory holding nothing but in-flight temps must still get its
+/// dangling `attachment_blobs` rows pruned.
+///
+/// The temp exemption gave the "nothing to walk" early return a second
+/// entrance, and that return used to sit *above* the #3371 bulk blob sweep. So
+/// a vault mid-transfer would skip the one piece of work it still had — and
+/// the sweep's whole purpose is rows whose `on_disk_path` is not on disk at
+/// all, which is exactly the state an empty walk describes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_prunes_blobs_when_only_temps_are_present_3325() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    // The only file present is a receive in progress, so the walk yields no
+    // candidates and the pass takes the early return.
+    let temp = attachments.join(transfer_temp_name(
+        "01JQ8ZC0DE5T0RAG31F",
+        "abcdef0123456789abcdef0123456789",
+    ));
+    tokio::fs::write(&temp, b"streaming right now")
+        .await
+        .unwrap();
+
+    // A blob mapping whose bytes are long gone and which no `attachments` row
+    // references — dangling, and reclaimable only by the bulk sweep.
+    sqlx::query(
+        "INSERT INTO attachment_blobs (content_hash, on_disk_path, size_bytes, created_at) \
+         VALUES ('deadbeef', 'attachments/vanished.bin', 4, 1735689600000)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "#3325: the dangling blob row survived because a directory of only \
+         in-flight temps took the early return above the bulk prune"
+    );
+    assert!(
+        temp.exists(),
+        "and the in-flight temp must still be there afterwards"
+    );
+}

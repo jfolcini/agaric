@@ -72,7 +72,11 @@ pub struct BatchIngestOutcome {
 ///   it: this device's remaining records are dropped for the session, leaving
 ///   our `MAX(seq)` for it at the last seq we truly hold. The peer re-offers
 ///   from the gap. The cost is one deferred session for that device's tail;
-///   the alternative is a hole in the log that nothing ever fills.
+///   the alternative is a hole in the log that nothing ever fills. Note that
+///   `Database` is taken as transient *unconditionally*, which is right for
+///   `SQLITE_BUSY` and wrong for a full disk or a corrupt page — those stall
+///   the device forever and re-download its tail every session, visible only
+///   as a per-record `warn!`. Bounding that is #3727.
 /// * **Corrupt** (hash mismatch, NUL byte in a hashed field, `SetProperty`
 ///   domain violation) — the bytes are unusable and every future re-ship of
 ///   them is unusable in exactly the same way. Stalling the device here would
@@ -86,12 +90,21 @@ pub struct BatchIngestOutcome {
 ///
 /// Skipping the remainder of a stalled device is scoped per `device_id`, never
 /// globally — the frontiers are independent, and one busy write must not cost
-/// us every other device's records. It is also independent of the order the
-/// records arrive in: once a device is stalled, everything further from that
-/// device is deferred whatever its seq, which is at worst more conservative
-/// than necessary. (In practice they arrive `(device_id, seq)`-ascending, the
-/// order [`collect_ops_for_peer`] emits and the order the Audit profile's
-/// parent-gap relaxation already relies on.)
+/// us every other device's records.
+///
+/// It is NOT order-independent, and that is worth stating plainly rather than
+/// glossing. Only records seen *after* the fault are deferred, so a record from
+/// the same device carrying a HIGHER seq that was already ingested earlier in
+/// the loop has already advanced `MAX(seq)` past the gap — precisely the
+/// outcome this function exists to prevent. The policy is therefore correct
+/// only under a precondition it does not itself enforce: each device's records
+/// must be presented in ascending `seq`. That holds today because
+/// [`collect_ops_for_peer`] emits `ORDER BY device_id ASC, seq ASC` and
+/// `pending_ingest_records` appends arriving batches in order, preserving it —
+/// the same ordering the Audit profile's parent-gap relaxation already depends
+/// on. Anything that reorders or parallelises the batch between those two
+/// points silently breaks this; making the precondition enforced rather than
+/// incidental is #3726.
 pub async fn ingest_replicated_batch(
     pool: &SqlitePool,
     records: &[OpTransfer],
