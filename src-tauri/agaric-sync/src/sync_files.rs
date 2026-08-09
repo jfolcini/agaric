@@ -231,6 +231,7 @@ pub async fn find_missing_attachments(
     pool: &SqlitePool,
     app_data_dir: &Path,
 ) -> Result<Vec<MissingAttachment>, AppError> {
+    // dynamic-sql: static SQL; runtime form matches this sync module's style.
     let rows = sqlx::query_as::<_, (String, String, i64, Option<String>)>(
         "SELECT id, fs_path, size_bytes, content_hash FROM attachments WHERE deleted_at IS NULL",
     )
@@ -341,6 +342,7 @@ pub async fn get_attachment_fs_path(
     pool: &SqlitePool,
     attachment_id: &str,
 ) -> Result<Option<String>, AppError> {
+    // dynamic-sql: static SQL; runtime form matches this sync module's style.
     let row = sqlx::query_scalar::<_, String>("SELECT fs_path FROM attachments WHERE id = ?")
         .bind(attachment_id)
         .fetch_optional(pool)
@@ -453,6 +455,7 @@ pub async fn get_attachment_receive_meta(
     attachment_id: &str,
 ) -> Result<Option<AttachmentReceiveMeta>, AppError> {
     let row: Option<(String, i64)> =
+        // dynamic-sql: static SQL; runtime form matches this sync module's style.
         sqlx::query_as("SELECT fs_path, size_bytes FROM attachments WHERE id = ?")
             .bind(attachment_id)
             .fetch_optional(pool)
@@ -494,8 +497,7 @@ pub async fn pretally_bytes_total(pool: &SqlitePool, attachment_ids: &[String]) 
     // clamps negatives to 0 to mirror the loop's saturating `unwrap_or(0)`, and
     // `COALESCE(SUM(...), 0)` handles the all-missing case (SUM over zero rows
     // is SQL NULL). Result fits i64 in the DB; we clamp to `u64` in Rust.
-    // dynamic-sql: static SQL; runtime form matches this sync module's style
-    // (get_attachment_receive_meta etc.) and json_each isn't macro-checkable.
+    // dynamic-sql: runtime form matches this sync module's style (get_attachment_receive_meta etc.) and json_each isn't macro-checkable.
     let row: Result<Option<(i64,)>, _> = sqlx::query_as(
         r"SELECT COALESCE(SUM(MAX(a.size_bytes, 0)), 0)
           FROM json_each(?1) je
@@ -541,8 +543,7 @@ async fn maybe_link_local_blob(
     // Repoint the row so reads resolve the shared bytes. Best-effort: if the
     // UPDATE fails we still return false-equivalent by not suppressing the
     // request would be safer, but the bytes ARE present, so treat as held.
-    // dynamic-sql: runtime query matches this sync module's existing
-    // runtime-query style (get_attachment_fs_path etc.); static SQL.
+    // dynamic-sql: static SQL; runtime query matches this sync module's existing runtime-query style (get_attachment_fs_path etc.).
     let _ = sqlx::query("UPDATE attachments SET fs_path = ? WHERE id = ?")
         .bind(&blob_path)
         .bind(attachment_id)
@@ -578,10 +579,9 @@ pub async fn local_blob_path_if_present(
     app_data_dir: &Path,
     content_hash: &str,
 ) -> Option<String> {
-    // dynamic-sql: static SQL; runtime form matches this sync module's style
-    // and the attachment_blobs table is not yet in the offline .sqlx cache.
     // #2652: also pull `size_bytes` so we can verify the blob is complete, not
     // merely present.
+    // dynamic-sql: static SQL; the attachment_blobs table is not in the offline .sqlx cache.
     let (on_disk_path, size_bytes) = sqlx::query_as::<_, (String, i64)>(
         "SELECT on_disk_path, size_bytes FROM attachment_blobs WHERE content_hash = ?",
     )
@@ -604,21 +604,55 @@ pub async fn local_blob_path_if_present(
     }
 }
 
-/// #1993 — register a verified, content-addressed blob (`INSERT OR IGNORE`).
+/// #1993 — register a verified, content-addressed blob.
 ///
-/// Called after a receive's hash-verified commit. Best-effort: errors are
-/// logged, never propagated — the blob store is a dedup optimization, and the
-/// per-row `fs_path` already resolves the bytes.
+/// Called after a receive's hash-verified commit, so `content_hash` is
+/// authoritative for the bytes now sitting at `on_disk_path`. Best-effort:
+/// errors are logged, never propagated — the blob store is a dedup
+/// optimization, and the per-row `fs_path` already resolves the bytes.
+///
+/// # Why a bare `INSERT OR IGNORE` is not enough (#3652)
+///
+/// `attachment_blobs` is the dedup INDEX: `content_hash` → the one canonical
+/// file holding those bytes. A plain `INSERT OR IGNORE` claims that mapping
+/// when it is free and otherwise walks away — which silently loses the index
+/// entry in two reachable states:
+///
+/// * **A stale mapping for this hash.** The only way this receive happened at
+///   all is that the #1993 content-addressed skip declined, and (per #2652) it
+///   declines exactly when the mapping's file is gone or the wrong length. The
+///   `OR IGNORE` then leaves `hash → vanished path` in place. Nothing repairs
+///   it: `cleanup_orphaned_attachments` prunes blob rows by `on_disk_path` and
+///   never by `content_hash`, so as soon as that path stops being referenced
+///   the bulk prune DELETEs the row outright — leaving a live `attachments`
+///   row carrying the hash with no blob entry anywhere, and the next ingest of
+///   those bytes re-copies instead of deduplicating.
+/// * **Another hash already claiming this path.** `on_disk_path` is UNIQUE, so
+///   `OR IGNORE` also swallows that collision. The surviving row then maps some
+///   other hash onto bytes we have just PROVEN hash to `content_hash`, and
+///   `add_attachment` dedups onto `on_disk_path` without re-reading the file —
+///   i.e. it would hand a fresh row the wrong bytes.
+///
+/// The repair belongs here rather than in the GC's prune. Keying the prune on
+/// `content_hash` reachability would preserve the stale row instead of
+/// deleting it, and #3371 established the asymmetry that makes that the worse
+/// choice: a mapping that outlives its bytes is a permanently broken reference,
+/// while a missing mapping costs one redundant re-copy. The index can only be
+/// pointed at bytes that exist where the bytes have just been verified to
+/// exist, which is here.
+///
+/// The healthy case still costs exactly one statement: the `INSERT OR IGNORE`
+/// runs first and, when it claims the mapping, nothing else executes.
 async fn register_received_blob(
     pool: &SqlitePool,
+    app_data_dir: &Path,
     content_hash: &str,
     on_disk_path: &str,
     size_bytes: i64,
 ) {
     let now = agaric_store::db::now_ms();
-    // dynamic-sql: static SQL; runtime form matches this sync module's style
-    // and the attachment_blobs table is not yet in the offline .sqlx cache.
-    if let Err(e) = sqlx::query(
+    // dynamic-sql: static SQL; the attachment_blobs table is not in the offline .sqlx cache.
+    match sqlx::query(
         "INSERT OR IGNORE INTO attachment_blobs \
          (content_hash, on_disk_path, size_bytes, created_at) VALUES (?, ?, ?, ?)",
     )
@@ -629,11 +663,87 @@ async fn register_received_blob(
     .execute(pool)
     .await
     {
+        // First mapping for these bytes — the common path, done.
+        Ok(r) if r.rows_affected() > 0 => return,
+        // Ignored: some row already claims this `content_hash`, or this
+        // `on_disk_path`. Fall through to the #3652 repair.
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(
+                content_hash,
+                error = %e,
+                "register_received_blob: INSERT OR IGNORE attachment_blobs failed (non-fatal)"
+            );
+            return;
+        }
+    }
+
+    // #3652 — a mapping for this hash that still resolves to a present,
+    // complete file is a perfectly good dedup target. Leave it alone: the bytes
+    // are identical by definition (same hash), so repointing would only churn
+    // the canonical path back and forth between two copies of the same content.
+    if local_blob_path_if_present(pool, app_data_dir, content_hash)
+        .await
+        .is_some()
+    {
+        return;
+    }
+
+    // #3652 — the index is wrong about these bytes; make it agree with what the
+    // commit just verified. Two statements, deliberately NOT wrapped in a
+    // transaction: each is independently correct, and the only ordering that
+    // matters is DELETE-then-INSERT (the reverse would collide on the UNIQUE
+    // `on_disk_path`). A crash between them leaves a removed-but-wrong mapping,
+    // which is the benign direction.
+    //
+    // Any row naming THIS path under a different hash is provably wrong — the
+    // bytes at this path were just hash-verified as `content_hash` — so drop it
+    // rather than let a future `add_attachment` dedup onto it.
+    // dynamic-sql: static SQL; attachment_blobs is absent from the .sqlx cache.
+    let cleared_conflicting = sqlx::query(
+        "DELETE FROM attachment_blobs \
+         WHERE on_disk_path = ? AND content_hash <> ?",
+    )
+    .bind(on_disk_path)
+    .bind(content_hash)
+    .execute(pool)
+    .await;
+    if let Err(e) = cleared_conflicting {
         tracing::warn!(
             content_hash,
             error = %e,
-            "register_received_blob: INSERT OR IGNORE attachment_blobs failed (non-fatal)"
+            "register_received_blob: could not clear a conflicting blob mapping for this path (non-fatal)"
         );
+        return;
+    }
+
+    // Now claim (or repoint) the mapping for this hash at the verified bytes.
+    // dynamic-sql: static SQL; attachment_blobs is absent from the .sqlx cache.
+    match sqlx::query(
+        "INSERT INTO attachment_blobs \
+         (content_hash, on_disk_path, size_bytes, created_at) VALUES (?, ?, ?, ?) \
+         ON CONFLICT(content_hash) DO UPDATE SET \
+           on_disk_path = excluded.on_disk_path, \
+           size_bytes   = excluded.size_bytes, \
+           created_at   = excluded.created_at",
+    )
+    .bind(content_hash)
+    .bind(on_disk_path)
+    .bind(size_bytes)
+    .bind(now)
+    .execute(pool)
+    .await
+    {
+        Ok(_) => tracing::debug!(
+            content_hash,
+            on_disk_path,
+            "register_received_blob: repointed a stale blob mapping at the freshly verified bytes (#3652)"
+        ),
+        Err(e) => tracing::warn!(
+            content_hash,
+            error = %e,
+            "register_received_blob: could not repoint the stale blob mapping (non-fatal)"
+        ),
     }
 }
 
@@ -1873,10 +1983,20 @@ pub async fn request_and_receive_files(
                 // content-addressed blob store so subsequent offers/adds of the
                 // same hash dedup against this file. The commit verified the
                 // bytes match `blake3_hash`, so the blob's key is authoritative.
-                // Best-effort (`INSERT OR IGNORE`): a failure here does not
-                // jeopardise the transfer — the boot-time backfill / next add
-                // reconciles the blob row, and reads still resolve via fs_path.
-                register_received_blob(pool, &blake3_hash, &meta.fs_path, meta.size_bytes).await;
+                // Best-effort: a failure here does not jeopardise the transfer
+                // — the boot-time backfill / next add reconciles the blob row,
+                // and reads still resolve via fs_path.
+                // #3652: `app_data_dir` lets the registration tell a stale
+                // mapping (its file gone / wrong length) from a healthy one, so
+                // it can repoint the former instead of silently declining.
+                register_received_blob(
+                    pool,
+                    app_data_dir,
+                    &blake3_hash,
+                    &meta.fs_path,
+                    meta.size_bytes,
+                )
+                .await;
 
                 stats.files_received += 1;
                 stats.bytes_received += size_bytes;
@@ -2089,6 +2209,7 @@ pub async fn run_file_transfer_responder(
 /// are stored.
 pub async fn app_data_dir_from_pool(pool: &SqlitePool) -> Result<PathBuf, AppError> {
     let row: (String,) =
+        // dynamic-sql: a PRAGMA virtual table the sqlx macros cannot type-check.
         sqlx::query_as("SELECT file FROM pragma_database_list WHERE name = 'main'")
             .fetch_one(pool)
             .await?;

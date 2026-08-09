@@ -3659,3 +3659,243 @@ async fn file_offer_without_content_hash_still_transfers_1993() {
     assert_eq!(data, file_data);
     assert_eq!(got_hash, hash);
 }
+
+// ── #3652: a receive must never orphan a live row's content_hash ─────
+//
+// `attachment_blobs` is the dedup INDEX (content_hash → the one canonical file
+// holding those bytes). Two rules keep it honest, and before #3652 the receive
+// path upheld neither when a mapping for the incoming hash already existed:
+//
+//   1. a mapping must name bytes that EXIST (#3371 established that a mapping
+//      to absent bytes is the strictly worse failure — `add_attachment` dedups
+//      onto `on_disk_path` without checking it, so a stale mapping hands a
+//      fresh row a deleted file);
+//   2. every live `attachments` row carrying a `content_hash` must have a
+//      mapping at all, or the next ingest of those bytes re-copies them.
+//
+// `cleanup_orphaned_attachments` prunes blob rows by `on_disk_path` only, never
+// by `content_hash`, so rule 2 can only be upheld where the bytes are verified:
+// at the write side.
+
+/// Assert rule 2 above over the whole DB: every LIVE `attachments` row that
+/// carries a `content_hash` resolves to an `attachment_blobs` entry.
+///
+/// Deliberately standalone rather than layered on the #3345 reconciliation
+/// oracle (`rebuild_attachment_blobs_from_base`, which reports the same shape):
+/// that work is not on this base. The predicate is the oracle's "live hash with
+/// no blob row" case, so the two compose when it lands.
+async fn assert_every_live_content_hash_has_a_blob_row(pool: &SqlitePool, when: &str) {
+    let orphaned: Vec<(String, String)> = sqlx::query_as(
+        "SELECT a.id, a.content_hash FROM attachments a \
+         WHERE a.deleted_at IS NULL \
+           AND a.content_hash IS NOT NULL \
+           AND NOT EXISTS ( \
+                 SELECT 1 FROM attachment_blobs b WHERE b.content_hash = a.content_hash \
+             )",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert!(
+        orphaned.is_empty(),
+        "{when}: live attachments rows whose content_hash has NO attachment_blobs \
+         entry — the dedup target was lost, so the next ingest of those bytes \
+         re-copies instead of deduplicating (#3652): {orphaned:?}"
+    );
+}
+
+/// Drive ONE real offer → stream → hash-verified commit → blob-register cycle
+/// through the production receive loop, with a scripted stand-in peer.
+///
+/// The peer deliberately never reads the receiver's `FileRequest` and offers
+/// exactly one file: what is under test is the receiver's blob bookkeeping
+/// after a verified commit, not request negotiation. (Same shape as the
+/// old-peer test above.)
+async fn receive_one_offered_file(
+    pool: &SqlitePool,
+    app_data_dir: &std::path::Path,
+    attachment_id: &str,
+    bytes: &[u8],
+    hash: &str,
+) -> FileTransferStats {
+    let mut pair = quic_pair().await;
+    let size_u64 = u64::try_from(bytes.len()).unwrap();
+    let (client, server) = (&mut pair.client, &mut pair.server);
+    let att = attachment_id.to_string();
+    let payload = bytes.to_vec();
+    let offered_hash = hash.to_string();
+    let sender = async move {
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
+                attachment_id: att,
+                size_bytes: size_u64,
+                blake3_hash: offered_hash.clone(),
+                content_hash: Some(offered_hash),
+            },
+        )
+        .await
+        .unwrap();
+        send_bulk(
+            &mut server.send,
+            std::io::Cursor::new(payload),
+            size_u64,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        let _ack = recv_sync_message(&mut server.recv).await.unwrap();
+        send_sync_message(&mut server.send, &SyncMessage::FileTransferComplete)
+            .await
+            .unwrap();
+    };
+
+    let cancel = AtomicBool::new(false);
+    let ((), stats) = tokio::join!(
+        sender,
+        request_and_receive_files(
+            &mut client.send,
+            &mut client.recv,
+            pool,
+            app_data_dir,
+            &cancel,
+            None,
+        ),
+    );
+    stats.unwrap()
+}
+
+/// Seed the #3652 pre-state: a blob row maps `hash` → `PATH_A` and a live row
+/// references `PATH_A`, but `PATH_A`'s bytes are GONE (partial restore, an
+/// external cleanup of the attachments folder, a half-copied vault). A second
+/// live row awaits the same bytes at `PATH_B` with nothing on disk yet.
+///
+/// The vanished file is what makes the receive reachable at all: #2652 requires
+/// a blob whose file is missing to NOT suppress a transfer, so the #1993
+/// content-addressed skip declines and the bytes really are streamed to
+/// `PATH_B`.
+async fn seed_stale_blob_mapping_3652(
+    pool: &SqlitePool,
+    dir: &std::path::Path,
+    hash: &str,
+    size: i64,
+    path_a: &str,
+    path_b: &str,
+) {
+    std::fs::create_dir_all(dir.join("attachments")).unwrap();
+    insert_test_attachment(pool, "ATT_A", path_a, size).await;
+    sqlx::query("UPDATE attachments SET content_hash = ? WHERE id = 'ATT_A'")
+        .bind(hash)
+        .execute(pool)
+        .await
+        .unwrap();
+    insert_blob_row(pool, hash, path_a, size).await;
+    insert_test_attachment(pool, "ATT_B", path_b, size).await;
+    // Precondition: the mapping does not resolve, so the receive cannot skip.
+    assert!(
+        local_blob_path_if_present(pool, dir, hash).await.is_none(),
+        "precondition: a blob mapping whose file is gone must not resolve"
+    );
+}
+
+/// #3652 (write side) — a receive that hash-verifies bytes whose `content_hash`
+/// is already mapped to a STALE path must repoint the mapping at the bytes it
+/// just proved present, instead of silently declining (`INSERT OR IGNORE`) and
+/// leaving the index naming a file that does not exist.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn receive_repoints_a_stale_blob_mapping_at_the_verified_bytes_3652() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+
+    let bytes = b"the very same bytes, landing at a second path".to_vec();
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    let size = i64::try_from(bytes.len()).unwrap();
+    const PATH_A: &str = "attachments/first.bin";
+    const PATH_B: &str = "attachments/second.bin";
+
+    seed_stale_blob_mapping_3652(&pool, dir.path(), &hash, size, PATH_A, PATH_B).await;
+
+    let stats = receive_one_offered_file(&pool, dir.path(), "ATT_B", &bytes, &hash).await;
+    assert_eq!(stats.files_received, 1, "the bytes must actually transfer");
+    let (landed, landed_hash) = read_attachment_file(dir.path(), PATH_B).unwrap();
+    assert_eq!(landed, bytes);
+    assert_eq!(landed_hash, hash);
+
+    // The dedup target for these bytes must now resolve — to the copy we just
+    // verified, not to the vanished one.
+    assert_eq!(
+        local_blob_path_if_present(&pool, dir.path(), &hash)
+            .await
+            .as_deref(),
+        Some(PATH_B),
+        "after a verified receive the blob mapping for these bytes must name the \
+         file that holds them; leaving it on the vanished path loses the dedup \
+         target (#3652)"
+    );
+}
+
+/// #3652 (the filed drift, end to end) — the four steps from the issue:
+///
+///   1. a blob row maps `H` → `A`;
+///   2. a receive lands the SAME bytes at `B` (the mapping is stale, so the
+///      content-addressed skip declines);
+///   3. `A` becomes unreferenced and the GC's bulk prune deletes the `H` → `A`
+///      row (it keys on `on_disk_path`, never on `content_hash`);
+///   4. a live `attachments` row carrying `H` is left with no blob entry at all.
+///
+/// Step 4 is the assertion. The row's `content_hash` is populated the way
+/// production populates it — the boot hash backfill — because the receive path
+/// itself writes only `attachment_blobs`, never `attachments.content_hash`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gc_cannot_orphan_a_live_rows_content_hash_after_a_second_path_receive_3652() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+
+    let bytes = b"bytes that outlive the path they were first mapped to".to_vec();
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    let size = i64::try_from(bytes.len()).unwrap();
+    const PATH_A: &str = "attachments/first.bin";
+    const PATH_B: &str = "attachments/second.bin";
+
+    // Steps 1 + 2.
+    seed_stale_blob_mapping_3652(&pool, dir.path(), &hash, size, PATH_A, PATH_B).await;
+    let stats = receive_one_offered_file(&pool, dir.path(), "ATT_B", &bytes, &hash).await;
+    assert_eq!(stats.files_received, 1, "the bytes must actually transfer");
+
+    // The boot hash backfill is what gives the received row its content_hash.
+    let report = crate::recovery::backfill_attachment_content_hashes(&pool, dir.path())
+        .await
+        .unwrap();
+    assert_eq!(
+        report.hashed, 1,
+        "only the received row (ATT_B) lacked a content_hash, and its file is now on disk"
+    );
+    assert_every_live_content_hash_has_a_blob_row(&pool, "before the GC pass").await;
+
+    // Step 3: A becomes unreferenced, and the GC settles.
+    sqlx::query("DELETE FROM attachments WHERE id = 'ATT_A'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::materializer::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+
+    // Step 4: the invariant that must NOT be false.
+    assert_every_live_content_hash_has_a_blob_row(&pool, "after the GC pass").await;
+
+    // …and the surviving mapping must name bytes that exist (rule 1), so the
+    // next ingest of these bytes dedups onto a real file.
+    assert_eq!(
+        local_blob_path_if_present(&pool, dir.path(), &hash)
+            .await
+            .as_deref(),
+        Some(PATH_B),
+        "the surviving blob mapping must resolve to the file that still holds \
+         these bytes"
+    );
+    assert!(
+        dir.path().join(PATH_B).exists(),
+        "the referenced file must survive the GC pass"
+    );
+}
