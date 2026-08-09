@@ -1,7 +1,8 @@
 /**
  * DaySection — renders a single day within the journal.
  *
- * Shared by DailyView, WeeklyView, and MonthlyView.
+ * Shared by DailyView, WeeklyView, and StreamView. MonthlyView does NOT use
+ * it — it renders a `MonthlyDayCell` calendar grid and mounts no BlockTree.
  */
 
 import { Calendar as CalendarIcon, ExternalLink, Plus } from 'lucide-react'
@@ -60,7 +61,7 @@ interface DaySectionProps {
    * callback so the caller's LRU can track recency and evict the farthest days
    * back to this same placeholder — bounding the TipTap-editor +
    * document-listener count an unbounded infinite scroll would otherwise
-   * accumulate. Used by `StreamView`; `WeeklyView` and `MonthlyView` leave this
+   * accumulate. Used by `StreamView`; `WeeklyView` and `DailyView` leave this
    * `undefined` and keep the original mount-forever-once-entered behavior
    * (their day count is already fixed, see file header). Only meaningful when
    * `lazyMount` is also `true`.
@@ -233,7 +234,7 @@ function DaySectionInner({
   const shouldLazyMount = lazyMount && !prefersReducedMotion
   const isWindowControlled = shouldLazyMount && onVisible != null
 
-  // Self-managed one-shot path (WeeklyView/MonthlyView, no `onVisible`) —
+  // Self-managed one-shot path (WeeklyView, no `onVisible`) —
   // unchanged from before #2670.
   const [selfEntered, selfLazyRef] = useEnteredViewport(shouldLazyMount && !isWindowControlled)
 

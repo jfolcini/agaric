@@ -9,6 +9,12 @@
  * collect_subtree_ids_unbounded` under `DescendantWalkFilter::Active` /
  * `DescendantWalkFilter::Cohort(deleted_at_ref)`.
  *
+ * #3693. A restore also walks UPWARD: `restoreDeletedAncestorChain` is the
+ * stand-in for `agaric_store::block_descendants::restore_deleted_ancestor_chain`
+ * (#1884), which every backend restore writer calls right after the downward
+ * cohort UPDATE. `restoreCohort` runs both, so no mock call site can take one
+ * walk without the other.
+ *
  * They live HERE, in a leaf module that owns no mock state, because three
  * call sites need them and two of them cannot reach `handlers/shared.ts`:
  *
@@ -92,7 +98,10 @@ export function deleteCohort(blocks: CohortBlocks, blockId: string, marker: stri
 /**
  * Restore `blockId` and only the descendants that share its `deleted_at`
  * cohort marker, reached via a CONTIGUOUS same-cohort walk from the seed.
- * Returns the number of rows restored.
+ * Returns the number of rows restored — the DOWNWARD cohort only, matching
+ * `RestoreResponse::restored_count`, which the backend takes from the
+ * `write_cohort_deleted_at_json` UPDATE's `rows_affected()` and NOT from the
+ * ancestor chain the same command also revives (see `restoreCohort`).
  *
  * Mirrors `descendants_cte_cohort!()` / `DescendantWalkFilter::Cohort`: the
  * recursive arm only descends into a child whose `deleted_at` equals the
@@ -100,7 +109,7 @@ export function deleteCohort(blocks: CohortBlocks, blockId: string, marker: stri
  * (an independently-deleted nested subtree stays deleted). A live or missing
  * target has no cohort to restore and returns 0.
  */
-export function restoreCohort(blocks: CohortBlocks, blockId: string): number {
+function restoreCohortDownward(blocks: CohortBlocks, blockId: string): number {
   const target = blocks.get(blockId)
   const cohort = target?.['deleted_at'] as string | null | undefined
   if (!target || !cohort) return 0
@@ -122,5 +131,86 @@ export function restoreCohort(blocks: CohortBlocks, blockId: string): number {
       }
     }
   }
+  return restored
+}
+
+/**
+ * Depth bound for the upward walk, mirroring the `deleted_chain` CTE's
+ * `c.depth < 100` guard (AGENTS.md invariant #9 — a corrupted `parent_id`
+ * chain must not run away).
+ */
+const ANCESTOR_CHAIN_DEPTH_CAP = 100
+
+/**
+ * #3693 — restore the contiguous soft-deleted ANCESTOR chain above `blockId`,
+ * up to (but not including) the nearest LIVE ancestor or the root. Returns the
+ * restored ancestor ids in depth-ascending order (nearest parent first), so
+ * the last element is the backend's `topmost`.
+ *
+ * Mirrors `agaric_store::block_descendants::restore_deleted_ancestor_chain`
+ * (`src-tauri/agaric-store/src/block_descendants.rs`, #1884) and its
+ * `deleted_chain` CTE exactly:
+ *
+ *   * the seed is the block's PARENT, included only when that parent is
+ *     itself soft-deleted — so a block whose parent is live restores nothing;
+ *   * the recursive arm walks `parent_id` upward while each ancestor is
+ *     soft-deleted, so the walk stops at the first LIVE ancestor and at the
+ *     root (`parent_id IS NULL`); a live ancestor is never touched;
+ *   * the walk is NOT cohort-filtered. That is the whole point: the hole it
+ *     closes is "delete a child, LATER delete its parent" — the parent's
+ *     cascade skips the already-deleted child, so the two carry DIFFERENT
+ *     `deleted_at` markers and the downward cohort walk can never reach the
+ *     parent. Restoring the child alone would leave it live under a
+ *     tombstoned parent: absent from the tree (`list_children` filters
+ *     `deleted_at IS NULL`) AND from trash, a state the backend cannot
+ *     produce.
+ *
+ * Deliberately unconditional on the seed's own state, like the SQL: a missing
+ * block has no `parent_id` to seed from and a live block's ancestors are still
+ * reconnected, matching the `OpPayload::RestoreBlock` apply arm
+ * (`src-tauri/src/commands/history.rs`), which runs this walk with no
+ * live-block guard. Idempotent — a re-run finds the chain already live.
+ */
+export function restoreDeletedAncestorChain(blocks: CohortBlocks, blockId: string): string[] {
+  const seed = blocks.get(blockId)
+  if (!seed) return []
+  const chain: string[] = []
+  const seen = new Set<string>([blockId])
+  let cursor = (seed['parent_id'] as string | null | undefined) ?? null
+  let depth = 0
+  while (cursor != null && depth < ANCESTOR_CHAIN_DEPTH_CAP) {
+    if (seen.has(cursor)) break
+    seen.add(cursor)
+    const node = blocks.get(cursor)
+    if (!node || !node['deleted_at']) break
+    node['deleted_at'] = null
+    chain.push(cursor)
+    cursor = (node['parent_id'] as string | null | undefined) ?? null
+    depth++
+  }
+  return chain
+}
+
+/**
+ * Restore `blockId`: the downward same-cohort subtree AND the upward
+ * contiguous soft-deleted ancestor chain. Returns the DOWNWARD cohort count
+ * (`restored_count` on the wire).
+ *
+ * Both walks live behind this one entry point because every backend writer of
+ * a restore performs both — `restore_block_inner`
+ * (`src-tauri/src/commands/blocks/crud.rs`), the `OpPayload::RestoreBlock`
+ * apply arm (`src-tauri/src/commands/history.rs`) and
+ * `project_restore_block_to_sql` (`agaric-engine/src/loro/projection.rs`) —
+ * and the mock has three call sites of its own (`handlers/blocks.ts`,
+ * `revert.ts`, `handlers/history.ts`). Pairing them here makes it structurally
+ * impossible for one call site to take the downward walk alone, which is the
+ * divergence #3693 reported.
+ */
+export function restoreCohort(blocks: CohortBlocks, blockId: string): number {
+  // Order mirrors the backend: cohort UPDATE first, ancestor chain second.
+  // (They cannot interact — the cohort is strictly below the seed and the
+  // chain strictly above it — but keeping the order makes the mirror literal.)
+  const restored = restoreCohortDownward(blocks, blockId)
+  restoreDeletedAncestorChain(blocks, blockId)
   return restored
 }

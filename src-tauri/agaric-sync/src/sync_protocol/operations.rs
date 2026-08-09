@@ -56,6 +56,13 @@ pub async fn insert_replicated_op(
 /// `op_log` as the join's outer table. Results are identical: `seq` is unique
 /// per device under the PK, so each device contributes exactly one head.
 pub async fn get_local_heads(pool: &SqlitePool) -> Result<Vec<DeviceHead>, AppError> {
+    // dynamic-sql: not dynamic — a fixed literal with no interpolation and no
+    // bind parameters, predating #646 and untouched by #3326. It takes the
+    // runtime form because its row type is supplied by hand
+    // (`DeviceHead: FromRow`) rather than inferred by the macro. The marker
+    // exists only because the sibling #3326 site below pushes this file's
+    // dynamic-site count past its baseline, at which point the hook demands a
+    // marker on *every* site in the file.
     let heads = sqlx::query_as::<_, DeviceHead>(
         "WITH RECURSIVE devices(device_id) AS ( \
              SELECT (SELECT device_id FROM op_log ORDER BY device_id LIMIT 1) \
@@ -193,47 +200,131 @@ pub fn check_reset_required(
 /// deliberately includes replicated (`is_replicated = 1`) rows we already hold
 /// so a frontier propagates transitively; the records are audit-only on the
 /// receiver too, so re-shipping them is safe.
+///
+/// #3326: the frontier is applied **in SQL** (see
+/// [`COLLECT_OPS_FOR_PEER_SQL`]). Until then this read was
+/// `SELECT … FROM op_log` with no `WHERE` — one full materialisation of the
+/// whole log, payloads included, on every head exchange with an
+/// `op_log_replication`-capable peer — which is every modern peer, on every
+/// session: the `DEFAULT_RESYNC` idle tick (60 s) *and* `DEFAULT_DEBOUNCE`
+/// (3 s) after each local edit burst. All of it only to throw away, in a Rust
+/// loop, everything at or below the peer's frontier — which for a caught-up
+/// peer is all of it. The op set returned is unchanged; only the rows SQLite
+/// touches to produce it are.
 pub async fn collect_ops_for_peer(
     pool: &SqlitePool,
     peer_heads: &[DeviceHead],
 ) -> Result<Vec<OpTransfer>, AppError> {
+    // dynamic-sql: not dynamic — the statement is a `const` so the #3326
+    // plan-regression test (`collect_ops_for_peer_seeks_the_frontier_3326`) can
+    // run `EXPLAIN QUERY PLAN` over *the exact text production executes*
+    // rather than a hand-copied duplicate that could silently drift back to a
+    // full scan. `sqlx::query!` only accepts a string literal, so the macro
+    // form cannot share its SQL with a test. The statement is exercised (and
+    // therefore schema-checked) by that test plus the frontier-parity oracle.
+    let rows = sqlx::query_as::<_, OpRow>(COLLECT_OPS_FOR_PEER_SQL)
+        .bind(peer_frontier_json(peer_heads)?)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows.into_iter().map(OpRow::into_transfer).collect())
+}
+
+/// The one statement [`collect_ops_for_peer`] runs. Shared with the #3326
+/// plan-regression test — see the `dynamic-sql` note at the call site.
+///
+/// #3326: the frontier lives in SQL. `devices` is the same
+/// loose-index-scan emulation [`get_local_heads`] uses (#430) — the distinct
+/// `device_id`s by covering-index seek, not a scan. `frontier` pins one
+/// `(device_id, seq)` cutoff per device we hold, defaulting to 0 for a device
+/// the peer never advertised (so all of its ops qualify, matching the old Rust
+/// `unwrap_or(0)`). The final join is a `CROSS JOIN` **on purpose**: it fixes
+/// the loop order so the tiny `frontier` drives and `op_log` is only *sought*
+/// (`SEARCH … (device_id=? AND seq>?)` on the `(device_id, seq)` PK). Without
+/// it the planner picks `op_log` as the outer table and scans the whole log —
+/// which is precisely the pre-#3326 behaviour this replaces.
+const COLLECT_OPS_FOR_PEER_SQL: &str = "\
+WITH RECURSIVE devices(device_id) AS ( \
+    SELECT (SELECT device_id FROM op_log ORDER BY device_id LIMIT 1) \
+    UNION ALL \
+    SELECT (SELECT ol.device_id FROM op_log ol \
+              WHERE ol.device_id > devices.device_id \
+              ORDER BY ol.device_id LIMIT 1) \
+      FROM devices \
+     WHERE devices.device_id IS NOT NULL \
+), \
+frontier(device_id, seq) AS MATERIALIZED ( \
+    SELECT d.device_id, \
+           COALESCE(( \
+               SELECT json_extract(pf.value, '$.s') FROM json_each(?1) pf \
+                WHERE json_extract(pf.value, '$.d') = d.device_id \
+           ), 0) \
+      FROM devices d \
+     WHERE d.device_id IS NOT NULL \
+) \
+SELECT ol.device_id, ol.seq, ol.parent_seqs, ol.hash, ol.op_type, ol.payload, \
+       ol.created_at, ol.origin \
+  FROM frontier f \
+  CROSS JOIN op_log ol \
+    ON ol.device_id = f.device_id AND ol.seq > f.seq \
+ ORDER BY ol.device_id ASC, ol.seq ASC";
+
+/// Row shape of [`COLLECT_OPS_FOR_PEER_SQL`]. Kept private: the DB↔wire
+/// boundary documented on [`OpTransfer`] stays intact — this is the DB side.
+#[derive(sqlx::FromRow)]
+struct OpRow {
+    device_id: String,
+    seq: i64,
+    parent_seqs: Option<String>,
+    hash: String,
+    op_type: String,
+    payload: String,
+    created_at: i64,
+    origin: String,
+}
+
+impl OpRow {
+    fn into_transfer(self) -> OpTransfer {
+        OpTransfer {
+            device_id: self.device_id,
+            seq: self.seq,
+            parent_seqs: self.parent_seqs,
+            hash: self.hash,
+            op_type: self.op_type,
+            payload: self.payload,
+            created_at: self.created_at,
+            origin: self.origin,
+        }
+    }
+}
+
+/// The peer's advertised frontier as the `[{"d": device_id, "s": seq}, …]`
+/// JSON array [`COLLECT_OPS_FOR_PEER_SQL`]'s `json_each` expands.
+///
+/// Routing it through a map first is not incidental: it preserves the exact
+/// tie-break the pre-#3326 Rust loop had. That loop built a `HashMap` from
+/// `peer_heads`, so a peer that advertised the same `device_id` twice was
+/// resolved **last-wins**; a bare array would make `json_each` resolve it
+/// first-wins instead, i.e. a different (and lower) cutoff, i.e. a different
+/// op set on the wire.
+fn peer_frontier_json(peer_heads: &[DeviceHead]) -> Result<String, AppError> {
     use std::collections::HashMap;
 
-    // Peer's advertised frontier per device. A device the peer did not list
-    // maps to 0 ("peer has none of this device's ops"), so every op qualifies.
+    #[derive(serde::Serialize)]
+    struct FrontierEntry<'a> {
+        d: &'a str,
+        s: i64,
+    }
+
     let peer_frontier: HashMap<&str, i64> = peer_heads
         .iter()
         .map(|h| (h.device_id.as_str(), h.seq))
         .collect();
-
-    let rows = sqlx::query!(
-        "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, origin \
-         FROM op_log \
-         ORDER BY device_id ASC, seq ASC",
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let mut out = Vec::new();
-    for r in rows {
-        let peer_seq = peer_frontier
-            .get(r.device_id.as_str())
-            .copied()
-            .unwrap_or(0);
-        if r.seq > peer_seq {
-            out.push(OpTransfer {
-                device_id: r.device_id,
-                seq: r.seq,
-                parent_seqs: r.parent_seqs,
-                hash: r.hash,
-                op_type: r.op_type,
-                payload: r.payload,
-                created_at: r.created_at,
-                origin: r.origin,
-            });
-        }
-    }
-    Ok(out)
+    let entries: Vec<FrontierEntry<'_>> = peer_frontier
+        .iter()
+        .map(|(&d, &s)| FrontierEntry { d, s })
+        .collect();
+    Ok(serde_json::to_string(&entries)?)
 }
 
 /// #2481 phase 1 — partition op transfers into `OpLogBatch`-sized groups.
@@ -295,4 +386,190 @@ pub async fn complete_sync_in_tx(
     last_sent_hash: &str,
 ) -> Result<(), AppError> {
     peer_refs::update_on_sync_in_tx(tx, peer_id, last_received_hash, last_sent_hash).await
+}
+
+#[cfg(test)]
+mod collect_ops_for_peer_tests {
+    use super::*;
+    use agaric_store::test_support::test_pool;
+    use sqlx::SqlitePool;
+
+    /// Three devices, distinct payloads / origins / `parent_seqs`, so a
+    /// column-mapping slip shows up as an inequality rather than a count
+    /// mismatch.
+    async fn seed(pool: &SqlitePool) {
+        let rows: &[(&str, i64, Option<&str>, &str)] = &[
+            ("device-A", 1, None, "user"),
+            ("device-A", 2, Some("1"), "user"),
+            ("device-A", 3, Some("2"), "agent:mcp"),
+            ("device-A", 4, Some("3"), "user"),
+            ("device-A", 5, Some("4"), "user"),
+            ("device-B", 1, None, "user"),
+            ("device-B", 2, Some("1"), "user"),
+            ("device-B", 3, Some("2"), "user"),
+            ("device-C", 1, None, "agent:gcal"),
+        ];
+        for (device_id, seq, parent_seqs, origin) in rows {
+            sqlx::query(
+                "INSERT INTO op_log \
+                   (device_id, seq, parent_seqs, hash, op_type, payload, created_at, origin) \
+                 VALUES (?1, ?2, ?3, ?4, 'create_block', ?5, ?6, ?7)",
+            )
+            .bind(device_id)
+            .bind(seq)
+            .bind(*parent_seqs)
+            .bind(format!("hash-{device_id}-{seq}"))
+            .bind(format!(r#"{{"block_id":"01JB{device_id}{seq}"}}"#))
+            .bind(1_736_942_400_000_i64 + seq)
+            .bind(origin)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    fn head(device_id: &str, seq: i64) -> DeviceHead {
+        DeviceHead {
+            device_id: device_id.into(),
+            seq,
+            hash: format!("hash-{device_id}-{seq}"),
+        }
+    }
+
+    /// The pre-#3326 implementation, preserved verbatim as the oracle
+    /// (AGENTS.md § Performance Conventions, "CTE oracle pattern"): full
+    /// `op_log` materialisation, frontier applied in a Rust loop.
+    async fn full_scan_oracle(pool: &SqlitePool, peer_heads: &[DeviceHead]) -> Vec<OpTransfer> {
+        use std::collections::HashMap;
+
+        let peer_frontier: HashMap<&str, i64> = peer_heads
+            .iter()
+            .map(|h| (h.device_id.as_str(), h.seq))
+            .collect();
+        let rows = sqlx::query_as::<_, OpRow>(
+            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, origin \
+             FROM op_log \
+             ORDER BY device_id ASC, seq ASC",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        rows.into_iter()
+            .filter(|r| {
+                r.seq
+                    > peer_frontier
+                        .get(r.device_id.as_str())
+                        .copied()
+                        .unwrap_or(0)
+            })
+            .map(OpRow::into_transfer)
+            .collect()
+    }
+
+    /// #3326 — the shipped statement must reach `op_log` by a
+    /// `(device_id, seq)` PK **seek** per device, never by scanning the log.
+    ///
+    /// This is the regression the issue is about: the plan, not the result.
+    /// Reverting `COLLECT_OPS_FOR_PEER_SQL` to the old unfiltered
+    /// `SELECT … FROM op_log ORDER BY …` turns the `SEARCH ol` line below into
+    /// `SCAN op_log`, and this assertion fails.
+    #[tokio::test]
+    async fn collect_ops_for_peer_seeks_the_frontier_3326() {
+        let (pool, _dir) = test_pool().await;
+        seed(&pool).await;
+
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {COLLECT_OPS_FOR_PEER_SQL}"
+        )))
+        .bind(peer_frontier_json(&[head("device-A", 2)]).unwrap())
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let plan: String = plan
+            .iter()
+            .map(|(_, _, _, detail)| detail.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Asserted in two halves rather than as one exact line so a future
+        // SQLite reword of the surrounding phrasing does not fail the build
+        // for a plan that is still a seek.
+        assert!(
+            plan.contains("SEARCH ol") && plan.contains("(device_id=? AND seq>?)"),
+            "op_log must be reached by a per-device PK range seek; plan was:\n{plan}"
+        );
+        assert!(
+            !plan.contains("SCAN ol"),
+            "the outer loop must be the frontier CTE, not op_log; plan was:\n{plan}"
+        );
+    }
+
+    /// #3326 — pushing the frontier into SQL must not change *which* ops a
+    /// peer receives, in any order, for any frontier shape. A miss here means
+    /// a peer silently loses audit history.
+    #[tokio::test]
+    async fn collect_ops_for_peer_matches_the_full_scan_oracle_3326() {
+        let (pool, _dir) = test_pool().await;
+        seed(&pool).await;
+
+        let cases: Vec<(&str, Vec<DeviceHead>)> = vec![
+            ("peer advertised nothing (first-ever sync)", vec![]),
+            (
+                "peer fully caught up on every device",
+                vec![
+                    head("device-A", 5),
+                    head("device-B", 3),
+                    head("device-C", 1),
+                ],
+            ),
+            (
+                "peer lags on some devices",
+                vec![head("device-A", 2), head("device-B", 3)],
+            ),
+            (
+                "peer advertised only one of our devices",
+                vec![head("device-B", 1)],
+            ),
+            (
+                "peer advertised a device we do not hold",
+                vec![head("device-Z", 9), head("device-A", 4)],
+            ),
+            (
+                "peer is ahead of our own frontier",
+                vec![head("device-A", 99)],
+            ),
+            ("peer advertised seq 0", vec![head("device-A", 0)]),
+            ("peer advertised a negative seq", vec![head("device-A", -7)]),
+            (
+                // The pre-#3326 `HashMap` collect resolved a duplicated
+                // device_id last-wins; `json_each` alone would resolve it
+                // first-wins and ship two extra ops.
+                "peer advertised the same device twice (last-wins)",
+                vec![head("device-A", 1), head("device-A", 4)],
+            ),
+        ];
+
+        for (label, heads) in cases {
+            let expected = full_scan_oracle(&pool, &heads).await;
+            let actual = collect_ops_for_peer(&pool, &heads).await.unwrap();
+            assert_eq!(
+                actual, expected,
+                "{label}: SQL-side frontier must select the same ops, in the same order, \
+                 as the pre-#3326 full-scan filter"
+            );
+        }
+    }
+
+    /// An empty `op_log` must not trip the `devices` walk's NULL terminator.
+    #[tokio::test]
+    async fn collect_ops_for_peer_handles_an_empty_op_log_3326() {
+        let (pool, _dir) = test_pool().await;
+        assert!(collect_ops_for_peer(&pool, &[]).await.unwrap().is_empty());
+        assert!(
+            collect_ops_for_peer(&pool, &[head("device-A", 3)])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
 }
