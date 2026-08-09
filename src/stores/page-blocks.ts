@@ -35,7 +35,7 @@ import { consumePrefetchedPageSubtree } from '@/lib/prefetch-page-subtree'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { buildFlatTree } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
-import { buildBlocksById } from '@/stores/page-blocks-map'
+import { buildBlocksById, reuseUnchangedBlocks } from '@/stores/page-blocks-map'
 import { createReducers } from '@/stores/page-blocks-reducers'
 import type { PageBlockState } from '@/stores/page-blocks-types'
 import { useRecentPagesStore } from '@/stores/recent-pages'
@@ -276,7 +276,15 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // flight; discard the stale result and let the newer load own
         // the store (including its `loading` flag).
         if (generation !== loadGeneration) return
-        let newBlocks = buildFlatTree(allBlocks, rootParentId)
+        // #3321 — reconcile against the rows we already hold instead of
+        // replacing every object reference. `buildFlatTree` allocates a fresh
+        // object per block, which memo-missed every mounted row on a reload
+        // that changed one block; `reuseUnchangedBlocks` hands back the
+        // previous object for every field-identical row. See its doc comment.
+        let newBlocks = reuseUnchangedBlocks(
+          buildFlatTree(allBlocks, rootParentId),
+          get().blocksById,
+        )
 
         // Preserve focused block's content during sync reload to prevent
         // visual flash and store/editor divergence

@@ -31,7 +31,7 @@ import { notify } from '@/lib/notify'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { getPageStore } from '@/stores/page-blocks'
-import { useResolveStore } from '@/stores/resolve'
+import { renamePage } from '@/stores/page-rename'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
@@ -41,8 +41,9 @@ async function refreshAfterUndoRedo(pageId: string): Promise<void> {
   try {
     const pageBlock = unwrap(await commands.getBlock(pageId))
     if (pageBlock?.content) {
-      useTabsStore.getState().replacePage(pageId, pageBlock.content)
-      useResolveStore.getState().set(pageId, pageBlock.content, false)
+      // #3322 — one fan-out to every store that holds a title copy (tabs +
+      // recents + resolve); see `@/stores/page-rename`.
+      renamePage(pageId, pageBlock.content)
     }
   } catch {
     // Page title refresh is best-effort

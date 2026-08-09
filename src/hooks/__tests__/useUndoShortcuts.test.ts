@@ -8,7 +8,7 @@ import { performActivePageUndo, useUndoShortcuts } from '@/hooks/useUndoShortcut
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 
-const { toastMock, mockUndo, mockRedo, mockLoad, mockReplacePage, mockGetBlock, mockGetPageStore } =
+const { toastMock, mockUndo, mockRedo, mockLoad, mockRenamePage, mockGetBlock, mockGetPageStore } =
   vi.hoisted(() => {
     const mock: ReturnType<typeof vi.fn> & { error: ReturnType<typeof vi.fn> } = Object.assign(
       vi.fn(),
@@ -18,7 +18,7 @@ const { toastMock, mockUndo, mockRedo, mockLoad, mockReplacePage, mockGetBlock, 
     const undoFn = vi.fn().mockResolvedValue(null)
     const redoFn = vi.fn().mockResolvedValue(null)
     const loadFn = vi.fn().mockResolvedValue(undefined)
-    const replacePageFn = vi.fn()
+    const renamePageFn = vi.fn()
     const getBlockFn = vi.fn().mockResolvedValue(null)
 
     const mockPageBlockStoreState = {
@@ -39,7 +39,7 @@ const { toastMock, mockUndo, mockRedo, mockLoad, mockReplacePage, mockGetBlock, 
       mockUndo: undoFn,
       mockRedo: redoFn,
       mockLoad: loadFn,
-      mockReplacePage: replacePageFn,
+      mockRenamePage: renamePageFn,
       mockGetBlock: getBlockFn,
       mockGetPageStore: getPageStoreFn,
     }
@@ -66,7 +66,7 @@ vi.mock('@/stores/tabs', () => ({
         { id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'Test Page' }], label: 'Test Page' },
       ],
       activeTabIndex: 0,
-      replacePage: mockReplacePage,
+      renamePage: mockRenamePage,
     })),
     // `@/stores/blocks` registers a module-level cross-store subscription.
     subscribe: vi.fn(() => () => {}),
@@ -180,7 +180,7 @@ beforeEach(() => {
   mockedTabsGetState.mockReturnValue({
     tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'Test Page' }], label: 'Test Page' }],
     activeTabIndex: 0,
-    replacePage: mockReplacePage,
+    renamePage: mockRenamePage,
   } as unknown as ReturnType<typeof useTabsStore.getState>)
 
   mockedUndoGetState.mockReturnValue({
@@ -228,7 +228,7 @@ describe('useUndoShortcuts', () => {
     mockedTabsGetState.mockReturnValue({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
-      replacePage: mockReplacePage,
+      renamePage: mockRenamePage,
     } as unknown as ReturnType<typeof useTabsStore.getState>)
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -249,7 +249,7 @@ describe('useUndoShortcuts', () => {
     mockedTabsGetState.mockReturnValue({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
-      replacePage: mockReplacePage,
+      renamePage: mockRenamePage,
     } as unknown as ReturnType<typeof useTabsStore.getState>)
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -449,7 +449,7 @@ describe('useUndoShortcuts', () => {
         },
       ],
       activeTabIndex: 0,
-      replacePage: mockReplacePage,
+      renamePage: mockRenamePage,
     } as unknown as ReturnType<typeof useTabsStore.getState>)
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -488,7 +488,7 @@ describe('journal view undo/redo (#2941)', () => {
     mockedTabsGetState.mockReturnValue({
       tabs: [{ id: '0', pageStack: [], label: '' }],
       activeTabIndex: 0,
-      replacePage: mockReplacePage,
+      renamePage: mockRenamePage,
     } as unknown as ReturnType<typeof useTabsStore.getState>)
   })
 
@@ -788,7 +788,7 @@ describe('refresh after undo/redo', () => {
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
     await vi.waitFor(() => {
-      expect(mockReplacePage).toHaveBeenCalledWith('PAGE_1', 'Reverted Title')
+      expect(mockRenamePage).toHaveBeenCalledWith('PAGE_1', 'Reverted Title')
     })
 
     unmount()
@@ -837,8 +837,8 @@ describe('refresh after undo/redo', () => {
       expect(mockLoad).toHaveBeenCalled() // no-args by contract
     })
 
-    // replacePage should NOT have been called since getBlock failed
-    expect(mockReplacePage).not.toHaveBeenCalled()
+    // renamePage should NOT have been called since getBlock failed
+    expect(mockRenamePage).not.toHaveBeenCalled()
 
     unmount()
   })

@@ -39,7 +39,7 @@ import { notify } from '@/lib/notify'
 import { editBlock, exportPageMarkdown, getBlock, setProperty } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
-import { useResolveStore } from '@/stores/resolve'
+import { renamePage } from '@/stores/page-rename'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
@@ -133,8 +133,9 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             try {
               const pageBlock = await getBlock(pageId)
               if (pageBlock?.content) {
-                useTabsStore.getState().replacePage(pageId, pageBlock.content)
-                useResolveStore.getState().set(pageId, pageBlock.content, false)
+                // #3322 — one fan-out to every store that holds a title copy
+                // (tabs + recents + resolve); see `@/stores/page-rename`.
+                renamePage(pageId, pageBlock.content)
               }
             } catch (err) {
               logger.warn(
@@ -381,8 +382,9 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         // #2468 — thread the rename's op ref(s) so Ctrl+Z is ref-addressed.
         const resp = await editBlock(pageId, newTitle)
         useUndoStore.getState().onNewAction(pageId, resp.op_refs)
-        useTabsStore.getState().replacePage(pageId, newTitle)
-        useResolveStore.getState().set(pageId, newTitle, false)
+        // #3322 — one fan-out to every store that holds a title copy (tabs +
+        // recents + resolve); see `@/stores/page-rename`.
+        renamePage(pageId, newTitle)
         announce(t('announce.pageRenamed'))
         notify.success(t('pageHeader.pageRenamed'))
       } catch (err) {

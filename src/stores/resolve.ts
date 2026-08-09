@@ -226,12 +226,48 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       // just O(fetched) instead of O(cacheSize). All consumers re-render off
       // `version`, not the Map reference (see consumer audit in resolve.ts
       // history / #2267), so reusing the same Map object is safe.
-      set((state) => {
-        const cache = state.cache
-        for (const [k, v] of fetchedPages) cache.set(k, v)
-        for (const [k, v] of fetchedTags) cache.set(k, v)
-        return { cache, version: state.version + 1, _preloaded: true }
-      })
+      //
+      // #3321 — diff before bumping `version`, mirroring the guards the two
+      // sibling writers already have (`set`'s #1073, `batchSet`'s #753). This
+      // is the ONLY writer reached on every `sync:complete` with
+      // `ops_received > 0` and every MCP `blocks:changed`
+      // (`reloadChangedPageStores` → `preload(spaceId, true)`), and a remote
+      // edit to a block's CONTENT cannot change any page title or tag name —
+      // yet every such tick used to bump `version`, which is a load-bearing
+      // `useMemo` dep in `useRichContent` and `BlockListItem`. One no-op tick
+      // therefore re-parsed markdown for every mounted row (up to
+      // `INITIAL_MOUNT_LIMIT = 500` per tree, ×N trees in a journal
+      // week/month view). Diffing turns that into zero re-renders.
+      const cache = get().cache
+      let mutated = false
+      const mergeFetched = (key: string, value: ResolveEntry): void => {
+        const cached = cache.get(key)
+        if (
+          cached !== undefined &&
+          cached.title === value.title &&
+          cached.deleted === value.deleted
+        )
+          return
+        cache.set(key, value)
+        mutated = true
+      }
+      for (const [k, v] of fetchedPages) mergeFetched(k, v)
+      for (const [k, v] of fetchedTags) mergeFetched(k, v)
+      if (!mutated) {
+        // Nothing the scan fetched differs from what is already cached. Skip
+        // the `version` bump entirely; still flip `_preloaded` on the first
+        // scan so `preload`'s once-only callers see it (and an empty space,
+        // whose scan legitimately fetches nothing, is not stuck retrying).
+        if (!get()._preloaded) set({ _preloaded: true })
+        return
+      }
+      // #3321 — the bulk path enforces `MAX_CACHE_SIZE` too. `set`/`batchSet`
+      // both evict after writing; preload used to be the one writer that
+      // could push the Map past the cap, so the documented budget was not
+      // actually a budget. Entries evicted here are the coldest ones and are
+      // re-resolved on demand by the block-tree `batchResolve` path.
+      evictLeastRecentlyUsed(cache, MAX_CACHE_SIZE)
+      set((state) => ({ cache, version: state.version + 1, _preloaded: true }))
     } catch (err) {
       logger.warn('ResolveStore', 'preload failed, using fallback', {}, err)
     }

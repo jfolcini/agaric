@@ -516,6 +516,64 @@ describe('useRecentPagesStore', () => {
     })
   })
 
+  describe('#3322 renamePage', () => {
+    beforeEach(() => {
+      useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: true })
+    })
+
+    it('retitles the entry in place, keeping MRU position, visitedAt and pin', () => {
+      const { addRecentPage, togglePinRecentPage, renamePage } = useRecentPagesStore.getState()
+      addRecentPage('A', 'Old')
+      togglePinRecentPage('A')
+      addRecentPage('B', 'Bravo')
+      const before = useRecentPagesStore.getState().recentPages
+      const beforeA = before.find((p) => p.pageId === 'A')
+
+      renamePage('A', 'New')
+
+      const after = useRecentPagesStore.getState().recentPages
+      expect(after.map((p) => p.pageId)).toEqual(before.map((p) => p.pageId))
+      const afterA = after.find((p) => p.pageId === 'A')
+      expect(afterA?.title).toBe('New')
+      expect(afterA?.pinned).toBe(true)
+      expect(afterA?.visitedAt).toBe(beforeA?.visitedAt)
+    })
+
+    it('is a no-op for a page that is not in the MRU', () => {
+      const { addRecentPage, renamePage } = useRecentPagesStore.getState()
+      addRecentPage('A', 'Alpha')
+      const before = useRecentPagesStore.getState().recentPages
+
+      renamePage('GHOST', 'Nope')
+
+      expect(useRecentPagesStore.getState().recentPages).toBe(before)
+    })
+
+    it('is a no-op when the stored title already matches', () => {
+      const { addRecentPage, renamePage } = useRecentPagesStore.getState()
+      addRecentPage('A', 'Alpha')
+      const before = useRecentPagesStore.getState().recentPages
+
+      renamePage('A', 'Alpha')
+
+      expect(useRecentPagesStore.getState().recentPages).toBe(before)
+    })
+
+    it('writes through to the per-space slice that gets persisted', () => {
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_A',
+        availableSpaces: [{ id: 'SPACE_A', name: 'A', accent_color: null }],
+        isReady: true,
+      })
+      const { addRecentPage, renamePage } = useRecentPagesStore.getState()
+      addRecentPage('A', 'Old')
+
+      renamePage('A', 'New')
+
+      expect(useRecentPagesStore.getState().recentPagesBySpace['SPACE_A']?.[0]?.title).toBe('New')
+    })
+  })
+
   describe('#1149 getRecentPagesForSpace (RecentPage-shaped snapshot read)', () => {
     it('maps the active-space slice to id-keyed RecentPage entries, pin-first', () => {
       useSpaceStore.setState({ currentSpaceId: 'space-1' })

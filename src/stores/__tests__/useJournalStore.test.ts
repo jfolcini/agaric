@@ -15,7 +15,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { useJournalStore } from '@/stores/journal'
+import { reconcileJournalOnSpaceChange, useJournalStore } from '@/stores/journal'
 import { useSpaceStore } from '@/stores/space'
 
 const PERSONAL = 'SPACE_PERSONAL'
@@ -178,6 +178,70 @@ describe('useJournalStore — per-space slices', () => {
     // are derived from the active slice on rehydrate).
     expect(parsed.state.currentDate).toBeUndefined()
     expect(parsed.state.mode).toBeUndefined()
+  })
+
+  // ------------------------------------------------------------------
+  // First fire (`prevKey === newKey`) — the rehydrate reconcile.
+  //
+  // #3322: this path used to be unreachable from the test runtime (the
+  // module-level subscriber fires it once, at import). Adopting
+  // `createPerSpaceSlice` re-exports the wired reconcile, so the boot
+  // behaviour every returning user hits is now actually covered.
+  // ------------------------------------------------------------------
+
+  it('first fire pulls the active space slice into the flat mirror', () => {
+    useJournalStore.setState({
+      currentDateBySpace: { [PERSONAL]: '2026-03-09' },
+      modeBySpace: { [PERSONAL]: 'monthly' },
+    })
+
+    reconcileJournalOnSpaceChange(PERSONAL, PERSONAL)
+
+    const state = useJournalStore.getState()
+    expect(state.mode).toBe('monthly')
+    expect(state.currentDate.getFullYear()).toBe(2026)
+    expect(state.currentDate.getMonth()).toBe(2)
+    expect(state.currentDate.getDate()).toBe(9)
+  })
+
+  it('first fire seeds an absent slice from the flat defaults', () => {
+    reconcileJournalOnSpaceChange(PERSONAL, PERSONAL)
+
+    const state = useJournalStore.getState()
+    // The mirror is untouched (the store defaults set in beforeEach)…
+    expect(state.mode).toBe('daily')
+    expect(state.currentDate).toEqual(new Date(2026, 0, 1))
+    // …and the slice now holds it, so the next switch flushes cleanly.
+    expect(state.currentDateBySpace[PERSONAL]).toBe('2026-01-01')
+    expect(state.modeBySpace[PERSONAL]).toBe('daily')
+  })
+
+  it('first fire keeps a half-present slice and defaults the missing half', () => {
+    useJournalStore.setState({
+      currentDateBySpace: { [PERSONAL]: '2026-03-09' },
+      modeBySpace: {},
+    })
+
+    reconcileJournalOnSpaceChange(PERSONAL, PERSONAL)
+
+    const state = useJournalStore.getState()
+    expect(state.currentDate.getDate()).toBe(9)
+    expect(state.mode).toBe('daily')
+  })
+
+  it('first fire falls back to today when the persisted date is unparseable', () => {
+    useJournalStore.setState({
+      currentDateBySpace: { [PERSONAL]: 'not-a-date' },
+      modeBySpace: { [PERSONAL]: 'weekly' },
+    })
+
+    reconcileJournalOnSpaceChange(PERSONAL, PERSONAL)
+
+    const state = useJournalStore.getState()
+    expect(state.mode).toBe('weekly')
+    const today = new Date()
+    expect(state.currentDate.getFullYear()).toBe(today.getFullYear())
+    expect(state.currentDate.getDate()).toBe(today.getDate())
   })
 
   it('mode set in space-A does not bleed into space-B', () => {

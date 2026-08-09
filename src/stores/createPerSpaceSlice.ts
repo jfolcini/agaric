@@ -98,6 +98,21 @@ export interface PerSpaceSliceOptions<State, T> {
    * fire, which is harmless.
    */
   equals?: (a: T, b: T) => boolean
+  /**
+   * Whether a REAL switch also seeds the incoming space's slice with the
+   * value it just pulled into the mirror. Defaults to `false` — see the
+   * flush/pull comment in `attach`: leaving a fresh space's slice absent is
+   * what stops "switch in and straight back out" from writing an empty seed
+   * that masks future data.
+   *
+   * `journal` opts in (#3322): its fresh-space fallback is *today* + `daily`,
+   * which is a real value rather than an empty one, and seeding it means the
+   * next flush round-trips even if the user never touches the view. Making it
+   * an explicit option is what let journal adopt this primitive at all —
+   * before, it hand-rolled the whole reconcile just to keep this one
+   * behaviour.
+   */
+  seedOnSwitch?: boolean
 }
 
 export interface PerSpaceSlice<State, T> {
@@ -128,6 +143,7 @@ export function createPerSpaceSlice<State, T>(
   options: PerSpaceSliceOptions<State, T>,
 ): PerSpaceSlice<State, T> {
   const { readMirror, writeMirror, getSlice, setSlice, fallback, onSwitch } = options
+  const seedOnSwitch = options.seedOnSwitch ?? false
   const eq = options.equals ?? Object.is
   const seedOnFirstFire = options.seedOnFirstFire ?? ((): boolean => true)
 
@@ -172,13 +188,19 @@ export function createPerSpaceSlice<State, T>(
 
       // Real switch: flush the outgoing mirror into the outgoing slice, then
       // pull the incoming slice — or the fresh-space fallback — into the
-      // mirror. The incoming slice is deliberately NOT seeded: a fresh space
+      // mirror. By default the incoming slice is NOT seeded: a fresh space
       // keeps an absent slice (its selector falls back), so switching in and
       // straight back out can't leave an empty seed masking future data.
+      // `seedOnSwitch` opts out of that (see its doc).
       const current = readMirror(state)
       const flushed = setSlice(state, prevKey, current)
-      const incoming = getSlice(state, newKey) ?? fallback({ newKey, prevKey, current })
-      store.setState({ ...flushed, ...writeMirror(incoming) })
+      // Read the incoming slice from the POST-FLUSH state so the two patches
+      // compose: both `setSlice` calls spread the same underlying map, so
+      // seeding off the pre-flush state would drop the outgoing write.
+      const afterFlush = { ...state, ...flushed }
+      const incoming = getSlice(afterFlush, newKey) ?? fallback({ newKey, prevKey, current })
+      const seeded = seedOnSwitch ? setSlice(afterFlush, newKey, incoming) : {}
+      store.setState({ ...flushed, ...seeded, ...writeMirror(incoming) })
       onSwitch?.(prevKey, newKey)
     }
 
