@@ -67,6 +67,11 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # The PR's own head, NOT the `refs/pull/N/merge` commit the runner
+          # has checked out. See `scripts/pr-overlap-diverged.sh` — the merge
+          # ref's first parent is the base tip, so deriving the merge base
+          # from HEAD compares the base branch with itself.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -uo pipefail
           # Every open PR including this one; the script filters `--pr` out.
@@ -84,17 +89,27 @@ jobs:
           # requests could ever have paired the two, and the thing that was
           # actually wrong is that #3724's base predated it.
           #
-          # `rm -f` first: an unwritten file must reach the script as ABSENT
-          # (rendered "not computed"), never as an empty list (rendered
-          # "nothing diverged"). A stale empty file from a previous step would
-          # turn an unanswered question into a reassuring answer.
-          rm -f diverged.txt
+          # The computation lives in a script with its own `--self-test`
+          # because the four lines that used to be here were wrong in a way
+          # nothing could see: they took the merge base from HEAD, which on a
+          # `pull_request` checkout is `refs/pull/N/merge` whose FIRST PARENT
+          # IS THE BASE TIP, so the diff was `git diff X X` — empty on every
+          # run, and rendered as an affirmative "None".
+          #
+          # Write to a temp file and `mv` only on success. `if cmd > file`
+          # leaves an EMPTY file behind when `cmd` fails, and an empty file is
+          # a real answer here ("nothing diverged") — so the failure would
+          # again arrive as reassurance. Exit 0 means computed, and the file
+          # exists; non-zero means not computed, and it must not.
+          rm -f diverged.txt diverged.tmp
           if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
             git fetch --no-tags origin "$BASE_REF" || true
           fi
-          if base_tip=$(git rev-parse "origin/${BASE_REF}" 2>/dev/null) &&
-             merge_base=$(git merge-base HEAD "$base_tip" 2>/dev/null); then
-            git diff --name-only "$merge_base" "$base_tip" > diverged.txt || rm -f diverged.txt
+          if bash scripts/pr-overlap-diverged.sh "$BASE_REF" "$HEAD_SHA" > diverged.tmp; then
+            mv diverged.tmp diverged.txt
+          else
+            echo "divergence not computed; the comment will say so" >&2
+            rm -f diverged.tmp
           fi
 
           args=(--pr "$PR_NUMBER" --prs prs.json --comment-body overlap.md)

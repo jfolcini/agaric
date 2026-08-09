@@ -258,9 +258,15 @@ jobs:
           # only PATCH check runs its own app created, and PATCHing is skipped
           # rather than attempted for anything else. `head_sha` is dropped
           # because it is a POST-only field.
+          #
+          # `max_by(.started_at)` rather than `.[-1]` (#3736's review): the API
+          # does not guarantee the ordering of `check_runs`, so taking the last
+          # element could PATCH an OLDER duplicate and leave the newer stale
+          # copy standing — which is the condition this dedup exists to remove,
+          # reintroduced by the fix for it.
           existing=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" -X GET \
             -f check_name='claude-review findings' -f per_page=100 \
-            --jq '[.check_runs[] | select(.app.slug == "github-actions") | .id] | .[-1] // empty' \
+            --jq '[.check_runs[] | select(.app.slug == "github-actions")] | max_by(.started_at) | .id // empty' \
             2>/dev/null | tail -1)
           published=no
           if [ -n "$existing" ]; then

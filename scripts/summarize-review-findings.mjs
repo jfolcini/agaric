@@ -118,8 +118,17 @@ function stripFences(body) {
 // in a follow-up:**". Trailing `**` allowed because the header is usually
 // bold. Since #3728 this is consulted only to OVERRIDE the verification rule
 // below, for the header that names both ("Verified, with three notes:").
+//
+// `blocking|issues|problems|defects|bugs` added on #3736's review. The absence
+// of `issues` is what caused the bug this file was just rewritten to fix, and
+// while the denylist rule no longer depends on this alternation to COUNT, it
+// still depends on it to override: without those words a header naming both a
+// verification verb and a finding word — "Blocking issues I checked:",
+// "Checked the retry path; the problems are:" — matches
+// `VERIFICATION_HEADER_RE`, fails this override, and silently suppresses every
+// item below it. Errs loud on purpose: a header this matches is COUNTED.
 const FINDINGS_HEADER_RE =
-  /^[^\n]*\b(?:non-?blocking|findings?|observations?|notes?|nits?|concerns?|suggestions?|follow-?ups?)\b[^\n]*:\**\s*$/im
+  /^[^\n]*\b(?:non-?blocking|blocking|findings?|issues?|problems?|defects?|bugs?|observations?|notes?|nits?|concerns?|suggestions?|follow-?ups?)\b[^\n]*:\**\s*$/im
 
 // The header above the bullets that say what the reviewer CHECKED rather than
 // what it found. #3639's review listed eight verifications and three findings;
@@ -225,6 +234,23 @@ export function filingSentence(text) {
 }
 
 /**
+ * Distinct `#NNNN` references from the filing claim onward.
+ *
+ * The "as many refs as findings claimed" fallback has to read forward only.
+ * A reference written BEFORE the claim was written for some other purpose —
+ * citing a contract, naming a sibling PR — and cannot be where these findings
+ * went. See `analyzeBody`.
+ *
+ * @param {string} text already fence-stripped
+ */
+export function issueRefsFromClaimOnward(text) {
+  const m = FILING_RE.exec(text)
+  if (m === null) return []
+  const tail = text.slice(m.index)
+  return [...new Set([...tail.matchAll(ISSUE_REF_RE)].map((x) => `#${x[1]}`))]
+}
+
+/**
  * Analyse one review/comment body.
  *
  * @param {string} body
@@ -241,8 +267,19 @@ export function analyzeBody(body) {
   // The claim is only backed if the body says WHERE, in the clause that makes
   // the claim — or cites at least as many distinct issues as it claims
   // findings, which is the other shape that leaves nothing unrecoverable.
+  //
+  // #3736's review: that second arm counted references from ANYWHERE in the
+  // body, which reopens a narrower version of the hole the first arm closes.
+  // This repo's review bodies routinely cite six or more unrelated issues —
+  // #3702, #3728, #3672, #3639, #3701 and #3694 all appear in this very PR's
+  // text — so "six non-blocking notes filed separately" with nothing filed
+  // would have been read as backed. Only references AT OR AFTER the filing
+  // clause can back it: a number written before the claim was written for
+  // something else.
+  const refsAfterClaim = claimsFiling ? issueRefsFromClaimOnward(stripped) : []
   const backed =
-    refsWithClaim.length > 0 || (claimed !== null && claimed > 0 && citedIssues.length >= claimed)
+    refsWithClaim.length > 0 ||
+    (claimed !== null && claimed > 0 && refsAfterClaim.length >= claimed)
   return {
     enumerated,
     claimed,
@@ -392,11 +429,15 @@ function renderVerdict({ state, findings, parts, perBody, shortfall, unbacked })
     )
   }
   if (shortfall > 0) {
-    const claimedMax = Math.max(...parts.map((p) => p.claimed ?? 0))
-    const namedMax = Math.max(...parts.map((p) => p.enumerated))
+    // Quoted from the ONE body that is short, not as maxima across bodies
+    // (#3736's review). `findings` above is a SUM, so a per-body `claimed` max
+    // and a per-body `enumerated` max need not reconcile with it or with each
+    // other, and the sentence would then cite a pair that appears in no single
+    // review.
+    const worst = parts.reduce((a, b) => (b.shortfall > a.shortfall ? b : a))
     lines.push(
       '',
-      `> **The review claims more findings than it names** — a count of ${claimedMax} against ${namedMax} enumerated, so ${shortfall} of them exist nowhere a reader can get to. On #3701 exactly three of six were recoverable.`,
+      `> **The review claims more findings than it names** — one body claims ${worst.claimed} and enumerates ${worst.enumerated}, so ${worst.shortfall} of them exist nowhere a reader can get to. On #3701 exactly three of six were recoverable.`,
     )
   }
   if (unbacked) {
@@ -1132,6 +1173,61 @@ function runSelfTest() {
       'as many distinct references as claimed findings backs the claim',
       analyzeBody(enumerated).unbackedFilingClaim === false,
       JSON.stringify(analyzeBody(enumerated)),
+    )
+    // …but only references AT OR AFTER the claim count toward it (#3736's
+    // review). This repo's review bodies routinely cite six unrelated issues,
+    // so a body-wide count re-opens the hole the sentence rule closes.
+    const citedBefore = `Verified against #3702, #3728, #3672, #3639, #3701 and #3694. Six non-blocking notes filed separately.`
+    expect(
+      'issue references written BEFORE the filing claim do not back it',
+      analyzeBody(citedBefore).unbackedFilingClaim === true,
+      JSON.stringify(analyzeBody(citedBefore)),
+    )
+    const citedAfter = `Six non-blocking notes filed separately: #3801, #3802, #3803, #3804, #3805 and #3806.`
+    expect(
+      'six references after the claim, for six claimed findings, does back it',
+      analyzeBody(citedAfter).unbackedFilingClaim === false,
+      JSON.stringify(analyzeBody(citedAfter)),
+    )
+  }
+
+  // 6g. A findings word the alternation lacked would suppress its own list
+  //     (#3736's review). `issues` missing is what caused the original bug;
+  //     with a verification verb in the same header the item list disappears
+  //     entirely, which is the loud-vs-silent distinction the whole file is
+  //     about.
+  {
+    for (const header of [
+      'Blocking issues I checked:',
+      'Checked the retry path; the problems are:',
+      'Verified the fix; remaining defects:',
+    ]) {
+      expect(
+        `a header naming both a verification verb and a finding word counts its items — "${header}"`,
+        enumeratedItems(`${header}\n\n1. one\n2. two`).length === 2,
+        JSON.stringify(enumeratedItems(`${header}\n\n1. one\n2. two`)),
+      )
+    }
+    // The sibling acceptance: a pure verification header still suppresses, or
+    // the denylist has been widened into a no-op.
+    expect(
+      'a pure verification header still suppresses its bullets',
+      enumeratedItems('**Verified independently:**\n- a\n- b').length === 0,
+      JSON.stringify(enumeratedItems('**Verified independently:**\n- a\n- b')),
+    )
+  }
+
+  // 6h. The shortfall sentence quotes ONE body, not maxima across bodies
+  //     (#3736's review): `findings` is a sum, so a claimed-max and an
+  //     enumerated-max need not reconcile with each other or with the title.
+  {
+    const claims6 = review('Six non-blocking notes filed separately.', 'APPROVED', HEAD)
+    const listOf3 = comment('Notes:\n\n- a\n- b\n- c', '2026-08-09T11:59:00Z')
+    const r = summarize({ reviews: [claims6], comments: [listOf3], headSha: HEAD })
+    expect(
+      'the shortfall sentence quotes the body that is short, and the pair reconciles',
+      /one body claims 6 and enumerates 0, so 6 of them/.test(r.summary),
+      r.summary,
     )
   }
 

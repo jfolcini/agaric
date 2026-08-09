@@ -247,8 +247,18 @@ export function renderComment(result) {
         '',
       )
     }
+    // A TABLE, not a bullet list. This comment is posted by
+    // `github-actions[bot]`, and `summarize-review-findings.mjs` counts
+    // top-level `- ` items in a bot comment as review findings. That is scoped
+    // to the reviewer today, but it falls back to "any bot" when no reviewer
+    // app is configured — so a bullet list here would turn every PR carrying a
+    // divergence into a yellow review check, for a reason invisible from the
+    // check output. That is precisely the defect #3728 finding 1 removed from
+    // the mutation lane's comment, and this lane must not reintroduce it.
+    // Pinned by an assertion in the self-test.
+    lines.push('| file | |', '| --- | --- |')
     for (const f of result.divergedFiles) {
-      lines.push(`- ${isRatchetFile(f) ? `**\`${f}\`** ⚠️ ratchet` : `\`${f}\``}`)
+      lines.push(`| \`${f}\` | ${isRatchetFile(f) ? '⚠️ **ratchet**' : ''} |`)
     }
     lines.push('')
   }
@@ -637,6 +647,30 @@ function runSelfTest() {
       'every comment body carries the sticky marker',
       bodies.every((b) => b.includes(COMMENT_MARKER)),
       'a rendering dropped the marker',
+    )
+    // No rendering may emit a TOP-LEVEL list item. This comment is authored by
+    // `github-actions[bot]`, and the review-findings summariser counts exactly
+    // those as findings whenever it falls back to "any bot" — which it does
+    // when no reviewer app is configured. Stated over every branch, including
+    // the divergence table, because that is the one that grew a bullet list.
+    const withDivergence = renderComment(
+      computeOverlap({
+        pr: 3724,
+        prs: LIVE_PRS,
+        divergedPaths: ['src-tauri/dynamic-sql-baseline.txt', 'prek.toml'],
+      }),
+    )
+    const topLevelItems = (body) =>
+      body.split('\n').filter((l) => /^(?:\d{1,2}[.)]|[-*+])\s+\S/.test(l))
+    expect(
+      'no comment body emits a top-level list item the review check would count as a finding',
+      [...bodies, withDivergence].every((b) => topLevelItems(b).length === 0),
+      JSON.stringify(topLevelItems(withDivergence)),
+    )
+    expect(
+      'the divergence section still names its files and marks the ratchet',
+      /\| `src-tauri\/dynamic-sql-baseline\.txt` \| ⚠️ \*\*ratchet\*\* \|/.test(withDivergence),
+      withDivergence,
     )
   }
 
