@@ -160,6 +160,10 @@ describe('PageBrowser multi-select', () => {
 
     mockedInvoke.mockResolvedValueOnce(2) // delete_blocks_by_ids count
     await user.click(screen.getByTestId('page-batch-trash-btn'))
+    // #3339 — the batch trash confirms before it cascades.
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: ['P1', 'P3'] })
@@ -168,7 +172,10 @@ describe('PageBrowser multi-select', () => {
     await waitFor(() => {
       expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
     })
-    expect(mockedToastSuccess).toHaveBeenCalledWith(t('pageBrowser.batch.trashed', { count: 2 }))
+    expect(mockedToastSuccess).toHaveBeenCalledWith(
+      t('pageBrowser.batch.trashed', { count: 2 }),
+      expect.objectContaining({ action: expect.objectContaining({ label: t('action.undo') }) }),
+    )
   })
 
   it('bulk Add tag fires add_tags_by_ids with the chosen tag and clears', async () => {
@@ -243,9 +250,15 @@ describe('PageBrowser multi-select', () => {
 
     mockedInvoke.mockRejectedValueOnce(new Error('backend boom'))
     await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith(t('pageBrowser.batch.trashFailed'))
+      expect(mockedToastError).toHaveBeenCalledWith(
+        t('pageBrowser.batch.trashFailed'),
+        expect.objectContaining({ action: expect.objectContaining({ label: t('action.retry') }) }),
+      )
     })
     // Failure leaves the selection intact (toolbar still present).
     expect(screen.getByRole('toolbar')).toBeInTheDocument()

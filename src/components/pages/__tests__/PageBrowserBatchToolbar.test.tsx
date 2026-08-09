@@ -93,30 +93,97 @@ describe('PageBrowserBatchToolbar', () => {
     expect(screen.getByTestId('page-batch-move-btn')).toBeInTheDocument()
   })
 
-  it('Trash fires delete_blocks_by_ids and clears + refreshes on success', async () => {
+  // #3339 — the batch trash cascades a soft-delete over every selected root's
+  // whole subtree and "Select all" is one Ctrl/Cmd+A away, so the toolbar
+  // button must open the app's ConfirmDialog rather than fire the IPC.
+  it('Trash asks for confirmation and fires nothing until the user confirms', async () => {
+    const user = userEvent.setup()
+    const { onClearSelection, onMutated } = renderToolbar()
+
+    await user.click(screen.getByTestId('page-batch-trash-btn'))
+
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_blocks_by_ids', expect.anything())
+    expect(onClearSelection).not.toHaveBeenCalled()
+    expect(onMutated).not.toHaveBeenCalled()
+
+    // Cancelling leaves everything untouched.
+    await user.click(screen.getByRole('button', { name: t('dialog.cancel') }))
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_blocks_by_ids', expect.anything())
+  })
+
+  it('Trash fires delete_blocks_by_ids and clears + refreshes once confirmed', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce(3) // delete_blocks_by_ids → count
     const { onClearSelection, onMutated } = renderToolbar()
 
     await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: SELECTED })
     })
     expect(onClearSelection).toHaveBeenCalledTimes(1)
     expect(onMutated).toHaveBeenCalledTimes(1)
-    expect(mockedToastSuccess).toHaveBeenCalledWith(t('pageBrowser.batch.trashed', { count: 3 }))
+    expect(mockedToastSuccess).toHaveBeenCalledWith(
+      t('pageBrowser.batch.trashed', { count: 3 }),
+      expect.objectContaining({
+        action: expect.objectContaining({ label: t('action.undo') }),
+      }),
+    )
   })
 
-  it('Trash surfaces an error toast and does NOT clear on failure', async () => {
+  // #3339 — the success toast's Undo must restore the SAME id list, via the
+  // list-accepting IPC `usePageDeleteAction` already uses.
+  it('the success toast exposes an Undo that restores the trashed ids', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce(3)
+    const { onMutated } = renderToolbar()
+
+    await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalled()
+    })
+
+    const call = mockedToastSuccess.mock.calls.at(-1)
+    const undo = (call?.[1] as { action?: { label?: string; onClick?: () => void } } | undefined)
+      ?.action
+    expect(undo?.label).toBe(t('action.undo'))
+
+    mockedInvoke.mockResolvedValueOnce({ restored: SELECTED.length })
+    undo?.onClick?.()
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', { blockIds: SELECTED })
+    })
+    // The list refreshes again so the restored pages reappear.
+    await waitFor(() => {
+      expect(onMutated).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  it('Trash surfaces an error toast with Retry and does NOT clear on failure', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockRejectedValueOnce(new Error('backend boom'))
     const { onClearSelection, onMutated } = renderToolbar()
 
     await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith(t('pageBrowser.batch.trashFailed'))
+      expect(mockedToastError).toHaveBeenCalledWith(
+        t('pageBrowser.batch.trashFailed'),
+        expect.objectContaining({
+          action: expect.objectContaining({ label: t('action.retry') }),
+        }),
+      )
     })
     expect(onClearSelection).not.toHaveBeenCalled()
     expect(onMutated).not.toHaveBeenCalled()

@@ -26,11 +26,11 @@ import {
   BlockTypeEditor,
   CreatedEditor,
   DatePredicateEditor,
-  InlineValueEditor,
   LinkTargetEditor,
   PathEditor,
   PropertyEditor,
   StateEditor,
+  TagPickerEditor,
 } from '@/components/PageBrowser/add-filter/editors'
 import { FilterCategoryGroup, FilterMenuItem } from '@/components/PageBrowser/add-filter/menu'
 import {
@@ -101,7 +101,6 @@ export function AddFilterPopover({
   const priorityLevels = usePriorityLevels()
   const [open, setOpen] = useState(false)
   const [editor, setEditor] = useState<EditorKey>(null)
-  const [tagValue, setTagValue] = useState('')
   const [pathValue, setPathValue] = useState('')
   const [pathExclude, setPathExclude] = useState(false)
   const [propKey, setPropKey] = useState('')
@@ -128,7 +127,6 @@ export function AddFilterPopover({
 
   const reset = useCallback(() => {
     setEditor(null)
-    setTagValue('')
     setPathValue('')
     setPathExclude(false)
     setPropKey('')
@@ -451,18 +449,10 @@ export function AddFilterPopover({
         )}
 
         {editor === 'tag' && (
-          <InlineValueEditor
+          <TagPickerEditor
             label={t('pageBrowser.filter.facetTag')}
-            value={tagValue}
-            onChange={setTagValue}
+            onSelect={(tagId) => emit({ type: 'Tag', tag: tagId })}
             onBack={() => setEditor(null)}
-            onApply={() => {
-              const v = tagValue.trim()
-              if (v) emit({ type: 'Tag', tag: v })
-            }}
-            applyLabel={t('pageBrowser.filter.apply')}
-            backLabel={t('pageBrowser.filter.back')}
-            placeholder={t('pageBrowser.filter.tagPlaceholder')}
           />
         )}
 

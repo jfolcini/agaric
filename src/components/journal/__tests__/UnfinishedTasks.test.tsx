@@ -400,8 +400,19 @@ describe('UnfinishedTasks', () => {
         expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
       })
 
-      // Badge counts ALL pages: 3 + 1 = 4 (pre-#757 it showed 3).
-      expect(screen.getByText('4')).toBeInTheDocument()
+      // #3342 — collapsed, the drain has not run: one page only, and the badge
+      // says so rather than claiming the partial count is the total.
+      expect(screen.getByText('3+')).toBeInTheDocument()
+      expect(mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unfinished_tasks')).toHaveLength(
+        1,
+      )
+
+      // Expanding drains the rest; the badge then counts ALL pages: 3 + 1 = 4
+      // (pre-#757 it showed 3).
+      await user.click(screen.getByRole('button', { expanded: false }))
+      await waitFor(() => {
+        expect(screen.getByText('4')).toBeInTheDocument()
+      })
 
       // Exactly two IPC pages, the second continuing the cursor chain.
       const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unfinished_tasks')
@@ -410,7 +421,6 @@ describe('UnfinishedTasks', () => {
       expect(cursors).toEqual([null, 'CURSOR-1'])
 
       // The second-page task renders in the Older group alongside page 1's.
-      await user.click(screen.getByRole('button', { expanded: false }))
       const olderGroup = screen.getByTestId('unfinished-group-older')
       expect(within(olderGroup).getByText('First page older task')).toBeInTheDocument()
       expect(within(olderGroup).getByText('Second page older task')).toBeInTheDocument()
@@ -443,16 +453,50 @@ describe('UnfinishedTasks', () => {
         return { items: [], next_cursor: null, has_more: false, total_count: null }
       })
 
+      const user = userEvent.setup()
+      render(<UnfinishedTasks />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+      await user.click(screen.getByRole('button', { expanded: false }))
+
+      // MAX_UNFINISHED_PAGES (25) bounds the loop instead of spinning forever.
+      await waitFor(() => {
+        expect(
+          mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unfinished_tasks'),
+        ).toHaveLength(25)
+      })
+      // The cap stops the drain with the chain still unfinished, so the badge
+      // stays honest about being a lower bound.
+      expect(screen.getAllByText('25+').length).toBeGreaterThanOrEqual(1)
+    })
+
+    // #3342 — the panel is collapsed by default and the rows only exist inside
+    // the expanded branch, so a collapsed mount must not walk the whole chain.
+    it('does not drain while collapsed — one page, and the badge marks itself partial', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_unfinished_tasks') {
+          return {
+            items: [makeYesterdayBlock('C1'), makeYesterdayBlock('C2', 'Another')],
+            next_cursor: 'CURSOR-1',
+            has_more: true,
+          }
+        }
+        if (cmd === 'batch_resolve') return []
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+
       render(<UnfinishedTasks />)
 
       await waitFor(() => {
         expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
       })
 
-      // MAX_UNFINISHED_PAGES (25) bounds the loop instead of spinning forever.
-      const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unfinished_tasks')
-      expect(calls).toHaveLength(25)
-      expect(screen.getAllByText('25').length).toBeGreaterThanOrEqual(1)
+      expect(mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unfinished_tasks')).toHaveLength(
+        1,
+      )
+      expect(screen.getByText('2+')).toBeInTheDocument()
     })
   })
 
@@ -740,16 +784,18 @@ describe('UnfinishedTasks', () => {
         return { items: [], next_cursor: null, has_more: false, total_count: null }
       })
 
-      const { container } = render(<UnfinishedTasks />)
+      render(<UnfinishedTasks />)
 
       // Wait for loading to finish
       await waitFor(() => {
         expect(screen.queryByRole('status', { busy: true })).not.toBeInTheDocument()
       })
 
-      // Component shows empty state (no crash, no blocks rendered)
+      // #3339 — a failed load renders an error + Retry affordance, NOT the
+      // same `null` a genuinely empty backlog produces.
       expect(screen.queryByTestId('unfinished-tasks')).not.toBeInTheDocument()
-      expect(container.innerHTML).toBe('')
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+      expect(screen.getByTestId('unfinished-tasks-error')).toBeInTheDocument()
 
       expect(warnSpy).toHaveBeenCalledWith(
         'UnfinishedTasks',
@@ -757,6 +803,80 @@ describe('UnfinishedTasks', () => {
         undefined,
         expect.any(Error),
       )
+      warnSpy.mockRestore()
+    })
+
+    // #3339 — the error card's Retry must actually re-issue the query.
+    it('Retry on the error card re-issues list_unfinished_tasks and recovers', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      let attempt = 0
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_unfinished_tasks') {
+          attempt += 1
+          if (attempt === 1) throw new Error('query failure')
+          return {
+            items: [makeYesterdayBlock('R1', 'Recovered task')],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'batch_resolve') return []
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+
+      const user = userEvent.setup()
+      render(<UnfinishedTasks />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks-error')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { name: /retry loading unfinished tasks/i }))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+      expect(
+        mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unfinished_tasks').length,
+      ).toBeGreaterThanOrEqual(2)
+      warnSpy.mockRestore()
+    })
+
+    // #3339 — a mid-drain failure leaves a TRUNCATED list on screen. Say so
+    // instead of presenting the partial set as the complete backlog.
+    it('a page rejects mid-drain — the rendered rows stay plus a truncation notice', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_unfinished_tasks') {
+          const params = args as { cursor?: string | null }
+          if (params.cursor == null) {
+            return {
+              items: [makeYesterdayBlock('TR-A', 'Loaded before the failure')],
+              next_cursor: 'CURSOR-1',
+              has_more: true,
+            }
+          }
+          throw new Error('mid-drain page failure')
+        }
+        if (cmd === 'batch_resolve') return []
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+
+      const user = userEvent.setup()
+      render(<UnfinishedTasks />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+      // No truncation claim before the drain is even attempted.
+      expect(screen.queryByTestId('unfinished-tasks-partial-error')).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { expanded: false }))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks-partial-error')).toBeInTheDocument()
+      })
+      expect(screen.getByText('Loaded before the failure')).toBeInTheDocument()
       warnSpy.mockRestore()
     })
 

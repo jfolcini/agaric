@@ -232,6 +232,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.savedViews.apply': 'Apply view {{name}}',
   'pageBrowser.savedViews.delete': 'Delete view {{name}}',
   'pageBrowser.savedViews.deleted': 'Deleted view "{{name}}"',
+  'pageBrowser.savedViews.restored': 'Restored view "{{name}}"',
   'pageBrowser.savedViews.applied': 'Applied view "{{name}}"',
   'pageBrowser.savedViews.schemaMismatch':
     'Saved views from a newer version of Agaric could not be loaded and were reset.',
@@ -269,6 +270,16 @@ export const pages: Record<string, string> = {
   'pageBrowser.batch.trashed_one': 'Moved {{count}} page to Trash',
   'pageBrowser.batch.trashed_other': 'Moved {{count}} pages to Trash',
   'pageBrowser.batch.trashFailed': 'Failed to trash the selected pages',
+  'pageBrowser.batch.trashConfirmTitle_one': 'Move {{count}} page to Trash?',
+  'pageBrowser.batch.trashConfirmTitle_other': 'Move {{count}} pages to Trash?',
+  'pageBrowser.batch.trashConfirmDescription_one':
+    'The page and everything under it moves to Trash. You can restore it from there.',
+  'pageBrowser.batch.trashConfirmDescription_other':
+    'The {{count}} pages and everything under them move to Trash. You can restore them from there.',
+  'pageBrowser.batch.trashConfirmAction': 'Move to Trash',
+  'pageBrowser.batch.trashUndone_one': 'Restored {{count}} page',
+  'pageBrowser.batch.trashUndone_other': 'Restored {{count}} pages',
+  'pageBrowser.batch.trashUndoFailed': 'Failed to restore the pages',
   'pageBrowser.batch.tagged_one': 'Tagged {{count}} page',
   'pageBrowser.batch.tagged_other': 'Tagged {{count}} pages',
   'pageBrowser.batch.addTagFailed': 'Failed to tag the selected pages',
@@ -414,7 +425,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.lastEdited.older': 'Edited long ago',
   'pageBrowser.filter.apply': 'Apply',
   'pageBrowser.filter.back': 'Back',
-  'pageBrowser.filter.tagPlaceholder': 'Tag id',
   'pageBrowser.filter.pathPlaceholder': 'e.g. Projects/*',
   'pageBrowser.filter.propertyKeyPlaceholder': 'Property key',
   'pageBrowser.filter.propertyValuePlaceholder': 'Value',
@@ -458,7 +468,7 @@ export const pages: Record<string, string> = {
     'Nothing links to this page (it may still link out).',
   // Short descriptions for the value-bearing facets so they read
   // as clearly as the boolean ones in the Add-Filter popover.
-  'pageBrowser.filter.facetTagDesc': 'Pages tagged with a specific tag id.',
+  'pageBrowser.filter.facetTagDesc': 'Pages carrying the tag you pick.',
   'pageBrowser.filter.facetPathDesc': 'Pages whose path matches a glob pattern.',
   'pageBrowser.filter.facetHasPropertyDesc': 'Pages with a property matching a condition.',
   'pageBrowser.filter.facetLastEditedDesc': 'Pages edited within the chosen window.',
@@ -490,6 +500,8 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.linkPickPage': 'Pick a page…',
   'pageBrowser.filter.linkSearchPages': 'Search pages',
   'pageBrowser.filter.linkNoPages': 'No matching pages',
+  'pageBrowser.filter.tagSearchPlaceholder': 'Search tags',
+  'pageBrowser.filter.tagNoTags': 'No matching tags',
   'pageBrowser.filter.hasParentMatchingLabel': 'Parent matcher',
   'pageBrowser.filter.hasParentMatchingHint': 'Build the filter the parent block must satisfy.',
   'pageBrowser.filter.hasParentMatchingEmpty': 'Add at least one condition for the parent matcher.',

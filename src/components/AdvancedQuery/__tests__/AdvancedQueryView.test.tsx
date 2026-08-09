@@ -41,6 +41,24 @@ function makeResponse(over: Partial<AdvancedQueryResponse> = {}): AdvancedQueryR
 }
 
 /**
+ * The space's tags, as the id-emitting Tag facet picker lists them (#3339).
+ * `seededTagId(name)` is the ULID a leaf built by picking `name` compiles to.
+ */
+const TAG_ROWS = [
+  { tag_id: '01JTAGTOP', name: 'top', usage_count: 1, updated_at: null },
+  { tag_id: '01JTAGNESTED', name: 'nested', usage_count: 1, updated_at: null },
+  { tag_id: '01JTAGPROJECT', name: 'project', usage_count: 1, updated_at: null },
+  { tag_id: '01JTAGA', name: 'a', usage_count: 1, updated_at: null },
+  { tag_id: '01JTAGB', name: 'b', usage_count: 1, updated_at: null },
+  { tag_id: '01JTAGGONE', name: 'gone', usage_count: 1, updated_at: null },
+]
+function seededTagId(name: string): string {
+  const row = TAG_ROWS.find((r) => r.name === name)
+  if (!row) throw new Error(`no seeded tag named ${name}`)
+  return row.tag_id
+}
+
+/**
  * Route IPC by command. `run_advanced_query` resolves the supplied response;
  * `batch_resolve` resolves a single title so the result rows render a page link.
  */
@@ -51,6 +69,9 @@ function routeInvoke(response: AdvancedQueryResponse): void {
     // The SavedViews picker lists views on mount; default to an empty list so
     // it renders its empty state rather than a (second) error alert.
     if (cmd === 'query_by_property') return { items: [], next_cursor: null, has_more: false }
+    // The Tag facet is an id-emitting picker (#3339); serve the space's tags
+    // so a leaf can be added by NAME and compiles to the tag's ULID.
+    if (cmd === 'list_all_tags_in_space') return TAG_ROWS
     return null
   })
 }
@@ -67,6 +88,12 @@ beforeEach(() => {
     controlsBySpace: {},
     nextAddId: 0,
   })
+  // Tags are preloaded into the resolve cache on boot in production; seed it
+  // so an id-carrying tag chip renders the tag NAME (#3339).
+  useResolveStore.setState({ cache: new Map(), version: 0 })
+  useResolveStore
+    .getState()
+    .batchSet(TAG_ROWS.map((r) => ({ id: r.tag_id, title: r.name, deleted: false })))
   routeInvoke(makeResponse())
 })
 
@@ -203,8 +230,7 @@ describe('AdvancedQueryView', () => {
     // option, so the bare-text lookup is ambiguous.
     const popover = await screen.findByRole('dialog')
     await user.click(within(popover).getByText('Tag'))
-    await user.type(screen.getByLabelText('Tag id'), tag)
-    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await user.click(await within(popover).findByRole('button', { name: tag }))
   }
 
   it('adds a tag leaf and re-runs the query wrapping it as an And of a Leaf', async () => {
@@ -221,7 +247,7 @@ describe('AdvancedQueryView', () => {
           spaceId: SPACE_ID,
           filter: {
             type: 'And',
-            children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: 'project' } }],
+            children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: seededTagId('project') } }],
           },
           limit: 50,
         },
@@ -262,8 +288,8 @@ describe('AdvancedQueryView', () => {
           filter: {
             type: 'Or',
             children: [
-              { type: 'Leaf', primitive: { type: 'Tag', tag: 'a' } },
-              { type: 'Leaf', primitive: { type: 'Tag', tag: 'b' } },
+              { type: 'Leaf', primitive: { type: 'Tag', tag: seededTagId('a') } },
+              { type: 'Leaf', primitive: { type: 'Tag', tag: seededTagId('b') } },
             ],
           },
           limit: 50,
@@ -289,7 +315,7 @@ describe('AdvancedQueryView', () => {
             type: 'Not',
             child: {
               type: 'And',
-              children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: 'a' } }],
+              children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: seededTagId('a') } }],
             },
           },
           limit: 50,
@@ -317,8 +343,7 @@ describe('AdvancedQueryView', () => {
     await user.click(within(nestedGroup).getByRole('button', { name: 'Add filter' }))
     const popover = await screen.findByRole('dialog')
     await user.click(within(popover).getByText('Tag'))
-    await user.type(screen.getByLabelText('Tag id'), 'nested')
-    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await user.click(await within(popover).findByRole('button', { name: 'nested' }))
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('run_advanced_query', {
@@ -327,10 +352,12 @@ describe('AdvancedQueryView', () => {
           filter: {
             type: 'And',
             children: [
-              { type: 'Leaf', primitive: { type: 'Tag', tag: 'top' } },
+              { type: 'Leaf', primitive: { type: 'Tag', tag: seededTagId('top') } },
               {
                 type: 'And',
-                children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: 'nested' } }],
+                children: [
+                  { type: 'Leaf', primitive: { type: 'Tag', tag: seededTagId('nested') } },
+                ],
               },
             ],
           },
@@ -629,6 +656,7 @@ describe('AdvancedQueryView', () => {
         if (cmd === 'run_advanced_query') return makeResponse()
         if (cmd === 'batch_resolve') return [{ id: 'PAGE001', title: 'Parent page' }]
         if (cmd === 'list_all_pages_in_space') return [{ id: 'PAGE_X', content: 'Roadmap' }]
+        if (cmd === 'list_all_tags_in_space') return TAG_ROWS
         return null
       })
     })
@@ -698,8 +726,7 @@ describe('AdvancedQueryView', () => {
         return all.at(-1) as HTMLElement
       })
       await user.click(within(inner).getByText('Tag'))
-      await user.type(within(inner).getByLabelText('Tag id'), 'project')
-      await user.click(within(inner).getByRole('button', { name: 'Apply' }))
+      await user.click(await within(inner).findByRole('button', { name: 'project' }))
 
       // Apply the has-parent leaf.
       await waitFor(() =>
@@ -728,7 +755,9 @@ describe('AdvancedQueryView', () => {
                     type: 'HasParentMatching',
                     matcher: {
                       type: 'And',
-                      children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: 'project' } }],
+                      children: [
+                        { type: 'Leaf', primitive: { type: 'Tag', tag: seededTagId('project') } },
+                      ],
                     },
                   },
                 },

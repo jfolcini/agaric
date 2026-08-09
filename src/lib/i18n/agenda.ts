@@ -151,4 +151,10 @@ export const agenda: Record<string, string> = {
   'agenda.day.empty': 'No blocks for {{date}}.',
   'agenda.day.addBlock': 'Add block',
   'unfinished.loading': 'Loading unfinished tasks',
+  'unfinished.countPartial': '{{n}}+',
+  'unfinished.countPartialLabel': 'At least {{n}} unfinished tasks — expand to load the rest',
+  'unfinished.loadError': 'Could not load unfinished tasks.',
+  'unfinished.partialLoadError': 'Some unfinished tasks could not be loaded.',
+  'unfinished.retry': 'Retry',
+  'unfinished.retryLabel': 'Retry loading unfinished tasks',
 }

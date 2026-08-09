@@ -6,11 +6,13 @@
  * so the navigational "pages under this page" affordance lives near the
  * Editor body, not buried under the references stack (Bug 2).
  *
- * Data source: `listAllPagesInSpace(currentSpaceId)` — same IPC the
- * `[[ picker preload uses, so the data is usually already warm in the
- * resolve cache. The component does its own fetch on mount because it
- * needs the full `{ id, content }[]` shape (not just resolved titles),
- * and it needs to react to `pageTitle` / space changes deterministically.
+ * Data source: `listPagesWithMetadata` narrowed by a `PathGlob` on the
+ * page's own namespace prefix (#3342). It used to call the explicitly
+ * unpaginated `listAllPagesInSpace`, which pulled EVERY live page row in
+ * the space on every page open and on every title edit, only to keep the
+ * handful prefixed `pageTitle + '/'` — and to `return null` when there
+ * were none. The backend reserves that no-pagination command for callers
+ * that genuinely need every page (markdown export, graph rendering).
  *
  * Empty-descendants behaviour: when the filtered list contains only the
  * current page itself (or nothing), the section returns `null` and the
@@ -31,11 +33,76 @@ import { useTranslation } from 'react-i18next'
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
 import { unwrap } from '@/lib/app-error'
-import type { PageHeading } from '@/lib/bindings'
+import type { PageResponse, PageWithMetadataRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
+import { paginationLimit } from '@/lib/safe-limit'
 import { useSpaceStore } from '@/stores/space'
+
+/** The `{ id, content }` pair `buildPageTree` consumes. */
+interface PageRef {
+  id: string
+  content: string | null
+}
+
+/**
+ * Characters that would change how the backend parses a glob entry:
+ * `prepare_globs` splits an entry on top-level commas, brace-expands
+ * `{a,b}`, treats `[...]` as a character class, and REJECTS unbalanced
+ * brackets / nested braces / escapes with a `Validation` error. A page
+ * title is arbitrary user text, so interpolating it verbatim would make
+ * `Notes, drafts` silently match two unrelated globs and `Notes [2026]`
+ * fail the IPC outright.
+ */
+const GLOB_SIGNIFICANT = /[,{}[\]\\*?]/g
+
+/**
+ * A glob matching AT LEAST every page under `pageTitle`'s namespace.
+ *
+ * Each glob-significant character is replaced by `?` (exactly one
+ * character), which can only ever widen the match — never drop a real
+ * descendant. Matching is also case-insensitive on the backend
+ * (`LOWER(title) GLOB ?`). Both are fine because the result is still run
+ * through `filterDescendantPages`, the exact prefix test this component
+ * already applied to the whole-space list; the glob is a server-side
+ * pre-filter, not the predicate.
+ */
+function descendantGlob(pageTitle: string): string {
+  return `${pageTitle.replace(GLOB_SIGNIFICANT, '?')}/*`
+}
+
+/**
+ * Runaway guard for the cursor drain. A namespace deep enough to exceed
+ * 2000 descendants is past the point where a flat tree panel is usable,
+ * and the cap keeps a non-advancing cursor from spinning forever.
+ */
+const MAX_DESCENDANT_PAGES = 10
+
+/** Every page under `pageTitle`'s namespace, drained across the cursor chain. */
+async function fetchDescendantPages(spaceId: string, pageTitle: string): Promise<PageRef[]> {
+  const out: PageRef[] = []
+  let cursor: string | null = null
+  for (let page = 0; page < MAX_DESCENDANT_PAGES; page += 1) {
+    const res: PageResponse<PageWithMetadataRow> = await commands
+      .listPagesWithMetadata(
+        {
+          spaceId,
+          filters: [{ type: 'PathGlob', pattern: descendantGlob(pageTitle), exclude: false }],
+        } as Parameters<typeof commands.listPagesWithMetadata>[0],
+        cursor,
+        paginationLimit(200),
+      )
+      .then(unwrap)
+    // Defensive narrowing: some smoke-test mocks resolve `invoke` with a
+    // non-array shape, matching the `Array.isArray` guard used elsewhere.
+    const items = Array.isArray(res.items) ? res.items : []
+    for (const row of items) out.push({ id: row.id, content: row.content })
+    if (!res.has_more || res.next_cursor == null) break
+    cursor = res.next_cursor
+  }
+  return out
+}
 
 export interface PagesTreeSectionProps {
   pageId: string
@@ -52,10 +119,7 @@ export interface PagesTreeSectionProps {
  * hybrid `Notes` page node). Callers then drop the anchor row by only
  * rendering descendants — see `descendantNodes` below.
  */
-function filterDescendantPages(
-  pages: ReadonlyArray<PageHeading>,
-  pageTitle: string,
-): PageHeading[] {
+function filterDescendantPages(pages: ReadonlyArray<PageRef>, pageTitle: string): PageRef[] {
   const prefix = `${pageTitle}/`
   return pages.filter((p) => {
     const content = p.content ?? ''
@@ -83,13 +147,13 @@ function descendantNodes(tree: PageTreeNode[], pageTitle: string): PageTreeNode[
 }
 
 export function PagesTreeSection({
-  pageId: _pageId,
+  pageId,
   pageTitle,
   onNavigateToPage,
 }: PagesTreeSectionProps): React.ReactElement | null {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const [pages, setPages] = useState<PageHeading[]>([])
+  const [pages, setPages] = useState<PageRef[]>([])
   // Collapsed by default per plan §"Per-page collapse state" — the
   // panel is informational, not the primary navigation surface, so
   // hidden-by-default avoids stacking it on top of LinkedReferences
@@ -107,17 +171,11 @@ export function PagesTreeSection({
       return
     }
     let cancelled = false
-    commands
-      .listAllPagesInSpace({ kind: 'active', space_id: currentSpaceId }, null)
-      .then(unwrap)
-      .then((rows) => {
-        if (cancelled) return
-        // Defensive narrowing: some smoke-test mocks resolve `invoke`
-        // with a non-array shape; the upstream contract is `PageHeading[]`
-        // but matches the `Array.isArray` guard pattern used elsewhere.
-        setPages(Array.isArray(rows) ? rows : [])
-      })
-      .catch((err) => {
+    void (async () => {
+      try {
+        const rows = await fetchDescendantPages(currentSpaceId, pageTitle)
+        if (!cancelled) setPages(rows)
+      } catch (err) {
         if (cancelled) return
         logger.error(
           'PagesTreeSection',
@@ -125,18 +183,25 @@ export function PagesTreeSection({
           { spaceId: currentSpaceId, pageTitle },
           err,
         )
-      })
+      }
+    })()
     return () => {
       cancelled = true
     }
   }, [currentSpaceId, pageTitle])
 
   const children = useMemo(() => {
-    const descendants = filterDescendantPages(pages, pageTitle)
+    // The glob matches `pageTitle/...` only, so re-add the page itself as the
+    // tree anchor — `buildPageTree` needs it to emit a hybrid page node rather
+    // than a synthetic namespace node (see `filterDescendantPages`).
+    const descendants = filterDescendantPages(
+      [{ id: pageId, content: pageTitle }, ...pages],
+      pageTitle,
+    )
     if (descendants.length === 0) return []
     const tree = buildPageTree(descendants.map((p) => ({ id: p.id, content: p.content })))
     return descendantNodes(tree, pageTitle)
-  }, [pages, pageTitle])
+  }, [pages, pageId, pageTitle])
 
   // Hide the entire section when there are zero descendants. The plan
   // Mandates `return null` here — "explain why empty" rule

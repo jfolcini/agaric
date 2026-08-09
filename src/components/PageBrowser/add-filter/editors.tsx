@@ -6,7 +6,7 @@
  * `MultiSelectGroup` are co-located here.
  */
 
-import { FileSearch } from 'lucide-react'
+import { FileSearch, Tag as TagIcon } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -27,71 +27,12 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { unwrap } from '@/lib/app-error'
-import type { PageHeading } from '@/lib/bindings'
+import type { PageHeading, TagCacheRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
-
-export function InlineValueEditor({
-  label,
-  value,
-  onChange,
-  onBack,
-  onApply,
-  applyLabel,
-  backLabel,
-  placeholder,
-}: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-  onBack: () => void
-  onApply: () => void
-  applyLabel: string
-  backLabel: string
-  placeholder: string
-}): React.ReactElement {
-  // D14: a required-input editor is a dead-end when Apply silently no-ops on
-  // empty input. Gate both Apply (click) and Enter-to-apply on a non-blank
-  // value so the affordance can't fail silently.
-  const canApply = value.trim().length > 0
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="px-1 text-xs font-medium">{label}</span>
-      <Input
-        // oxlint-disable-next-line jsx-a11y/no-autofocus -- this sub-editor renders only after the user opens it from the filter menu; focusing the single required text input lets them type the value immediately without an extra click/tab
-        autoFocus
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            if (canApply) onApply()
-          }
-        }}
-        placeholder={placeholder}
-        aria-label={placeholder}
-      />
-      <div className="flex justify-between gap-2">
-        <Button type="button" variant="ghost" size="xs" onClick={onBack}>
-          {backLabel}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          onClick={onApply}
-          disabled={!canApply}
-          aria-disabled={!canApply}
-        >
-          {applyLabel}
-        </Button>
-      </div>
-    </div>
-  )
-}
 
 /**
  * Editor for the `PathGlob` facet. Mirrors `InlineValueEditor`'s UX (D21 —
@@ -658,6 +599,107 @@ export function LinkTargetEditor({
                     The chip resolves the stored id→title via the SAME resolver
                     after selection. */}
                 {labelFor(page)}
+              </button>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+      <div className="flex justify-start">
+        <Button type="button" variant="ghost" size="xs" onClick={onBack}>
+          {t('pageBrowser.filter.back')}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Editor for the `Tag` facet. The primitive compiles to `tag_id = ?` on both
+ * the Pages and Search surfaces, so the value has to be a tag ULID — and no
+ * surface shows the user one. The facet used to be a bare text box labelled
+ * "Tag id", which made it effectively uncompletable: typing the tag NAME
+ * compiled to a filter that matched nothing (#3339). This picker searches by
+ * name (the same `listAllTagsInSpace` source the Pages batch toolbar uses) and
+ * emits the row's id, mirroring `LinkTargetEditor`'s search-by-title /
+ * emit-the-id contract.
+ */
+export function TagPickerEditor({
+  label,
+  onSelect,
+  onBack,
+}: {
+  label: string
+  onSelect: (tagId: string) => void
+  onBack: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const [search, setSearch] = useState('')
+  const [tags, setTags] = useState<TagCacheRow[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    if (currentSpaceId == null) {
+      setTags([])
+      setLoading(false)
+      return () => {
+        cancelled = true
+      }
+    }
+    commands
+      .listAllTagsInSpace({ kind: 'active', space_id: currentSpaceId })
+      .then(unwrap)
+      .then((rows) => {
+        if (!cancelled) setTags(rows)
+      })
+      .catch((err: unknown) => {
+        logger.error('AddFilterPopover', 'Failed to load tags for tag picker', undefined, err)
+        if (!cancelled) setTags([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [currentSpaceId])
+
+  const filtered = useMemo(() => {
+    if (!search) return tags
+    return tags.filter((tag) => matchesSearchFolded(tag.name, search))
+  }, [tags, search])
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="tag-picker-editor">
+      <span className="px-1 text-xs font-medium">{label}</span>
+      <Input
+        className="h-8 text-xs"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={t('pageBrowser.filter.tagSearchPlaceholder')}
+        aria-label={t('pageBrowser.filter.tagSearchPlaceholder')}
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- this picker renders only after the user opens it from the filter menu; focusing the search input lets them filter tags immediately without an extra click/tab
+        autoFocus
+      />
+      <ScrollArea className="max-h-48">
+        <div className="flex flex-col gap-0.5" aria-busy={loading}>
+          {loading ? (
+            <div className="flex justify-center py-3">
+              <Spinner size="sm" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <EmptyState icon={TagIcon} message={t('pageBrowser.filter.tagNoTags')} compact />
+          ) : (
+            filtered.map((tag) => (
+              <button
+                key={tag.tag_id}
+                type="button"
+                className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent focus-ring-visible truncate"
+                onClick={() => onSelect(tag.tag_id)}
+              >
+                {tag.name}
               </button>
             ))
           )}

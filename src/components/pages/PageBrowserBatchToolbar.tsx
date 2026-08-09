@@ -38,6 +38,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -47,6 +48,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useStarredPages } from '@/hooks/useStarredPages'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import type { TagCacheRow } from '@/lib/tauri'
@@ -105,6 +108,7 @@ export function PageBrowserBatchToolbar({
   // for the two date keys the native date input drives it (ISO YYYY-MM-DD).
   const [propertyValue, setPropertyValue] = useState<string>('')
   const [busy, setBusy] = useState(false)
+  const [trashConfirmOpen, setTrashConfirmOpen] = useState(false)
 
   // Human labels for the property keys and their reserved value options.
   const propertyLabels: Record<PropertyKey, string> = {
@@ -183,26 +187,48 @@ export function PageBrowserBatchToolbar({
     setPropertyValue('')
   }, [])
 
+  // Undo for the batch trash. The selection is cleared as soon as the trash
+  // succeeds, so the id list is captured at call time rather than read back off
+  // `selectedIds`. `restoreBlocksByIds` is the same list-accepting IPC
+  // `usePageDeleteAction.handleUndo` uses; it cascade-restores each root's
+  // subtree, which is exactly what `deleteBlocksByIds` cascaded away.
+  const handleUndoTrash = useCallback(
+    (ids: string[]) => {
+      commands
+        .restoreBlocksByIds(ids)
+        .then(unwrap)
+        .then(() => {
+          onMutated()
+          notify.success(t('pageBrowser.batch.trashUndone', { count: ids.length }))
+        })
+        .catch((err: unknown) => {
+          logger.error('PageBrowserBatchToolbar', 'bulk trash undo failed', { ids }, err)
+          notify.error(t('pageBrowser.batch.trashUndoFailed'))
+        })
+    },
+    [onMutated, t],
+  )
+
   const handleTrash = useCallback(async () => {
     if (selectedIds.length === 0 || busy) return
+    const ids = [...selectedIds]
     setBusy(true)
     try {
-      const count = await deleteBlocksByIds(selectedIds)
+      const count = await deleteBlocksByIds(ids)
       onClearSelection()
       onMutated()
-      notify.success(t('pageBrowser.batch.trashed', { count }))
+      notify.success(t('pageBrowser.batch.trashed', { count }), {
+        action: { label: t('action.undo'), onClick: () => handleUndoTrash(ids) },
+      })
     } catch (err) {
-      logger.error(
-        'PageBrowserBatchToolbar',
-        'bulk trash failed',
-        { count: selectedIds.length },
-        err,
-      )
-      notify.error(t('pageBrowser.batch.trashFailed'))
+      logger.error('PageBrowserBatchToolbar', 'bulk trash failed', { count: ids.length }, err)
+      notify.retry(t('pageBrowser.batch.trashFailed'), () => {
+        void handleTrash()
+      })
     } finally {
       setBusy(false)
     }
-  }, [selectedIds, busy, onClearSelection, onMutated, t])
+  }, [selectedIds, busy, onClearSelection, onMutated, handleUndoTrash, t])
 
   const handleAddTag = useCallback(async () => {
     if (selectedIds.length === 0 || selectedTagId === '' || busy) return
@@ -310,13 +336,29 @@ export function PageBrowserBatchToolbar({
       <Button
         variant="destructive"
         size="sm"
-        onClick={handleTrash}
+        onClick={() => setTrashConfirmOpen(true)}
         disabled={busy}
         data-testid="page-batch-trash-btn"
       >
         <Trash2 className="h-3.5 w-3.5" />
         {t('pageBrowser.batch.trash')}
       </Button>
+
+      {/* Ctrl/Cmd+A selects every loaded page and the backend cascades the
+          soft-delete over each selected root's whole subtree, so this gets the
+          same confirm the single-page delete and the Trash batch actions get.
+          Renders nothing inline while closed (Radix portals the open dialog). */}
+      <ConfirmDialog
+        open={trashConfirmOpen}
+        onOpenChange={setTrashConfirmOpen}
+        titleKey="pageBrowser.batch.trashConfirmTitle"
+        descriptionKey="pageBrowser.batch.trashConfirmDescription"
+        confirmKey="pageBrowser.batch.trashConfirmAction"
+        values={{ count: selectedIds.length }}
+        variant="destructive"
+        onConfirm={handleTrash}
+        className="page-batch-trash-confirm"
+      />
 
       {/* Star / unstar the whole selection (pure localStorage). One toggle:
           unstars when every selected page is already starred, else stars. */}

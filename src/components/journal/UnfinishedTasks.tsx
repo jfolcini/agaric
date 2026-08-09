@@ -15,6 +15,7 @@ import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHead
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useToday } from '@/hooks/useToday'
@@ -211,7 +212,7 @@ export function UnfinishedTasks({
     () => ['unfinishedTasks', currentSpaceId, todayStr],
     [currentSpaceId, todayStr],
   )
-  const { data, isFetching, isError, hasNextPage, fetchNextPage, isFetchingNextPage } =
+  const { data, isFetching, isError, hasNextPage, fetchNextPage, isFetchingNextPage, refetch } =
     useInfiniteQuery(
       {
         queryKey,
@@ -255,21 +256,30 @@ export function UnfinishedTasks({
   // forever (#757). This replaces the old hook's internal drain loop: each
   // settled page re-runs this effect, which fetches the next until the backend
   // reports no more pages (or the cap is hit).
+  //
+  // #3342 — the drain is gated on the panel being EXPANDED. The rows only
+  // exist inside `{!collapsed && …}`, and the panel is collapsed by default,
+  // so a collapsed panel used to pay up to 25 sequential IPCs (and a
+  // batch-resolve over every distinct page id) on every journal mount purely
+  // to make the header badge exact. Collapsed now costs one page, and the
+  // badge says "N+" while pages remain unloaded rather than lying about the
+  // total.
+  const shouldDrain = !collapsed
+  const pageCount = data?.pages.length ?? 0
+  // `!isError` stops the drain the moment a page rejects: `retry` is off on
+  // the client, so a failed `fetchNextPage` leaves `hasNextPage` true (derived
+  // from the last GOOD page) but will not re-fetch — without this guard the
+  // effect would keep re-issuing a no-op `fetchNextPage` and, worse, the
+  // `loading` derivation below would hang on the skeleton forever.
+  const draining = shouldDrain && !isError && hasNextPage && pageCount < MAX_UNFINISHED_PAGES
   useEffect(() => {
-    // `!isError` stops the drain the moment a page rejects: `retry` is off on
-    // the client, so a failed `fetchNextPage` leaves `hasNextPage` true (derived
-    // from the last GOOD page) but will not re-fetch — without this guard the
-    // effect would keep re-issuing a no-op `fetchNextPage` and, worse, the
-    // `loading` derivation below would hang on the skeleton forever.
-    if (
-      !isError &&
-      hasNextPage &&
-      !isFetchingNextPage &&
-      (data?.pages.length ?? 0) < MAX_UNFINISHED_PAGES
-    ) {
-      void fetchNextPage()
-    }
-  }, [isError, hasNextPage, isFetchingNextPage, data, fetchNextPage])
+    // `pageCount` is what advances the chain: a page settling is the event
+    // that must re-run this effect (`isFetchingNextPage` can flip true→false
+    // inside a single batched commit and be missed).
+    if (!shouldDrain || isError || !hasNextPage || isFetchingNextPage) return
+    if (pageCount >= MAX_UNFINISHED_PAGES) return
+    void fetchNextPage()
+  }, [shouldDrain, isError, hasNextPage, isFetchingNextPage, pageCount, fetchNextPage])
 
   const blocks = useMemo<BlockRow[]>(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
 
@@ -284,12 +294,12 @@ export function UnfinishedTasks({
   // skeleton — the old drain propagated the error and settled `loading` false,
   // degrading to the empty/partial render instead. Traces:
   //   • first load        → isFetching true                        → true
-  //   • between-pages gap  → hasNextPage true & pages<25 & !error   → true
+  //   • between-pages gap  → draining true                          → true
   //   • fully drained      → hasNextPage false & isFetching false   → false
-  //   • cap hit (pages≥25) → second clause false → loading=isFetching → false
-  //   • mid-drain failure  → isError true → second clause false → isFetching false → false
-  const loading =
-    isFetching || (!isError && hasNextPage && (data?.pages.length ?? 0) < MAX_UNFINISHED_PAGES)
+  //   • cap hit (pages≥25) → draining false → loading=isFetching    → false
+  //   • mid-drain failure  → isError true → draining false          → false
+  //   • collapsed          → draining false → settles after page 1  → false
+  const loading = isFetching || draining
 
   const { handleBlockClick, handleBlockKeyDown } = useBlockNavigation({
     onNavigateToPage,
@@ -355,6 +365,31 @@ export function UnfinishedTasks({
     )
   }
 
+  // A *failed* load gets an explicit error + retry affordance rather than the
+  // `null` below (#3339, mirroring DonePanel and the #1345 AgendaView fix):
+  // returning null made an IPC failure indistinguishable from "nothing is
+  // overdue", which for a task app means silently dropping overdue work.
+  if (isError && blocks.length === 0) {
+    return (
+      <section aria-label={t('unfinished.sectionLabel')} data-testid="unfinished-tasks-error">
+        <div
+          className="unfinished-tasks-error flex items-center gap-2 px-2 py-2 text-sm text-muted-foreground"
+          role="alert"
+        >
+          <span>{t('unfinished.loadError')}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refetch()}
+            aria-label={t('unfinished.retryLabel')}
+          >
+            {t('unfinished.retry')}
+          </Button>
+        </div>
+      </section>
+    )
+  }
+
   // Don't render section if no unfinished tasks
   if (blocks.length === 0) return null
 
@@ -362,10 +397,36 @@ export function UnfinishedTasks({
     <section aria-label={t('unfinished.sectionLabel')} data-testid="unfinished-tasks">
       <CollapsiblePanelHeader isCollapsed={collapsed} onToggle={handleToggle}>
         {t('unfinished.title')}
-        <Badge tone="secondary" className="ml-2">
-          {blocks.length}
+        <Badge
+          tone="secondary"
+          className="ml-2"
+          {...(hasNextPage && {
+            'aria-label': t('unfinished.countPartialLabel', { n: blocks.length }),
+          })}
+        >
+          {hasNextPage ? t('unfinished.countPartial', { n: blocks.length }) : blocks.length}
         </Badge>
       </CollapsiblePanelHeader>
+
+      {/* Mid-drain failure: pages 1..k are committed and rendered, but the
+          list is truncated. Say so rather than presenting it as complete. */}
+      {isError && (
+        <div
+          className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground"
+          role="alert"
+          data-testid="unfinished-tasks-partial-error"
+        >
+          <span>{t('unfinished.partialLoadError')}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refetch()}
+            aria-label={t('unfinished.retryLabel')}
+          >
+            {t('unfinished.retry')}
+          </Button>
+        </div>
+      )}
 
       {!collapsed && (
         <div className="mt-1 space-y-3 animate-in fade-in-0 duration-normal">

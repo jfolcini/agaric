@@ -63,6 +63,7 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
+const mockedToastSuccess = vi.mocked(toast.success)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -78,6 +79,7 @@ beforeEach(() => {
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.
   localStorage.removeItem('agaric:page-browser-filters')
+  localStorage.removeItem('agaric:pages:savedViews:v1')
   usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
   // Phase 2 — PageBrowser now gates its render and page query
   // on `useSpaceStore.isReady`. Seed the store so tests exercise the
@@ -125,6 +127,77 @@ describe('PageBrowser', () => {
       }
     }
 
+    // ── #3339 — saved-view delete is undoable ───────────────────────────
+    // The delete button sits one row-item away from the apply target and the
+    // store is localStorage-only (no Trash, no restore path), so a mis-click
+    // used to destroy the whole {name, sort, density, filters} tuple for good.
+    it('#3339: deleting a saved view offers an Undo that restores the tuple', async () => {
+      const user = userEvent.setup()
+      const savedView = {
+        id: 'VIEW_1',
+        name: 'My view',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        sort: 'alphabetical',
+        density: 'regular',
+        filters: [{ type: 'Orphan' }],
+      }
+      localStorage.setItem(
+        'agaric:pages:savedViews:v1',
+        JSON.stringify({ schemaVersion: 1, views: [savedView] }),
+      )
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [metaPage('P1', 'Apple')],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return pageRowInvokeFallback(cmd)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      await user.click(await screen.findByTestId('saved-views-trigger'))
+      await user.click(
+        await screen.findByRole('button', {
+          name: t('pageBrowser.savedViews.delete', { name: 'My view' }),
+        }),
+      )
+
+      await waitFor(() => {
+        expect(mockedToastSuccess).toHaveBeenCalledWith(
+          t('pageBrowser.savedViews.deleted', { name: 'My view' }),
+          expect.objectContaining({
+            action: expect.objectContaining({ label: t('action.undo') }),
+          }),
+        )
+      })
+
+      // The view is gone from storage…
+      expect(JSON.parse(localStorage.getItem('agaric:pages:savedViews:v1') ?? '{}').views).toEqual(
+        [],
+      )
+
+      // …until Undo puts the exact tuple back.
+      const call = mockedToastSuccess.mock.calls.at(-1)
+      const undo = (call?.[1] as { action?: { onClick?: () => void } } | undefined)?.action
+      undo?.onClick?.()
+
+      const restored = JSON.parse(localStorage.getItem('agaric:pages:savedViews:v1') ?? '{}')
+        .views as Array<Record<string, unknown>>
+      expect(restored).toHaveLength(1)
+      expect(restored[0]).toMatchObject({
+        name: 'My view',
+        sort: 'alphabetical',
+        density: 'regular',
+        filters: [{ type: 'Orphan' }],
+      })
+    })
+
     // ── E5 — tag chip resolves the id to a tag name ─────────────────────
     it('E5: a tag chip shows the resolved tag name, not the raw id', async () => {
       const user = userEvent.setup()
@@ -133,6 +206,10 @@ describe('PageBrowser', () => {
       useResolveStore.getState().set('01TAGURGENT', 'urgent', false)
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_all_tags_in_space')
+          return Promise.resolve([
+            { tag_id: '01TAGURGENT', name: 'urgent', usage_count: 1, updated_at: null },
+          ])
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
             items: [metaPage('P1', 'Apple')],
@@ -150,9 +227,7 @@ describe('PageBrowser', () => {
       // Add a Tag chip carrying the seeded tag id.
       await user.click(screen.getByRole('button', { name: 'Add filter' }))
       await user.click(await screen.findByText(t('pageBrowser.filter.facetTag')))
-      const input = await screen.findByPlaceholderText(t('pageBrowser.filter.tagPlaceholder'))
-      await user.type(input, '01TAGURGENT')
-      await user.click(screen.getByRole('button', { name: t('pageBrowser.filter.apply') }))
+      await user.click(await screen.findByRole('button', { name: 'urgent' }))
 
       // The chip label uses the resolved name ("tag: urgent"), not the id.
       await waitFor(() => {
@@ -169,6 +244,10 @@ describe('PageBrowser', () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_all_tags_in_space')
+          return Promise.resolve([
+            { tag_id: '01UNKNOWNTAG', name: 'mystery', usage_count: 1, updated_at: null },
+          ])
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
             items: [metaPage('P1', 'Apple')],
@@ -185,9 +264,7 @@ describe('PageBrowser', () => {
 
       await user.click(screen.getByRole('button', { name: 'Add filter' }))
       await user.click(await screen.findByText(t('pageBrowser.filter.facetTag')))
-      const input = await screen.findByPlaceholderText(t('pageBrowser.filter.tagPlaceholder'))
-      await user.type(input, '01UNKNOWNTAG')
-      await user.click(screen.getByRole('button', { name: t('pageBrowser.filter.apply') }))
+      await user.click(await screen.findByRole('button', { name: 'mystery' }))
 
       // Unresolved → raw id, not the resolve store's `[[…]]` placeholder.
       await waitFor(() => {
@@ -444,6 +521,10 @@ describe('PageBrowser', () => {
       useResolveStore.getState().set('01TAGURGENT', 'urgent', false)
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_all_tags_in_space')
+          return Promise.resolve([
+            { tag_id: '01TAGURGENT', name: 'urgent', usage_count: 1, updated_at: null },
+          ])
         if (cmd === 'list_pages_with_metadata') {
           return Promise.resolve({
             items: [metaPage('P1', 'Apple')],
@@ -460,9 +541,7 @@ describe('PageBrowser', () => {
 
       await user.click(screen.getByRole('button', { name: 'Add filter' }))
       await user.click(await screen.findByText(t('pageBrowser.filter.facetTag')))
-      const input = await screen.findByPlaceholderText(t('pageBrowser.filter.tagPlaceholder'))
-      await user.type(input, '01TAGURGENT')
-      await user.click(screen.getByRole('button', { name: t('pageBrowser.filter.apply') }))
+      await user.click(await screen.findByRole('button', { name: 'urgent' }))
       await screen.findByText(t('pageBrowser.filter.summaryTag', { tag: 'urgent' }))
 
       await waitFor(
