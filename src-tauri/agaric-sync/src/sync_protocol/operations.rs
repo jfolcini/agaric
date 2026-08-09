@@ -28,6 +28,164 @@ pub async fn insert_replicated_op(
     agaric_engine::dag::ingest_replicated_record(pool, &record, &origin).await
 }
 
+/// What one pull session's buffered audit batch did on the way into `op_log`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct BatchIngestOutcome {
+    /// Records newly landed in `op_log`.
+    pub ingested: usize,
+    /// Records already held (idempotent redelivery — the `INSERT OR IGNORE`
+    /// matched an existing `(device_id, seq)`).
+    pub already_held: usize,
+    /// Records deliberately abandoned: the record *itself* is unusable, so
+    /// re-shipping it would fault identically forever. The frontier is
+    /// allowed to advance past these.
+    pub rejected: usize,
+    /// Records left on the peer for the next session because a transient
+    /// failure hit their device's chain earlier in this batch. Nothing was
+    /// written for them, so the frontier we advertise for that device still
+    /// sits below them and the peer re-ships them.
+    pub deferred: usize,
+}
+
+/// #3325 — ingest one pull session's buffered audit records, keeping the
+/// per-device frontier we will advertise *contiguous* with what we actually
+/// hold.
+///
+/// The subtlety this function exists for is that the frontier is not a cursor
+/// anyone maintains. It is derived, after the fact, from the op log itself:
+/// [`get_local_heads`] reports `MAX(seq)` per device, and the peer's
+/// [`collect_ops_for_peer`] ships exactly `seq > that`. The log's contents
+/// *are* the acknowledgement, so any record skipped while a later record from
+/// the same device lands is skipped permanently — the next session's
+/// `HeadExchange` advertises the higher seq and the peer never offers the gap
+/// again. The old loop skipped every failure alike and asserted in a comment
+/// that "the puller's frontier for that device does not advance, so it
+/// re-ships next session", which holds only when the failing record happens to
+/// be the highest seq that device contributed to the batch.
+///
+/// The two failure classes want opposite treatment, and conflating them is
+/// what made the old behaviour wrong in one direction and right in the other:
+///
+/// * **Transient** ([`AppError::Database`], [`AppError::PoolTimedOut`]) — a
+///   busy writer, a cache rebuild the pre-ingest flush did not fully settle.
+///   The record is fine and will land next time, so we must NOT advance past
+///   it: this device's remaining records are dropped for the session, leaving
+///   our `MAX(seq)` for it at the last seq we truly hold. The peer re-offers
+///   from the gap. The cost is one deferred session for that device's tail;
+///   the alternative is a hole in the log that nothing ever fills.
+/// * **Corrupt** (hash mismatch, NUL byte in a hashed field, `SetProperty`
+///   domain violation) — the bytes are unusable and every future re-ship of
+///   them is unusable in exactly the same way. Stalling the device here would
+///   re-fetch and re-reject the same record every session forever while
+///   permanently blocking that device's later ops behind it. So we skip it and
+///   let the frontier advance past it, deliberately. The resulting hash-chain
+///   discontinuity is already a first-class state on this path:
+///   `IngestProfile::Audit` lands an unresolved `parent_seqs` pointer with a
+///   `warn!` rather than rejecting it, because peer-side compaction produces
+///   legitimate gaps too.
+///
+/// Skipping the remainder of a stalled device is scoped per `device_id`, never
+/// globally — the frontiers are independent, and one busy write must not cost
+/// us every other device's records. It is also independent of the order the
+/// records arrive in: once a device is stalled, everything further from that
+/// device is deferred whatever its seq, which is at worst more conservative
+/// than necessary. (In practice they arrive `(device_id, seq)`-ascending, the
+/// order [`collect_ops_for_peer`] emits and the order the Audit profile's
+/// parent-gap relaxation already relies on.)
+pub async fn ingest_replicated_batch(
+    pool: &SqlitePool,
+    records: &[OpTransfer],
+    local_device_id: &str,
+    remote_device_id: &str,
+) -> BatchIngestOutcome {
+    ingest_replicated_batch_inner(pool, records, local_device_id, remote_device_id, &|_| None).await
+}
+
+/// [`ingest_replicated_batch`] with a synthetic per-record failure injected.
+///
+/// The policy above turns on *which* error a record produces, and the error
+/// that matters most — a transient `SQLITE_BUSY` on one record while its
+/// successors succeed — cannot be provoked from outside: a lock held long
+/// enough to fault one record faults them all, and `INSERT OR IGNORE` swallows
+/// every constraint violation that might otherwise stand in for it. So the
+/// seam is explicit. `fault` returns `Some(e)` to fail a record *instead of*
+/// writing it, `None` to let the real write proceed.
+///
+/// Gated to test builds (and the `test-util` feature, since the tests that
+/// drive it live in the app crate across a crate boundary), so no production
+/// path can reach it.
+#[cfg(any(test, feature = "test-util"))]
+pub async fn ingest_replicated_batch_with_fault(
+    pool: &SqlitePool,
+    records: &[OpTransfer],
+    local_device_id: &str,
+    remote_device_id: &str,
+    fault: &(dyn Fn(&OpTransfer) -> Option<AppError> + Sync),
+) -> BatchIngestOutcome {
+    ingest_replicated_batch_inner(pool, records, local_device_id, remote_device_id, fault).await
+}
+
+async fn ingest_replicated_batch_inner(
+    pool: &SqlitePool,
+    records: &[OpTransfer],
+    local_device_id: &str,
+    remote_device_id: &str,
+    fault: &(dyn Fn(&OpTransfer) -> Option<AppError> + Sync),
+) -> BatchIngestOutcome {
+    use std::collections::HashSet;
+
+    let mut outcome = BatchIngestOutcome::default();
+    // Devices whose chain hit a transient failure this session; their
+    // remaining records are left for the peer to re-ship.
+    let mut stalled: HashSet<&str> = HashSet::new();
+
+    for record in records {
+        if stalled.contains(record.device_id.as_str()) {
+            outcome.deferred += 1;
+            continue;
+        }
+
+        let result = match fault(record) {
+            Some(e) => Err(e),
+            None => insert_replicated_op(pool, record).await,
+        };
+
+        match result {
+            Ok(true) => outcome.ingested += 1,
+            Ok(false) => outcome.already_held += 1,
+            Err(e @ (AppError::Database(_) | AppError::PoolTimedOut)) => {
+                stalled.insert(record.device_id.as_str());
+                outcome.deferred += 1;
+                tracing::warn!(
+                    device_id = %local_device_id,
+                    remote_device_id = %remote_device_id,
+                    op_device_id = %record.device_id,
+                    op_seq = record.seq,
+                    error = %e,
+                    "#2481: transient DB error ingesting a replicated op record; \
+                     deferring the rest of this device's chain so our advertised \
+                     frontier stays contiguous and the peer re-ships from the gap (#3325)"
+                );
+            }
+            Err(e) => {
+                outcome.rejected += 1;
+                tracing::error!(
+                    device_id = %local_device_id,
+                    remote_device_id = %remote_device_id,
+                    op_device_id = %record.device_id,
+                    op_seq = record.seq,
+                    error = %e,
+                    "#2481: rejecting a corrupt replicated op record; skipping it \
+                     permanently (audit-only, not load-bearing for state — a \
+                     re-ship would fault identically forever, #3325)"
+                );
+            }
+        }
+    }
+
+    outcome
+}
+
 // ---------------------------------------------------------------------------
 // Core functions
 // ---------------------------------------------------------------------------

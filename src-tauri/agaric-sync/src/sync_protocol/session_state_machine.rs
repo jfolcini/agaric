@@ -1353,6 +1353,14 @@ impl SyncOrchestrator {
         // the same record every session → permanent backoff over non-state
         // data). The unresolved-parent-gap case is already handled inside
         // `insert_replicated_op` under the Audit profile (warn-and-land).
+        //
+        // #3325: the per-record failure policy is NOT uniform, and the ordering
+        // it enforces is what keeps the frontier honest — see
+        // [`ingest_replicated_batch`], which owns it. In short: a *transient*
+        // failure defers the rest of that device's chain (our advertised
+        // `MAX(seq)` for it must not step over a record we do not hold, or the
+        // peer never offers it again), while a *corrupt* record is skipped
+        // permanently and the frontier is allowed past it.
         if !self.pending_ingest_records.is_empty() {
             if let Err(e) = self.host.flush().await {
                 tracing::warn!(
@@ -1363,46 +1371,20 @@ impl SyncOrchestrator {
                 );
             }
             let records = std::mem::take(&mut self.pending_ingest_records);
-            let mut ingested = 0usize;
-            for record in &records {
-                match crate::sync_protocol::insert_replicated_op(&self.pool, record).await {
-                    Ok(true) => ingested += 1,
-                    Ok(false) => {} // idempotent redelivery — already held
-                    // Distinguish genuine corruption (hash mismatch / NUL /
-                    // domain validation → `Validation`) from a transient
-                    // DB/lock error (`Database` / `PoolTimedOut`, e.g. a rebuild
-                    // task the flush did not fully settle). Both skip the record
-                    // — the puller's frontier for that device does not advance,
-                    // so it re-ships next session — but only the former is
-                    // "corrupt"; mislabeling a transient loss hides it.
-                    Err(e @ (AppError::Database(_) | AppError::PoolTimedOut)) => {
-                        tracing::warn!(
-                            device_id = %self.device_id,
-                            remote_device_id = %self.session.remote_device_id,
-                            op_device_id = %record.device_id,
-                            op_seq = record.seq,
-                            error = %e,
-                            "#2481: transient DB error ingesting a replicated op \
-                             record; skipping it (will re-ship next session)"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            device_id = %self.device_id,
-                            remote_device_id = %self.session.remote_device_id,
-                            op_device_id = %record.device_id,
-                            op_seq = record.seq,
-                            error = %e,
-                            "#2481: rejecting a corrupt replicated op record; \
-                             skipping it (audit-only, not load-bearing for state)"
-                        );
-                    }
-                }
-            }
+            let outcome = crate::sync_protocol::ingest_replicated_batch(
+                &self.pool,
+                &records,
+                &self.device_id,
+                &self.session.remote_device_id,
+            )
+            .await;
             tracing::debug!(
                 device_id = %self.device_id,
                 remote_device_id = %self.session.remote_device_id,
-                ingested,
+                ingested = outcome.ingested,
+                already_held = outcome.already_held,
+                rejected = outcome.rejected,
+                deferred = outcome.deferred,
                 total = records.len(),
                 "#2481: ingested buffered op-log audit records at session completion"
             );
