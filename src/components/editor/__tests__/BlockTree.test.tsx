@@ -7745,4 +7745,45 @@ describe('BlockTree zoom × Ctrl+A × batch actions (#3344)', () => {
       blockIds: ['Z', 'C1', 'C2', 'S', 'S1'],
     })
   })
+
+  // #3643 — the branch where `selectAllIds` diverges MOST from what is
+  // rendered. At the page root Ctrl+A is page-wide, so it includes rows the
+  // collapse filter kept out of the mounted tree entirely. That divergence is
+  // why the brand needed a discriminant kind rather than one "derived here"
+  // bit: the same list would be flatly wrong for Shift+Arrow extend, whose
+  // contract is the rendered rows. Intentional semantics with no test are the
+  // ones that get "simplified" away later, so pin it.
+  it('Ctrl+A at the page root includes collapse-hidden rows', async () => {
+    const user = userEvent.setup()
+    pageStore.setState({ blocks: zoomFixture(), loading: false })
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-S')
+
+    // Collapse S through the production affordance; S1 leaves the mounted tree.
+    await user.click(screen.getByTestId('toggle-S'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('sortable-block-S1')).not.toBeInTheDocument()
+    })
+    expect(screen.getByTestId('sortable-block-S')).toHaveAttribute('data-is-collapsed', 'true')
+
+    fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Delete/i })).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /Delete/i }))
+    await user.click(await screen.findByRole('button', { name: /Yes, delete/i }))
+
+    await waitFor(() => {
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_blocks_by_ids'),
+      ).toHaveLength(1)
+    })
+
+    // S1 is in the payload despite never having been rendered — narrowing
+    // page-root select-all to the rendered list would drop it here.
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', {
+      blockIds: ['Z', 'C1', 'C2', 'S', 'S1'],
+    })
+  })
 })

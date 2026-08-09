@@ -11,9 +11,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { UseBlockTreeKeyboardShortcutsOptions } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
 import { useBlockTreeKeyboardShortcuts } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
-import type { SelectAllScopeIds, ZoomedIds } from '@/components/block-tree/use-block-zoom'
 import { t } from '@/lib/i18n'
 import { __resetLastInteractedTreeForTests } from '@/lib/last-interacted-tree'
+import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 
 // #913 — block cut/copy/paste reads/writes the system clipboard via the
@@ -61,7 +61,7 @@ function makePageStore(
 }
 
 /**
- * #3344 — `visibleIds` is brand-gated (`ZoomedIds`) and `selectAllIds` carries
+ * #3344 — `visibleIds` is brand-gated (`MountedIds`) and `selectAllIds` carries
  * the separate `SelectAllScopeIds` kind, so this hook cannot feed the selection
  * anything but the list derived for that specific contract. These tests supply
  * plain fixtures rather than running the real `useBlockZoom` derivation, so
@@ -71,8 +71,8 @@ function makePageStore(
  * code has no reachable way to mint one, so these must not become shared,
  * importable exports.
  */
-const zoomScoped = (ids: string[]): ZoomedIds => ids as ZoomedIds
-const selectAllScoped = (ids: string[]): SelectAllScopeIds => ids as SelectAllScopeIds
+const mountScoped = (ids: readonly string[]): MountedIds => ids as MountedIds
+const selectAllScoped = (ids: readonly string[]): SelectAllScopeIds => ids as SelectAllScopeIds
 
 /**
  * Overrides accept plain `string[]` for the brand-gated id lists — a test
@@ -94,7 +94,7 @@ function makeOptions(overrides: OptionOverrides = {}): UseBlockTreeKeyboardShort
     selectedBlockIds: [],
     hasChildrenSet: new Set(['BLOCK_1']),
     selectAllIds: selectAllScoped(selectAllIds ?? ['BLOCK_1', 'BLOCK_2']),
-    visibleIds: zoomScoped(visibleIds ?? ['BLOCK_1', 'BLOCK_2']),
+    visibleIds: mountScoped(visibleIds ?? ['BLOCK_1', 'BLOCK_2']),
     toggleCollapse: vi.fn(),
     rawSelectAll: vi.fn(),
     extendSelection: vi.fn(),
@@ -282,7 +282,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
   describe('Keyboard range-select (#922 — Shift+Arrow)', () => {
     /** Three owned, visible blocks; a single block pre-selected as the anchor. */
-    function selectOpts(overrides: Partial<UseBlockTreeKeyboardShortcutsOptions> = {}) {
+    function selectOpts(overrides: OptionOverrides = {}) {
       return makeOptions({
         focusedBlockId: null,
         pageStore: makePageStore(['B1', 'B2', 'B3']),
@@ -391,7 +391,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
   describe('Keyboard toggle selection (#1733 — Ctrl+Space)', () => {
     /** Three owned, visible blocks; a single block pre-selected as the anchor. */
-    function selectOpts(overrides: Partial<UseBlockTreeKeyboardShortcutsOptions> = {}) {
+    function selectOpts(overrides: OptionOverrides = {}) {
       return makeOptions({
         focusedBlockId: null,
         pageStore: makePageStore(['B1', 'B2', 'B3']),
@@ -473,7 +473,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
   describe('Block cut/copy/paste (#913)', () => {
     /** Two top-level blocks + one child, owned by this store. */
-    function clipboardOpts(overrides: Partial<UseBlockTreeKeyboardShortcutsOptions> = {}) {
+    function clipboardOpts(overrides: OptionOverrides = {}) {
       const pageStore = makePageStore([
         { id: 'A', depth: 0, parent_id: 'PAGE_1', content: 'alpha' },
         { id: 'A1', depth: 1, parent_id: 'A', content: 'alpha-child' },

@@ -36,7 +36,7 @@ import { cn } from '@/lib/utils'
 
 export interface BlockListRendererProps {
   /** Blocks visible during drag (descendants of active item excluded). */
-  visibleItems: FlatBlock[]
+  visibleItems: readonly FlatBlock[]
   /** Full block list (distinguishes an empty page from an empty projection). */
   blocks: FlatBlock[]
   /** Whether the block list is loading. */

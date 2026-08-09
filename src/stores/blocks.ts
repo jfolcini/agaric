@@ -14,6 +14,7 @@
 import { create } from 'zustand'
 
 import type { FlatBlock } from '@/lib/tree-utils'
+import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
@@ -56,8 +57,16 @@ interface BlockStore {
    * selection (#1729 — anchor/focus model, can shrink as well as grow). The
    * anchor is the persisted `selectionAnchorId` if still visible, else the last
    * selected block. Requires the visible block IDs from the per-page store.
+   *
+   * #3642 — `visibleIds` is brand-gated (`MountedIds`, see `@/lib/zoom-scope`)
+   * rather than `string[]`. The gate used to live in `BlockTree`'s adapters,
+   * which was sound only because `BlockTree` happened to be the sole caller:
+   * any of the ~30 other modules importing `useBlockStore` could inject an
+   * ungated list here and typecheck. Injecting the selection IS the defect
+   * class (#3251/#3252) — batch delete / batch TODO act on whatever lands in
+   * `selectedBlockIds` — so the gate belongs on the primitive.
    */
-  rangeSelect: (blockId: string, visibleIds: string[]) => void
+  rangeSelect: (blockId: string, visibleIds: MountedIds) => void
   /**
    * Extend the block selection by one visible block in `direction` (#922 —
    * Shift+ArrowUp / Shift+ArrowDown in block-select mode). Maintains a fixed
@@ -70,13 +79,20 @@ interface BlockStore {
    * selected block becomes both anchor and focus. No-ops when there is
    * nothing to extend from (empty selection) or no further block in that
    * direction (selection clamped at the list edge).
+   *
+   * Brand-gated for the same reason as `rangeSelect` (#3642).
    */
-  extendSelection: (direction: ExtendDirection, visibleIds: string[]) => void
+  extendSelection: (direction: ExtendDirection, visibleIds: MountedIds) => void
   /**
    * Select all blocks (Ctrl+A when not editing).
    * Requires the visible block IDs from the per-page store.
+   *
+   * #3642 — gated on the SEPARATE `SelectAllScopeIds` kind, not `MountedIds`:
+   * at the page root Ctrl/Cmd+A is documented to take the whole page including
+   * collapse-hidden rows and rows past the mount cap, so its scope is not the
+   * rendered list and the two must not substitute for one another.
    */
-  selectAll: (visibleIds: string[]) => void
+  selectAll: (visibleIds: SelectAllScopeIds) => void
   /** Clear the selection. */
   clearSelected: () => void
   /** Replace the selection with the given IDs. */
@@ -227,7 +243,9 @@ export const useBlockStore = create<BlockStore>((set) => ({
   // selection" direction).
   selectAll: (visibleIds) => {
     set((state) => ({
-      selectedBlockIds: visibleIds,
+      // Copied, not aliased: `visibleIds` is a memoized render projection and
+      // `selectedBlockIds` is mutable state.
+      selectedBlockIds: [...visibleIds],
       selectionAnchorId: null,
       selectionFocusId: null,
       // Guard like `setSelected`: `selectAll([])` (empty page) selects

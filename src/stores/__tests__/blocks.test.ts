@@ -1,8 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
+
+/**
+ * #3642 — the store's selection primitives are brand-gated (`@/lib/zoom-scope`):
+ * `rangeSelect`/`extendSelection` take the mounted projection's ids,
+ * `selectAll` takes Ctrl/Cmd+A's separate page-wide scope. These tests supply
+ * plain fixtures rather than running the real `useBlockZoom` /
+ * `useBlockMountLimit` derivation, so they stand in for it here.
+ *
+ * Deliberately file-local helpers: the brand's whole point is that production
+ * code has no reachable way to mint one, so these must not become shared,
+ * importable exports.
+ */
+const mountScoped = (ids: readonly string[]): MountedIds => ids as MountedIds
+const selectAllScoped = (ids: readonly string[]): SelectAllScopeIds => ids as SelectAllScopeIds
 
 describe('useBlockStore', () => {
   beforeEach(() => {
@@ -51,18 +66,18 @@ describe('useBlockStore', () => {
 
     it('rangeSelect selects contiguous blocks', () => {
       useBlockStore.getState().toggleSelected('A')
-      useBlockStore.getState().rangeSelect('C', ['A', 'B', 'C', 'D'])
+      useBlockStore.getState().rangeSelect('C', mountScoped(['A', 'B', 'C', 'D']))
       expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C'])
     })
 
     it('rangeSelect with empty selection starts from clicked block', () => {
-      useBlockStore.getState().rangeSelect('B', ['A', 'B', 'C'])
+      useBlockStore.getState().rangeSelect('B', mountScoped(['A', 'B', 'C']))
       expect(useBlockStore.getState().selectedBlockIds).toEqual(['B'])
     })
 
     it('rangeSelect handles missing last selected block gracefully', () => {
       useBlockStore.setState({ selectedBlockIds: ['DELETED_BLOCK'] })
-      useBlockStore.getState().rangeSelect('B', ['A', 'B', 'C'])
+      useBlockStore.getState().rangeSelect('B', mountScoped(['A', 'B', 'C']))
       expect(useBlockStore.getState().selectedBlockIds).toEqual(['B'])
     })
 
@@ -70,7 +85,7 @@ describe('useBlockStore', () => {
     // Shift+Arrow in the same tree and Shift+Click in the list views) so the
     // gesture can SHRINK as well as grow, instead of the old union-only path.
     describe('rangeSelect anchor/focus model (#1729)', () => {
-      const visible = ['A', 'B', 'C', 'D', 'E']
+      const visible = mountScoped(['A', 'B', 'C', 'D', 'E'])
 
       it('seeds the anchor on a first click into an empty selection', () => {
         useBlockStore.getState().rangeSelect('C', visible)
@@ -123,12 +138,12 @@ describe('useBlockStore', () => {
     })
 
     it('selectAll selects all blocks', () => {
-      useBlockStore.getState().selectAll(['A', 'B', 'C'])
+      useBlockStore.getState().selectAll(selectAllScoped(['A', 'B', 'C']))
       expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C'])
     })
 
     it('clearSelected empties selection', () => {
-      useBlockStore.getState().selectAll(['A', 'B', 'C'])
+      useBlockStore.getState().selectAll(selectAllScoped(['A', 'B', 'C']))
       useBlockStore.getState().clearSelected()
       expect(useBlockStore.getState().selectedBlockIds).toEqual([])
     })
@@ -139,7 +154,7 @@ describe('useBlockStore', () => {
     })
 
     it('setFocused clears selection', () => {
-      useBlockStore.getState().selectAll(['A', 'B', 'C'])
+      useBlockStore.getState().selectAll(selectAllScoped(['A', 'B', 'C']))
       useBlockStore.getState().setFocused('A')
       expect(useBlockStore.getState().selectedBlockIds).toEqual([])
     })
@@ -159,12 +174,12 @@ describe('useBlockStore', () => {
       })
 
       it('rangeSelect clears focusedBlockId', () => {
-        useBlockStore.getState().rangeSelect('B', ['A', 'B', 'C'])
+        useBlockStore.getState().rangeSelect('B', mountScoped(['A', 'B', 'C']))
         expect(useBlockStore.getState().focusedBlockId).toBeNull()
       })
 
       it('selectAll clears focusedBlockId', () => {
-        useBlockStore.getState().selectAll(['A', 'B', 'C'])
+        useBlockStore.getState().selectAll(selectAllScoped(['A', 'B', 'C']))
         expect(useBlockStore.getState().focusedBlockId).toBeNull()
       })
 
@@ -179,13 +194,13 @@ describe('useBlockStore', () => {
       })
 
       it('selectAll([]) (empty page) does NOT disturb an unrelated in-progress edit', () => {
-        useBlockStore.getState().selectAll([])
+        useBlockStore.getState().selectAll(selectAllScoped([]))
         expect(useBlockStore.getState().focusedBlockId).toBe('EDITING_BLOCK')
       })
 
       it('extendSelection clears focusedBlockId when it actually extends', () => {
         useBlockStore.setState({ focusedBlockId: 'EDITING_BLOCK', selectedBlockIds: ['B'] })
-        useBlockStore.getState().extendSelection('down', ['A', 'B', 'C'])
+        useBlockStore.getState().extendSelection('down', mountScoped(['A', 'B', 'C']))
         expect(useBlockStore.getState().focusedBlockId).toBeNull()
       })
     })
@@ -269,7 +284,7 @@ describe('useBlockStore', () => {
   // keyboard range extension (#922 — Shift+Arrow)
   // ---------------------------------------------------------------------------
   describe('extendSelection (#922)', () => {
-    const visible = ['A', 'B', 'C', 'D']
+    const visible = mountScoped(['A', 'B', 'C', 'D'])
 
     beforeEach(() => {
       useBlockStore.setState({

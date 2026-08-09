@@ -28,9 +28,24 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
+
+/**
+ * #3642 — the store's selection primitives are brand-gated (`@/lib/zoom-scope`):
+ * `rangeSelect`/`extendSelection` take the mounted projection's ids,
+ * `selectAll` takes Ctrl/Cmd+A's separate page-wide scope. These tests supply
+ * plain fixtures rather than running the real `useBlockZoom` /
+ * `useBlockMountLimit` derivation, so they stand in for it here.
+ *
+ * Deliberately file-local helpers: the brand's whole point is that production
+ * code has no reachable way to mint one, so these must not become shared,
+ * importable exports.
+ */
+const mountScoped = (ids: readonly string[]): MountedIds => ids as MountedIds
+const selectAllScoped = (ids: readonly string[]): SelectAllScopeIds => ids as SelectAllScopeIds
 
 /** Mutual exclusivity: never both editing AND multi-selecting at once. */
 function assertModesExclusive(): void {
@@ -70,7 +85,7 @@ describe('cross-store invariants (#2465)', () => {
 
     describe('direction A: entering edit mode exits select mode', () => {
       it('setFocused(id) with an active multi-selection clears the selection', () => {
-        useBlockStore.getState().selectAll(['A', 'B', 'C'])
+        useBlockStore.getState().selectAll(selectAllScoped(['A', 'B', 'C']))
         expect(useBlockStore.getState().selectedBlockIds).not.toEqual([])
         assertModesExclusive()
 
@@ -83,7 +98,7 @@ describe('cross-store invariants (#2465)', () => {
     })
 
     describe('direction B: entering select mode exits edit mode', () => {
-      const visible = ['A', 'B', 'C', 'D']
+      const visible = mountScoped(['A', 'B', 'C', 'D'])
 
       // Each entry drives the store into edit mode, performs one
       // selection-mutating action against a NON-EMPTY result, then asserts
@@ -103,7 +118,7 @@ describe('cross-store invariants (#2465)', () => {
         },
         {
           name: 'selectAll',
-          run: () => useBlockStore.getState().selectAll(visible),
+          run: () => useBlockStore.getState().selectAll(selectAllScoped(visible)),
         },
         {
           name: 'setSelected',
@@ -136,14 +151,14 @@ describe('cross-store invariants (#2465)', () => {
     })
 
     it('an interleaved sequence of edit/select actions never violates exclusivity', () => {
-      const visible = ['A', 'B', 'C', 'D', 'E']
+      const visible = mountScoped(['A', 'B', 'C', 'D', 'E'])
       const steps: Array<() => void> = [
         () => useBlockStore.getState().setFocused('A'),
         () => useBlockStore.getState().toggleSelected('B'),
         () => useBlockStore.getState().setFocused('C'),
         () => useBlockStore.getState().rangeSelect('D', visible),
         () => useBlockStore.getState().setFocused('E'),
-        () => useBlockStore.getState().selectAll(visible),
+        () => useBlockStore.getState().selectAll(selectAllScoped(visible)),
         () => useBlockStore.getState().setFocused(null),
         () => useBlockStore.getState().setSelected(['A']),
         () => useBlockStore.getState().extendSelection('down', visible),

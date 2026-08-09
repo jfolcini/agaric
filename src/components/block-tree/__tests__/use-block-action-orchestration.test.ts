@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { useBlockActionOrchestration } from '@/components/block-tree/use-block-action-orchestration'
-import type { ZoomedBlocks } from '@/components/block-tree/use-block-zoom'
 import { parse } from '@/editor/markdown-serializer'
 import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import type { FlatBlock } from '@/lib/tree-utils'
+import type { MountedBlocks } from '@/lib/zoom-scope'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 vi.mock('@/editor/markdown-serializer', () => ({
@@ -37,7 +37,7 @@ const mockedLoggerWarn = vi.mocked(logger.warn)
 type OrchestrationParams = Parameters<typeof useBlockActionOrchestration>[0]
 
 /**
- * #3344 — the hook's `collapsedVisible` is brand-gated (`ZoomedBlocks`), so a
+ * #3344 — the hook's `collapsedVisible` is brand-gated (`MountedBlocks`), so a
  * caller cannot hand a command path the un-zoomed page list. These tests build
  * plain fixtures rather than running the real `useBlockZoom` derivation, so
  * they stand in for it here.
@@ -46,7 +46,7 @@ type OrchestrationParams = Parameters<typeof useBlockActionOrchestration>[0]
  * code has no reachable way to mint one, so this must not become a shared,
  * importable export.
  */
-const zoomScoped = (blocks: FlatBlock[]): ZoomedBlocks => blocks as ZoomedBlocks
+const mountScoped = (blocks: readonly FlatBlock[]): MountedBlocks => blocks as MountedBlocks
 
 function makeDefaultParams(
   overrides?: Partial<Omit<OrchestrationParams, 'collapsedVisible'>> & {
@@ -56,7 +56,7 @@ function makeDefaultParams(
   const { collapsedVisible: collapsedVisibleOverride, ...rest } = overrides ?? {}
   return {
     focusedBlockId: 'B' as string | null,
-    collapsedVisible: zoomScoped(
+    collapsedVisible: mountScoped(
       collapsedVisibleOverride ?? [
         makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
         makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
@@ -241,7 +241,9 @@ describe('useBlockActionOrchestration handleDeleteBlock', () => {
     })
 
     params.remove = vi.fn(async () => {
-      params.collapsedVisible.splice(1, 1)
+      // #3643 — the branded projection is readonly; simulate the store's
+      // removal by re-deriving it rather than splicing in place.
+      params.collapsedVisible = mountScoped(params.collapsedVisible.slice(0, 1))
     })
 
     const { result } = renderHook(() => useBlockActionOrchestration(params))
@@ -671,7 +673,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
   // joins inline.
   it('strips a leading list marker so merged content does not become a list item', async () => {
     const params = makeDefaultParams()
-    params.collapsedVisible = zoomScoped([
+    params.collapsedVisible = mountScoped([
       makeBlock({ id: 'A', depth: 0, content: 'foo' }),
       makeBlock({ id: 'B', depth: 0, content: '- bar' }),
     ])
@@ -691,7 +693,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
 
   it('strips a leading heading marker on merge', async () => {
     const params = makeDefaultParams()
-    params.collapsedVisible = zoomScoped([
+    params.collapsedVisible = mountScoped([
       makeBlock({ id: 'A', depth: 0, content: 'foo' }),
       makeBlock({ id: 'B', depth: 0, content: '# h' }),
     ])
@@ -707,7 +709,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
 
   it('leaves plain (marker-free) content as a simple concat', async () => {
     const params = makeDefaultParams()
-    params.collapsedVisible = zoomScoped([
+    params.collapsedVisible = mountScoped([
       makeBlock({ id: 'A', depth: 0, content: 'foo' }),
       makeBlock({ id: 'B', depth: 0, content: 'bar' }),
     ])
@@ -813,7 +815,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
         makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
         makeBlock({ id: 'B2', depth: 1, content: 'B-two', parent_id: 'B' }),
       ]
-      params.collapsedVisible = zoomScoped(params.blocks)
+      params.collapsedVisible = mountScoped(params.blocks)
       // Focus the source B (flat index 2), not the A1 row above it.
       params.focusedBlockId = 'B'
       params.rovingEditor.unmount = vi.fn(() => 'Beta')
@@ -852,7 +854,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
         makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
         makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
       ]
-      params.collapsedVisible = zoomScoped([
+      params.collapsedVisible = mountScoped([
         makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
         makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
       ])
@@ -878,7 +880,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
         makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
         makeBlock({ id: 'B2', depth: 1, content: 'B-two', parent_id: 'B' }),
       ]
-      params.collapsedVisible = zoomScoped([
+      params.collapsedVisible = mountScoped([
         makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
         makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
       ])
@@ -914,7 +916,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
         makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
         makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
       ]
-      params.collapsedVisible = zoomScoped([
+      params.collapsedVisible = mountScoped([
         makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
         makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
       ])
@@ -943,7 +945,7 @@ describe('useBlockActionOrchestration handleMergeWithPrev', () => {
         makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
         makeBlock({ id: 'B2', depth: 1, content: 'B-two', parent_id: 'B' }),
       ]
-      params.collapsedVisible = zoomScoped([
+      params.collapsedVisible = mountScoped([
         makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
         makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
       ])
@@ -1120,7 +1122,7 @@ describe('merge honors edit() resolving false (store contract)', () => {
       makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
       makeBlock({ id: 'B1', depth: 1, content: 'B-one', parent_id: 'B' }),
     ]
-    params.collapsedVisible = zoomScoped([
+    params.collapsedVisible = mountScoped([
       makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
       makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
     ])
@@ -1310,11 +1312,11 @@ describe('merge into a verbatim previous block is a no-op join', () => {
 
   it('code-fence prev: flushes the current block and focuses prev with caret at end', async () => {
     const params = makeDefaultParams()
-    params.collapsedVisible = zoomScoped([
+    params.collapsedVisible = mountScoped([
       makeBlock({ id: 'A', depth: 0, content: CODE_FENCE }),
       makeBlock({ id: 'B', depth: 0, content: 'text' }),
     ])
-    params.blocks = params.collapsedVisible
+    params.blocks = [...params.collapsedVisible]
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
@@ -1334,11 +1336,11 @@ describe('merge into a verbatim previous block is a no-op join', () => {
 
   it('divider prev: horizontalRule last node also suppresses the join', async () => {
     const params = makeDefaultParams()
-    params.collapsedVisible = zoomScoped([
+    params.collapsedVisible = mountScoped([
       makeBlock({ id: 'A', depth: 0, content: DIVIDER }),
       makeBlock({ id: 'B', depth: 0, content: 'text' }),
     ])
-    params.blocks = params.collapsedVisible
+    params.blocks = [...params.collapsedVisible]
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
@@ -1351,11 +1353,11 @@ describe('merge into a verbatim previous block is a no-op join', () => {
 
   it('handleMergeById no-ops against a verbatim prev without unmounting the editor', async () => {
     const params = makeDefaultParams({ focusedBlockId: 'B' })
-    params.collapsedVisible = zoomScoped([
+    params.collapsedVisible = mountScoped([
       makeBlock({ id: 'A', depth: 0, content: CODE_FENCE }),
       makeBlock({ id: 'B', depth: 0, content: 'text' }),
     ])
-    params.blocks = params.collapsedVisible
+    params.blocks = [...params.collapsedVisible]
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {

@@ -33,7 +33,7 @@ function mapsEqual(a: Map<string, ListStyle>, b: Map<string, ListStyle>): boolea
   return true
 }
 
-export function useListStyles(blocks: Array<{ id: string }>): Map<string, ListStyle> {
+export function useListStyles(blocks: ReadonlyArray<{ id: string }>): Map<string, ListStyle> {
   const batch = useBatchPropertyRows()
   const get = batch?.get
 

@@ -17,7 +17,6 @@ import { useEffect } from 'react'
 import type { StoreApi } from 'zustand'
 
 import type { DatePickerMode } from '@/components/block-tree/use-block-date-picker'
-import type { SelectAllScopeIds, ZoomedIds } from '@/components/block-tree/use-block-zoom'
 import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import { readText, writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
@@ -30,6 +29,7 @@ import {
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { computeSelectionRoots } from '@/lib/tree-utils'
+import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { addOwnedBlockListener, storeOwnsBlock } from '@/stores/page-blocks'
@@ -72,18 +72,18 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
    * #3344 — brand-gated for the same reason as `selectAllIds`: Shift+Arrow is
    * the other way ids enter the selection that batch actions consume.
    */
-  visibleIds: ZoomedIds
+  visibleIds: MountedIds
   toggleCollapse: (id: string) => void
   /**
    * Replace the global selection. Narrowed to `SelectAllScopeIds` so this hook
    * has no way to pass anything but Ctrl/Cmd+A's derived scope — the selection
    * is what the batch delete / batch TODO handlers act on. Note this is NOT
-   * `ZoomedIds`: handing it the mount-capped rendered list would silently make
+   * `MountedIds`: handing it the mount-capped rendered list would silently make
    * Ctrl+A stop at the mount envelope.
    */
   rawSelectAll: (ids: SelectAllScopeIds) => void
   /** Extend the block selection by one visible block (#922 — Shift+Arrow). */
-  extendSelection: (direction: 'up' | 'down', visibleIds: ZoomedIds) => void
+  extendSelection: (direction: 'up' | 'down', visibleIds: MountedIds) => void
   /** Toggle a single block in/out of the selection (#1733 — keyboard toggle). */
   toggleSelected: (blockId: string) => void
   clearSelected: () => void

@@ -23,9 +23,24 @@ import {
   useBlockMountLimit,
 } from '@/components/block-tree/use-block-mount-limit'
 import type { FlatBlock } from '@/lib/tree-utils'
+import type { ZoomedBlocks } from '@/lib/zoom-scope'
 
-function makeFlatBlocks(count: number): FlatBlock[] {
-  return Array.from({ length: count }, (_, i) => makeBlock({ id: `BLK_${i}`, content: `b${i}` }))
+/**
+ * #3344/#3641 — the hook's input is brand-gated (`ZoomedBlocks`, which only
+ * `useBlockZoom` derives) and its output carries the distinct `'mounted'`
+ * kind. These tests build plain fixtures rather than running the real
+ * derivation, so this stands in for it.
+ *
+ * Deliberately a file-local helper: the brand's whole point is that
+ * production code has no reachable way to mint one, so this must not become a
+ * shared, importable export.
+ */
+const zoomScoped = (blocks: readonly FlatBlock[]): ZoomedBlocks => blocks as ZoomedBlocks
+
+function makeFlatBlocks(count: number): ZoomedBlocks {
+  return zoomScoped(
+    Array.from({ length: count }, (_, i) => makeBlock({ id: `BLK_${i}`, content: `b${i}` })),
+  )
 }
 
 describe('useBlockMountLimit', () => {
@@ -170,7 +185,7 @@ describe('useBlockMountLimit', () => {
   })
 
   it('handles an empty block list gracefully', () => {
-    const { result } = renderHook(() => useBlockMountLimit([]))
+    const { result } = renderHook(() => useBlockMountLimit(zoomScoped([])))
     expect(result.current.mounted).toEqual([])
     expect(result.current.hiddenCount).toBe(0)
   })
