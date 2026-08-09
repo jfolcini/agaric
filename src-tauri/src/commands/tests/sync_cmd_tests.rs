@@ -1064,12 +1064,14 @@ async fn sync_start_sync_rejects_a_corrupt_stored_endpoint_id() {
     // before the fix, `start_sync_inner` never read `peer_refs` and so could not
     // fail on its contents. This pins where that lands.
     //
-    // The fixture is not a hand-corrupted DB: `deadbeef…` is 64 lowercase hex, so
-    // `bind_endpoint_id`'s own `validate_endpoint_id` accepts it and migration
-    // 0107's column CHECK accepts it. Only the ed25519 point decompression inside
-    // `EndpointId::from_str` rejects it. So the storage layer really can hold a
-    // value that makes the probe fail, and the `bind_endpoint_id` call below
-    // succeeding is half the assertion.
+    // The row is planted with raw SQL, and that is now the *only* way it can arise:
+    // #3561 taught `bind_endpoint_id` to parse, so the API no longer admits
+    // `deadbeef…`. What it does not stop is a row written around the API or one
+    // written before that landed — migration 0107's column CHECK still accepts this
+    // value, because a SQLite CHECK has no curve arithmetic and can only restate the
+    // hex shape. So the storage layer can still *hold* a value that makes the probe
+    // fail, which is why this exit has to keep existing; the `execute` succeeding
+    // below is half the assertion.
     let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
     let corrupt = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
@@ -1077,9 +1079,12 @@ async fn sync_start_sync_rejects_a_corrupt_stored_endpoint_id() {
     peer_refs::upsert_peer_ref(&pool, "corrupt-peer")
         .await
         .unwrap();
-    peer_refs::bind_endpoint_id(&pool, "corrupt-peer", corrupt)
+    sqlx::query("UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = ?")
+        .bind(corrupt)
+        .bind("corrupt-peer")
+        .execute(&pool)
         .await
-        .expect("the store's own validation admits this value — that is the point");
+        .expect("the column CHECK admits this value — that is the point");
 
     let err = start_sync_inner(&pool, &scheduler, "device-local", "corrupt-peer".into())
         .await

@@ -65,7 +65,7 @@ pub async fn get_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<Option<Pee
 }
 
 /// The canonical on-disk spelling of an `EndpointId`: exactly 64 lowercase hex
-/// characters.
+/// characters **that decode to a real ed25519 public key**.
 ///
 /// This is `iroh::PublicKey`'s `Display` (`data_encoding::HEXLOWER` over the 32 raw
 /// bytes) and it is the *only* spelling migration `0107_peer_refs_endpoint_id.sql`
@@ -92,6 +92,36 @@ pub async fn get_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<Option<Pee
 ///
 /// It also rejects `EndpointId::fmt_short()`'s 10 characters, which is the convenient
 /// thing to reach for when logging and the mistake the migration header calls out.
+///
+/// # Why the spelling check is not enough on its own (#3561)
+///
+/// An `EndpointId` is not an arbitrary 32-byte value. It is a *compressed Edwards
+/// point*: `FromStr` decodes the hex and hands the bytes to `VerifyingKey::from_bytes`,
+/// which decompresses them. Roughly half of all 32-byte values have no `x` on the
+/// curve and fail — `"deadbeef".repeat(8)` is 64 lowercase hex characters and is one of
+/// them.
+///
+/// So the shape rules above, and the column CHECK that restates them, together admit
+/// values that *no* `EndpointId::from_str` will ever accept, and every consumer of this
+/// column parses it back into a key (`peer_lock_key_from_stored`, dial targeting). A
+/// row like that is not merely odd, it is a peer that can be stored and then never
+/// dialled or locked. Parsing here is what makes the column's declared meaning — "an
+/// endpoint id" — and its actual contents the same statement.
+///
+/// SQLite cannot express this: a CHECK constraint has no curve arithmetic, so the
+/// migration can only ever restate the hex shape. The predicate has to live in Rust,
+/// and it has to be iroh's own parser rather than a re-derivation of it, so the store's
+/// notion of a valid key cannot drift from the transport's.
+///
+/// # What this does *not* claim
+///
+/// This is a check at the door, not a type. A direct `UPDATE peer_refs SET
+/// endpoint_id = …` still reaches the column, and rows written before this landed were
+/// never subject to it. That is deliberate and is why the read side stays tolerant:
+/// [`get_peer_ref`] and [`list_peer_refs`] hand the column back verbatim and never
+/// validate a row on the way out, so tightening the door cannot make already-stored
+/// data unreadable. The consumer that needs a key still parses and still reports its
+/// own failure (#3550).
 fn validate_endpoint_id(endpoint_id: &str) -> Result<(), AppError> {
     if endpoint_id.len() != 64
         || !endpoint_id
@@ -102,6 +132,16 @@ fn validate_endpoint_id(endpoint_id: &str) -> Result<(), AppError> {
             "invalid endpoint_id: expected the 64-char lowercase-hex `Display` form of \
              an iroh EndpointId, got {} chars",
             endpoint_id.len()
+        )));
+    }
+    // The shape check has already fixed the encoding, so this adds exactly one thing:
+    // that the 32 bytes are a decompressible point. The two are not redundant and the
+    // order matters — `FromStr` alone would accept the 52-char base32 spelling and the
+    // uppercase hex one, both of which store fine and then never match a lookup.
+    if let Err(e) = endpoint_id.parse::<iroh_base::EndpointId>() {
+        return Err(AppError::validation(format!(
+            "invalid endpoint_id: {endpoint_id:?} is 64 lowercase hex characters but is \
+             not a valid ed25519 public key, so no EndpointId will ever parse it: {e}"
         )));
     }
     Ok(())
@@ -1533,8 +1573,26 @@ mod tests {
     // These fixtures spell it out rather than deriving it from a real key so the
     // encoding under test is the one the migration's CHECK describes, not whatever
     // iroh happens to produce today.
+    //
+    // Since #3561 they must also decode to real curve points, which both of these
+    // happen to do — a coin flip per constant, checked, not assumed:
+    // `KEY_A_IS_A_REAL_KEY` below fails loudly if either ever stops being one, so a
+    // future edit to these literals cannot quietly turn the bind tests into tests of
+    // the rejection path.
     const KEY_A: &str = "aa11bb22cc33dd44ee55ff6607788990a1b2c3d4e5f60718293a4b5c6d7e8f90";
     const KEY_B: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    /// The fixtures above are only usable as "a key that binds" if they really parse.
+    #[test]
+    fn the_fixture_keys_are_real_endpoint_ids() {
+        for (label, key) in [("KEY_A", KEY_A), ("KEY_B", KEY_B)] {
+            assert!(
+                validate_endpoint_id(key).is_ok(),
+                "{label} must be a bindable EndpointId, or every test that binds it is \
+                 secretly testing the rejection path"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn an_authenticated_key_resolves_to_the_peer_it_was_bound_to() {
@@ -1818,6 +1876,114 @@ mod tests {
             found_by_uppercase.is_err(),
             "the uppercase spelling must be refused rather than silently miss the row \
              it cannot match under BINARY collation"
+        );
+    }
+
+    // ── endpoint_id: the rule SQL cannot state (#3561) ──────────────────
+
+    /// The gap this closes, stated as the value that used to fall through it.
+    ///
+    /// `deadbeef…deadbeef` is 64 lowercase hex characters, so the shape rule admits it
+    /// and migration 0107's column CHECK admits it. It is nonetheless not a compressed
+    /// Edwards point: `EndpointId::from_str` decompresses, finds no `x` for that `y`,
+    /// and refuses. Before this, the write path stored it happily and every consumer
+    /// that parsed it back — the S-5 lock probe, dial targeting — hit a value the
+    /// column had promised was a key.
+    ///
+    /// The two halves are asserted together on purpose. "the writer rejects it" is
+    /// only interesting alongside "the parser also rejects it": if a later iroh made
+    /// this value parseable, the second assertion would fail and tell us the first is
+    /// now over-strict, rather than leaving a mystery rejection behind.
+    #[tokio::test]
+    async fn hex_that_is_not_a_curve_point_is_refused_by_the_write_path() {
+        let (pool, _dir) = test_pool().await;
+        let not_a_point = "deadbeef".repeat(8);
+
+        assert_eq!(
+            not_a_point.len(),
+            64,
+            "the fixture must pass the shape rule"
+        );
+        assert!(
+            not_a_point.parse::<iroh_base::EndpointId>().is_err(),
+            "the fixture is only the fixture if iroh still refuses to parse it"
+        );
+
+        let Err(err) = bind_endpoint_id(&pool, "peer-A", &not_a_point).await else {
+            panic!(
+                "64 hex characters that are not an ed25519 public key must not be \
+                 bindable — no consumer of this column can ever use the row"
+            );
+        };
+        assert!(
+            err.to_string().contains("invalid endpoint_id"),
+            "it must fail as the same named validation error as every other bad \
+             spelling, got: {err}"
+        );
+
+        // And nothing landed: the refusal is before the INSERT, not after it.
+        let peer = get_peer_ref(&pool, "peer-A").await.unwrap();
+        assert!(
+            peer.is_none(),
+            "the refused bind must not have inserted a row, got {peer:?}"
+        );
+
+        // The read path states the same rule, so a lookup by such a value is a named
+        // error rather than an indistinguishable "no such peer".
+        let looked_up = get_peer_ref_by_endpoint_id(&pool, &not_a_point).await;
+        assert!(
+            looked_up.is_err(),
+            "the read path must refuse the value the write path refuses"
+        );
+    }
+
+    /// Tightening the door must not lock anyone out of the room.
+    ///
+    /// Migration 0107 adds `endpoint_id` as a nullable column with no backfill, so no
+    /// row predating this validation can hold a non-key — but a row can still be
+    /// written around the API, and the point of a tolerant read path is that it does
+    /// not depend on the write guard having held. Whatever is in the column comes back
+    /// verbatim; validation happens where a *key* is needed, and the consumer reports
+    /// its own failure (#3550).
+    #[tokio::test]
+    async fn a_row_holding_unparseable_hex_still_reads_back_verbatim() {
+        let (pool, _dir) = test_pool().await;
+        let not_a_point = "deadbeef".repeat(8);
+
+        // Planted the only way it can now arise: past the API, as a pre-existing row
+        // would have been. The column CHECK accepts it, which is the whole point —
+        // SQL cannot tell this apart from a key.
+        upsert_peer_ref(&pool, "legacy-peer").await.unwrap();
+        sqlx::query!(
+            "UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = ?",
+            not_a_point,
+            "legacy-peer",
+        )
+        .execute(&pool)
+        .await
+        .expect("migration 0107's CHECK cannot express curve membership, so this lands");
+
+        let peer = get_peer_ref(&pool, "legacy-peer")
+            .await
+            .expect("reading a peer must not start failing because of its endpoint_id")
+            .expect("legacy-peer must exist");
+        assert_eq!(
+            peer.endpoint_id.as_deref(),
+            Some(not_a_point.as_str()),
+            "get_peer_ref must hand the stored value back unchanged"
+        );
+
+        let listed = list_peer_refs(&pool)
+            .await
+            .expect("listing peers must not fail on one unparseable endpoint_id");
+        assert_eq!(
+            listed
+                .iter()
+                .find(|p| p.peer_id == "legacy-peer")
+                .and_then(|p| p.endpoint_id.as_deref()),
+            Some(not_a_point.as_str()),
+            "the device list must still show a peer whose stored key is corrupt — \
+             hiding it would be how a user loses the ability to unpair it"
         );
     }
 }
