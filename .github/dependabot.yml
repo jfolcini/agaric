@@ -318,3 +318,9 @@ updates:
       fuzz:
         patterns:
           - '*'
+    # The fuzz workspace has an independent lockfile, so the root cargo
+    # entry's Loro hold above does not protect it. Keep fuzzing on the same
+    # production dependency line until #3161's width-2 regression is cleared.
+    ignore:
+      - dependency-name: 'loro'
+      - dependency-name: 'loro-*'
