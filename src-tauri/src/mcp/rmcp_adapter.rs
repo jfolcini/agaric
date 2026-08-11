@@ -39,8 +39,9 @@ use std::sync::Arc;
 use rmcp::{
     handler::server::ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, ErrorData, Implementation, ListToolsResult,
-        PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ErrorData,
+        Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+        ServerCapabilities, ServerInfo, Tool,
     },
     service::{RequestContext, RoleServer},
 };
@@ -442,7 +443,7 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         // Forward every registry description unfiltered.
         // `ToolDescription::input_schema` is a `serde_json::Value`;
@@ -464,29 +465,36 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
                 )
             })
             .collect();
-        Ok(ListToolsResult::with_all_items(tools))
+        let result = ListToolsResult::with_all_items(tools);
+        if context
+            .protocol_version()
+            .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28)
+        {
+            Ok(result.with_ttl_ms(0).with_cache_scope(CacheScope::Public))
+        } else {
+            Ok(result)
+        }
     }
 
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<CallToolResponse, ErrorData> {
         let name = request.name.to_string();
 
-        // Pull `clientInfo.name` out of rmcp's per-connection peer
-        // state. rmcp captures `InitializeRequestParams` during the
-        // handshake automatically — `peer_info()` is the equivalent
-        // of `super::server::ConnectionState::client_info`.
+        // Pull `clientInfo.name` out of rmcp's request context. This reads
+        // per-request metadata for 2026-07-28+ clients and falls back to the
+        // negotiated handshake state for legacy sessions.
         // #1569 — the handshake `clientInfo.name` is fully controlled by
         // the local MCP client and is stamped, verbatim, into the
         // permanent append-only `op_log.origin` column on every RW tool
         // call. Cap + control-strip it ONCE here at the trust boundary so
         // the cleaned value flows through `Actor::Agent` → `origin_tag()`
         // → durable state; downstream code never sees the raw string.
-        let agent_name = context.peer.peer_info().map_or_else(
+        let agent_name = context.client_info().map_or_else(
             || AGENT_NAME_PLACEHOLDER.to_string(),
-            |info| sanitize_agent_name(&info.client_info.name),
+            |info| sanitize_agent_name(&info.name),
         );
 
         let args = request.arguments.map_or(Value::Null, Value::Object);
@@ -496,7 +504,9 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
         // drive and CANCEL them mid-commit without constructing an rmcp
         // `RequestContext`. `agent_name` is already sanitised here at the
         // trust boundary.
-        self.dispatch_tool_call(name, args, agent_name).await
+        self.dispatch_tool_call(name, args, agent_name)
+            .await
+            .map(Into::into)
     }
 }
 
@@ -567,13 +577,16 @@ mod tests {
     const SEARCH_TOOL_NAME: &str = "search";
 
     use rmcp::{
-        model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation},
+        ClientLifecycleMode, ClientServiceExt,
+        model::{
+            CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation, ResultType,
+        },
         service::ServiceExt,
     };
     use serde_json::{Value, json};
 
     /// Build a `ClientInfo` with a custom `clientInfo.name` so the
-    /// adapter's `peer_info().client_info.name` is observable in
+    /// adapter's `RequestContext::client_info().name` is observable in
     /// assertions. `ClientInfo` is `#[non_exhaustive]`, so we route
     /// through `InitializeRequestParams::new` instead of a struct
     /// literal — this is the public constructor.
@@ -779,13 +792,149 @@ mod tests {
         assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
     }
 
+    /// MCP 2026-07-28 requires list responses to state their cache lifetime
+    /// and scope. Agaric's registry metadata is static for the lifetime of a
+    /// server process, but `ttlMs: 0` deliberately disables client caching so
+    /// reconnecting to a rebuilt server always observes its current tools.
+    ///
+    /// NON-VACUOUS: omitting either cache hint leaves the corresponding field
+    /// as `None`, failing these exact assertions.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rmcp_2026_tools_list_advertises_required_cache_hints() {
+        let adapter = mk_mock_adapter(McpSurface::ReadOnly);
+        let (server_io, client_io) = tokio::io::duplex(4096);
+        let server_task = tokio::spawn(async move {
+            let server = adapter.serve(server_io).await.expect("server handshake");
+            let _ = server.waiting().await;
+        });
+        let client = make_test_client_info()
+            .with_protocol_version(ProtocolVersion::V_2026_07_28)
+            .serve(client_io)
+            .await
+            .expect("client handshake");
+
+        let result = client
+            .list_tools(None)
+            .await
+            .expect("2026 tools/list round-trip");
+        assert_eq!(result.ttl_ms, Some(0), "2026 tools/list requires ttlMs");
+        assert_eq!(
+            result.cache_scope,
+            Some(CacheScope::Public),
+            "2026 tools/list requires public cacheScope",
+        );
+        assert_eq!(
+            result.result_type,
+            Some(ResultType::COMPLETE),
+            "2026 tools/list requires resultType=complete",
+        );
+
+        let _ = client.cancel().await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), server_task).await;
+    }
+
+    /// The same list result must retain the pre-2026 wire shape for a peer
+    /// that explicitly negotiates 2025-11-25. This is the negative half of
+    /// the cache-hint/version gate above: it fails if hints are emitted
+    /// unconditionally, and it drives rmcp's production legacy
+    /// `resultType` stripping rather than calling the strip helper directly.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rmcp_legacy_tools_list_omits_2026_only_fields() {
+        let adapter = mk_mock_adapter(McpSurface::ReadOnly);
+        let (server_io, client_io) = tokio::io::duplex(4096);
+        let server_task = tokio::spawn(async move {
+            let server = adapter.serve(server_io).await.expect("server handshake");
+            let _ = server.waiting().await;
+        });
+        let client = make_test_client_info()
+            .with_protocol_version(ProtocolVersion::V_2025_11_25)
+            .serve(client_io)
+            .await
+            .expect("legacy client handshake");
+
+        let result = client
+            .list_tools(None)
+            .await
+            .expect("legacy tools/list round-trip");
+        assert_eq!(result.ttl_ms, None, "legacy tools/list must omit ttlMs");
+        assert_eq!(
+            result.cache_scope, None,
+            "legacy tools/list must omit cacheScope",
+        );
+        assert_eq!(
+            result.result_type, None,
+            "legacy tools/list must omit resultType",
+        );
+
+        let _ = client.cancel().await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), server_task).await;
+    }
+
+    /// A 2026 discover-lifecycle request carries client identity in request
+    /// metadata and has no initialize-time peer info on the server. This
+    /// distinguishes `RequestContext::client_info()` from the retired direct
+    /// `peer_info()` lookup: the latter observes no name and records
+    /// `agent:unknown` here. The complete result discriminator also pins the
+    /// 2026 half of rmcp's negotiated `tools/call` wire behavior.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rmcp_2026_discover_request_attributes_actor_and_keeps_result_type() {
+        let observed = Arc::new(Mutex::new(None));
+        let count = Arc::new(Mutex::new(0));
+        let registry = Arc::new(MockRoRegistry {
+            observed_actor: observed.clone(),
+            call_count: count.clone(),
+        });
+        let adapter = RmcpAdapter::new(registry, None, McpSurface::ReadOnly);
+
+        let (server_io, client_io) = tokio::io::duplex(4096);
+        let server_task = tokio::spawn(async move {
+            let server = adapter.serve(server_io).await.expect("server discovery");
+            let _ = server.waiting().await;
+        });
+        let client = make_test_client_info()
+            .serve_with_lifecycle(
+                client_io,
+                ClientLifecycleMode::Discover {
+                    preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+                },
+            )
+            .await
+            .expect("discover client startup");
+
+        let result = client
+            .call_tool(CallToolRequestParams::new(SEARCH_TOOL_NAME))
+            .await
+            .expect("2026 discover tools/call round-trip");
+        assert_eq!(
+            result.result_type,
+            Some(ResultType::COMPLETE),
+            "2026 tools/call requires resultType=complete",
+        );
+        assert_eq!(*count.lock().unwrap(), 1, "registry must run once");
+        let actor = observed
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("actor was captured during the discover request");
+        match actor {
+            Actor::Agent { name } => assert_eq!(
+                name, "spike-test-agent",
+                "request metadata clientInfo.name must reach ACTOR.scope",
+            ),
+            Actor::User => panic!("expected Actor::Agent for the discover request"),
+        }
+
+        let _ = client.cancel().await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), server_task).await;
+    }
+
     /// Core integration test. Exercises the full rmcp framing path:
     ///
     /// 1. Spawn the adapter as a real rmcp service over an in-memory
     ///    duplex stream.
     /// 2. Connect a real rmcp client over the other end with a
     ///    custom `clientInfo.name` so the adapter's
-    ///    `peer_info().client_info.name` is observable.
+    ///    `RequestContext::client_info().name` is observable.
     /// 3. `client.call_tool("search", { query: "spike" })` round-trip.
     /// 4. Assert:
     ///    (a) the registry's `call_tool` ran (call_count == 1),
@@ -825,7 +974,7 @@ mod tests {
         });
 
         // Client side — identify with a stable name so the adapter
-        // picks it up via `context.peer.peer_info().client_info.name`.
+        // picks it up via `context.client_info().name`.
         let client_info = make_test_client_info();
         let client = client_info
             .serve(client_io)
@@ -849,6 +998,10 @@ mod tests {
             .await
             .expect("tools/call round-trip");
 
+        assert_eq!(
+            result.result_type, None,
+            "the default 2025-11-25 peer must receive the legacy tools/call shape",
+        );
         assert_eq!(result.is_error, Some(false));
         // Spec wire-shape: `CallToolResult::structured` produces the
         // MCP `{ content, structuredContent, isError: false }` envelope.
@@ -1100,14 +1253,14 @@ mod tests {
     // and points at the drifting shim.
     // ---------------------------------------------------------------------
 
-    /// Pins the success envelope rmcp emits onto the canonical MCP
-    /// wire shape. Asserts byte-for-byte against hardcoded JSON literals
+    /// Pins the success envelope rmcp emits for a legacy peer onto the
+    /// canonical MCP wire shape. Asserts byte-for-byte against hardcoded JSON literals
     /// across a cross-section of payload shapes (object, array, primitive,
     /// null, empty object) so any future rmcp behaviour change shows up as
     /// a focused diff against a fixed reference.
     #[test]
     fn rmcp_call_tool_result_envelope_matches_canonical_wire_shape() {
-        use rmcp::model::CallToolResult;
+        use rmcp::model::{CallToolResult, ServerResult};
 
         // (label, payload, expected envelope serialisation). The
         // expected `content[0].text` is the JSON-stringified payload
@@ -1149,7 +1302,13 @@ mod tests {
             ),
         ];
         for (label, value, expected) in samples {
-            let rmcp_envelope = CallToolResult::structured(value.clone());
+            // rmcp 3.1 models complete results with `resultType: "complete"`
+            // internally, then the production `ServerHandler` strips that
+            // 2026-only discriminator for legacy negotiated peers before
+            // serialisation. Model that authoritative wire path here.
+            let mut rmcp_envelope =
+                ServerResult::CallToolResult(CallToolResult::structured(value.clone()));
+            rmcp_envelope.strip_result_type_for_legacy_peer();
             let rmcp_json = serde_json::to_value(&rmcp_envelope).expect("rmcp serialise");
             assert_eq!(
                 rmcp_json, *expected,
