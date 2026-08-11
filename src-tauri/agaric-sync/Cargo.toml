@@ -72,7 +72,7 @@ iroh-dns = "=1.0.3"
 # and pinning them independently is how you *create* the duplicate-copy problem
 # rather than avoid it.
 n0-error = "1.0"
-n0-future = "0.2"
+n0-future = "0.3"
 
 # Loro CRDT runtime — the sync protocol reads `loro::{VersionVector, PeerID, …}`
 # directly (the wire types + apply path). Caret-1 mirrors the app crate.
