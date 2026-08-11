@@ -14,8 +14,8 @@
 //! Two distinct things go wrong when it is stored verbatim, and this module
 //! exists so neither can be expressed in the column:
 //!
-//! 1. **The path is not confined.** The shape check the resolvers ran
-//!    (`check_attachment_fs_path_shape`) refused `..` and absolute paths but
+//! 1. **The path is not confined.** The lexical shape check the resolvers ran
+//!    before this module existed refused `..` and absolute paths but
 //!    accepted any other *relative* path — `notes.db`, `notes.db-wal`, a key
 //!    file. `app_data_dir` holds the SQLite database itself, so a peer that
 //!    named one of those in `fs_path` and then answered the resulting
@@ -54,14 +54,49 @@
 //! and the apply transaction would abort on every retry: the same DoS, reached
 //! through the storage layer instead of through the validator.
 //! [`AttachmentFsPath::for_storage_id`] therefore mints the id into a path only
-//! when [`AttachmentFsPath::parse`] accepts it *unchanged*, and substitutes the
-//! id's blake3 digest otherwise.
+//! when it is ASCII with no lowercase letters and
+//! [`AttachmentFsPath::parse`] accepts it *unchanged*, and substitutes the id's
+//! blake3 digest otherwise.
 //!
 //! `fs_path` is device-local storage detail, not replicated state — the receive
 //! path already repoints it (`UPDATE attachments SET fs_path = ?` when a local
 //! blob matches by content hash), and each side of a sync resolves bytes
 //! through its *own* row. So a coerced path cannot diverge peers in any sense
 //! that matters: it changes where this device keeps the bytes, nothing else.
+//!
+//! # Limitations
+//!
+//! Canonicalization here is **lexical and byte-exact**. Case and Unicode
+//! transformations a real filesystem can apply but this module does not
+//! include (#3734):
+//!
+//! * **Case.** APFS and NTFS are case-insensitive by default, so a peer row
+//!   spelled `attachments/PHOTO.PNG` names the same file as an existing
+//!   `attachments/photo.png` — two distinct strings in the column, one file on
+//!   disk. That is GC failure mode 2 by another spelling: the orphan GC's
+//!   directory walk derives whichever case the directory entry actually holds
+//!   and cannot match the other row's string. The general peer-steerable case is
+//!   not closed. The steerable cases that *are* closed are fallback ids:
+//!   [`AttachmentFsPath::for_storage_id`] only mints ASCII ids without
+//!   lowercase letters verbatim and compares the `id-<hex>` prefix
+//!   case-insensitively. Normalizing every accepted peer path's case here would
+//!   rewrite the ULID paths this device already minted and stored, which is a
+//!   larger change than the hazard warrants.
+//! * **Unicode case folding.** Some case-insensitive filesystems fold non-ASCII
+//!   code points too. For example, NTFS's uppercase mapping can fold the dotless
+//!   `ı` in a peer path such as `attachments/ıD-file` to `I`, making it collide
+//!   with `attachments/ID-file`. The ASCII/lowercase gate above closes this for
+//!   fallback ids, but [`AttachmentFsPath::parse`] still accepts either spelling
+//!   when it arrives directly as a peer-supplied `fs_path`.
+//! * **Unicode form.** HFS+ stores NFD; a row carrying the NFC spelling of the
+//!   same name is again one file and two strings.
+//!
+//! These are narrow in practice because every path this device mints is
+//! `attachments/<ULID>` — ASCII, uppercase, and unique by construction — so the
+//! collision needs a peer-supplied path to reach it. They are stated here rather
+//! than left implicit, because the invariant a reader would otherwise take from
+//! the type ("one path string per file") is stronger than what it delivers on
+//! those filesystems.
 
 use crate::error::AppError;
 
@@ -77,25 +112,37 @@ const OPAQUE_ID_PREFIX: &str = "id-";
 /// MS-DOS device names. Windows resolves these as devices in **every**
 /// directory and with any extension (`CON`, `con.png`, `NUL.bin`), so a
 /// component whose stem is one of them cannot be created as a file there. That
-/// is not a traversal or a GC hazard — the write simply fails and the row is
-/// re-requested from a peer forever — but the fallback exists precisely to
-/// produce a path that works, so it is closed here rather than left as a loop.
+/// is not a traversal or a GC hazard — the write fails, or the bytes vanish into
+/// the device — but `find_missing_attachments` then re-requests that row from a
+/// peer on every sync, forever. [`AttachmentFsPath::parse`] therefore refuses
+/// such a component *anywhere* in the path (#3734), which is what makes the
+/// coercion fallback divert to the digest as well: the loop is closed here
+/// rather than left to the writer to discover.
 const DOS_DEVICE_NAMES: &[&str] = &[
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "COM¹", "COM²",
+    "COM³", "LPT¹", "LPT²", "LPT³",
 ];
 
-/// True when `id` is a component Windows resolves as a device rather than a
+/// True when `component` is one Windows resolves as a device rather than a
 /// file. Windows does so in **every** directory and with any extension (`CON`,
-/// `con.png`, `NUL.bin`), so such a component cannot be created there. That is
-/// neither a traversal nor a GC hazard — the write simply fails and the row is
-/// re-requested from a peer forever — but a fallback exists precisely to
-/// produce a path that works, so it diverts to the digest instead.
-fn is_dos_device_name(id: &str) -> bool {
-    let stem = id.split('.').next().unwrap_or("");
+/// `con.png`, `NUL.bin`), so such a component cannot be created there.
+fn is_dos_device_name(component: &str) -> bool {
+    let stem = component.split('.').next().unwrap_or("");
     DOS_DEVICE_NAMES
         .iter()
         .any(|d| stem.eq_ignore_ascii_case(d))
+}
+
+/// True when `id` opens with the digest namespace marker in any ASCII case.
+///
+/// ASCII-case-insensitive because the verbatim branch admits only ASCII and the
+/// path lands on a filesystem that is case-insensitive on macOS and Windows:
+/// `ID-<hex>` and `id-<hex>` are two strings the `UNIQUE` index treats as
+/// distinct and one file on APFS/NTFS (#3734).
+fn has_opaque_id_prefix(id: &str) -> bool {
+    id.get(..OPAQUE_ID_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(OPAQUE_ID_PREFIX))
 }
 
 /// The always-parseable, per-id-unique path `for_storage_id` falls back to.
@@ -150,8 +197,16 @@ impl AttachmentFsPath {
     /// Returns [`AppError::Validation`] when the input is empty, absolute,
     /// contains `..`, contains a control character or a `:` (a Windows drive
     /// spec or NTFS alternate-data-stream suffix), has a component that
-    /// Windows' trailing-dot/space stripping would fold back to `.`/`..`, does
+    /// Windows' trailing-dot/space stripping would fold back to `.`/`..`, has a
+    /// component Windows resolves as an MS-DOS device (`CON`, `NUL.png`), does
     /// not start at [`ATTACHMENTS_ROOT`], or names no file below that root.
+    ///
+    /// The device-name rule is about a path that cannot be *written*, not one
+    /// that escapes: the write fails or the bytes vanish into the device,
+    /// `find_missing_attachments` sees the row as missing, and the peer is asked
+    /// for it again on every sync forever. Refusing at the door sends the apply
+    /// path to [`Self::for_storage_id`] instead, which is a path that works
+    /// (#3734).
     pub fn parse(raw: &str) -> Result<Self, AppError> {
         if raw.is_empty() {
             return Err(AppError::validation(
@@ -212,6 +267,14 @@ impl AttachmentFsPath {
                     "attachment path escapes app data dir".into(),
                 ));
             }
+            // Checked on the FOLDED form, because that is the name the
+            // filesystem would see: Windows strips the trailing space from
+            // `CON ` before resolving it as a device.
+            if is_dos_device_name(folded) {
+                return Err(AppError::validation(
+                    "attachment path component names an MS-DOS device".into(),
+                ));
+            }
             components.push(folded);
         }
 
@@ -242,27 +305,47 @@ impl AttachmentFsPath {
     /// # Two properties, both by construction
     ///
     /// **The result always parses.** The id is minted into the path verbatim
-    /// only when [`Self::parse`] accepts the candidate *unchanged* — an
-    /// identity parse. Anything `parse` would have normalized or refused, for
-    /// any reason including one nobody enumerated here, falls to the id's
-    /// blake3 digest, which is hex and therefore cannot be refused. The rules
-    /// are thus read off `parse` itself rather than restated, so the two cannot
-    /// drift apart.
+    /// only when it is ASCII without lowercase letters and [`Self::parse`]
+    /// accepts the candidate *unchanged* — an identity parse. Anything else
+    /// falls to the id's blake3 digest, which is hex and therefore cannot be
+    /// refused. The local ULID alphabet is a subset of that admitted shape;
+    /// excluding lowercase and non-ASCII peer ids prevents them from exploiting
+    /// filesystem case folds.
+    /// The remaining path rules are read off `parse` itself rather than
+    /// restated, so the two cannot drift apart.
     ///
-    /// **Distinct ids stay distinct.** `attachments.fs_path` carries a partial
-    /// `UNIQUE` index (migration 0037): two rows sharing a path means the
-    /// second `INSERT OR IGNORE` is silently dropped. A sanitizing fallback
-    /// cannot promise this — `""`, `"."` and `" "` all sanitize to one name —
-    /// but a digest can, and a verbatim id is distinct from other verbatim ids
-    /// by definition. An id spelled like a digest (`id-<hex>`) is diverted to
-    /// the digest branch too, so the two namespaces cannot be made to overlap
-    /// by a peer choosing its own id.
+    /// **Distinct ids stay byte-distinct, and the digest namespace stays
+    /// distinct under filesystem case folding for constructor output.**
+    /// `attachments.fs_path` carries a partial `UNIQUE` index (migration 0037):
+    /// two rows sharing a path means the second
+    /// `INSERT OR IGNORE` is silently dropped. A sanitizing fallback cannot
+    /// promise this — `""`, `"."` and `" "` all sanitize to one name — but a
+    /// digest can, and a verbatim id is distinct from other verbatim ids by
+    /// definition. An id spelled like a digest is diverted to the digest branch
+    /// too, so the two namespaces cannot be made to overlap by a peer choosing
+    /// its own id — and the prefix test is **case-insensitive** (#3734), because
+    /// the index compares strings while APFS and NTFS compare files: `ID-<hex>`
+    /// and `id-<hex>` are two rows the index is happy with and one file on disk,
+    /// which is the collision this branch exists to prevent. Non-ASCII ids are
+    /// digested rather than relying on a platform's Unicode folding rules. This
+    /// property is scoped to paths minted here; directly accepted peer paths
+    /// retain the module-level limitations.
     #[must_use]
     pub fn for_storage_id(storage_id: &str) -> Self {
         let candidate = format!("{ATTACHMENTS_ROOT}/{storage_id}");
-        let mintable = !storage_id.contains(['/', '\\'])
-            && !storage_id.starts_with(OPAQUE_ID_PREFIX)
-            && !is_dos_device_name(storage_id)
+        // No device-name test here: `parse` refuses an MS-DOS device component
+        // anywhere in the path (#3734), so the identity parse below already
+        // diverts one. Restating the rule is what lets the two drift.
+        // Local attachment ids are uppercase ASCII ULIDs. Keeping the verbatim
+        // branch to ASCII values without lowercase letters makes its
+        // case-insensitive uniqueness claim portable: peer-derived lowercase
+        // or non-ASCII ids take the per-id digest rather than relying on a
+        // filesystem's case table.
+        let ascii_without_lowercase =
+            storage_id.is_ascii() && !storage_id.bytes().any(|byte| byte.is_ascii_lowercase());
+        let mintable = ascii_without_lowercase
+            && !storage_id.contains(['/', '\\'])
+            && !has_opaque_id_prefix(storage_id)
             && matches!(Self::parse(&candidate), Ok(ref parsed) if parsed.as_str() == candidate);
 
         if mintable {
@@ -485,8 +568,8 @@ mod tests {
         "NUL.png",
         "LPT9",
         "aux.bin",
-        // Length: past the display sanitizer's byte cap, and multi-byte so a
-        // naive cut would split a code point.
+        // Long and multi-byte identifiers exercise the digest branch without
+        // relying on a byte-truncating sanitizer.
         "ID-01234567890123456789012345678901234567890123456789",
         "\u{e9}",
     ];
@@ -548,14 +631,23 @@ mod tests {
     /// Distinct ids must not collapse onto one path: `attachments.fs_path`
     /// carries a partial UNIQUE index (migration 0037), so a constant fallback
     /// would make the second such row collide.
+    ///
+    /// Compared **case-insensitively** (#3734). The UNIQUE index compares byte
+    /// strings, but the paths it indexes are opened on a filesystem that is
+    /// case-insensitive by default on macOS and Windows: two rows the index is
+    /// perfectly happy with can still be one file on disk, and then one row's
+    /// bytes are the other's. An exact-string check cannot see that class at
+    /// all, which is how the `ID-<hex>`/`id-<hex>` collision survived the
+    /// original test.
     #[test]
     fn the_fallback_keeps_distinct_ids_distinct() {
         let mut seen = std::collections::HashSet::new();
         for id in HOSTILE_IDS {
             let path = AttachmentFsPath::coerce_from_peer("notes.db", id).into_string();
             assert!(
-                seen.insert(path.clone()),
-                "two distinct hostile ids share the fallback path {path:?}"
+                seen.insert(path.to_ascii_lowercase()),
+                "two distinct hostile ids share the fallback path {path:?} \
+                 (compared case-insensitively: on APFS/NTFS that is one file)"
             );
         }
     }
@@ -636,21 +728,146 @@ mod tests {
     /// A peer cannot steer its own attachment onto another row's digest path by
     /// naming itself `id-<hex>`: an id spelled like a digest is diverted to the
     /// digest branch, whose output would have to be a blake3 preimage to match.
+    ///
+    /// Checked over every ASCII spelling of the marker and **compared
+    /// case-insensitively** (#3734). The digest path is the file the victim's
+    /// bytes live in; on APFS or NTFS `attachments/ID-<hex>` opens that same
+    /// file, so a byte-exact `assert_ne!` — which is what shipped — declares the
+    /// namespaces disjoint while they are not. The victim is reachable: its row
+    /// only holds a digest path if its own id was unmintable, i.e. peer-crafted
+    /// in the first place, and both ids come off the same wire.
     #[test]
     fn an_id_spelled_like_a_digest_does_not_collide_with_one() {
         let victim = AttachmentFsPath::for_storage_id(":");
-        let impostor_id = victim
+        let digest_component = victim
             .as_str()
             .strip_prefix("attachments/")
             .expect("rooted")
             .to_owned();
-        let impostor = AttachmentFsPath::for_storage_id(&impostor_id);
-        assert_ne!(
-            victim.as_str(),
-            impostor.as_str(),
-            "an id spelled like a digest must not land on the digest's path"
+        for impostor_id in [
+            digest_component.clone(),
+            digest_component.to_ascii_uppercase(),
+            // Marker uppercased, digits left alone — the minimal spelling that
+            // slips a case-sensitive `starts_with`.
+            format!(
+                "{}{}",
+                OPAQUE_ID_PREFIX.to_ascii_uppercase(),
+                digest_component
+                    .strip_prefix(OPAQUE_ID_PREFIX)
+                    .expect("digest carries the marker")
+            ),
+        ] {
+            let impostor = AttachmentFsPath::for_storage_id(&impostor_id);
+            assert_ne!(
+                victim.as_str().to_ascii_lowercase(),
+                impostor.as_str().to_ascii_lowercase(),
+                "id {impostor_id:?} lands on the victim's digest path on any \
+                 case-insensitive filesystem — the same file, two rows"
+            );
+            assert!(AttachmentFsPath::parse(impostor.as_str()).is_ok());
+        }
+    }
+
+    /// Only ASCII identifiers without lowercase letters may mint verbatim. A
+    /// lowercase direct caller and a non-ASCII peer id both take the per-id
+    /// digest, so filesystem case tables cannot make them alias an uppercase
+    /// path or the digest namespace.
+    #[test]
+    fn lowercase_and_non_ascii_storage_ids_use_distinct_digests() {
+        let lowercase = "peer-id";
+        assert_eq!(
+            AttachmentFsPath::for_storage_id(lowercase).as_str(),
+            digest_component_path(lowercase),
+            "lowercase direct input must not mint a verbatim path"
         );
-        assert!(AttachmentFsPath::parse(impostor.as_str()).is_ok());
+
+        let dotless_i = "ıD-PEER";
+        let ascii_i = "ID-PEER";
+        let dotless_path = AttachmentFsPath::for_storage_id(dotless_i);
+        let ascii_path = AttachmentFsPath::for_storage_id(ascii_i);
+        assert_eq!(
+            dotless_path.as_str(),
+            digest_component_path(dotless_i),
+            "a non-ASCII id must not mint the spelling a filesystem may fold"
+        );
+        assert_eq!(
+            ascii_path.as_str(),
+            digest_component_path(ascii_i),
+            "the ASCII digest-namespace spelling must also take its own digest"
+        );
+        assert_ne!(
+            dotless_path, ascii_path,
+            "dotless-ı and ASCII-I ids must remain different files"
+        );
+    }
+
+    /// #3734 — a component Windows resolves as a device is refused **in the
+    /// path**, not only in the fallback id.
+    ///
+    /// A peer-supplied `attachments/CON` used to parse and be stored. On Windows
+    /// the write then fails, or the bytes disappear into the device; either way
+    /// `find_missing_attachments` reports the row as missing and asks the peer
+    /// for it again on every sync, forever. Nothing else in the pipeline breaks
+    /// that loop, which is why it is closed at the parse.
+    #[test]
+    fn ms_dos_device_components_are_refused_anywhere_in_the_path() {
+        for bad in [
+            "attachments/CON",
+            "attachments/con",
+            "attachments/NUL.png",
+            "attachments/aux.bin",
+            "attachments/LPT9",
+            "attachments/com1.tar.gz",
+            // Interior components resolve as devices too — the directory
+            // itself cannot be created.
+            "attachments/PRN/photo.png",
+            // Windows strips the trailing space before resolving, so the
+            // folded form is what must be tested.
+            "attachments/CON ",
+            "attachments/nul.",
+        ] {
+            assert!(
+                AttachmentFsPath::parse(bad).is_err(),
+                "{bad:?} cannot be written on Windows and must be refused, not \
+                 stored and re-requested forever"
+            );
+        }
+        // Names that merely start with a device name are ordinary files.
+        for good in [
+            "attachments/console.log",
+            "attachments/CONTACT",
+            "attachments/nulls.bin",
+            "attachments/com10",
+        ] {
+            assert!(
+                AttachmentFsPath::parse(good).is_ok(),
+                "{good:?} is not a device name and must still parse"
+            );
+        }
+        // And the apply path keeps working: a device-named peer path coerces to
+        // this device's own, writable path rather than being rejected.
+        let coerced = AttachmentFsPath::coerce_from_peer("attachments/CON", "01J0ATT");
+        assert_eq!(coerced.as_str(), "attachments/01J0ATT");
+    }
+
+    /// Win32 also reserves COM/LPT followed by the superscript digits ¹, ², or
+    /// ³. The stem match is ASCII-case-insensitive and applies before any file
+    /// extension, just like the ordinary numbered device names.
+    #[test]
+    fn superscript_dos_device_stems_are_refused_with_case_and_extensions() {
+        for bad in [
+            "attachments/COM¹",
+            "attachments/com².log",
+            "attachments/Com³.tar.gz",
+            "attachments/LPT¹",
+            "attachments/lpt².bin",
+            "attachments/LpT³.data",
+        ] {
+            assert!(
+                AttachmentFsPath::parse(bad).is_err(),
+                "{bad:?} is a reserved Win32 device stem and must be refused"
+            );
+        }
     }
 
     #[test]

@@ -146,23 +146,14 @@ pub fn validate_attachment_fs_path(
     Ok(app_data_dir.join(canonical.as_str()))
 }
 
-/// Pure lexical check on an attachment `fs_path`. Exists for trust boundaries
-/// such as snapshot restore and pre-write checks that need lexical validation
-/// without resolving the path or requiring its target to exist.
-/// See [`validate_attachment_fs_path`] for the full docs.
-///
-/// Thin wrapper over [`agaric_core::attachment_path::AttachmentFsPath::parse`],
-/// which is the single definition of what a stored attachment path may be —
-/// the apply/undo/replay writers parse with the same function, so what the
-/// resolvers accept and what the writers store cannot drift apart.
-///
-/// # Errors
-///
-/// Returns [`AppError::Validation`] when the path escapes, leaves the
-/// attachments root, or is otherwise malformed.
-pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
-    AttachmentFsPath::parse(fs_path).map(|_| ())
-}
+// `check_attachment_fs_path_shape` lived here: a `pub` wrapper returning
+// `Result<(), _>` for callers that wanted the lexical check without a resolved
+// path. #3370 moved the rules into `AttachmentFsPath::parse` and repointed the
+// last production caller, which left the wrapper reachable only from tests —
+// and being `pub`, nothing warned about it (#3734). It is gone rather than kept
+// as test-only surface: `AttachmentFsPath::parse(p)` says the same thing at
+// every remaining site, and a second public name for one rule is what lets a
+// reader believe there are two.
 
 /// Query the `attachments` table and return entries whose `fs_path` file
 /// is missing — or corrupted — on disk under `app_data_dir`.

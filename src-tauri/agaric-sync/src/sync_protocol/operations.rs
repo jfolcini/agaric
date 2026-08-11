@@ -92,8 +92,11 @@ pub struct BatchIngestOutcome {
 ///   *consecutive* count and escalates to a single `error!` once a device has
 ///   deferred [`audit_ingest_metrics::PERSISTENT_STALL_BATCHES`] batches
 ///   running without landing anything — the point at which "busy writer" stops
-///   being a plausible explanation. The deferred-record total is surfaced
-///   through `StatusInfo` alongside it.
+///   being a plausible explanation. "Without landing anything" is meant
+///   literally (#3740): a device that lands records and only then stalls
+///   mid-chain has advanced its frontier, so its run is retired at the stall
+///   itself and the escalation cannot claim otherwise. The deferred-record total
+///   is surfaced through `StatusInfo` alongside it.
 /// * **Corrupt** (hash mismatch, NUL byte in a hashed field, `SetProperty`
 ///   domain violation) — the bytes are unusable and every future re-ship of
 ///   them is unusable in exactly the same way. Stalling the device here would
@@ -124,9 +127,11 @@ pub struct BatchIngestOutcome {
 ///
 /// #3726 makes that precondition **checked** rather than merely documented: the
 /// loop tracks the highest `seq` each device has presented and reports any
-/// record arriving below it through [`BatchIngestOutcome::out_of_order`], an
-/// `error!` line and [`audit_ingest_metrics::record_out_of_order`]. Three
-/// things it deliberately is not:
+/// record arriving below it through [`BatchIngestOutcome::out_of_order`] and
+/// [`audit_ingest_metrics::record_out_of_order`], which emits **one** `error!`
+/// per offending device per batch carrying the count (#3740 — the scenario is
+/// thousands of records over a handful of devices, and a line each would bury
+/// the finding). Three things it deliberately is not:
 ///
 /// * Not a `debug_assert!`. The data loss happens in release builds, where a
 ///   `debug_assert!` is compiled out — it would trip exactly where the harm
@@ -193,11 +198,22 @@ async fn ingest_replicated_batch_inner(
     // is the set that made progress, which is what clears a device's
     // consecutive-stall count (#3727).
     let mut seen: HashSet<&str> = HashSet::new();
+    // #3740: devices for which something actually LANDED in this batch —
+    // ingested, or found already held. Not the complement of `stalled`: a
+    // device can land three records and stall on the fourth, and its frontier
+    // has moved even though it stalled. That distinction is what the
+    // consecutive-stall run is supposed to measure.
+    let mut landed: HashSet<&str> = HashSet::new();
     // #3726: the highest `seq` each device has presented SO FAR, which is what
     // the ascending-seq precondition is about. Tracks presentation order, not
     // what landed: a deferred record does not advance the frontier, but a
     // record arriving below it still means the batch was reordered.
     let mut highest_seq: HashMap<&str, i64> = HashMap::new();
+    // #3740: out-of-order violations aggregated per device, reported once at
+    // the end of the batch rather than once per record. A reordered batch is
+    // thousands of records over a handful of devices, and a log line each would
+    // bury the finding it is trying to surface.
+    let mut out_of_order: HashMap<&str, (i64, i64, u64)> = HashMap::new();
 
     for record in records {
         let device = record.device_id.as_str();
@@ -211,12 +227,10 @@ async fn ingest_replicated_batch_inner(
             && record.seq < highest
         {
             outcome.out_of_order += 1;
-            audit_ingest_metrics::record_out_of_order(
-                remote_device_id,
-                device,
-                record.seq,
-                highest,
-            );
+            out_of_order
+                .entry(device)
+                .and_modify(|(_, _, count)| *count += 1)
+                .or_insert((record.seq, highest, 1));
         }
         highest_seq
             .entry(device)
@@ -234,11 +248,35 @@ async fn ingest_replicated_batch_inner(
         };
 
         match result {
-            Ok(true) => outcome.ingested += 1,
-            Ok(false) => outcome.already_held += 1,
+            Ok(true) => {
+                outcome.ingested += 1;
+                landed.insert(device);
+            }
+            Ok(false) => {
+                outcome.already_held += 1;
+                // `already_held` still proves progress since this pull's head
+                // exchange: `COLLECT_OPS_FOR_PEER_SQL` offers only `ol.seq >
+                // f.seq`, where `f.seq` is the frontier we advertised. If the
+                // row is present by insertion time, it landed after that
+                // snapshot (for example through an earlier duplicate or a
+                // concurrent ingest), so retiring the old no-progress run is
+                // sound. Keep this coupled to that query's strict frontier.
+                landed.insert(device);
+            }
             Err(e @ (AppError::Database(_) | AppError::PoolTimedOut)) => {
                 stalled.insert(device);
                 outcome.deferred += 1;
+                // #3740: if this device already landed a record in THIS batch,
+                // its frontier moved, so whatever run it was carrying is over
+                // and this stall starts a new one. Retired here, before the
+                // stall is counted, and not in the post-loop sweep: the
+                // escalation fires from inside `record_stall`, so a reset that
+                // happened afterwards would arrive too late to stop an `error!`
+                // asserting that the device has been "running without landing
+                // anything" in the very batch where it landed something.
+                if landed.contains(device) {
+                    audit_ingest_metrics::note_progress(device);
+                }
                 // #3727: aggregate the stall before logging it, so the warn
                 // line carries how many batches running this device has now
                 // failed to make any progress. One is a busy writer; a run of
@@ -282,9 +320,21 @@ async fn ingest_replicated_batch_inner(
     // progress, which retires any consecutive-stall run it was carrying. Done
     // once per batch per device rather than once per record — a batch is
     // thousands of records over a handful of devices, and the map being probed
-    // is normally empty.
+    // is normally empty. Devices that stalled *after* landing something were
+    // already retired at the stall itself (#3740).
     for device in seen.difference(&stalled) {
         audit_ingest_metrics::note_progress(device);
+    }
+    // #3726/#3740: one summarised line per offending device, after the loop, so
+    // a reordered batch produces a handful of lines rather than one per record.
+    for (device, (first_seq, first_highest, count)) in out_of_order {
+        audit_ingest_metrics::record_out_of_order(
+            remote_device_id,
+            device,
+            first_seq,
+            first_highest,
+            count,
+        );
     }
     audit_ingest_metrics::record_deferred(outcome.deferred);
 
