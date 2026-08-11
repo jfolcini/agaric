@@ -730,7 +730,7 @@ jobs:
           retention-days: 90
 
       - name: Install cargo-nextest via prebuilt binary
-        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
         with:
           tool: cargo-nextest
 
@@ -818,7 +818,7 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install cargo-mutants + cargo-nextest via prebuilt binary
-        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
         with:
           tool: cargo-mutants,cargo-nextest
 
@@ -1363,7 +1363,7 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install cargo-fuzz via prebuilt binary
-        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
         with:
           tool: cargo-fuzz
 
@@ -1675,7 +1675,7 @@ jobs:
       - name: Install prek + non-Rust lint tools via prebuilt binaries
         # Mirrors the lint job's ungated tool install: prek runs the whole
         # suite; zizmor/taplo/typos/sqruff are invoked by prek hooks.
-        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
         with:
           # sqruff pinned to 0.38.x: >=0.39 needs rustc 1.96 while this repo
           # pins 1.95.0 — bump in lockstep with the lint job / `full-suite`.
@@ -1687,7 +1687,7 @@ jobs:
         # Back the `cargo-deny` / `cargo-machete` pre-commit hooks.
         # cargo-nextest/cargo-audit are NOT needed: `cargo-test` and
         # `cargo audit` are pre-push-staged, not run by this job.
-        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
         with:
           tool: cargo-deny,cargo-machete
 
@@ -1857,7 +1857,7 @@ jobs:
       - name: Install prek + non-Rust lint tools via prebuilt binaries
         # Mirrors the lint job's first (ungated) tool install: prek runs the
         # whole suite; zizmor/taplo/typos/sqruff are invoked by prek hooks.
-        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
         with:
           # sqruff pinned to 0.38.x: >=0.39 needs rustc 1.96 while this repo
           # pins 1.95.0 (see the lint job in _validate.yml). Bump in lockstep.
@@ -1868,7 +1868,7 @@ jobs:
       - name: Install cargo plugins via prebuilt binaries
         # cargo-deny/cargo-machete are invoked by prek Rust hooks; cargo-nextest
         # backs both the cargo-test hook and the explicit nextest step below.
-        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
         with:
           tool: cargo-deny,cargo-machete,cargo-audit,cargo-nextest
 
