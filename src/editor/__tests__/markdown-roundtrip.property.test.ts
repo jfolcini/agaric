@@ -196,11 +196,10 @@ function startsWithDelimiterBulletMarker(p: ParagraphNode): boolean {
 /** A paragraph, occasionally carrying a todoState (a task block, #1435). */
 const arbParagraph: fc.Arbitrary<ParagraphNode> = fc
   .tuple(arbInlineContent, fc.option(fc.constantFrom(...TODO_STATES), { nil: undefined }))
-  .map(
-    ([content, todoState]): ParagraphNode =>
-      todoState === undefined
-        ? { type: 'paragraph' as const, content }
-        : { type: 'paragraph' as const, attrs: { todoState }, content },
+  .map(([content, todoState]): ParagraphNode =>
+    todoState === undefined
+      ? { type: 'paragraph' as const, content }
+      : { type: 'paragraph' as const, attrs: { todoState }, content },
   )
   .filter((p) => !startsWithDelimiterBulletMarker(p))
 

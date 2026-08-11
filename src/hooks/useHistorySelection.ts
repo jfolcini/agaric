@@ -85,7 +85,7 @@ export function useHistorySelection(entries: HistoryEntry[]): UseHistorySelectio
     (): HistoryEntry[] =>
       entries
         .filter((e) => selected.has(entryKey(e)))
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+        .toSorted((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
     [entries, selected],
   )
 

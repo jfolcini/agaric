@@ -21,6 +21,9 @@
     "src/editor/emoji-data.generated.ts",
     "**/coverage",
     "**/*.md",
+    "**/*.toml",
+    "**/*.yml",
+    "**/*.yaml",
     "docs/**",
     "public/pdf.worker.min.mjs"
   ]
