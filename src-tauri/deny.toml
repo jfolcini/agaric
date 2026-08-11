@@ -74,6 +74,18 @@ ignore = [
     { id = "RUSTSEC-2024-0429", reason = "Tauri GTK3 transitive dep: glib 0.18.5 unsound (sibling of GTK3 binding accept-list above)" },
     # Loro transitive unmaintained crate (atomic-polyfill via heapless → postcard → loro)
     { id = "RUSTSEC-2023-0089", reason = "Loro transitive dep: atomic-polyfill (via heapless → postcard)" },
+    # Loro 1.13.6 depends on the archived `im` collection stack. There is no
+    # patched `im`, `bitmaps`, or `sized-chunks` release; replacing them with
+    # the maintained `imbl` family must happen upstream in Loro. Agaric cannot
+    # lift its Loro pin until the width-2 history regression documented in
+    # .github/dependabot.yml / #3161 is resolved. The separate `im::OrdSet`
+    # unsoundness is not reachable through Loro 1.13.6: its production source
+    # uses `im::HashMap` only (`im::HashSet` occurs only in Loro's tests), and
+    # contains no `OrdSet` use.
+    { id = "RUSTSEC-2026-0247", reason = "bitmaps is unmaintained with no patched release; transitive only through pinned Loro 1.13.6's im stack (#3161)" },
+    { id = "RUSTSEC-2026-0248", reason = "im is unmaintained with no patched release; transitive only through pinned Loro 1.13.6 (#3161)" },
+    { id = "RUSTSEC-2026-0251", reason = "sized-chunks is unmaintained with no patched release; transitive only through pinned Loro 1.13.6's im stack (#3161)" },
+    { id = "RUSTSEC-2023-0126", reason = "im::OrdSet insertion is unsound, but Loro 1.13.6 production code uses im::HashMap and contains no OrdSet use; blocked on upstream replacing im (#3161)" },
     # NOTE: RUSTSEC-2023-0071 (rsa Marvin Attack, via sqlx-mysql) was removed here
     # In /#145 — current sqlx (0.8.x) no longer pulls the `rsa` crate at all
     # (absent from Cargo.lock), so the advisory is no longer reachable from any
