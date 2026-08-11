@@ -283,22 +283,21 @@ dirs = { version = "6.0.0", default-features = false }
 # Hard (non-optional) dependency as of the rmcp migration (#693): the
 # `mcp_rmcp_spike` feature gate was retired and the hand-rolled framing
 # deleted, so `RmcpAdapter` serves both surfaces unconditionally. Held at
-# the 2.x line (Apache-2.0); the lockfile resolves 2.2.0. Defaults
+# the 3.x line (Apache-2.0); the lockfile resolves 3.1.0. Defaults
 # (`base64`, `macros`, `server`) include the `transport-async-rw` server
 # transport via the `server` feature; the `client` feature is added so the
 # end-to-end tests can drive a real rmcp client over an in-memory
 # `tokio::io::duplex` pair.
 #
-# NOT a lazy pin: rmcp 3.0 is a breaking major for the exact APIs we
-# implement — `ServerHandler::call_tool`'s return type changed, the metadata
-# model split into `MetaObject` / `RequestMetaObject` /
-# `NotificationMetaObject`, and the pre-3.0 deprecated surface was removed.
-# Moving to `^3.0` requires porting `src/mcp/rmcp_adapter.rs`,
-# `src/mcp/server/tests_rmcp.rs`, and `src/mcp/server.rs` (which takes
-# `rmcp::service::ServiceExt`) in the same commit as the manifest + BOTH
-# lockfiles. Dependabot attempted the manifest half alone in #3432; see the
-# `/src-tauri/fuzz` entry in `.github/dependabot.yml` for the guard that
-# stops that recurring.
+# The rmcp 2.2 -> 3.1 migration changes `ServerHandler::call_tool` to return
+# `CallToolResponse` and adds protocol-gated result/cache metadata. It also
+# requires using the request-context client-metadata accessor so modern
+# discover/inline requests do not depend on handshake-only peer state.
+# `src/mcp/rmcp_adapter.rs` keeps those details at the rmcp boundary so the
+# internal registry contract stays stable.
+# Keep the manifest and BOTH lockfiles in the same commit. Dependabot attempted
+# the manifest half alone in #3432; see the `/src-tauri/fuzz` entry in
+# `.github/dependabot.yml` for the guard that stops that recurring.
 rmcp = { version = "3.1", features = ["client"] }
 
 # Phase 1 — Loro CRDT runtime. Hard dep as of Phase 3 day-9
