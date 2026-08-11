@@ -89,7 +89,7 @@ function listOrder(rows: FlatBlock[]): string[] {
   const childrenOf = (parentId: string | null) =>
     rows
       .filter((b) => (b.parent_id ?? null) === parentId)
-      .sort((a, b) => {
+      .toSorted((a, b) => {
         const pa = a.position ?? Number.MAX_SAFE_INTEGER
         const pb = b.position ?? Number.MAX_SAFE_INTEGER
         if (pa !== pb) return pa - pb
