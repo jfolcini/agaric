@@ -6,7 +6,7 @@
 | **Subagents** | 5 build + 5 review (+1 targeted follow-up) |
 | **Items closed** | `#3749` `#3751` `#3754` `#3765` `#3766` |
 | **Items modified** | `#3142` (77 survivor lines removed from the machine-readable block), `#3788` (dedup evidence added) |
-| **Tests added** | +24 (frontend) / +0 (backend) |
+| **Tests added** | 25 (frontend) / 0 (backend) |
 | **Files touched** | 9 |
 
 **Summary:** Triaged the 77 listed mutation survivors across five more frontend areas under #3142 — 31 mutants killed, the rest recorded as accepted gaps with proofs of equivalence. `filters-model` reached **100.00%** with zero survivors and zero `NoCoverage`. The batch's real output was methodological: every builder was required to read Stryker's own `mutation.json` before designing a test, which eliminated the line-vs-column errors that cost session 1288 a rework pass — and the review layer then reversed a builder conclusion in *both* directions on the same module.
