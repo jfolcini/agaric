@@ -127,6 +127,7 @@ CRATE_ROOTS: list[Path] = [
 # the shared globs, the `test-util` pool helper, and standalone audit/bin
 # binaries (their fixture-seed queries are not production dynamic SQL).
 EXTRA_TEST_FILE_GLOBS = [
+    "**/bulk_equivalence/**",
     "**/*proptest*.rs",
     "**/test_support.rs",
     "**/src/bin/**",

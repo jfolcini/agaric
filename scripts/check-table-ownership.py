@@ -112,10 +112,17 @@ _glob_match = _crt._glob_match
 #       test-pool helper in agaric-store.
 #   * **/src/bin/**          — standalone bins (e.g. diagnostics audit tools)
 #       whose fixture seeds are not production store writes.
+#   * **/bulk_equivalence/**  — the #3346 batch-vs-fold oracle. `mod.rs` is
+#       `#![cfg(test)]` and its submodules inherit that from the `mod`
+#       declaration, so their filenames match none of the shared globs. The
+#       raw `blocks` writes there are fixture SEEDS seeding SQL and the Loro
+#       engine together; the operations under test are driven through the
+#       real commands.
 EXTRA_TEST_FILE_GLOBS = [
     "**/*proptest*.rs",
     "**/test_support.rs",
     "**/src/bin/**",
+    "**/bulk_equivalence/**",
 ]
 
 
