@@ -16,7 +16,7 @@ function mkFlat(id: string, parentId: string | null, depth: number): FlatBlock {
 }
 
 describe('computeDropIndex mutants (#3142)', () => {
-  // Line 521 [ConditionalExpression]: `if (overId === SENTINEL_ID)`.
+  // Line 528 [ConditionalExpression]: `if (overId === SENTINEL_ID)`.
   // Forcing the condition to always-true makes a normal drop target be
   // treated as "append after last" — wrong insertAt/slot for a real id.
   it('does not treat a real overId as the append-after-last sentinel', () => {
@@ -27,7 +27,23 @@ describe('computeDropIndex mutants (#3142)', () => {
   })
   // Note: the always-false direction of this mutant is equivalent — SENTINEL_ID
   // never matches a real item id, so the "unknown target" else-branch also
-  // resolves to `without.length`, identical to the sentinel branch.
+  // resolves to `without.length`, identical to the sentinel branch. Differential
+  // execution over 1 082 327 generated inputs (#3765) found the only inputs that
+  // separate them are lists containing a block whose OWN id is SENTINEL_ID.
+  // That is unrepresentable — but NOT because of a declared "id contract":
+  // `blocks.id` has no CHECK constraint and the sync ingest paths never
+  // ULID-validate. What actually excludes it is (a) the client-supplied-id
+  // path parsing strictly (`BlockId::from_string` → `Ulid::from_str`,
+  // agaric-engine/src/block_ops.rs), and (b) every untrusted path
+  // (`BlockId::from_trusted` and the lenient `Deserialize` in
+  // agaric-core/src/ulid.rs) ASCII-uppercasing whatever it cannot parse, so a
+  // peer-supplied `__drop-after-last__` lands as `__DROP-AFTER-LAST__` and
+  // misses this case-sensitive `===`. The whole margin is one
+  // `to_ascii_uppercase()` that exists for hash canonicalization (#1558), not
+  // for sentinel safety: if SENTINEL_ID ever becomes uppercase, or that
+  // normalization is relaxed to preserve peer bytes, this mutant becomes
+  // killable and the collision becomes a real bug. Left alive deliberately
+  // rather than pinned as a guard on a state today's normalization forbids.
 
   // Line 531 [EqualityOperator]: `overIdxInItems > activeIndex ? +1 : same`.
   it('adds one when dragging downward past the target (overIdx > activeIndex)', () => {
@@ -141,3 +157,54 @@ describe('computeDropIndex mutants (#3142)', () => {
     expect(computeDropIndex(items, null, SENTINEL_ID, 'B')).toBe(1)
   })
 })
+
+describe('SENTINEL_ID preconditions (#3794)', () => {
+  // Tripwire for the equivalence argument recorded in the computeDropIndex
+  // describe above. That argument is only sound while SENTINEL_ID is lowercase:
+  // the sync ingest paths accept peer-supplied block ids verbatim and
+  // ASCII-uppercase whatever they cannot parse as a ULID, so an injected
+  // `__drop-after-last__` arrives as `__DROP-AFTER-LAST__` and misses the
+  // case-sensitive `===`. Make an uppercase SENTINEL_ID fail here rather than
+  // silently invalidate a comment: the survivor at tree-utils.ts:528 would
+  // become reachable from untrusted data.
+  //
+  // This covers only half the stated precondition. The other half — the Rust
+  // normalization being relaxed to preserve peer bytes — cannot be asserted
+  // from here and needs a Rust-side test (tracked on #3794).
+  it('SENTINEL_ID is lowercase, so uppercased peer ids cannot collide', () => {
+    expect(SENTINEL_ID).toBe(SENTINEL_ID.toLowerCase())
+    expect(SENTINEL_ID).not.toBe(SENTINEL_ID.toUpperCase())
+  })
+})
+
+/*
+ * Further equivalent mutants in `computeDropIndex` (issue #3765). No fixture
+ * can distinguish these, so no test is added for them:
+ *
+ * - tree-utils.ts:538:18 [EqualityOperator]
+ *   `overIdxInItems > activeIndex` -> `>=`. The extra case needs
+ *   `overIdxInItems === activeIndex`. Two distinct ids can never share a first
+ *   *found* index, so that requires either `overId === activeId` or both
+ *   indices being -1 (neither id present in `items`). Both are excluded before
+ *   line 538: `without` has every `activeId` row filtered out, and an `overId`
+ *   absent from `items` is absent from `without` too — so either way
+ *   `overIdxInWithout` is -1 and control takes the "unknown target" branch
+ *   above. Line 538 is never reached with the two indices equal. Confirmed
+ *   empirically, not just by argument: a canary returning early on
+ *   `overIdxInItems === activeIndex` fires 4 679 times when spliced just
+ *   before the `overIdxInWithout < 0` test, and zero times at line 538.
+ *
+ * - tree-utils.ts:545:23 [ConditionalExpression]
+ *   `parentId === null` -> `false`. When `parentId` IS null the mutant merely
+ *   evaluates the else-arm instead: `items.find((i) => i.id === null)` matches
+ *   nothing (`FlatBlock['id']` is a string), so `?? -1` yields the very -1 the
+ *   then-arm returns.
+ *
+ * - tree-utils.ts:548:35 [ConditionalExpression] `i < without.length` -> `true`:
+ *   the same reasoning as the `i <= without.length` note above — `insertAt` is
+ *   always <= `without.length`, so `i < insertAt` is the binding bound and the
+ *   second clause cannot change the iteration count.
+ *
+ * Verified by differential execution over 1 082 327 generated inputs: zero
+ * output differences.
+ */

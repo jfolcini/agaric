@@ -1180,6 +1180,53 @@ describe('mutation coverage: groupByPage "No page" guard', () => {
   })
 })
 
+describe('mutation coverage: groupByPage sortWithin date tiebreak', () => {
+  it('leaves an already-ascending same-state/same-priority date run untouched (ternary direction)', () => {
+    // agenda-sort.ts:307 col 33 — `dateA < dateB ? -1 : 1`. A
+    // ConditionalExpression(true) mutant on `dateA < dateB` answers -1 for
+    // EVERY differing-date pair ("a before b" even when b is the earlier
+    // one), which reverses this already-ascending run. Only the `: 1` arm
+    // keeps it in place, so the assertion pins the ternary's direction and
+    // not merely the guard above it.
+    //
+    // Note: the assertion (ascending output) is correct and stable, but
+    // whether it actually KILLS this mutant depends on an implementation
+    // detail of `Array.prototype.sort` — specifically, that V8 reorders a
+    // 3-element array when the comparator always answers -1. That is not
+    // guaranteed by the spec. If a future engine/runtime stops doing so,
+    // this test stays green on both the real code and the mutant, and the
+    // mutant would silently go from killed to survived with no local signal
+    // — a mutation run showing it alive again should be read as "the sort
+    // implementation changed," not as a regression in this test.
+    const blocks = [
+      makeBlock({
+        id: 'jun01',
+        page_id: 'pg',
+        todo_state: 'TODO',
+        priority: '2',
+        due_date: '2025-06-01',
+      }),
+      makeBlock({
+        id: 'jun10',
+        page_id: 'pg',
+        todo_state: 'TODO',
+        priority: '2',
+        due_date: '2025-06-10',
+      }),
+      makeBlock({
+        id: 'jun20',
+        page_id: 'pg',
+        todo_state: 'TODO',
+        priority: '2',
+        due_date: '2025-06-20',
+      }),
+    ]
+    const pageTitles = new Map([['pg', 'Page']])
+    const groups = groupByPage(blocks, pageTitles)
+    expect(groups[0]?.blocks.map((b) => b.id)).toEqual(['jun01', 'jun10', 'jun20'])
+  })
+})
+
 describe('mutation coverage: sortByPage no-page-id routing', () => {
   it('sorts a no-page-id block after a paged block regardless of input order or state', () => {
     const pageTitles = new Map([['pg', 'Page']])
@@ -1254,6 +1301,47 @@ describe('mutation coverage: sortByPage no-page-id routing', () => {
     ]
     const sorted = sortByPage(blocks, pageTitles)
     expect(sorted.map((b) => b.id)).toEqual(['betterP', 'worseP'])
+  })
+})
+
+describe('mutation coverage: sortByPage date tiebreak', () => {
+  const pageTitles = new Map([['pg', 'Same Page']])
+  const sameKeyBlock = (id: string, due_date: string) =>
+    makeBlock({ id, page_id: 'pg', todo_state: 'TODO', priority: '2', due_date })
+
+  it('sorts same-page blocks by date ascending when state AND priority tie', () => {
+    // agenda-sort.ts:370/374 — the last tiebreak of sortByPage, reached by no
+    // test before (Stryker reported the whole line 374 as NoCoverage).
+    // `prioA !== prioB` → true short-circuits with `prioA - prioB === 0`, and
+    // deleting or inverting the date compare (`dateA !== dateB` → false /
+    // `===`, `dateA < dateB` → false / `>=`, `-1` → `+1`) all answer "leave as
+    // given" or "reverse" for this deliberately descending input.
+    const blocks = [
+      sameKeyBlock('jun20', '2025-06-20'),
+      sameKeyBlock('jun10', '2025-06-10'),
+      sameKeyBlock('jun01', '2025-06-01'),
+    ]
+    const sorted = sortByPage(blocks, pageTitles)
+    expect(sorted.map((b) => b.id)).toEqual(['jun01', 'jun10', 'jun20'])
+  })
+
+  it('leaves an already-ascending same-page date run untouched (ternary direction)', () => {
+    // agenda-sort.ts:374 col 33 — `dateA < dateB ? -1 : 1`. The mirror of the
+    // test above: a ConditionalExpression(true) mutant answers -1 for every
+    // differing-date pair and so reverses an input that is already correct.
+    //
+    // Note: as with the mirrored test above, the assertion is stable but
+    // the kill depends on the same V8 sort-implementation detail (a
+    // comparator that always returns -1 reordering a 3-element array) —
+    // not guaranteed by spec. If that ever changes, this mutant would
+    // survive while this test stays green.
+    const blocks = [
+      sameKeyBlock('jun01', '2025-06-01'),
+      sameKeyBlock('jun10', '2025-06-10'),
+      sameKeyBlock('jun20', '2025-06-20'),
+    ]
+    const sorted = sortByPage(blocks, pageTitles)
+    expect(sorted.map((b) => b.id)).toEqual(['jun01', 'jun10', 'jun20'])
   })
 })
 

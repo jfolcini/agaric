@@ -51,6 +51,19 @@ describe('vaultRelativePath', () => {
     expect(vaultRelativePath('')).toBe('')
     expect(vaultRelativePath(undefined)).toBe('')
   })
+
+  it('only strips a leading "./" — a stray "./" elsewhere in the path is left for the ordinary top-folder strip', () => {
+    // No leading './', so the top-folder strip treats 'a.' as the folder name.
+    expect(vaultRelativePath('a./b.png')).toBe('b.png')
+  })
+
+  it('removes a leading "./" outright (not by substitution) even with no other slash present', () => {
+    expect(vaultRelativePath('./note.md')).toBe('note.md')
+  })
+
+  it('strips the top segment even when it is a single character (first slash at index 1)', () => {
+    expect(vaultRelativePath('a/b.png')).toBe('b.png')
+  })
 })
 
 describe('basename', () => {
@@ -131,6 +144,31 @@ describe('indexVaultFiles / resolveVaultRef', () => {
     // Basename collision → the first indexed file wins.
     expect(resolveVaultRef('img.png', index)).toBe(a)
   })
+
+  it('keeps the FIRST file on an exact vault-relative-path collision too (byPath dedup, not just byBase)', () => {
+    // Two different top-level vault picks that normalize to the same vault-relative path.
+    const first = folderFile(['# a'], 'x.png', 'Vault1/notes/x.png')
+    const second = folderFile(['# b'], 'x.png', 'Vault2/notes/x.png')
+    const index = indexVaultFiles([first, second])
+
+    expect(resolveVaultRef('notes/x.png', index)).toBe(first)
+  })
+
+  it('only strips a leading "./" on the reference — a stray "./" elsewhere falls through to the basename fallback', () => {
+    const target = folderFile(['b'], 'b.png', 'MyVault/x/b.png')
+    const index = indexVaultFiles([target])
+
+    // want stays 'a./b.png' (no leading './'); no exact-path match, so it
+    // falls back to the basename ('b.png'), which does resolve.
+    expect(resolveVaultRef('a./b.png', index)).toBe(target)
+  })
+
+  it('removes a leading "./" on the reference outright (not by substitution)', () => {
+    const target = folderFile(['n'], 'note.md', 'MyVault/note.md')
+    const index = indexVaultFiles([target])
+
+    expect(resolveVaultRef('./note.md', index)).toBe(target)
+  })
 })
 
 describe('collectVaultFiles', () => {
@@ -192,6 +230,16 @@ describe('mdFilesToUnits', () => {
     expect(loaded?.vaultFiles).toHaveLength(1)
     expect(loaded?.vaultFiles?.[0]?.path).toBe('assets/diagram.png')
     expect(loaded?.vaultFiles?.[0]?.bytes).toEqual([9, 9])
+  })
+
+  it('short-circuits to vaultFiles: null on a null vault index without ever calling collectVaultFiles, even when the content has attachment refs', async () => {
+    // A plain (non-folder) pick has no vault index. If load() tried to
+    // collect vault files anyway it would read a null index and throw.
+    const file = new File(['![](assets/diagram.png)'], 'note.md', { type: 'text/markdown' })
+    const [unit] = mdFilesToUnits([file], null)
+
+    const loaded = await unit?.load()
+    expect(loaded?.vaultFiles).toBeNull()
   })
 })
 

@@ -266,3 +266,50 @@ describe('projectDepth — normal branch (dead zone + clamps)', () => {
     expect(result?.parentId).toBe('ROOTN10')
   })
 })
+
+/*
+ * Equivalent mutants in `projectDepth` (issue #3765). Each is unkillable by
+ * construction, so no test is added for them:
+ *
+ * - tree-utils.ts:386:7 and 413:5 [EqualityOperator]
+ *   `Math.abs(dragOffset) > DEAD_ZONE_PX` -> `>=`. The two arms coincide
+ *   exactly at the boundary they disagree on: when
+ *   `Math.abs(dragOffset) === DEAD_ZONE_PX` the mutant takes the then-arm and
+ *   computes `dragOffset - Math.sign(dragOffset) * DEAD_ZONE_PX`. At that
+ *   boundary `dragOffset` equals `Math.sign(dragOffset) * DEAD_ZONE_PX`
+ *   exactly, so the subtraction always yields `0` — the same value the
+ *   original's else-arm supplies — for any value of `DEAD_ZONE_PX`,
+ *   including `0` (where `Math.sign(0) === 0` keeps the identity intact).
+ *   This is not specific to the constant's current value.
+ *
+ * - tree-utils.ts:426:7 `depth > maxDepth` -> `>=`
+ * - tree-utils.ts:427:7 `depth < minDepth` -> `<=`
+ * - tree-utils.ts:434:7 `depth > depthCeiling` -> `>=`
+ *   Each guards an idempotent clamp of the form
+ *   `if (depth > bound) depth = bound`. The only extra case the mutant admits
+ *   is `depth === bound`, where the assignment writes back the value `depth`
+ *   already holds.
+ *
+ * - tree-utils.ts:446:9 `depth > previousItem.depth` -> `>=` (inside
+ *   `getParentId`). The equality case cannot reach this line: the earlier
+ *   `if (depth === previousItem.depth)` branch has already returned, so
+ *   `depth !== previousItem.depth` holds here and `>` and `>=` agree.
+ *
+ * Verified by differential execution over 1 082 327 generated inputs —
+ * including synthetic `ProjectionSim` fixtures (as this file builds) with
+ * depths, ceilings and offsets swept across each boundary, plus
+ * `dragOffset === ±DEAD_ZONE_PX` exactly: zero output differences.
+ *
+ * "Zero differences" only means something if the sweep actually produced the
+ * equality inputs these mutants need — every mutant the suite already kills at
+ * these same lines differs on a whole half-space, so killing those does not
+ * prove the measure-zero boundary was ever generated. Re-checked with canaries
+ * that fire ONLY at the equality point: `depth === maxDepth` fires 44 460
+ * times, `depth === minDepth` 150 068, `depth === depthCeiling` 19 657, and
+ * `Math.abs(dragOffset) === DEAD_ZONE_PX` 17 680 (both dead-zone sites). So
+ * the boundaries are reached and the arms provably coincide there. For 446:9
+ * the same canary fires 28 918 times when spliced ABOVE the
+ * `depth === previousItem.depth` branch and zero times at line 446 itself,
+ * which confirms the earlier `return` shadows it rather than the sweep simply
+ * missing the case.
+ */
