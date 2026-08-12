@@ -1153,8 +1153,8 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Typecheck (tsc -b)
-        run: npx tsc -b
+      - name: Typecheck (npm run typecheck)
+        run: npm run typecheck
 
       - name: Vitest (full suite, no coverage)
         run: npx vitest run

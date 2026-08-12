@@ -160,7 +160,7 @@ repo = "local"
 [[repos.hooks]]
 id = "tsc"
 name = "typescript check (tsc)"
-entry = "npx tsc -b --noEmit"
+entry = "npm run typecheck"
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]

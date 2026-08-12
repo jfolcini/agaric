@@ -59,12 +59,15 @@ bash scripts/setup.sh        # ONE-command dev-env setup (Node + deps + .env + d
 cargo tauri dev              # Dev mode with hot reload
 cargo tauri build            # Production build (per-platform)
 npm run test                 # Vitest (frontend test suite)
+npm run typecheck            # TypeScript — all four projects (NEVER bare `npx tsc --noEmit`, see below)
 cd src-tauri && cargo nextest run --workspace   # Rust tests (bare form runs only the app crate)
 npx playwright test          # E2E tests (see `e2e/` for spec inventory)
 cargo tauri android build --target aarch64 --debug   # Android debug APK
 cargo tauri android build --target aarch64            # Android release APK
 prek run --all-files         # Pre-commit hooks
 ```
+
+**Typecheck with `npm run typecheck` — never bare `npx tsc --noEmit`.** The root [`tsconfig.json`](tsconfig.json) is solution-style: `"files": []` plus four `references`, and no `include`. `--noEmit` does **not** follow project references (only `--build`/`-b` does), so `npx tsc --noEmit` type-checks an *empty* program and **exits 0 no matter how broken the code is** (#3805) — not a check that reports nothing, a green result that means nothing. It waves through exactly the class of mistake a typecheck exists to catch (a missing narrowing guard under `noUncheckedIndexedAccess`, say). `npm run typecheck` is `tsc -b --noEmit`, and prek's `tsc` pre-commit hook, CI's typecheck step and `beforeDevCommand` all now invoke that same script rather than re-spelling the command — so a local green means those will be green too, structurally rather than by coincidence. It covers all four projects (`tsconfig.app.json`, `.node`, `.e2e`, `.wdio`) and automatically covers any project added to `references` later. It emits nothing but `.tsbuildinfo` under the gitignored `node_modules/.tmp/`. Narrower loops: `npm run typecheck:e2e`, `npm run typecheck:e2e-tauri`. With `just`: `just typecheck`.
 
 **Dev-env setup is one command.** `bash scripts/setup.sh` (identical: `npm run setup`; or `just setup`) is the single canonical bootstrap and handles everything, idempotently: it provisions the `.nvmrc`-pinned Node version via `nvm` when the active `node` does not satisfy `engines.node` (`^22.22.2 || ^24.15.0 || >=26.0.0`; Claude's cloud VMs ship Node 20–22, so this matters there — a 22.22.2+ VM is now supported as-is), runs `npm ci`, seeds `.env` (from `src-tauri/.env.example`) and the sidecar placeholder, provisions the dev DB, and installs the prek hook toolchain. **It auto-runs on Claude Code on the web** via the committed `SessionStart` hook ([`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh), gated on `CLAUDE_CODE_REMOTE=true`), so a fresh cloud session is ready with no manual step. See [docs/BUILD.md → Claude Code on the web](docs/BUILD.md#claude-code-on-the-web) (incl. why prek's three git-cloned hooks stay unwired in repo-scoped sandboxes). **Prek toolchain:** every hook in `prek.toml` is `language = "system"`, so `scripts/setup-hooks.sh` installs each host binary the hooks shell out to — mirroring CI's install set — and runs `prek install`; best-effort and idempotent (re-run to fill gaps).
 

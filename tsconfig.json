@@ -1,4 +1,5 @@
 {
+  "//": "Solution-style root: `files: []` with only references, so this project contains NOTHING to check. That means a bare `tsc --noEmit` here type-checks an EMPTY program and exits 0 no matter how broken the tree is — `--noEmit` does not follow `references`, only `--build` does (#3805). Use `npm run typecheck` (`tsc -b --noEmit`) — the single definition that prek's `tsc` hook, _validate.yml's typecheck step and tauri.conf.json's beforeDevCommand all invoke, so a local green predicts the gate and the four cannot drift apart. Every project must stay referenced from here: `tsc -b` is the only typecheck any gate runs, so a project outside this list is a project nothing checks (see the notes in tsconfig.e2e.json and tsconfig.wdio.json).",
   "files": [],
   "references": [
     { "path": "./tsconfig.app.json" },
