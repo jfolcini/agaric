@@ -1048,6 +1048,14 @@ pub async fn export_page_markdown_inner(
     // #384: also project value_ref and value_num so numeric and
     // page-reference properties render instead of silently dropping to
     // empty (the old query only selected value_text + value_date).
+    //
+    // DRIFT WARNING (#3797) — the `key NOT IN (…)` list below is duplicated in
+    // FOUR places and nothing checks them against each other. Change one,
+    // change all four: (1) here; (2) the descendant-property query further
+    // down this function; (3) `FRONTMATTER_RESERVED_KEYS` in
+    // `agaric-engine/src/import.rs`; (4) `INLINE_PROPERTY_RESERVED_KEYS` in
+    // `src/lib/inline-property-parse.ts`. Copies (1) and (2) are literal SQL,
+    // so grepping for either constant name will NOT find them.
     let property_rows = sqlx::query!(
         r#"SELECT key AS "key!", value_text, value_date, value_num, value_ref,
                   value_bool AS "value_bool: i64"
@@ -1089,6 +1097,14 @@ pub async fn export_page_markdown_inner(
     // at all, so they simply cannot appear in these rows. They continue to
     // be emitted from the `blocks` columns in the descendant walk below,
     // exactly as before.
+    //
+    // DRIFT WARNING (#3797) — the `key NOT IN (…)` list below is duplicated in
+    // FOUR places and nothing checks them against each other. Change one,
+    // change all four: (1) here; (2) the page-property query above; (3)
+    // `FRONTMATTER_RESERVED_KEYS` in `agaric-engine/src/import.rs`; (4)
+    // `INLINE_PROPERTY_RESERVED_KEYS` in `src/lib/inline-property-parse.ts`.
+    // Copies (1) and (2) are literal SQL, so grepping for either constant name
+    // will NOT find them.
     let descendant_ids: Vec<String> = descendants
         .iter()
         .map(|b| b.id.clone().into_string())

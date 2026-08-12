@@ -1260,7 +1260,7 @@ describe('mutation coverage: sortByPage no-page-id routing', () => {
   })
 
   it('falls through to state/priority/date when BOTH blocks have no page_id (not a blanket "b before a")', () => {
-    // agenda-sort.ts:369/370 — `titleB !== null` / `titleA !== null`. Both
+    // agenda-sort.ts:363/364 — `titleB !== null` / `titleA !== null`. Both
     // titles are null here, so neither of these clauses should ever fire on
     // its own (only when exactly one side is null). A mutant that drops
     // either null-check would force a return of 1 or -1 unconditionally
@@ -1276,10 +1276,10 @@ describe('mutation coverage: sortByPage no-page-id routing', () => {
   })
 
   it('falls through correctly for two no-page blocks regardless of which one is passed first', () => {
-    // agenda-sort.ts:370 — `titleA !== null`. Same reasoning as the test
+    // agenda-sort.ts:364 — `titleA !== null`. Same reasoning as the test
     // above, but with the input array pre-ordered so the underlying
     // comparator ends up invoked with the opposite (a, b) assignment,
-    // exercising line 370's clause instead of 369's.
+    // exercising line 364's clause instead of 363's.
     const blocks = [
       makeBlock({ id: 'better', page_id: null, todo_state: 'DOING' }),
       makeBlock({ id: 'worse', page_id: null, todo_state: 'CANCELLED' }),
@@ -1400,10 +1400,10 @@ describe('mutation coverage: formatGroupDate malformed input fallback', () => {
   })
 
   it('falls back to the raw string for a 4-segment date (too many parts, all numeric)', () => {
-    // agenda-sort.ts:432 — `parts.length !== 3`. The 2-part case above
+    // agenda-sort.ts:429 — `parts.length !== 3`. The 2-part case above
     // ('2025-06') doesn't actually distinguish a ConditionalExpression(false)
     // mutant here, because the resulting `d === undefined` is caught by the
-    // (unmutated) guard on line 434 either way. A 4-part date parses into 3
+    // (unmutated) guard on line 435 either way. A 4-part date parses into 3
     // fully-defined, non-NaN numbers via `.map(Number)` (the trailing part is
     // simply dropped by destructuring), so forcing this guard off would
     // proceed all the way to constructing a real (wrong) formatted date

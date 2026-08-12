@@ -263,12 +263,13 @@ describe('exportGraphAsZip', () => {
 
   it('maps an absolute-looking title’s LEADING EMPTY segment to Untitled instead of dropping it', async () => {
     // `'/etc/x'.split('/')` yields a leading EMPTY segment, and `sanitizeSegment`
-    // turns that into `'Untitled'` — so `titleToZipPath`'s `.filter(s => s.length > 0)`
-    // never sees an empty string and drops nothing. Both doc comments in
-    // `export-graph.ts` assert the opposite ("Empty segments … are dropped" /
-    // "A leading empty segment (absolute `/etc/...`) is already dropped by the
-    // caller's `filter`"), so pin what the code ACTUALLY does: a later "fix" that
-    // made the filter live by returning `''` for an empty segment would silently
+    // turns that into `'Untitled'`, so nothing is ever dropped and the archive
+    // gains an extra level. Two doc comments in `export-graph.ts` used to assert
+    // the opposite ("Empty segments … are dropped" / "A leading empty segment
+    // (absolute `/etc/...`) is already dropped by the caller's `filter`"); #3798
+    // fixed them to match the code and removed the provably-dead filter they
+    // described. This test pins what the code ACTUALLY does: a later "fix" that
+    // made `sanitizeSegment` return `''` for an empty segment would silently
     // change `/etc/x.md`'s depth in the archive. The Zip-Slip test above does NOT
     // cover this — `../../etc/passwd` has no empty segment, it exercises the
     // dots-only branch of the sanitizer.
@@ -1396,61 +1397,62 @@ describe('downloadBlob', () => {
  *
  * Two structural lemmas do most of the work:
  *
- *   L1. `sanitizeSegment` NEVER returns an empty/falsy string. Its three exits
- *       are `'Untitled'` (line 89), `'Untitled'` (line 92) and
- *       `escapeReservedDeviceName(cleaned)` (line 94) — and line 92 guarantees
- *       `cleaned.length > 0` before that last one, while
- *       `escapeReservedDeviceName` returns either its own (non-empty) argument
- *       or `` `${basename}_${rest}` `` (≥ 1 char). Note the third exit is safe
- *       for EVERY argument, including `.`-leading ones: `'.md'` gives
- *       `basename === ''`, which is not reserved, so the input is returned
- *       unchanged rather than collapsing. This is a proof by enumeration of the
- *       exits, not a sampling result — no input can evade it.
+ *   L1. `sanitizeSegment` NEVER returns an empty/falsy string. It has three
+ *       `return` statements — `'Untitled'` (line 108), `'Untitled'` (line 111)
+ *       and `escapeReservedDeviceName(cleaned)` (line 113) — but FOUR distinct
+ *       exit values, because the third delegates: `escapeReservedDeviceName`
+ *       itself returns either its own argument (`return name`) or
+ *       `` `${basename}_${rest}` `` (≥ 1 char). Line 111 guarantees
+ *       `cleaned.length > 0` before the delegation, so `return name` is
+ *       non-empty too. Note the delegated exit is safe for EVERY argument,
+ *       including `.`-leading ones: `'.md'` gives `basename === ''`, which is
+ *       not reserved, so the input is returned unchanged rather than
+ *       collapsing. This is a proof by enumeration of the exits, not a sampling
+ *       result — no input can evade it.
  *
- *   L2. Therefore, in `titleToZipPath`, `segments.length === title.split('/').length`
- *       always — `split` returns ≥ 1 element, `map` preserves length, and the
- *       `.filter(s => s.length > 0)` can never drop anything (L1). So
- *       `segments.length > 0` is invariantly TRUE and `.filter` is a no-op.
- *       L2 is a DEDUCTIVE consequence of L1, not an empirical one: reaching
- *       `segments.length === 0` requires the filter to drop every segment, which
- *       is precisely what L1 forbids. So no amount of sampling can corroborate
+ *   L2. Therefore, in `titleToZipPath`, the mapped segment list always has
+ *       exactly `title.split('/').length` non-empty entries — `split` returns
+ *       ≥ 1 element, `map` preserves length, and no entry can be empty (L1).
+ *       RESOLVED by #3798: the `.filter(s => s.length > 0)` and the
+ *       `segments.length > 0 ? … : 'Untitled'` ternary that L2 proved dead have
+ *       been DELETED, so the mutants they carried (formerly 106:20, 109:20,
+ *       110:10, 110:53) no longer exist in the population. L1 is what now
+ *       licenses the bare `.join('/')`.
+ *       L2 was a DEDUCTIVE consequence of L1, not an empirical one: reaching
+ *       `segments.length === 0` required the filter to drop every segment, which
+ *       is precisely what L1 forbids. So no amount of sampling could corroborate
  *       L2 independently — if L1 holds, L2 holds; if L1 ever failed, a sweep
  *       that never observed `length === 0` would prove nothing.
  *
  * The sweep harness was validated against all 44 mutants Stryker KILLED in
- * lines 48-111: every one of them showed a difference (0 blind spots), so its
- * null results below are meaningful.
+ * lines 48-111 (pre-#3798 numbering; the same code now spans 48-139): every one
+ * of them showed a difference (0 blind spots), so its null results below are
+ * meaningful.
  *
- *  89:7  [ConditionalExpression] "false"
- *  89:7  [LogicalOperator]       "cleaned.length === 0 && /^\.+$/.test(cleaned)"
- *  89:7  [ConditionalExpression] "false"   (the `cleaned.length === 0` operand)
- *  89:31 [Regex]                 "/^\.$/"
+ * 108:7  [ConditionalExpression] "false"
+ * 108:7  [LogicalOperator]       "cleaned.length === 0 && /^\.+$/.test(cleaned)"
+ * 108:7  [ConditionalExpression] "false"   (the `cleaned.length === 0` operand)
+ * 108:31 [Regex]                 "/^\.$/"
  *      All four weaken or delete the `cleaned.length === 0 || /^\.+$/` guard,
- *      and all four are subsumed by lines 91-92: `cleaned.replace(/[. ]+$/, '')`
- *      erases a dots-only string entirely, and the `cleaned.length === 0`
- *      re-check two lines later then returns the same `'Untitled'` the guard
- *      would have returned. (For the `&&` variant specifically: it can never
- *      fire at all, since `/^\.+$/.test('')` is false — an empty string has no
- *      dots — so it degenerates to the deleted-guard case.) Line 89 is thus
- *      REDUNDANT with 91-92. It is kept deliberately as an explicit,
- *      documented Zip-Slip guard rather than relying on a coincidence of the
- *      trailing-trim regex — see the CODE FINDINGS note at the end.
+ *      and all four are subsumed by lines 110-111:
+ *      `cleaned.replace(/[. ]+$/, '')` erases a dots-only string entirely, and
+ *      the `cleaned.length === 0` re-check two lines later then returns the same
+ *      `'Untitled'` the guard would have returned. (For the `&&` variant
+ *      specifically: it can never fire at all, since `/^\.+$/.test('')` is
+ *      false — an empty string has no dots — so it degenerates to the
+ *      deleted-guard case.) Line 108 is thus REDUNDANT with 110-111. It is kept
+ *      deliberately as an explicit, documented Zip-Slip guard rather than
+ *      relying on a coincidence of the trailing-trim regex; #3798 annotated it
+ *      in place so the next reader does not re-derive this.
  *
- * 106:20 [MethodExpression]      "title.split('/').map(s => sanitizeSegment(s))"
- * 109:20 [ConditionalExpression] "true"
- * 109:20 [EqualityOperator]      "s.length >= 0"
- *      All three neutralize the `.filter(s => s.length > 0)`, which is dead by
- *      L2. Zero differences over 16,119 inputs.
+ * (REMOVED by #3798 — formerly 106:20 [MethodExpression] on the `.map`, 109:20
+ *      ×2 on the `.filter(s => s.length > 0)`, and 110:10 ×2 / 110:53 on the
+ *      `segments.length > 0 ? … : 'Untitled'` ternary. The filter and ternary
+ *      were dead by L2 — zero differences over 16,119 inputs — and have been
+ *      deleted, so these six mutants are gone from the population rather than
+ *      surviving in it.)
  *
- * 110:10 [ConditionalExpression] "true"
- * 110:10 [EqualityOperator]      "segments.length >= 0"
- * 110:53 [StringLiteral]         "\"\""   (NoCoverage — the `: 'Untitled'` arm)
- *      `segments.length > 0` is invariantly true by L2, so the ternary always
- *      takes the `join` arm and its else-branch is unreachable; mutating the
- *      condition to another always-true form, or mutating the dead arm's
- *      string, changes nothing.
- *
- * 301:65 [StringLiteral] "\"\""  (NoCoverage — `page.content ?? 'Untitled'`)
+ * 329:65 [StringLiteral] "\"\""  (NoCoverage — `page.content ?? 'Untitled'`)
  *      Only reachable when a page has no content, and then
  *      `titleToZipPath('Untitled')` and `titleToZipPath('')` both return
  *      `'Untitled'` (the empty title splits to `['']`, which `sanitizeSegment`
@@ -1458,18 +1460,18 @@ describe('downloadBlob', () => {
  *      "falls back to an Untitled path for a page with no content" test above,
  *      which converts this from NoCoverage to covered-but-equivalent.
  *
- * 466:43 [StringLiteral] "\"Stryker was here!\""  (NoCoverage — `m[3] ?? ''`)
+ * 494:43 [StringLiteral] "\"Stryker was here!\""  (NoCoverage — `m[3] ?? ''`)
  *      Capture group 3 of `ATTACHMENT_REF_RE` is neither optional nor inside an
  *      alternation, so it always participates in a successful match and `m[3]`
  *      is always a string — the `?? ''` arm is unreachable. Checked over 636
  *      real matches from 1,008 ref-shaped inputs: group 3 was nullish 0 times.
  *
- * 504:22 [StringLiteral] "\"Stryker was here!\""  (NoCoverage)
+ * 532:22 [StringLiteral] "\"Stryker was here!\""  (NoCoverage)
  *      The `assetsPathPrefix = ''` DEFAULT parameter of `rewriteAttachmentRefs`.
- *      The function has exactly one call site (line 307) and it always passes
+ *      The function has exactly one call site (line 335) and it always passes
  *      the argument explicitly, so the default is never evaluated.
  *
- * 507:7  [ConditionalExpression] "false"  (`if (ids.size === 0) return …`)
+ * 535:7  [ConditionalExpression] "false"  (`if (ids.size === 0) return …`)
  *      A pure fast path. When `ids` is empty, every ref the regex finds must
  *      have failed `parseAttachmentRef` (that is exactly why it is not in
  *      `ids`), so the rewrite callback hits `if (id == null) return match` for
@@ -1478,18 +1480,18 @@ describe('downloadBlob', () => {
  *      empty. Both branches therefore return `{ md, skippedAttachmentIds: [] }`
  *      with identical values.
  *
- * 529:53 [StringLiteral] "\"\""  (NoCoverage — `sanitizeSegment(flatName) || 'attachment'`)
+ * 557:53 [StringLiteral] "\"\""  (NoCoverage — `sanitizeSegment(flatName) || 'attachment'`)
  *      Unreachable by L1: `sanitizeSegment` never returns a falsy value, so the
  *      `||` right operand is never evaluated.
  *
- * 597:7  [ConditionalExpression] "false"  (`if (!md.includes(ATTACHMENT_REF_SCHEME)) return md`)
+ * 625:7  [ConditionalExpression] "false"  (`if (!md.includes(ATTACHMENT_REF_SCHEME)) return md`)
  *      Another pure fast path. `ATTACHMENT_REF_SCHEME` is the literal
  *      `'attachment:'`, which appears verbatim inside `ATTACHMENT_REF_RE`, so a
  *      string lacking the substring cannot match the regex: `collectAttachmentIds`
  *      returns an empty set and `md.replace` with no matches returns the input
  *      string. Verified over 11,111 scheme-free generated inputs: 0 matches.
  *
- * 617:9  [ConditionalExpression] "false"  (`if (id == null) return alt`)
+ * 645:9  [ConditionalExpression] "false"  (`if (id == null) return alt`)
  *      Falling through is indistinguishable: `resolved`'s keys all come from
  *      `parseAttachmentRef` and are therefore non-null strings, so
  *      `resolved.get(null)` is `undefined`, and the very next line's
@@ -1500,29 +1502,31 @@ describe('downloadBlob', () => {
  *      converge on the same value.
  *
  * ---------------------------------------------------------------------------
- * CODE FINDINGS (follow-up material, no behavior change made here)
+ * CODE FINDINGS
  * ---------------------------------------------------------------------------
- * 1. `titleToZipPath`'s `.filter((s) => s.length > 0)` and its
- *    `segments.length > 0 ? … : 'Untitled'` ternary are both DEAD (L2). Worse,
- *    two doc comments assert the opposite: `titleToZipPath`'s says "Empty
+ * 1. RESOLVED by #3798. `titleToZipPath`'s `.filter((s) => s.length > 0)` and
+ *    its `segments.length > 0 ? … : 'Untitled'` ternary were both DEAD (L2),
+ *    and two doc comments asserted the opposite: `titleToZipPath`'s said "Empty
  *    segments (leading/trailing or doubled slashes) are dropped" and
- *    `sanitizeSegment`'s says "A leading empty segment (absolute `/etc/...`) is
- *    already dropped by the caller's `filter`". Neither is true — an empty
+ *    `sanitizeSegment`'s said "A leading empty segment (absolute `/etc/...`) is
+ *    already dropped by the caller's `filter`". Neither was true — an empty
  *    segment becomes `'Untitled'` before the filter ever sees it, so `'/etc/x'`
- *    exports as `Untitled/etc/x.md` — confirmed by running it, and now pinned by
+ *    exports as `Untitled/etc/x.md` — confirmed by running it, and pinned by
  *    the "maps an absolute-looking title's LEADING EMPTY segment to Untitled"
  *    test above. (The `../../etc/passwd` Zip-Slip test does NOT cover this: that
  *    title has no empty segment, it exercises the dots-only branch.) The
- *    behavior is safe; the docs are wrong.
- * 2. Line 89's traversal guard is subsumed by the trailing-dot trim on lines
- *    91-92 for ALL inputs, not merely the tested ones — the argument is total,
- *    not empirical: line 89 fires iff `cleaned` is `''` or matches `/^\.+$/`,
- *    and in BOTH of those cases `cleaned.replace(/[. ]+$/, '')` erases the whole
+ *    behavior is safe, so #3798 took the docs-follow-code option: both comments
+ *    now describe the `Untitled` mapping and the dead filter/ternary are gone.
+ * 2. RESOLVED by #3798 (annotated, deliberately NOT removed). Line 108's
+ *    traversal guard is subsumed by the trailing-dot trim on lines 110-111 for
+ *    ALL inputs, not merely the tested ones — the argument is total, not
+ *    empirical: line 108 fires iff `cleaned` is `''` or matches `/^\.+$/`, and
+ *    in BOTH of those cases `cleaned.replace(/[. ]+$/, '')` erases the whole
  *    string (a string of only dots is matched end-to-end by `[. ]+$`), so line
- *    92 returns the identical `'Untitled'`. There is no input for which the two
- *    paths differ. Keeping line 89 is defensible as explicit security intent,
- *    but it is belt-and-braces, not load-bearing.
- * 3. `rewriteAttachmentRefs`'s `assetsPathPrefix = ''` default (504) and
- *    `collectAttachmentIds`'s `m[3] ?? ''` (466) are both unreachable defensive
- *    code, as is the `|| 'attachment'` fallback on 529.
+ *    111 returns the identical `'Untitled'`. There is no input for which the two
+ *    paths differ. It is kept as explicit security intent — belt-and-braces, not
+ *    load-bearing — and now says so in a comment at the guard itself.
+ * 3. STILL OPEN. `rewriteAttachmentRefs`'s `assetsPathPrefix = ''` default (532)
+ *    and `collectAttachmentIds`'s `m[3] ?? ''` (494) are both unreachable
+ *    defensive code, as is the `|| 'attachment'` fallback on 557.
  */

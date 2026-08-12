@@ -165,9 +165,15 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
     'text-status-active-foreground',
   ] as const
 
+  // `lv` always comes from `levels`: the only call site passes
+  // `label.replace(/^P/, '')` where `label` is `` `P${lv}` ``, so the strip is
+  // an exact round-trip and `idx >= 0` always (levels are normalised to
+  // non-empty, deduped strings in priority-levels.ts). The clamped index is
+  // therefore always in range — the `?? ''` is unreachable at runtime and
+  // exists only for `noUncheckedIndexedAccess`, which types a variable tuple
+  // index as `string | undefined`.
   const classForLevel = (lv: string): string => {
     const idx = levels.indexOf(lv)
-    if (idx < 0) return ''
     return INDEX_CLASS[Math.min(idx, INDEX_CLASS.length - 1)] ?? ''
   }
 
@@ -329,7 +335,9 @@ export function groupByPage(blocks: BlockRow[], pageTitles: Map<string, string>)
   }
 
   // `No page` group key at the end (renderer translates via t('agenda.noPage'))
-  if (noPageBlocks && noPageBlocks.length > 0) {
+  // No length check: the `__no_page__` bucket is only ever created by pushing
+  // a block into it, so when present it is non-empty.
+  if (noPageBlocks) {
     result.push({
       label: 'No page',
       blocks: [...noPageBlocks].toSorted(sortWithin),
@@ -355,7 +363,10 @@ export function sortByPage(blocks: BlockRow[], pageTitles: Map<string, string>):
     if (titleA === null && titleB !== null) return 1
     if (titleA !== null && titleB === null) return -1
 
-    // Both have page titles — compare alphabetically
+    // Both have page titles — compare alphabetically.
+    // The two `!== null` clauses are always true here (the one-sided-null
+    // cases returned above), but they are required for narrowing: without
+    // them TS reports `'titleA' is possibly 'null'` on `.localeCompare`.
     if (titleA !== null && titleB !== null && titleA !== titleB) {
       return titleA.localeCompare(titleB)
     }
@@ -417,6 +428,10 @@ function formatGroupDate(dateStr: string): string {
   const parts = dateStr.split('-')
   if (parts.length !== 3) return dateStr
   const [y, m, d] = parts.map(Number)
+  // Unreachable at runtime — `parts.length === 3` is guaranteed by the early
+  // return above, so all three destructured slots exist. Kept for narrowing:
+  // `noUncheckedIndexedAccess` types them `number | undefined`, and without
+  // this guard `new Date(y, m - 1, d)` fails to typecheck.
   if (y === undefined || m === undefined || d === undefined) return dateStr
   if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return dateStr
   const date = new Date(y, m - 1, d)
