@@ -210,6 +210,16 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
   // widget uses `toLowerCase()` for the same reason. For the remaining
   // Unicode case-folding edge cases we follow VSCode's approximation
   // (fold the haystack and needle together).
+  //
+  // NOTE this is deliberately WEAKER than `src/lib/fold-for-search.ts`, which
+  // the global search and filter surfaces use: that one is additionally
+  // diacritic- and eszett-insensitive, so `naive` matches `naïve` there and
+  // not here. The divergence is forced, not an oversight — folding via NFKD
+  // changes string length, and every match this module returns is a
+  // {start,end} offset into the ORIGINAL text node for the highlighter to
+  // range over. A length-changing fold breaks that mapping. If in-page find
+  // ever needs diacritic insensitivity it needs an offset-preserving fold,
+  // not this helper.
   const needle = opts.caseSensitive ? query : query.toLowerCase()
   const wholeWord = opts.wholeWord
   const caseSensitive = opts.caseSensitive

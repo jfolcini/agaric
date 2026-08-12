@@ -307,32 +307,56 @@ describe('compileQuery — locale-independent case folding (#3800)', () => {
   // Code points whose lowercase mapping differs between `toLowerCase()` and at
   // least one locale-tailored mapping. Under `toLowerCase()` each one must be
   // found by its own lowercase form.
-  const tripwires: Array<{ label: string; upper: string; divergentIn: string }> = [
-    { label: 'U+0049 LATIN CAPITAL LETTER I', upper: 'I', divergentIn: 'tr/az → dotless ı' },
+  //
+  // `live` records whether the row actually DISCRIMINATES — i.e. whether it
+  // fails with the fix reverted. Two do not, and saying so matters: a row that
+  // passes either way is documentation, not a regression guard, and a future
+  // reader would otherwise trust all five equally. U+00CC and U+00CD are
+  // Latin-1 representable, so `scanLiteralFolded`'s per-code-point folding
+  // takes V8's fast path and never reaches the locale-tailored mapping. With
+  // the three fold sites reverted: 5 rows fail under tr_TR, but only U+0128
+  // fails under lt_LT.
+  const tripwires: Array<{
+    label: string
+    upper: string
+    divergentIn: string
+    live: boolean
+  }> = [
+    {
+      label: 'U+0049 LATIN CAPITAL LETTER I',
+      upper: 'I',
+      divergentIn: 'tr/az → dotless ı',
+      live: true,
+    },
     {
       label: 'U+00CC LATIN CAPITAL LETTER I WITH GRAVE',
       upper: 'Ì',
       divergentIn: 'lt → i+0307+0300',
+      live: false, // Latin-1: fast path, passes with or without the fix
     },
     {
       label: 'U+00CD LATIN CAPITAL LETTER I WITH ACUTE',
       upper: 'Í',
       divergentIn: 'lt → i+0307+0301',
+      live: false, // Latin-1: fast path, passes with or without the fix
     },
     {
       label: 'U+0128 LATIN CAPITAL LETTER I WITH TILDE',
       upper: 'Ĩ',
       divergentIn: 'lt → i+0307+0303',
+      live: true, // the ONLY live lt tripwire
     },
     {
       label: 'U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE',
       upper: 'İ',
       divergentIn: 'tr/az → bare i',
+      live: true,
     },
   ]
 
-  for (const { label, upper, divergentIn } of tripwires) {
-    it(`lowercase query finds ${label} (diverges ${divergentIn})`, () => {
+  for (const { label, upper, divergentIn, live } of tripwires) {
+    const guard = live ? '' : ' [not a regression guard — Latin-1 fast path]'
+    it(`lowercase query finds ${label} (diverges ${divergentIn})${guard}`, () => {
       const compiled = compileQuery(upper.toLowerCase(), defaultOpts) as Extract<
         CompiledQuery,
         { kind: 'literal' }
