@@ -81,12 +81,20 @@ export function formatJournalTitle(isoContent: string, fmt: string): string {
   const year = Number(m[1])
   const month = Number(m[2])
   const day = Number(m[3])
-  // Validate components BEFORE constructing the Date — `new Date(2026, 12, 45)`
-  // silently wraps, and a wrapped Date would render a wrong-but-plausible title.
-  if (year < 1000 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) {
+  // `new Date(2026, 12, 45)` silently wraps, and a wrapped Date would render a
+  // wrong-but-plausible title. Only the year needs checking up front: years 0-99
+  // map to 1900-1999 yet still round-trip cleanly, so the check below cannot see
+  // them. Out-of-range months and days need no explicit check — see below.
+  if (year < 1000) {
     return isoContent
   }
   const date = new Date(year, month - 1, day)
+  // This round-trip subsumes every month/day range check: getMonth() only ever
+  // returns 0-11 and getDate() 1-31, so agreement on both implies month was in
+  // 1-12 and day in 1-31 to begin with. Both arms are load-bearing — an
+  // out-of-range month shifts getMonth() while getDate() still agrees
+  // ("1000-00-01"), and a date-line skip shifts getDate() while getMonth()
+  // agrees ("2011-12-30" under Pacific/Apia, a day that never existed there).
   if (date.getMonth() !== month - 1 || date.getDate() !== day) return isoContent
 
   // The default preset preserves the existing localized rendering exactly.
@@ -147,11 +155,17 @@ export function formatCompactDate(dateStr: string): string {
   const parts = dateStr.split('-')
   if (parts.length !== 3) return dateStr
   const [y, m, d] = parts.map(Number)
+  // Unreachable at runtime — `parts.length === 3` and `Number()` yields NaN, never
+  // undefined — but required for narrowing: `noUncheckedIndexedAccess` types the
+  // destructured elements as `number | undefined`, and the comparisons below need
+  // plain numbers.
   if (y === undefined || m === undefined || d === undefined) return dateStr
   if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return dateStr
   if (m < 1 || m > 12 || d < 1 || d > 31) return dateStr
-  const month = MONTH_SHORT[(m ?? 1) - 1] ?? 'Jan'
-  const day = d ?? 1
+  // The `?? 'Jan'` fallback is live: a fractional month such as "2026-1.5-05"
+  // passes the range check above yet indexes MONTH_SHORT at a non-integer.
+  const month = MONTH_SHORT[m - 1] ?? 'Jan'
+  const day = d
   const now = new Date()
   if (y === now.getFullYear()) return `${month} ${day}`
   return `${month} ${day}, ${y}`
@@ -197,10 +211,6 @@ export function getDateRangeForFilter(
     const rangeStart = new Date(today)
     rangeStart.setDate(today.getDate() - (numDays - 1))
     return { start: formatDate(rangeStart), end: todayStr }
-  }
-
-  if (preset === 'overdue') {
-    return null
   }
 
   return null

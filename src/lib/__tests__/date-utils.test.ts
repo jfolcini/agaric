@@ -115,6 +115,13 @@ describe('formatCompactDate', () => {
     // the isNaN checks.
     expect(formatCompactDate('2026-ab-15')).toBe('2026-ab-15')
   })
+
+  it('falls back to Jan when a fractional month indexes MONTH_SHORT off-integer', () => {
+    // A fractional month is numeric and within 1..12, so it clears both the NaN
+    // and the range guard, then indexes MONTH_SHORT at 0.5 — undefined. This is
+    // the only input shape that reaches the `?? 'Jan'` fallback.
+    expect(formatCompactDate('2026-1.5-05')).toBe('Jan 5')
+  })
 })
 
 describe('MONTH_SHORT', () => {
