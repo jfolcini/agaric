@@ -448,6 +448,46 @@ pass_filenames = false
 files = "^scripts/check-lib-layering\\.mjs$"
 stages = ["pre-commit"]
 
+# bulk-vs-fold equivalence inventory ratchet (#3346): every bulk command is
+# an optimisation of a loop, and where the bulk path RE-IMPLEMENTS the single
+# path's SQL instead of calling it the two bodies drift silently (#3280 ran
+# that way for a year). `src-tauri/src/bulk_equivalence/` is the oracle; this
+# guard is the INVENTORY — it enumerates bulk-named functions (`batch` /
+# `bulk` / `by_ids` name segments, plus any function the baseline pins by
+# hand) across the WHOLE workspace: src-tauri/src AND every sibling crate's
+# src-tauri/*/src. It classifies each mutating vs read-only from its body's
+# write primitives (and those of the same-file helpers it calls), then fails
+# on a NEW one with no recorded disposition, a STALE entry (so the inventory
+# ratchets down), a recorded kind that no longer matches the computed one (a
+# read-only fan-out that grew a write can now fork), or a `covered` entry
+# whose equivalence test has been deleted. Keyed to
+# scripts/bulk-equivalence-baseline.json. pass_filenames=false — the script
+# does its own walk; `files` only decides WHEN to run it, so it must cover
+# every crate the walk covers or a sibling-crate fan-out lands unchallenged.
+[[repos.hooks]]
+id = "bulk-equivalence"
+name = "bulk-vs-fold equivalence inventory (ratchet)"
+entry = "node scripts/check-bulk-equivalence.mjs"
+language = "system"
+pass_filenames = false
+files = "^(src-tauri/.*\\.rs|scripts/bulk-equivalence-baseline\\.json)$"
+stages = ["pre-commit"]
+
+# Self-test the bulk-equivalence ratchet's own exit behavior (new bulk fn
+# FAILS — including one in a SIBLING CRATE, stale entry FAILS, kind drift
+# FAILS, deleted equivalence test FAILS, unjustified `gap` FAILS, a pinned
+# entry survives regeneration and goes stale when its function is deleted,
+# fully-recorded inventory PASSES) whenever the guard script itself changes,
+# so a regression that defangs it can't land.
+[[repos.hooks]]
+id = "bulk-equivalence-selftest"
+name = "bulk-equivalence ratchet self-test"
+entry = "node scripts/check-bulk-equivalence.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-bulk-equivalence\\.mjs$"
+stages = ["pre-commit"]
+
 # strict-invoke-optout ratchet (#3332): `src/test-setup.ts` installs the
 # #3225 strict `invoke` mock — an unstubbed IPC REJECTS and `afterEach`
 # names the command — but a file-level
