@@ -13,7 +13,7 @@
  * Runs under happy-dom — no browser APIs beyond DOM are touched.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CHUNK_SIZE,
@@ -178,6 +178,19 @@ describe('compileQuery', () => {
 })
 
 describe('compileQuery — Unicode correctness (#756)', () => {
+  // Every İ-based test below assumes the runtime's default locale folds
+  // U+0130 to two units. That is NOT universal: under tr/az it folds to a
+  // single 'i', and these tests would fail or — worse — pass while exercising
+  // a different code path. Assert it once here so the cause is named rather
+  // than debugged. The underlying production dependence on the ambient locale
+  // is #3800; when that is fixed to use toLowerCase(), this guard can go.
+  beforeAll(() => {
+    expect(
+      'İ'.toLocaleLowerCase(),
+      'default locale does not fold U+0130 to two units (tr/az?) — see #3800',
+    ).toHaveLength(2)
+  })
+
   it('literal offsets stay aligned after a length-changing case fold (İ)', () => {
     const compiled = compileQuery('bravo', defaultOpts) as Extract<
       CompiledQuery,
@@ -689,8 +702,16 @@ describe('collectTextNodes', () => {
     // SVG-namespace fixture.
     const tpl = document.createElement('template')
     tpl.append(document.createTextNode('hidden'))
-    expect(tpl.childNodes).toHaveLength(0) // real browser: 1
-    expect(tpl.content.childNodes).toHaveLength(1) // real browser: 0
+    // The failure messages are written for whoever triages a red Dependabot
+    // happy-dom bump: this going red means the dependency got BETTER.
+    expect(
+      tpl.childNodes,
+      'happy-dom fixed — see the comment above this assertion; this is not a regression',
+    ).toHaveLength(0) // real browser: 1
+    expect(
+      tpl.content.childNodes,
+      'happy-dom fixed — see the comment above this assertion; this is not a regression',
+    ).toHaveLength(1) // real browser: 0
 
     // The *parser* path, by contrast, is spec-conformant in happy-dom, so
     // asserting it would prove nothing about the deviation — which is why it is
