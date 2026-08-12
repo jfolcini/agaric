@@ -12,10 +12,57 @@ export type AgendaGroupBy = 'date' | 'priority' | 'state' | 'page' | 'none'
 
 /**
  * Effective date for a block: prefer due_date, then scheduled_date.
- * Returns '9999-12-31' for blocks with no date (sort to bottom).
+ *
+ * Returns `null` — NOT a far-future date string — when the block has neither.
+ * This used to return `'9999-12-31'`, a calendar-valid ISO date that
+ * `set_due_date` accepts, so a block genuinely due that day was
+ * indistinguishable from an undated one (#3806). "Undated" now lives in a
+ * value that no date can occupy.
+ *
+ * `||`, not `??`: both columns are `string | null`, so the only falsy value
+ * besides `null` is `''` — which is not a date and must bucket as "No date",
+ * not as an Overdue one (`'' < todayStr`). `validate_date_format` rejects `''`
+ * on every write path, so this is the same hand-edited/imported-data class as
+ * `'0000-00-00'`, and the same rule applies: nothing that is not a date may
+ * enter the date half of a sort key.
  */
-function effectiveDate(block: BlockRow): string {
-  return block.due_date ?? block.scheduled_date ?? '9999-12-31'
+function effectiveDate(block: BlockRow): string | null {
+  return block.due_date || block.scheduled_date || null
+}
+
+/**
+ * Chronological compare of two `YYYY-MM-DD` strings.
+ *
+ * Lexicographic order == chronological order for that format (#719), so this
+ * is a plain string compare. The one definition is shared by the block-level
+ * comparator and the group-order comparator so both are exercised by the same
+ * tests instead of each carrying its own untested arm.
+ */
+function compareDateStrings(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
+/**
+ * Chronological compare of two OPTIONAL `YYYY-MM-DD` strings, undated last.
+ *
+ * The composite sort key `[hasDate, date]` evaluated lazily: the "has a date"
+ * rank is compared first, and the date strings only when both sides are dated
+ * — so no real date can sort as though undated (#3806). Returns 0 for equal
+ * keys, so callers fall through to their own tiebreaks.
+ *
+ * Shared by the block comparator and the group-order comparator
+ * (`compareGroupSortKeys`), so the null arms are exercised by one set of tests
+ * instead of each caller carrying its own copy.
+ */
+function compareNullableDateStrings(a: string | null, b: string | null): number {
+  if (a === null) return b === null ? 0 : 1
+  if (b === null) return -1
+  return compareDateStrings(a, b)
+}
+
+/** Compare two blocks by effective date ascending, undated last. */
+function compareByDate(a: BlockRow, b: BlockRow): number {
+  return compareNullableDateStrings(effectiveDate(a), effectiveDate(b))
 }
 
 /**
@@ -24,10 +71,9 @@ function effectiveDate(block: BlockRow): string {
  */
 export function sortAgendaBlocks(blocks: BlockRow[]): BlockRow[] {
   return [...blocks].toSorted((a, b) => {
-    // 1. Date ascending
-    const dateA = effectiveDate(a)
-    const dateB = effectiveDate(b)
-    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+    // 1. Date ascending (undated last)
+    const byDate = compareByDate(a, b)
+    if (byDate !== 0) return byDate
 
     // 2. State: DOING > TODO > DONE > CANCELLED > null
     const stateA = taskStateRank(a.todo_state)
@@ -46,6 +92,52 @@ export interface AgendaGroup {
   /** CSS class for the group header */
   className?: string | undefined
   blocks: BlockRow[]
+}
+
+/**
+ * Rank half of a `groupByDate` group-order key.
+ *
+ * A rank is a field no date string can occupy, which is the whole point: the
+ * previous encoding expressed these three positions in the DATE field itself
+ * (`'0000-00-00'` for Overdue, `'9999-99-99'` for No date), and those are
+ * strings a raw `due_date` can equal — so a block dated `'0000-00-00'` tied
+ * with the Overdue group (#3790 finding 4).
+ *
+ * Exported for tests, which drive `compareGroupSortKeys` directly rather than
+ * relying on the order `groupByDate` happens to insert its buckets in.
+ */
+export const GROUP_RANK = { beforeDates: -1, dated: 0, afterDates: 1 } as const
+
+/**
+ * Composite group-order key: rank first, then the group's own date.
+ *
+ * `Overdue` (before every real date) and `No date` (after every real date) are
+ * ranks with no date of their own, so they carry `null` — and the type makes
+ * any other value there UNREPRESENTABLE, so no future construction site can
+ * smuggle a placeholder like `''` or `'9999-99-99'` back into the date half.
+ * `dated` covers both the raw `YYYY-MM-DD` bucket keys and the `Today` /
+ * `Tomorrow` special groups, which sort by the date they stand for.
+ */
+export type GroupSortKey =
+  | readonly [rank: typeof GROUP_RANK.beforeDates | typeof GROUP_RANK.afterDates, date: null]
+  | readonly [rank: typeof GROUP_RANK.dated, date: string]
+
+/**
+ * Order two group keys: by rank, then chronologically within a rank.
+ *
+ * The rank comparison is the only half that reorders anything in production:
+ * `groupByDate` builds its buckets from a date-ascending pass, so the `dated`
+ * groups already arrive chronologically and only `Overdue` has to move. The
+ * date half is nonetheless the ordering CONTRACT — it is what makes the
+ * comparator total and independent of insertion order — so it is tested here
+ * directly instead of being left implicit in how the buckets happen to be
+ * built.
+ */
+export function compareGroupSortKeys(a: GroupSortKey, b: GroupSortKey): number {
+  const [rankA, dateA] = a
+  const [rankB, dateB] = b
+  if (rankA !== rankB) return rankA - rankB
+  return compareNullableDateStrings(dateA, dateB)
 }
 
 /**
@@ -70,7 +162,7 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
     // every other date. Raw-date keys keep lexicographic order ==
     // chronological order (#719) — formatting happens at output time.
     let key: string
-    if (date === '9999-12-31') {
+    if (date === null) {
       key = 'No date'
     } else if (date < todayStr && block.todo_state !== 'DONE') {
       key = 'Overdue'
@@ -92,27 +184,31 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
   // approach emitted Overdue/Today/Tomorrow first, then the raw-date groups —
   // so a past-dated group (e.g. a completed task keyed by its own past
   // YYYY-MM-DD, which is NOT bucketed as Overdue) rendered AFTER Today/Tomorrow
-  // and broke chronological monotonicity (#1524). Now each group maps to a
-  // sort key: `Overdue` (past, not-done) sorts before every real date, the
-  // special day groups sort by their actual date, raw-date keys sort by
-  // themselves (already chronological — #719), and `No date` sinks last.
-  // Labels are formatted only after ordering.
-  const SPECIAL_SORT_KEY: Record<string, string> = {
-    Overdue: '0000-00-00',
-    Today: todayStr,
-    Tomorrow: tomorrowStr,
-    'No date': '9999-99-99',
-  }
-  const sortKeyFor = (key: string): string => SPECIAL_SORT_KEY[key] ?? key
+  // and broke chronological monotonicity (#1524).
+  //
+  // The key is a composite `[rank, date]`, not a magic date string (see
+  // `GroupSortKey` / `compareGroupSortKeys`): `beforeDates` pins `Overdue`
+  // ahead of every real date, `dated` holds the special day groups and the
+  // raw-date keys (which sort by themselves — already chronological, #719),
+  // and `afterDates` sinks `No date` last. Labels are formatted only after
+  // ordering.
+  //
+  // A Map, not an object literal: bucket keys are raw `due_date` strings, and
+  // `'constructor' in {}` / `{}['constructor']` are truthy through the
+  // prototype chain.
+  const SPECIAL_SORT_KEY = new Map<string, GroupSortKey>([
+    ['Overdue', [GROUP_RANK.beforeDates, null]],
+    ['Today', [GROUP_RANK.dated, todayStr]],
+    ['Tomorrow', [GROUP_RANK.dated, tomorrowStr]],
+    ['No date', [GROUP_RANK.afterDates, null]],
+  ])
+  const sortKeyFor = (key: string): GroupSortKey =>
+    SPECIAL_SORT_KEY.get(key) ?? [GROUP_RANK.dated, key]
 
   return [...groups.entries()]
-    .toSorted(([a], [b]) => {
-      const ka = sortKeyFor(a)
-      const kb = sortKeyFor(b)
-      return ka < kb ? -1 : ka > kb ? 1 : 0
-    })
+    .toSorted(([a], [b]) => compareGroupSortKeys(sortKeyFor(a), sortKeyFor(b)))
     .map(([key, groupBlocks]) => ({
-      label: key in SPECIAL_SORT_KEY ? key : formatGroupDate(key),
+      label: SPECIAL_SORT_KEY.has(key) ? key : formatGroupDate(key),
       blocks: groupBlocks,
       className:
         key === 'Overdue'
@@ -151,10 +247,9 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
   }
 
   const sortWithin = (a: BlockRow, b: BlockRow): number => {
-    // date ASC
-    const dateA = effectiveDate(a)
-    const dateB = effectiveDate(b)
-    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+    // date ASC (undated last)
+    const byDate = compareByDate(a, b)
+    if (byDate !== 0) return byDate
     // state
     return taskStateRank(a.todo_state) - taskStateRank(b.todo_state)
   }
@@ -208,10 +303,9 @@ export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
   }
 
   const sortWithin = (a: BlockRow, b: BlockRow): number => {
-    // date ASC
-    const dateA = effectiveDate(a)
-    const dateB = effectiveDate(b)
-    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+    // date ASC (undated last)
+    const byDate = compareByDate(a, b)
+    if (byDate !== 0) return byDate
     // priority
     return priorityRank(a.priority) - priorityRank(b.priority)
   }
@@ -247,10 +341,9 @@ export function sortByPriority(blocks: BlockRow[]): BlockRow[] {
     const prioB = priorityRank(b.priority)
     if (prioA !== prioB) return prioA - prioB
 
-    // 2. Date ascending
-    const dateA = effectiveDate(a)
-    const dateB = effectiveDate(b)
-    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+    // 2. Date ascending (undated last)
+    const byDate = compareByDate(a, b)
+    if (byDate !== 0) return byDate
 
     // 3. State: DOING > TODO > DONE > CANCELLED > null
     const stateA = taskStateRank(a.todo_state)
@@ -270,10 +363,9 @@ export function sortByState(blocks: BlockRow[]): BlockRow[] {
     const stateB = taskStateRank(b.todo_state)
     if (stateA !== stateB) return stateA - stateB
 
-    // 2. Date ascending
-    const dateA = effectiveDate(a)
-    const dateB = effectiveDate(b)
-    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+    // 2. Date ascending (undated last)
+    const byDate = compareByDate(a, b)
+    if (byDate !== 0) return byDate
 
     // 3. Priority: 1 > 2 > 3 > null
     const prioA = priorityRank(a.priority)
@@ -307,11 +399,8 @@ export function groupByPage(blocks: BlockRow[], pageTitles: Map<string, string>)
     const prioA = priorityRank(a.priority)
     const prioB = priorityRank(b.priority)
     if (prioA !== prioB) return prioA - prioB
-    // date
-    const dateA = effectiveDate(a)
-    const dateB = effectiveDate(b)
-    if (dateA !== dateB) return dateA < dateB ? -1 : 1
-    return 0
+    // date (undated last)
+    return compareByDate(a, b)
   }
 
   // Separate no-page bucket
@@ -380,11 +469,7 @@ export function sortByPage(blocks: BlockRow[], pageTitles: Map<string, string>):
     const prioB = priorityRank(b.priority)
     if (prioA !== prioB) return prioA - prioB
 
-    const dateA = effectiveDate(a)
-    const dateB = effectiveDate(b)
-    if (dateA !== dateB) return dateA < dateB ? -1 : 1
-
-    return 0
+    return compareByDate(a, b)
   })
 }
 
