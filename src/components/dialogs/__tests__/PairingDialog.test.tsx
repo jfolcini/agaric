@@ -2638,12 +2638,19 @@ describe('PairingDialog', () => {
     expect(screen.getByRole('button', { name: /^Cancel pairing$/i })).toBeInTheDocument()
 
     // #3463 (review): opening the dialog started a host session, and
-    // selectJoinerRole already cancelled it once when switching roles —
-    // before this click, cancel_pairing has already fired exactly once.
+    // selectJoinerRole already cancelled it once when switching roles, so at
+    // least one cancel_pairing has fired before this click.
+    //
+    // The absolute count is deliberately NOT pinned. How many session
+    // start/cancel cycles the setup performs is timing-dependent: this read
+    // `toBe(1)` and failed as 2 in full-suite runs while passing in isolation.
+    // What the test actually means to assert is the DELTA around each action
+    // below — the guard click adds none, and confirm_pairing landing adds
+    // exactly one — so both are expressed relative to this baseline.
     const cancelCallsBeforeGuardClick = mockedInvoke.mock.calls.filter(
       ([cmd]) => cmd === 'cancel_pairing',
     ).length
-    expect(cancelCallsBeforeGuardClick).toBe(1)
+    expect(cancelCallsBeforeGuardClick).toBeGreaterThanOrEqual(1)
 
     await user.click(screen.getByRole('button', { name: /^Cancel pairing$/i }))
 
@@ -2662,7 +2669,7 @@ describe('PairingDialog', () => {
     const cancelCallsAfterGuardClick = mockedInvoke.mock.calls.filter(
       ([cmd]) => cmd === 'cancel_pairing',
     ).length
-    expect(cancelCallsAfterGuardClick).toBe(1)
+    expect(cancelCallsAfterGuardClick).toBe(cancelCallsBeforeGuardClick)
 
     // Once `confirm_pairing` answers, the marker it armed is torn down —
     // where before #3628 the guard's Cancel was a pure UI act and the marker
@@ -2674,7 +2681,7 @@ describe('PairingDialog', () => {
       const cancelCallsAfterConfirmLands = mockedInvoke.mock.calls.filter(
         ([cmd]) => cmd === 'cancel_pairing',
       ).length
-      expect(cancelCallsAfterConfirmLands).toBe(2)
+      expect(cancelCallsAfterConfirmLands).toBe(cancelCallsBeforeGuardClick + 1)
     })
   })
 
