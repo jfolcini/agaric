@@ -17,7 +17,7 @@
 - `docs/session-log/session-1294-a-date-that-meant-no-date.md` (new)
 
 **Verification:**
-- `npx vitest run src/lib/__tests__/agenda-sort.test.ts` — 95 passed. Consumers: 29 files, 722 tests, all green.
+- `npx vitest run src/lib/__tests__/agenda-sort.test.ts` — 101 passed. Consumers: 29 files, 722 tests, all green.
 - `npm run typecheck` — clean.
 - `node scripts/run-mutation.mjs agenda-sort` — survivors **28 → 20** (93.40%), no new locations. Nothing survives in `effectiveDate`, `compareNullableDateStrings`, `GROUP_RANK` or `compareGroupSortKeys`; every remaining survivor is in a function this change did not touch.
 - New tests demonstrated RED against the unfixed source before the fix landed.
