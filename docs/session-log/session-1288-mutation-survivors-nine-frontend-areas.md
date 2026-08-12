@@ -6,20 +6,24 @@
 | **Subagents** | 6 build + 6 review (+1 targeted follow-up) |
 | **Items closed** | `#3750` `#3752` `#3755` `#3756` `#3760` `#3761` `#3762` `#3763` `#3764` |
 | **Items modified** | `#3142` (53 survivor lines removed from the machine-readable block) |
-| **Tests added** | +40 (frontend) / +0 (backend) |
+| **Tests added** | 39 (frontend) / 0 (backend) |
 | **Files touched** | 8 |
 
 **Summary:** Triaged all 53 Stryker mutation survivors across nine frontend areas under the #3142 tracking issue — 28 killed with new tests, 25 recorded as accepted gaps after being proven equivalent. Every verdict came from a real per-module Stryker run read back out of `reports/mutation/<module>/mutation.json`, which turned out to matter: an authoritative verification pass at the end found live mutants on three lines that per-item review had already reported as cleared. Four follow-up issues were filed for findings the work surfaced.
 
 **Files touched (this session):**
-- `src/lib/__tests__/block-tree-ops.test.ts` (+108/-1)
-- `src/lib/__tests__/date-utils.test.ts` (+122)
-- `src/lib/__tests__/history-utils.test.ts` (+28)
-- `src/lib/__tests__/query-utils.test.ts` (+84)
-- `src/lib/__tests__/tagExpr.test.ts` (+30)
-- `src/lib/search-query/__tests__/serialize.test.ts` (+32)
-- `src/lib/search-query/__tests__/tokenize.test.ts` (+46)
+- `src/lib/__tests__/block-tree-ops.test.ts`
+- `src/lib/__tests__/date-utils.test.ts`
+- `src/lib/__tests__/history-utils.test.ts`
+- `src/lib/__tests__/query-utils.test.ts`
+- `src/lib/__tests__/tagExpr.test.ts`
+- `src/lib/search-query/__tests__/serialize.test.ts`
+- `src/lib/search-query/__tests__/tokenize.test.ts`
 - `docs/session-log/session-1288-mutation-survivors-nine-frontend-areas.md` (new)
+
+Per-file line deltas are deliberately omitted: they went stale twice during review
+as follow-up commits landed, and `git diff --numstat origin/main...HEAD` is both
+authoritative and always current.
 
 No source file was modified. Sources were temporarily mutated during falsification and restored; `git diff` over all nine modules' sources is empty.
 
@@ -37,7 +41,7 @@ No source file was modified. Sources were temporarily mutated during falsificati
 | graph-neighborhood | 0 | 6 | 90.38% | #3755 |
 | date-utils | 0 | 11 | 89.30% | #3752 |
 
-The **Killed** column sums to 28, short of the "+40 tests" in the metadata
+The **Killed** column sums to 28, short of the 39 tests in the metadata
 above — the difference is extra `date-utils` coverage work that doesn't show
 up as a "Killed" survivor in this table: `date-utils` shows 0 killed because
 none of its 11 documented gaps were killable (#3787), but the reviewer still

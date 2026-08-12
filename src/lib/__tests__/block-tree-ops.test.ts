@@ -169,13 +169,23 @@ describe('planSplit', () => {
     // `warn` stays uncalled; the mutant funnels the placeholder through the
     // unknown-node path, which calls `onUnknownNode` → `logger.warn`.
     //
-    // This couples the assertion to `notifyUnknownNodeTypeToast` in
-    // `src/editor/markdown-serialize-toast.ts` logging every unknown-node
-    // occurrence via `logger.warn` (see its line "logger.warn('serializer',
-    // ...unknown node type...")). If that call site ever stops using
-    // `logger.warn` — moves to a different log level or a different sink —
-    // this assertion goes vacuously green and silently stops guarding the
-    // invariant; re-derive the spy target from that file if it changes.
+    // What this pins is user-visible behaviour, not plumbing: an unknown node
+    // reaching the serializer raises a toast via `notifyUnknownNodeTypeToast`
+    // (`src/editor/markdown-serialize-toast.ts`), so the invariant is "splitting
+    // an empty parse must not raise a spurious unknown-node toast at the user".
+    // `logger.warn` is only the observation point — that path's toast is fired
+    // from the same call.
+    //
+    // That distinction is why this test survives the bar that removed a test
+    // for `graph-neighborhood:79` in this same batch: that one was observable
+    // ONLY by naming a fixture after Stryker's placeholder string, so it pinned
+    // the mutation tool. This one pins a real effect a user would see.
+    //
+    // The coupling is still real and worth stating: this is a NEGATIVE
+    // assertion on one sink, so if that call site moves to a different level or
+    // sink, the test goes vacuously green rather than red. A serializer-level
+    // `onUnknownNode` injection point would remove that failure mode; until one
+    // exists, re-derive the spy target from that file if it changes.
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     try {
       const plan = planSplit('|---|')
