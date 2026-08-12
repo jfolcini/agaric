@@ -106,7 +106,7 @@ describe('parseInlineProperties', () => {
   // single key blanked to `''` still "passes" — the test derives its
   // expectation from the very value under test. Pin the literal contents
   // instead so the constant's actual membership is checked.
-  it('has the exact reserved key list (mirrors FRONTMATTER_RESERVED_KEYS in import.rs)', () => {
+  it('has the exact reserved key list (mirrors FRONTMATTER_RESERVED_KEYS in src-tauri/agaric-engine/src/import.rs)', () => {
     expect([...INLINE_PROPERTY_RESERVED_KEYS].toSorted()).toEqual(
       [
         'space',

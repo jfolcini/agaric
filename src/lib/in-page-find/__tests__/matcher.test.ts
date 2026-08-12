@@ -141,10 +141,11 @@ describe('compileQuery', () => {
 
   it('case-sensitive regex mode keeps the `g` and `u` flags and drops `i`', () => {
     // Kills matcher.ts:188:42 [StringLiteral] `'gu'` → `''`. `\u{41}` is the
-    // code-point escape for 'A' and *requires* the `u` flag — without it the
-    // pattern means a literal 'u' repeated 65 times and matches nothing. The
-    // two hits also prove `g` is set (the scan loop relies on `lastIndex`),
-    // and the untouched lowercase 'a' proves `i` is NOT set.
+    // code-point escape for 'A' and *requires* the `u` flag — without it,
+    // `{41}` is read as a decimal quantifier, so the pattern means a literal
+    // 'u' repeated 41 times and matches nothing. The two hits also prove `g`
+    // is set (the scan loop relies on `lastIndex`), and the untouched
+    // lowercase 'a' proves `i` is NOT set.
     const compiled = compileQuery('\\u{41}', {
       ...defaultOpts,
       isRegex: true,
@@ -686,36 +687,32 @@ describe('collectTextNodes', () => {
     expect(collectTextNodes(host).map((n) => n.nodeValue)).toEqual(['visible'])
   })
 
-  it('ENVIRONMENT TRIPWIRE (happy-dom bug, not production): appendChild into a <template> is diverted into .content', () => {
-    // This test deliberately asserts a KNOWN-WRONG behaviour of the test
-    // environment. It exists only so the workaround in the test above is
-    // retired once it is no longer needed — it makes no claim about production.
+  it.fails('ENVIRONMENT TRIPWIRE (happy-dom bug, not production): appendChild into a <template> is diverted into .content', () => {
+    // This test asserts the SPEC-CORRECT behaviour of appendChild into a
+    // <template>, wrapped in `it.fails` — it exists only so the workaround
+    // in the test above is retired once it is no longer needed; it makes no
+    // claim about production.
     //
     // Spec: only the HTML parser redirects into `template.content`; DOM
     // insertion keeps the node as a direct child. A real browser therefore
     // reports `tpl.childNodes.length === 1` and `tpl.content.childNodes.length
-    // === 0`. happy-dom (20.11.1) reports the reverse.
+    // === 0`. happy-dom (20.11.1) reports the reverse, so the spec-correct
+    // assertions below currently fail — which `it.fails` turns into a green
+    // run — and the failure is what documents the deviation.
     //
-    // WHEN THIS TEST FAILS, happy-dom has been fixed. That is NOT a regression:
-    // delete this test and rewrite 'ignores text parented by a TEMPLATE
-    // element' to use a real `<template>` plus `appendChild`, dropping the
-    // SVG-namespace fixture.
+    // WHEN THIS TEST FAILS (vitest reports "expected test to fail but it
+    // passed"), happy-dom has been fixed. That is NOT a regression: delete
+    // the `it.fails` wrapper (and this comment) and rewrite 'ignores text
+    // parented by a TEMPLATE element' to use a real `<template>` plus
+    // `appendChild`, dropping the SVG-namespace fixture.
     const tpl = document.createElement('template')
     tpl.append(document.createTextNode('hidden'))
-    // The failure messages are written for whoever triages a red Dependabot
-    // happy-dom bump: this going red means the dependency got BETTER.
-    expect(
-      tpl.childNodes,
-      'happy-dom fixed — see the comment above this assertion; this is not a regression',
-    ).toHaveLength(0) // real browser: 1
-    expect(
-      tpl.content.childNodes,
-      'happy-dom fixed — see the comment above this assertion; this is not a regression',
-    ).toHaveLength(1) // real browser: 0
+    expect(tpl.childNodes).toHaveLength(1) // spec; happy-dom (bug): 0
+    expect(tpl.content.childNodes).toHaveLength(0) // spec; happy-dom (bug): 1
 
     // The *parser* path, by contrast, is spec-conformant in happy-dom, so
-    // asserting it would prove nothing about the deviation — which is why it is
-    // not the tripwire.
+    // asserting it would prove nothing about the deviation — which is why it
+    // is not part of the tripwire assertions above.
     const parsed = attach('<template>diverted</template>')
     expect(collectTextNodes(parsed)).toHaveLength(0)
   })

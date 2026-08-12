@@ -1340,10 +1340,13 @@ describe('downloadBlob', () => {
     const objectUrl = 'blob:agaric/test-object-url'
     const createObjectURL = vi.fn(() => objectUrl)
     const revokeObjectURL = vi.fn()
-    const originalCreate = URL.createObjectURL
-    const originalRevoke = URL.revokeObjectURL
-    URL.createObjectURL = createObjectURL as unknown as typeof URL.createObjectURL
-    URL.revokeObjectURL = revokeObjectURL as unknown as typeof URL.revokeObjectURL
+    // `vi.stubGlobal` (not a direct assign-and-restore) because happy-dom may
+    // not define these on `URL` at all — a plain restore would then write
+    // `undefined` back onto the property instead of removing it, an
+    // asymmetric restore that leaks into later tests. `vi.stubGlobal` snapshots
+    // the real property descriptor (present or absent) and `unstubAllGlobals`
+    // reinstates it exactly, deleting the property again if it was never there.
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
 
     // Snapshot the anchor's state AT CLICK TIME — afterwards it is detached
     // again, so `attached` can only be observed from inside the click.
@@ -1372,8 +1375,7 @@ describe('downloadBlob', () => {
       expect(revokeObjectURL).toHaveBeenCalledWith(objectUrl)
     } finally {
       clickSpy.mockRestore()
-      URL.createObjectURL = originalCreate
-      URL.revokeObjectURL = originalRevoke
+      vi.unstubAllGlobals()
     }
   })
 })
