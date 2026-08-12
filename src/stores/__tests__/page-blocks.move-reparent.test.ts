@@ -1015,4 +1015,309 @@ describe('PageBlockStore', () => {
       expectMapMatchesArray(s)
     })
   })
+
+  // #3759 — the resolve/rollback half of the #2849 optimistic-move machinery
+  // (`reconcileProvisionalMoveSuccess` / `rollbackProvisionalMove`). The suites
+  // above drive the SPLICE; these drive the reconcile's own decisions: which
+  // half of the "is the splice still in place?" identity check fires, whether
+  // the backend rank is healed at all, and what a failed move restores.
+  describe('provisional move reconcile (#3759)', () => {
+    /** Deferred IPC: queue a promise we can resolve mid-test. */
+    function deferInvoke(): (v: unknown) => void {
+      let resolve!: (v: unknown) => void
+      mockedInvoke.mockReturnValueOnce(
+        new Promise((r) => {
+          resolve = r
+        }),
+      )
+      return resolve
+    }
+
+    // #3759 EQUIVALENCE LEDGER — mutants in this core that survive by
+    // construction, so the next triage pass does not re-derive them. Each rests
+    // on an invariant of the CALL SITES rather than on the function alone, so
+    // each was checked with a canary compiled into the source and run over the
+    // whole `src/stores/__tests__` corpus (30 files, 870 tests): 122
+    // `applyProvisionalMove` calls, 96 `reconcileProvisionalMoveSuccess` calls,
+    // 74 `deriveTouched` ids. Counts marked ZERO below are observed-never, not
+    // merely unobserved — the same canary run recorded 24 hits on
+    // `provIndex === 0` and 2 on `!cur`, so it does reach the boundaries.
+    //
+    //   270:20 ConditionalExpression `provIndex >= 0` -> `true`
+    //   270:37 OptionalChaining `blocks[provIndex]?.parent_id` -> `blocks[provIndex].parent_id`
+    //     `provIndex` comes from `blocks.findIndex(...)` on the array the
+    //     splice just returned, and all seven `computeSpliced` call sites put
+    //     the moved/created block INTO that array (dedent splices `movedItems`
+    //     back into `remaining` before returning it). So `provIndex` is never
+    //     -1 and `blocks[provIndex]` is never undefined: canary
+    //     `PROVINDEX_NEGATIVE` = 0, `SLOT_UNDEFINED` = 0 of 122. Independently,
+    //     even at `provIndex === -1` the forced-true branch would evaluate
+    //     `blocks[-1]?.parent_id ?? null` -> `null`, which is exactly what the
+    //     `: null` arm yields — so 270:20 is equivalent twice over. (The other
+    //     three mutants on that same expression ARE killed, below.)
+    //
+    //   300:9  ConditionalExpression `!cur` -> `false`
+    //   300:15 BlockStatement `{ needsReload = true; return {} }` -> `{}`
+    //     `blocksById` is always rebuilt in lockstep with `blocks`
+    //     (`buildBlocksById` / `cloneBlocksByIdWith`), so a missing `cur` means
+    //     the array changed too — and then the `stillInPlace` check below fails
+    //     and sets `needsReload` itself, reaching the same `return {}`. Line 307
+    //     cannot throw on the undefined `cur` either, because the `&&` on 306
+    //     short-circuits first. Canary `CUR_MISSING_BUT_IN_PLACE` = 0 of the 2
+    //     observed `!cur` hits. A defensively redundant guard.
+    //
+    //   305:7 ConditionalExpression `state.blocks === handle.provBlocks` -> `false`
+    //     The reference-equality fast path is a pure optimisation: whenever it
+    //     holds, the (index, parent) check it short-circuits also holds — the
+    //     index by construction of `provIndex`, the parent because the same
+    //     splice updated `blocksById` for every re-parented row. Canary
+    //     `FAST_TRUE_SLOW_FALSE` = 0 of 96.
+    //
+    //   207:9 ConditionalExpression `seen.has(id)` -> `false`  (deriveTouched)
+    //   210:9 ConditionalExpression `b` -> `true`               (deriveTouched)
+    //     Every `touchedIds` list is derived from ids present in the `blocks`
+    //     array returned alongside it, and none repeats: canary
+    //     `MISSING_FROM_BLOCKS` = 0 and `DUPLICATE` = 0 of 74. The dedup is
+    //     belt-and-braces regardless — the result feeds
+    //     `cloneBlocksByIdWith`, whose `next.set(b.id, b)` is idempotent for a
+    //     repeated id because both lookups return the same object.
+
+    it('heals the backend rank in place when an interleaved write left the block at its provisional slot', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', content: 'orig A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', content: 'orig B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', content: 'orig C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      const reorderPromise = store.getState().reorder('C', 0)
+      // Provisional splice: C is now the FIRST row (flat index 0), still a
+      // child of PAGE_1.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'B'])
+
+      // An interleaved edit replaces the blocks ARRAY reference, so the cheap
+      // `state.blocks === provBlocks` fast path no longer applies: the
+      // reconcile must fall back to the recorded (index, parent) identity. A
+      // handle that forgot the parent — or recorded it as null — reads the
+      // splice as superseded and burns a full reload for nothing.
+      mockedInvoke.mockResolvedValueOnce({})
+      await store.getState().edit('B', 'edited mid-flight')
+
+      resolveMove({ block_id: 'C', new_parent_id: 'PAGE_1', new_position: 1 })
+      await reorderPromise
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['C', 'A', 'B'])
+      expect(s.blocksById.get('C')?.position).toBe(1)
+      expect(s.blocksById.get('B')?.content).toBe('edited mid-flight')
+    })
+
+    it('reloads when an interleaved write RE-PARENTED the block without moving its flat slot', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      const reorderPromise = store.getState().reorder('A', 2)
+      // Provisional splice puts A last — flat index 2.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['B', 'C', 'A'])
+
+      // A sync load lands mid-flight in which a peer INDENTED A under C. A is
+      // still at flat index 2, so the index half of the identity check still
+      // matches — only the parent half can notice the splice is stale.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'B', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'A', position: 1, parent_id: 'C', depth: 1 }),
+        ],
+      })
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 1 }),
+          makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 2 }),
+          makeBlock({ id: 'A', parent_id: 'C', position: 1 }),
+        ]),
+      )
+
+      resolveMove({ block_id: 'A', new_parent_id: 'PAGE_1', new_position: 3 })
+      await reorderPromise
+
+      expect(mockedInvoke).toHaveBeenCalledWith('load_page_subtree', expect.anything())
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['B', 'C', 'A'])
+      expect(s.blocksById.get('A')?.parent_id).toBe('C')
+      // The stale root-level rank was NOT healed onto the re-parented block.
+      expect(s.blocksById.get('A')?.position).toBe(1)
+    })
+
+    it('survives an interleaved write that SHRANK the array past the provisional slot', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'D', position: 4, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      const movePromise = store.getState().moveUp('D')
+      // Provisional swap puts D at flat index 2.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'B', 'D', 'C'])
+
+      // A sync load lands mid-flight in which a peer deleted every sibling. D
+      // still EXISTS (so the "block vanished" guard does not fire), but the
+      // provisional index 2 is now past the end of the array — the identity
+      // probe must read that as "not in place", not blow up on it.
+      store.setState({
+        blocks: [makeBlock({ id: 'D', position: 1, parent_id: 'PAGE_1', depth: 0 })],
+      })
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([makeBlock({ id: 'D', parent_id: 'PAGE_1', position: 1 })]),
+      )
+
+      resolveMove({ block_id: 'D', new_parent_id: 'PAGE_1', new_position: 3 })
+
+      // A throw out of the Zustand updater would surface as a FAILED move
+      // (rollback + error toast) for a move the backend actually committed.
+      await expect(movePromise).resolves.toBe(true)
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      expect(mockedInvoke).toHaveBeenCalledWith('load_page_subtree', expect.anything())
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['D'])
+    })
+
+    it('leaves state UNTOUCHED when the backend rank already matches the provisional position', async () => {
+      // Store state a completed optimistic reorder leaves behind: A was dragged
+      // to the end of dense [A,B,C] and healed to rank 3, while B keeps its
+      // pre-move integer.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'A', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      const reorderPromise = store.getState().reorder('C', 2)
+      const provBlocks = store.getState().blocks
+      const provC = store.getState().blocksById.get('C')
+      expect(provBlocks.map((b) => b.id)).toEqual(['B', 'A', 'C'])
+
+      // C lands as the third child, so the backend's dense rank is 3 — exactly
+      // the (stale) integer C already carries. There is nothing to heal, and
+      // re-allocating the row anyway would memo-miss every mounted sibling for
+      // a write that changes no field.
+      resolveMove({ block_id: 'C', new_parent_id: 'PAGE_1', new_position: 3 })
+      await reorderPromise
+
+      const s = store.getState()
+      expect(s.blocks).toBe(provBlocks)
+      expect(s.blocksById.get('C')).toBe(provC)
+      expect(s.blocks.map((b) => b.id)).toEqual(['B', 'A', 'C'])
+      expect(s.blocksById.get('C')?.position).toBe(3)
+    })
+
+    it('heals the rank into a FRESH array, never mutating the rendered one', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      const reorderPromise = store.getState().reorder('C', 0)
+      const provBlocks = store.getState().blocks
+      const provC = provBlocks[0]
+      expect(provC?.id).toBe('C')
+
+      resolveMove({ block_id: 'C', new_parent_id: 'PAGE_1', new_position: 1 })
+      await reorderPromise
+
+      const s = store.getState()
+      // A fresh array reference — Zustand subscribers only fire on identity …
+      expect(s.blocks).not.toBe(provBlocks)
+      expect(s.blocks[0]?.position).toBe(1)
+      // … and the array React already rendered is left exactly as it was,
+      // rather than having the healed row written into it in place.
+      expect(provBlocks[0]).toBe(provC)
+      expect(provBlocks[0]?.position).toBe(3)
+    })
+
+    it('a null backend rank keeps the provisional position instead of nulling it', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      // `indent` deliberately reconciles with a NULL rank: its splice already
+      // assigned the provisional `position: 1` (#400 — the real dense rank is
+      // the backend's and is not threaded through here). Null must be a
+      // no-op, not a heal that writes null over the provisional rank.
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: 'A', new_position: 4 })
+
+      await expect(store.getState().indent('B')).resolves.toBe(true)
+
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['A', 'B'])
+      expect(s.blocksById.get('B')?.parent_id).toBe('A')
+      expect(s.blocksById.get('B')?.position).toBe(1)
+    })
+
+    it('a failed move reloads instead of clobbering an interleaved write', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', content: 'orig A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      let rejectMove!: (err: Error) => void
+      mockedInvoke.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectMove = reject
+          }),
+      )
+      const movePromise = store.getState().moveUp('C')
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'C', 'B'])
+
+      // An edit echo lands while move_block is in flight, replacing the blocks
+      // array. The pre-move snapshot the handle carries no longer describes
+      // reality, so restoring it verbatim would silently revert that edit.
+      mockedInvoke.mockResolvedValueOnce({})
+      await store.getState().edit('A', 'edited mid-flight')
+
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 1, content: 'edited mid-flight' }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 2 }),
+          makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 3 }),
+        ]),
+      )
+      rejectMove(new Error('move failed'))
+      await expect(movePromise).resolves.toBe(false)
+
+      // Reconciled through a reload: the provisional swap is undone AND the
+      // interleaved edit survives. Leaving the splice in place would strand
+      // the store showing a move the backend rejected.
+      expect(mockedInvoke).toHaveBeenCalledWith('load_page_subtree', expect.anything())
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['A', 'B', 'C'])
+      expect(s.blocksById.get('A')?.content).toBe('edited mid-flight')
+    })
+  })
 })
