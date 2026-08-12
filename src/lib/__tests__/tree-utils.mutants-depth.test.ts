@@ -275,8 +275,12 @@ describe('projectDepth — normal branch (dead zone + clamps)', () => {
  *   `Math.abs(dragOffset) > DEAD_ZONE_PX` -> `>=`. The two arms coincide
  *   exactly at the boundary they disagree on: when
  *   `Math.abs(dragOffset) === DEAD_ZONE_PX` the mutant takes the then-arm and
- *   computes `dragOffset - Math.sign(dragOffset) * DEAD_ZONE_PX`, i.e.
- *   `20 - 20` or `-20 + 20` — the same `0` the original's else-arm supplies.
+ *   computes `dragOffset - Math.sign(dragOffset) * DEAD_ZONE_PX`. At that
+ *   boundary `dragOffset` equals `Math.sign(dragOffset) * DEAD_ZONE_PX`
+ *   exactly, so the subtraction always yields `0` — the same value the
+ *   original's else-arm supplies — for any value of `DEAD_ZONE_PX`,
+ *   including `0` (where `Math.sign(0) === 0` keeps the identity intact).
+ *   This is not specific to the constant's current value.
  *
  * - tree-utils.ts:426:7 `depth > maxDepth` -> `>=`
  * - tree-utils.ts:427:7 `depth < minDepth` -> `<=`

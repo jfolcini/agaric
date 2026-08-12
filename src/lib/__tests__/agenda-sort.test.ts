@@ -1188,6 +1188,16 @@ describe('mutation coverage: groupByPage sortWithin date tiebreak', () => {
     // one), which reverses this already-ascending run. Only the `: 1` arm
     // keeps it in place, so the assertion pins the ternary's direction and
     // not merely the guard above it.
+    //
+    // Note: the assertion (ascending output) is correct and stable, but
+    // whether it actually KILLS this mutant depends on an implementation
+    // detail of `Array.prototype.sort` — specifically, that V8 reorders a
+    // 3-element array when the comparator always answers -1. That is not
+    // guaranteed by the spec. If a future engine/runtime stops doing so,
+    // this test stays green on both the real code and the mutant, and the
+    // mutant would silently go from killed to survived with no local signal
+    // — a mutation run showing it alive again should be read as "the sort
+    // implementation changed," not as a regression in this test.
     const blocks = [
       makeBlock({
         id: 'jun01',
@@ -1319,6 +1329,12 @@ describe('mutation coverage: sortByPage date tiebreak', () => {
     // agenda-sort.ts:374 col 33 — `dateA < dateB ? -1 : 1`. The mirror of the
     // test above: a ConditionalExpression(true) mutant answers -1 for every
     // differing-date pair and so reverses an input that is already correct.
+    //
+    // Note: as with the mirrored test above, the assertion is stable but
+    // the kill depends on the same V8 sort-implementation detail (a
+    // comparator that always returns -1 reordering a 3-element array) —
+    // not guaranteed by spec. If that ever changes, this mutant would
+    // survive while this test stays green.
     const blocks = [
       sameKeyBlock('jun01', '2025-06-01'),
       sameKeyBlock('jun10', '2025-06-10'),

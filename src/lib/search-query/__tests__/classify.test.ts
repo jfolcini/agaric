@@ -715,6 +715,21 @@ describe('classify / parse', () => {
     // already emitted, duplicating the tail of the free text.
     // Mutating the guard to `true` (or dropping it) reproduces exactly that:
     // free text 'aa' instead of 'a'.
+    //
+    // This fixture — a quoted span `[0, 9]` reaching past a 3-char input,
+    // overlapping a word span `[1, 5]` — is not one `tokenize` can ever
+    // produce for `parse()`: `tokenize` advances a single cursor and only
+    // ever emits strictly ordered, disjoint, in-bounds spans, so it is not
+    // `parse()`-reachable. That puts it in the same fabricated-fixture class
+    // as the test removed elsewhere in this file — but with a different
+    // outcome: that removed test pinned whatever the mutant happened to
+    // emit as if it were correct behavior, while this test asserts the
+    // actually-correct output ('a', not 'aa') and exercises `classify`
+    // itself, which is an exported, directly-callable lower-level entry
+    // point with its own defensive contract independent of what `parse()`
+    // can hand it. That is the line being drawn: fabricated inputs are a
+    // problem when they pin artifacts, not when they probe a defensive
+    // contract with the correct expectation.
     ensureRegistered()
     const input = 'abc'
     const tokens: RawToken[] = [

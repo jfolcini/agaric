@@ -6,21 +6,26 @@
 | **Subagents** | 5 build + 5 review (+1 targeted follow-up) |
 | **Items closed** | `#3749` `#3751` `#3754` `#3765` `#3766` |
 | **Items modified** | `#3142` (77 survivor lines removed from the machine-readable block), `#3788` (dedup evidence added) |
-| **Tests added** | +21 (frontend) / +0 (backend) |
+| **Tests added** | +24 (frontend) / +0 (backend) |
 | **Files touched** | 9 |
 
 **Summary:** Triaged the 77 listed mutation survivors across five more frontend areas under #3142 — 31 mutants killed, the rest recorded as accepted gaps with proofs of equivalence. `filters-model` reached **100.00%** with zero survivors and zero `NoCoverage`. The batch's real output was methodological: every builder was required to read Stryker's own `mutation.json` before designing a test, which eliminated the line-vs-column errors that cost session 1288 a rework pass — and the review layer then reversed a builder conclusion in *both* directions on the same module.
 
 **Files touched (this session):**
-- `src/lib/__tests__/agenda-sort.test.ts` (+72)
+- `src/lib/__tests__/agenda-sort.test.ts`
 - `src/lib/__tests__/tree-utils.mutants-build.test.ts` (comments only)
 - `src/lib/__tests__/tree-utils.mutants-depth.test.ts` (comments only)
 - `src/lib/__tests__/tree-utils.mutants-drop.test.ts` (comments only)
 - `src/lib/__tests__/tree-utils.mutants-simulate.test.ts` (comments only)
-- `src/lib/filters/__tests__/model.test.ts` (+120)
-- `src/lib/search-query/__tests__/classify.test.ts` (net +21)
-- `src/lib/vault-import.test.ts` (+7 tests)
+- `src/lib/filters/__tests__/model.test.ts`
+- `src/lib/search-query/__tests__/classify.test.ts`
+- `src/lib/vault-import.test.ts`
 - `docs/session-log/session-1289-mutation-survivors-five-more-areas.md` (new)
+
+Per-file line deltas are deliberately omitted, as in session 1288: they went
+stale twice during that PR's review as follow-up commits landed, and
+`git diff --numstat origin/main...HEAD` is both authoritative and always
+current.
 
 No source file was modified. Sources were temporarily mutated during falsification and restored; `git diff` over all five modules' sources is empty.
 
