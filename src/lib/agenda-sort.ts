@@ -18,9 +18,16 @@ export type AgendaGroupBy = 'date' | 'priority' | 'state' | 'page' | 'none'
  * `set_due_date` accepts, so a block genuinely due that day was
  * indistinguishable from an undated one (#3806). "Undated" now lives in a
  * value that no date can occupy.
+ *
+ * `||`, not `??`: both columns are `string | null`, so the only falsy value
+ * besides `null` is `''` — which is not a date and must bucket as "No date",
+ * not as an Overdue one (`'' < todayStr`). `validate_date_format` rejects `''`
+ * on every write path, so this is the same hand-edited/imported-data class as
+ * `'0000-00-00'`, and the same rule applies: nothing that is not a date may
+ * enter the date half of a sort key.
  */
 function effectiveDate(block: BlockRow): string | null {
-  return block.due_date ?? block.scheduled_date ?? null
+  return block.due_date || block.scheduled_date || null
 }
 
 /**
@@ -36,19 +43,26 @@ function compareDateStrings(a: string, b: string): number {
 }
 
 /**
- * Compare two blocks by effective date ascending, undated last.
+ * Chronological compare of two OPTIONAL `YYYY-MM-DD` strings, undated last.
  *
- * This is the composite sort key `[hasDate, date]` evaluated lazily: the
- * "has a date" rank is compared first, and the date strings only when both
- * blocks are dated — so no real date can sort as though undated (#3806).
- * Returns 0 for equal keys, so callers fall through to their own tiebreaks.
+ * The composite sort key `[hasDate, date]` evaluated lazily: the "has a date"
+ * rank is compared first, and the date strings only when both sides are dated
+ * — so no real date can sort as though undated (#3806). Returns 0 for equal
+ * keys, so callers fall through to their own tiebreaks.
+ *
+ * Shared by the block comparator and the group-order comparator
+ * (`compareGroupSortKeys`), so the null arms are exercised by one set of tests
+ * instead of each caller carrying its own copy.
  */
+function compareNullableDateStrings(a: string | null, b: string | null): number {
+  if (a === null) return b === null ? 0 : 1
+  if (b === null) return -1
+  return compareDateStrings(a, b)
+}
+
+/** Compare two blocks by effective date ascending, undated last. */
 function compareByDate(a: BlockRow, b: BlockRow): number {
-  const dateA = effectiveDate(a)
-  const dateB = effectiveDate(b)
-  if (dateA === null) return dateB === null ? 0 : 1
-  if (dateB === null) return -1
-  return compareDateStrings(dateA, dateB)
+  return compareNullableDateStrings(effectiveDate(a), effectiveDate(b))
 }
 
 /**
@@ -78,6 +92,52 @@ export interface AgendaGroup {
   /** CSS class for the group header */
   className?: string | undefined
   blocks: BlockRow[]
+}
+
+/**
+ * Rank half of a `groupByDate` group-order key.
+ *
+ * A rank is a field no date string can occupy, which is the whole point: the
+ * previous encoding expressed these three positions in the DATE field itself
+ * (`'0000-00-00'` for Overdue, `'9999-99-99'` for No date), and those are
+ * strings a raw `due_date` can equal — so a block dated `'0000-00-00'` tied
+ * with the Overdue group (#3790 finding 4).
+ *
+ * Exported for tests, which drive `compareGroupSortKeys` directly rather than
+ * relying on the order `groupByDate` happens to insert its buckets in.
+ */
+export const GROUP_RANK = { beforeDates: -1, dated: 0, afterDates: 1 } as const
+
+/**
+ * Composite group-order key: rank first, then the group's own date.
+ *
+ * `Overdue` (before every real date) and `No date` (after every real date) are
+ * ranks with no date of their own, so they carry `null` — and the type makes
+ * any other value there UNREPRESENTABLE, so no future construction site can
+ * smuggle a placeholder like `''` or `'9999-99-99'` back into the date half.
+ * `dated` covers both the raw `YYYY-MM-DD` bucket keys and the `Today` /
+ * `Tomorrow` special groups, which sort by the date they stand for.
+ */
+export type GroupSortKey =
+  | readonly [rank: typeof GROUP_RANK.beforeDates | typeof GROUP_RANK.afterDates, date: null]
+  | readonly [rank: typeof GROUP_RANK.dated, date: string]
+
+/**
+ * Order two group keys: by rank, then chronologically within a rank.
+ *
+ * The rank comparison is the only half that reorders anything in production:
+ * `groupByDate` builds its buckets from a date-ascending pass, so the `dated`
+ * groups already arrive chronologically and only `Overdue` has to move. The
+ * date half is nonetheless the ordering CONTRACT — it is what makes the
+ * comparator total and independent of insertion order — so it is tested here
+ * directly instead of being left implicit in how the buckets happen to be
+ * built.
+ */
+export function compareGroupSortKeys(a: GroupSortKey, b: GroupSortKey): number {
+  const [rankA, dateA] = a
+  const [rankB, dateB] = b
+  if (rankA !== rankB) return rankA - rankB
+  return compareNullableDateStrings(dateA, dateB)
 }
 
 /**
@@ -126,46 +186,27 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
   // YYYY-MM-DD, which is NOT bucketed as Overdue) rendered AFTER Today/Tomorrow
   // and broke chronological monotonicity (#1524).
   //
-  // The key is a composite `[rank, date]`, not a magic date string: rank
-  // BEFORE_DATES pins `Overdue` ahead of every real date, DATED holds the
-  // special day groups and the raw-date keys (which sort by themselves —
-  // already chronological, #719), and AFTER_DATES sinks `No date` last. The
-  // date half is only compared within a rank.
+  // The key is a composite `[rank, date]`, not a magic date string (see
+  // `GroupSortKey` / `compareGroupSortKeys`): `beforeDates` pins `Overdue`
+  // ahead of every real date, `dated` holds the special day groups and the
+  // raw-date keys (which sort by themselves — already chronological, #719),
+  // and `afterDates` sinks `No date` last. Labels are formatted only after
+  // ordering.
   //
-  // The previous encoding put those three positions in the date field itself
-  // ('0000-00-00' for Overdue, '9999-99-99' for No date). Those are strings a
-  // raw `due_date` can equal, so a block dated '0000-00-00' tied with the
-  // Overdue group and the order fell out of Map insertion order (#3790
-  // finding 4). A rank is a field no date string can occupy, so the tie —
-  // and the whole class — is gone. Labels are formatted only after ordering.
-  const RANK_BEFORE_DATES = -1
-  const RANK_DATED = 0
-  const RANK_AFTER_DATES = 1
-  type GroupSortKey = readonly [rank: number, date: string]
   // A Map, not an object literal: bucket keys are raw `due_date` strings, and
   // `'constructor' in {}` / `{}['constructor']` are truthy through the
   // prototype chain.
   const SPECIAL_SORT_KEY = new Map<string, GroupSortKey>([
-    ['Overdue', [RANK_BEFORE_DATES, '']],
-    ['Today', [RANK_DATED, todayStr]],
-    ['Tomorrow', [RANK_DATED, tomorrowStr]],
-    ['No date', [RANK_AFTER_DATES, '']],
+    ['Overdue', [GROUP_RANK.beforeDates, null]],
+    ['Today', [GROUP_RANK.dated, todayStr]],
+    ['Tomorrow', [GROUP_RANK.dated, tomorrowStr]],
+    ['No date', [GROUP_RANK.afterDates, null]],
   ])
-  const sortKeyFor = (key: string): GroupSortKey => SPECIAL_SORT_KEY.get(key) ?? [RANK_DATED, key]
+  const sortKeyFor = (key: string): GroupSortKey =>
+    SPECIAL_SORT_KEY.get(key) ?? [GROUP_RANK.dated, key]
 
   return [...groups.entries()]
-    .toSorted(([a], [b]) => {
-      const [rankA, dateA] = sortKeyFor(a)
-      const [rankB, dateB] = sortKeyFor(b)
-      // The rank comparison is what actually reorders anything: `groups` is
-      // built from a date-ascending pass, so the DATED groups are already in
-      // chronological insertion order and only `Overdue` has to move. The date
-      // half is therefore a no-op today — it exists so the comparator is total
-      // and stays correct if the bucketing order ever changes, which is why
-      // mutants on the `rankA !== rankB` guard survive.
-      if (rankA !== rankB) return rankA - rankB
-      return compareDateStrings(dateA, dateB)
-    })
+    .toSorted(([a], [b]) => compareGroupSortKeys(sortKeyFor(a), sortKeyFor(b)))
     .map(([key, groupBlocks]) => ({
       label: SPECIAL_SORT_KEY.has(key) ? key : formatGroupDate(key),
       blocks: groupBlocks,

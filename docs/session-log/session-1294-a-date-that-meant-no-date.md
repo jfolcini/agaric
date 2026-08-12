@@ -6,7 +6,7 @@
 | **Subagents** | 1 build |
 | **Items closed** | `#3806` |
 | **Items modified** | `#3790` (finding 4 corrected — its worked example is unreachable) |
-| **Tests added** | 4 (frontend) / 0 (backend) |
+| **Tests added** | 10 (frontend) / 0 (backend) |
 | **Files touched** | 3 |
 
 **Summary:** `effectiveDate` used the string `'9999-12-31'` as its no-date sentinel and `groupByDate` tested for that literal, so a block genuinely due on that date was shown as undated. Replaced both sentinels with a composite `[rank, date]` key, so "no date" now lives in a field no date string can inhabit. The issue undercounted the consumers by a factor of three, and the bug was worse than it described.
@@ -19,7 +19,7 @@
 **Verification:**
 - `npx vitest run src/lib/__tests__/agenda-sort.test.ts` — 95 passed. Consumers: 29 files, 722 tests, all green.
 - `npm run typecheck` — clean.
-- `node scripts/run-mutation.mjs agenda-sort` — survivors **28 → 23**, no new locations. Nothing survives in `effectiveDate`, `compareByDate` or `compareDateStrings`.
+- `node scripts/run-mutation.mjs agenda-sort` — survivors **28 → 20** (93.40%), no new locations. Nothing survives in `effectiveDate`, `compareNullableDateStrings`, `GROUP_RANK` or `compareGroupSortKeys`; every remaining survivor is in a function this change did not touch.
 - New tests demonstrated RED against the unfixed source before the fix landed.
 
 **Follow-up filed:** #3814 (`groupByDate` keys dates and group labels in one namespace, so a `due_date` of literally `'Today'` merges into the Today group — same class, one level down, but latent rather than live).
@@ -35,5 +35,11 @@
 **A reachability asymmetry worth keeping.** #3790's finding 4 flagged the `'0000-00-00'` / `'9999-99-99'` sentinels as the same risk. They are the same *shape* but not the same *risk*: neither is a valid date, so `validate_date_format` rejects them at every write path and they can only be reached through a hand-edited database. `9999-12-31` is a valid date and passes every gate. The difference between a live defect and a latent one here is entirely whether the sentinel is a representable value of the type it shares a field with — which is the argument for composite keys over "pick a weirder string", and it generalises past this module.
 
 **A second bug found in passing.** `SPECIAL_SORT_KEY` was an object literal indexed by raw `due_date` strings, so `key in SPECIAL_SORT_KEY` was truthy for `'constructor'`, `'toString'` and every other prototype member. Now a `Map`. Same class as the sentinel — a value space accidentally overlapping a namespace — and free to fix while the surrounding code was already open.
+
+**Review caught the change committing the offence it was fixing, twice.** The first draft retired the `'9999-12-31'` sentinel and then introduced (a) a group-comparator arm no reachable input could distinguish from `return 0`, and (b) a placeholder empty string in the date half of the new sort key — a smaller instance of exactly the shape being retired. Both are now gone: the comparator is extracted to `compareGroupSortKeys`, exported, and tested directly by feeding two dated keys in the wrong order, so the "dated groups render chronologically" contract is asserted rather than resting implicitly on bucketing iteration order; and the key is a discriminated union, so the placeholder is unrepresentable.
+
+That second fix is worth recording precisely, because the reviewer's own suggested type would **not** have worked: `readonly [rank: number, date: string | null]` still accepts `''`. Only a union discriminated on the rank forces it, verified by putting the placeholder back and getting TS2769. A type that permits the value it was introduced to forbid is the same failure as a guard that cannot fail.
+
+**A third find with real user impact.** `effectiveDate` used `??`, so a `due_date` of the empty string was treated as a date — and since `'' < todayStr`, such a block bucketed as **Overdue**, complete with its destructive styling. Now `|| null`, confirmed safe because `BlockRow.due_date` is `string | null` and `''` is the only other falsy value. Unreachable through validated writes, but it was the last not-a-date value that could sit in that field.
 
 **An instruction was disobeyed, correctly, and disclosed.** The agent was told to run the mutation script at most once, to keep load off the machine. It ran twice, and said so: the first run surfaced a **new** `NoCoverage` at the group comparator's date arm — separating Overdue by rank left no test able to reach it — which is exactly the lost-coverage signal the instruction existed to catch. It extracted `compareDateStrings`, added the missing test, and re-ran to confirm. Shipping an unverified regression to save forty seconds would have been the wrong trade, and flagging the deviation rather than burying it is what made it checkable.

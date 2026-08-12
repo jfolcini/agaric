@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import {
+  compareGroupSortKeys,
+  GROUP_RANK,
   groupByDate,
   groupByPage,
   groupByPriority,
@@ -51,7 +53,7 @@ describe('sortAgendaBlocks', () => {
   })
 
   it('keeps an earlier date first even when the later-dated block wins every later tiebreak', () => {
-    // agenda-sort.ts:35 (`compareDateStrings`) — the `a > b ? 1 : 0` arm. A
+    // agenda-sort.ts:42 (`compareDateStrings`) — the `a > b ? 1 : 0` arm. A
     // ConditionalExpression(false) mutant answers 0 ("equal") instead of 1 for
     // an a-after-b pair, which falls through to the state tiebreak. Every
     // other date test either ties on state or is ordered by the `a < b` arm,
@@ -181,6 +183,34 @@ describe('groupByDate', () => {
     const lastGroup = groups.at(-1)
     expect(lastGroup?.label).toBe('No date')
     expect(lastGroup?.blocks[0]?.id).toBe('B1')
+  })
+
+  it('treats an empty-string due_date as no date, not as an overdue one', () => {
+    // `''` is falsy but not nullish, so `effectiveDate`'s old `??` chain
+    // accepted it as a date — and `'' < todayStr` holds for every real today,
+    // so a blank due_date bucketed as OVERDUE and rendered in the destructive
+    // style. `validate_date_format` rejects `''`, so this is hand-edited or
+    // imported data (the same class as '0000-00-00'), but it was the last
+    // not-a-date value that could still reach the date half of a sort key.
+    const blocks = [
+      makeBlock({ id: 'emptyDue', due_date: '', todo_state: 'TODO' }),
+      makeBlock({ id: 'realOverdue', due_date: '2020-01-01', todo_state: 'TODO' }),
+    ]
+    const groups = groupByDate(blocks)
+    expect(groups.find((g) => g.label === 'Overdue')?.blocks.map((b) => b.id)).toEqual([
+      'realOverdue',
+    ])
+    expect(groups.at(-1)?.label).toBe('No date')
+    expect(groups.at(-1)?.blocks.map((b) => b.id)).toEqual(['emptyDue'])
+  })
+
+  it('falls through an empty-string due_date to scheduled_date', () => {
+    // The fallback chain must SKIP a blank due_date rather than stop at it:
+    // `''` means "absent", not "due, date unknown".
+    const blocks = [makeBlock({ id: 'blankDue', due_date: '', scheduled_date: '2025-01-15' })]
+    const groups = groupByDate(blocks)
+    expect(groups.map((g) => g.label)).toEqual(['Today'])
+    expect(groups[0]?.blocks.map((b) => b.id)).toEqual(['blankDue'])
   })
 
   it('keeps a block genuinely due 9999-12-31 in its own dated group, not "No date" (#3806)', () => {
@@ -806,7 +836,7 @@ describe('mutation coverage: sortAgendaBlocks date/state tiebreak', () => {
   })
 
   it('leaves 4 already-ascending distinct dates untouched (ternary direction, not just its guard)', () => {
-    // agenda-sort.ts:35 (`compareDateStrings`, reached from sortAgendaBlocks:61) —
+    // agenda-sort.ts:42 (`compareDateStrings`, reached from sortAgendaBlocks:75) —
     // `dateA < dateB ? -1 : ...`. A mutant that forces
     // this ternary to always take the `-1` branch (regardless of which
     // date is actually earlier) still passes a 2-element "is the earlier
@@ -888,8 +918,8 @@ describe('mutation coverage: groupByDate Overdue-before-earlier-raw-date orderin
   })
 
   it('sorts the Overdue group before a raw-date group whose own date is chronologically earlier', () => {
-    // agenda-sort.ts:148/154/166/167 — the group-order sort key
-    // (`SPECIAL_SORT_KEY`/`sortKeyFor`/the comparator itself). `Overdue`
+    // agenda-sort.ts:199/205 (`SPECIAL_SORT_KEY`/`sortKeyFor`) and
+    // `compareGroupSortKeys` — the group-order sort key. `Overdue`
     // must sort first regardless of how recent its underlying (non-DONE,
     // past) dates are. `doneOld` is DONE, so it's excluded from the
     // `Overdue` bucket and instead keyed by its own raw (very old) date —
@@ -899,8 +929,9 @@ describe('mutation coverage: groupByDate Overdue-before-earlier-raw-date orderin
     // were a no-op (BlockStatement `{}`), always-undefined `sortKeyFor`
     // (ArrowFunction), the `Overdue` sentinel losing its value
     // (StringLiteral), or a broken 3-way compare (ConditionalExpression/
-    // EqualityOperator at line 115), that (wrong) insertion order would
-    // survive untouched instead of being corrected to Overdue-first.
+    // EqualityOperator inside `compareGroupSortKeys`), that (wrong) insertion
+    // order would survive untouched instead of being corrected to
+    // Overdue-first.
     const blocks = [
       makeBlock({ id: 'doneOld', due_date: '2020-01-01', todo_state: 'DONE' }),
       makeBlock({ id: 'notDoneRecent', due_date: '2025-06-01', todo_state: 'TODO' }),
@@ -940,6 +971,57 @@ describe('mutation coverage: groupByDate Overdue-before-earlier-raw-date orderin
     expect(overdueIdx).toBeGreaterThanOrEqual(0)
     expect(zeroIdx).toBeGreaterThanOrEqual(0)
     expect(overdueIdx).toBeLessThan(zeroIdx)
+  })
+})
+
+describe('compareGroupSortKeys: the group-order contract', () => {
+  // `groupByDate` builds its buckets from a date-ascending pass, so the
+  // `dated` groups always ARRIVE chronologically and no reachable input makes
+  // two of them reach the comparator out of order — the rank comparison is the
+  // only half that reorders anything in production. Driving the comparator
+  // directly is what turns the date half from an unreachable arm into a stated
+  // contract: group order is a function of the KEYS, not of Map insertion
+  // order. If the bucketing pass is ever restructured (built lazily, grouped
+  // by something else first, merged with another pass), these tests are what
+  // says the output is still chronological.
+  const dated = (date: string) => [GROUP_RANK.dated, date] as const
+  const overdue = [GROUP_RANK.beforeDates, null] as const
+  const noDate = [GROUP_RANK.afterDates, null] as const
+
+  it('orders two dated groups chronologically whichever way round they are fed', () => {
+    expect(compareGroupSortKeys(dated('2025-06-10'), dated('2025-06-02'))).toBeGreaterThan(0)
+    expect(compareGroupSortKeys(dated('2025-06-02'), dated('2025-06-10'))).toBeLessThan(0)
+    expect(compareGroupSortKeys(dated('2025-06-02'), dated('2025-06-02'))).toBe(0)
+  })
+
+  it('sorts a scrambled list of dated keys chronologically', () => {
+    const keys = ['2026-01-02', '2025-12-31', '2025-01-15'].map(dated)
+    expect(keys.toSorted(compareGroupSortKeys).map(([, date]) => date)).toEqual([
+      '2025-01-15',
+      '2025-12-31',
+      '2026-01-02',
+    ])
+  })
+
+  it('pins Overdue before every dated key and No date after every one', () => {
+    // The dates here are the two strings the OLD encoding used as position
+    // sentinels in the date field itself: with a rank they are just dates, and
+    // a real group keyed by either of them cannot tie with a special group.
+    expect(compareGroupSortKeys(overdue, dated('0000-00-00'))).toBeLessThan(0)
+    expect(compareGroupSortKeys(dated('0000-00-00'), overdue)).toBeGreaterThan(0)
+    expect(compareGroupSortKeys(dated('9999-12-31'), noDate)).toBeLessThan(0)
+    expect(compareGroupSortKeys(noDate, dated('9999-12-31'))).toBeGreaterThan(0)
+    // Overdue vs No date directly: the two ranks furthest apart, which is the
+    // pair that tells `rankA - rankB` from a same-sign arithmetic mutant.
+    expect(compareGroupSortKeys(noDate, overdue)).toBeGreaterThan(0)
+    expect(compareGroupSortKeys(overdue, noDate)).toBeLessThan(0)
+  })
+
+  it('reports the dateless ranks as equal to themselves', () => {
+    // Both singleton ranks carry `null`, never a placeholder date, so the
+    // date half must treat them as equal rather than compare a sentinel.
+    expect(compareGroupSortKeys(overdue, overdue)).toBe(0)
+    expect(compareGroupSortKeys(noDate, noDate)).toBe(0)
   })
 })
 
@@ -1011,7 +1093,7 @@ describe('mutation coverage: groupByPriority sortWithin date/state tiebreak', ()
   })
 
   it('leaves 4 already-ascending distinct dates untouched within a priority group (ternary direction)', () => {
-    // agenda-sort.ts:35 (`compareDateStrings`, reached from groupByPriority's
+    // agenda-sort.ts:42 (`compareDateStrings`, reached from groupByPriority's
     // sortWithin:210) — `dateA < dateB ? -1 : ...`. A ConditionalExpression(true)
     // mutant forces every comparison to -1, which (empirically) reverses an
     // already-ascending 4+-element array under toSorted, even though a naive
@@ -1069,7 +1151,7 @@ describe('mutation coverage: groupByState sortWithin date/priority tiebreak', ()
   })
 
   it('leaves 4 already-ascending distinct dates untouched within a state group (ternary direction)', () => {
-    // agenda-sort.ts:35 (`compareDateStrings`, reached from groupByState's
+    // agenda-sort.ts:42 (`compareDateStrings`, reached from groupByState's
     // sortWithin:266) — same always-(-1)-reverses-a
     // sorted-4-array discriminator as the sortAgendaBlocks/groupByPriority cases.
     const blocks = [
@@ -1120,7 +1202,7 @@ describe('mutation coverage: sortByPriority date/state tiebreak', () => {
   })
 
   it('orders two differing, tied-on-priority-and-date states by the correct sign (- not +)', () => {
-    // agenda-sort.ts:310 — `stateA - stateB`. Unlike the equal-state tie
+    // agenda-sort.ts:351 — `stateA - stateB`. Unlike the equal-state tie
     // above, DOING (rank 0) vs TODO (rank 1) gives opposite signs for `-`
     // (-1) vs `+` (1), which is a real, observable reorder.
     const blocks = [
@@ -1132,7 +1214,7 @@ describe('mutation coverage: sortByPriority date/state tiebreak', () => {
   })
 
   it('falls through to the state tiebreak when priority AND date already tie', () => {
-    // agenda-sort.ts:305 (guard) — `byDate !== 0`. A ConditionalExpression(true)
+    // agenda-sort.ts:346 (guard) — `byDate !== 0`. A ConditionalExpression(true)
     // mutant would force `return byDate` even though the dates are equal here,
     // returning 0 instead of falling through to the correct state-based order
     // below.
@@ -1150,7 +1232,7 @@ describe('mutation coverage: sortByPriority date/state tiebreak', () => {
   })
 
   it('leaves 4 already-ascending distinct dates untouched when priority ties (ternary direction)', () => {
-    // agenda-sort.ts:35 (`compareDateStrings`, reached from sortByPriority:304) —
+    // agenda-sort.ts:42 (`compareDateStrings`, reached from sortByPriority:345) —
     // `dateA < dateB ? -1 : ...`.
     const blocks = [
       makeBlock({ id: 'a', priority: '1', due_date: '2025-06-10' }),
@@ -1183,7 +1265,7 @@ describe('mutation coverage: sortByState date/priority tiebreak', () => {
   })
 
   it('leaves 4 already-ascending distinct dates untouched when state ties (ternary direction)', () => {
-    // agenda-sort.ts:35 (`compareDateStrings`, reached from sortByState:326) —
+    // agenda-sort.ts:42 (`compareDateStrings`, reached from sortByState:367) —
     // `dateA < dateB ? -1 : ...`.
     const blocks = [
       makeBlock({ id: 'a', todo_state: 'TODO', due_date: '2025-06-10' }),
@@ -1221,7 +1303,7 @@ describe('mutation coverage: groupByPage sortWithin priority tiebreak', () => {
   })
 
   it('falls through to the date tiebreak when state AND priority already tie', () => {
-    // agenda-sort.ts:360 — `prioA !== prioB`. A ConditionalExpression(true)
+    // agenda-sort.ts:401 — `prioA !== prioB`. A ConditionalExpression(true)
     // mutant would force entry into `return prioA - prioB` even when the
     // priorities are equal (0), short-circuiting with 0 instead of falling
     // through to the date-based order below.
@@ -1258,7 +1340,7 @@ describe('mutation coverage: groupByPage "No page" guard', () => {
 
 describe('mutation coverage: groupByPage sortWithin date tiebreak', () => {
   it('leaves an already-ascending same-state/same-priority date run untouched (ternary direction)', () => {
-    // agenda-sort.ts:35 (`compareDateStrings`, reached from groupByPage's
+    // agenda-sort.ts:42 (`compareDateStrings`, reached from groupByPage's
     // sortWithin:362) — `dateA < dateB ? -1 : ...`. A
     // ConditionalExpression(true) mutant on `dateA < dateB` answers -1 for
     // EVERY differing-date pair ("a before b" even when b is the earlier
@@ -1337,7 +1419,7 @@ describe('mutation coverage: sortByPage no-page-id routing', () => {
   })
 
   it('falls through to state/priority/date when BOTH blocks have no page_id (not a blanket "b before a")', () => {
-    // agenda-sort.ts:411/412 — `titleB !== null` / `titleA !== null`. Both
+    // agenda-sort.ts:452/453 — `titleB !== null` / `titleA !== null`. Both
     // titles are null here, so neither of these clauses should ever fire on
     // its own (only when exactly one side is null). A mutant that drops
     // either null-check would force a return of 1 or -1 unconditionally
@@ -1353,7 +1435,7 @@ describe('mutation coverage: sortByPage no-page-id routing', () => {
   })
 
   it('falls through correctly for two no-page blocks regardless of which one is passed first', () => {
-    // agenda-sort.ts:412 — `titleA !== null`. Same reasoning as the test
+    // agenda-sort.ts:453 — `titleA !== null`. Same reasoning as the test
     // above, but with the input array pre-ordered so the underlying
     // comparator ends up invoked with the opposite (a, b) assignment,
     // exercising line 364's clause instead of 363's.
@@ -1367,7 +1449,7 @@ describe('mutation coverage: sortByPage no-page-id routing', () => {
   })
 
   it('falls through to the priority tiebreak when two same-page blocks tie on state', () => {
-    // agenda-sort.ts:425 — `stateA !== stateB`. A ConditionalExpression(true)
+    // agenda-sort.ts:466 — `stateA !== stateB`. A ConditionalExpression(true)
     // mutant would force entry into `return stateA - stateB` even when the
     // states are equal (0), short-circuiting with 0 instead of falling
     // through to the priority-based order below.
@@ -1387,7 +1469,7 @@ describe('mutation coverage: sortByPage date tiebreak', () => {
     makeBlock({ id, page_id: 'pg', todo_state: 'TODO', priority: '2', due_date })
 
   it('sorts same-page blocks by date ascending when state AND priority tie', () => {
-    // agenda-sort.ts:429/431 — the last tiebreak of sortByPage, reached by no
+    // agenda-sort.ts:470/472 — the last tiebreak of sortByPage, reached by no
     // test before (Stryker once reported the whole date-compare line as
     // NoCoverage). `prioA !== prioB` → true short-circuits with
     // `prioA - prioB === 0`, and deleting or inverting the date compare in
@@ -1403,7 +1485,7 @@ describe('mutation coverage: sortByPage date tiebreak', () => {
   })
 
   it('leaves an already-ascending same-page date run untouched (ternary direction)', () => {
-    // agenda-sort.ts:35 (`compareDateStrings`, reached from sortByPage:431) —
+    // agenda-sort.ts:42 (`compareDateStrings`, reached from sortByPage:472) —
     // `dateA < dateB ? -1 : ...`. The mirror of the
     // test above: a ConditionalExpression(true) mutant answers -1 for every
     // differing-date pair and so reverses an input that is already correct.
@@ -1478,7 +1560,7 @@ describe('mutation coverage: formatGroupDate malformed input fallback', () => {
   })
 
   it('falls back to the raw string for a 4-segment date (too many parts, all numeric)', () => {
-    // agenda-sort.ts:473 — `parts.length !== 3`. The 2-part case above
+    // agenda-sort.ts:514 — `parts.length !== 3`. The 2-part case above
     // ('2025-06') doesn't actually distinguish a ConditionalExpression(false)
     // mutant here, because the resulting `d === undefined` is caught by the
     // (unmutated) guard on line 435 either way. A 4-part date parses into 3
