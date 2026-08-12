@@ -2806,33 +2806,68 @@ async fn purge_blocks_by_ids_clears_all_related_state() {
     }
 }
 
+/// A MISSING id is still silently skipped — nothing exists to destroy, and
+/// the chunked "empty trash in this space" flow legitimately races a
+/// concurrent purge of the same row.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn purge_blocks_by_ids_skips_non_deleted() {
+async fn purge_blocks_by_ids_skips_missing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let resp = purge_blocks_by_ids_inner(&pool, DEV, &mat, vec!["PBBIGHOST".into()])
+        .await
+        .unwrap();
+    assert_eq!(resp.affected_count, 0, "missing ids skip; count must be 0");
+}
+
+/// #3819: a LIVE id is REFUSED, not skipped — `purge_block_inner` refuses the
+/// same id, and the pre-fix "silently drop it" reading was only ever true of
+/// the OP LOG: the physical cascade was seeded from the raw input list and
+/// hard-deleted the live block's whole subtree with no op and no sync.
+///
+/// The refusal must hold even in a MIXED batch, where a valid soft-deleted
+/// root would otherwise carry the cascade over the live row — that is the
+/// shape that lost data, and this asserts the whole batch rolls back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_blocks_by_ids_refuses_a_live_id() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PBBIALIVE", "content", "alive", None, Some(1)).await;
-    let resp = purge_blocks_by_ids_inner(
+    insert_block(&pool, "PBBIDEAD", "content", "dead", None, Some(2)).await;
+    delete_block_inner(&pool, DEV, &mat, "PBBIDEAD".into())
+        .await
+        .expect("soft-delete the purgeable root");
+
+    let err = purge_blocks_by_ids_inner(
         &pool,
         DEV,
         &mat,
-        vec!["PBBIALIVE".into(), "PBBIGHOST".into()],
+        vec!["PBBIALIVE".into(), "PBBIDEAD".into(), "PBBIGHOST".into()],
     )
     .await
-    .unwrap();
-    assert_eq!(
-        resp.affected_count, 0,
-        "alive + missing ids both skip; count must be 0"
+    .expect_err("a live id must be refused, not silently dropped");
+    assert!(
+        matches!(err, AppError::InvalidOperation(ref m) if m.contains("PBBIALIVE")),
+        "refusal must name the live block: {err:?}"
     );
 
-    // Live block should still be in the DB and not soft-deleted.
+    // Nothing was purged: the live block AND the soft-deleted root both
+    // survive, because the refusal aborts the whole transaction.
+    for id in ["PBBIALIVE", "PBBIDEAD"] {
+        let n = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 1, "{id} must survive a refused batch purge");
+    }
     let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", "PBBIALIVE")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert!(
         row.deleted_at.is_none(),
-        "live block must remain alive after no-op purge call"
+        "live block must remain alive after a refused purge call"
     );
 }
 

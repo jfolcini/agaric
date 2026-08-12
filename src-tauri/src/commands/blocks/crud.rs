@@ -1909,6 +1909,12 @@ pub async fn purge_all_deleted_inner(
 /// command collapses that to a single round trip and a single op_log
 /// scope.
 ///
+/// #3818: mirroring the *all* variant is not sufficient on its own. That
+/// variant restores EVERY tombstone, so the #1884 upward ancestor-chain
+/// restore is vacuous there; scoped to an id list it is not, and this
+/// path runs [`block_descendants::restore_deleted_ancestor_chain`](agaric_store::block_descendants::restore_deleted_ancestor_chain)
+/// per root exactly as [`restore_block_inner`] does.
+///
 /// Each input id is treated as a *root* of a soft-delete cascade —
 /// the frontend's batch action is sourced from
 /// `listTrash` which already returns roots only.
@@ -2056,9 +2062,43 @@ pub async fn restore_blocks_by_ids_inner(
     )
     .await?;
 
-    // Recompute tag inheritance for each restored root subtree.
+    // #1884 / #3818: also restore UPWARD, exactly as
+    // `restore_block_inner` does. The cohort UPDATE above only clears
+    // `deleted_at` DOWNWARD, so a root whose PARENT was tombstoned in a
+    // SEPARATE delete event (delete child, then delete parent — the parent's
+    // cascade skips the already-deleted child, making the child its own trash
+    // root) comes back LIVE under a still-tombstoned, invisible parent:
+    // absent from the tree render AND from `list_trash`. Mirroring
+    // `restore_all_deleted_inner` is what hid this — the "all" variant
+    // restores everything, so an upward walk is vacuous THERE and load-bearing
+    // here.
+    //
+    // Resolved per root rather than once for the batch, which is both correct
+    // and cheap: the helper is a bounded (`depth < 100`) upward CTE that emits
+    // NO ops and is idempotent, so two roots under the SAME tombstoned parent
+    // do not double-restore or double-emit — the second walk finds the chain
+    // already live and returns an empty result. The engine fan-out for the
+    // chain rides the very `RestoreBlock` op appended per root above (#2017:
+    // `apply_op` → `dispatch_restore_ancestors`), same as the single path.
+    //
+    // `topmost` becomes the inheritance root, mirroring the single path: when
+    // a chain came back with the root, the whole RECONNECTED subtree needs its
+    // inherited tags recomputed, not just the root's own. With no chain it
+    // resolves to the root itself (unchanged behaviour).
+    let mut inheritance_roots: Vec<String> = Vec::with_capacity(roots.len());
     for root in &roots {
-        agaric_store::tag_inheritance::recompute_subtree_inheritance(&mut tx, &root.id).await?;
+        let topmost =
+            agaric_store::block_descendants::restore_deleted_ancestor_chain(&mut tx, &root.id)
+                .await?
+                .topmost;
+        inheritance_roots.push(topmost.unwrap_or_else(|| root.id.clone()));
+    }
+
+    // Recompute tag inheritance for each restored root subtree (from the
+    // topmost restored ancestor where the #1884 walk above reconnected one).
+    for inheritance_root in &inheritance_roots {
+        agaric_store::tag_inheritance::recompute_subtree_inheritance(&mut tx, inheritance_root)
+            .await?;
     }
 
     // #2042: pages_cache counts for the restored subtrees' pages are recomputed
@@ -2100,17 +2140,25 @@ pub async fn restore_blocks_by_ids_inner(
 /// a single round trip and runs each cleanup-chain query exactly once.
 ///
 /// Each input id must already be soft-deleted (the TrashView only
-/// surfaces deleted rows). Non-deleted or missing ids in the input
-/// are silently dropped (mirrors the "all" variant's `WHERE
-/// deleted_at IS NOT NULL` skip semantics). The descendant walk uses
-/// the purge variant of the recursive CTE — every trace of the
-/// subtree is erased.
+/// surfaces deleted rows). A LIVE id is REFUSED — the whole batch
+/// aborts with [`AppError::InvalidOperation`], exactly as
+/// [`purge_block_inner`] refuses the same id (#3819). It is not
+/// filtered out: the physical cascade below is seeded from the raw
+/// input list, so a live id that merely fell out of the *op* root set
+/// used to be erased — subtree, satellite rows and all — with no
+/// `PurgeBlock` op, no engine fan-out and nothing for a peer to
+/// replay. MISSING ids stay silently dropped: nothing is destroyed by
+/// naming an id that no longer exists, and the chunked
+/// "empty trash in this space" flow legitimately races a concurrent
+/// purge. The descendant walk uses the purge variant of the recursive
+/// CTE — every trace of the subtree is erased.
 ///
 /// Returns the number of `blocks` rows physically removed.
 ///
 /// # Errors
 ///
 /// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries
+/// - [`AppError::InvalidOperation`] — an input id names a block that is not soft-deleted
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn purge_blocks_by_ids_inner(
     pool: &SqlitePool,
@@ -2135,12 +2183,39 @@ pub async fn purge_blocks_by_ids_inner(
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
+    // #3819: REFUSE a LIVE input id before anything is destroyed, mirroring
+    // `purge_block_inner`'s "must be soft-deleted before purging" guard.
+    // The root query below filters to soft-deleted rows, but the physical
+    // cascade further down is seeded from the RAW `ids_json` — so a live id
+    // was hard-deleted (whole subtree, every satellite table) while
+    // contributing NO `PurgeBlock` op and no engine fan-out: unsynced local
+    // data loss no peer ever hears about. Filtering the live id out of the
+    // cascade instead would fix the loss but keep the batch path silently
+    // ignoring part of its argument where the single path errors; refusing
+    // is what makes the two agree. Runs INSIDE the IMMEDIATE tx, so the
+    // check cannot race a concurrent restore. Missing ids are NOT refused
+    // (see the doc comment) — only rows that exist and are alive.
+    let live_id: Option<String> = sqlx::query_scalar!(
+        "SELECT b.id FROM blocks b \
+         WHERE b.id IN (SELECT value FROM json_each(?1)) \
+           AND b.deleted_at IS NULL \
+         LIMIT 1",
+        ids_json,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if let Some(live_id) = live_id {
+        return Err(AppError::InvalidOperation(format!(
+            "block '{live_id}' must be soft-deleted before purging"
+        )));
+    }
+
     // Audit Validator I11 note: the "all" variant's root-selection step
     // (`SELECT roots WHERE deleted_at IS NOT NULL AND parent NOT cascade`)
     // is replaced here by the simpler "input list filtered to actually
-    // soft-deleted rows" lookup — the input IS the root set. Non-deleted
-    // / missing ids get silently skipped, matching the "all" variant's
-    // implicit behaviour against a mixed table.
+    // soft-deleted rows" lookup — the input IS the root set. Missing ids
+    // get silently skipped, matching the "all" variant's implicit
+    // behaviour against a mixed table; live ids were refused above.
     // #2037 pt2: select `block_type` so each per-root dispatch can narrow
     // the rebuild fan-out for a CONTENT root.
     let roots = sqlx::query!(

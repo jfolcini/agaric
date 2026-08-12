@@ -571,18 +571,27 @@ export const blocksHandlers = {
   // shape — that one only removed from `blocks`, but the real backend
   // cleans the ~13 dependent tables; we mirror that here for the maps
   // the seed actually tracks: properties, blockTags, attachments,
-  // pageAliases). Non-deleted / missing ids are silently skipped.
+  // pageAliases). Missing ids are silently skipped; a LIVE id is REFUSED.
   purge_blocks_by_ids: (args) => {
     const a = args as Record<string, unknown>
     const ids = (a['blockIds'] as string[]) ?? []
-    // #3091 — collect the actually-soft-deleted ids (missing/live ids are
-    // silently skipped, matching `purge_blocks_by_ids_inner`), then run the
-    // SAME full satellite cleanup as `purge_block` (uniform across all three
-    // purge handlers — block_tags tag_id side, block_tag_refs, attachment bytes
+    // #3091 — collect the actually-soft-deleted ids, then run the SAME full
+    // satellite cleanup as `purge_block` (uniform across all three purge
+    // handlers — block_tags tag_id side, block_tag_refs, attachment bytes
     // were all leaked by the old per-id cleanup shape).
+    //
+    // #3819 — a LIVE id is rejected with `InvalidOperation` and NOTHING is
+    // purged, mirroring both `purge_blocks_by_ids_inner` and this file's own
+    // `purge_block` handler. The backend used to seed its physical cascade
+    // from the raw input list and hard-delete the live block's whole subtree
+    // with no op; the mock must enforce the refusal or a stray live-id batch
+    // purge passes in tests. Missing ids stay skipped (nothing to destroy).
     const cohort: string[] = []
     for (const id of ids) {
       const b = blocks.get(id)
+      if (b && !b['deleted_at']) {
+        throw invalidOperationRejection(`block '${id}' must be soft-deleted before purging`)
+      }
       if (b?.['deleted_at']) cohort.push(id)
     }
     purgeCohortAndSatellites(cohort)
