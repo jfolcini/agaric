@@ -37,7 +37,7 @@ export function parse(input: string): SearchQueryAST {
  * `classify` is exported and directly callable, so unlike `parse` it does not
  * get to assume its `tokens` came from `tokenize`. Token spans that run past
  * `input.length` are therefore TOLERATED, not trusted: `buildFreeText`'s
- * `if (cursor < input.length)` guard (line 162) is what stops an out-of-range
+ * `if (cursor < input.length)` guard in `buildFreeText` is what stops an out-of-range
  * consumed span from calling `append(from, to)` with `from > to`, which would
  * invert the quoted-span arithmetic and duplicate the free-text tail. Do not
  * "tighten" or drop that guard — it is a defensive contract, pinned by the

@@ -26,6 +26,12 @@
  *     `":: "` separator — but `key:: ` with a trailing space DOES split
  *     there, yielding an empty value the backend then rejects. Here both
  *     forms stay literal, which is the only non-lossy option at save time.)
+ *     There is no explicit empty-value check enforcing this any more (#3797
+ *     removed one that no input could reach). The property is now STRUCTURAL:
+ *     `raw.trim()` runs before the `":: "` search, so the separator's trailing
+ *     space can never be the last character and the value slice always keeps a
+ *     non-whitespace char. Reorder those two steps and this mirror breaks with
+ *     nothing pointing at it.
  *   - Reserved / exporter-managed keys (`FRONTMATTER_RESERVED_KEYS` in
  *     import.rs, e.g. `space`, `template`) are never parsed. DIVERGENCE from
  *     import.rs: import DROPS such lines (round-trip filter); here the line
