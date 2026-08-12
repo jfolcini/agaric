@@ -132,6 +132,7 @@ pub struct ParseOutput {
 ///   3. the page-property `key NOT IN (…)` in `export_page_markdown_inner`
 ///      (`src-tauri/src/commands/pages/markdown.rs`);
 ///   4. the descendant-property `key NOT IN (…)` in that same function.
+///
 /// Sites 3 and 4 are literal SQL, so grepping for either constant name will
 /// NOT find them.
 const FRONTMATTER_RESERVED_KEYS: &[&str] = &[
