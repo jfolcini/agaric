@@ -13,13 +13,14 @@
  * Runs under happy-dom — no browser APIs beyond DOM are touched.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CHUNK_SIZE,
   type CompiledQuery,
   collectTextNodes,
   compileQuery,
+  type FindMatch,
   REGEX_NODE_MAX,
   REGEX_NODE_SCAN_MAX,
   REGEX_PATTERN_MAX,
@@ -41,6 +42,7 @@ let attachedHosts: HTMLElement[] = []
 afterEach(() => {
   for (const el of attachedHosts) el.remove()
   attachedHosts = []
+  vi.unstubAllGlobals()
 })
 beforeEach(() => {
   attachedHosts = []
@@ -130,6 +132,30 @@ describe('compileQuery', () => {
     }
   })
 
+  it('regex accepts a pattern of exactly REGEX_PATTERN_MAX (cap is exclusive)', () => {
+    // Kills matcher.ts:179:9 [EqualityOperator] `>` → `>=`: at exactly the cap
+    // the pattern must still compile; only *longer* patterns reject.
+    const atCap = 'a'.repeat(REGEX_PATTERN_MAX)
+    expect(compileQuery(atCap, { ...defaultOpts, isRegex: true }).kind).toBe('regex')
+  })
+
+  it('case-sensitive regex mode keeps the `g` and `u` flags and drops `i`', () => {
+    // Kills matcher.ts:188:42 [StringLiteral] `'gu'` → `''`. `\u{41}` is the
+    // code-point escape for 'A' and *requires* the `u` flag — without it the
+    // pattern means a literal 'u' repeated 65 times and matches nothing. The
+    // two hits also prove `g` is set (the scan loop relies on `lastIndex`),
+    // and the untouched lowercase 'a' proves `i` is NOT set.
+    const compiled = compileQuery('\\u{41}', {
+      ...defaultOpts,
+      isRegex: true,
+      caseSensitive: true,
+    }) as Extract<CompiledQuery, { kind: 'regex' }>
+    expect(compiled.matcher('A a A')).toEqual([
+      { start: 0, end: 1 },
+      { start: 4, end: 5 },
+    ])
+  })
+
   it('regex zero-width matches are dropped, not emitted (exact output)', () => {
     const compiled = compileQuery('a*', { ...defaultOpts, isRegex: true }) as Extract<
       CompiledQuery,
@@ -204,6 +230,38 @@ describe('compileQuery — Unicode correctness (#756)', () => {
     expect(compiled.matcher('x𝐀 x')).toEqual([{ start: 4, end: 5 }])
   })
 
+  it('length-preserving folds use whole-string folding, not per-code-point folding', () => {
+    // Kills matcher.ts:231:7 [ConditionalExpression → false] and 231:40
+    // [BlockStatement → {}], i.e. "always take the slow per-code-point path".
+    // Greek final sigma is the discriminator: `'ΑΣ'.toLocaleLowerCase()` is
+    // 'ας' (context-sensitive ς), while folding code point by code point
+    // yields 'ασ'. Both are 2 units long, so the fast path is the one that
+    // must run — and a query must always find itself.
+    const compiled = compileQuery('ΑΣ', defaultOpts) as Extract<CompiledQuery, { kind: 'literal' }>
+    expect(compiled.matcher('ΑΣ')).toEqual([{ start: 0, end: 2 }])
+  })
+
+  it('wholeWord filters partial matches on the length-changing fold path', () => {
+    // Kills the whole-word arm of matcher.ts:301 (the folded-path emit guard):
+    // 301:9 [ConditionalExpression → true], 301:9 [LogicalOperator `&&` → `||`],
+    // 301:54 [ConditionalExpression → true], 301:54 [BooleanLiteral `!wholeWord`
+    // → `wholeWord`] and 301:54 [LogicalOperator `||` → `&&`]. The leading 'İ'
+    // (U+0130 → 'i' + U+0307) forces the slow folded path, which had no
+    // wholeWord coverage at all: mutants that ignore the filter emit the
+    // 'bravo' inside 'bravocado' too, and the `&&` mutant emits nothing.
+    // Precondition, not decoration: `toLocaleLowerCase()` is locale-sensitive
+    // and under a tr/az default locale 'İ' folds to a single 'i', which is
+    // length-preserving — the fast path would run, the assertion below would
+    // still pass, and this test would silently stop covering anything. Fail
+    // loudly instead.
+    expect('İ'.toLocaleLowerCase()).toHaveLength(2)
+    const compiled = compileQuery('bravo', { ...defaultOpts, wholeWord: true }) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    expect(compiled.matcher('İstanbul bravo bravocado')).toEqual([{ start: 9, end: 14 }])
+  })
+
   it('wholeWord regex post-filter uses the same Unicode word classes', () => {
     const compiled = compileQuery('мир', {
       ...defaultOpts,
@@ -211,6 +269,80 @@ describe('compileQuery — Unicode correctness (#756)', () => {
       isRegex: true,
     }) as Extract<CompiledQuery, { kind: 'regex' }>
     expect(compiled.matcher('мир мирный')).toEqual([{ start: 0, end: 3 }])
+  })
+})
+
+/**
+ * `codePointBefore` steps back over a *complete* surrogate pair before
+ * classifying the character preceding a match. Every branch of that step-back
+ * is only observable through `wholeWord`, and only with strings that mix
+ * paired and UNPAIRED surrogates — DOM text is UTF-16 and is not validated, so
+ * a `Text` node can legitimately hold a lone surrogate (e.g. a string sliced
+ * mid-pair upstream). Each test below is built so the two candidate "character
+ * before the match" readings differ in word-ness, which flips the whole-word
+ * verdict and is therefore observable in the emitted spans.
+ */
+describe('compileQuery — surrogate-aware word boundaries', () => {
+  function wholeWordLiteral(query: string) {
+    return compileQuery(query, { ...defaultOpts, wholeWord: true }) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+  }
+
+  it('reads the immediately preceding unit when it is not a low surrogate', () => {
+    // Kills matcher.ts:361:7 [ConditionalExpression → true], 361:7
+    // [LogicalOperator `(low>=0xdc00 && low<=0xdfff) && index>=2` → `|| index>=2`],
+    // 361:7-37 [ConditionalExpression → true], 361:7-37 [LogicalOperator `&&` →
+    // `||`] and 361:7-20 [ConditionalExpression → true] — every mutant that
+    // lets the step-back run when the preceding unit is NOT a trailing
+    // surrogate. Here 'bc' is preceded by the letter 'a', so it is not a whole
+    // word; the mutants instead read the lone LEAD surrogate at index 0 (not a
+    // word character) and wrongly emit the match.
+    expect(wholeWordLiteral('bc').matcher('\uD800abc')).toEqual([])
+  })
+
+  it('does not step back for a preceding BMP character above U+DFFF', () => {
+    // Kills matcher.ts:361:24 [ConditionalExpression `low <= 0xdfff` → true].
+    // U+FF41 (fullwidth 'a') is ≥ 0xdc00 but > 0xdfff, so it is NOT a trailing
+    // surrogate and must be classified as itself — a letter, so 'bc' is not a
+    // whole word. The mutant steps back to the lone lead surrogate at index 0
+    // and emits.
+    expect(wholeWordLiteral('bc').matcher('\uD800ａbc')).toEqual([])
+  })
+
+  it('steps back over a pair whose trailing unit is exactly U+DFFF', () => {
+    // Kills matcher.ts:361:24 [EqualityOperator `low <= 0xdfff` → `<`]. U+1D7FF
+    // (MATHEMATICAL MONOSPACE DIGIT NINE) encodes as U+D835 U+DFFF — the trail
+    // unit sits exactly on the inclusive bound. It is a \p{N} word character,
+    // so 'abc' is not a whole word; the mutant excludes 0xdfff, reads the bare
+    // trail surrogate (not a word character) and emits.
+    expect(wholeWordLiteral('abc').matcher('\u{1D7FF}abc')).toEqual([])
+  })
+
+  it('keeps the trailing surrogate when the unit before it is not a lead', () => {
+    // Kills matcher.ts:363:9 [ConditionalExpression → true], 363:9
+    // [LogicalOperator `high>=0xd800 && high<=0xdbff` → `||`], 363:9-23
+    // [ConditionalExpression → true] and 363:27 [ConditionalExpression
+    // `high <= 0xdbff` → true]. In both fixtures the unit at index 1 is an
+    // UNPAIRED trail surrogate (not a word character), so 'xyz' IS a whole
+    // word. The mutants complete a pair that does not exist and classify
+    // index 0 instead — 'a' and fullwidth 'a' are both letters, so they drop
+    // the match. The two fixtures separate the lower bound (0x61 < 0xd800)
+    // from the upper bound (0xff41 > 0xdbff).
+    expect(wholeWordLiteral('xyz').matcher('a\uDC00xyz')).toEqual([{ start: 2, end: 5 }])
+    expect(wholeWordLiteral('xyz').matcher('ａ\uDC00xyz')).toEqual([{ start: 2, end: 5 }])
+  })
+
+  it('steps back over a pair whose leading unit is exactly U+D800', () => {
+    // Kills matcher.ts:363:9-23 [EqualityOperator `high >= 0xd800` → `>`] and
+    // 363:67 [ArithmeticOperator `index - 2` → `index + 2`]. U+10000 (LINEAR B
+    // SYLLABLE B008 A) encodes as U+D800 U+DC00 — the lead unit sits exactly on
+    // the inclusive bound — and is a \p{L} letter, so 'ab' is not a whole word.
+    // The `>` mutant reads the bare trail surrogate; the `index + 2` mutant
+    // reads past the end of the string (undefined). Neither is a word
+    // character, so both wrongly emit.
+    expect(wholeWordLiteral('ab').matcher('\u{10000}ab')).toEqual([])
   })
 })
 
@@ -256,6 +388,42 @@ describe('walkSync', () => {
     expect(result.skippedLongNodes).toBe(1)
     // The "short" node carries no `x`, so no matches collected.
     expect(result.matches).toHaveLength(0)
+  })
+
+  it('literal mode scans text nodes longer than REGEX_NODE_MAX', () => {
+    // Kills matcher.ts:452:9 [ConditionalExpression `compiled.kind === 'regex'`
+    // → true]: the long-node cap is a regex-only guard (literal scanning is
+    // linear), so a literal walk must still find a match past the cap.
+    const host = attach('<p></p>')
+    host
+      .querySelector('p')
+      ?.append(document.createTextNode(`${'x'.repeat(REGEX_NODE_MAX + 1)}needle`))
+    const nodes = collectTextNodes(host)
+    const compiled = compileQuery('needle', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    const result = walkSync(nodes, compiled)
+    expect(result.skippedLongNodes).toBe(0)
+    expect(result.matches).toHaveLength(1)
+    expect(result.matches[0]?.start).toBe(REGEX_NODE_MAX + 1)
+  })
+
+  it('regex mode scans a node of exactly REGEX_NODE_MAX (the cap is exclusive)', () => {
+    // Kills matcher.ts:452:38 [EqualityOperator `>` → `>=`]: a node sitting
+    // exactly on the cap is scanned, not skipped.
+    const host = attach('<p></p>')
+    const text = `zz${'x'.repeat(REGEX_NODE_MAX - 2)}`
+    host.querySelector('p')?.append(document.createTextNode(text))
+    const nodes = collectTextNodes(host)
+    const compiled = compileQuery('zz', { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+    const result = walkSync(nodes, compiled)
+    expect(result.skippedLongNodes).toBe(0)
+    expect(result.matches).toHaveLength(1)
+    expect(result.matches[0]?.end).toBe(2)
   })
 })
 
@@ -381,6 +549,71 @@ describe('regex ReDoS / catastrophic-backtracking guard (#2030)', () => {
 
     expect(result.timedOut).toBe(true)
   })
+
+  it('literal mode never consults the clock or the budget', () => {
+    // Kills matcher.ts:440:21 [ConditionalExpression `compiled.kind === 'regex'`
+    // → true]. The budget exists only because `re.exec` cannot be interrupted;
+    // literal scanning is linear, so `now()` must not be called at all — and a
+    // clock that races past a zero budget must not abort the walk.
+    const nodes = makeNodes('alpha', 4)
+    const compiled = compileQuery('alpha', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    let clockCalls = 0
+    const now = () => {
+      clockCalls += 1
+      return clockCalls * 1000
+    }
+
+    const result = walkSync(nodes, compiled, { timeBudgetMs: 0, now })
+
+    expect(clockCalls).toBe(0)
+    expect(result.timedOut).toBeFalsy()
+    expect(result.matches).toHaveLength(4)
+  })
+
+  it('falls back to REGEX_TIME_BUDGET_MS when the caller passes no budget', () => {
+    // Kills matcher.ts:442:18 [LogicalOperator `??` → `&&`]: with `&&` an
+    // absent `timeBudgetMs` yields `undefined`, every `elapsed > undefined`
+    // comparison is false and the guard silently never fires.
+    const nodes = makeNodes(`${'a'.repeat(20)}!`, 5)
+    const compiled = compileQuery(EVIL_PATTERN, { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+    let ticks = 0
+    const now = () => {
+      ticks += 1
+      return ticks <= 2 ? 0 : REGEX_TIME_BUDGET_MS + 1
+    }
+
+    const result = walkSync(nodes, compiled, { now })
+
+    expect(result.timedOut).toBe(true)
+    expect(result.matches.length).toBeLessThan(5)
+  })
+
+  it('does not abort when the elapsed time exactly equals the budget', () => {
+    // Kills matcher.ts:448:22 [EqualityOperator `>` → `>=`]. The clock reads
+    // exactly `startedAt + budget` at every node boundary: strictly-greater
+    // never trips, so the whole walk completes.
+    const nodes = makeNodes('alpha', 4)
+    const compiled = compileQuery('alpha', { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+    let calls = 0
+    const now = () => {
+      calls += 1
+      return calls === 1 ? 0 : 10
+    }
+
+    const result = walkSync(nodes, compiled, { timeBudgetMs: 10, now })
+
+    expect(result.timedOut).toBeFalsy()
+    expect(result.matches).toHaveLength(4)
+  })
 })
 
 describe('collectTextNodes', () => {
@@ -394,9 +627,76 @@ describe('collectTextNodes', () => {
     expect(collectTextNodes(host).map((n) => n.nodeValue)).toEqual(['visible'])
   })
 
-  it('skips empty text nodes', () => {
+  it('skips an element that holds no text nodes at all', () => {
+    // NB this fixture does NOT reach the zero-length-text filter: `<p></p>` has
+    // no child nodes, so the TreeWalker is never offered anything to reject.
+    // (It was named 'skips empty text nodes' and believed to cover
+    // matcher.ts:396 — it never did. The test below is the one that does.)
     const host = attach('<p></p><p>visible</p>')
     expect(collectTextNodes(host).map((n) => n.nodeValue)).toEqual(['visible'])
+  })
+
+  it('rejects a zero-length text node that actually exists in the tree', () => {
+    // Kills matcher.ts:396:11 [ConditionalExpression → false], 396:11
+    // [LogicalOperator `||` → `&&`] and 396:24 [ConditionalExpression
+    // `v.length === 0` → false]. `<p></p>` above has NO child nodes at all, so
+    // it never exercises the filter; an explicitly created empty `Text` does.
+    const host = attach('<p>visible</p><p></p>')
+    const emptyParent = host.querySelectorAll('p')[1]
+    emptyParent?.append(document.createTextNode(''))
+    // Guard against this test going vacuous the way its predecessor did: the
+    // zero-length `Text` must really be in the tree for the filter to see it.
+    expect(emptyParent?.childNodes).toHaveLength(1)
+    expect(collectTextNodes(host).map((n) => n.nodeValue)).toEqual(['visible'])
+  })
+
+  it('ignores text parented by a TEMPLATE element', () => {
+    // Kills matcher.ts:390:50 [ConditionalExpression `tag === 'TEMPLATE'` →
+    // false] and 390:58 [StringLiteral `'TEMPLATE'` → ''].
+    //
+    // Fixture note: the production filter inspects nothing but `parent.tagName`,
+    // and the natural fixture is unbuildable under happy-dom. Per the DOM spec
+    // `HTMLTemplateElement` does not override the mutation methods — only the
+    // HTML *parser* diverts markup into `template.content` — so in a real
+    // browser a template populated through `appendChild` (what React does for
+    // `<template>{text}</template>`) keeps that text as a DIRECT CHILD that the
+    // TreeWalker walks. That is where this filter earns its keep. happy-dom
+    // diverts the `appendChild` path into `.content` as well (pinned by the
+    // deviation tripwire test below), so a foreign-namespace element named
+    // TEMPLATE is the only way to present the walker with the tagName the
+    // filter is written against.
+    const host = attach('<p>visible</p>')
+    const tpl = document.createElementNS('http://www.w3.org/2000/svg', 'TEMPLATE')
+    tpl.append(document.createTextNode('hidden'))
+    host.append(tpl)
+    expect(tpl.tagName).toBe('TEMPLATE')
+    expect(collectTextNodes(host).map((n) => n.nodeValue)).toEqual(['visible'])
+  })
+
+  it('ENVIRONMENT TRIPWIRE (happy-dom bug, not production): appendChild into a <template> is diverted into .content', () => {
+    // This test deliberately asserts a KNOWN-WRONG behaviour of the test
+    // environment. It exists only so the workaround in the test above is
+    // retired once it is no longer needed — it makes no claim about production.
+    //
+    // Spec: only the HTML parser redirects into `template.content`; DOM
+    // insertion keeps the node as a direct child. A real browser therefore
+    // reports `tpl.childNodes.length === 1` and `tpl.content.childNodes.length
+    // === 0`. happy-dom (20.11.1) reports the reverse.
+    //
+    // WHEN THIS TEST FAILS, happy-dom has been fixed. That is NOT a regression:
+    // delete this test and rewrite 'ignores text parented by a TEMPLATE
+    // element' to use a real `<template>` plus `appendChild`, dropping the
+    // SVG-namespace fixture.
+    const tpl = document.createElement('template')
+    tpl.append(document.createTextNode('hidden'))
+    expect(tpl.childNodes).toHaveLength(0) // real browser: 1
+    expect(tpl.content.childNodes).toHaveLength(1) // real browser: 0
+
+    // The *parser* path, by contrast, is spec-conformant in happy-dom, so
+    // asserting it would prove nothing about the deviation — which is why it is
+    // not the tripwire.
+    const parsed = attach('<template>diverted</template>')
+    expect(collectTextNodes(parsed)).toHaveLength(0)
   })
 })
 
@@ -504,4 +804,405 @@ describe('runWalker', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(completed).toBe(false)
   })
+
+  function longNodeHost(text: string): Text[] {
+    const host = attach('<p></p>')
+    host.querySelector('p')?.append(document.createTextNode(text))
+    return collectTextNodes(host)
+  }
+
+  it('completes a regex walk inside the budget and emits full match objects', async () => {
+    // Kills five mutants at once, all of which turn a healthy regex walk into
+    // something else:
+    //  - 526:24 [ConditionalExpression → true], 526:24 [EqualityOperator `>` →
+    //    `<=`] and 526:24 [ArithmeticOperator `now() - startedAt` → `+`, whose
+    //    epoch-scale sum always exceeds the budget] → the walk aborts on the
+    //    first node with `timedOut`.
+    //  - 503:15 [LogicalOperator `??` → `&&`] → `now` becomes `undefined` and
+    //    `now()` throws, so `onComplete` never fires.
+    //  - 534:40 [ConditionalExpression → true], 534:40 [EqualityOperator `>` →
+    //    `<=`] and 534:11 [LogicalOperator `&&` → `||`] → every node is
+    //    counted as an over-long node and skipped.
+    //  - 540:22 [ObjectLiteral → {}] → the emitted matches lose node/offsets.
+    // No `options` are passed, so the real `Date.now` and the real default
+    // budget are exercised.
+    const host = attach('<p>alpha</p><p>beta</p>')
+    const nodes = collectTextNodes(host)
+    const compiled = compileQuery('alpha|beta', { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+    const result = await new Promise<ReturnType<typeof walkSync>>((resolve) => {
+      runWalker(nodes, compiled, { onComplete: resolve })
+    })
+    expect(result.timedOut).toBeFalsy()
+    expect(result.skippedLongNodes).toBe(0)
+    expect(result.matches).toHaveLength(2)
+    expect(result.matches[0]?.node).toBe(nodes[0])
+    expect(result.matches[0]?.start).toBe(0)
+    expect(result.matches[0]?.end).toBe(5)
+    expect(result.matches[1]?.node).toBe(nodes[1])
+    expect(result.matches[1]?.end).toBe(4)
+  })
+
+  it('literal mode never consults the clock or the budget', async () => {
+    // Kills matcher.ts:502:21 [ConditionalExpression `compiled.kind === 'regex'`
+    // → true] — the walker's copy of the same regex-only guard as walkSync.
+    const host = attach('<p>alpha</p><p>alpha</p>')
+    const nodes = collectTextNodes(host)
+    const compiled = compileQuery('alpha', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    let clockCalls = 0
+    const now = () => {
+      clockCalls += 1
+      return clockCalls * 1000
+    }
+    const result = await new Promise<ReturnType<typeof walkSync>>((resolve) => {
+      runWalker(nodes, compiled, { onComplete: resolve }, { timeBudgetMs: 0, now })
+    })
+    expect(clockCalls).toBe(0)
+    expect(result.timedOut).toBeFalsy()
+    expect(result.matches).toHaveLength(2)
+  })
+
+  it('falls back to REGEX_TIME_BUDGET_MS when the caller passes no budget', async () => {
+    // Kills matcher.ts:504:18 [LogicalOperator `??` → `&&`] (budget becomes
+    // `undefined`, so no comparison ever trips) and, again, 503:15
+    // [LogicalOperator `??` → `&&`] (an injected clock is present, so the
+    // mutant swaps in the real `Date.now` and the abort never happens).
+    const host = attach('<p>aaaa!</p><p>aaaa!</p><p>aaaa!</p>')
+    const nodes = collectTextNodes(host)
+    const compiled = compileQuery('(a+)+$', { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+    let ticks = 0
+    const now = () => {
+      ticks += 1
+      return ticks <= 2 ? 0 : REGEX_TIME_BUDGET_MS + 1
+    }
+    const result = await new Promise<ReturnType<typeof walkSync>>((resolve) => {
+      runWalker(nodes, compiled, { onComplete: resolve }, { now })
+    })
+    expect(result.timedOut).toBe(true)
+    expect(result.matches.length).toBeLessThan(3)
+  })
+
+  it('does not abort when the elapsed time exactly equals the budget', async () => {
+    // Kills matcher.ts:526:24 [EqualityOperator `>` → `>=`]. The clock reads
+    // exactly `startedAt + budget` at every node boundary.
+    const host = attach('<p>alpha</p><p>alpha</p><p>alpha</p>')
+    const nodes = collectTextNodes(host)
+    const compiled = compileQuery('alpha', { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+    let calls = 0
+    const now = () => {
+      calls += 1
+      return calls === 1 ? 0 : 10
+    }
+    const result = await new Promise<ReturnType<typeof walkSync>>((resolve) => {
+      runWalker(nodes, compiled, { onComplete: resolve }, { timeBudgetMs: 10, now })
+    })
+    expect(result.timedOut).toBeFalsy()
+    expect(result.matches).toHaveLength(3)
+  })
+
+  it('regex mode skips and counts a node longer than REGEX_NODE_MAX', async () => {
+    // Kills matcher.ts:534:11 [ConditionalExpression → false], 534:11
+    // [EqualityOperator `===` → `!==`], 534:29 [StringLiteral `'regex'` → ''],
+    // 534:70 [BlockStatement → {}] and 535:9 [AssignmentOperator `+=` → `-=`].
+    const nodes = longNodeHost('x'.repeat(REGEX_NODE_MAX + 1))
+    const compiled = compileQuery('x', { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+    const result = await new Promise<ReturnType<typeof walkSync>>((resolve) => {
+      runWalker(nodes, compiled, { onComplete: resolve })
+    })
+    expect(result.skippedLongNodes).toBe(1)
+    expect(result.matches).toHaveLength(0)
+  })
+
+  it('literal mode scans text nodes longer than REGEX_NODE_MAX', async () => {
+    // Kills matcher.ts:534:11 [ConditionalExpression `compiled.kind === 'regex'`
+    // → true] and, from the other side, 534:11 [EqualityOperator `===` → `!==`].
+    const nodes = longNodeHost(`${'x'.repeat(REGEX_NODE_MAX + 1)}needle`)
+    const compiled = compileQuery('needle', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    const result = await new Promise<ReturnType<typeof walkSync>>((resolve) => {
+      runWalker(nodes, compiled, { onComplete: resolve })
+    })
+    expect(result.skippedLongNodes).toBe(0)
+    expect(result.matches).toHaveLength(1)
+    expect(result.matches[0]?.start).toBe(REGEX_NODE_MAX + 1)
+  })
+
+  it('regex mode scans a node of exactly REGEX_NODE_MAX (the cap is exclusive)', async () => {
+    // Kills matcher.ts:534:40 [EqualityOperator `>` → `>=`].
+    const nodes = longNodeHost(`zz${'x'.repeat(REGEX_NODE_MAX - 2)}`)
+    const compiled = compileQuery('zz', { ...defaultOpts, isRegex: true }) as Extract<
+      CompiledQuery,
+      { kind: 'regex' }
+    >
+    const result = await new Promise<ReturnType<typeof walkSync>>((resolve) => {
+      runWalker(nodes, compiled, { onComplete: resolve })
+    })
+    expect(result.skippedLongNodes).toBe(0)
+    expect(result.matches).toHaveLength(1)
+  })
+
+  it('chunks a long doc when the caller supplies no onProgress callback', async () => {
+    // Kills matcher.ts:548:5 [OptionalChaining `?.` → `.`]: `onProgress` is
+    // optional, and a multi-chunk walk without one must still complete instead
+    // of throwing "onProgress is not a function" inside the scheduled step.
+    const host = attach(
+      Array(CHUNK_SIZE + 5)
+        .fill(null)
+        .map(() => '<p>alpha</p>')
+        .join(''),
+    )
+    const nodes = collectTextNodes(host)
+    const compiled = compileQuery('alpha', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    const result = await new Promise<ReturnType<typeof walkSync>>((resolve) => {
+      runWalker(nodes, compiled, { onComplete: resolve })
+    })
+    expect(result.matches).toHaveLength(nodes.length)
+  })
+
+  it('hands onProgress a populated, frozen-in-time snapshot of the running totals', async () => {
+    // Kills matcher.ts:548:28 [ObjectLiteral → {}] (the payload carries the
+    // running totals, not an empty object) and 548:39 [MethodExpression
+    // `matches.slice()` → `matches`] (the payload must be a COPY: the mutant
+    // hands out the live array, which keeps growing behind the caller's back
+    // and would already hold every match by the time the walk finishes).
+    const host = attach(
+      Array(CHUNK_SIZE * 2 + 5)
+        .fill(null)
+        .map(() => '<p>alpha</p>')
+        .join(''),
+    )
+    const nodes = collectTextNodes(host)
+    const compiled = compileQuery('alpha', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    const snapshots: Array<{ arr: FindMatch[]; lenAtCall: number; skipped: number }> = []
+    const final = await new Promise<ReturnType<typeof walkSync>>((resolve) => {
+      runWalker(nodes, compiled, {
+        onProgress: (partial) => {
+          snapshots.push({
+            arr: partial.matches,
+            lenAtCall: partial.matches.length,
+            skipped: partial.skippedLongNodes,
+          })
+        },
+        onComplete: resolve,
+      })
+    })
+    expect(snapshots.length).toBeGreaterThanOrEqual(1)
+    const first = snapshots[0]
+    expect(first?.lenAtCall).toBe(CHUNK_SIZE)
+    expect(first?.skipped).toBe(0)
+    // Still CHUNK_SIZE after the walk finished → it really was a snapshot.
+    expect(first?.arr).toHaveLength(CHUNK_SIZE)
+    expect(first?.arr).not.toBe(final.matches)
+    expect(final.matches).toHaveLength(nodes.length)
+  })
+
+  it('schedules chunks through requestIdleCallback when the host provides one', async () => {
+    // Kills matcher.ts:509:9 [ConditionalExpression → false], 509:24
+    // [StringLiteral `'function'` → ''] — both of which force the `setTimeout`
+    // fallback even when `requestIdleCallback` exists — and 509:36
+    // [BlockStatement → {}], which drops the `ric(fn)` call so nothing is ever
+    // scheduled and `onComplete` never fires. happy-dom has no
+    // `requestIdleCallback`, so the preferred branch was previously dead.
+    let ricCalls = 0
+    // Model the real contract rather than a convenient subset: a host
+    // `requestIdleCallback` invokes its callback with an `IdleDeadline` and
+    // returns a handle. Production ignores both today, so a stub that omitted
+    // them would let this branch look exercised while any deadline-aware
+    // scheduling stayed untested.
+    vi.stubGlobal('requestIdleCallback', (cb: (deadline: IdleDeadline) => void) => {
+      ricCalls += 1
+      return setTimeout(() => {
+        cb({ didTimeout: false, timeRemaining: () => 50 })
+      }, 0)
+    })
+    const host = attach('<p>alpha</p><p>alpha</p>')
+    const nodes = collectTextNodes(host)
+    const compiled = compileQuery('alpha', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    const result = await new Promise<ReturnType<typeof walkSync>>((resolve) => {
+      runWalker(nodes, compiled, { onComplete: resolve })
+    })
+    expect(ricCalls).toBeGreaterThanOrEqual(1)
+    expect(result.matches).toHaveLength(2)
+  })
 })
+
+/*
+ * ─────────────────────── EQUIVALENT-MUTANT LEDGER (#3757) ───────────────────
+ *
+ * Mutants of `matcher.ts` that survive by construction: each was spliced in at
+ * its exact Stryker offsets and the suite stayed green *because the mutated
+ * program computes the same thing*, not because coverage is missing. Recorded
+ * so the next triage pass does not re-derive them. Format: line:col [mutator]
+ * verbatim replacement — argument.
+ *
+ * A. Guards over states the DOM/type contract cannot produce. TypeScript types
+ *    `Node.ownerDocument`, `Node.nodeValue` and indexed access as nullable, so
+ *    these branches exist to satisfy the compiler; no input reaches them.
+ *
+ *    193:81 [StringLiteral] `''` → "Stryker was here!" — the `err instanceof
+ *      Error ? err.message : ''` fallback. `new RegExp(...)` rejects only with
+ *      a SyntaxError, so the else arm is unreachable.
+ *    383:18 [OptionalChaining] `host.ownerDocument?.createTreeWalker` →
+ *      `host.ownerDocument.createTreeWalker`, and 400:7 [ConditionalExpression]
+ *      `!walker` → false — per the DOM spec only a Document has a null
+ *      `ownerDocument`; for an Element it is always present, so the walker is
+ *      always constructed and the `?.` / `!walker` pair is dead. (Killable only
+ *      by fabricating a non-Element "host", which production never passes.)
+ *    385:11 [ConditionalExpression] `!(node instanceof Text)` → false — the
+ *      walker is created with `NodeFilter.SHOW_TEXT`, so `acceptNode` is only
+ *      ever offered Text nodes.
+ *    387:11 [ConditionalExpression] `!parent` → false — the walker is rooted at
+ *      an element and the root itself is not SHOW_TEXT, so every visited text
+ *      node has an element parent.
+ *    396:11 [ConditionalExpression] `v == null` → false — `Text.nodeValue` is
+ *      always a string (`''` at worst), never null. (The `v.length === 0` half
+ *      of the same condition IS covered — see the zero-length-text-node test.)
+ *    451:36 and 533:38 [StringLiteral] `''` → "Stryker was here!" — the
+ *      `node.nodeValue ?? ''` fallbacks, same reason as 396:11.
+ *    532:11 [ConditionalExpression] `!node` → false — `textNodes[i]` is read
+ *      under `i < Math.min(cursor + CHUNK_SIZE, textNodes.length)`.
+ *
+ * B. 221:7 [ConditionalExpression] `needle.length === 0` → false, and
+ *    221:35 [ArrayDeclaration] `[]` → ["Stryker was here"] — `scanLiteral` is
+ *    reached only through `compileQuery`, which returns `{kind:'empty'}` for
+ *    `query.length === 0`; and no case fold shrinks a string (verified over all
+ *    0x110000 code points, in every locale checked — en, el, tr, az, lt: zero
+ *    mappings with `f.length < ch.length`). So the needle is never empty and
+ *    the early return never runs.
+ *
+ * C. 251:10 and 296:10 [EqualityOperator] `from <= haystack.length` /
+ *    `from <= folded.length` → `<`. The two differ only on the final iteration
+ *    where `from === length`; with a non-empty needle (see B) `indexOf` then
+ *    returns -1 and the loop breaks without emitting, which is exactly what the
+ *    mutant's loop test does. Same output either way.
+ *
+ * D. The folded (length-changing case fold) path's index guards and its
+ *    duplicate-span filter.
+ *
+ *    CAVEAT ON THE UNDERLYING FACT. Under the default locale U+0130 'İ' →
+ *    'i' + U+0307 is the only code point whose lowercase mapping expands
+ *    (verified over 0x110000 code points). That is NOT a universal Unicode
+ *    fact: `matcher.ts` folds with `toLocaleLowerCase()` and passes no locale,
+ *    so the expanding set follows the runtime's default locale — tr/az expand
+ *    NOTHING (the folded path is dead there), and lt expands FOUR (U+00CC,
+ *    U+00CD, U+0128, U+0130, e.g. 'Ì' → 'i' + U+0307 + U+0300). The verdicts
+ *    below hold in all three cases, because what they actually need is weaker:
+ *    (i) `idx <= folded.length - needle.length` bounds every lookup whatever
+ *    the fold widths are, and (ii) no fold in any of these locales contains two
+ *    ADJACENT IDENTICAL code units, which is what a duplicate span would
+ *    require. Do not restate the one-expanding-code-point figure as universal.
+ *
+ *    Both defences are therefore unreachable:
+ *      - `foldedStart`/`foldedEnd` have exactly `folded.length` entries and the
+ *        indices used are bounded by `idx <= folded.length - needle.length`, so
+ *        neither lookup is ever `undefined`;
+ *      - a duplicate span needs two match offsets inside one code point's fold
+ *        at BOTH ends, which forces the needle to be periodic with period 1
+ *        while its first two folded units are 'i' and U+0307 — a contradiction.
+ *    Confirmed by differential sweep: 4,422,600 (text, needle, wholeWord) cases
+ *    over an alphabet saturated with İ / i / U+0307 / astral letters produced
+ *    zero undefined lookups, zero duplicate spans, and — the near-miss canaries
+ *    that matter for the sub-expression mutants — zero cases where only the
+ *    start or only the end repeated. The same harness detects 1,160 differences
+ *    for a mutant the suite already kills (`from = idx + 1` → `+ needle.length`),
+ *    so it is not blind.
+ *      301:9  [ConditionalExpression] `start !== undefined && end !== undefined`
+ *             → true
+ *      301:9  [LogicalOperator] `start !== undefined && end !== undefined` →
+ *             `start !== undefined || end !== undefined`. NB this one must be
+ *             judged as an AST edit, not a textual splice: pasting the
+ *             replacement in place reassociates the enclosing condition to
+ *             `A || (B && C)` (because `&&` binds tighter than `||`) and the
+ *             whole-word arm stops being enforced, which the folded-path
+ *             wholeWord test above does catch. Stryker replaces the node, so
+ *             the real mutant is `(A || B) && C`; with A and B both invariably
+ *             true that is `true && C`, i.e. the original.
+ *             Careful, though: `A && B && C` parses as `(A && B) && C`, and
+ *             BOTH `&&` nodes start at column 9, so "301:9 [LogicalOperator]"
+ *             names two distinct mutants, not one. Only the inner one is
+ *             equivalent. The outer one, `(A && B) || C`, disables the
+ *             whole-word arm and IS killed by the folded-path wholeWord test.
+ *             Verified by splicing each reading separately.
+ *      301:9  [ConditionalExpression] `start !== undefined` → true
+ *      301:32 [ConditionalExpression] `end !== undefined` → true
+ *      304:27 [UnaryOperator] `-1` → `+1` (`out.at(-1)` → `out.at(+1)`): the
+ *             guard's verdict is "push" for every reachable input, so which
+ *             element it inspects cannot change the output.
+ *      305:11 [ConditionalExpression] `!last || last.start !== start ||
+ *             last.end !== end` → true
+ *      305:20 [ConditionalExpression] `last.start !== start` → false
+ *      305:20 [EqualityOperator] `last.start !== start` → `last.start === start`
+ *      305:44 [ConditionalExpression] `last.end !== end` → false
+ *      305:44 [EqualityOperator] `last.end !== end` → `last.end === end`
+ *
+ * E. Rewrites that are value-identical rather than merely untested.
+ *      327:19 [ConditionalExpression] `text.length > REGEX_NODE_SCAN_MAX` → true,
+ *      327:19 [EqualityOperator] same → `>=` — `text.slice(0, N)` returns a
+ *        string equal to `text` whenever `text.length <= N`, so both the
+ *        always-slice mutant and the boundary shift hand `re.exec` the same
+ *        input, including at exactly `REGEX_NODE_SCAN_MAX`.
+ *      361:41 [ConditionalExpression] `index >= 2` → true — `codePointBefore`
+ *        already returned for `index <= 0`, so the only extra case is
+ *        `index === 1`, where `charCodeAt(-1)` is NaN and `NaN >= 0xd800` is
+ *        false; the block falls through to the same `return low`.
+ *      363:27 [EqualityOperator] `high <= 0xdbff` → `high < 0xdbff` — differs
+ *        only at `high === 0xdbff`, i.e. code points U+10FC00…U+10FFFF. That
+ *        whole plane-16 range is Private Use / noncharacter: exhaustively
+ *        checked, none of the 1,024 code points matches `/[\p{L}\p{N}_]/u`, and
+ *        the bare trailing surrogate the mutant returns instead is not a word
+ *        character either. Both readings classify as "not a word char".
+ *      370:17 [ConditionalExpression] `end >= text.length` → false,
+ *      370:17 [EqualityOperator] same → `>` — `String.prototype.codePointAt`
+ *        already returns `undefined` for any index at or past the end, so the
+ *        ternary's guard is redundant with the call it guards.
+ *
+ * Follow-up-worthy (redundant / unreachable production code, not test gaps):
+ * the whole of group A, the `needle.length === 0` early return (B), the folded
+ * path's duplicate-span filter (D), and the redundant guards in E (361:41,
+ * 370:17).
+ *
+ * Also follow-up-worthy, and a behaviour question rather than dead code:
+ * `compileQuery` / `scanLiteralFolded` fold with `toLocaleLowerCase()` and pass
+ * no locale, so case-insensitive find silently changes meaning with the user's
+ * locale — under tr/az 'i' no longer matches 'I', and under lt the fold grows
+ * combining dots. VSCode uses `toLowerCase()` for exactly this reason. Several
+ * tests in this file (both the U+0130 ones) assume a non-tr/az default locale;
+ * the folded-path wholeWord test asserts that assumption up front so it fails
+ * loudly instead of going quietly vacuous.
+ *
+ * Note on 385:11 (`!(node instanceof Text)` → false, listed under A): the guard
+ * is redundant under `SHOW_TEXT` and would additionally misfire across realms,
+ * since `instanceof` is realm-scoped. That is not reachable here: the walker is
+ * built from `host.ownerDocument`, so it only ever yields nodes from the host's
+ * own tree, and a same-window *different document* (e.g. template contents)
+ * still shares the realm. Reaching it needs a host from another realm — an
+ * iframe's `contentDocument` — and `collectTextNodes` is called from exactly
+ * one production site, `InPageFind.tsx`, with a same-document React ref; the
+ * app renders no iframe anywhere. Left unkilled deliberately: a test would pin
+ * an accident as intended behaviour.
+ */

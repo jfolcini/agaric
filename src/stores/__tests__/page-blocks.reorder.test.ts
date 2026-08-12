@@ -1164,6 +1164,209 @@ describe('PageBlockStore', () => {
       expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
     })
 
+    // #3759 EQUIVALENCE LEDGER — `reconcileBatchMove` mutants that survive by
+    // construction, so the next triage pass does not re-derive them. Each was
+    // checked by differential execution: original vs. spliced copy over 3,068
+    // generated (tree, request, response) triples (722 reaching the splice),
+    // with the mutants the tests below DO kill included as controls — all five
+    // were detected, so a zero is meaningful. Controls are named by MUTATOR,
+    // not bare line:col, because several distinct mutants share one position
+    // (three of the four at 175:7 were already dead before this batch):
+    //   94:7   ConditionalExpression `resp.length !== orderedIds.length` -> false
+    //   122:25 MethodExpression `base.slice(0, p)` -> `base`
+    //   134:62 ArithmeticOperator `i + 1` -> `i - 1`
+    //   175:7  ConditionalExpression `par === (b.parent_id ?? null)` -> true
+    //   185:9  ConditionalExpression `!present.has(id)` -> false
+    //
+    //   101:32 BlockStatement `{ if (!byId.has(id)) return null }` -> `{}`
+    //   102:9  ConditionalExpression `!byId.has(id)` -> `false`
+    //     The "moved id still exists" pre-check is a fast path, not a guard.
+    //     `updatedBag` is built by walking `blocks`, so the rebuilt tree can
+    //     only ever contain ids that were in `blocks`; an id missing there is
+    //     therefore also missing from `present` and the post-rebuild check
+    //     returns null anyway. Nothing in between can throw on a missing id.
+    //     0 differing inputs.
+    //
+    //   129:32 BlockStatement (the `sourceParents` collection loop) -> `{}`
+    //   130:18 LogicalOperator `oldParentOf.get(id) ?? null` -> `... && null`
+    //   131:9  ConditionalExpression `from !== wantParent` -> `false`
+    //   133:35 BlockStatement (the vacated-source renumber loop) -> `{}`
+    //   134:35 ArrowFunction `(bid, i) => posOf.set(bid, i + 1)` -> `() => undefined`
+    //     The vacated-source renumbering is fully SUBSUMED by the #3320
+    //     catch-all loop below it: that loop ranks every block not already in
+    //     `posOf`, grouped by final parent, walking `blocks` in array order —
+    //     which for a non-moved block is the same key and the same order
+    //     `remainingChildren(sp)` would produce, so it assigns identical 1..n
+    //     ranks. Deleting or neutering the source loop therefore changes
+    //     nothing; writing WRONG ranks into it does (see the `i - 1` test
+    //     above, which the catch-all cannot repair because `posOf.has` skips
+    //     an already-poisoned entry). 0 differing inputs each.
+    //
+    //   170:35 ArrayDeclaration `const updatedBag: FlatBlock[] = []` ->
+    //          `['Stryker was here']`
+    //     The injected sentinel has no `parent_id`, so it is a child of `null`.
+    //     `createPageBlockStore(pageId: string)` always seeds a non-null
+    //     `rootParentId` (immutable for the store's lifetime), so the sentinel
+    //     is never reachable from the root and `buildFlatTree` drops it.
+    //     Measured both ways: 526 differing inputs when the sweep is allowed to
+    //     use `rootParentId: null`, 0 when restricted to the shapes the factory
+    //     can actually produce. Killing it would require a test that observes
+    //     Stryker's own placeholder, which is not a contract worth pinning.
+    //
+    //   173:64 LogicalOperator `b.position ?? null` -> `b.position && null`
+    //     (reported NoCoverage) — the `: (b.position ?? null)` arm of the
+    //     `posOf.has(b.id) ? … : …` ternary is DEAD CODE: the #3320 loop gives
+    //     every block in `blocks` a `posOf` entry, so the ternary's test is
+    //     always true. 0 differing inputs.
+
+    // #3759 — the OTHER half of the backend-echo guard. The parent-echo loop
+    // above only inspects the responses that came back; a SHORT response means
+    // the backend did not move every root we asked for, and the local
+    // remove-then-splice replay (which lands all of `orderedIds` unconditionally)
+    // would commit a tree the backend never produced.
+    it('falls back to a reload when the backend echoes FEWER responses than moved ids', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      // Two roots requested, ONE response — and the response it does carry
+      // echoes the requested parent, so the count check is the only guard that
+      // can catch the mismatch.
+      mockedInvoke.mockResolvedValueOnce(batchResp(['A'], 'PAGE_1'))
+      // Backend truth: only A actually moved to the tail.
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 1 }),
+          makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 2 }),
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 3 }),
+        ]),
+      )
+
+      await store.getState().moveBlocks(['A', 'B'], 'PAGE_1', 2)
+
+      expect(reloaded()).toBe(true)
+      // Backend truth won. Replaying the short response locally would have
+      // committed C,A,B — a run the backend never landed.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['B', 'C', 'A'])
+    })
+
+    // #3759 — every other splice test lands the run at (or past) the tail, where
+    // the head slice happens to BE the whole base. This one lands it strictly
+    // inside the base run so head and tail slices are both non-empty.
+    it('splices the run at a MID-LIST base slot and re-densifies the whole destination group', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'D', position: 4, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      mockedInvoke.mockResolvedValueOnce(batchResp(['A', 'B'], 'PAGE_1'))
+
+      // Base slot 1 among the non-selected children [C, D].
+      await store.getState().moveBlocks(['A', 'B'], 'PAGE_1', 1)
+
+      expect(reloaded()).toBe(false)
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'B', 'D'])
+      // Dense 1-based ranks across the WHOLE destination group. Re-emitting the
+      // base instead of its head slice re-ranks the duplicated tail last and
+      // yields 1,3,4,5 — an order-preserving but NON-dense group that the next
+      // batch reconcile would replay from.
+      expect(store.getState().blocks.map((b) => b.position)).toEqual([1, 2, 3, 4])
+    })
+
+    // #3759 — the vacated source group is renumbered from 1, matching the
+    // backend's 1-based dense ranks. An off-by-one here is invisible in the
+    // rendered ORDER (a uniform shift preserves the sort) but leaves the group
+    // holding 0/-1 ranks that no backend reprojection can produce.
+    it('densely renumbers the VACATED source group from 1 on a cross-parent batch', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'P', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'A', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', position: 4, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      mockedInvoke.mockResolvedValueOnce(batchResp(['A', 'B'], 'P'))
+
+      await store.getState().moveBlocks(['A', 'B'], 'P', 0)
+
+      expect(reloaded()).toBe(false)
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['P', 'A', 'B', 'C'])
+      // Destination group (P's children) AND the vacated root group are both
+      // dense and 1-based.
+      expect(Object.fromEntries(store.getState().blocks.map((b) => [b.id, b.position]))).toEqual({
+        P: 1,
+        A: 1,
+        B: 2,
+        C: 2,
+      })
+    })
+
+    // #3759 — the row-reuse guard is per-FIELD: a block whose dense rank happens
+    // to be unchanged still needs a new row when its PARENT changed. Reusing the
+    // old row on a rank match alone silently drops the reparent.
+    it('re-parents a block whose new dense rank EQUALS its stored position', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'P1', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          // X is P1's only child at rank 1; P2 is empty, so landing X there
+          // gives it rank 1 again and ONLY its parent changes.
+          makeBlock({ id: 'X', position: 1, parent_id: 'P1', depth: 1 }),
+          makeBlock({ id: 'P2', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      mockedInvoke.mockResolvedValueOnce(batchResp(['X'], 'P2'))
+
+      await store.getState().moveBlocks(['X'], 'P2', 0)
+
+      expect(reloaded()).toBe(false)
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['P1', 'P2', 'X'])
+      expect(store.getState().blocksById.get('X')?.parent_id).toBe('P2')
+      expect(store.getState().blocksById.get('X')?.depth).toBe(1)
+    })
+
+    // #3759 — unlike `moveToParent`, `moveBlocks` has NO `canSplice` cycle
+    // guard (see the pinned "selection roots only" test above: it accepts any
+    // ids at all), so the post-rebuild presence check is the only thing between
+    // a cyclic request and a store that silently lost the whole subtree.
+    it('falls back to a reload when a moved id would fall OUT of the rebuilt tree', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'A1', position: 1, parent_id: 'A', depth: 1 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      // A re-parented under its OWN child: the replayed bag holds the cycle
+      // A→A1→A, which `buildFlatTree` cannot reach from the root and drops.
+      mockedInvoke.mockResolvedValueOnce(batchResp(['A'], 'A1'))
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 1 }),
+          makeBlock({ id: 'A1', parent_id: 'A', position: 1 }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 2 }),
+        ]),
+      )
+
+      await store.getState().moveBlocks(['A'], 'A1', 0)
+
+      expect(reloaded()).toBe(true)
+      // Without the presence check the store would commit the rebuilt tree
+      // ['B'] — both A and A1 gone from the page.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'A1', 'B'])
+    })
+
     // #976 finding 4 — the `moveBlocks` docstring requires callers pass the
     // SELECTION ROOTS only (a nested descendant must NOT be listed; it travels
     // inside its ancestor's subtree). The implementation performs NO such
