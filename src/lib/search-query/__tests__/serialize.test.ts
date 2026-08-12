@@ -165,6 +165,18 @@ describe('serialize round-trip', () => {
     expect(quoteValueIfNeeded('"ab"')).toBe('""ab""')
   })
 
+  // -------------------------------------------------------------------
+  // Mutation-survivor coverage (GH #3761)
+  // -------------------------------------------------------------------
+
+  it('quoteValueIfNeeded: a value of exactly length 2 (two `"` chars) is quote-surrounded, not just longer ones (serialize.ts:40)', () => {
+    // The `length >= 2` guard must include its own boundary — a value
+    // of exactly two characters where both are `"` (the string `""`)
+    // is quote-surrounded and must be re-quoted. A `length > 2` guard
+    // would exclude this exact length and leave it bare.
+    expect(quoteValueIfNeeded('""')).toBe('""""')
+  })
+
   it('#718 — a pathInclude token with spaces survives serialize → parse', () => {
     // The FilterHelperPopover path: SearchPanel builds the token from the
     // raw submitted glob; the serialised query must re-parse to the SAME
@@ -179,5 +191,25 @@ describe('serialize round-trip', () => {
     expect(round.filters).toHaveLength(1)
     expect(round.filters[0]).toMatchObject({ kind: 'pathInclude', value: 'Meeting Notes/*' })
     expect(round.freeText).toBe('')
+  })
+
+  it('tokenSource echoes an invalid token back verbatim (serialize.ts:80)', () => {
+    // `invalid` is the only kind whose source text is not rebuilt from
+    // structured fields — it must be replayed byte-for-byte. If the case
+    // stops returning, the switch falls out and yields `undefined`, so
+    // serialize() would splice the literal string `undefined` into the
+    // query and the user's unrecognised chip would be destroyed.
+    expect(
+      tokenSource({
+        kind: 'invalid',
+        source: 'bogus:foo',
+        error: "unknown filter key 'bogus:'",
+        span: [0, 9],
+      }),
+    ).toBe('bogus:foo')
+
+    const ast = parse('bogus:foo tag:#a')
+    expect(ast.filters[0]).toMatchObject({ kind: 'invalid', source: 'bogus:foo' })
+    expect(serialize(ast)).toBe('bogus:foo tag:#a')
   })
 })

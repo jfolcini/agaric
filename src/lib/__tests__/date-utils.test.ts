@@ -5,10 +5,14 @@ import {
   formatCompactDate,
   formatDate,
   formatJournalTitle,
+  formatWeekRange,
+  getCalendarMonthRange,
   getDateRangeForFilter,
   getMaxJournalDate,
   getTodayString,
+  getWeekDays,
   getWeekOptions,
+  getWeekRange,
   isDateFormattedPage,
   MONTH_SHORT,
 } from '@/lib/date-utils'
@@ -460,6 +464,17 @@ describe('formatJournalTitle (#1448 — display-only journal date format)', () =
     expect(formatJournalTitle('2026-04-31', 'MMMM d, yyyy')).toBe('2026-04-31')
   })
 
+  it('degrades to the raw ISO content when date-fns rejects the format string', () => {
+    // The format is a user-editable preference, so an invalid token string is
+    // reachable input, not a theoretical one. date-fns throws a RangeError on
+    // the protected `YYYY`/`DD` tokens (the single most likely typo for anyone
+    // used to Moment/Java patterns) and on unescaped latin characters. The
+    // `catch` must swallow that and echo the ISO content — an uncaught throw
+    // here blanks the whole journal title.
+    expect(formatJournalTitle(ISO, 'YYYY-MM-DD')).toBe('2026-06-17')
+    expect(formatJournalTitle(ISO, 'not a token')).toBe('2026-06-17')
+  })
+
   // Regression: the LOOKUP/identity key is the raw ISO content, and it must be
   // independent of the chosen display format. `formatJournalTitle` is the only
   // place the format is applied — it takes the ISO key and returns a *display*
@@ -473,5 +488,112 @@ describe('formatJournalTitle (#1448 — display-only journal date format)', () =
       // byte-for-byte unchanged after formatting under any preset.
       expect(lookupKey).toBe('2026-06-17')
     }
+  })
+})
+
+// #3752 — `getWeekRange`, `getWeekDays`, `formatWeekRange` and
+// `getCalendarMonthRange` had NO test anywhere in `src`, so every mutant in
+// them was reported as "no coverage" rather than as a survivor and never
+// showed up on the survivor list.
+//
+// Determinism: every expected value below is derived from the local-time
+// `Date(y, m, d)` constructor and compared through `formatDate`, which uses
+// local-time getters — so the assertions hold in any host timezone. The
+// week-start preference is set explicitly (or cleared to the Monday default)
+// rather than inherited from whatever a previous test left in localStorage.
+describe('week helpers (getWeekRange / getWeekDays / formatWeekRange)', () => {
+  // Friday, April 10 2026.
+  const FRIDAY = new Date(2026, 3, 10)
+
+  beforeEach(() => {
+    localStorage.removeItem('week-start-preference')
+  })
+
+  afterEach(() => {
+    localStorage.removeItem('week-start-preference')
+  })
+
+  it('getWeekRange spans Monday..Sunday under the default preference', () => {
+    const { start, end } = getWeekRange(FRIDAY)
+    expect(formatDate(start)).toBe('2026-04-06')
+    expect(formatDate(end)).toBe('2026-04-12')
+  })
+
+  it('getWeekRange shifts with the Sunday week-start preference', () => {
+    localStorage.setItem('week-start-preference', '0')
+    const { start, end } = getWeekRange(FRIDAY)
+    expect(formatDate(start)).toBe('2026-04-05')
+    expect(formatDate(end)).toBe('2026-04-11')
+  })
+
+  it('getWeekDays returns the 7 consecutive days of the containing week', () => {
+    expect(getWeekDays(FRIDAY).map(formatDate)).toEqual([
+      '2026-04-06',
+      '2026-04-07',
+      '2026-04-08',
+      '2026-04-09',
+      '2026-04-10',
+      '2026-04-11',
+      '2026-04-12',
+    ])
+  })
+
+  it('formatWeekRange renders "MMM d - MMM d, yyyy"', () => {
+    expect(formatWeekRange(FRIDAY)).toBe('Apr 6 - Apr 12, 2026')
+  })
+
+  it('formatWeekRange prints the year of the END of a week crossing the new year', () => {
+    // Wed Dec 31 2025 -> Mon Dec 29 2025 .. Sun Jan 4 2026. Only the end of
+    // the range carries the year, so a week straddling January pins which
+    // side of the range the `yyyy` token is attached to.
+    expect(formatWeekRange(new Date(2025, 11, 31))).toBe('Dec 29 - Jan 4, 2026')
+  })
+})
+
+describe('getCalendarMonthRange (the 6-week grid the calendar actually renders)', () => {
+  beforeEach(() => {
+    localStorage.removeItem('week-start-preference')
+  })
+
+  afterEach(() => {
+    localStorage.removeItem('week-start-preference')
+  })
+
+  it('starts at the week boundary on/before the 1st and spans exactly 42 days', () => {
+    // Apr 1 2026 is a Wednesday, so the grid opens on Mon Mar 30 2026; the
+    // 42nd day inclusive (start + 41) is Sun May 10 2026.
+    expect(getCalendarMonthRange(new Date(2026, 3, 15))).toEqual({
+      startDate: '2026-03-30',
+      endDate: '2026-05-10',
+    })
+  })
+
+  it('starts on the 1st itself when the 1st is already the week-start day', () => {
+    // Jun 1 2026 is a Monday — no leading days from the previous month.
+    expect(getCalendarMonthRange(new Date(2026, 5, 30))).toEqual({
+      startDate: '2026-06-01',
+      endDate: '2026-07-12',
+    })
+  })
+
+  it('anchors the grid on the Sunday week-start preference', () => {
+    localStorage.setItem('week-start-preference', '0')
+    expect(getCalendarMonthRange(new Date(2026, 3, 15))).toEqual({
+      startDate: '2026-03-29',
+      endDate: '2026-05-09',
+    })
+  })
+
+  it('covers exactly 42 inclusive days', () => {
+    // Guards the `+ 41` offset against both an off-by-one and a wrong
+    // arithmetic direction, independent of the calendar dates above.
+    const { startDate, endDate } = getCalendarMonthRange(new Date(2026, 1, 5))
+    // Measured in UTC on purpose: a DST transition inside the window would
+    // make local-time millisecond arithmetic off by an hour in some zones.
+    const toUtcDay = (iso: string) => {
+      const [y, m, d] = iso.split('-').map(Number) as [number, number, number]
+      return Date.UTC(y, m - 1, d) / 86_400_000
+    }
+    expect(toUtcDay(endDate) - toUtcDay(startDate)).toBe(41)
   })
 })

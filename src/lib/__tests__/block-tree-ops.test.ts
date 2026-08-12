@@ -5,7 +5,7 @@
  * they are tested in isolation here without a Zustand instance or mocks.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import type { BlockLevelNode } from '@/editor/types'
@@ -15,6 +15,8 @@ import {
   isNonEmptyBlock,
   planSplit,
 } from '@/lib/block-tree-ops'
+import { logger } from '@/lib/logger'
+import type { FlatBlock } from '@/lib/tree-utils'
 
 describe('isNonEmptyBlock', () => {
   it('returns true for a non-paragraph block even without content', () => {
@@ -132,6 +134,69 @@ describe('planSplit', () => {
       expect(plan.rest[0]).toBe('Paragraph')
     }
   })
+
+  it('returns edit-only with empty content for input that parses to zero blocks', () => {
+    // "|---|" matches the table producer's `line.startsWith('|')` guard, but a
+    // lone separator row is dropped by buildTableRows — the parse yields zero
+    // blocks (not one), so `blocks.length === 1` must be false here: the
+    // `: ''` branch of the ternary must run rather than force-calling
+    // serializeSingleBlock(blocks[0]) on an out-of-bounds index.
+    const plan = planSplit('|---|')
+    expect(plan).toEqual({ kind: 'edit-only', content: '' })
+  })
+
+  it('does not synthesize a phantom block when parse() yields no content array', () => {
+    // "|---|" parses to zero blocks, so `parse()` returns `{ type: 'doc' }`
+    // with `content` genuinely `undefined` (see parser.ts) — the `?? []`
+    // fallback on line 52 must produce a real empty array. If it fell back to
+    // any non-empty array instead, `blocks.length === 1` would go true and
+    // route the fallback's first entry into `serializeSingleBlock` as though
+    // it were a real block, which — not being a well-formed BlockLevelNode —
+    // would hit the serializer's "unknown node type" path and log a warning.
+    //
+    // Why the spy is load-bearing, not decoration: the `ArrayDeclaration`
+    // mutant on `?? []` (Stryker's `?? ["Stryker was here"]`) makes
+    // `blocks = ["Stryker was here"]`, so `blocks.length === 1` is true and
+    // `serializeSingleBlock(blocks[0])` runs on that placeholder string. That
+    // placeholder has no `type`, so `serializeBlockNode` falls into its
+    // unknown-node branch, which returns `''` — the SAME `content` the
+    // correct code produces from zero blocks. `content === markdown` is
+    // false either way, so both the real and mutated code return
+    // `{ kind: 'edit-only', content: '' }`: the test above this one (plain
+    // `toEqual`, no spy) passes under the mutant too and does NOT kill it.
+    // Only the `logger.warn` observation below distinguishes them: the
+    // correct code never calls `serializeBlockNode` at all (zero blocks), so
+    // `warn` stays uncalled; the mutant funnels the placeholder through the
+    // unknown-node path, which calls `onUnknownNode` → `logger.warn`.
+    //
+    // What this pins is user-visible behaviour, not plumbing: an unknown node
+    // reaching the serializer raises a toast via `notifyUnknownNodeTypeToast`
+    // (`src/editor/markdown-serialize-toast.ts`), so the invariant is "splitting
+    // an empty parse must not raise a spurious unknown-node toast at the user".
+    // `logger.warn` is only the observation point — that path's toast is fired
+    // from the same call.
+    //
+    // That distinction is why this test survives the bar that removed a test
+    // for `graph-neighborhood:79` in this same batch: that one was observable
+    // ONLY by naming a fixture after Stryker's placeholder string, so it pinned
+    // the mutation tool. This one pins a real effect a user would see.
+    //
+    // The coupling is still real and worth stating: this is a NEGATIVE
+    // assertion on one sink, so if that call site moves to a different level or
+    // sink, the test goes vacuously green rather than red. A serializer-level
+    // `onUnknownNode` injection point would remove that failure mode; until one
+    // exists, re-derive the spy target from that file if it changes.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    try {
+      const plan = planSplit('|---|')
+      expect(plan).toEqual({ kind: 'edit-only', content: '' })
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      // Restore in `finally`: a failing assertion above would otherwise leave
+      // `logger.warn` stubbed for every later test in this file.
+      warn.mockRestore()
+    }
+  })
 })
 
 describe('findPrevSiblingAt', () => {
@@ -184,6 +249,47 @@ describe('findPrevSiblingAt', () => {
     // match under the `?? null` normalization.
     const b = makeBlock({ id: 'B', parent_id: null, depth: 0 })
     expect(findPrevSiblingAt([a, b], 1)?.id).toBe('A')
+  })
+
+  it('skips a hole/undefined entry in the blocks slice instead of dereferencing it', () => {
+    // Index 1 is genuinely absent (not a real FlatBlock) — the `if
+    // (!candidate) continue` guard must skip it rather than read `.depth`
+    // off `undefined`, which would throw.
+    const a = makeBlock({ id: 'A', parent_id: null, depth: 0 })
+    const c = makeBlock({ id: 'C', parent_id: null, depth: 0 })
+    const blocks = [a, undefined, c] as unknown as FlatBlock[]
+    expect(findPrevSiblingAt(blocks, 2)?.id).toBe('A')
+  })
+
+  it('stops at a shallower block even when an earlier same-depth block would coincidentally match parent_id', () => {
+    // X (depth 1, parent 'P') precedes Y (depth 0 — a real ancestor
+    // boundary), which precedes C (depth 1, parent 'P') — same depth/parent
+    // as X purely by coincidence. The walk must return null as soon as the
+    // shallower Y is seen; X must never be considered.
+    const x = makeBlock({ id: 'X', parent_id: 'P', depth: 1 })
+    const y = makeBlock({ id: 'Y', parent_id: null, depth: 0 })
+    const c = makeBlock({ id: 'C', parent_id: 'P', depth: 1 })
+    expect(findPrevSiblingAt([x, y, c], 2)).toBeNull()
+  })
+
+  it('does not match a candidate at a different depth even when parent_id happens to coincide', () => {
+    // D is one level deeper than C but shares C's parent_id by coincidence —
+    // the depth-equality half of the match condition must still reject it.
+    const d = makeBlock({ id: 'D', parent_id: null, depth: 1 })
+    const c = makeBlock({ id: 'C', parent_id: null, depth: 0 })
+    expect(findPrevSiblingAt([d, c], 1)).toBeNull()
+  })
+
+  it('does not match when only the candidate has a non-null parent_id', () => {
+    const candidate = makeBlock({ id: 'X', parent_id: 'OTHER', depth: 0 })
+    const block = makeBlock({ id: 'C', parent_id: null, depth: 0 })
+    expect(findPrevSiblingAt([candidate, block], 1)).toBeNull()
+  })
+
+  it('does not match when only the block has a non-null parent_id', () => {
+    const candidate = makeBlock({ id: 'X', parent_id: null, depth: 0 })
+    const block = makeBlock({ id: 'C', parent_id: 'OTHER', depth: 0 })
+    expect(findPrevSiblingAt([candidate, block], 1)).toBeNull()
   })
 })
 
@@ -307,5 +413,21 @@ describe('computeIndentedBlocks', () => {
     expect(result.map((x) => x.id)).toEqual(['A', 'A1', 'A2', 'A3', 'B'])
     expect(result[4]?.parent_id).toBe('A')
     expect(result[4]?.depth).toBe(1)
+  })
+
+  it('inserts after prevSibling even when prevSibling is not at index 0 of the remaining array', () => {
+    // Z precedes prevSibling A in `remaining` (index 1, not 0) — insertAt
+    // must be derived from A's real index (1) plus one, not fall back to the
+    // `?? -1` default, which a falsy-coercing bug would trigger even for a
+    // legitimate nonzero index.
+    const z = makeBlock({ id: 'Z', position: 0, parent_id: null, depth: 0 })
+    const a = makeBlock({ id: 'A', position: 1, parent_id: null, depth: 0 })
+    const b = makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 })
+
+    const result = computeIndentedBlocks([z, a, b], 'B', a)
+
+    expect(result.map((x) => x.id)).toEqual(['Z', 'A', 'B'])
+    expect(result[2]?.parent_id).toBe('A')
+    expect(result[2]?.depth).toBe(1)
   })
 })
