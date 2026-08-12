@@ -31,7 +31,20 @@ export function parse(input: string): SearchQueryAST {
   return classify(raw, input)
 }
 
-/** Lower-level entry: classify a pre-tokenised stream. */
+/**
+ * Lower-level entry: classify a pre-tokenised stream.
+ *
+ * `classify` is exported and directly callable, so unlike `parse` it does not
+ * get to assume its `tokens` came from `tokenize`. Token spans that run past
+ * `input.length` are therefore TOLERATED, not trusted: `buildFreeText`'s
+ * `if (cursor < input.length)` guard (line 162) is what stops an out-of-range
+ * consumed span from calling `append(from, to)` with `from > to`, which would
+ * invert the quoted-span arithmetic and duplicate the free-text tail. Do not
+ * "tighten" or drop that guard — it is a defensive contract, pinned by the
+ * "does not duplicate the tail when a consumed span runs past the end of the
+ * input" test, whose fixture looks contrived precisely because `tokenize` can
+ * never emit it.
+ */
 export function classify(tokens: RawToken[], input: string): SearchQueryAST {
   const filters: FilterToken[] = []
   // Track the spans we "consumed" as filters so we can reconstruct

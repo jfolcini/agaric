@@ -71,21 +71,40 @@ function escapeReservedDeviceName(name: string): string {
  * Neutralizing a dots-only segment is a SECURITY requirement, not cosmetics: a
  * page titled `../../etc/passwd` would otherwise emit a ZIP entry
  * `../../etc/passwd.md`, a classic Zip-Slip path that escapes the extraction
- * root when the archive is unpacked by a naive tool. A leading empty segment
- * (absolute `/etc/...`) is already dropped by the caller's `filter`.
+ * root when the archive is unpacked by a naive tool. An EMPTY segment — the
+ * leading one an absolute-looking title (`/etc/x`) produces when split — is NOT
+ * dropped anywhere: it hits the same `Untitled` fallback, so `/etc/x` exports
+ * as `Untitled/etc/x.md`. That extra level is harmless (it stays inside the
+ * export root) and is pinned by a characterization test.
+ *
+ * This function therefore NEVER returns an empty string: every exit yields
+ * either `Untitled` or a value of length ≥ 1. `titleToZipPath` relies on that
+ * to join its segments without a length check.
  *
  * Trailing dots/spaces are trimmed (Windows silently strips them on write, so
  * `Notes.` and `Notes` would otherwise collide or resolve to a different name
  * than written) and a Windows-reserved device basename (`CON`, `NUL`, `COM1`,
  * …) is escaped, since a file by that exact name (with or without extension)
- * is invalid/dangerous to create on Windows. Both run BEFORE the final
- * empty→fallback check so a segment that trims down to nothing (e.g. a name
- * made entirely of dots and spaces) still falls back to `Untitled`.
+ * is invalid/dangerous to create on Windows. The trailing trim runs BEFORE the
+ * final empty→fallback check so a segment that trims down to nothing (e.g. a
+ * name made entirely of dots and spaces) still falls back to `Untitled`; the
+ * device-name escape runs after it, which is safe because it can only lengthen
+ * its argument, never empty it.
  */
 export function sanitizeSegment(segment: string): string {
   let cleaned = segment.replace(ILLEGAL_SEGMENT_CHARS_RE, '_').trim()
   // A segment that is empty or consists solely of dots (`.`, `..`, `...`) is a
   // traversal/relative-path token, not a usable folder name — replace it.
+  //
+  // BELT-AND-BRACES, not load-bearing: this guard is subsumed by the trailing
+  // `[. ]+$` trim below for EVERY input, not merely the tested ones. It fires
+  // iff `cleaned` is `''` or matches `/^\.+$/`, and in both cases the trim
+  // erases the string end-to-end and the re-check two lines down returns the
+  // identical `'Untitled'`. It is kept as EXPLICIT, documented Zip-Slip intent
+  // rather than leaning on a coincidence of the trim regex — so don't
+  // "simplify" it away, and don't read it as the only thing holding the
+  // traversal case. (Its mutants are permanently unkillable for the same
+  // reason; see the equivalent-mutant ledger in export-graph.test.ts.)
   if (cleaned.length === 0 || /^\.+$/.test(cleaned)) return 'Untitled'
 
   cleaned = cleaned.replace(/[. ]+$/, '')
@@ -100,14 +119,23 @@ export function sanitizeSegment(segment: string): string {
  * segment is sanitized independently so the namespace hierarchy survives the
  * round-trip (`Project/Backend/API` → `Project/Backend/API`), fixing the prior
  * data-loss bug that flattened `/` to `_`. Empty segments (leading/trailing or
- * doubled slashes) are dropped.
+ * doubled slashes) are NOT dropped — `sanitizeSegment` maps each of them to
+ * `Untitled`, so `/etc/x` becomes `Untitled/etc/x` and `a//b` becomes
+ * `a/Untitled/b`. The extra level stays inside the export root, so this is a
+ * layout quirk rather than a traversal hole; it is pinned by a characterization
+ * test in `export-graph.test.ts`.
+ *
+ * No emptiness handling is needed here: `split` always yields ≥ 1 segment and
+ * `sanitizeSegment` never returns an empty string, so the join can never
+ * produce one either. (A `.filter(s => s.length > 0)` and a
+ * `segments.length > 0 ? … : 'Untitled'` ternary used to guard both; both were
+ * provably unreachable and were removed — see #3798.)
  */
 function titleToZipPath(title: string): string {
-  const segments = title
+  return title
     .split('/')
     .map((s) => sanitizeSegment(s))
-    .filter((s) => s.length > 0)
-  return segments.length > 0 ? segments.join('/') : 'Untitled'
+    .join('/')
 }
 
 /**
