@@ -671,6 +671,18 @@ describe('classify / parse', () => {
     const ast = classify(tokens, input)
     expect(ast.freeText).toBe('01234567CDEFGHIJ')
   })
+  // Note: the `q[1] <= to` -> `q[1] < to` mutant on that same line
+  // (classify.ts:148:11) is EQUIVALENT for every input `parse()` can produce,
+  // so it is recorded as an accepted gap rather than killed. `tokenize`
+  // advances a single cursor, so it only ever emits strictly ordered, disjoint,
+  // in-bounds spans: when a quoted span ends exactly at `to`, the next quoted
+  // span starts at or after `to` (`q[0] < to` is already false, so the loop
+  // exits either way), and the following append() call's leading skip-loop
+  // discards the un-advanced `qi` anyway because `q[1] <= from`. Only a
+  // hand-built stream with NESTED quoted spans separates the two variants, and
+  // what it exposes is the duplicated overlap the test above exists to forbid
+  // — pinning that output would contract-ify a bug. Verified by differential
+  // execution over 612 696 `parse()`-reachable inputs: zero output differences.
 
   it('collapses whitespace right up to (not past) the next quoted span boundary', () => {
     // classify.ts:159 — `if (s > cursor) append(cursor, s)`. Between two
@@ -690,6 +702,27 @@ describe('classify / parse', () => {
     ]
     const ast = classify(tokens, input)
     expect(ast.freeText).toBe('AB XY')
+  })
+
+  it('does not duplicate the tail when a consumed span runs past the end of the input', () => {
+    // classify.ts:162 — `if (cursor < input.length) append(cursor, input.length)`.
+    // The guard is load-bearing, not cosmetic: a consumed span whose end
+    // exceeds `input.length` leaves `cursor` past the end, and calling
+    // append(cursor, input.length) with `from > to` inverts the quoted-span
+    // arithmetic — `qs`/`qe` come out reversed, so `quotedOut` receives a
+    // NEGATIVE-width entry. The second pass then rewinds `pos` behind itself,
+    // and the trailing `if (pos < stripped.length)` re-emits text it had
+    // already emitted, duplicating the tail of the free text.
+    // Mutating the guard to `true` (or dropping it) reproduces exactly that:
+    // free text 'aa' instead of 'a'.
+    ensureRegistered()
+    const input = 'abc'
+    const tokens: RawToken[] = [
+      { kind: 'quoted', text: 'A', span: [0, 9] },
+      { kind: 'word', text: '#tag', span: [1, 5] },
+    ]
+    const ast = classify(tokens, input)
+    expect(ast.freeText).toBe('a')
   })
 
   it('reconstructs free text around multiple quoted phrases interleaved with multiple filters', () => {

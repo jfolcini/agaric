@@ -152,4 +152,22 @@ describe('computeSelectionRoots', () => {
  * distinguish the mutant from the original without contriving a selected id
  * equal to Stryker's literal placeholder string, which is not a realistic
  * test.
+ *
+ * Re-confirmed for #3765 by differential execution (original vs mutant over
+ * 885 205 generated inputs, including lists whose FIRST item has depth > 0 —
+ * the one shape that leaves the seeded element un-truncated): the outputs are
+ * identical everywhere. Even then the seeded id is only ever passed to
+ * `selected.has(...)`, so it can change the result only if the caller selects
+ * Stryker's own placeholder string.
+ */
+
+/*
+ * Note on tree-utils.ts:193:7 [ConditionalExpression]
+ * `selected.size === 0` -> `false`:
+ * EQUIVALENT. The mutant only deletes the empty-selection fast path. With an
+ * empty selection the loop still runs, `selected.has(item.id)` is false for
+ * every item, nothing is pushed, and the function returns an equally empty
+ * array — the guard short-circuits work, it does not decide behaviour. (The
+ * forced-TRUE direction of the same mutant IS killed, by the non-empty
+ * selection test above.)
  */

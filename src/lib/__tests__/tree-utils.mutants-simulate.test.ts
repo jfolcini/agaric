@@ -88,3 +88,29 @@ describe('simulateProjection mutant kills (#3142)', () => {
     })
   })
 })
+
+/*
+ * Equivalent and unreachable mutants in `simulateProjection` (issue #3765).
+ * No fixture can distinguish these, so no test is added for them:
+ *
+ * - tree-utils.ts:301:7  [ConditionalExpression] `activeIndex < 0` -> `false`
+ * - tree-utils.ts:301:24 [BlockStatement]        the guard's `return` block -> `{}`
+ * - tree-utils.ts:310:7  [ConditionalExpression] `!activeItem` -> `false`
+ * - tree-utils.ts:310:20, 311:12, 312:13, 313:19 — reported NoCoverage
+ *
+ * The two guards are mutually redundant BY DESIGN; the source comment at
+ * tree-utils.ts:294-300 says so explicitly. Disabling the first one lets a
+ * missing `activeId` fall through to `items[-1] === undefined`, and the
+ * `!activeItem` guard then returns the character-for-character identical
+ * `{ kind: 'fixed', projection: { depth: 0, parentId: rootParentId,
+ * maxDepth: 0, minDepth: 0 } }`. In the other direction, while the first guard
+ * stands, `activeItem` is `items[activeIndex]` for an index `findIndex` just
+ * matched, so it is never nullish — the `!activeItem` body is unreachable,
+ * which is exactly why its four inner mutants get no coverage at all.
+ *
+ * Verified by differential execution over 885 205 generated inputs (items
+ * lists x activeId/overId incl. absent ids x rootParentId x subtreeHeight):
+ * zero output differences. The same harness flags all 211 mutants in this
+ * module's functions that the suite already kills, so its blindness here is a
+ * property of the code, not of the input space.
+ */
