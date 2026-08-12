@@ -76,11 +76,14 @@ uvx code-review-graph serve
 ```bash
 cargo tauri dev              # Dev mode with hot reload
 npm run test                 # Vitest (frontend)
+npm run typecheck            # TypeScript (all four tsconfig projects) — NOT `npx tsc --noEmit`
 cd src-tauri && cargo nextest run --workspace   # Rust tests (bare form is package-scoped only, #3212)
 prek run --all-files         # Full local gate (mirror of CI's `validate` job)
 ```
 
-With the optional [`just`](#optional-just-task-runner) runner installed, the same four are `just dev`, `just test-fe`, `just test-be`, and `just check` (and `just test` runs both test suites); run `just --list` for the rest.
+With the optional [`just`](#optional-just-task-runner) runner installed, the same commands are `just dev`, `just test-fe`, `just typecheck`, `just test-be`, and `just check` (and `just test` runs both test suites); run `just --list` for the rest.
+
+**Use `npm run typecheck`, not `npx tsc --noEmit`.** The root `tsconfig.json` is solution-style (`"files": []` + four `references`), and `--noEmit` does not follow project references — only `--build`/`-b` does. So `npx tsc --noEmit` checks an empty program and **always exits 0**, however broken the code is (#3805). `npm run typecheck` is `tsc -b --noEmit`, the same command the pre-commit hook runs, so a local green means the hook will be green too.
 
 ### Fixing a format check failure
 

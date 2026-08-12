@@ -100,6 +100,11 @@ lint:
 lint-fix:
     npm run lint:fix
 
+# Typecheck all four tsconfig projects (tsc -b --noEmit). Bare `npx tsc --noEmit` checks NOTHING — see AGENTS.md.
+[group('lint')]
+typecheck:
+    npm run typecheck
+
 # Format files you changed vs HEAD: oxfmt (JS/TS/JSON) + taplo (TOML). See fmt-all for a whole-repo pass.
 [group('lint')]
 fmt:
