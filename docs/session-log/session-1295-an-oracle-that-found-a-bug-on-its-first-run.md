@@ -7,7 +7,7 @@
 | **Items closed** | `#3346` |
 | **Items filed** | `#3816`, `#3817`, `#3818`, `#3819` |
 | **Tests added** | 0 (frontend) / see below (backend) |
-| **Files touched** | 7 |
+| **Files touched** | 10 |
 
 **Summary:** #3346 asked for a metamorphic equivalence oracle — `batch(ops) ≡ fold(single, ops)` — plus a ratcheted guard so new bulk paths cannot skip it. Built both. The oracle found **two** live production bugs against clean `main` — #3818 (batch restore orphans a block under a deleted parent) and #3819 (batch purge physically erases live blocks with no op and no sync) — which is the outcome that justifies the whole issue.
 
@@ -19,6 +19,9 @@
 - `scripts/bulk-equivalence-baseline.json` (new)
 - `src-tauri/src/lib.rs`
 - `prek.toml`
+- `scripts/check-table-ownership.py`
+- `scripts/check-dynamic-sql.py`
+- `.github/workflows/scheduled-deep-checks.yml`
 - `docs/session-log/session-1295-an-oracle-that-found-a-bug-on-its-first-run.md` (new)
 
 **Process notes:**
@@ -71,20 +74,8 @@ Then the happy-path scenario passed and the mixed-input one did not. `purge_bloc
 
 **Kept the older hand-written fixture rather than replacing it.** `compute_reverse_batch_matches_per_op_loop` pins *absolute* answers; a parity oracle structurally cannot. A regression that breaks both kernels identically satisfies parity and fails those assertions. The two are complementary, and deleting the fixture on the grounds that the general harness supersedes it would have removed the only test that catches that case.
 
-**Three holes an adversarial review found, and the second production bug that came out of closing them.**
+## Two more (third pass)
 
-The review did not stop at the diff. It attacked the oracle's ability to fail, audited the guard's own claims, and spot-checked the baseline against source. All three findings were defects in the deliverable, not new scope, so they were fixed before shipping rather than filed.
+**`covered` verified a NAME, not a test.** The guard asserted only that some `fn <test>` existed somewhere under the scanned trees, so the entry stayed green if the covering test was `#[ignore]`d, or if an ordinary function was later renamed on top of a deleted one. That is acutely wrong *here*: this module deliberately ships two `#[ignore]`d reproducers (#3818, #3819), so "an `#[ignore]`d test under `bulk_equivalence/`" is a shape that already reads as intentional — a real covering test silenced the same way would have been indistinguishable. The check now requires the named test to carry a test attribute and to not be `#[ignore]`d, read from the attribute stack *immediately* preceding the signature rather than from a fixed window before it (a window cannot tell one item's attributes from its neighbour's, and both answers are wrong in the dangerous direction). Anything the parser cannot resolve — a `cfg_attr` that could attach an `ignore`, a test attribute that exists only under some `cfg` — fails closed and makes the guard complain. Falsified both ways before being believed: `#[ignore]`ing `delete_blocks_by_ids_matches_per_block_fold` and pointing `restore_blocks_by_ids_inner` at the non-test `seed_tree` each go red, and each was green before.
 
-**A misclassified baseline entry is worse than no guard.** `purge_blocks_by_ids_inner` was recorded `converged` — "all run the same `purge_subtree_tables` cascade, one body, nothing to fork". That is true of the satellite-table DELETE chain and false of the member-set CTE, which is a hand-written multi-root copy. A wrong `converged` silences a fork permanently and looks like diligence while doing it.
-
-Writing the scenario found #3819 on its first run: the soft-deleted filter governs which roots get `PurgeBlock` **ops**, while the CTE seed takes the raw input list. A live id is physically erased — whole subtree, every satellite table, no op, no fan-out, no peer notification — where `purge_block_inner` refuses it with `InvalidOperation`. The doc comment saying non-deleted ids are "silently dropped" is accurate about the op log and silent about the rows, which is precisely why reading it did not surface the bug.
-
-The framing in the fix prompt was itself wrong in an instructive way: it pointed at the CTEs as the suspect. **The CTEs agree.** A reviewer who checked only "do the two CTEs match?" would have downgraded the `converged` label to sloppy and moved on, never reaching the line above them.
-
-**A guard that overstates its coverage is a guard that lies.** The scan walked `src-tauri/src/**` only. Fourteen bulk-named functions sat outside it, one of them mutating. The script meanwhile advertised enumerating "every bulk-named function" and keeping "the inventory honest". Widened to every discovered `src-tauri/*/src` — and the prompt's own hardcoded crate list would have missed one, because `agaric-diagnostics` is the *crate* name and `src-tauri/diagnostics` is the directory. Enumerating directories rather than trusting a list is the general lesson.
-
-The honest yield was smaller than the count suggested: of the fourteen, one was already covered by its own crate's parity tests, five are not fan-outs in any sense (`send_bulk`/`recv_bulk` are byte streams), and the real find was one — `replay_inbox_batch`, a genuine uncovered fork whose per-slot sibling it *falls back to on batch error*, which is the code admitting it assumes the arms interchangeable.
-
-That one got a new `gap` status: a recorded, justified, uncovered fork. It prints on every clean run and an unjustified `gap` fails like any other entry. Writing an oracle for it needs a sync-side harness — its observable surface is a LoroDoc and the quarantine tables in another crate, not SQL — so classifying it away or faking coverage were the two wrong answers available.
-
-**Two limits stated rather than papered over.** The depth-guard probe discriminates guard *presence* but cannot pin the threshold: both paths test `>= 99` against a `depth < 100` walk, so a batch guard mis-set to `>= 98` refuses a tree the single path also refuses, and the oracle goes green. And the one-hop callee expansion added to the write discriminator does not fire on the case that motivated it — `ingest_replicated_batch`'s write is two hops and one crate away, so its recorded kind stays `read-only` with a reason that says exactly that. Recording a fix that did not work where intended is more useful than a header claiming a general guarantee.
+**A `gap` beside a `covered` still reads as a clean bill of health.** The two entries whose functions have committed failing reproducers said `covered` and named only the passing scenario; the module docs were careful about the divergence, the baseline was not. Both now carry a `reason` naming the `#[ignore]`d reproducer and its issue. No new field was needed — `reason` already coexists with `covered` on `read_blocks_bulk` — but it *was* previously unchecked on `covered` entries, so a placeholder `TODO` there would have been waved through; it is now held to the same bar as every other justification. The remaining honesty gap, left open deliberately: the reproducer name in a `reason` is prose, so deleting that test does not fail the guard the way deleting the `covered` test does.

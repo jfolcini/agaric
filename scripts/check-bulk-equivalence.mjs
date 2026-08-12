@@ -96,8 +96,19 @@
 // Each baseline entry carries a `status`:
 //
 //   covered      — an equivalence test exists; `test` names it and the guard
-//                  verifies a `fn <test>` still exists in the tree (so deleting
-//                  the test fails the guard rather than silently un-covering).
+//                  verifies that test still RUNS: a `fn <test>` exists, carries
+//                  a test attribute (`#[test]` / `#[tokio::test]` / …), and is
+//                  not `#[ignore]`d. Name-existence alone was not enough. This
+//                  module ships two DELIBERATELY `#[ignore]`d reproducers that
+//                  document unfixed bugs (#3818, #3819), so "an `#[ignore]`d
+//                  test in bulk_equivalence/" is a shape that already looks
+//                  normal here — a real covering test silenced with `#[ignore]`
+//                  would have been indistinguishable from the intended pattern,
+//                  and a `fn` renamed on top of a deleted test would have kept
+//                  the claim alive with nothing behind it.
+//                  An optional `reason` records anything the word "covered"
+//                  would otherwise overstate — e.g. a KNOWN divergence that the
+//                  named test does not exercise.
 //   converged    — the bulk path and the single path share ONE body (a common
 //                  `*_in_tx` / `*_subtree_*` helper), so there is nothing to
 //                  fork. Needs a `reason`. Beware: "shares a helper" is a claim
@@ -138,7 +149,8 @@
 //   - a STALE baseline entry (the function is gone) — so the baseline only
 //     ratchets DOWN, exactly like `check-lib-layering.mjs`
 //   - a recorded kind that no longer matches the computed kind
-//   - a `covered` entry whose named test no longer exists
+//   - a `covered` entry whose named test no longer runs (gone, not a test, or
+//     `#[ignore]`d)
 //   - an `uncovered` entry, or any placeholder `TODO` reason
 //
 // Usage: node scripts/check-bulk-equivalence.mjs
@@ -194,6 +206,15 @@ const TEST_FILE_RE =
 
 const WRITE_PRIMITIVE_RE =
   /(append_local_op)|(begin_immediate)|(INSERT\s+(OR\s+\w+\s+)?INTO)|(UPDATE\s+[a-zA-Z_])|(DELETE\s+FROM)|(\.execute\()/i
+
+/** An attribute that makes an item a test harness entry point. */
+const TEST_ATTR_RE = /^#\[\s*(?:[a-z_][a-z0-9_]*\s*::\s*)*(?:test|rstest)\s*[([\]]/
+/** `#[ignore]` and `#[ignore = "why"]` (the string is blanked in `structural`). */
+const IGNORE_ATTR_RE = /^#\[\s*ignore\s*[=\]]/
+const CFG_ATTR_RE = /^#\[\s*cfg_attr\b/
+
+/** Qualifiers that may sit between an attribute stack and the `fn` keyword. */
+const FN_QUALIFIERS = new Set(['pub', 'async', 'unsafe', 'const', 'extern', 'default'])
 
 const VALID_STATUSES = new Set([
   'covered',
@@ -295,6 +316,93 @@ export function blank(src, { blankStrings }) {
   return out.join('')
 }
 
+/**
+ * Index of the `open` delimiter matching the `close` delimiter at `closeAt`,
+ * scanning BACKWARDS. `-1` when the text is unbalanced.
+ */
+function matchBackwards(s, closeAt, open, close) {
+  let depth = 0
+  for (let j = closeAt; j >= 0; j -= 1) {
+    if (s[j] === close) depth += 1
+    else if (s[j] === open) {
+      depth -= 1
+      if (depth === 0) return j
+    }
+  }
+  return -1
+}
+
+/**
+ * The OUTER attributes attached to the `fn` whose keyword starts at `at`, in
+ * source order, read from the STRUCTURAL view.
+ *
+ * Read backwards rather than by slicing a fixed window before the signature,
+ * because a fixed window cannot tell "this item's attributes" from "the
+ * previous item's attributes" — and both of the things this parser must decide
+ * (is it a test? is it `#[ignore]`d?) are wrong in the dangerous direction if
+ * they read a neighbour's stack.
+ *
+ * Two properties of `blank()` make the walk short: doc comments are already
+ * spaces, so stepping over whitespace steps over them for free, and every
+ * string literal is blanked, so no bracket inside one can unbalance the match.
+ *
+ * `#![…]` is an INNER attribute of the ENCLOSING item (the `#![proptest_config]`
+ * at the top of a `proptest!` block), not of this fn, so the stack ends there.
+ *
+ * @param {string} structural
+ * @param {number} at index of the `f` in `fn`
+ * @returns {string[]}
+ */
+export function attrsBefore(structural, at) {
+  let i = at
+  // Step back over the signature's qualifiers: `pub(crate) async unsafe fn`.
+  for (;;) {
+    while (i > 0 && /\s/.test(structural[i - 1])) i -= 1
+    if (i > 0 && structural[i - 1] === ')') {
+      const open = matchBackwards(structural, i - 1, '(', ')')
+      if (open === -1) break
+      i = open
+      continue
+    }
+    const end = i
+    while (i > 0 && /[A-Za-z0-9_]/.test(structural[i - 1])) i -= 1
+    const word = structural.slice(i, end)
+    if (word.length > 0 && FN_QUALIFIERS.has(word)) continue
+    i = end
+    break
+  }
+  const attrs = []
+  for (;;) {
+    while (i > 0 && /\s/.test(structural[i - 1])) i -= 1
+    if (i === 0 || structural[i - 1] !== ']') break
+    const open = matchBackwards(structural, i - 1, '[', ']')
+    if (open <= 0 || structural[open - 1] !== '#') break
+    attrs.push(structural.slice(open - 1, i))
+    i = open - 1
+  }
+  return attrs.toReversed()
+}
+
+/**
+ * Whether an attribute stack describes a test that RUNS.
+ *
+ * `'live'` is the only answer callers may act on positively; it is emitted
+ * only when a test attribute is present unconditionally and no `#[ignore]`
+ * is. Everything this parser cannot resolve — notably a `cfg_attr` that could
+ * ATTACH an `ignore`, or a test attribute that only exists under some `cfg` —
+ * lands on `'ignored'` / `'not-a-test'` on purpose: the guard's job here is to
+ * complain when it cannot SEE the test running, not to assume it does.
+ *
+ * @param {string[]} attrs
+ * @returns {'live' | 'ignored' | 'not-a-test'}
+ */
+export function testKindOf(attrs) {
+  if (!attrs.some((a) => TEST_ATTR_RE.test(a))) return 'not-a-test'
+  const conditionalIgnore = attrs.some((a) => CFG_ATTR_RE.test(a) && /\bignore\b/.test(a))
+  if (conditionalIgnore || attrs.some((a) => IGNORE_ATTR_RE.test(a))) return 'ignored'
+  return 'live'
+}
+
 /** Byte ranges covered by `#[cfg(test)]`-annotated items, from `structural`. */
 function cfgTestRanges(structural) {
   const ranges = []
@@ -365,7 +473,7 @@ function listRustFiles(dir) {
 /**
  * Every `fn` in a file, in source order, with its body span already resolved.
  *
- * @returns {{ name: string, at: number, body: string, isTest: boolean, inCfgTest: boolean }[]}
+ * @returns {{ name: string, at: number, body: string, testKind: string, isTest: boolean, inCfgTest: boolean }[]}
  */
 function fnsInFile(structural, content) {
   const skip = cfgTestRanges(structural)
@@ -391,15 +499,17 @@ function fnsInFile(structural, content) {
         }
       }
     }
-    // `#[test]` / `#[tokio::test]` / `#[rstest]` within the preceding 400
-    // chars — attribute stacks on these are short, and a false skip is
-    // strictly safer than a false demand for an equivalence test.
-    const preamble = structural.slice(Math.max(0, m.index - 400), m.index)
+    const testKind = testKindOf(attrsBefore(structural, m.index))
     out.push({
       name: m[1],
       at: m.index,
       body: braceStart === -1 ? '' : content.slice(braceStart, bodyEnd),
-      isTest: /#\[(tokio::)?(rs)?test\b|#\[test\]/.test(preamble),
+      testKind,
+      // For the INVENTORY, `isTest` only decides whether to demand a
+      // disposition, and a false skip is strictly safer than a false demand —
+      // so an `#[ignore]`d test still counts as a test here. The `covered`
+      // check reads `testKind` instead, where the safe direction is reversed.
+      isTest: testKind !== 'not-a-test',
       inCfgTest: inSkip(m.index),
     })
   }
@@ -472,18 +582,40 @@ export function inventory({ root, srcDirs, pinned = new Set() }) {
   return found
 }
 
-/** Every `fn <name>` defined anywhere under `srcDirs` — used to verify tests exist. */
-function definedFnNames(srcDirs) {
-  const names = new Set()
+/** `live` beats `ignored` beats `not-a-test` when a name is defined more than once. */
+const TEST_KIND_RANK = { live: 3, ignored: 2, 'not-a-test': 1 }
+
+/**
+ * Every `fn <name>` defined anywhere under `srcDirs`, mapped to whether it is a
+ * test that RUNS — used to verify that a `covered` entry's test still covers
+ * something. A name defined more than once takes its BEST kind: the claim a
+ * `covered` entry makes is "a live test by this name exists", and a same-named
+ * helper elsewhere in the workspace should not falsify it.
+ *
+ * @returns {Map<string, 'live' | 'ignored' | 'not-a-test'>}
+ */
+function testFnKinds(srcDirs) {
+  const kinds = new Map()
   for (const srcDir of srcDirs) {
     for (const file of listRustFiles(srcDir)) {
       const structural = blank(fs.readFileSync(file, 'utf8'), { blankStrings: true })
-      const re = /\bfn\s+([a-z_][a-z0-9_]*)\s*[(<]/g
-      let m
-      while ((m = re.exec(structural)) !== null) names.add(m[1])
+      // Bodies are unused here, so the structural view stands in for the
+      // content view rather than paying for a second pass over the file.
+      for (const { name, testKind } of fnsInFile(structural, structural)) {
+        const prev = kinds.get(name)
+        if (!prev || TEST_KIND_RANK[testKind] > TEST_KIND_RANK[prev]) kinds.set(name, testKind)
+      }
     }
   }
-  return names
+  return kinds
+}
+
+/** Why a `covered` entry's named test does not count as coverage. */
+const DEAD_TEST_WHY = {
+  missing: 'no `fn` by that name exists in the tree',
+  'not-a-test':
+    'that `fn` exists but carries no test attribute (`#[test]` / `#[tokio::test]` / …), so nothing runs it',
+  ignored: '`#[ignore]`d, so it never runs — an ignored test covers nothing',
 }
 
 /** The `<path>::<fn>` keys a baseline pins by hand (entries carrying `pin`). */
@@ -498,12 +630,12 @@ function pinnedKeys(baseline) {
 export function analyze({ root, srcDirs, baseline }) {
   const live = inventory({ root, srcDirs, pinned: pinnedKeys(baseline) })
   const recorded = new Map(baseline.map((e) => [e.fn, e]))
-  const testNames = definedFnNames(srcDirs)
+  const testKinds = testFnKinds(srcDirs)
 
   const missing = [] // in the tree, not in the baseline
   const stale = [] // in the baseline, gone from the tree
   const kindDrift = []
-  const missingTests = []
+  const deadTests = [] // `covered`, but the named test does not run
   const undecided = []
   const gaps = [] // recorded, justified, still uncovered — reported, not fatal
 
@@ -519,7 +651,17 @@ export function analyze({ root, srcDirs, baseline }) {
       undecided.push({ fn: key, why: `unknown status \`${entry.status}\`` })
     } else if (entry.status === 'covered') {
       if (!entry.test) undecided.push({ fn: key, why: '`covered` with no `test` name' })
-      else if (!testNames.has(entry.test)) missingTests.push({ fn: key, test: entry.test })
+      else if (entry.reason === 'TODO') {
+        undecided.push({ fn: key, why: '`covered` with a placeholder `TODO` reason' })
+      } else {
+        // A `covered` entry claims a test PROVES the fold. It is only a claim
+        // if that test still runs, so an absent name, a non-test `fn` renamed
+        // on top of it, and an `#[ignore]` all land here.
+        const testKind = testKinds.get(entry.test) ?? 'missing'
+        if (testKind !== 'live') {
+          deadTests.push({ fn: key, test: entry.test, why: DEAD_TEST_WHY[testKind] })
+        }
+      }
     } else if (!entry.reason || entry.reason === 'TODO') {
       undecided.push({ fn: key, why: `\`${entry.status}\` with no justification` })
     } else if (entry.status === 'gap') {
@@ -537,7 +679,7 @@ export function analyze({ root, srcDirs, baseline }) {
     missing: missing.toSorted((a, b) => a.fn.localeCompare(b.fn)),
     stale: stale.toSorted(),
     kindDrift: kindDrift.toSorted((a, b) => a.fn.localeCompare(b.fn)),
-    missingTests: missingTests.toSorted((a, b) => a.fn.localeCompare(b.fn)),
+    deadTests: deadTests.toSorted((a, b) => a.fn.localeCompare(b.fn)),
     undecided: undecided.toSorted((a, b) => a.fn.localeCompare(b.fn)),
     gaps: gaps.toSorted((a, b) => a.fn.localeCompare(b.fn)),
   }
@@ -634,10 +776,15 @@ function runGuard() {
     console.error('answer), then re-run with --update-baseline.')
   }
 
-  if (r.missingTests.length > 0) {
+  if (r.deadTests.length > 0) {
     failed = true
-    console.error('ERROR: `covered` entr(ies) whose equivalence test no longer exists:')
-    for (const { fn, test } of r.missingTests) console.error(`  ${fn}  (expected fn ${test})`)
+    console.error('ERROR: `covered` entr(ies) whose equivalence test does not run:')
+    for (const { fn, test, why } of r.deadTests) console.error(`  ${fn}  (fn ${test}: ${why})`)
+    console.error('')
+    console.error('`covered` means a test PROVES this bulk path folds. Deleting that test,')
+    console.error('renaming an ordinary function on top of it, or silencing it with #[ignore]')
+    console.error('all leave the claim standing with nothing behind it. Restore the test, or')
+    console.error('re-record the entry as `gap` with the reason it is uncovered.')
   }
 
   if (r.undecided.length > 0) {
@@ -736,6 +883,78 @@ function runSelfTest() {
     ok('an unrelated same-file writer does not taint a read fan-out')
   } else fail('same-file expansion is call-scoped', JSON.stringify(scanFile(noHopSrc)))
 
+  // A `covered` entry is only a claim if the test it names RUNS. These are the
+  // shapes that decide it. `#[ignore]` matters acutely in this module: it ships
+  // two DELIBERATELY ignored reproducers, so a real covering test silenced with
+  // `#[ignore]` would otherwise have looked exactly like the intended pattern.
+  const kindOf = (src, name) => {
+    const structural = blank(src, { blankStrings: true })
+    return testKindOf(attrsBefore(structural, structural.indexOf(`fn ${name}`)))
+  }
+  for (const [label, src, name, want] of [
+    ['a plain fn is not a test', 'fn t() { }', 't', 'not-a-test'],
+    ['#[test]', '#[test]\nfn t() { }', 't', 'live'],
+    ['#[tokio::test]', '#[tokio::test]\nasync fn t() { }', 't', 'live'],
+    [
+      '#[tokio::test(flavor = …)]',
+      '#[tokio::test(flavor = "multi_thread", worker_threads = 2)]\nasync fn t() { }',
+      't',
+      'live',
+    ],
+    [
+      'a doc comment between the attribute and the fn',
+      '#[test]\n/// docs\nfn t() { }',
+      't',
+      'live',
+    ],
+    [
+      '#[ignore] after #[test]',
+      '#[test]\n#[ignore = "reproduces #3818"]\nasync fn t() { }',
+      't',
+      'ignored',
+    ],
+    ['#[ignore] before #[test]', '#[ignore]\n#[test]\nfn t() { }', 't', 'ignored'],
+    [
+      '#[cfg_attr(…, ignore)] fails closed',
+      '#[test]\n#[cfg_attr(miri, ignore)]\nfn t() { }',
+      't',
+      'ignored',
+    ],
+    [
+      'qualifiers between the stack and the fn',
+      '#[test]\npub(crate) async unsafe fn t() { }',
+      't',
+      'live',
+    ],
+    // The real shape of `compute_reverse_batch_matches_per_op_fold`: the
+    // enclosing `proptest!` block's INNER attribute must not end the walk early
+    // (it does not), nor be read as this fn's own.
+    [
+      'a proptest! body’s inner attribute',
+      'proptest! {\n  #![proptest_config(C)]\n  /// doc\n  #[test]\n  fn t(x in s()) { }\n}',
+      't',
+      'live',
+    ],
+    // The dangerous direction: an attribute stack belongs to ONE item. A fixed
+    // window before the signature cannot tell, and would call `b` a test.
+    [
+      'a preceding test does not leak onto the next fn',
+      '#[test]\nfn a() { }\nfn b() { }',
+      'b',
+      'not-a-test',
+    ],
+    [
+      'a preceding #[ignore] does not leak either',
+      '#[test]\n#[ignore]\nfn a() { }\n#[test]\nfn b() { }',
+      'b',
+      'live',
+    ],
+  ]) {
+    const got = kindOf(src, name)
+    if (got === want) ok(`testKind: ${label} → ${want}`)
+    else fail(`testKind: ${label}`, `got ${got}, want ${want}`)
+  }
+
   runTreeSelfTest(ok, fail)
   runCliSelfTest(ok, fail)
 
@@ -805,9 +1024,19 @@ function runTreeSelfTest(ok, fail) {
     // The equivalence test itself is BULK-NAMED (it names the function it
     // covers) and lives in a test path, so it must be excluded from the
     // inventory while staying FINDABLE by name for `covered` verification.
+    // Alongside it, the two shapes a `covered` entry must NOT be allowed to
+    // name: a deliberately `#[ignore]`d reproducer (this module ships two) and
+    // an ordinary helper that merely has a plausible name.
     fs.writeFileSync(
       path.join(srcDir, 'tests', 'oracle.rs'),
-      'fn covered_batch_matches_fold() { let _ = 1; }',
+      [
+        '#[tokio::test]',
+        'async fn covered_batch_matches_fold() { let _ = 1; }',
+        '#[tokio::test]',
+        '#[ignore = "#NNNN: reproduces a REAL divergence"]',
+        'async fn covered_batch_known_divergence() { let _ = 1; }',
+        'fn covered_batch_helper() { let _ = 1; }',
+      ].join('\n'),
     )
 
     const srcDirs = sourceRoots(tauri)
@@ -918,15 +1147,7 @@ function runTreeSelfTest(ok, fail) {
       ok('kind drift (read-only -> mutating) is flagged')
     } else fail('kind drift flagged', JSON.stringify(drifted.kindDrift))
 
-    // DELETED equivalence test -> flagged.
-    const noTest = analyze({
-      root: tmp,
-      srcDirs,
-      baseline: patched('::covered_batch', { test: 'vanished_test' }),
-    })
-    if (noTest.missingTests.some((t) => t.test === 'vanished_test')) {
-      ok('a `covered` entry whose test vanished is flagged')
-    } else fail('missing test flagged', JSON.stringify(noTest.missingTests))
+    runCoveredLivenessSelfTest(ok, fail, { tmp, srcDirs, patched })
 
     // `uncovered` / placeholder reasons -> flagged.
     const undecided = analyze({
@@ -1029,6 +1250,41 @@ function runTreeSelfTest(ok, fail) {
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
   }
+}
+
+/**
+ * `covered` is a CLAIM that a named test proves the fold, so the guard checks
+ * that the test still RUNS rather than that some `fn` answers to the name.
+ * Each case here is a way that claim goes hollow with the entry untouched — the
+ * middle one is the reason this check exists at all.
+ */
+function runCoveredLivenessSelfTest(ok, fail, { tmp, srcDirs, patched }) {
+  for (const [test, label] of [
+    ['vanished_test', 'whose test vanished'],
+    // Name-existence alone passes this one, and in THIS module an `#[ignore]`d
+    // test under bulk_equivalence/ is a shape that already looks intentional —
+    // two of them are, by design, documenting unfixed bugs.
+    ['covered_batch_known_divergence', 'naming an #[ignore]d test'],
+    // What a rename leaves behind when the test is deleted and an ordinary
+    // function inherits the name.
+    ['covered_batch_helper', 'naming a non-test fn'],
+  ]) {
+    const r = analyze({ root: tmp, srcDirs, baseline: patched('::covered_batch', { test }) })
+    if (r.deadTests.some((t) => t.test === test)) ok(`a \`covered\` entry ${label} is flagged`)
+    else fail(`covered entry ${label}`, JSON.stringify(r.deadTests))
+  }
+
+  // A `covered` entry may carry a `reason` (a known divergence the named test
+  // does NOT exercise), so that field is held to the same bar as every other
+  // justification rather than waved through because the status is `covered`.
+  const todoReason = analyze({
+    root: tmp,
+    srcDirs,
+    baseline: patched('::covered_batch', { reason: 'TODO' }),
+  })
+  if (todoReason.undecided.some((u) => u.fn.endsWith('::covered_batch'))) {
+    ok('a `covered` entry with a placeholder `TODO` reason is flagged')
+  } else fail('covered TODO reason flagged', JSON.stringify(todoReason.undecided))
 }
 
 /**

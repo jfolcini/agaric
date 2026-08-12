@@ -388,8 +388,9 @@ fn has_directive_for_target(filter: &str, target: &str) -> bool {
 /// #3346 (programme #3351, theme T2): the batch-vs-fold equivalence oracle —
 /// drive the same inputs through a bulk command once and through its
 /// single-item sibling in a loop, then diff the resulting observable state.
-/// Covers the three GENUINELY FORKED bulk paths (`delete_blocks_by_ids_inner`,
-/// `restore_blocks_by_ids_inner`, `reverse::compute_reverse_batch`); the
+/// Covers the four GENUINELY FORKED bulk paths (`delete_blocks_by_ids_inner`,
+/// `restore_blocks_by_ids_inner`, `purge_blocks_by_ids_inner`,
+/// `reverse::compute_reverse_batch`); the
 /// `scripts/check-bulk-equivalence.mjs` ratchet keeps the inventory honest.
 #[cfg(test)]
 mod bulk_equivalence;

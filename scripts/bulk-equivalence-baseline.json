@@ -4,19 +4,19 @@
     "kind": "read-only",
     "status": "covered",
     "test": "flat_space_bulk_positions_match_per_block",
-    "reason": "A read fan-out CAN still fork \u2014 on the ANSWER rather than on state (that is exactly what compute_reverse_batch did). Its docstring claims the bulk reprojection is byte-identical to the per-block read_block path including the dense `position` rank, and that claim is already falsifiable: reads.rs::read_blocks_bulk_tests projects every block BOTH ways and compares, on a flat 200-sibling space and on a scrambled multi-parent one (nested_multi_parent_bulk_positions_match_per_block). Widening the scan is what made this coverage visible to the ratchet"
+    "reason": "A read fan-out CAN still fork — on the ANSWER rather than on state (that is exactly what compute_reverse_batch did). Its docstring claims the bulk reprojection is byte-identical to the per-block read_block path including the dense `position` rank, and that claim is already falsifiable: reads.rs::read_blocks_bulk_tests projects every block BOTH ways and compares, on a flat 200-sibling space and on a scrambled multi-parent one (nested_multi_parent_bulk_positions_match_per_block). Widening the scan is what made this coverage visible to the ratchet"
   },
   {
     "fn": "src-tauri/agaric-engine/src/loro/engine/snapshot.rs::import_batch_with_changed_purged_tagscope",
     "kind": "read-only",
     "status": "converged",
-    "reason": "ONE BODY: a single-expression delegate to import_payload_with_changed_purged_tagscope(ImportPayload::Batch(..)), the same body the single-blob path reaches with ImportPayload::Single. Everything after the doc.import* call \u2014 diff capture, no-op short-circuit, legacy-migration fallback, changed/purged/tag-scope resolution \u2014 is payload-agnostic and shared. The batch-vs-single difference lives inside loro's own import_batch (one detached append per blob, one re-attach), not in this crate"
+    "reason": "ONE BODY: a single-expression delegate to import_payload_with_changed_purged_tagscope(ImportPayload::Batch(..)), the same body the single-blob path reaches with ImportPayload::Single. Everything after the doc.import* call — diff capture, no-op short-circuit, legacy-migration fallback, changed/purged/tag-scope resolution — is payload-agnostic and shared. The batch-vs-single difference lives inside loro's own import_batch (one detached append per blob, one re-attach), not in this crate"
   },
   {
     "fn": "src-tauri/agaric-store/src/backlink/query.rs::fetch_block_rows_by_ids",
     "kind": "read-only",
     "status": "read-only",
-    "reason": "N-key SELECT fan-out; no writes. NOTE it carries an internal equivalence claim of its own \u2014 a positional IN(?,?,..) branch under SMALL_IN_LIMIT and a json_each(?) branch above it, documented as returning identical row sets. That is a batch-vs-batch parity, not a batch-vs-single one, and it forks nothing durable: a divergence would surface as a wrong read, never as divergent state"
+    "reason": "N-key SELECT fan-out; no writes. NOTE it carries an internal equivalence claim of its own — a positional IN(?,?,..) branch under SMALL_IN_LIMIT and a json_each(?) branch above it, documented as returning identical row sets. That is a batch-vs-batch parity, not a batch-vs-single one, and it forks nothing durable: a divergence would surface as a wrong read, never as divergent state"
   },
   {
     "fn": "src-tauri/agaric-store/src/cross_space_validation.rs::resolve_block_spaces_batch",
@@ -28,19 +28,19 @@
     "fn": "src-tauri/agaric-store/src/pagination/mod.rs::ensure_batch_within_cap",
     "kind": "read-only",
     "status": "not-a-fan-out",
-    "reason": "Not a fan-out at all: a two-line upper-bound check on a length, shared by the *_by_ids / batch family so they all reject an over-cap batch with one verbatim message. Caught by the name heuristic (`batch` segment), kept in the inventory rather than regex-excluded \u2014 narrowing the heuristic is how a real fan-out escapes it"
+    "reason": "Not a fan-out at all: a two-line upper-bound check on a length, shared by the *_by_ids / batch family so they all reject an over-cap batch with one verbatim message. Caught by the name heuristic (`batch` segment), kept in the inventory rather than regex-excluded — narrowing the heuristic is how a real fan-out escapes it"
   },
   {
     "fn": "src-tauri/agaric-sync/src/sync_protocol/loro_sync.rs::replay_inbox_batch",
     "kind": "mutating",
     "status": "gap",
-    "reason": "A GENUINE, UNCOVERED FORK \u2014 the one the widened scan was worth doing for. It collapses N imports + N projections + N slot deletes into one LoroDoc::import_batch, one union projection and one tx, against a per-slot sibling (replay_inbox_row) it also FALLS BACK to on any batch error. The fallback is the tell: the code already assumes the two arms are interchangeable. Their inputs differ in ways an oracle should pin \u2014 the batch gates blobs against a CUMULATIVE version base (gate_replay_blobs) where the per-row path gates each alone, and it purges the UNION of the batch's tombstones. No oracle yet: the harness in src-tauri/src/bulk_equivalence/ is app-crate, #[cfg(test)], and drives SQL+op_log state, while this arm's observable surface is a LoroDoc, the loro_sync_inbox/quarantine tables and a BatchReplayOutcome in another crate \u2014 a real scenario needs a sync-side harness, not a scenario file. Recorded as owed work rather than argued away; #3346 follow-up"
+    "reason": "A GENUINE, UNCOVERED FORK — the one the widened scan was worth doing for. It collapses N imports + N projections + N slot deletes into one LoroDoc::import_batch, one union projection and one tx, against a per-slot sibling (replay_inbox_row) it also FALLS BACK to on any batch error. The fallback is the tell: the code already assumes the two arms are interchangeable. Their inputs differ in ways an oracle should pin — the batch gates blobs against a CUMULATIVE version base (gate_replay_blobs) where the per-row path gates each alone, and it purges the UNION of the batch's tombstones. No oracle yet: the harness in src-tauri/src/bulk_equivalence/ is app-crate, #[cfg(test)], and drives SQL+op_log state, while this arm's observable surface is a LoroDoc, the loro_sync_inbox/quarantine tables and a BatchReplayOutcome in another crate — a real scenario needs a sync-side harness, not a scenario file. Recorded as owed work rather than argued away; #3346 follow-up"
   },
   {
     "fn": "src-tauri/agaric-sync/src/sync_protocol/operations.rs::batch_ops_for_wire",
     "kind": "read-only",
     "status": "not-a-fan-out",
-    "reason": "A PARTITIONER, not a fan-out: it slices one Vec<OpTransfer> into size-bounded chunks so each fits LORO_INLINE_MAX_BYTES on the wire. Pure, no I/O, no single-item sibling to agree with \u2014 the thing that must agree with a fold is its CALLER's ingest, not the slicing"
+    "reason": "A PARTITIONER, not a fan-out: it slices one Vec<OpTransfer> into size-bounded chunks so each fits LORO_INLINE_MAX_BYTES on the wire. Pure, no I/O, no single-item sibling to agree with — the thing that must agree with a fold is its CALLER's ingest, not the slicing"
   },
   {
     "fn": "src-tauri/agaric-sync/src/sync_protocol/operations.rs::ingest_replicated_batch",
@@ -52,7 +52,7 @@
     "fn": "src-tauri/agaric-sync/src/sync_protocol/operations.rs::ingest_replicated_batch_inner",
     "kind": "read-only",
     "status": "converged",
-    "reason": "ALREADY A FOLD: it loops the records and calls insert_replicated_op \u2014 the single-record ingest entry point \u2014 once each. There is one write body. What the loop adds around it is policy, not a second implementation (per-device stall/defer, #3726 ascending-seq reporting, #3727 stall accounting). CAVEAT on the `kind` field: this WRITES, but computes `read-only`, because insert_replicated_op's write is one more hop away in another crate (agaric_engine::dag::ingest_replicated_record) and the discriminator expands exactly one level and does not cross files. Recorded here rather than papered over: the recorded kind is the computed kind, and this reason is what the kind does not say"
+    "reason": "ALREADY A FOLD: it loops the records and calls insert_replicated_op — the single-record ingest entry point — once each. There is one write body. What the loop adds around it is policy, not a second implementation (per-device stall/defer, #3726 ascending-seq reporting, #3727 stall accounting). CAVEAT on the `kind` field: this WRITES, but computes `read-only`, because insert_replicated_op's write is one more hop away in another crate (agaric_engine::dag::ingest_replicated_record) and the discriminator expands exactly one level and does not cross files. Recorded here rather than papered over: the recorded kind is the computed kind, and this reason is what the kind does not say"
   },
   {
     "fn": "src-tauri/agaric-sync/src/sync_protocol/operations.rs::ingest_replicated_batch_with_fault",
@@ -82,7 +82,7 @@
     "fn": "src-tauri/agaric-sync/src/transport/bulk.rs::send_bulk",
     "kind": "read-only",
     "status": "not-a-fan-out",
-    "reason": "Moves ONE payload as an uninterrupted QUIC byte run (#78/#3464). `bulk` is the byte-stream sense \u2014 one attachment or snapshot, not N keys \u2014 so there is no fold to agree with; the fixed BULK_COPY_BYTES buffer is a memory bound and a progress-tick granularity, unobservable on the wire"
+    "reason": "Moves ONE payload as an uninterrupted QUIC byte run (#78/#3464). `bulk` is the byte-stream sense — one attachment or snapshot, not N keys — so there is no fold to agree with; the fixed BULK_COPY_BYTES buffer is a memory bound and a progress-tick granularity, unobservable on the wire"
   },
   {
     "fn": "src-tauri/src/commands/agenda.rs::count_agenda_batch",
@@ -154,7 +154,8 @@
     "fn": "src-tauri/src/commands/blocks/crud.rs::purge_blocks_by_ids_inner",
     "kind": "mutating",
     "status": "covered",
-    "test": "purge_blocks_by_ids_matches_per_block_fold"
+    "test": "purge_blocks_by_ids_matches_per_block_fold",
+    "reason": "NOT a clean bill of health. The named test covers the soft-deleted-cohort scenario and passes; a second committed scenario, purge_blocks_by_ids_purges_a_live_block_the_single_path_refuses, FAILS and is #[ignore]d as a reproducer for #3819 (the batch path hard-deletes a LIVE input id the single path refuses, with no op and no sync). Un-ignore it when #3819 is fixed"
   },
   {
     "fn": "src-tauri/src/commands/blocks/crud.rs::restore_blocks_by_ids",
@@ -166,7 +167,8 @@
     "fn": "src-tauri/src/commands/blocks/crud.rs::restore_blocks_by_ids_inner",
     "kind": "mutating",
     "status": "covered",
-    "test": "restore_blocks_by_ids_matches_per_block_fold"
+    "test": "restore_blocks_by_ids_matches_per_block_fold",
+    "reason": "NOT a clean bill of health. The named test covers the sibling-cohort scenario and passes; a second committed scenario, restore_blocks_by_ids_omits_the_1884_ancestor_chain_restore, FAILS and is #[ignore]d as a reproducer for #3818 (the batch path skips the #1884 ancestor-chain restore, orphaning a block restored under a still-deleted parent). Un-ignore it when #3818 is fixed"
   },
   {
     "fn": "src-tauri/src/commands/blocks/move_ops.rs::move_blocks_batch",
@@ -293,7 +295,7 @@
     "kind": "read-only",
     "status": "covered",
     "test": "compute_reverse_batch_matches_per_op_fold",
-    "pin": "NOT bulk-named (no batch/bulk/by_ids segment), so the name heuristic cannot see it \u2014 but it is the sixth of compute_reverse_batch's hand-copied prior-state kernels, sibling to five *_batch names the heuristic does catch. Pinned by exact key so deleting it fails the guard as a stale entry instead of vanishing silently"
+    "pin": "NOT bulk-named (no batch/bulk/by_ids segment), so the name heuristic cannot see it — but it is the sixth of compute_reverse_batch's hand-copied prior-state kernels, sibling to five *_batch names the heuristic does catch. Pinned by exact key so deleting it fails the guard as a stale entry instead of vanishing silently"
   },
   {
     "fn": "src-tauri/src/reverse/batch.rs::get_op_records_batch",
