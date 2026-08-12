@@ -137,6 +137,22 @@ describe('immutable tree updates', () => {
     expect(r.children).toHaveLength(2) // original untouched
   })
 
+  it('removeNode prunes a node nested inside a sub-group, not just top-level children', () => {
+    // The id being removed is NOT a direct child of the root — it only shows
+    // up once `removeNode` recurses into the sub-group. A prune that only
+    // filters the group it was called on (and never recurses) would leave
+    // both `x` and `y` behind.
+    const root = emptyTagBuilder()
+    const g = makeGroup('and')
+    let r = addChild(root, root.id, g)
+    const x = makeTagLeaf('X', 'x')
+    const y = makeTagLeaf('Y', 'y')
+    r = addChild(r, g.id, x)
+    r = addChild(r, g.id, y)
+    const next = removeNode(r, x.id)
+    expect(compileTagExpr(next)).toEqual({ type: 'Tag', value: 'Y' })
+  })
+
   it('setGroupOp changes a nested group combinator immutably', () => {
     const root = emptyTagBuilder()
     const next = setGroupOp(root, root.id, 'or')
@@ -175,5 +191,15 @@ describe('tagBuilderHasLeaves', () => {
     let r = addChild(root, root.id, g)
     r = addChild(r, g.id, makePrefixLeaf('x'))
     expect(tagBuilderHasLeaves(r)).toBe(true)
+  })
+})
+
+describe('stable-id source', () => {
+  it('hands out strictly increasing ids across allocations (React keys must never repeat or regress)', () => {
+    const a = makeTagLeaf('A', 'a')
+    const b = makeTagLeaf('B', 'b')
+    const c = makePrefixLeaf('proj')
+    expect(b.id).toBe(a.id + 1)
+    expect(c.id).toBe(b.id + 1)
   })
 })

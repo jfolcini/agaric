@@ -68,6 +68,29 @@ describe('getPayloadPreview', () => {
     const entry = makeEntry(JSON.stringify({ to_text: text }))
     expect(getPayloadPreview(entry)).toBe(text)
   })
+
+  it('returns null when content is present but is not a string', () => {
+    const entry = makeEntry(JSON.stringify({ content: 42 }), 'create_block')
+    expect(getPayloadPreview(entry)).toBeNull()
+  })
+
+  it('truncates content (create_block payload) at maxLen with "..."', () => {
+    const longText = 'b'.repeat(150)
+    const entry = makeEntry(JSON.stringify({ content: longText }), 'create_block')
+    expect(getPayloadPreview(entry)).toBe(`${'b'.repeat(100)}...`)
+  })
+
+  it('does not truncate content (create_block payload) when under maxLen', () => {
+    const shortText = 'b'.repeat(50)
+    const entry = makeEntry(JSON.stringify({ content: shortText }), 'create_block')
+    expect(getPayloadPreview(entry)).toBe(shortText)
+  })
+
+  it('does not truncate content (create_block payload) when exactly at maxLen', () => {
+    const text = 'b'.repeat(100)
+    const entry = makeEntry(JSON.stringify({ content: text }), 'create_block')
+    expect(getPayloadPreview(entry)).toBe(text)
+  })
 })
 
 describe('getPayloadRawContent', () => {
@@ -131,5 +154,10 @@ describe('getPropertyPayload', () => {
   it('returns null when key is missing', () => {
     const entry = makeEntry(JSON.stringify({ value: '2026-04-15' }), 'set_property')
     expect(getPropertyPayload(entry)).toBeNull()
+  })
+
+  it('excludes value from the result when present but not a string', () => {
+    const entry = makeEntry(JSON.stringify({ key: 'due_date', value: 42 }), 'set_property')
+    expect(getPropertyPayload(entry)).toEqual({ key: 'due_date' })
   })
 })

@@ -173,4 +173,50 @@ describe('tokenize', () => {
       expect(tokens[1]).toMatchObject({ kind: 'word', text: 'rest' })
     }
   })
+
+  // -------------------------------------------------------------------
+  // Mutation-survivor coverage (GH #3764)
+  // -------------------------------------------------------------------
+
+  it('finds the closing quote by searching for `"`, not an empty needle (tokenize.ts:101)', () => {
+    // A blanked search needle resolves `indexOf` to the very next
+    // position regardless of its content, closing the phrase one
+    // character too early whenever that next character happens to sit
+    // right before whitespace.
+    const tokens = tokenize('"a b"')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0]).toMatchObject({ kind: 'quoted', text: '"a b"', span: [0, 5] })
+  })
+
+  it('searches for the closing quote strictly after the opening one, not at/before it (tokenize.ts:101)', () => {
+    // Searching from `open - 1` (instead of `open + 1`) clamps back onto
+    // the opening quote itself, which is then misread as its own close
+    // whenever the very next character is whitespace.
+    const tokens = tokenize('" "')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0]).toMatchObject({ kind: 'quoted', text: '" "', span: [0, 3] })
+  })
+
+  it('resumes scanning exactly at close + 1, not close - 1, after a mid-word phrase (tokenize.ts:84)', () => {
+    // If `i` rewound to `close - 1` it would re-enter the phrase one
+    // character early; when that character is a trailing space just
+    // inside the closing quote, the word loop breaks there instead of
+    // after the quote, fragmenting the token into three pieces.
+    const tokens = tokenize('prop:key="ab " end')
+    expect(tokens).toHaveLength(2)
+    expect(tokens[0]).toMatchObject({ kind: 'word', text: 'prop:key="ab "', span: [0, 14] })
+    expect(tokens[1]).toMatchObject({ kind: 'word', text: 'end', span: [15, 18] })
+  })
+
+  it('only opens a mid-word phrase on an actual `"` strictly after the word start (tokenize.ts:81)', () => {
+    // If the guard were forced to always fire (or the `"` check
+    // inverted), the very first characters of a plain word would go
+    // looking ahead for a boundary-quote and — when one exists later in
+    // the input — would splice unrelated following text into this word
+    // instead of leaving it as its own token.
+    const tokens = tokenize('ab "cd"')
+    expect(tokens).toHaveLength(2)
+    expect(tokens[0]).toMatchObject({ kind: 'word', text: 'ab', span: [0, 2] })
+    expect(tokens[1]).toMatchObject({ kind: 'quoted', text: '"cd"', span: [3, 7] })
+  })
 })

@@ -179,6 +179,75 @@ describe('parseQueryExpression', () => {
       { key: 'priority', value: '1', operator: 'eq' },
     ])
   })
+
+  // --- Escaping / edge-case tests targeting specific parser branches ---
+
+  it('unescapes backslash-escaped operator characters before parsing property shorthand', () => {
+    // Markdown serialization escapes '=' as '\=' in block content; the parser
+    // must unescape it before the shorthand regex can see the operator.
+    const result = parseQueryExpression('property:key\\=value')
+    expect(result).toEqual({
+      type: 'filtered',
+      params: {},
+      propertyFilters: [{ key: 'key', value: 'value', operator: 'eq' }],
+      tagFilters: [],
+    })
+  })
+
+  it('ignores a token where the colon is the first character', () => {
+    // colonIdx === 0 must NOT satisfy the "has a prefix" gate.
+    const result = parseQueryExpression(':foo')
+    expect(result).toEqual({
+      type: 'unknown',
+      params: {},
+      propertyFilters: [],
+      tagFilters: [],
+    })
+  })
+
+  it('treats a property: token without an operator character as a plain param', () => {
+    // prefix === 'property' alone must not be sufficient to enter shorthand parsing.
+    const result = parseQueryExpression('property:plainvalue')
+    expect(result).toEqual({
+      type: 'unknown',
+      params: { property: 'plainvalue' },
+      propertyFilters: [],
+      tagFilters: [],
+    })
+  })
+
+  it('treats a tag: token containing "=" as a tag filter, not property shorthand', () => {
+    // An operator character in rest alone must not be sufficient without prefix === 'property'.
+    const result = parseQueryExpression('tag:has=equals')
+    expect(result).toEqual({
+      type: 'filtered',
+      params: {},
+      propertyFilters: [],
+      tagFilters: ['has=equals'],
+    })
+  })
+
+  it('drops a property shorthand token whose value does not start immediately after the key', () => {
+    // opMatch's leading \w+ must be anchored at the very start of rest.
+    const result = parseQueryExpression('property:=key=value')
+    expect(result).toEqual({
+      type: 'unknown',
+      params: {},
+      propertyFilters: [],
+      tagFilters: [],
+    })
+  })
+
+  it('drops a property shorthand token with an operator but no value after it', () => {
+    // opMatch's trailing (.+) must require at least one value character, not zero.
+    const result = parseQueryExpression('property:key=')
+    expect(result).toEqual({
+      type: 'unknown',
+      params: {},
+      propertyFilters: [],
+      tagFilters: [],
+    })
+  })
 })
 
 describe('buildFilters', () => {
@@ -253,6 +322,21 @@ describe('buildFilters', () => {
   it('defaults to Eq when operator is undefined', () => {
     const filters = buildFilters([{ key: 'due_date', value: '2025-01-01' }], [])
     expect(filters).toEqual([{ type: 'DueDate', op: 'Eq', value: '2025-01-01' }])
+  })
+
+  it('maps neq operator to Neq compare op', () => {
+    const filters = buildFilters([{ key: 'status', value: 'active', operator: 'neq' }], [])
+    expect(filters).toEqual([{ type: 'PropertyText', key: 'status', op: 'Neq', value: 'active' }])
+  })
+
+  it('maps lt operator to Lt compare op', () => {
+    const filters = buildFilters([{ key: 'status', value: 'active', operator: 'lt' }], [])
+    expect(filters).toEqual([{ type: 'PropertyText', key: 'status', op: 'Lt', value: 'active' }])
+  })
+
+  it('maps gte operator to Gte compare op', () => {
+    const filters = buildFilters([{ key: 'status', value: 'active', operator: 'gte' }], [])
+    expect(filters).toEqual([{ type: 'PropertyText', key: 'status', op: 'Gte', value: 'active' }])
   })
 })
 
