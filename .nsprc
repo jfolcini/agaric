@@ -1,1 +1,7 @@
-{}
+{
+  "1139346": {
+    "active": true,
+    "notes": "GHSA-jmr9-qjv8-65gv - extract-zip unvalidated symlink path traversal (high). NO FIXED VERSION EXISTS: the advisory range is <=2.0.1 and 2.0.1 is the latest published release, so this cannot be resolved by upgrading. `npm audit fix` proposes downgrading @wdio/cli 9.30.1 -> 8.14.6, a semver-major DOWNGRADE that does not remove the dependency either. Reach: devDependencies only, via @wdio/cli -> @wdio/utils -> @puppeteer/browsers -> extract-zip, used by the e2e-tauri WDIO lane to unpack browser drivers. `npm ls extract-zip --omit=dev` is empty, so it is absent from the shipped application tree and from every user-facing artifact. Exploiting it requires extracting an attacker-controlled archive; the only archives extracted are browser binaries fetched from official Chromium/Google endpoints over TLS. Time-boxed deliberately: re-evaluate at expiry and drop this entry the moment a patched extract-zip ships or WDIO stops depending on it - an exception with no expiry is a permanent silence, which is what this file exists to prevent.",
+    "expiry": "2026-11-12"
+  }
+}
