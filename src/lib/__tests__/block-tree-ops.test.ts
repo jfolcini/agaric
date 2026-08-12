@@ -153,9 +153,29 @@ describe('planSplit', () => {
     // route the fallback's first entry into `serializeSingleBlock` as though
     // it were a real block, which — not being a well-formed BlockLevelNode —
     // would hit the serializer's "unknown node type" path and log a warning.
-    // Spying on `logger.warn` (rather than asserting on Stryker's literal
-    // placeholder) pins that real invariant: zero parsed blocks means no
-    // block is ever handed to the serializer.
+    //
+    // Why the spy is load-bearing, not decoration: the `ArrayDeclaration`
+    // mutant on `?? []` (Stryker's `?? ["Stryker was here"]`) makes
+    // `blocks = ["Stryker was here"]`, so `blocks.length === 1` is true and
+    // `serializeSingleBlock(blocks[0])` runs on that placeholder string. That
+    // placeholder has no `type`, so `serializeBlockNode` falls into its
+    // unknown-node branch, which returns `''` — the SAME `content` the
+    // correct code produces from zero blocks. `content === markdown` is
+    // false either way, so both the real and mutated code return
+    // `{ kind: 'edit-only', content: '' }`: the test above this one (plain
+    // `toEqual`, no spy) passes under the mutant too and does NOT kill it.
+    // Only the `logger.warn` observation below distinguishes them: the
+    // correct code never calls `serializeBlockNode` at all (zero blocks), so
+    // `warn` stays uncalled; the mutant funnels the placeholder through the
+    // unknown-node path, which calls `onUnknownNode` → `logger.warn`.
+    //
+    // This couples the assertion to `notifyUnknownNodeTypeToast` in
+    // `src/editor/markdown-serialize-toast.ts` logging every unknown-node
+    // occurrence via `logger.warn` (see its line "logger.warn('serializer',
+    // ...unknown node type...")). If that call site ever stops using
+    // `logger.warn` — moves to a different log level or a different sink —
+    // this assertion goes vacuously green and silently stops guarding the
+    // invariant; re-derive the spy target from that file if it changes.
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const plan = planSplit('|---|')
     expect(plan).toEqual({ kind: 'edit-only', content: '' })

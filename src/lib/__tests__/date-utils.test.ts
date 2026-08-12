@@ -506,11 +506,11 @@ describe('week helpers (getWeekRange / getWeekDays / formatWeekRange)', () => {
   const FRIDAY = new Date(2026, 3, 10)
 
   beforeEach(() => {
-    localStorage.clear()
+    localStorage.removeItem('week-start-preference')
   })
 
   afterEach(() => {
-    localStorage.clear()
+    localStorage.removeItem('week-start-preference')
   })
 
   it('getWeekRange spans Monday..Sunday under the default preference', () => {
@@ -552,11 +552,11 @@ describe('week helpers (getWeekRange / getWeekDays / formatWeekRange)', () => {
 
 describe('getCalendarMonthRange (the 6-week grid the calendar actually renders)', () => {
   beforeEach(() => {
-    localStorage.clear()
+    localStorage.removeItem('week-start-preference')
   })
 
   afterEach(() => {
-    localStorage.clear()
+    localStorage.removeItem('week-start-preference')
   })
 
   it('starts at the week boundary on/before the 1st and spans exactly 42 days', () => {

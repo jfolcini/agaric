@@ -6,7 +6,7 @@
 | **Subagents** | 6 build + 6 review (+1 targeted follow-up) |
 | **Items closed** | `#3750` `#3752` `#3755` `#3756` `#3760` `#3761` `#3762` `#3763` `#3764` |
 | **Items modified** | `#3142` (53 survivor lines removed from the machine-readable block) |
-| **Tests added** | +34 (frontend) / +0 (backend) |
+| **Tests added** | +40 (frontend) / +0 (backend) |
 | **Files touched** | 8 |
 
 **Summary:** Triaged all 53 Stryker mutation survivors across nine frontend areas under the #3142 tracking issue — 28 killed with new tests, 25 recorded as accepted gaps after being proven equivalent. Every verdict came from a real per-module Stryker run read back out of `reports/mutation/<module>/mutation.json`, which turned out to matter: an authoritative verification pass at the end found live mutants on three lines that per-item review had already reported as cleared. Four follow-up issues were filed for findings the work surfaced.
@@ -37,10 +37,23 @@ No source file was modified. Sources were temporarily mutated during falsificati
 | graph-neighborhood | 0 | 6 | 90.38% | #3755 |
 | date-utils | 0 | 11 | 89.30% | #3752 |
 
+The **Killed** column sums to 28, short of the "+34 tests" in the metadata
+above — the difference is extra `date-utils` coverage work that doesn't show
+up as a "Killed" survivor in this table: `date-utils` shows 0 killed because
+none of its 11 documented gaps were killable (#3787), but the reviewer still
+spent budget closing the `NoCoverage` gap on four exported functions the
+survivor list couldn't see (`getWeekRange` / `getWeekDays` /
+`formatWeekRange` / `getCalendarMonthRange`, #3788), taking `date-utils` from
+14 uncovered mutants to 1. Those tests raise the test count without
+incrementing any area's Killed total.
+
 Scores are over each module's mutants at the pinned Stryker config — not statements about the modules' coverage generally.
 
 **Verification:**
-- `npx vitest run` over the seven changed test files — all green.
+- `npx vitest run` over the ten test files it exercises (the seven changed
+  files above plus three related unchanged suites: `date-utils.property.test.ts`,
+  `search-query/__tests__/to-search-filter.test.ts`, and
+  `graph-neighborhood.test.ts`) — 326 tests, all green.
 - `node scripts/run-mutation.mjs` over all nine modules — final survivor set is exactly the 25 documented equivalents; every kill was additionally demonstrated RED by hand-applying Stryker's exact `replacement` before restoring the source.
 - `git diff --name-only | grep -v __tests__` — empty, confirming no source left mutated.
 - pre-commit hook — all staged-file checks pass.

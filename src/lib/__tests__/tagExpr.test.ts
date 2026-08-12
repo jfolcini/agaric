@@ -199,7 +199,11 @@ describe('stable-id source', () => {
     const a = makeTagLeaf('A', 'a')
     const b = makeTagLeaf('B', 'b')
     const c = makePrefixLeaf('proj')
-    expect(b.id).toBe(a.id + 1)
-    expect(c.id).toBe(b.id + 1)
+    // Strictly increasing (and therefore distinct) is the property that
+    // actually matters for React keys — not "+1 exactly" — so this doesn't
+    // couple to nextId ever allocating more than one id per constructor call.
+    expect(b.id).toBeGreaterThan(a.id)
+    expect(c.id).toBeGreaterThan(b.id)
+    expect(new Set([a.id, b.id, c.id]).size).toBe(3)
   })
 })
