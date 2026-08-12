@@ -13,7 +13,7 @@
  * Runs under happy-dom — no browser APIs beyond DOM are touched.
  */
 
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CHUNK_SIZE,
@@ -179,18 +179,13 @@ describe('compileQuery', () => {
 })
 
 describe('compileQuery — Unicode correctness (#756)', () => {
-  // Every İ-based test below assumes the runtime's default locale folds
-  // U+0130 to two units. That is NOT universal: under tr/az it folds to a
-  // single 'i', and these tests would fail or — worse — pass while exercising
-  // a different code path. Assert it once here so the cause is named rather
-  // than debugged. The underlying production dependence on the ambient locale
-  // is #3800; when that is fixed to use toLowerCase(), this guard can go.
-  beforeAll(() => {
-    expect(
-      'İ'.toLocaleLowerCase(),
-      'default locale does not fold U+0130 to two units (tr/az?) — see #3800',
-    ).toHaveLength(2)
-  })
+  // The İ-based tests below need U+0130 to fold to two units. That used to be
+  // an assumption about the ambient locale (under tr/az it folds to a single
+  // 'i'), guarded by a `beforeAll`. #3800 moved the matcher to `toLowerCase()`,
+  // which is locale-independent, so the guard is gone: U+0130 → 'i' + U+0307
+  // is now a fixed Unicode fact rather than a property of the host's LC_ALL.
+  // See the `locale-independent case folding (#3800)` describe below, which
+  // pins that invariant directly.
 
   it('literal offsets stay aligned after a length-changing case fold (İ)', () => {
     const compiled = compileQuery('bravo', defaultOpts) as Extract<
@@ -247,7 +242,7 @@ describe('compileQuery — Unicode correctness (#756)', () => {
   it('length-preserving folds use whole-string folding, not per-code-point folding', () => {
     // Kills matcher.ts:231:7 [ConditionalExpression → false] and 231:40
     // [BlockStatement → {}], i.e. "always take the slow per-code-point path".
-    // Greek final sigma is the discriminator: `'ΑΣ'.toLocaleLowerCase()` is
+    // Greek final sigma is the discriminator: `'ΑΣ'.toLowerCase()` is
     // 'ας' (context-sensitive ς), while folding code point by code point
     // yields 'ασ'. Both are 2 units long, so the fast path is the one that
     // must run — and a query must always find itself.
@@ -263,12 +258,13 @@ describe('compileQuery — Unicode correctness (#756)', () => {
     // (U+0130 → 'i' + U+0307) forces the slow folded path, which had no
     // wholeWord coverage at all: mutants that ignore the filter emit the
     // 'bravo' inside 'bravocado' too, and the `&&` mutant emits nothing.
-    // Precondition, not decoration: `toLocaleLowerCase()` is locale-sensitive
-    // and under a tr/az default locale 'İ' folds to a single 'i', which is
-    // length-preserving — the fast path would run, the assertion below would
-    // still pass, and this test would silently stop covering anything. Fail
-    // loudly instead.
-    expect('İ'.toLocaleLowerCase()).toHaveLength(2)
+    // Precondition, not decoration: if 'İ' ever stopped folding to two units
+    // it would be length-preserving, the fast path would run, the assertion
+    // below would still pass, and this test would silently stop covering
+    // anything. Since #3800 the matcher folds with `toLowerCase()`, so this
+    // holds on every host regardless of LC_ALL — assert it anyway so the
+    // coupling between this test and the slow path is explicit.
+    expect('İ'.toLowerCase()).toHaveLength(2)
     const compiled = compileQuery('bravo', { ...defaultOpts, wholeWord: true }) as Extract<
       CompiledQuery,
       { kind: 'literal' }
@@ -283,6 +279,98 @@ describe('compileQuery — Unicode correctness (#756)', () => {
       isRegex: true,
     }) as Extract<CompiledQuery, { kind: 'regex' }>
     expect(compiled.matcher('мир мирный')).toEqual([{ start: 0, end: 3 }])
+  })
+})
+
+describe('compileQuery — locale-independent case folding (#3800)', () => {
+  // The matcher used to fold with `toLocaleLowerCase()` and no locale
+  // argument, so case-insensitive find gave DIFFERENT ANSWERS on identical
+  // content depending on the host's default locale:
+  //   - tr/az: 'I' folds to dotless 'ı', so the query `i` stopped matching `I`;
+  //   - lt:    folds grow combining dots (U+00CC/U+00CD/U+0128/U+0130), so the
+  //            query `ĩ` stopped matching `Ĩ` — a query stopped finding itself.
+  // These tests pin the fix (`toLowerCase()`) WITHOUT mutating process env:
+  // each assertion is true under `toLowerCase()` on every host and false under
+  // `toLocaleLowerCase()` on a tr/az or lt host, so running the suite under
+  // `LC_ALL=tr_TR.UTF-8` / `lt_LT.UTF-8` is what exercises the regression —
+  // the suite itself stays locale-agnostic, as the rest of the file requires.
+  //
+  // Every fixture appends an em dash (U+2014). That is load-bearing, not
+  // decoration: V8 folds Latin-1-representable strings through a fast path
+  // that ignores the default locale entirely, so `'Istanbul'` folds the same
+  // everywhere while `'It’s Istanbul'` does not. One non-Latin-1 character —
+  // a curly quote, an em dash, an emoji — anywhere in a text node flips the
+  // whole node onto the locale-sensitive ICU path. Real prose is full of them,
+  // which is why this was a live bug and not a curiosity.
+  const EM_DASH = '—'
+
+  // Code points whose lowercase mapping differs between `toLowerCase()` and at
+  // least one locale-tailored mapping. Under `toLowerCase()` each one must be
+  // found by its own lowercase form.
+  const tripwires: Array<{ label: string; upper: string; divergentIn: string }> = [
+    { label: 'U+0049 LATIN CAPITAL LETTER I', upper: 'I', divergentIn: 'tr/az → dotless ı' },
+    {
+      label: 'U+00CC LATIN CAPITAL LETTER I WITH GRAVE',
+      upper: 'Ì',
+      divergentIn: 'lt → i+0307+0300',
+    },
+    {
+      label: 'U+00CD LATIN CAPITAL LETTER I WITH ACUTE',
+      upper: 'Í',
+      divergentIn: 'lt → i+0307+0301',
+    },
+    {
+      label: 'U+0128 LATIN CAPITAL LETTER I WITH TILDE',
+      upper: 'Ĩ',
+      divergentIn: 'lt → i+0307+0303',
+    },
+    {
+      label: 'U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE',
+      upper: 'İ',
+      divergentIn: 'tr/az → bare i',
+    },
+  ]
+
+  for (const { label, upper, divergentIn } of tripwires) {
+    it(`lowercase query finds ${label} (diverges ${divergentIn})`, () => {
+      const compiled = compileQuery(upper.toLowerCase(), defaultOpts) as Extract<
+        CompiledQuery,
+        { kind: 'literal' }
+      >
+      expect(compiled.matcher(upper + EM_DASH)).toEqual([{ start: 0, end: upper.length }])
+    })
+  }
+
+  it('ASCII query matches ASCII text that shares a node with a non-Latin-1 char', () => {
+    // The reported symptom, in the shape a user would hit it: searching
+    // `index` in a heading that happens to contain an em dash returned
+    // nothing at all on a Turkish host.
+    const compiled = compileQuery('index', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    expect(compiled.matcher('The Index — v2')).toEqual([{ start: 4, end: 9 }])
+  })
+
+  it('uppercase query matches lowercase text across the same divergence', () => {
+    // The mirror direction: the needle is folded by `compileQuery` and the
+    // haystack by `scanLiteral`/`scanLiteralFolded`. All three sites have to
+    // use the SAME fold — a half-applied fix leaves the needle folded one way
+    // and the haystack the other, and this case is where that shows up.
+    const compiled = compileQuery('ICE', defaultOpts) as Extract<CompiledQuery, { kind: 'literal' }>
+    expect(compiled.matcher('nice 😀 ICE')).toEqual([
+      { start: 1, end: 4 },
+      { start: 8, end: 11 },
+    ])
+  })
+
+  it('does not conflate dotless ı with ASCII i', () => {
+    // Locale independence is not "fold everything together": U+0131 is a
+    // distinct letter and `i` must not match it. A fix that reached for a
+    // Turkish-aware fold instead of dropping locale sensitivity would break
+    // this.
+    const compiled = compileQuery('i', defaultOpts) as Extract<CompiledQuery, { kind: 'literal' }>
+    expect(compiled.matcher(`ı${EM_DASH}`)).toEqual([])
   })
 })
 
@@ -1119,9 +1207,9 @@ describe('runWalker', () => {
  * B. 221:7 [ConditionalExpression] `needle.length === 0` → false, and
  *    221:35 [ArrayDeclaration] `[]` → ["Stryker was here"] — `scanLiteral` is
  *    reached only through `compileQuery`, which returns `{kind:'empty'}` for
- *    `query.length === 0`; and no case fold shrinks a string (verified over all
- *    0x110000 code points, in every locale checked — en, el, tr, az, lt: zero
- *    mappings with `f.length < ch.length`). So the needle is never empty and
+ *    `query.length === 0`; and no case fold shrinks a string (verified for
+ *    `toLowerCase()` over all 0x110000 code points: zero mappings with
+ *    `f.length < ch.length`). So the needle is never empty and
  *    the early return never runs.
  *
  * C. 251:10 and 296:10 [EqualityOperator] `from <= haystack.length` /
@@ -1133,18 +1221,19 @@ describe('runWalker', () => {
  * D. The folded (length-changing case fold) path's index guards and its
  *    duplicate-span filter.
  *
- *    CAVEAT ON THE UNDERLYING FACT. Under the default locale U+0130 'İ' →
- *    'i' + U+0307 is the only code point whose lowercase mapping expands
- *    (verified over 0x110000 code points). That is NOT a universal Unicode
- *    fact: `matcher.ts` folds with `toLocaleLowerCase()` and passes no locale,
- *    so the expanding set follows the runtime's default locale — tr/az expand
- *    NOTHING (the folded path is dead there), and lt expands FOUR (U+00CC,
- *    U+00CD, U+0128, U+0130, e.g. 'Ì' → 'i' + U+0307 + U+0300). The verdicts
- *    below hold in all three cases, because what they actually need is weaker:
- *    (i) `idx <= folded.length - needle.length` bounds every lookup whatever
- *    the fold widths are, and (ii) no fold in any of these locales contains two
+ *    THE UNDERLYING FACT. U+0130 'İ' → 'i' + U+0307 is the only code point
+ *    whose `toLowerCase()` mapping expands (verified by exhaustive scan over
+ *    all 0x110000 code points). Since #3800 `matcher.ts` folds with
+ *    `toLowerCase()`, so that IS locale-independent and holds on every host.
+ *    It was not always: while the module folded with `toLocaleLowerCase()` and
+ *    no locale the expanding set followed the runtime's default locale — tr/az
+ *    expanded NOTHING (the folded path was dead there) and lt expanded FOUR
+ *    (U+00CC, U+00CD, U+0128, U+0130, e.g. 'Ì' → 'i' + U+0307 + U+0300). The
+ *    verdicts below held in all of those cases too, because what they actually
+ *    need is weaker: (i) `idx <= folded.length - needle.length` bounds every
+ *    lookup whatever the fold widths are, and (ii) no fold contains two
  *    ADJACENT IDENTICAL code units, which is what a duplicate span would
- *    require. Do not restate the one-expanding-code-point figure as universal.
+ *    require.
  *
  *    Both defences are therefore unreachable:
  *      - `foldedStart`/`foldedEnd` have exactly `folded.length` entries and the
@@ -1215,14 +1304,19 @@ describe('runWalker', () => {
  * path's duplicate-span filter (D), and the redundant guards in E (361:41,
  * 370:17).
  *
- * Also follow-up-worthy, and a behaviour question rather than dead code:
- * `compileQuery` / `scanLiteralFolded` fold with `toLocaleLowerCase()` and pass
- * no locale, so case-insensitive find silently changes meaning with the user's
- * locale — under tr/az 'i' no longer matches 'I', and under lt the fold grows
- * combining dots. VSCode uses `toLowerCase()` for exactly this reason. Several
- * tests in this file (both the U+0130 ones) assume a non-tr/az default locale;
- * the folded-path wholeWord test asserts that assumption up front so it fails
- * loudly instead of going quietly vacuous.
+ * RESOLVED (#3800): the three fold sites (`compileQuery`, `scanLiteral`,
+ * `scanLiteralFolded`) used to call `toLocaleLowerCase()` with no locale, so
+ * case-insensitive find silently changed meaning with the user's locale — under
+ * tr/az 'i' stopped matching 'I', and under lt the fold grew combining dots so
+ * 'ĩ' stopped matching 'Ĩ'. They now use `toLowerCase()`, as VSCode's find
+ * widget does. The `locale-independent case folding (#3800)` describe pins the
+ * invariant, and the ambient-locale precondition guards those tests needed are
+ * gone.
+ *
+ * Note that the duplicate-span filter in `scanLiteralFolded` (D) is now
+ * provably rather than empirically dead: with a single expanding code point,
+ * fixed across all hosts, no needle can produce two match offsets whose
+ * folded spans coincide. Removing it is tracked in #3809.
  *
  * Note on 385:11 (`!(node instanceof Text)` → false, listed under A): the guard
  * is redundant under `SHOW_TEXT` and would additionally misfire across realms,
