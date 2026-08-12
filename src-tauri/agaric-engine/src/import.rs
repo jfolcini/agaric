@@ -123,6 +123,17 @@ pub struct ParseOutput {
 /// associations. Filtering them here (like the reserved keys) would silently
 /// drop the semantic round-trip, so they are handled by interception, not
 /// exclusion.
+///
+/// DRIFT WARNING (#3797) — this key set is duplicated in FOUR places and
+/// nothing checks them against each other. Change one, change all four:
+///   1. here — `FRONTMATTER_RESERVED_KEYS` (Rust);
+///   2. `INLINE_PROPERTY_RESERVED_KEYS` in `src/lib/inline-property-parse.ts`
+///      (TypeScript, the inline `key:: value` parser);
+///   3. the page-property `key NOT IN (…)` in `export_page_markdown_inner`
+///      (`src-tauri/src/commands/pages/markdown.rs`);
+///   4. the descendant-property `key NOT IN (…)` in that same function.
+/// Sites 3 and 4 are literal SQL, so grepping for either constant name will
+/// NOT find them.
 const FRONTMATTER_RESERVED_KEYS: &[&str] = &[
     "space",
     "is_space",

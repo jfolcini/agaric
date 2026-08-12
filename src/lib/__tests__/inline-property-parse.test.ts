@@ -2,7 +2,7 @@
  * Unit tests for the inline `key:: value` property parser (#2675).
  *
  * The line-level rules mirror the Logseq import parser
- * (`src-tauri/src/import.rs`): split at the FIRST `":: "`, key must match
+ * (`src-tauri/agaric-engine/src/import.rs`): split at the FIRST `":: "`, key must match
  * `^[A-Za-z0-9_-]{1,64}$`, value must be non-empty after trimming, reserved
  * keys and fenced code are skipped. Divergences (reserved keys stay literal
  * instead of being dropped) are documented in the module docstring.
@@ -19,6 +19,28 @@ import {
   parseInlineProperties,
   stripPropertyLines,
 } from '../inline-property-parse'
+
+/**
+ * The reserved keys, spelled out independently of the constant under test.
+ * Both reserved-key tests below drive off THIS literal, never off
+ * `INLINE_PROPERTY_RESERVED_KEYS` — a test whose fixtures come from the value
+ * it asserts over passes for any value of that constant (#3797). Mirrors
+ * `FRONTMATTER_RESERVED_KEYS` in `src-tauri/agaric-engine/src/import.rs` and
+ * the two `key NOT IN (…)` SQL lists in `export_page_markdown_inner`
+ * (`src-tauri/src/commands/pages/markdown.rs`).
+ */
+const EXPECTED_RESERVED_KEYS = [
+  'space',
+  'is_space',
+  'created_at',
+  'completed_at',
+  'repeat',
+  'repeat-until',
+  'repeat-count',
+  'repeat-seq',
+  'repeat-origin',
+  'template',
+]
 
 function def(value_type: string, options: string | null = null): PropertyDefinition {
   return { key: 'k', value_type, options, created_at: '2026-01-01T00:00:00Z' }
@@ -95,32 +117,22 @@ describe('parseInlineProperties', () => {
     expect(parseInlineProperties('status::')).toEqual([])
   })
 
+  // Behavioural half: the parser actually SKIPS each reserved key. Kept
+  // alongside the membership pin below because only this test fails if the
+  // `INLINE_PROPERTY_RESERVED_KEYS.has(key)` guard is deleted from
+  // `parseInlineProperties`. It iterates the independent literal, not the
+  // constant, so it can no longer pass vacuously (#3797).
   it('skips reserved / exporter-managed keys (they stay literal)', () => {
-    for (const key of INLINE_PROPERTY_RESERVED_KEYS) {
+    for (const key of EXPECTED_RESERVED_KEYS) {
       expect(parseInlineProperties(`${key}:: something`)).toEqual([])
     }
   })
 
-  // Line 58-68 [ArrayDeclaration / StringLiteral]: the loop above iterates
-  // `INLINE_PROPERTY_RESERVED_KEYS` itself, so an empty-set mutant or any
-  // single key blanked to `''` still "passes" — the test derives its
-  // expectation from the very value under test. Pin the literal contents
-  // instead so the constant's actual membership is checked.
+  // Membership half — line 58-68 [ArrayDeclaration / StringLiteral]: pins the
+  // constant's actual contents against the independent literal, so an
+  // empty-set mutant or any single key blanked to `''` fails here.
   it('has the exact reserved key list (mirrors FRONTMATTER_RESERVED_KEYS in src-tauri/agaric-engine/src/import.rs)', () => {
-    expect([...INLINE_PROPERTY_RESERVED_KEYS].toSorted()).toEqual(
-      [
-        'space',
-        'is_space',
-        'created_at',
-        'completed_at',
-        'repeat',
-        'repeat-until',
-        'repeat-count',
-        'repeat-seq',
-        'repeat-origin',
-        'template',
-      ].toSorted(),
-    )
+    expect([...INLINE_PROPERTY_RESERVED_KEYS].toSorted()).toEqual(EXPECTED_RESERVED_KEYS.toSorted())
   })
 
   it('skips lines inside fenced code blocks', () => {
@@ -191,26 +203,27 @@ describe('parseInlineProperties', () => {
     expect(parseInlineProperties('context:: \\\nmore text')).toEqual([])
   })
 
-  // Ledger — Line 136 [ConditionalExpression `value === '' → false`] and
-  // [StringLiteral `'' → "Stryker was here!"`]: both survive but the branch
-  // they guard is UNREACHABLE, not merely untested. `trimmed` (line 123) is
-  // always fully right-trimmed before `indexOf(':: ')` runs, so the matched
-  // separator's space can never be `trimmed`'s last character (trim() would
-  // have removed it) — the value slice therefore always retains at least one
-  // trailing non-whitespace char, and `value.trim()` can never be `''` at
-  // this point. Verified two ways (script, not committed):
-  //   - closed-form: for any string reaching this line, sepIndex+3 <=
-  //     trimmed.length-1, and trimmed's last char is non-whitespace by
-  //     construction, so it survives into `value`.
-  //   - canary: an instrumented copy logging at (and just above) this line,
-  //     fuzzed over 500k generated "key:: value"-shaped lines, hit the site
-  //     232,758 times and fired (`value === ''`) zero times — confirms
-  //     genuinely unreachable, not just unobserved by a thin fuzz.
-  // The StringLiteral variant (comparing to "Stryker was here!" instead of
-  // '') DOES differ for the one input `value === 'Stryker was here!'`, but
-  // killing it would mean asserting on Stryker's own placeholder text — the
-  // exact pattern this batch's method explicitly rejects — so both mutants
-  // on this dead branch are left as an accepted gap rather than gamed.
+  // Ledger — the former `if (value === '') continue` guard (old line 136) was
+  // REMOVED in #3797, together with the two permanent mutation survivors it
+  // carried [ConditionalExpression `value === '' → false`, StringLiteral
+  // `'' → "Stryker was here!"`]. The branch was unreachable, not merely
+  // untested: `trimmed` is fully right-trimmed before `indexOf(':: ')` runs,
+  // so the matched separator's trailing space can never be `trimmed`'s last
+  // character, so the value slice always keeps a trailing non-whitespace char
+  // and `value.trim()` can never be `''` there. Established three ways:
+  //   - closed-form: sepIndex + 3 <= trimmed.length - 1 for any string that
+  //     reaches the line, and trimmed's last char is non-whitespace by
+  //     construction, so it survives into `value`;
+  //   - canary: an instrumented copy fuzzed over 500k generated lines hit the
+  //     site 232,758 times and fired zero times;
+  //   - adversarial re-check before deletion: an exhaustive sweep over every
+  //     BMP code point as the trailing character, plus all 0-3 char suffixes
+  //     drawn from the Unicode-whitespace/near-whitespace alphabet (TAB, VT,
+  //     FF, NBSP, all Zs, U+2028/29, U+FEFF, U+200B, U+180E, lone surrogates)
+  //     and 400k random fuzz — 390,096 reaches, still zero fires.
+  // The empty-value BEHAVIOUR is unaffected and still covered by the "rejects
+  // an empty value" test above: `key:: ` trims to `key::`, which has no
+  // `':: '` separator and falls out at the `sepIndex === -1` check.
 
   it('returns an empty list for plain content', () => {
     expect(parseInlineProperties('just a normal block')).toEqual([])

@@ -11,7 +11,7 @@
  * committed content ONLY after its write succeeds.
  *
  * The line-level semantics deliberately mirror the Logseq import parser
- * (`src-tauri/src/import.rs::parse_logseq_markdown`) so inline entry and file
+ * (`agaric-engine/src/import.rs::parse_logseq_markdown`) so inline entry and file
  * import agree on what a property line IS:
  *
  *   - A line is a property line when, after trimming, it splits at the FIRST
@@ -51,9 +51,22 @@ import type { PropertyDefinition } from '@/lib/bindings'
 
 /**
  * Keys the parser never treats as inline properties. Mirrors
- * `FRONTMATTER_RESERVED_KEYS` in `src-tauri/src/import.rs` (#1568): these are
- * exporter-managed / column-backed keys (`space` needs a `value_ref`, so a
- * text write would be rejected with a Validation error anyway).
+ * `FRONTMATTER_RESERVED_KEYS` in `src-tauri/agaric-engine/src/import.rs`
+ * (#1568): these are exporter-managed / column-backed keys (`space` needs a
+ * `value_ref`, so a text write would be rejected with a Validation error
+ * anyway).
+ *
+ * DRIFT WARNING (#3797) — this key set is duplicated in FOUR places and
+ * nothing checks them against each other. Change one, change all four:
+ *   1. here — `INLINE_PROPERTY_RESERVED_KEYS` (TypeScript);
+ *   2. `FRONTMATTER_RESERVED_KEYS` in `src-tauri/agaric-engine/src/import.rs`;
+ *   3. the page-property `key NOT IN (…)` in `export_page_markdown_inner`
+ *      (`src-tauri/src/commands/pages/markdown.rs`);
+ *   4. the descendant-property `key NOT IN (…)` in that same function.
+ * Sites 3 and 4 are literal SQL, so grepping for either constant name will
+ * NOT find them. `inline-property-parse.test.ts` pins THIS copy against a
+ * hardcoded literal; no test yet pins the copies against each other across
+ * languages, so a Rust- or SQL-side change still drifts silently.
  */
 export const INLINE_PROPERTY_RESERVED_KEYS: ReadonlySet<string> = new Set([
   'space',
@@ -131,9 +144,15 @@ export function parseInlineProperties(content: string): InlinePropertyLine[] {
     const sepIndex = trimmed.indexOf(':: ')
     if (sepIndex === -1) continue
     const key = trimmed.slice(0, sepIndex).trim()
+    // `value` is structurally non-empty and needs no emptiness guard (#3797):
+    // `trimmed` is fully right-trimmed, so its last character is never
+    // whitespace, so the matched `':: '` separator's trailing space can never
+    // BE that last character — the slice below therefore always keeps at least
+    // one trailing non-whitespace char. A typed `key:: ` reaches this loop as
+    // `key::` (no `':: '` at all) and is rejected by the `sepIndex === -1`
+    // check above instead; see the "rejects an empty value" test.
     const value = trimmed.slice(sepIndex + 3).trim()
     if (!isInlinePropertyKey(key)) continue
-    if (value === '') continue
     if (INLINE_PROPERTY_RESERVED_KEYS.has(key)) continue
     result.push({ key, value, lineIndex })
   }
