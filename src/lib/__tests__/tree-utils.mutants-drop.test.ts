@@ -156,6 +156,18 @@ describe('computeDropIndex mutants (#3142)', () => {
     const items: FlatBlock[] = [mkFlat('A', null, 0), mkFlat('B', null, 0)]
     expect(computeDropIndex(items, null, SENTINEL_ID, 'B')).toBe(1)
   })
+
+  // Tripwire for the equivalence argument recorded above (#3794). That argument
+  // is only sound while SENTINEL_ID is lowercase: the sync ingest paths accept
+  // peer-supplied block ids verbatim and ASCII-uppercase whatever they cannot
+  // parse as a ULID, so an injected `__drop-after-last__` arrives as
+  // `__DROP-AFTER-LAST__` and misses the case-sensitive `===`. Make an uppercase
+  // SENTINEL_ID fail here rather than silently invalidate a comment: the
+  // survivor at tree-utils.ts:528 would become reachable from untrusted data.
+  it('precondition: SENTINEL_ID is lowercase, so uppercased peer ids cannot collide', () => {
+    expect(SENTINEL_ID).toBe(SENTINEL_ID.toLowerCase())
+    expect(SENTINEL_ID).not.toBe(SENTINEL_ID.toUpperCase())
+  })
 })
 
 /*
