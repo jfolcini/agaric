@@ -200,10 +200,27 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
     }
   }
 
-  // Literal mode. Folding via `toLocaleLowerCase` is fine for ASCII;
-  // for Unicode case-folding edge cases we follow VSCode's
-  // approximation (fold the haystack and needle together).
-  const needle = opts.caseSensitive ? query : query.toLocaleLowerCase()
+  // Literal mode. Fold with `toLowerCase()`, NOT `toLocaleLowerCase()`:
+  // find-in-page is a mechanical text operation and must give every user
+  // the same answer on the same content. Locale-tailored casing is right
+  // for sorting and display, not for "does this substring occur" — under
+  // a tr/az default locale `toLocaleLowerCase()` maps 'I' to dotless 'ı'
+  // so searching `i` stops matching `I`, and under `lt` folds grow
+  // combining dots so `ĩ` stops matching `Ĩ` (#3800). VSCode's find
+  // widget uses `toLowerCase()` for the same reason. For the remaining
+  // Unicode case-folding edge cases we follow VSCode's approximation
+  // (fold the haystack and needle together).
+  //
+  // NOTE this is deliberately WEAKER than `src/lib/fold-for-search.ts`, which
+  // the global search and filter surfaces use: that one is additionally
+  // diacritic- and eszett-insensitive, so `naive` matches `naïve` there and
+  // not here. The divergence is forced, not an oversight — folding via NFKD
+  // changes string length, and every match this module returns is a
+  // {start,end} offset into the ORIGINAL text node for the highlighter to
+  // range over. A length-changing fold breaks that mapping. If in-page find
+  // ever needs diacritic insensitivity it needs an offset-preserving fold,
+  // not this helper.
+  const needle = opts.caseSensitive ? query : query.toLowerCase()
   const wholeWord = opts.wholeWord
   const caseSensitive = opts.caseSensitive
   return {
@@ -220,14 +237,21 @@ function scanLiteral(
 ): Array<{ start: number; end: number }> {
   if (needle.length === 0) return []
   if (caseSensitive) return scanIndexOf(text, text, needle, wholeWord)
-  const haystack = text.toLocaleLowerCase()
+  // Locale-independent fold — must stay in lockstep with the needle fold
+  // in `compileQuery` (see the note there).
+  const haystack = text.toLowerCase()
   // Fast path only when folding preserved the code-unit length. Lowercase
   // mappings never contract (1→N, N ≥ 1), so equal total length means every
   // code point folded 1:1 and offsets into `haystack` are valid offsets
-  // into `text`. When folding expands (e.g. `İ` U+0130 → `i` + U+0307,
-  // 1 → 2 units) every later offset shifts and the indexOf results would
-  // point at the wrong span in the original — fall through to the
-  // code-point walk that carries an explicit offset map.
+  // into `text`. When folding expands (`İ` U+0130 → `i` + U+0307, 1 → 2
+  // units — under `toLowerCase()` the only expanding code point in all of
+  // Unicode, verified by exhaustive scan over 0x110000) every later offset
+  // shifts and the indexOf results would point at the wrong span in the
+  // original — fall through to the code-point walk that carries an
+  // explicit offset map. The check stays length-based rather than
+  // U+0130-specific: it is also what keeps the fast path correct for
+  // context-sensitive but length-preserving folds such as Greek final
+  // sigma, which per-code-point folding would get wrong.
   if (haystack.length === text.length) {
     return scanIndexOf(text, haystack, needle, wholeWord)
   }
@@ -268,7 +292,7 @@ function scanIndexOf(
  * Folds the text one code point at a time and records, for every folded
  * code unit, the original span of the code point that produced it. Matches
  * found in the folded string are then mapped back to original offsets, so
- * a length-changing fold early in the node (e.g. Turkish `İ`) no longer
+ * a length-changing fold early in the node (`İ` U+0130) no longer
  * shifts every later highlight span.
  */
 function scanLiteralFolded(
@@ -283,7 +307,7 @@ function scanLiteralFolded(
   let folded = ''
   let oi = 0
   for (const ch of text) {
-    const f = ch.toLocaleLowerCase()
+    const f = ch.toLowerCase()
     for (let k = 0; k < f.length; k++) {
       foldedStart.push(oi)
       foldedEnd.push(oi + ch.length)
