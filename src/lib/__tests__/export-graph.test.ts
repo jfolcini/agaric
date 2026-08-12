@@ -1338,15 +1338,19 @@ describe('downloadBlob', () => {
     // all, and a leaked object URL pins the whole blob in memory for the
     // lifetime of the document.
     const objectUrl = 'blob:agaric/test-object-url'
-    const createObjectURL = vi.fn(() => objectUrl)
-    const revokeObjectURL = vi.fn()
-    // `vi.stubGlobal` (not a direct assign-and-restore) because happy-dom may
-    // not define these on `URL` at all — a plain restore would then write
-    // `undefined` back onto the property instead of removing it, an
-    // asymmetric restore that leaks into later tests. `vi.stubGlobal` snapshots
-    // the real property descriptor (present or absent) and `unstubAllGlobals`
-    // reinstates it exactly, deleting the property again if it was never there.
-    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    // Spy on the two statics INDIVIDUALLY rather than replacing the `URL`
+    // global. Swapping `URL` wholesale would take the constructor with it, so
+    // anything needing real URL parsing in this window (happy-dom resolving
+    // `a.href`, or a future assertion) would throw.
+    //
+    // `vi.spyOn` + `mockRestore` also restores symmetrically, which a plain
+    // assign-and-restore does not: happy-dom provides these two as INHERITED
+    // properties (checked — `Object.getOwnPropertyDescriptor(URL,
+    // 'createObjectURL')` is `undefined` while `typeof` is `'function'`), so
+    // writing the captured value back would leave a permanent OWN property
+    // shadowing the prototype's.
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue(objectUrl)
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
 
     // Snapshot the anchor's state AT CLICK TIME — afterwards it is detached
     // again, so `attached` can only be observed from inside the click.
@@ -1375,7 +1379,8 @@ describe('downloadBlob', () => {
       expect(revokeObjectURL).toHaveBeenCalledWith(objectUrl)
     } finally {
       clickSpy.mockRestore()
-      vi.unstubAllGlobals()
+      createObjectURL.mockRestore()
+      revokeObjectURL.mockRestore()
     }
   })
 })

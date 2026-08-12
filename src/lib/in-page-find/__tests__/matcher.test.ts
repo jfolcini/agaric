@@ -705,14 +705,25 @@ describe('collectTextNodes', () => {
     // the `it.fails` wrapper (and this comment) and rewrite 'ignores text
     // parented by a TEMPLATE element' to use a real `<template>` plus
     // `appendChild`, dropping the SVG-namespace fixture.
+    // Keep this body to the deviation and nothing else. `it.fails` is
+    // satisfied if ANY assertion throws, so an unrelated assertion sharing
+    // the body could keep the test green after happy-dom is fixed — the
+    // signal would never arrive. The parser-path check lives in its own
+    // test below for exactly that reason.
     const tpl = document.createElement('template')
     tpl.append(document.createTextNode('hidden'))
     expect(tpl.childNodes).toHaveLength(1) // spec; happy-dom (bug): 0
     expect(tpl.content.childNodes).toHaveLength(0) // spec; happy-dom (bug): 1
+  })
 
-    // The *parser* path, by contrast, is spec-conformant in happy-dom, so
-    // asserting it would prove nothing about the deviation — which is why it
-    // is not part of the tripwire assertions above.
+  it('ignores text the parser diverted into a <template>', () => {
+    // The *parser* path is spec-conformant in happy-dom (and in browsers):
+    // `<template>x</template>` puts the text in `.content`, where no
+    // TreeWalker over the host reaches it. Asserting it proves nothing about
+    // the deviation above, which is why it is a separate plain `it` — and
+    // separating it also means it actually runs. Inside the `it.fails` body
+    // execution stopped at the first failing assertion, so these lines never
+    // executed at all.
     const parsed = attach('<template>diverted</template>')
     expect(collectTextNodes(parsed)).toHaveLength(0)
   })
