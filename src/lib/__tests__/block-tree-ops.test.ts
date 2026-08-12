@@ -177,10 +177,15 @@ describe('planSplit', () => {
     // this assertion goes vacuously green and silently stops guarding the
     // invariant; re-derive the spy target from that file if it changes.
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const plan = planSplit('|---|')
-    expect(plan).toEqual({ kind: 'edit-only', content: '' })
-    expect(warn).not.toHaveBeenCalled()
-    warn.mockRestore()
+    try {
+      const plan = planSplit('|---|')
+      expect(plan).toEqual({ kind: 'edit-only', content: '' })
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      // Restore in `finally`: a failing assertion above would otherwise leave
+      // `logger.warn` stubbed for every later test in this file.
+      warn.mockRestore()
+    }
   })
 })
 
