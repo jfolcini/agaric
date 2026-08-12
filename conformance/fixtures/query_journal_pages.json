@@ -1,0 +1,215 @@
+{
+  "description": "#3347 — READ-command differential over the two journal lookups, `get_journal_page_by_date` and `list_journal_pages_in_range`. Neither resolves anything against a clock: the date is an ARGUMENT (`WHERE content = ?date` / `content >= ? AND content <= ?`), so a seed of date-titled pages binds them exactly — the waiver these steps replace claimed the opposite. Two negatives are pinned INSIDE the non-empty range step rather than as a separate empty one: S4 sits past the upper bound, and S5 ('2026-01-0x') is a decoy that PASSES the backend's sargable `content LIKE '____-__-__'` and falls inside the lexicographic range, so only the backend's `GLOB '[0-9]...'` digit class (and, on the mock, its `^\\d{4}-\\d{2}-\\d{2}$` regex) excludes it — drop either and the step reddens. S6 is renamed into date shape by an op, so the range must also see journal pages that did not exist as such at seed time.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "2026-01-20",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "2026-01-05",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "2026-01-13",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "2026-02-02",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "2026-01-0x",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "2026-01-27",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "has_more": null,
+      "name": "journal_page_hit",
+      "rows": ["B3"],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "journal_page_miss",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "journal_pages_january",
+      "rows": ["B2", "B3", "B1", "B6"],
+      "total_count": null
+    }
+  ],
+  "name": "query_journal_pages",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S6",
+        "toText": "2026-01-27"
+      },
+      "command": "edit_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "date": "2026-01-13",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_journal_page_by_date",
+      "comment": "Exact-date hit. The response is a BARE `Option<BlockRow>` — no pagination envelope — so both `has_more` and `total_count` are structurally null.",
+      "name": "journal_page_hit"
+    },
+    {
+      "args": {
+        "date": "2026-01-14",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "get_journal_page_by_date",
+      "comment": "Declared-empty (see the vacuity guard): the lookup is an EQUALITY, not a nearest-date fallback. 2026-01-14 sits between two seeded journal pages and must resolve to nothing on both stacks.",
+      "expect_empty": true,
+      "name": "journal_page_miss"
+    },
+    {
+      "args": {
+        "endDate": "2026-01-31",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "startDate": "2026-01-01"
+      },
+      "command": "list_journal_pages_in_range",
+      "comment": "`ordered` because the sort key is the page's date TITLE, which the fixture controls — and the seed is deliberately NOT in date order, so the expected sequence differs from the canonical `B1, B2, …` sort and this step really does pin `ORDER BY content ASC`.",
+      "name": "journal_pages_january",
+      "ordered": true
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "2026-01-20",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "2026-01-05",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "2026-01-13",
+        "id": "S3",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "page",
+        "content": "2026-02-02",
+        "id": "S4",
+        "parent_id": null,
+        "position": 4
+      },
+      {
+        "block_type": "page",
+        "content": "2026-01-0x",
+        "id": "S5",
+        "parent_id": null,
+        "position": 5
+      },
+      {
+        "block_type": "page",
+        "content": "Untitled Journal Draft",
+        "id": "S6",
+        "parent_id": null,
+        "position": 6
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

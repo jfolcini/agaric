@@ -1,0 +1,306 @@
+{
+  "description": "#3347 — READ-command differential over `run_advanced_query` plus the two agenda list queries. The op sequence only stamps reserved columns on SEED blocks (no create_block), so every queried id is byte-identical on both stacks and the projected rows stay comparable. The State step is the exclude+is_null AND-join (#2019 / #3314 finding 1): the backend emits `todo_state IS NOT NULL AND todo_state NOT IN ('DONE')`, so a mock that OR-joins the two branches matches EVERY row. The DueDate step straddles both Between endpoints (S2 sits on `from`, S4 on `to`): SQL BETWEEN is inclusive, so a half-open mock evaluator drops S4. Neither semantic is reachable through the Pages surface — `PAGES_ALLOWED_KEYS` rejects `state` / `due-date` — which is why `conformance/pages-metadata/filters.vectors.json` cannot cover them and this fixture is their only cross-impl gate.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Query Filters",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "task alpha",
+        "deleted_at": null,
+        "due_date": "2026-01-01",
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "task beta",
+        "deleted_at": null,
+        "due_date": "2026-02-15",
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "task gamma",
+        "deleted_at": null,
+        "due_date": "2026-03-31",
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "task delta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      }
+    ],
+    "op_log_digest": {
+      "count": 7,
+      "ops": [
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "has_more": false,
+      "name": "advanced_no_filter_returns_the_space",
+      "rows": ["B1", "B2", "B3", "B4", "B5"],
+      "total_count": 5
+    },
+    {
+      "has_more": false,
+      "name": "advanced_state_exclude_done_and_unset",
+      "rows": ["B2", "B4", "B5"],
+      "total_count": 3
+    },
+    {
+      "has_more": false,
+      "name": "advanced_due_date_between_is_inclusive",
+      "rows": ["B2", "B3", "B4"],
+      "total_count": 3
+    },
+    {
+      "has_more": false,
+      "name": "agenda_unfinished_before_march",
+      "rows": ["B2"],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "agenda_undated_tasks",
+      "rows": ["B5"],
+      "total_count": null
+    }
+  ],
+  "name": "query_advanced_filters",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "TODO"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "state": "DONE"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "state": "TODO"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "state": "TODO"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2026-01-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "date": "2026-02-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "date": "2026-03-31"
+      },
+      "command": "set_due_date"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "Vacuity guard: a filterless advanced query must return the WHOLE seeded space on both stacks. If this step ever goes empty, the steps below agree only because neither reached any data. NOT `ordered` only because of #3821 (mock sorts `b.id ASC`, engine `b.id DESC`) — every id here is a SEED id, identical on both stacks, so this step can and should pin the order once #3821 lands.",
+      "name": "advanced_no_filter_returns_the_space"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "exclude": true,
+              "is_null": true,
+              "type": "State",
+              "values": ["DONE"]
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "#3314 finding 1 (State half): exclude + is_null is an AND-join — non-NULL todo_state that is not DONE. An OR-join is a tautology and returns every row.",
+      "name": "advanced_state_exclude_done_and_unset"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "predicate": {
+                "from": "2026-01-01",
+                "to": "2026-03-31",
+                "type": "Between"
+              },
+              "type": "DueDate"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "#3314 finding 1 (Between half): SQL BETWEEN is inclusive on BOTH endpoints. S2 sits on `from`, S4 on `to`.",
+      "name": "advanced_due_date_between_is_inclusive"
+    },
+    {
+      "args": {
+        "beforeDate": "2026-03-01",
+        "limit": 100,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "todoStates": ["TODO"]
+      },
+      "command": "list_unfinished_tasks",
+      "name": "agenda_unfinished_before_march"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_undated_tasks",
+      "comment": "S5 is the only task with a todo_state and neither date.",
+      "name": "agenda_undated_tasks"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Query Filters",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "task alpha",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "task beta",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "task gamma",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "task delta",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

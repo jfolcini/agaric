@@ -15,8 +15,10 @@
  *
  *   1. a state-MUTATING IPC command has NEITHER a conformance fixture that
  *      drives it NOR a justified allowlist waiver — so a new mutating command
- *      cannot land without a fixture or an explicit, reasoned exemption; and
- *   2. a required (op, scenario) tuple from the manifest below is not pinned by
+ *      cannot land without a fixture or an explicit, reasoned exemption;
+ *   2. a READ-ONLY IPC command has NEITHER a conformance QUERY step that drives
+ *      it NOR a justified waiver (#3347 — see `READ_NO_QUERY_ALLOWLIST`); and
+ *   3. a required (op, scenario) tuple from the manifest below is not pinned by
  *      any fixture — so the specific behaviors we care about (the recent escape
  *      classes) stay covered as fixtures land.
  *
@@ -114,6 +116,14 @@ function takesWriteHandle(signature: string): boolean {
  * name begins with one of these query verbs. Everything NOT matched here is a
  * MUTATING candidate and must be covered by a fixture or allowlisted below —
  * so a new command with a mutating-shaped name is caught automatically.
+ *
+ * #3347 — read-only is NO LONGER an exemption from the coverage requirement. It
+ * used to be: a read command needed neither a fixture nor a waiver, so the
+ * `list_` / `search_` / `query_` surface the UI renders from had zero
+ * differential coverage and the mock could answer it however it liked. A
+ * read-only command now needs a conformance QUERY step or an entry in
+ * `READ_NO_QUERY_ALLOWLIST`. The classification still decides WHICH requirement
+ * applies (op fixture vs query step), not whether one applies at all.
  *
  * The verb is a HEURISTIC, not evidence. `it('the read-only classifier agrees
  * with the Rust signatures', …)` below cross-checks every name classified here
@@ -287,6 +297,179 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
 }
 
 // ---------------------------------------------------------------------------
+// Allowlist — read-only commands NOT (yet) driven by a conformance query step
+// ---------------------------------------------------------------------------
+
+/**
+ * #3347 — each entry is a READ-ONLY command with a justified reason it carries
+ * no conformance query step yet. The categories are deliberately narrower than
+ * the mutating allowlist's, because "it only reads" is never itself a reason:
+ * a read command IS the surface the UI renders, so a mock that answers it
+ * differently from the backend is exactly the failure #3347 exists to catch.
+ *
+ *   - `fixture candidate: <why not yet>` — nothing structural blocks a query
+ *     step; it simply is not written. This is the honest majority. Every entry
+ *     in this category is a to-do, not a verdict.
+ *   - `<X> outside the conformance snapshot scope` — reads state the fixture
+ *     seed cannot express (attachments, drafts, aliases, spaces, peers,
+ *     property_definitions, link metadata).
+ *   - `<return shape>` — the response carries no row identity the query
+ *     projection can bind: a bare scalar, a rendered string, a keyed count
+ *     map, or a multi-partition envelope. `conformance-query.ts` projects one
+ *     `rows` list of canonical block tokens plus one `has_more`/`total_count`
+ *     pair, so these need a projection EXTENSION, not just a fixture step —
+ *     which is why they are NOT "fixture candidate"s.
+ *   - `<arg not fixture-expressible>` — the command is selected by a
+ *     coordinate the two stacks generate independently (an `op_log`
+ *     `(device_id, seq)` point), so no fixture can name the same input on
+ *     both sides.
+ *   - `wall-clock / environment dependent` — the answer is not a function of
+ *     the seeded state, so no recorded expectation can bind it.
+ *   - `no domain state` — process/runtime/telemetry status reads.
+ *
+ * A reason must name the ACTUAL blocker. A plausible-but-wrong one is worse
+ * than none: it forecloses the question with a wrong answer, and the next
+ * reader takes it at face value. Both journal lookups sat here behind "derived
+ * from the wall-clock date" until someone opened `journal.rs` and found
+ * `WHERE content = ?date` — an explicit argument, trivially seedable. They are
+ * now query steps in `query_journal_pages.json`.
+ *
+ * ADDING A COMMAND HERE IS A WAIVER, not a free pass: prefer a query step. The
+ * `it('read allowlist stays honest', …)` test below fails if an allowlisted
+ * command later gains a query step, stops being read-only, or leaves
+ * `bindings.ts`.
+ */
+const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
+  // ── Point reads over blocks / properties / tags ──
+  // The ROWS these serve are already diffed row-for-row by the #763 snapshot;
+  // what is NOT diffed is each command's own projection, pagination and
+  // filtering of them. That residual is real, so these are fixture candidates.
+  batch_resolve: 'fixture candidate: point resolve over rows the #763 snapshot already diffs',
+  first_child_for_blocks: 'fixture candidate: point read over rows the #763 snapshot already diffs',
+  get_block: 'fixture candidate: point read over rows the #763 snapshot already diffs',
+  get_blocks: 'fixture candidate: point read over rows the #763 snapshot already diffs',
+  get_batch_properties:
+    'fixture candidate: point read over properties the #763 snapshot already diffs',
+  get_properties: 'fixture candidate: point read over properties the #763 snapshot already diffs',
+  get_property: 'fixture candidate: point read over properties the #763 snapshot already diffs',
+  list_blocks: 'fixture candidate: paginated block list; pagination is the uncovered part',
+  list_tags_for_block: 'fixture candidate: point read over block_tags the snapshot already diffs',
+  list_inherited_tags_for_block:
+    'fixture candidate: block_tag_inherited is derived state the snapshot does not model',
+  load_page_subtree: 'fixture candidate: subtree read over rows the #763 snapshot already diffs',
+
+  // ── Legacy tag / property query surface ──
+  query_by_property: 'fixture candidate: superseded by filtered_blocks_query, still IPC-reachable',
+  query_by_tags: 'fixture candidate: superseded by filtered_blocks_query, still IPC-reachable',
+  query_by_tag_expr: 'fixture candidate: tag-expression surface with no query step yet',
+  list_all_tags_in_space: 'fixture candidate: tags_cache-backed listing with no query step yet',
+  list_tags_by_prefix: 'fixture candidate: tags_cache prefix scan with no query step yet',
+  list_property_keys: 'fixture candidate: distinct-key scan with no query step yet',
+  list_property_values: 'fixture candidate: distinct-value scan with no query step yet',
+
+  // ── Links / backlinks ──
+  // The EDGES are pinned twice (the snapshot's `page_links`, and the
+  // `list_page_links` query step); these commands' grouping, filtering and
+  // counting on top of them are not.
+  get_backlinks: 'fixture candidate: grouping/pagination over edges the snapshot already pins',
+  query_backlinks_filtered: 'fixture candidate: filtered backlinks over already-pinned edges',
+  count_backlinks_batch:
+    'returns `HashMap<page_id, count>` — a keyed count map, not the canonical ' +
+    'block-id rows the query projection binds',
+  list_backlinks_grouped: 'fixture candidate: grouped backlinks over already-pinned edges',
+  list_unlinked_references: 'fixture candidate: content scan over already-pinned block content',
+  // The envelope IS the uncovered part — "same FTS scan" is an argument FOR
+  // covering it, not a waiver. The real blocker is the return shape: this
+  // command answers with TWO independently-capped page envelopes
+  // (`{ pages, blocks }`), while the query projection carries a single `rows`
+  // list and a single `has_more`/`total_count` pair.
+  search_blocks_partitioned:
+    'two-partition `{pages, blocks}` return shape; one projection row-list cannot ' +
+    'hold both partitions — needs a partition-qualified row token in both runners',
+
+  // ── Pages / journal / templates ──
+  list_all_pages_in_space: 'fixture candidate: unpaginated twin of list_pages_with_metadata',
+  list_template_page_ids_in_space: 'fixture candidate: template-property scan with no step yet',
+  // `get_journal_page_by_date` / `list_journal_pages_in_range` are NOT waived:
+  // they are query steps in `query_journal_pages.json`.
+  //
+  // Only `list_projected_agenda` is wall-clock dependent — its `_inner` takes
+  // `chrono::Local::now().date_naive()` and threads it through the recurrence
+  // projection. The two `count_agenda_*` commands are plain `agenda_cache`
+  // lookups keyed by their EXPLICIT `dates` argument (agenda.rs
+  // `count_agenda_batch_inner`); no clock is involved, and the real blocker is
+  // the shape they answer with.
+  count_agenda_batch:
+    'returns `HashMap<date, count>` — a keyed count map with no row identity the ' +
+    'query projection can bind (NOT wall-clock: the `dates` arg is explicit)',
+  count_agenda_batch_by_source:
+    'returns nested `HashMap<date, HashMap<source, count>>` — a keyed count map with ' +
+    'no row identity the query projection can bind (NOT wall-clock: `dates` is explicit)',
+  list_projected_agenda:
+    'wall-clock dependent: `list_projected_agenda_inner` anchors the `.+` / `++` ' +
+    'recurrence projection (and the cache-freshness horizon) to `chrono::Local::now()`',
+
+  // ── Trash ──
+  count_trash: 'returns a bare `i64`; the query projection has no row identity to bind it to',
+  list_trash: 'fixture candidate: tombstone listing over rows the #763 snapshot already diffs',
+  trash_descendant_counts:
+    'returns `HashMap<root_id, count>` — a keyed count map, not the canonical ' +
+    'block-id rows the query projection binds',
+
+  // ── Op log / history / time travel ──
+  // The Rust runner replays raw `OpPayload`s and normalises the op log to a
+  // digest, so no recorded expectation can bind a history command's per-entry
+  // shape (ids, timestamps, device). Same structural blocker as the mutating
+  // undo/redo waivers above.
+  get_block_history: 'op-log entries are digested (not compared per entry) by the #763 snapshot',
+  list_page_history: 'op-log entries are digested (not compared per entry) by the #763 snapshot',
+  find_undo_group: 'op-log entries are digested (not compared per entry) by the #763 snapshot',
+  get_compaction_status: 'op-log maintenance counters, not projected block state',
+  // Not "pure text diffs": both SELECT their input by an op-log coordinate the
+  // two stacks generate independently, so a fixture cannot name the same op on
+  // both sides. The text they diff is indeed snapshot-pinned; the ARG that
+  // picks it is not.
+  compute_edit_diff:
+    'selected by an `op_log` `(device_id, seq)` point (history.rs) — an op identity ' +
+    'each stack generates independently, so no fixture can spell the same input twice',
+  compute_block_vs_current_diff:
+    'selected by an `op_log` `(historical_created_at, historical_seq)` point — an op ' +
+    'coordinate each stack generates independently, not fixture-expressible',
+  export_page_markdown:
+    'returns a rendered markdown `String`; the query projection binds canonical ' +
+    'block-id rows, so it has nothing to compare',
+
+  // ── Registries outside the conformance snapshot scope ──
+  get_page_aliases: 'page-alias table outside the conformance snapshot scope',
+  list_page_aliases_by_prefix: 'page-alias table outside the conformance snapshot scope',
+  resolve_page_by_alias: 'page-alias table outside the conformance snapshot scope',
+  list_spaces: 'space registry outside the single-space conformance snapshot scope',
+  get_property_def: 'property_definitions registry (app-layer), not projected block state',
+  list_property_defs: 'property_definitions registry (app-layer), not projected block state',
+  get_link_metadata: 'link_metadata cache outside the conformance snapshot scope',
+  list_attachments: 'attachments blob store outside the conformance snapshot scope',
+  list_attachments_batch: 'attachments blob store outside the conformance snapshot scope',
+  read_attachment_meta: 'attachments blob store outside the conformance snapshot scope',
+  list_drafts: 'draft staging table outside the conformance snapshot scope',
+  get_peer_ref: 'peer registry (device metadata) outside the conformance snapshot scope',
+  list_peer_refs: 'peer registry (device metadata) outside the conformance snapshot scope',
+
+  // ── Process / environment / telemetry status (no domain state) ──
+  collect_bug_report_metadata: 'no domain state — host + build metadata',
+  read_logs_for_report: 'no domain state — reads the on-disk log files',
+  get_device_id: 'no domain state — this install’s device identity',
+  get_status: 'no domain state — sync transport status',
+  get_recovery_status: 'no domain state — boot recovery status',
+  get_mdns_status: 'no domain state — mDNS discovery status',
+  is_flatpak: 'no domain state — packaging/environment probe',
+  get_mcp_status: 'no domain state — MCP server runtime status',
+  get_mcp_rw_status: 'no domain state — MCP server runtime status',
+  get_mcp_socket_path: 'no domain state — MCP transport path',
+  get_mcp_rw_socket_path: 'no domain state — MCP transport path',
+  get_mcp_recent_activity: 'no domain state — in-memory MCP activity ring buffer',
+}
+
+// ---------------------------------------------------------------------------
 // Fixture loading
 // ---------------------------------------------------------------------------
 
@@ -303,14 +486,29 @@ const FIXTURES_DIR = path.resolve(
 interface FixtureShape {
   name: string
   ops: Array<{ command: string }>
+  /** #3347 — post-op READ steps (see `conformance-query.ts`). */
+  queries?: Array<QueryStepShape>
+  /** #3347 — the backend-authored projection of each `queries` step. */
+  expected_queries?: Array<{ name: string; rows: string[] }>
   /** Additive, replay-inert string tags declaring which scenarios this fixture
    *  pins (see `REQUIRED_SCENARIOS`). Absent on fixtures that predate the tag. */
   scenarios?: string[]
 }
 
+interface QueryStepShape {
+  name: string
+  command: string
+  /** Opt-in declaration that this step's recorded `rows` is legitimately empty
+   *  (see the vacuity guard below). Ignored by both query runners. */
+  expect_empty?: boolean
+}
+
 interface LoadedFixture {
   name: string
   opCommands: Set<string>
+  queryCommands: Set<string>
+  querySteps: QueryStepShape[]
+  expectedQueries: Array<{ name: string; rows: string[] }>
   scenarios: Set<string>
 }
 
@@ -323,6 +521,9 @@ function loadFixtures(): LoadedFixture[] {
       return {
         name: raw.name,
         opCommands: new Set(raw.ops.map((o) => o.command)),
+        queryCommands: new Set((raw.queries ?? []).map((q) => q.command)),
+        querySteps: raw.queries ?? [],
+        expectedQueries: raw.expected_queries ?? [],
         scenarios: new Set(raw.scenarios ?? []),
       }
     })
@@ -383,6 +584,7 @@ const REQUIRED_SCENARIOS: ReadonlyArray<readonly [op: string, scenario: string]>
 describe('#3083 conformance-coverage ratchet', () => {
   const bindingsCommands = extractBindingsCommandNames()
   const mutatingCommands = bindingsCommands.filter((c) => !isReadOnly(c))
+  const readOnlyCommands = bindingsCommands.filter((c) => isReadOnly(c))
   const fixtures = loadFixtures()
 
   // Commands actually driven by ≥1 fixture. A conformance op IS the IPC command
@@ -391,11 +593,20 @@ describe('#3083 conformance-coverage ratchet', () => {
   const fixtureOpCommands = new Set<string>()
   for (const fx of fixtures) for (const c of fx.opCommands) fixtureOpCommands.add(c)
 
+  // #3347 — the same idea for reads: a query step's `command` IS the IPC
+  // command name (the Rust runner's `run_step` matches on it).
+  const fixtureQueryCommands = new Set<string>()
+  for (const fx of fixtures) for (const c of fx.queryCommands) fixtureQueryCommands.add(c)
+
   it('extracts a non-trivial command + fixture surface (guards vacuous pass)', () => {
     expect(bindingsCommands.length).toBeGreaterThan(50)
     expect(mutatingCommands.length).toBeGreaterThan(30)
+    expect(readOnlyCommands.length).toBeGreaterThan(30)
     expect(fixtures.length).toBeGreaterThan(15)
     expect(fixtureOpCommands.size).toBeGreaterThanOrEqual(10)
+    // #3347 — a floor on QUERY coverage too. Without it the read-only ratchet
+    // below could be satisfied entirely by waivers and still read as a gate.
+    expect(fixtureQueryCommands.size).toBeGreaterThanOrEqual(5)
   })
 
   // #3332 — classify by EVIDENCE, not by verb. `READ_ONLY_PREFIXES` is a
@@ -494,6 +705,147 @@ describe('#3083 conformance-coverage ratchet', () => {
       allowKeys.every((c) => NO_FIXTURE_ALLOWLIST[c]?.trim()),
       'Every NO_FIXTURE_ALLOWLIST entry needs a non-empty reason string.',
     ).toBe(true)
+  })
+
+  // #3347 — the READ half of the ratchet. `isReadOnly` used to be a blanket
+  // exemption: a `get_` / `list_` / `search_` command needed neither a fixture
+  // nor a waiver, so the query surface the UI renders from had no differential
+  // coverage at all. It now needs a query step or a reasoned waiver.
+  it('every read-only command has a conformance query step or a justified allowlist waiver', () => {
+    const uncovered = readOnlyCommands.filter(
+      (c) => !fixtureQueryCommands.has(c) && !(c in READ_NO_QUERY_ALLOWLIST),
+    )
+    expect(
+      uncovered,
+      `These READ-ONLY Tauri commands have NO conformance query step and NO ` +
+        `allowlist waiver: ${JSON.stringify(uncovered)}. The mock's answer to a ` +
+        `read command is what almost every vitest/Playwright spec asserts against, ` +
+        `so an unchecked one is an unchecked second implementation of the query. ` +
+        `FIX by EITHER (a) adding a "queries" step to a conformance/fixtures/*.json ` +
+        `fixture that drives the command — wire it in ` +
+        `src-tauri/src/command_integration_tests/conformance_query.rs and in the ` +
+        `WIRE table of ./conformance-query.ts, then author the expectation with ` +
+        `CONFORMANCE_UPDATE=1 cargo nextest run -E ` +
+        `'test(conformance_fixtures_match_backend)' — OR (b) adding an entry to ` +
+        `READ_NO_QUERY_ALLOWLIST in this file with a reason.`,
+    ).toEqual([])
+  })
+
+  it('read allowlist stays honest (no stale, mutating, or now-covered entries)', () => {
+    const allowKeys = Object.keys(READ_NO_QUERY_ALLOWLIST)
+
+    const notInBindings = allowKeys.filter((c) => !bindingsCommands.includes(c))
+    expect(
+      notInBindings,
+      `READ_NO_QUERY_ALLOWLIST references commands absent from bindings.ts ` +
+        `${JSON.stringify(notInBindings)}. Remove the stale entries.`,
+    ).toEqual([])
+
+    // A command cannot be waived twice. Overlap would let a rename between the
+    // two classifications silently keep a command exempt under the other list.
+    //
+    // ORDER MATTERS: this runs BEFORE `misclassifiedMutating`. A double-waived
+    // MUTATING command trips both filters, and the first failing `expect`
+    // aborts the `it` — so with the two swapped, the only overlap direction
+    // this check could ever report on its own was the read-only one (and there
+    // `misclassifiedReadOnly`, in the sibling `it` above, is already red). It
+    // was a guard that could not fire.
+    const doubleWaived = allowKeys.filter((c) => c in NO_FIXTURE_ALLOWLIST)
+    expect(
+      doubleWaived,
+      `These commands are waived by BOTH allowlists ${JSON.stringify(doubleWaived)}. ` +
+        `Each command has exactly one classification — keep exactly one waiver.`,
+    ).toEqual([])
+
+    const misclassifiedMutating = allowKeys.filter((c) => !isReadOnly(c))
+    expect(
+      misclassifiedMutating,
+      `READ_NO_QUERY_ALLOWLIST lists commands that are NOT read-only ` +
+        `${JSON.stringify(misclassifiedMutating)}; a mutating command belongs in ` +
+        `NO_FIXTURE_ALLOWLIST (or needs an op fixture) instead.`,
+    ).toEqual([])
+
+    const nowCovered = allowKeys.filter((c) => fixtureQueryCommands.has(c))
+    expect(
+      nowCovered,
+      `READ_NO_QUERY_ALLOWLIST waives commands now driven by a conformance query ` +
+        `step ${JSON.stringify(nowCovered)}. Delete the redundant waiver — the ` +
+        `query step is the coverage.`,
+    ).toEqual([])
+
+    expect(
+      allowKeys.every((c) => READ_NO_QUERY_ALLOWLIST[c]?.trim()),
+      'Every READ_NO_QUERY_ALLOWLIST entry needs a non-empty reason string.',
+    ).toBe(true)
+  })
+
+  // #3347 vacuity guard. `expected_queries` is authored by the backend and
+  // asserted by both runners — but an EMPTY projection is authored and asserted
+  // exactly like a populated one. A step whose args select nothing (a scope
+  // pointing at a space with no blocks, a filter no seed row satisfies, a
+  // search term nothing matches) records `"rows": []`, the mock reproduces `[]`,
+  // and the differential passes having compared nothing. That is the harness's
+  // catastrophic failure mode — two stacks agreeing because neither reached any
+  // data — and it looks identical to coverage.
+  //
+  // So an empty step must SAY it is empty. `"expect_empty": true` on the step is
+  // the declaration; both runners ignore the key, and it cannot rot because a
+  // step that declares it and then returns rows fails here too.
+  it('every conformance query step records a non-empty result (or declares itself empty)', () => {
+    const vacuous: string[] = []
+    const staleEmptyClaim: string[] = []
+    const misaligned: string[] = []
+    for (const fx of fixtures) {
+      if (fx.querySteps.length === 0) continue
+      for (const [i, step] of fx.querySteps.entries()) {
+        const recorded = fx.expectedQueries[i]
+        if (!recorded || recorded.name !== step.name) {
+          misaligned.push(`${fx.name}/${step.name}`)
+          continue
+        }
+        const isEmpty = recorded.rows.length === 0
+        if (isEmpty && step.expect_empty !== true) vacuous.push(`${fx.name}/${step.name}`)
+        if (!isEmpty && step.expect_empty === true) staleEmptyClaim.push(`${fx.name}/${step.name}`)
+      }
+    }
+
+    expect(
+      misaligned,
+      `These query steps have no positionally-matching \`expected_queries\` entry ` +
+        `${JSON.stringify(misaligned)}. The two arrays are index-aligned — re-author ` +
+        `with CONFORMANCE_UPDATE=1 cargo nextest run -E ` +
+        `'test(conformance_fixtures_match_backend)'.`,
+    ).toEqual([])
+
+    expect(
+      vacuous,
+      `These conformance query steps recorded ZERO rows ${JSON.stringify(vacuous)}. ` +
+        `An empty step proves nothing: the mock reproduces \`[]\` whatever it does, ` +
+        `so the step reads as coverage while comparing nothing. FIX by EITHER ` +
+        `(a) giving the step args that actually select seeded rows, OR (b) adding ` +
+        `"expect_empty": true to the step plus a "comment" saying which negative ` +
+        `the empty result pins (both query runners ignore the key).`,
+    ).toEqual([])
+
+    expect(
+      staleEmptyClaim,
+      `These query steps declare "expect_empty": true but recorded rows ` +
+        `${JSON.stringify(staleEmptyClaim)}. Drop the stale declaration.`,
+    ).toEqual([])
+  })
+
+  // Every command wired into the query runner must be reachable as a read: a
+  // query step naming a MUTATING command would drive state inside the read
+  // phase, after the snapshot has been taken, and no assertion would see it.
+  it('every conformance query step drives a read-only command', () => {
+    const mutatingQuerySteps = [...fixtureQueryCommands].filter((c) => !isReadOnly(c))
+    expect(
+      mutatingQuerySteps,
+      `These conformance query steps drive MUTATING commands ` +
+        `${JSON.stringify(mutatingQuerySteps)}. Query steps run AFTER the state ` +
+        `snapshot is taken, so their writes are unasserted — drive the command ` +
+        `from "ops" instead.`,
+    ).toEqual([])
   })
 
   it('every required (op, scenario) is pinned by a fixture that declares it and drives the op', () => {
