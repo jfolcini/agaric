@@ -407,6 +407,48 @@ export function AgendaResults({
             : t('agenda.resultCount', { count: blocks.length })}
         </output>
 
+        {/* #3291 — the displayed order is only as complete as the fetched
+            window. Sorting and grouping both run client-side over `blocks`,
+            so while `hasMore` is true the "top" item is the best of what has
+            been loaded, not of the agenda.
+
+            The trigger is `hasMore` ALONE — deliberately not "hasMore && a
+            non-date sort is active". Every query feeding this panel paginates
+            in ULID order, not date order:
+              - `query_by_property`  (agaric-store/src/pagination/properties.rs)
+              - `list_undated_tasks` (agaric-store/src/pagination/undated.rs)
+              - `filtered_blocks_query` (src-tauri/src/commands/queries.rs)
+            all end in `ORDER BY b.id ASC`. So the fetched 200 rows are the 200
+            oldest-created matches — a set uncorrelated with due date. `'date'`
+            (this component's prop default; the SHIPPED default from
+            `useAgendaPreferences` is `'state'`) therefore orders an arbitrary
+            window exactly as `'priority'` does, and exempting it would promise
+            a completeness the backend never provides. Truncation, not the
+            choice of sort key, is the whole defect.
+
+            PageBrowser gates the same cue on
+            `isFrontendOnlySort(sortOption) && hasMore` (PageBrowser.tsx) —
+            because SOME of its sorts ARE pushed into SQL
+            (commands/pages/metadata.rs `ORDER BY {key_expr}`). No agenda sort
+            is. The predicate here is that same one with its first conjunct
+            collapsed to `true`, not a laxer rule.
+
+            Rendered above the list (not next to the Load more button, which
+            sits below a scrolling viewport) so it is adjacent to the item
+            whose primacy it qualifies. Mirrors the SearchPanel 5000-item
+            capped notice: same `role="status"` polite live region, announced
+            on appearance, never blocking. */}
+        {hasMore && (
+          <div
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
+            role="status"
+            data-testid="agenda-partial-order-notice"
+            className="agenda-partial-order-notice rounded-lg border border-alert-warning-border bg-alert-warning p-2 text-xs text-alert-warning-foreground"
+          >
+            {t('agenda.partialOrderNotice')}
+          </div>
+        )}
+
         {/* Virtualized list (perf-review Tier 2 #6, 2026-05-14).
             Headers + items are interleaved as flat virtual rows so the
             virtualizer can drop offscreen subtrees entirely; this
