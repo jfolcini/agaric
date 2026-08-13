@@ -51,8 +51,13 @@ pub struct QueueMetrics {
     /// read zero in a shipped build, and an operator auditing panic rates would
     /// read that zero as health. The unwind arm still exists for debug/test
     /// builds (`panic = "unwind"`), and a panic there is counted here, as the
-    /// failure it is. See #3295 for the separate question of whether the
-    /// panic-isolation machinery itself should survive `panic = "abort"`.
+    /// failure it is. #3295 settled the follow-on question: the spawn-per-
+    /// attempt machinery stays — it carries the #665 cancellation contract
+    /// and does isolate panics wherever the build unwinds — but nothing in
+    /// the release surface advertises a panic signal, and the vestigial
+    /// `RetryOutcome::panicked` flag went with the counters. See
+    /// `consumer.rs` and the `panic` key's rationale in the workspace-root
+    /// `Cargo.toml`.
     pub fg_errors: AtomicU64,
     /// Background twin of [`Self::fg_errors`] — see there for why panics are
     /// folded in rather than counted separately.

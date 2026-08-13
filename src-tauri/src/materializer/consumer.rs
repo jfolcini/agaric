@@ -68,8 +68,14 @@ pub(super) fn log_consumer_result(
 /// #665: an abort-on-drop wrapper around a [`tokio::task::JoinHandle`].
 ///
 /// Each `retry_with_backoff` attempt runs inside its own
-/// `tokio::task::spawn` (for panic isolation — a panicking handler must
-/// not take down the consumer loop). The consumer loop itself runs as a
+/// `tokio::task::spawn`. #3295: that spawn isolates a panicking handler
+/// from the consumer loop **only in a build that unwinds** — debug/test,
+/// and (because Cargo ignores a profile's `panic` key for test targets)
+/// every test binary, `--release` ones included. The shipped binary sets
+/// `panic = "abort"` in the workspace root's `[profile.release]`, and
+/// there a handler panic aborts the process before any join result can
+/// exist. What the spawn buys in *every* profile is the cancellation
+/// contract this guard implements: the consumer loop itself runs as a
 /// Task on the [`JoinSet`](super::coordinator::Materializer) and is
 /// cancelled by `shutdown()`'s `abort_all()` at its next `.await` point —
 /// which is the `.await` on the attempt's `JoinHandle`. A bare
@@ -117,11 +123,17 @@ impl<T> std::future::Future for AbortOnDrop<T> {
     }
 }
 
-/// #665: spawn a `retry_with_backoff` attempt as a detached task (for
-/// panic isolation) and immediately wrap its handle in [`AbortOnDrop`] so
-/// that cancelling the awaiting consumer loop also cancels the in-flight
-/// attempt. Returns the awaited `Result` — identical shape to the former
+/// #665: spawn a `retry_with_backoff` attempt as a detached task and
+/// immediately wrap its handle in [`AbortOnDrop`] so that cancelling the
+/// awaiting consumer loop also cancels the in-flight attempt. Returns the
+/// awaited `Result` — identical shape to the former
 /// `tokio::task::spawn(fut).await`.
+///
+/// #3295: the `Err(JoinError)` half of that `Result` is an unwind-only
+/// signal. It carries a handler panic in debug/test builds; it cannot be
+/// produced by a panic in a `panic = "abort"` release build, where the
+/// process is already gone. Read its absence as "no panic was
+/// *observable*", never as "nothing panicked".
 async fn run_attempt_cancellable<F>(fut: F) -> Result<F::Output, tokio::task::JoinError>
 where
     F: std::future::Future + Send + 'static,
@@ -135,19 +147,37 @@ where
 /// Captures enough state for the caller to bump the right metric counters
 /// and emit retry-exhaustion warnings without re-running the task. The
 /// values are mutually consistent:
-/// * `succeeded = true` ⇒ `panicked = false`, `last_error_msg = None`
-/// * `panicked = true` ⇒ `succeeded = false`
+/// * `succeeded = true` ⇒ `last_error_msg = None`
+/// * `succeeded = false` ⇒ `last_error_msg = Some(_)`, carrying a
+///   `"panic: …"` prefix when the attempt panicked in an unwinding build
+///
+/// #3295: there is deliberately no `panicked` flag. It could only ever be
+/// set from the unwind-only `Err(JoinError)` arm, so in the shipped
+/// (`panic = "abort"`) binary it was structurally `false` — and after
+/// #3382 deleted the `fg_panics` / `bg_panics` counters its only readers
+/// were a post-loop `!outcome.panicked` guard that the panic arm's early
+/// `return` made vacuously true, plus two tests asserting it was `false`.
+/// A field that cannot be `true` where it matters is a false-health
+/// signal, not observability. A panicked attempt is a failed attempt and
+/// is counted as one on `fg_errors` / `bg_errors`; the distinction
+/// survives where it is honest about its scope — in `last_error_msg`'s
+/// `"panic: "` prefix and in the `error`-level "materializer task
+/// panicked" log line, both of which exist only when the build unwound.
 #[derive(Debug)]
 pub(super) struct RetryOutcome {
     pub succeeded: bool,
-    pub panicked: bool,
     pub last_error_msg: Option<String>,
 }
 
 /// Run an async task, retrying up to `max_retries` times on failure with
 /// the backoff returned by `backoff_for(attempt)`. Each invocation runs
-/// inside a freshly spawned `tokio::task` so a panic in the handler does
-/// not crash the consumer loop.
+/// inside a freshly spawned `tokio::task`, so in an unwinding build
+/// (debug/test) a panic in the handler surfaces here as `Err(JoinError)`
+/// and does not crash the consumer loop. #3295: the shipped binary is
+/// built with `panic = "abort"`, where the same panic takes the process
+/// down and this function never returns — the isolation is a debug/test
+/// property, not a release guarantee. See the `panic` key's rationale in
+/// the workspace root `Cargo.toml`.
 ///
 /// Extracted from the formerly-duplicated retry loops in
 /// [`process_single_foreground_task`] (single retry, 100 ms constant
@@ -174,7 +204,6 @@ where
 {
     let mut outcome = RetryOutcome {
         succeeded: false,
-        panicked: false,
         last_error_msg: None,
     };
 
@@ -195,10 +224,17 @@ where
             // always interesting (and break the consumer's invariants).
             log_consumer_result(label, &first, tracing::Level::DEBUG);
         }
+        // #3295: unwind-only arm. A `JoinError` reaches us only when the
+        // attempt panicked *and* the build unwound; under the release
+        // profile's `panic = "abort"` the process dies inside the attempt,
+        // so this arm never runs in a shipped build. It is kept for the
+        // debug/test isolation it does provide (and for `JoinHandle`'s
+        // cancellation variant), not as a production recovery path.
+        // A panic is never retried: re-running a handler that violated its
+        // own invariants just re-runs the bug.
         Err(e) => {
             outcome.last_error_msg = Some(format!("panic: {e:?}"));
             log_consumer_result(label, &first, tracing::Level::ERROR);
-            outcome.panicked = true;
             return outcome;
         }
     }
@@ -238,22 +274,22 @@ where
                 // again (or escalated below). Demote to `debug`.
                 log_consumer_result(&retry_label, &retry, tracing::Level::DEBUG);
             }
+            // Unwind-only, exactly as the first-attempt arm above (#3295).
             Err(e) => {
                 outcome.last_error_msg = Some(format!("panic: {e:?}"));
                 log_consumer_result(&retry_label, &retry, tracing::Level::ERROR);
-                outcome.panicked = true;
                 return outcome;
             }
         }
     }
 
-    // Retries exhausted without panic — surface a single
-    // operator-facing `error` line so the demoted-to-debug
-    // intermediate failures don't leave the operator-facing logs
-    // silent. Panic-exhausted paths are NOT logged here; they were
-    // already emitted at `error` level in their respective arms.
+    // Retries exhausted — surface a single operator-facing `error` line so
+    // the demoted-to-debug intermediate failures don't leave the
+    // operator-facing logs silent. Panicking attempts never reach here:
+    // both `Err(JoinError)` arms `return` after logging at `error`
+    // themselves. #3295 dropped this guard's `!outcome.panicked` conjunct
+    // for exactly that reason — the early `return` made it unfalsifiable.
     if !outcome.succeeded
-        && !outcome.panicked
         && let Some(msg) = outcome.last_error_msg.as_deref()
     {
         tracing::error!(label, error = msg, "error processing materializer task");
@@ -530,13 +566,15 @@ pub(super) async fn process_single_foreground_task(
         .await
     };
 
-    // #3382: no panic arm. `outcome.panicked` implies `!outcome.succeeded`
-    // (see `RetryOutcome`), so a panicked attempt falls through to the error
-    // arm below and is counted as the failure it is. The former `fg_panics`
-    // counter was deleted rather than left reading zero forever: under
+    // #3382: no panic arm. A panicked attempt leaves `succeeded = false`
+    // (see `RetryOutcome`), so it falls through to the error arm below and
+    // is counted as the failure it is. The former `fg_panics` counter was
+    // deleted rather than left reading zero forever: under
     // `[profile.release]`'s `panic = "abort"` the process is gone before any
     // counter can be written, so it could only ever be zero in a shipped
-    // build — the false-health signal #3349 exists to remove.
+    // build — the false-health signal #3349 exists to remove. #3295 then
+    // removed the vestigial `RetryOutcome::panicked` flag on the same
+    // grounds; a panic is observable at all only in an unwinding build.
     if outcome.succeeded {
         // Issue #378: confirmed-durable-success clear for the foreground
         // path. A sweep-driven `ApplyOp` re-run that succeeds here must

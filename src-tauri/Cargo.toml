@@ -420,16 +420,63 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 debug = false
-# `panic = "abort"` shrinks the binary 5-10% (drops the
-# unwind tables) and shaves a small amount of cold-start cost. Safe
-# because Agaric does not rely on stack unwinding to recover from
-# panics: Tauri IPC commands return `Result`, the daemon panic hook
-# at lib.rs:447 just logs + lets the process terminate, and there
-# are zero `std::panic::catch_unwind` call-sites in `src-tauri/src/`
-# (verified during R24 landing — re-run `grep -r catch_unwind
-# src-tauri/src/` before tightening this further). `lto = "fat"`
-# was considered and rejected (2-5 min added to every release build
-# per platform; not worth it on a 5-10% binary-size delta).
+# `panic = "abort"` shrinks the binary 5-10% (drops the unwind tables) and
+# shaves a small amount of cold-start cost. This manifest is the workspace
+# root, so the setting reaches every crate in every shipped build. What it
+# buys is paid for with a hard rule: in a release binary ANY panic — ours
+# or a dependency's, on any thread — is an immediate SIGABRT. No unwinding,
+# no `catch_unwind` recovery, and no `Err(JoinError)` from a panicking
+# `tokio::task::spawn`.
+#
+# #3295 — the test this comment used to cite ("zero `std::panic::catch_unwind`
+# call-sites in `src-tauri/src/`, re-run the grep before tightening") was
+# wrong on two independent axes, so do NOT re-run it as though a zero
+# answer settled anything:
+#
+#   1. It only looked at FIRST-PARTY code. Dependencies both rely on
+#      unwinding and document what abort does to them. `netdev` 0.45
+#      (in-tree via `netwatch` -> `iroh`; its `android-extra` feature is
+#      ON by default) calls `panic::catch_unwind(ndk_context::android_context)`
+#      in `src/os/android/api.rs` to probe for a JNI context — a recovery
+#      this profile deletes. `iroh-dns` 1.0.3 spells the consequence out in
+#      `src/android.rs` and `src/dns.rs`: it catches the same panic to fall
+#      back to default nameservers. From `src/android.rs`: "This depends on
+#      panic unwinding though, so if you set `panic = abort` in your
+#      compilation profile, and don't install the JNI context, your app
+#      would panic and abort on the first DNS lookup." `src/dns.rs` draws
+#      the conclusion: "either make sure that the JNI context is installed,
+#      or don't use `panic = abort`."
+#   2. It only looked for `catch_unwind`. This repo's own panic recovery is
+#      `JoinHandle`-based: `materializer/consumer.rs` runs each attempt in a
+#      spawned task and treats `Err(JoinError)` as an isolated handler panic.
+#      Under abort tokio never produces that error, so the grep would have
+#      returned a clean zero for a codebase whose panic recovery this flag
+#      silently deletes. That machinery is now documented as debug/test-only
+#      (#3295), and #3382 deleted the `fg_panics` / `bg_panics` counters that
+#      could only ever read zero here.
+#
+# The cost is not theoretical: #3847 (fixed by #3848). `ndk_context::android_context()`
+# is `ANDROID_CONTEXT.expect("android context was not initialized")`, and
+# `MulticastLock::acquire` in agaric-sync called it directly. Under this
+# profile that `expect` became `Fatal signal 6 (SIGABRT)` on a
+# `tokio-rt-worker` thread and killed the Android app whenever the user
+# opened the sync dialog — where an unwinding build would have confined the
+# panic to that spawned task (and iroh-dns's `catch_unwind` on the same
+# uninitialized context would have degraded to fallback DNS rather than
+# taking the process down). The fix was to install the JNI context at
+# `JNI_OnLoad` and to make the guard checkable, not to change this flag —
+# but this flag is what escalated a contained failure into a crash.
+#
+# So before keeping, tightening, or removing this key, ask the question the
+# grep was standing in for: does anything on a reachable path depend on
+# unwinding to recover? Check the DEPENDENCY graph for `catch_unwind` and
+# for docs that mention `panic = "abort"`, and check first-party code for
+# `JoinHandle` / `JoinError` recovery — not just for `catch_unwind` in
+# `src-tauri/src/` (which, since the `panic_payload_and_location` unit test
+# landed, no longer even returns zero).
+#
+# `lto = "fat"` was considered and rejected (2-5 min added to every release
+# build per platform; not worth it on a 5-10% binary-size delta).
 panic = "abort"
 
 # Dev-build link-time trim (PEND-37, local dev speed). The link step is the
