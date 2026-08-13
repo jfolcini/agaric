@@ -227,26 +227,43 @@ describe('parseQueryExpression', () => {
     })
   })
 
-  it('drops a property shorthand token whose value does not start immediately after the key', () => {
+  it('falls through to params instead of dropping a property shorthand token whose value does not start immediately after the key (#3795)', () => {
     // opMatch's leading \w+ must be anchored at the very start of rest.
+    // Previously this token was dropped entirely (not parsed, not recorded
+    // in params, no error). #3795: it now falls through to the same
+    // "unrecognised token" handling as any other prefix, so the source
+    // text survives. `'property:' + result.params.property` reconstructs
+    // this token verbatim.
+    //
+    // Scoped claim, deliberately: `params` is keyed by PREFIX, so two
+    // malformed `property:` tokens in one query overwrite each other and
+    // the earlier one is still dropped — the very class #3795 is about,
+    // surviving for multi-token input. That matches the pre-existing
+    // `else` for every other unrecognised prefix, so it is consistent
+    // rather than newly broken, but this test does NOT cover it and the
+    // fix does not claim to.
     const result = parseQueryExpression('property:=key=value')
     expect(result).toEqual({
       type: 'unknown',
-      params: {},
+      params: { property: '=key=value' },
       propertyFilters: [],
       tagFilters: [],
     })
+    expect(`property:${result.params['property']}`).toBe('property:=key=value')
   })
 
-  it('drops a property shorthand token with an operator but no value after it', () => {
+  it('falls through to params instead of dropping a property shorthand token with an operator but no value after it (#3795)', () => {
     // opMatch's trailing (.+) must require at least one value character, not zero.
+    // Same fall-through as above: the raw text is preserved in params
+    // rather than silently discarded.
     const result = parseQueryExpression('property:key=')
     expect(result).toEqual({
       type: 'unknown',
-      params: {},
+      params: { property: 'key=' },
       propertyFilters: [],
       tagFilters: [],
     })
+    expect(`property:${result.params['property']}`).toBe('property:key=')
   })
 })
 

@@ -45,7 +45,42 @@ export function tokenize(input: string): RawToken[] {
   let i = 0
   const n = input.length
 
+  // Dev-only forward-progress guards (#3786): nothing else asserts that the
+  // cursor strictly advances on every iteration of either `while` loop
+  // below. In production code today it always does, but a future
+  // regression (e.g. a flipped sign on a `close + 1`) would otherwise spin
+  // forever in one of these synchronous loops — a hang that vitest's
+  // `--testTimeout` cannot interrupt (a tight synchronous loop never
+  // yields to the event loop), rather than a fast, legible red test.
+  // `assertAdvanced` converts that hang into an immediate throw at the
+  // exact point of the regression.
+  //
+  // Chosen over a bounded-iterations cap: it states the actual invariant
+  // (the cursor must strictly increase) instead of an arbitrary bound, so
+  // it fires immediately rather than after N wasted iterations, and it is
+  // self-documenting at the call site. Kept dev-only, matching the
+  // existing `import.meta.env.DEV` invariants elsewhere in this codebase
+  // (e.g. `ConfirmDialog.tsx`, `popover-menu-item.tsx`) — false in
+  // production builds, where esbuild's `define` dead-code-eliminates the
+  // whole branch, so the hot loop pays nothing there. This is a pure
+  // safety net: every branch below already advances `i` for all valid
+  // input, so the guard never fires on correct code.
+  //
+  // Say the residual risk out loud rather than leaving it inferable: being
+  // dev-only means a regression that ships STILL FREEZES THE USER'S APP
+  // forever — the guard protects the test runner and the dev build, not
+  // production. That is the deliberate scope (#3786 is about a hang that
+  // silently eats a CI run, because a synchronous `while` never yields so
+  // vitest's `--testTimeout` cannot fire). If a hang is ever observed in a
+  // shipped build, the fix is to drop the `DEV` condition, not to add a
+  // cap: the check is two integer comparisons per iteration against a loop
+  // that is already doing per-character string work, so making it
+  // unconditional would not be measurable.
+  let prevOuter = -1
+
   while (i < n) {
+    assertAdvanced('tokenize/outer', prevOuter, i)
+    prevOuter = i
     const ch = input[i]
     if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
       i++
@@ -75,7 +110,10 @@ export function tokenize(input: string): RawToken[] {
     // embedded phrase that extends through whitespace until a matching
     // `"` at a token boundary, so `prop:key="v with spaces"` survives
     // as a single word.
+    let prevInner = -1
     while (i < n) {
+      assertAdvanced('tokenize/word', prevInner, i)
+      prevInner = i
       const c = input[i]
       if (c === ' ' || c === '\t' || c === '\n' || c === '\r') break
       if (c === '"' && i > start) {
@@ -90,6 +128,27 @@ export function tokenize(input: string): RawToken[] {
     tokens.push({ kind: 'word', text: input.slice(start, i), span: [start, i] })
   }
   return tokens
+}
+
+/**
+ * Dev-only forward-progress assertion (#3786). Throws when `cur` fails to
+ * strictly exceed `prev`, converting a would-be infinite synchronous loop
+ * into an immediate, legible failure. No-ops (and is dead-code-eliminated
+ * by esbuild's `define`) outside dev/test builds — see the comment at the
+ * top of {@link tokenize} for why this is dev-only and why an invariant
+ * check was chosen over a bounded-iterations cap.
+ */
+// Exported for tests ONLY. The guard fires only against code that is
+// already broken, so no input to `tokenize` can reach it — which left the
+// body a mutation survivor (deleting it failed no test). Testing it
+// directly is what makes the guard itself covered rather than merely
+// present.
+export function assertAdvanced(where: string, prev: number, cur: number): void {
+  if (import.meta.env.DEV && cur <= prev) {
+    throw new Error(
+      `tokenize(): scan cursor failed to advance at ${where} (was ${prev}, now ${cur}) — this would otherwise hang forever`,
+    )
+  }
 }
 
 /**

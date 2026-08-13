@@ -102,6 +102,14 @@ export function parseQueryExpression(expr: string): {
             value: opMatch[3] as string,
             operator: OPERATOR_MAP[opMatch[2] as string],
           })
+        } else {
+          // Malformed shorthand (empty/non-\w key, or an operator with no
+          // value after it) — don't silently drop the token (#3795). Fall
+          // through to the same "unrecognised token" handling every other
+          // prefix already gets below, so the raw text survives into
+          // `params` instead of vanishing with no filter, no param, and no
+          // error.
+          params[prefix] = rest
         }
       } else if (prefix === 'tag' && rest !== '') {
         // Shorthand: tag:prefix
