@@ -1251,7 +1251,7 @@ impl Materializer {
 /// captured here — it depends on `&Materializer` state and is driven
 /// by [`Materializer::maybe_enqueue_fts_optimize`] after the returned
 /// vec has been enqueued.
-fn invalidations_for_op(
+pub(crate) fn invalidations_for_op(
     record: &OpRecord,
     block_type_hint: Option<&str>,
     move_same_page: Option<bool>,
@@ -1284,6 +1284,45 @@ fn invalidations_for_op(
             } else {
                 let block_id: Arc<str> = Arc::from(hint.block_id.as_str());
                 tasks.push(MaterializeTask::UpdateFtsBlock {
+                    block_id: Arc::clone(&block_id),
+                });
+                // #3296: a freshly created block can already contain inline
+                // `[[ULID]]` / `((ULID))` LINK tokens for exactly the same
+                // reason it can contain tag refs (imports, paste, template
+                // insertion, `create_blocks_batch`, the MCP `append_block`
+                // tool, `quick_capture_block_inner`). The in-tx create hook
+                // (`agaric_engine::apply::pages_cache`, the `PreOpState::Create`
+                // arm) already writes `block_links` + the affected pages'
+                // `inbound_link_count` and its comment explicitly assumes "the
+                // later background reindex" will follow — but this arm never
+                // enqueued one, and `ReindexBlockLinks`' handler is the SOLE
+                // writer of the page-level `page_link_cache` rollup
+                // (`cache::reindex_page_link_cache_for_block`, see
+                // `task_handlers.rs`). Without it a create-with-content's edges
+                // reached `block_links` but never `page_link_cache`, so the
+                // Graph view and the page-links panel — which read
+                // `page_link_cache` exclusively — showed no edge until the block
+                // was later EDITED (the `EditBlock` arm below does enqueue it),
+                // a delete/restore/purge/cross-page-move fired the full
+                // `RebuildPageLinkCache`, or the read path's lazy rebuild fired
+                // — and that only self-heals when the cache is ENTIRELY empty
+                // (`commands/pages/links.rs`).
+                //
+                // Idempotent and retry-persistable: the in-tx
+                // `reindex_block_links_conn` already wrote the `block_links`
+                // half, so the handler's diff is empty and the only added work
+                // is the page-level rollup that was missing.
+                //
+                // Dedup is per-`block_id` (`materializer/dedup.rs`), so repeats
+                // on the SAME block collapse but an N-block
+                // `create_blocks_batch` / import enqueues N tasks that do NOT.
+                // That is ~one extra handler invocation per created block,
+                // bounded by `ensure_batch_within_cap`. Accepted for
+                // correctness: gating the push on "content actually has link
+                // tokens" would duplicate the token regex into this hot path,
+                // and the unconditional shape matches `ReindexBlockTagRefs`
+                // directly below, which is unconditional for the same reason.
+                tasks.push(MaterializeTask::ReindexBlockLinks {
                     block_id: Arc::clone(&block_id),
                 });
                 // A freshly created block can already contain
@@ -1378,6 +1417,35 @@ fn invalidations_for_op(
                     tasks.push(MaterializeTask::RebuildTagsCache);
                     tasks.push(MaterializeTask::RebuildPagesCache);
                     tasks.push(MaterializeTask::RebuildAgendaCache);
+                    // #3296: the no-hint fallback is documented (in this
+                    // function's rustdoc) as "the full conservative set", i.e. a
+                    // SUPERSET of `Some("tag")` ∪ `Some("page")`. It carried the
+                    // union of their GLOBAL rebuilds but silently dropped the
+                    // per-block `ReindexFtsReferences` that BOTH concrete arms
+                    // push — and that task is the only thing that re-resolves a
+                    // referencing block's inline `#[ULID]` / `[[ULID]]` tokens
+                    // to the renamed tag's / page's new human-readable text
+                    // (`agaric_store::fts::reindex_fts_references`).
+                    //
+                    // The no-hint path is not hypothetical: UNDO/REDO takes it.
+                    // All three revert sites in `commands/history.rs` enqueue
+                    // the reverse op through the unhinted
+                    // `CommandTx::enqueue_background`, which routes to
+                    // `Materializer::dispatch_background` →
+                    // `enqueue_background_tasks(record, None, None)`, while the
+                    // FORWARD rename goes through the hinted
+                    // `enqueue_edit_background(record, "tag"|"page")`. So
+                    // undoing a rename refreshed the renamed block's own FTS row
+                    // (the unconditional `UpdateFtsBlock` below) but left every
+                    // REFERENCING block's `fts_blocks.stripped` holding the
+                    // post-rename name — searching the restored name missed
+                    // them, searching the undone name still matched. Remote
+                    // replay / inbound sync take the same unhinted path.
+                    if !block_id.is_empty() {
+                        tasks.push(MaterializeTask::ReindexFtsReferences {
+                            block_id: Arc::from(block_id),
+                        });
+                    }
                 }
             }
             if !block_id.is_empty() {
@@ -1906,6 +1974,9 @@ mod tests {
             vec![
                 "RebuildTagsCache",
                 "UpdateFtsBlock(BLK1)",
+                // #3296: link reindex is enqueued for EVERY create, not just
+                // content ones — a tag block's content can carry `[[ULID]]`.
+                "ReindexBlockLinks(BLK1)",
                 "ReindexBlockTagRefs(BLK1)",
                 "SetBlockPageId(BLK1)",
             ],
@@ -1930,6 +2001,8 @@ mod tests {
             vec![
                 "RebuildPagesCache",
                 "UpdateFtsBlock(PG1)",
+                // #3296.
+                "ReindexBlockLinks(PG1)",
                 "ReindexBlockTagRefs(PG1)",
             ],
         );
@@ -1945,6 +2018,8 @@ mod tests {
             labels(&tasks),
             vec![
                 "UpdateFtsBlock(C1)",
+                // #3296: the page-link rollup's only per-block maintainer.
+                "ReindexBlockLinks(C1)",
                 "ReindexBlockTagRefs(C1)",
                 "SetBlockPageId(C1)",
             ],
@@ -2043,9 +2118,58 @@ mod tests {
                 "RebuildTagsCache",
                 "RebuildPagesCache",
                 "RebuildAgendaCache",
+                // #3296: the fallback is the CONSERVATIVE set, so it must be a
+                // superset of `Some("tag")` ∪ `Some("page")` — including the
+                // per-block reference reindex both of those arms push.
+                "ReindexFtsReferences(E4)",
                 "UpdateFtsBlock(E4)",
             ],
         );
+    }
+
+    /// #3296 gap 2 — the no-hint fallback must be a genuine SUPERSET of the two
+    /// concrete `block_type_hint` arms, not just of their GLOBAL rebuilds.
+    ///
+    /// This is the invariant the pinning test above froze the violation of: it
+    /// asserted an explicit list, so a task missing from BOTH the list and the
+    /// code read as agreement. Comparing the arms against each other instead
+    /// makes the omission structural — the fallback cannot silently drop a task
+    /// a narrower, better-informed arm considers necessary.
+    #[test]
+    fn invalidations_for_op_edit_block_no_hint_is_a_superset_of_every_hinted_arm() {
+        let r = make_record("edit_block", r#"{"block_id":"E4"}"#, Some("E4"));
+        let fallback = labels(&invalidations_for_op(&r, None, None).unwrap());
+        for hint in ["tag", "page", "content"] {
+            for task in labels(&invalidations_for_op(&r, Some(hint), None).unwrap()) {
+                assert!(
+                    fallback.contains(&task),
+                    "the no-hint edit_block fallback (documented as \"the full conservative \
+                     set\") omits {task}, which the Some(\"{hint}\") arm enqueues — undo/redo \
+                     and inbound sync take the no-hint path (#3296), so anything a hinted \
+                     arm needs the fallback needs too. Fallback: {fallback:?}",
+                );
+            }
+        }
+    }
+
+    /// #3296 gap 1 — a `create_block` carrying inline `[[ULID]]` content must
+    /// enqueue the link reindex, because that task's handler is the SOLE writer
+    /// of the `page_link_cache` rollup. Before the fix only `edit_block` did, so
+    /// a create-with-content's edges reached `block_links` but never the rollup
+    /// the Graph view reads.
+    #[test]
+    fn invalidations_for_op_create_block_enqueues_link_reindex_3296() {
+        for block_type in ["content", "page", "tag"] {
+            let payload = format!(r#"{{"block_id":"CL1","block_type":"{block_type}"}}"#);
+            let r = make_record("create_block", &payload, Some("CL1"));
+            let tasks = invalidations_for_op(&r, None, None).unwrap();
+            assert!(
+                labels(&tasks).contains(&"ReindexBlockLinks(CL1)".to_owned()),
+                "create_block({block_type}) must enqueue ReindexBlockLinks — it is the only \
+                 per-block maintainer of page_link_cache (#3296); got {:?}",
+                labels(&tasks),
+            );
+        }
     }
 
     // ── delete / restore / purge (full cache rebuild) ───────────────

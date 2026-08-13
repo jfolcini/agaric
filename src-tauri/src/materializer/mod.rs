@@ -66,6 +66,15 @@ pub(crate) use handlers::{
 pub(crate) use handlers::apply_op_projected;
 #[cfg(test)]
 use handlers::{handle_background_task, handle_foreground_task};
+// #3345/#3296: the reconciliation oracle drives `page_link_cache` maintenance
+// from production's OWN per-op fan-out table rather than from a hand-written
+// list, so a task the dispatcher forgets to enqueue is a task the oracle never
+// runs — which is exactly how a missing invalidation becomes a visible
+// divergence instead of an untested assumption. Test-only: `dispatch` is a
+// private module and nothing outside the materializer reads the table in a
+// production build.
+#[cfg(test)]
+pub(crate) use dispatch::invalidations_for_op;
 // #1993: re-exported test-only so command-level tests can drive the GC pass
 // (delete defers byte reclamation to it). Non-test code reaches it within the
 // materializer module via `handlers::cleanup_orphaned_attachments`.

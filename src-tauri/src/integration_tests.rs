@@ -1420,8 +1420,13 @@ async fn materializer_processes_background_tasks_after_page_create() {
 
     let bg = mat.metrics().bg_processed.load(Ordering::Relaxed);
     // A `create_block` op with `block_type = "page"` fans out to exactly
-    // 3 background tasks via `dispatch::enqueue_background_tasks`:
-    // RebuildPagesCache, UpdateFtsBlock, ReindexBlockTagRefs.
+    // 4 background tasks via `dispatch::enqueue_background_tasks`:
+    // RebuildPagesCache, UpdateFtsBlock, ReindexBlockLinks, ReindexBlockTagRefs.
+    // (#3296: `ReindexBlockLinks` joined the create arm — its handler is the
+    // SOLE per-block writer of the `page_link_cache` roll-up, and a page's own
+    // content can already carry `[[ULID]]` tokens at create time. Before that
+    // a create-with-content's edges reached `block_links` but never the
+    // roll-up the Graph view reads.)
     // (#2200: RebuildTagInheritanceCache is no longer enqueued on create — the
     // in-tx `inherit_parent_tags` already populates the new childless block's
     // inherited tags, so the vault-wide rebuild is redundant.)
@@ -1432,10 +1437,10 @@ async fn materializer_processes_background_tasks_after_page_create() {
     // SetBlockPageId is skipped for page blocks — their page_id = id
     // is enforced by the page_id_self_for_pages CHECK constraint at
     // INSERT time. `flush_background` then enqueues one Barrier,
-    // which the worker also counts as a processed task — total 4.
+    // which the worker also counts as a processed task — total 5.
     assert_eq!(
-        bg, 4,
-        "page creation dispatches exactly 3 bg tasks + 1 flush barrier, got {bg}"
+        bg, 5,
+        "page creation dispatches exactly 4 bg tasks + 1 flush barrier, got {bg}"
     );
 }
 

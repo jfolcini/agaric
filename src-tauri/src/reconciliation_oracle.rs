@@ -51,11 +51,28 @@
 //! | `pages_cache` ROW MEMBERSHIP | `blocks` | `rebuild_pages_cache` (the `RebuildPagesCache` task) |
 //! | `blocks.page_id` (page OWNERSHIP) | `blocks` | `set_block_page_id_from_parent` (create arm) / `rederive_page_and_space_ids` (move arm) / `rebuild_page_ids` (vault-wide arm) |
 //! | `pages_cache.{inbound_link_count,child_block_count}` | `blocks`, `block_links` | `maintain_pages_cache_counts_after_op` (sync arms) / `rebuild_pages_cache_counts` (deferred cohort arm) |
+//! | `page_link_cache` (the page-level `block_links` roll-up) | `blocks`, `block_links` | `reindex_page_link_cache_for_block` (the `ReindexBlockLinks` task — the SOLE per-block writer) / `rebuild_page_link_cache` (the `RebuildPageLinkCache` task) |
 //!
 //! Deliberately **not** covered here — see the follow-up issues: the agenda
-//! cache, the projected-agenda cache, `page_link_cache`, `block_tag_refs`,
+//! cache, the projected-agenda cache, `block_tag_refs`,
 //! `tags_cache.usage_count`, `blocks.space_id` re-derivation, and the FTS
 //! index.
+//!
+//! # `page_link_cache` has NO synchronous arm at all (#3296)
+//!
+//! Unlike the `pages_cache` counts, this roll-up is maintained **only** by
+//! background tasks the DISPATCHER decides to enqueue: nothing in
+//! `apply_op_tx` writes it. That makes the dispatch table itself — not a
+//! projection helper — the thing that can be wrong, and it is a table with one
+//! arm per op type, hand-maintained (`materializer::dispatch::
+//! invalidations_for_op`). So the settle for this artefact
+//! ([`settle_page_link_cache_for_op`]) does not run a fixed list of
+//! maintainers: it asks PRODUCTION's fan-out table which link maintainers this
+//! op needs and runs exactly those. An arm that forgets to enqueue
+//! `ReindexBlockLinks` therefore runs nothing, the roll-up never gains the
+//! edge, and the diff below reports it — which is precisely how the #3296
+//! `CreateBlock` gap surfaces structurally rather than by someone noticing an
+//! empty graph.
 //!
 //! # The counts' page-ownership assumption is no longer unfalsifiable (#3654)
 //!
@@ -155,6 +172,17 @@ pub struct OracleCoverage {
     pub soft_deleted_attachment_rows: i64,
     /// Rows in `attachment_blobs`.
     pub attachment_blob_rows: i64,
+    /// Rows in `page_link_cache` — what incremental maintenance produced.
+    pub page_link_cache_rows: i64,
+    /// `(source_page, target)` pairs a from-base rebuild says MUST have a
+    /// `page_link_cache` row.
+    ///
+    /// The page-link artefact compares a map of this size against the table's
+    /// key set, so a zero here means the diff was `{} == {}`. It is the
+    /// non-vacuity counter that matters most for this artefact: a chain that
+    /// never writes a `[[ULID]]` token leaves `block_links` empty, and an
+    /// oracle over an always-empty roll-up is worthless.
+    pub page_link_edges: i64,
 }
 
 /// Count the artefact rows the oracle is auditing.
@@ -178,6 +206,15 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
     let attachment_blob_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
         .fetch_one(pool)
         .await?;
+    // dynamic-sql: static SQL, test-only oracle read-back.
+    let page_link_cache_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_link_cache")
+        .fetch_one(pool)
+        .await?;
+    // Folded, not counted in SQL — same rule as the page-shaped counters
+    // below: "the fixture covers this" and "the oracle audited this" must come
+    // from one computation so they cannot drift apart.
+    let page_link_edges =
+        i64::try_from(rebuild_page_link_cache_from_base(pool).await?.len()).unwrap_or(i64::MAX);
 
     // Both page-shaped counters come from the SAME Rust folds the artefacts
     // use, so "the fixture covers this" and "the oracle audited this" can
@@ -200,6 +237,8 @@ pub async fn oracle_coverage(pool: &SqlitePool) -> Result<OracleCoverage, AppErr
         hashed_attachment_rows,
         soft_deleted_attachment_rows,
         attachment_blob_rows,
+        page_link_cache_rows,
+        page_link_edges,
     })
 }
 
@@ -710,6 +749,254 @@ async fn read_attachment_blobs(pool: &SqlitePool) -> Result<BTreeMap<String, Str
 }
 
 // ---------------------------------------------------------------------------
+// Artefact 5 — `page_link_cache` (the page-level `block_links` roll-up, #3296)
+// ---------------------------------------------------------------------------
+
+/// The payload of one `page_link_cache` row; its `(source_page, target)` PK is
+/// the map key.
+///
+/// All four columns are diffed, not just `edge_count`. The three flags
+/// (migration 0096) exist so the hot unscoped read in `list_page_links_inner`
+/// can filter with a partial index and ZERO `blocks` joins — which means a
+/// stale flag is not cosmetic: it is a link the Graph view silently drops
+/// (`src_deleted`/`tgt_deleted` stuck at 1) or a link to a non-page block it
+/// silently shows (`tgt_is_page` stuck at 1). Auditing `edge_count` alone
+/// would leave the entire reason the denormalisation exists unchecked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageLinkEdge {
+    /// Live `block_links` rows whose source block rolls up to this page.
+    pub edge_count: i64,
+    /// Is the SOURCE PAGE (the group key) soft-deleted — or gone entirely?
+    pub src_deleted: bool,
+    /// Is the target block soft-deleted?
+    pub tgt_deleted: bool,
+    /// Is the target block a `page`?
+    pub tgt_is_page: bool,
+}
+
+/// Recompute the whole `page_link_cache` from `blocks` + `block_links` alone.
+///
+/// The rules are transcribed from the column semantics (migrations 0065 /
+/// 0096) rather than from either maintenance query — with ONE honest
+/// exception, called out below: the `COALESCE(page_id, parent_id, id)`
+/// attribution chain IS the writers' rule, restated. So this oracle catches
+/// IMPLEMENTATION bugs (a wrong join, a lost aggregate, a missing `WHERE`, the
+/// chunked `INSERT OR IGNORE`, the zero-edge `DELETE` sweep) but CANNOT catch a
+/// SPECIFICATION bug in the attribution rule itself — if that chain is the
+/// wrong idea, the fold is wrong in the same way and the two agree. Inherent to
+/// re-deriving a rule rather than deriving it from an independent source; noted
+/// so nobody reads this as stronger than it is.
+///
+/// The rules:
+///
+/// * an edge is one `block_links` row whose SOURCE BLOCK exists and is live —
+///   a tombstoned source contributes nothing, which is why deleting a block
+///   must drop the rows it was holding up;
+/// * an edge whose TARGET block no longer exists contributes nothing either
+///   (both production queries inner-join `blocks` on the target);
+/// * edges are grouped by `(source_page, target)`, where `source_page` is the
+///   source block's owning page: its `page_id`, else its `parent_id`, else the
+///   source block's own id. This chain is load-bearing and identical in the
+///   incremental writer, the full rebuild and here — a block whose `page_id`
+///   was never stamped rolls up under its immediate parent instead;
+/// * `edge_count` is how many such rows land in the group;
+/// * `src_deleted` is the state of the SOURCE PAGE — the group key — and is
+///   `true` when that page is soft-deleted OR does not exist at all (a purged
+///   or never-created page id, which the read must mask exactly as it masks a
+///   tombstone);
+/// * `tgt_deleted` / `tgt_is_page` come from the single target block.
+///
+/// Folded in Rust over two flat row dumps: no `GROUP BY`, no `COUNT`, no
+/// `COALESCE`, no `LEFT JOIN` is delegated to SQLite. Both production writers
+/// express this as one SQL shape — the incremental UPSERT restricted to one
+/// source page, the full rebuild unrestricted — so an oracle written in that
+/// shape would agree with a bug living in it. In particular the ancestor
+/// question ("which page does this block's links belong to?") is answered here
+/// by reading the two columns directly rather than by re-expressing the
+/// `COALESCE` in SQL.
+///
+/// # Tombstones: verified against the writers, not assumed
+///
+/// A soft-deleted SOURCE BLOCK is excluded (both writers carry
+/// `WHERE sb.deleted_at IS NULL`), but a soft-deleted TARGET is NOT — its row
+/// survives carrying `tgt_deleted = 1`, and the read path filters on the flag.
+/// A soft-deleted SOURCE PAGE likewise keeps its rows, flagged. Only a HARD
+/// delete removes rows, and it does so through the schema rather than through
+/// app code: `page_link_cache`'s two columns are
+/// `REFERENCES blocks(id) ON DELETE CASCADE` (migration 0065), so a purge that
+/// removes the block removes its cache rows — matching this fold, which drops
+/// any edge whose source or target block is absent from `blocks`.
+pub async fn rebuild_page_link_cache_from_base(
+    pool: &SqlitePool,
+) -> Result<BTreeMap<(String, String), PageLinkEdge>, AppError> {
+    let blocks = dump_blocks(pool).await?;
+    let links = dump_block_links(pool).await?;
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+
+    let mut out: BTreeMap<(String, String), PageLinkEdge> = BTreeMap::new();
+    for (source_id, target_id) in &links {
+        // The source block must exist and be LIVE.
+        let Some(source) = by_id.get(source_id.as_str()) else {
+            continue;
+        };
+        if source.deleted_at.is_some() {
+            continue;
+        }
+        // The target block must exist (its flags are read off it).
+        let Some(target) = by_id.get(target_id.as_str()) else {
+            continue;
+        };
+
+        let source_page = source
+            .page_id
+            .clone()
+            .or_else(|| source.parent_id.clone())
+            .unwrap_or_else(|| source_id.clone());
+        // A source page that is absent from `blocks` is masked as deleted —
+        // the same outcome the writers' `COALESCE(…, 1)` / `CASE WHEN sp.id IS
+        // NULL THEN 1` produce, reached without borrowing their shape.
+        let src_deleted = by_id
+            .get(source_page.as_str())
+            .is_none_or(|p| p.deleted_at.is_some());
+
+        let entry = out
+            .entry((source_page, target_id.clone()))
+            .or_insert(PageLinkEdge {
+                edge_count: 0,
+                src_deleted,
+                tgt_deleted: target.deleted_at.is_some(),
+                tgt_is_page: target.block_type == PAGE_BLOCK_TYPE,
+            });
+        entry.edge_count += 1;
+    }
+    Ok(out)
+}
+
+/// Read the incrementally-maintained `page_link_cache` as it stands.
+async fn read_page_link_cache(
+    pool: &SqlitePool,
+) -> Result<BTreeMap<(String, String), PageLinkEdge>, AppError> {
+    // dynamic-sql: static SQL, test-only oracle read-back of the derived table.
+    let rows = sqlx::query_as::<_, (String, String, i64, i64, i64, i64)>(
+        "SELECT source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, \
+         tgt_is_page FROM page_link_cache",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(source, target, edge_count, src_deleted, tgt_deleted, tgt_is_page)| {
+                (
+                    (source, target),
+                    PageLinkEdge {
+                        edge_count,
+                        src_deleted: src_deleted != 0,
+                        tgt_deleted: tgt_deleted != 0,
+                        tgt_is_page: tgt_is_page != 0,
+                    },
+                )
+            },
+        )
+        .collect())
+}
+
+/// Run production's whole-table `page_link_cache` recompute — the
+/// `RebuildPageLinkCache` task, a member of every lifecycle rebuild set
+/// (delete / restore / purge), of the cross-page `MoveBlock` arm, and of the
+/// inbound-sync / snapshot-restore sets.
+///
+/// For a driver that writes `block_links` WITHOUT an op (a fixture, or the
+/// in-tx arm of a path whose op is not modelled), this is the only maintainer
+/// that can know about those edges: the per-block reindex keys on one source
+/// page. It is production code (`agaric_store::cache::rebuild_page_link_cache`),
+/// so breaking it turns the oracle red.
+pub async fn settle_page_link_cache_rebuild(pool: &SqlitePool) -> Result<(), AppError> {
+    agaric_store::cache::rebuild_page_link_cache(pool).await
+}
+
+/// Run the `page_link_cache` maintainers PRODUCTION's dispatch table says this
+/// op needs — and only those.
+///
+/// Nothing writes this roll-up inside `apply_op_tx`; its only maintainers are
+/// two background tasks (`ReindexBlockLinks`, `RebuildPageLinkCache`) that the
+/// per-op-type fan-out table in `materializer::dispatch::invalidations_for_op`
+/// decides to enqueue. So a driver that ran a FIXED list of maintainers after
+/// every op would be auditing the projection helpers while silently repairing
+/// the one thing that is actually hand-maintained per op — the table. This
+/// function asks the real table instead, which is what makes a forgotten
+/// enqueue (#3296's `CreateBlock` arm) show up as a divergence rather than as
+/// an assumption nobody wrote down. Returns how many maintainers production
+/// asked for, so a caller can see "zero" for itself.
+///
+/// # Why only the roll-up half of the `ReindexBlockLinks` handler runs
+///
+/// The production handler does three things: re-diff `block_links` for the
+/// block, roll up into `page_link_cache`, then refresh
+/// `pages_cache.inbound_link_count` for the affected pages. The first and
+/// third are deliberately NOT run here. `block_links` is a BASE table for this
+/// module — [`rebuild_pages_cache_counts_from_base`] and
+/// [`rebuild_page_link_cache_from_base`] both fold it as ground truth — so
+/// re-deriving it from content would let the backstop overwrite whatever the
+/// in-tx arm produced; and re-running the inbound-count refresh would REPAIR
+/// the `pages_cache.inbound_link_count` artefact this same oracle audits,
+/// turning that count diff from a check into a self-confirming one. Running
+/// only `reindex_page_link_cache_for_block` keeps every other artefact's
+/// evidence exactly as the arm under audit left it.
+///
+/// # What this does NOT cover (be precise about it)
+///
+/// `reindex_page_link_cache_for_block` is production code — the SOLE per-block
+/// writer of the roll-up — so breaking THAT FUNCTION turns the oracle red. But
+/// this calls it directly rather than through `handle_background_task`, so the
+/// `ReindexBlockLinks` task → function WIRING is bypassed: deleting the call in
+/// `materializer/handlers/task_handlers.rs` would leave this oracle green. That
+/// wiring is pinned elsewhere (`materializer/tests/page_link_cache.rs`,
+/// `local_edit_page_link_cache_converges_local_matches_remote_2397`), so it is
+/// covered — just not here. Do not read a green B6 as evidence the handler is
+/// wired up.
+///
+/// Likewise, this runs `invalidations_for_op`'s RAW output, whereas production
+/// runs it through `enqueue_background_tasks`, which FILTERS: a local
+/// delete/restore/purge diverts `is_global_lifecycle_rebuild` tasks (including
+/// `RebuildPageLinkCache`) into a trailing debounce. So the harness settles
+/// more EAGERLY than production does. That is the safe direction for an
+/// eventual-consistency oracle — it cannot manufacture a divergence production
+/// would not eventually reach — but "asks production's own table" is one level
+/// shallower than the function that actually runs.
+///
+/// `block_type_hint` / `move_same_page` are the same hints the caller's op
+/// path would carry: `None`/`None` models remote replay, inbound sync and boot
+/// (which never carry hints), which is also what the apply-path proptest
+/// drivers model. Note `move_same_page: None` means the #2700 same-page-move
+/// optimisation is not exercised here.
+pub async fn settle_page_link_cache_for_op(
+    pool: &SqlitePool,
+    record: &agaric_store::op_log::OpRecord,
+    block_type_hint: Option<&str>,
+    move_same_page: Option<bool>,
+) -> Result<usize, AppError> {
+    use crate::materializer::MaterializeTask;
+
+    let tasks = crate::materializer::invalidations_for_op(record, block_type_hint, move_same_page)?;
+    let mut ran = 0usize;
+    for task in &tasks {
+        match task {
+            MaterializeTask::ReindexBlockLinks { block_id } => {
+                agaric_store::cache::reindex_page_link_cache_for_block(pool, block_id).await?;
+                ran += 1;
+            }
+            MaterializeTask::RebuildPageLinkCache => {
+                agaric_store::cache::rebuild_page_link_cache(pool).await?;
+                ran += 1;
+            }
+            _ => {}
+        }
+    }
+    Ok(ran)
+}
+
+// ---------------------------------------------------------------------------
 // The oracle
 // ---------------------------------------------------------------------------
 
@@ -880,6 +1167,57 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
                 owner: "maintain_pages_cache_counts_after_op (PreOpState arms for \
                         Create/Edit/Move) + rebuild_pages_cache_counts (the deferred \
                         cohort pass dispatch enqueues for Delete/Restore/Purge)",
+            });
+        }
+    }
+
+    // --- Artefact 5: page_link_cache (#3296) ---------------------------------
+    //
+    // LAST, and after page ownership deliberately: this roll-up is keyed on the
+    // same `page_id` the ownership artefact audits, so a drift there would
+    // otherwise report twice — once at its root and once as an unexplained
+    // link-attribution difference. Reporting it here keeps `first` naming the
+    // root cause.
+    const PAGE_LINK_OWNER: &str = "reindex_page_link_cache_for_block (the ReindexBlockLinks task — the SOLE \
+         per-block writer; NOTHING maintains this roll-up inside apply_op_tx) / \
+         rebuild_page_link_cache (the RebuildPageLinkCache task, in the lifecycle + \
+         inbound-sync rebuild sets) — and, one level up, the arm of \
+         materializer::dispatch::invalidations_for_op that decides whether either \
+         task is enqueued at all (#3296): the Graph view and the page-links panel \
+         read page_link_cache EXCLUSIVELY, and the read path's lazy rebuild only \
+         fires when the table is ENTIRELY empty";
+    let expected_links = rebuild_page_link_cache_from_base(pool).await?;
+    let actual_links = read_page_link_cache(pool).await?;
+    for (key, expected) in &expected_links {
+        let label = format!("{} -> {}", key.0, key.1);
+        match actual_links.get(key) {
+            None => out.push(Divergence {
+                artefact: "page_link_cache.row",
+                key: label,
+                expected: format!("a cache row {expected:?}"),
+                actual: "no row in page_link_cache".to_owned(),
+                owner: PAGE_LINK_OWNER,
+            }),
+            Some(actual) if actual != expected => out.push(Divergence {
+                artefact: "page_link_cache.edge",
+                key: label,
+                expected: format!("{expected:?}"),
+                actual: format!("{actual:?}"),
+                owner: PAGE_LINK_OWNER,
+            }),
+            Some(_) => {}
+        }
+    }
+    for (key, actual) in &actual_links {
+        if !expected_links.contains_key(key) {
+            out.push(Divergence {
+                artefact: "page_link_cache.row",
+                key: format!("{} -> {}", key.0, key.1),
+                expected: "no cache row (no live source block on this page links to this \
+                           target, or an endpoint block is gone)"
+                    .to_owned(),
+                actual: format!("a row in page_link_cache {actual:?}"),
+                owner: PAGE_LINK_OWNER,
             });
         }
     }
