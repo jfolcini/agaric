@@ -1158,8 +1158,23 @@ async fn run_fixture(path: &PathBuf) {
     let snapshot: Snapshot = build_snapshot_with_order(raw_state, &canonical_order);
     let snapshot_value = serde_json::to_value(&snapshot).unwrap();
 
+    // 5. #3347 — optional post-op READ steps. Each runs one query command
+    // against the real backend and projects its response into the same
+    // canonical `Bn` vocabulary the snapshot uses. Authored by the SAME
+    // `CONFORMANCE_UPDATE=1` flow, asserted by the SAME two runners.
+    let labels = super::conformance_snapshot::canonical_label_map(&canonical_order);
+    let queries_value = super::conformance_query::run_query_steps(&pool, &fixture, &labels).await;
+
     if std::env::var("CONFORMANCE_UPDATE").as_deref() == Ok("1") {
         fixture["expected"] = snapshot_value;
+        if queries_value.is_null() {
+            // A fixture with no `queries` keeps no `expected_queries` key.
+            if let Some(obj) = fixture.as_object_mut() {
+                obj.remove("expected_queries");
+            }
+        } else {
+            fixture["expected_queries"] = queries_value;
+        }
         // Pretty-print with a trailing newline so the file stays diff-friendly.
         let mut out = serde_json::to_string_pretty(&fixture).unwrap();
         out.push('\n');
@@ -1183,6 +1198,29 @@ async fn run_fixture(path: &PathBuf) {
         "conformance snapshot mismatch for fixture '{name}' (backend is source of truth; \
          re-author with CONFORMANCE_UPDATE=1 if the backend behaviour changed intentionally)",
     );
+
+    // #3347 — the read-command leg. Same contract as the snapshot: the backend
+    // authors, both runners assert.
+    let expected_queries = &fixture["expected_queries"];
+    if queries_value.is_null() {
+        assert!(
+            expected_queries.is_null(),
+            "fixture '{name}' carries `expected_queries` but declares no `queries` steps — \
+             delete the stale key (or add the steps back)",
+        );
+    } else {
+        assert!(
+            !expected_queries.is_null(),
+            "fixture '{name}' declares `queries` but has no `expected_queries` — \
+             run with CONFORMANCE_UPDATE=1 to author it",
+        );
+        assert_eq!(
+            &queries_value, expected_queries,
+            "conformance QUERY mismatch for fixture '{name}' (backend is source of truth; \
+             re-author with CONFORMANCE_UPDATE=1 if the backend behaviour changed \
+             intentionally)",
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

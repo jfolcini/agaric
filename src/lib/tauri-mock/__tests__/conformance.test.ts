@@ -20,7 +20,17 @@ import { join } from 'node:path'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { buildSnapshot, type MockState } from '@/lib/tauri-mock/__tests__/conformance-snapshot'
+import {
+  type QueryResult,
+  type QueryStep,
+  runQuerySteps,
+  stampMockSpace,
+} from '@/lib/tauri-mock/__tests__/conformance-query'
+import {
+  buildSnapshot,
+  canonicalLabelMap,
+  type MockState,
+} from '@/lib/tauri-mock/__tests__/conformance-snapshot'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
   blocks,
@@ -45,6 +55,10 @@ interface Fixture {
   }
   ops: Array<{ command: string; args: Record<string, unknown> }>
   expected: Record<string, unknown> | null
+  /** #3347 — optional post-op READ steps (see `./conformance-query`). */
+  queries?: QueryStep[]
+  /** Backend-authored projection of each `queries` step. */
+  expected_queries?: QueryResult[]
 }
 
 const FIXTURES_DIR = join(process.cwd(), 'conformance', 'fixtures')
@@ -247,5 +261,41 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
 
       expect(snapshot).toEqual(fixture.expected)
     })
+  }
+
+  // #3347 — the READ leg. The op replay is identical; what differs is that the
+  // fixture then calls query commands and diffs their projected responses
+  // against the SAME backend-authored recording. Kept as its own `it` per
+  // fixture so a query divergence names the query, not the snapshot.
+  for (const { fixture } of fixtures) {
+    if (!fixture.queries || fixture.queries.length === 0) continue
+    const run = DRIFT_SKIP.has(fixture.name) ? it.skip : it
+    run(
+      `fixture '${fixture.name}' — mock reproduces the backend-authored query results`,
+      async () => {
+        expect(
+          fixture.expected_queries,
+          `fixture '${fixture.name}' declares \`queries\` but has no \`expected_queries\` — ` +
+            `author it with CONFORMANCE_UPDATE=1 on the Rust side`,
+        ).toBeDefined()
+
+        loadSeed(fixture)
+        // Mirror image of the Rust runner's `assign_all_to_test_space`, which
+        // runs BOTH after the seed insert (so ops replay with space membership
+        // already resolved) and again after the ops (to catch pages the ops
+        // created). Stamping only once, at the end, would replay every op
+        // against a space-less mock.
+        stampMockSpace()
+        for (const op of fixture.ops) {
+          dispatch(op.command, expandOpArgs(op.args))
+        }
+        stampMockSpace()
+
+        const labels = canonicalLabelMap(canonicalOrder(fixture))
+        const actual = await runQuerySteps(fixture.queries ?? [], labels)
+
+        expect(actual).toEqual(fixture.expected_queries)
+      },
+    )
   }
 })

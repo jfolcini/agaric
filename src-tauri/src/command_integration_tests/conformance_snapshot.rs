@@ -266,7 +266,7 @@ pub fn build_snapshot_with_order(state: RawState, canonical_order: &[String]) ->
 
 /// Sort key for a `Bn` canonical token: `(prefix, numeric_suffix)`. Falls back
 /// to lexical for non-`Bn` tokens (pass-through ids).
-fn token_key(token: &str) -> (String, i64, String) {
+pub(super) fn token_key(token: &str) -> (String, i64, String) {
     if let Some(rest) = token.strip_prefix('B')
         && let Ok(n) = rest.parse::<i64>()
     {
