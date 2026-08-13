@@ -61,10 +61,30 @@ export function tokenize(input: string): RawToken[] {
   // self-documenting at the call site. Kept dev-only, matching the
   // existing `import.meta.env.DEV` invariants elsewhere in this codebase
   // (e.g. `ConfirmDialog.tsx`, `popover-menu-item.tsx`) — false in
-  // production builds, where esbuild's `define` dead-code-eliminates the
-  // whole branch, so the hot loop pays nothing there. This is a pure
-  // safety net: every branch below already advances `i` for all valid
-  // input, so the guard never fires on correct code.
+  // production builds, where `define` folds the condition to `false` and the
+  // minifier drops the whole thing.
+  //
+  // MEASURED, not assumed: a real `vite build` of this repo (which minifies
+  // with `oxc`, not esbuild — see `vite.config.ts`'s Track B note) contains
+  // ZERO occurrences of the string literals `tokenize/outer`, `tokenize/word`
+  // or `scan cursor failed` anywhere in the bundle. The per-iteration calls,
+  // their string arguments AND the `prevOuter` / `prevInner` bookkeeping are
+  // all eliminated — the production hot loop pays literally nothing.
+  //
+  // Re-measure by grepping the built bundle for those three STRING LITERALS.
+  // Do not add the `assertAdvanced` identifier to that list: the minifier
+  // mangles internal names, so it is absent from the bundle whether or not
+  // the calls survive, and a search term that cannot appear either way would
+  // report "eliminated" for a guard that is still running. String literals
+  // are the only terms here that carry evidence.
+  //
+  // (An earlier revision of this comment claimed the call survived and cost
+  // "a function call plus two integer comparisons per iteration". That was
+  // inferred rather than checked, and it is false.)
+  //
+  // This is a pure safety net either way: every branch below already
+  // advances `i` for all valid input, so the guard never fires on correct
+  // code.
   //
   // Say the residual risk out loud rather than leaving it inferable: being
   // dev-only means a regression that ships STILL FREEZES THE USER'S APP
@@ -133,10 +153,12 @@ export function tokenize(input: string): RawToken[] {
 /**
  * Dev-only forward-progress assertion (#3786). Throws when `cur` fails to
  * strictly exceed `prev`, converting a would-be infinite synchronous loop
- * into an immediate, legible failure. No-ops (and is dead-code-eliminated
- * by esbuild's `define`) outside dev/test builds — see the comment at the
- * top of {@link tokenize} for why this is dev-only and why an invariant
- * check was chosen over a bounded-iterations cap.
+ * into an immediate, legible failure. Outside dev/test builds `define` folds
+ * the condition to `false` and the minifier removes the call sites entirely
+ * (verified against a real build — see the comment at the top of
+ * {@link tokenize}), so this costs nothing in production. That comment also
+ * covers why this is dev-only and why an invariant check was chosen over a
+ * bounded-iterations cap.
  */
 // Exported for tests ONLY. The guard fires only against code that is
 // already broken, so no input to `tokenize` can reach it — which left the
@@ -144,6 +166,16 @@ export function tokenize(input: string): RawToken[] {
 // directly is what makes the guard itself covered rather than merely
 // present.
 export function assertAdvanced(where: string, prev: number, cur: number): void {
+  // Deliberately unguarded (`import.meta.env.DEV`, not `import.meta.env?.DEV`),
+  // unlike `src/lib/observability/config.ts`, which guards because THAT
+  // module is written to tolerate being loaded outside Vite. This module
+  // is not: `tokenize()` (and therefore this per-iteration call) is only
+  // ever reached through the app bundle or the vitest/Stryker test
+  // runners, both of which are Vite-plugin-driven and always populate
+  // `import.meta.env`. That matches the unguarded precedent in
+  // `src/lib/logger.ts`. If `tokenize.ts` is ever imported from a plain
+  // Node context (no Vite/vitest in the loader chain), guard this the
+  // same way `config.ts` does — don't assume it can't happen.
   if (import.meta.env.DEV && cur <= prev) {
     throw new Error(
       `tokenize(): scan cursor failed to advance at ${where} (was ${prev}, now ${cur}) — this would otherwise hang forever`,
