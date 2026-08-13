@@ -268,9 +268,11 @@ export function TrashView(): React.ReactElement {
   // 50 op_log scopes for a 50-row selection); the backend now handles
   // the whole list in one tx. Resolve-store updates and per-row
   // failure tolerance are folded into the post-IPC pass: the backend
-  // silently skips ids that are alive / missing, and we apply the
-  // resolve-store hint for every selected page/tag regardless (the
-  // store is content-addressable and tolerates over-broad sets).
+  // skips ids that are MISSING but REFUSES a LIVE one (#3838 — it used to
+  // skip those too, diverging from `restoreBlock`), so a row restored in
+  // another window since this listing loaded fails the whole batch; we
+  // apply the resolve-store hint for every selected page/tag regardless
+  // (the store is content-addressable and tolerates over-broad sets).
   const handleBatchRestore = useCallback(async () => {
     const selectedBlocks = blocks.filter((b) => selected.has(b.id) && b.deleted_at)
     if (selectedBlocks.length === 0) return
@@ -290,6 +292,13 @@ export function TrashView(): React.ReactElement {
       logger.error('TrashView', 'Batch restore failed', { count: selectedBlocks.length }, err)
       notify.error(t('trash.batchRestoreFailed'))
       announce(t('announce.batchRestoreFailed'))
+      // #3838 — the most likely cause is now a STALE LISTING: the backend
+      // refuses a live id, and an id goes live when another window restores
+      // it. Retrying the same selection against the same stale rows fails
+      // identically every time, so reload before the user can retry. The
+      // selection survives the reload deliberately (see above); only the
+      // rows behind it are refreshed.
+      reload()
       return
     }
     reload()

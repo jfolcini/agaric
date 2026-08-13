@@ -57,9 +57,14 @@ pub(crate) use handlers::purge_block_sql_cascade;
 // `apply_op_projected` too, so the `apply_edit_block_via_loro` re-export was
 // likewise dropped (the Edit arm of `apply_op_tx` and the convergence proptest
 // still reach the helper via its own module path within `handlers`).
+// #3834: `dispatch_restore_ancestors` joins the re-export list. Both LOCAL
+// restore command sites (`restore_block_inner`, `restore_blocks_by_ids_inner`)
+// now drive the restored ancestor chain onto the engine themselves post-commit
+// — the `apply_op` replay arm that used to be cited for it never runs for a
+// locally authored op (the local path leaves the apply cursor put).
 pub(crate) use handlers::{
     collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
-    dispatch_restore_descendants,
+    dispatch_restore_ancestors, dispatch_restore_descendants,
 };
 // #2325/#2250: the single collapsed apply-projection entry point the LOCAL
 // command sites route through (`advance_cursor = false`).

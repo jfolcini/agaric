@@ -1322,15 +1322,22 @@ pub async fn restore_block_inner(
     // restored ancestors. Returns the TOPMOST restored ancestor id (or `None`
     // when the parent chain was already live), used below as the re-derivation
     // root so the whole reconnected subtree is refreshed.
-    // #2017: the engine fan-out for the restored ancestor chain happens in the
-    // materializer replay arm (`apply_op` → `dispatch_restore_ancestors`),
-    // driven by the op enqueued via `commit_and_dispatch` below — the same path
-    // that fans the descendant cohort out. The command tx only owns the SQL
-    // `deleted_at` clear here; we keep `topmost` for the re-derivation root.
-    let restored_ancestor_top =
-        agaric_store::block_descendants::restore_deleted_ancestor_chain(&mut tx, &block_id)
-            .await?
-            .topmost;
+    // #3834: keep the FULL restored chain, not just `topmost`. The engine
+    // fan-out for it runs POST-COMMIT below (`dispatch_restore_ancestors`), in
+    // this command — NOT, as this comment used to claim, in the materializer
+    // replay arm (`apply_op` → `dispatch_restore_ancestors`). That arm never
+    // runs for a locally authored op: the LOCAL command path deliberately does
+    // not advance the apply cursor (the #1257 boot-replay safety net), so this
+    // op is only ever replayed at boot — by which point the chain is already
+    // live in SQL and `project_restore_block_to_sql` walks up onto a LIVE
+    // parent and returns an EMPTY chain, so the replay fans nothing out. The
+    // ancestors would therefore stay live in SQL and still tombstoned in the
+    // per-space CRDT, and the next `reproject_block_deleted_at_from_engine`
+    // would read the stale engine tombstone and RE-DELETE them in SQL — the
+    // self-perpetuating divergence #2017 documents.
+    let restored_chain =
+        agaric_store::block_descendants::restore_deleted_ancestor_chain(&mut tx, &block_id).await?;
+    let restored_ancestor_top = restored_chain.topmost.clone();
 
     // R27: the pre-fix #2268 `MAX(depth)` saturation probe is gone — the
     // batched walk above no longer truncates at the depth-100 cap (crossing
@@ -1383,8 +1390,33 @@ pub async fn restore_block_inner(
     // Commit + fire-and-forget background cache dispatch. #2037 pt2: thread
     // the block's type so the materializer narrows the rebuild fan-out for a
     // content-block restore.
-    tx.enqueue_lifecycle_background(Arc::new(op_record), block_type);
+    //
+    // Wrapped once in `Arc` so the dispatch queue borrows the record by
+    // refcount AND the #3834 post-commit ancestor fan-out below can still
+    // reference it (same shape as `delete_block_inner`).
+    let op_record = Arc::new(op_record);
+    tx.enqueue_lifecycle_background(Arc::clone(&op_record), block_type);
     tx.commit_and_dispatch(materializer).await?;
+
+    // #3834 POST-COMMIT engine fan-out for the restored ANCESTOR chain — the
+    // LOCAL counterpart of the `dispatch_restore_ancestors` call `apply_op`
+    // runs after ITS commit (#2017). Nothing in this command reached the
+    // engine for the ancestors: the SQL walk above only cleared `deleted_at`,
+    // and the replay arm that used to be cited for the fan-out never fires for
+    // a local op (see the `restored_chain` comment). Without this the chain is
+    // live in SQL and tombstoned in the CRDT, and the next reproject re-deletes
+    // it. The fan-out resolves the space inline from the pool — valid because
+    // the chain is alive again post-commit — and engine `apply_restore_block`
+    // is idempotent, so an already-live member is a no-op. Empty chain (the
+    // common case: the parent was never tombstoned) returns immediately.
+    // Infallible / log-only, mirroring `apply_op`'s call shape exactly.
+    crate::materializer::dispatch_restore_ancestors(
+        pool,
+        &op_record,
+        &restored_chain.chain,
+        materializer.loro_state(),
+    )
+    .await;
 
     Ok(RestoreResponse {
         block_id,
@@ -1925,8 +1957,18 @@ pub async fn purge_all_deleted_inner(
 /// `AND deleted_at = deleted_at_ref` guard per-root (NOT "any tombstoned
 /// descendant"). A child trashed in a different delete event keeps its
 /// tombstone, and the emitted `RestoreBlock(deleted_at_ref)` op restores
-/// the same cohort a peer's replay would — no sync divergence. Non-deleted
-/// ids in the input are silently no-ops.
+/// the same cohort a peer's replay would — no sync divergence.
+///
+/// #3838: a LIVE (not soft-deleted) input id is REFUSED — the whole batch
+/// aborts with [`AppError::InvalidOperation`] carrying the same
+/// `block '<id>' is not deleted` message [`restore_block_inner`] raises for
+/// the same id. It is NOT filtered out: filtering would leave the batch
+/// silently *skipping* what the single path *refuses*, a permanent
+/// batch-vs-fold output divergence (the mirror image of the asymmetry
+/// #3819/#3832 closed for purge). MISSING ids stay silently dropped, exactly
+/// as on the purge path: nothing is restored by naming an id that no longer
+/// exists, and the chunked "restore all in this space" flow legitimately
+/// races a concurrent purge.
 ///
 /// Returns the number of blocks whose `deleted_at` was actually cleared
 /// (roots + descendants), NOT the input list length.
@@ -1934,6 +1976,7 @@ pub async fn purge_all_deleted_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries
+/// - [`AppError::InvalidOperation`] — an input id names a block that is not soft-deleted
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_blocks_by_ids_inner(
     pool: &SqlitePool,
@@ -1958,10 +2001,46 @@ pub async fn restore_blocks_by_ids_inner(
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
+    // #3838: REFUSE a LIVE input id, mirroring `restore_block_inner`'s
+    // "block '<id>' is not deleted" guard byte-for-byte. The root query below
+    // filters to soft-deleted rows, so a live id used to fall out of the batch
+    // silently — the batch SKIPPED what the single path REFUSES, which is the
+    // permanent batch-vs-fold divergence the equivalence oracle exists to
+    // detect (and the exact argument that decided the #3819 purge fix, left
+    // standing one function away). Nothing is destroyed by the old behaviour —
+    // a skipped restore just leaves the block tombstoned — but the two paths
+    // must agree on what a live id MEANS. Runs INSIDE the IMMEDIATE tx, so the
+    // check cannot race a concurrent delete. Missing ids are NOT refused (see
+    // the doc comment) — only rows that exist and are alive.
+    //
+    // Driving the join from `json_each` (not `blocks`) is what makes
+    // "byte-for-byte" true rather than incidental. The fold refuses the FIRST
+    // live id in INPUT order; the original `FROM blocks b WHERE b.id IN
+    // (SELECT … json_each)` planned as `SEARCH b` + `LIST SUBQUERY`, so
+    // `LIMIT 1` returned the lowest id by PK index and named a different id
+    // than the fold whenever a batch held two or more live ids in non-ascending
+    // order — a batch-vs-fold OUTPUT divergence inside the very guard added to
+    // remove one. `ORDER BY je.key` (the array index) then pins the input order
+    // explicitly rather than leaving it to the planner's choice of driving
+    // table, which nothing else here would notice changing.
+    let live_id: Option<String> = sqlx::query_scalar!(
+        "SELECT b.id AS \"id!\" FROM json_each(?1) je \
+         JOIN blocks b ON b.id = je.value \
+         WHERE b.deleted_at IS NULL \
+         ORDER BY je.key LIMIT 1",
+        ids_json,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if let Some(live_id) = live_id {
+        return Err(AppError::InvalidOperation(format!(
+            "block '{live_id}' is not deleted"
+        )));
+    }
+
     // Resolve which input ids are actually soft-deleted "roots" — a
-    // present, deleted block. Skips ids that are alive or missing
-    // (mirrors `restore_all_deleted_inner`'s no-throw policy on its
-    // sweep). Each surviving root contributes one `RestoreBlock` op.
+    // present, deleted block. Skips ids that are missing (live ids were
+    // refused above). Each surviving root contributes one `RestoreBlock` op.
     // #2037 pt2: select `block_type` so each per-root dispatch can narrow
     // the rebuild fan-out for a CONTENT root.
     let roots = sqlx::query!(
@@ -1994,7 +2073,10 @@ pub async fn restore_blocks_by_ids_inner(
     // `ApplyEffects`). Engine `apply_restore_block` is idempotent, so the
     // seed re-apply is harmless. The op-log shape (one op per root) and the
     // apply cursor are untouched.
-    let mut restore_fanout: Vec<(Arc<op_log::OpRecord>, Vec<String>)> =
+    // #3834: the third element is the restored ANCESTOR chain, filled in by the
+    // upward-restore loop further down (which runs after the cohort UPDATE) and
+    // fanned out post-commit alongside the cohort.
+    let mut restore_fanout: Vec<(Arc<op_log::OpRecord>, Vec<String>, Vec<String>)> =
         Vec::with_capacity(roots.len());
     for root in &roots {
         // The selecting query filters `WHERE deleted_at IS NOT NULL`, so this
@@ -2024,7 +2106,7 @@ pub async fn restore_blocks_by_ids_inner(
 
         // PRE-UPDATE capture of the connected cohort (#1055 contiguous walk).
         let cohort = crate::materializer::collect_restore_cohort(&mut tx, &inner_payload).await?;
-        restore_fanout.push((op_record, cohort));
+        restore_fanout.push((op_record, cohort, Vec::new()));
     }
 
     // C3 (#345): restore each root's EXACT delete cohort, not "any
@@ -2047,7 +2129,7 @@ pub async fn restore_blocks_by_ids_inner(
         let mut seen = std::collections::HashSet::new();
         restore_fanout
             .iter()
-            .flat_map(|(_, cohort)| cohort.iter())
+            .flat_map(|(_, cohort, _)| cohort.iter())
             .filter(|id| seen.insert(id.as_str()))
             .map(String::as_str)
             .collect()
@@ -2077,21 +2159,56 @@ pub async fn restore_blocks_by_ids_inner(
     // and cheap: the helper is a bounded (`depth < 100`) upward CTE that emits
     // NO ops and is idempotent, so two roots under the SAME tombstoned parent
     // do not double-restore or double-emit — the second walk finds the chain
-    // already live and returns an empty result. The engine fan-out for the
-    // chain rides the very `RestoreBlock` op appended per root above (#2017:
-    // `apply_op` → `dispatch_restore_ancestors`), same as the single path.
+    // already live and returns an empty result.
+    //
+    // #3834: the returned `chain` is KEPT (it used to be dropped on the floor
+    // in favour of the `apply_op` → `dispatch_restore_ancestors` replay arm,
+    // which never runs for a locally authored op — the local path leaves the
+    // apply cursor put, so the op only replays at boot, by which point the
+    // chain is already live in SQL and the projection returns an EMPTY chain).
+    // It is stashed on this root's `restore_fanout` entry and driven onto the
+    // engine post-commit alongside the descendant cohort, which this function
+    // already hand-rolls for exactly this reason. `restore_fanout` was built by
+    // the loop above in `roots` order, one entry per root, so the zip is
+    // index-aligned by construction.
     //
     // `topmost` becomes the inheritance root, mirroring the single path: when
     // a chain came back with the root, the whole RECONNECTED subtree needs its
     // inherited tags recomputed, not just the root's own. With no chain it
     // resolves to the root itself (unchanged behaviour).
     let mut inheritance_roots: Vec<String> = Vec::with_capacity(roots.len());
-    for root in &roots {
-        let topmost =
+    // The two collections are index-aligned by construction: the loop above
+    // pushes exactly one `restore_fanout` entry per root, and every early exit
+    // in it is a `?` full-function return rather than a `continue`. That is an
+    // UNENFORCED invariant, and `zip` fails SILENTLY by truncating — a future
+    // `continue` would mis-pair root i's op record with root j's ancestor
+    // chain. `fan_out_restore` resolves the target space from the OP RECORD, so
+    // a mis-pair applies one root's ancestors against another root's engine:
+    // they stay CRDT-tombstoned in their own space (silently reintroducing the
+    // #3834 bug this fixes) while the last root's chain is dropped entirely.
+    // Cross-space batches are reachable — `restore_blocks_by_ids` is an IPC
+    // entry point with no space scoping. Fail loudly instead, aborting the tx.
+    if roots.len() != restore_fanout.len() {
+        // `Internal`, not `InvalidOperation`: nothing the caller passed can
+        // cause this. It is a violated internal invariant, and classifying it
+        // as a user-facing rejection would send the wrong kind over IPC.
+        return Err(AppError::Internal(format!(
+            "restore: fan-out/root misalignment ({} roots, {} fan-out entries)",
+            roots.len(),
+            restore_fanout.len()
+        )));
+    }
+    for (root, fanout) in roots.iter().zip(restore_fanout.iter_mut()) {
+        let restored_chain =
             agaric_store::block_descendants::restore_deleted_ancestor_chain(&mut tx, &root.id)
-                .await?
-                .topmost;
-        inheritance_roots.push(topmost.unwrap_or_else(|| root.id.clone()));
+                .await?;
+        inheritance_roots.push(
+            restored_chain
+                .topmost
+                .clone()
+                .unwrap_or_else(|| root.id.clone()),
+        );
+        fanout.2 = restored_chain.chain;
     }
 
     // Recompute tag inheritance for each restored root subtree (from the
@@ -2114,11 +2231,26 @@ pub async fn restore_blocks_by_ids_inner(
     // `dispatch_restore_descendants`). The fan-out resolves the space inline
     // from the pool — valid because the cohort is alive again post-commit.
     // Engine `apply_restore_block` is idempotent. Engine-absent is a no-op.
-    for (op_record, cohort) in &restore_fanout {
+    //
+    // #3834: the UPWARD ancestor chain is fanned out here too, symmetrically —
+    // the SQL walk above only cleared `deleted_at` on it, and the replay arm
+    // that used to be cited for the engine half never fires for a local op. Left
+    // undone, the ancestors stay live in SQL and tombstoned in the CRDT, and the
+    // next `reproject_block_deleted_at_from_engine` re-deletes them in SQL.
+    // Same call shape as `apply_op`'s pair (descendants first, then ancestors);
+    // an empty chain returns immediately.
+    for (op_record, cohort, ancestors) in &restore_fanout {
         crate::materializer::dispatch_restore_descendants(
             pool,
             op_record,
             cohort,
+            materializer.loro_state(),
+        )
+        .await;
+        crate::materializer::dispatch_restore_ancestors(
+            pool,
+            op_record,
+            ancestors,
             materializer.loro_state(),
         )
         .await;
@@ -2195,11 +2327,16 @@ pub async fn purge_blocks_by_ids_inner(
     // is what makes the two agree. Runs INSIDE the IMMEDIATE tx, so the
     // check cannot race a concurrent restore. Missing ids are NOT refused
     // (see the doc comment) — only rows that exist and are alive.
+    //
+    // `ORDER BY je.key` for the same reason as the restore guard above: the
+    // fold refuses the first live id in INPUT order, and an unordered `LIMIT 1`
+    // names an index-order id instead. Shipped unordered in #3819; corrected
+    // here so both guards spell the same contract.
     let live_id: Option<String> = sqlx::query_scalar!(
-        "SELECT b.id FROM blocks b \
-         WHERE b.id IN (SELECT value FROM json_each(?1)) \
-           AND b.deleted_at IS NULL \
-         LIMIT 1",
+        "SELECT b.id AS \"id!\" FROM json_each(?1) je \
+         JOIN blocks b ON b.id = je.value \
+         WHERE b.deleted_at IS NULL \
+         ORDER BY je.key LIMIT 1",
         ids_json,
     )
     .fetch_optional(&mut **tx)

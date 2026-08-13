@@ -2001,6 +2001,18 @@ describe('TrashView screen reader announcements', () => {
     for (const cb of screen.getAllByTestId('trash-item-checkbox')) {
       expect(cb).toBeChecked()
     }
+
+    // #3838 — and the LISTING is refreshed. The backend now refuses a live
+    // id, so the likeliest cause of this failure is a stale listing (another
+    // window restored one of these rows). Without a reload every retry hits
+    // the same stale rows and fails identically, which is the shape the
+    // `restoreBlocksByIds` doc comment explicitly tells callers to avoid.
+    // Asserted as "more than the initial load", so it cannot pass on the
+    // mount fetch alone.
+    await waitFor(() => {
+      const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_trash')
+      expect(listCalls.length).toBeGreaterThan(1)
+    })
   })
 
   // #1888 — batch purge failure: same contract (error toast + announce, dialog

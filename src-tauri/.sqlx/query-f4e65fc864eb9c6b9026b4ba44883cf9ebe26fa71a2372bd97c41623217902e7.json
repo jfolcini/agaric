@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id FROM blocks b WHERE b.id IN (SELECT value FROM json_each(?1)) AND b.deleted_at IS NULL LIMIT 1",
+  "query": "SELECT b.id AS \"id!\" FROM json_each(?1) je JOIN blocks b ON b.id = je.value WHERE b.deleted_at IS NULL ORDER BY je.key LIMIT 1",
   "describe": {
     "columns": [
       {
-        "name": "id",
+        "name": "id!",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "5ba31e927f546817d91b93de3838a852d435f803ec5ad570d15c09ac891fb492"
+  "hash": "f4e65fc864eb9c6b9026b4ba44883cf9ebe26fa71a2372bd97c41623217902e7"
 }
