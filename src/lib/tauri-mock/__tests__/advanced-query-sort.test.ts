@@ -21,6 +21,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
+  blockTags,
   blocks,
   makeBlock,
   opLog,
@@ -40,6 +41,7 @@ function id(label: string): string {
 function clearMock(): void {
   seedBlocks()
   blocks.clear()
+  blockTags.clear()
   properties.clear()
   propertyDefs.clear()
   opLog.length = 0
@@ -380,5 +382,89 @@ describe('run_advanced_query — request.sort by lastEdited', () => {
         sort: [{ source: { type: 'Column', name: 'lastEdited' }, desc: true }],
       }),
     ).toEqual([OLD, NEW, MIDDLE, NEVER])
+  })
+})
+
+/**
+ * The `SortColumn` set is CLOSED. The mock resolves a key's getter by name, and
+ * an object-literal index would resolve `constructor` / `valueOf` / `toString`
+ * to an inherited `Object.prototype` method — truthy, so accepted and pushed as
+ * a sort term. The engine rejects such a key at deserialization, so silently
+ * accepting it is a mock-vs-engine divergence in the direction that matters:
+ * the mock is MORE permissive than the thing it stands in for.
+ *
+ * Same hazard and same fix as the agenda group-header lookup in #3851.
+ *
+ * The observable consequence is deliberately mild — a bogus getter returns the
+ * same value for every row, so the `id DESC` tiebreak decides and the order
+ * looks correct. That is exactly why it needs pinning: it fails silently.
+ * These assert the order is the UNSORTED default, which is what "the bogus key
+ * was ignored" means.
+ */
+describe('run_advanced_query — request.sort rejects non-column keys', () => {
+  const PAGE = id('C0')
+  const FIRST = id('C1')
+  const SECOND = id('C2')
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    // Positions ASCEND with id, so Position ASC ([FIRST, SECOND]) is the
+    // OPPOSITE of the `id DESC` default ([SECOND, FIRST]). If the two
+    // coincided, a wrongly-accepted sort term would be undetectable and every
+    // assertion below would be vacuous.
+    for (const [blockId, position] of [
+      [FIRST, 1],
+      [SECOND, 5],
+    ] as Array<[string, number]>) {
+      const b = makeBlock(blockId, 'text', null, PAGE, position)
+      b['page_id'] = PAGE
+      b['position'] = position
+      blocks.set(blockId, b)
+    }
+  })
+
+  const TEXT_ONLY = { type: 'Leaf', primitive: { type: 'BlockType', values: ['text'] } }
+  // Default keyset is `id DESC`, and the ids ascend, so this is SECOND, FIRST.
+  // Position ASC would be the opposite order, which is what makes a wrongly
+  // accepted sort term detectable at all.
+  const DEFAULT_ORDER = [SECOND, FIRST]
+
+  // Only `__proto__` is asserted, and that is deliberate. `constructor`,
+  // `valueOf`, `toString` and `hasOwnProperty` were tried here first and all
+  // four stayed GREEN against the unguarded object-literal lookup: they
+  // resolve to a `Object.prototype` method whose return value compares EQUAL
+  // for every row, so the `id DESC` tiebreak decides and "accepted but inert"
+  // is indistinguishable from "ignored" through this seam. Keeping them would
+  // have been four assertions that cannot fail. They are named here rather
+  // than deleted silently, because the fact that they are unobservable is the
+  // reason the guard is worth having: the engine REJECTS such a key, so the
+  // mock accepting it is a real divergence that no black-box assertion over
+  // row order can catch.
+  it('ignores the inherited __proto__ key instead of sorting by it', () => {
+    expect(
+      orderedIds({
+        filter: TEXT_ONLY,
+        sort: [{ source: { type: 'Column', name: '__proto__' } }],
+      }),
+    ).toEqual(DEFAULT_ORDER)
+  })
+
+  it('ignores a non-Column source that carries a name', () => {
+    expect(
+      orderedIds({
+        filter: TEXT_ONLY,
+        sort: [{ source: { type: 'Aggregate', name: 'position' } }],
+      }),
+    ).toEqual(DEFAULT_ORDER)
+  })
+
+  it('still honours a genuine Column key, so the guard is not rejecting everything', () => {
+    // Position ASC is the opposite of the default — proving the tests above
+    // assert "ignored", not "sorting is broken for all keys".
+    expect(
+      orderedIds({ filter: TEXT_ONLY, sort: [{ source: { type: 'Column', name: 'position' } }] }),
+    ).toEqual([FIRST, SECOND])
   })
 })

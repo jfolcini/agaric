@@ -83,6 +83,17 @@ interface ResolvedSortTerm {
  * the real stripper and an FTS5 index. They are the boundary of what a mock
  * relevance assertion can be trusted to prove, and a test that depends on
  * either direction is testing this approximation, not the backend.
+ *
+ * A THIRD divergence, on the narrowing rather than the ranking:
+ * `sanitize_fts_query` (`agaric-store/src/query/engine.rs`) ERRORS with "no
+ * searchable terms (each term must be at least 3 characters)" whenever
+ * `fulltext` is `Some` and sanitizes to empty. This mock instead treats
+ * `fulltext: ''` as "no term at all" (falling back to the whole structural
+ * set in `id DESC`) and happily substring-matches 1- and 2-character terms
+ * the backend would reject outright. So a conformance test using a short
+ * query pins mock-only behaviour against a backend that throws — the exact
+ * failure mode this module exists to prevent. Treat any `fulltext` shorter
+ * than 3 characters as untrustworthy here until the rejection is mirrored.
  */
 function approximateFtsRank(content: string | null, foldedQuery: string): number {
   const foldedText = foldForSearch(content ?? '')
@@ -94,23 +105,43 @@ function approximateFtsRank(content: string | null, foldedQuery: string): number
   return foldedText.length / occurrences
 }
 
-/** Value getters for the closed `SortColumn` set, over a matched `{ b, row }` pair. */
-const SORT_COLUMN_GETTERS: Record<string, (m: MatchedEntry) => SortValue> = {
-  // ULID id == creation order (`resolve_sort`'s `SortColumn::Created`).
-  created: (m) => m.row.id,
-  // The engine applies COALESCE to the op_log MAX to epoch-ms `0` (never actually
-  // NULL); `lastModifiedAt` is this mock's pre-existing ISO-8601 string
-  // representation of the same value (`pageLastModifiedAt`), so `''` is the
-  // matching "no op-log activity" sentinel — it sorts before every real
-  // ISO-8601 timestamp string, preserving relative order.
-  lastEdited: (m) => m.row.lastModifiedAt ?? '',
-  position: (m) => m.row.position,
-  priority: (m) => m.row.priority,
-  // `pc.title` comes from the `pages_cache` row whose `page_id = b.id` — the
-  // matched row's OWN page-cache entry, which only exists when the row IS a
-  // page. Non-page rows get `null` (NULLS LAST), mirroring the LEFT JOIN.
-  title: (m) => (m.row.blockType === 'page' ? m.row.content : null),
-}
+/**
+ * Value getters for the closed `SortColumn` set, over a matched `{ b, row }` pair.
+ *
+ * A `Map`, not an object literal, and looked up only after a `source.type ===
+ * 'Column'` check. An object-literal index is unguarded: a name like
+ * `constructor`, `valueOf` or `toString` resolves to an inherited
+ * `Object.prototype` method, which is truthy, so it would be accepted and
+ * pushed as a sort term. The effect is benign here (every row stringifies
+ * identically, so the id tiebreak decides the order) but the engine REJECTS
+ * such a key at deserialization, and silently accepting what the backend
+ * refuses is precisely the mock-vs-engine divergence this module exists to
+ * remove. Same hazard, same fix as the agenda group-header lookup in #3851.
+ *
+ * Only part of this is black-box testable, and the untestable part is the
+ * reason the guard exists: for most prototype keys the resulting getter
+ * returns a value that compares EQUAL across every row, so the id tiebreak
+ * decides and the observable order is identical to having ignored the key.
+ * See the note on the `__proto__` case in the sort test file.
+ */
+const SORT_COLUMN_GETTERS = new Map<string, (m: MatchedEntry) => SortValue>(
+  Object.entries({
+    // ULID id == creation order (`resolve_sort`'s `SortColumn::Created`).
+    created: (m) => m.row.id,
+    // The engine applies COALESCE to the op_log MAX to epoch-ms `0` (never actually
+    // NULL); `lastModifiedAt` is this mock's pre-existing ISO-8601 string
+    // representation of the same value (`pageLastModifiedAt`), so `''` is the
+    // matching "no op-log activity" sentinel — it sorts before every real
+    // ISO-8601 timestamp string, preserving relative order.
+    lastEdited: (m) => m.row.lastModifiedAt ?? '',
+    position: (m) => m.row.position,
+    priority: (m) => m.row.priority,
+    // `pc.title` comes from the `pages_cache` row whose `page_id = b.id` — the
+    // matched row's OWN page-cache entry, which only exists when the row IS a
+    // page. Non-page rows get `null` (NULLS LAST), mirroring the LEFT JOIN.
+    title: (m) => (m.row.blockType === 'page' ? m.row.content : null),
+  }),
+)
 
 /**
  * Resolve a request's wire `sort: SortKey[]` into ordered comparator terms,
@@ -137,8 +168,12 @@ function resolveSortTerms(
       terms.push({ desc, get: (m) => approximateFtsRank(m.row.content, foldedQuery) })
       continue
     }
+    // Only a `Column` source carries a `name`. The engine's `SortSource` is a
+    // closed tagged union, so a reserved variant that happened to carry a
+    // `name` must not be silently treated as a column.
+    if (source['type'] !== 'Column') continue
     const name = source['name'] as string | undefined
-    const getter = name ? SORT_COLUMN_GETTERS[name] : undefined
+    const getter = name === undefined ? undefined : SORT_COLUMN_GETTERS.get(name)
     if (!getter) continue
     if (name === 'created') hasCreated = true
     terms.push({ desc, get: getter })
