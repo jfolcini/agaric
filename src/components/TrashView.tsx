@@ -290,6 +290,13 @@ export function TrashView(): React.ReactElement {
       logger.error('TrashView', 'Batch restore failed', { count: selectedBlocks.length }, err)
       notify.error(t('trash.batchRestoreFailed'))
       announce(t('announce.batchRestoreFailed'))
+      // #3838 — the most likely cause is now a STALE LISTING: the backend
+      // refuses a live id, and an id goes live when another window restores
+      // it. Retrying the same selection against the same stale rows fails
+      // identically every time, so reload before the user can retry. The
+      // selection survives the reload deliberately (see above); only the
+      // rows behind it are refreshed.
+      reload()
       return
     }
     reload()

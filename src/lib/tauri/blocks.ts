@@ -240,6 +240,19 @@ async function collectAllTrashRootIds(spaceId: string): Promise<string[]> {
 export async function restoreAllDeletedInSpace(spaceId: string): Promise<BulkTrashResponse> {
   const ids = await collectAllTrashRootIds(spaceId)
   let affectedCount = 0
+  // #3838 made this chunk loop depend on the ORDER of `ids`, where it
+  // previously did not. `restoreBlocksByIds` now REFUSES a live id, and one
+  // chunk's #1884 upward ancestor walk can make a later chunk's trash root
+  // live — which would abort the whole remaining restore.
+  //
+  // It is unreachable today, and the reason is worth writing down because it
+  // lives in another crate: `list_trash` orders `deleted_at DESC`
+  // (`agaric-store/src/pagination/trash.rs`), an ancestor trash root always
+  // carries a LATER `deleted_at` than a descendant trash root, and an equal
+  // `deleted_at` disqualifies the descendant from being a root at all. So an
+  // ancestor is always in an EARLIER chunk than anything it would revive.
+  // If that ordering ever changes, this loop breaks silently — nothing here
+  // would notice.
   for (let i = 0; i < ids.length; i += MAX_TRASH_BATCH_IDS) {
     affectedCount += await restoreBlocksByIds(ids.slice(i, i + MAX_TRASH_BATCH_IDS))
   }

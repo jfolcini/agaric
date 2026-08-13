@@ -2189,7 +2189,10 @@ pub async fn restore_blocks_by_ids_inner(
     // Cross-space batches are reachable — `restore_blocks_by_ids` is an IPC
     // entry point with no space scoping. Fail loudly instead, aborting the tx.
     if roots.len() != restore_fanout.len() {
-        return Err(AppError::InvalidOperation(format!(
+        // `Internal`, not `InvalidOperation`: nothing the caller passed can
+        // cause this. It is a violated internal invariant, and classifying it
+        // as a user-facing rejection would send the wrong kind over IPC.
+        return Err(AppError::Internal(format!(
             "restore: fan-out/root misalignment ({} roots, {} fan-out entries)",
             roots.len(),
             restore_fanout.len()
