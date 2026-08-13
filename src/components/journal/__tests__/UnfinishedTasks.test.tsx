@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
@@ -125,7 +126,7 @@ function mockInvokeForBlocks(blocks: BlockRow[], resolvedPages?: { id: string; t
   })
 }
 
-import { UnfinishedTasks } from '@/components/journal/UnfinishedTasks'
+import { effectiveDisplayDate, UnfinishedTasks } from '@/components/journal/UnfinishedTasks'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -1081,6 +1082,25 @@ describe('UnfinishedTasks', () => {
     await user.click(screen.getByRole('button', { expanded: false }))
 
     expect(screen.getByText('Scheduled task')).toBeInTheDocument()
+
+    // The date badge must fall back to `scheduled_date` when `due_date` is
+    // absent. Asserting the RENDERED date, not merely that the row appeared —
+    // the row renders either way, so a content-only assertion cannot tell the
+    // fallback from a missing badge.
+    //
+    // Be precise about what this does and does NOT pin, because it is easy to
+    // read as covering #3816 and it does not. Verified by mutation:
+    //
+    //   * `dueDate={block.due_date}` (fallback removed)      -> RED
+    //   * `block.due_date ?? block.scheduled_date` (#3816's bug) -> PASSES
+    //
+    // `due_date` is `null` here, and `??` and `||` are identical on `null`.
+    // The `??`/`||` distinction is only observable with a BLANK STRING, and
+    // such a block never reaches a render at all: `groupByAge` drops it
+    // before grouping (#3841). That is why #3816 itself is pinned as a unit
+    // test on `effectiveDisplayDate`, and why this assertion is a separate,
+    // weaker guarantee — that the component-level fallback exists at all.
+    expect(screen.getByText(formatCompactDate(daysAgo(2)))).toBeInTheDocument()
   })
 
   it('groups a past scheduled date with a future due date under Yesterday', async () => {
@@ -1261,6 +1281,44 @@ describe('UnfinishedTasks', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+})
+
+// #3816 — a blank (not null) due_date must fall back to scheduled_date for
+// the visible badge, matching agenda-sort.ts's `effectiveDate` `||` idiom
+// (#3815). `??` would stop at the empty string and never reach the fallback.
+//
+// This is unit-tested directly against `effectiveDisplayDate` rather than
+// through a full `<UnfinishedTasks />` render: `groupByAge` treats a blank
+// `due_date` as the "past-most" qualifying date (`''` sorts before any real
+// date string) and then drops the block via its `if (!dateStr) continue`
+// guard — so a block with a blank due_date can never reach a rendered group
+// regardless of this fix. That is a separate, adjacent latent defect in
+// `groupByAge`, out of scope here; it does not affect `effectiveDisplayDate`
+// itself, which is exercised directly below.
+describe('effectiveDisplayDate', () => {
+  it('uses due_date when present', () => {
+    expect(
+      effectiveDisplayDate(makeBlock({ due_date: '2026-08-10', scheduled_date: '2026-08-20' })),
+    ).toBe('2026-08-10')
+  })
+
+  it('falls back to scheduled_date when due_date is null', () => {
+    expect(effectiveDisplayDate(makeBlock({ due_date: null, scheduled_date: '2026-08-20' }))).toBe(
+      '2026-08-20',
+    )
+  })
+
+  // The case `??` got wrong: an empty string is a present `string`, so `??`
+  // returns it as-is and never falls back — no date is shown.
+  it('falls back to scheduled_date when due_date is a blank string', () => {
+    expect(effectiveDisplayDate(makeBlock({ due_date: '', scheduled_date: '2026-08-20' }))).toBe(
+      '2026-08-20',
+    )
+  })
+
+  it('returns null when both dates are absent', () => {
+    expect(effectiveDisplayDate(makeBlock({ due_date: null, scheduled_date: null }))).toBeNull()
   })
 })
 

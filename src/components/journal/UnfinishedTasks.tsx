@@ -177,6 +177,19 @@ async function resolvePageTitles(parentIds: string[]): Promise<Map<string, strin
   return titles
 }
 
+/**
+ * The date shown on a block's badge: `due_date`, falling back to
+ * `scheduled_date`. Uses `||`, not `??` — a blank `due_date` (`''`) is a
+ * valid `string`, so `??` would return it and never reach the fallback.
+ * Matches `effectiveDate` in `agenda-sort.ts` (#3815). Exported so this
+ * idiom can be pinned directly: `groupByAge` (above) drops any block whose
+ * only qualifying date is a blank string before it reaches a render, so a
+ * full-component test cannot observe this expression on its own (#3816).
+ */
+export function effectiveDisplayDate(block: BlockRow): string | null {
+  return block.due_date || block.scheduled_date
+}
+
 // ── Component ──────────────────────────────────────────────────────────
 
 export function UnfinishedTasks({
@@ -494,7 +507,7 @@ export function UnfinishedTasks({
                         statusIconShowDone={false}
                         priority={block.priority}
                         priorityVariant="agenda"
-                        dueDate={block.due_date ?? block.scheduled_date}
+                        dueDate={effectiveDisplayDate(block)}
                         pageId={block.page_id}
                         pageTitle={pageTitles.get(block.page_id ?? '') ?? t('unfinished.untitled')}
                         breadcrumbArrow={t('unfinished.breadcrumbArrow')}

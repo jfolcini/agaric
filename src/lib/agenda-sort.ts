@@ -141,6 +141,16 @@ export function compareGroupSortKeys(a: GroupSortKey, b: GroupSortKey): number {
 }
 
 /**
+ * The four fixed non-date buckets `groupByDate` can produce, kept as a
+ * distinct type rather than folding into the same `string` space as a raw
+ * YYYY-MM-DD key (#3814). This is latent, not live: `validate_date_format`
+ * rejects a non-ISO string like `'Today'` at every validated write path, so
+ * reaching a collision needs a hand-edited database or a sync-protocol bug
+ * — the same reachability class as the `effectiveDate` fix above.
+ */
+type SpecialLabel = 'Overdue' | 'Today' | 'Tomorrow' | 'No date'
+
+/**
  * Group blocks by effective date. Returns groups in date order.
  * Special group keys (renderer maps to t('agenda.overdue') / t('agenda.today') /
  * t('agenda.tomorrow') / t('agenda.noDate')): `Overdue` (pinned first),
@@ -154,29 +164,36 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
   tomorrow.setDate(tomorrow.getDate() + 1)
   const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
 
-  const groups = new Map<string, BlockRow[]>()
+  // Two maps, not one: `specialGroups` is keyed by the fixed `SpecialLabel`
+  // union, `dateGroups` by a raw YYYY-MM-DD string. A block lands in exactly
+  // one, and the two key spaces cannot collide at the type level — unlike a
+  // single `Map<string, BlockRow[]>`, where a `due_date` that happened to
+  // spell a label (e.g. the literal string "Today") would merge into that
+  // label's group and inherit its semantics (#3814).
+  const specialGroups = new Map<SpecialLabel, BlockRow[]>()
+  const dateGroups = new Map<string, BlockRow[]>()
+
+  const pushTo = <K>(map: Map<K, BlockRow[]>, key: K, block: BlockRow): void => {
+    const existing = map.get(key) ?? []
+    existing.push(block)
+    map.set(key, existing)
+  }
 
   for (const block of sorted) {
     const date = effectiveDate(block)
-    // Map keys: the special group names plus raw YYYY-MM-DD strings for
-    // every other date. Raw-date keys keep lexicographic order ==
-    // chronological order (#719) — formatting happens at output time.
-    let key: string
     if (date === null) {
-      key = 'No date'
+      pushTo(specialGroups, 'No date', block)
     } else if (date < todayStr && block.todo_state !== 'DONE') {
-      key = 'Overdue'
+      pushTo(specialGroups, 'Overdue', block)
     } else if (date === todayStr) {
-      key = 'Today'
+      pushTo(specialGroups, 'Today', block)
     } else if (date === tomorrowStr) {
-      key = 'Tomorrow'
+      pushTo(specialGroups, 'Tomorrow', block)
     } else {
-      key = date
+      // Raw-date keys keep lexicographic order == chronological order (#719)
+      // — formatting happens at output time.
+      pushTo(dateGroups, date, block)
     }
-
-    const existing = groups.get(key) ?? []
-    existing.push(block)
-    groups.set(key, existing)
   }
 
   // Order EVERY group by a chronological sort key, rather than pinning the
@@ -192,28 +209,56 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
   // raw-date keys (which sort by themselves — already chronological, #719),
   // and `afterDates` sinks `No date` last. Labels are formatted only after
   // ordering.
-  //
-  // A Map, not an object literal: bucket keys are raw `due_date` strings, and
-  // `'constructor' in {}` / `{}['constructor']` are truthy through the
-  // prototype chain.
-  const SPECIAL_SORT_KEY = new Map<string, GroupSortKey>([
-    ['Overdue', [GROUP_RANK.beforeDates, null]],
-    ['Today', [GROUP_RANK.dated, todayStr]],
-    ['Tomorrow', [GROUP_RANK.dated, tomorrowStr]],
-    ['No date', [GROUP_RANK.afterDates, null]],
-  ])
-  const sortKeyFor = (key: string): GroupSortKey =>
-    SPECIAL_SORT_KEY.get(key) ?? [GROUP_RANK.dated, key]
+  // An object literal is safe HERE, where a Map was required before (#3814).
+  // The old single-map design keyed this by raw `due_date` strings, and
+  // `{}['constructor']` / `'constructor' in {}` are truthy through the
+  // prototype chain — so a due_date of `'constructor'` would have resolved to
+  // `Object.prototype.constructor` and been destructured as `[rank, date]`.
+  // Now it is indexed ONLY by the closed `SpecialLabel` union: raw dates go to
+  // `dateGroups` (a real Map) and build their sort key inline, never through
+  // this object. Keep it that way — if a raw date ever reaches this lookup,
+  // it needs to be a Map again.
+  const specialSortKey: Record<SpecialLabel, GroupSortKey> = {
+    Overdue: [GROUP_RANK.beforeDates, null],
+    Today: [GROUP_RANK.dated, todayStr],
+    Tomorrow: [GROUP_RANK.dated, tomorrowStr],
+    'No date': [GROUP_RANK.afterDates, null],
+  }
 
-  return [...groups.entries()]
-    .toSorted(([a], [b]) => compareGroupSortKeys(sortKeyFor(a), sortKeyFor(b)))
-    .map(([key, groupBlocks]) => ({
-      label: SPECIAL_SORT_KEY.has(key) ? key : formatGroupDate(key),
+  // `special` carries the ORIGINAL (unformatted) special label forward for
+  // the `className` step below, kept separate from `label` (which for a
+  // date bucket is the formatted display string) so a coincidentally-named
+  // date bucket cannot be mistaken for a special one there either.
+  interface GroupEntry {
+    label: string
+    blocks: BlockRow[]
+    sortKey: GroupSortKey
+    special: SpecialLabel | null
+  }
+  const entries: GroupEntry[] = [
+    ...[...specialGroups.entries()].map(([label, groupBlocks]): GroupEntry => ({
+      label,
+      blocks: groupBlocks,
+      sortKey: specialSortKey[label],
+      special: label,
+    })),
+    ...[...dateGroups.entries()].map(([date, groupBlocks]): GroupEntry => ({
+      label: formatGroupDate(date),
+      blocks: groupBlocks,
+      sortKey: [GROUP_RANK.dated, date],
+      special: null,
+    })),
+  ]
+
+  return entries
+    .toSorted((a, b) => compareGroupSortKeys(a.sortKey, b.sortKey))
+    .map(({ label, blocks: groupBlocks, special }) => ({
+      label,
       blocks: groupBlocks,
       className:
-        key === 'Overdue'
+        special === 'Overdue'
           ? 'text-destructive'
-          : key === 'No date'
+          : special === 'No date'
             ? 'text-muted-foreground'
             : undefined,
     }))
