@@ -30,6 +30,25 @@ export const agenda: Record<string, string> = {
   'agenda.zeroResults': '0 results',
   'agenda.resultOne': '1 result',
   'agenda.resultCount': '{{count}} results',
+  // #3291 — shown while `hasMore` is true: sorting AND grouping both run
+  // client-side over the fetched window only, so neither the visible order nor
+  // the per-group header counts describe the whole agenda. Naming grouping is
+  // not padding: the shipped default is `groupBy: 'page'`
+  // (useAgendaPreferences.ts), and each header renders
+  // `({group.blocks.length})` — a count over the loaded window presented with
+  // no qualifier. A sort-only sentence leaves that number looking authoritative.
+  //
+  // Siblings covering the same "client-side sort over a loaded prefix" shape:
+  // `query.sortPartialNotice_one/_other` (properties.ts) and
+  // `pageBrowser.frontendSortHint` (pages.ts). The former DOES carry a count —
+  // of LOADED rows — with i18next plural suffixes. This key deliberately
+  // carries none, so it needs no plural form: `blocks.length` is already
+  // announced by the sibling `agenda.resultCount` live region two lines up in
+  // AgendaResults, and repeating it here would restate the very window whose
+  // completeness is in question. The count that WOULD be informative — how many
+  // matches remain unfetched — is exactly what the frontend cannot know.
+  'agenda.partialOrderNotice':
+    'Sorted and grouped within the tasks loaded so far — load more to cover the whole agenda.',
   'agenda.loadMore': 'Load more',
   'agenda.loading': 'Loading...',
   'agenda.untitled': 'Untitled',

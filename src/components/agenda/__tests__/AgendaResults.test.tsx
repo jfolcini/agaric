@@ -363,6 +363,102 @@ describe('AgendaResults', () => {
     expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument()
   })
 
+  // ── #3291 partial-order warning ──────────────────────────────────────
+  // Sorting and grouping run client-side over the fetched window, and every
+  // backing query paginates `ORDER BY b.id ASC` — so while `hasMore` is true
+  // the top item is the best of what was LOADED, not of the agenda. The pair
+  // below is load-bearing as a pair: the appearance test alone would pass a
+  // component that shows the notice unconditionally.
+  const NOTICE = 'agenda-partial-order-notice'
+
+  it('#3291: warns that the visible order covers only the loaded tasks', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', content: 'Loaded task', priority: '2' }),
+      makeBlock({ id: 'B2', content: 'Another loaded task', priority: '3' }),
+    ]
+
+    render(<AgendaResults {...defaultProps({ blocks, hasMore: true, sortBy: 'priority' })} />)
+
+    const notice = screen.getByTestId(NOTICE)
+    expect(notice).toHaveTextContent(t('agenda.partialOrderNotice'))
+    // The copy must name the remedy, not just the defect. Asserted against
+    // the resolved string rather than the key so a catalog entry that goes
+    // missing (t() then echoes the key back, matching the assertion above
+    // vacuously) still reddens here.
+    expect(notice).toHaveTextContent(/load more/i)
+    // Non-blocking polite live region (mirrors the SearchPanel capped
+    // notice) — it must be announced, not merely painted.
+    expect(notice).toHaveAttribute('role', 'status')
+  })
+
+  it('#3291: shows no warning once every matching task is loaded', () => {
+    const blocks = [makeBlock({ id: 'B1', content: 'Complete set', priority: '2' })]
+
+    render(<AgendaResults {...defaultProps({ blocks, hasMore: false, sortBy: 'priority' })} />)
+
+    expect(screen.queryByTestId(NOTICE)).not.toBeInTheDocument()
+  })
+
+  // The deliberate decision (#3291): the DEFAULT date sort is warned about
+  // too. `query_by_property` / `list_undated_tasks` / `filtered_blocks_query`
+  // all end in `ORDER BY b.id ASC`, so the fetched window is the oldest-created
+  // matches — uncorrelated with due date. An implementation gated on
+  // `sortBy !== 'date'` would look right and be wrong; this test is what
+  // distinguishes them.
+  it('#3291: warns under the default date sort/group as well', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', content: 'Dated task', due_date: '2025-06-15' }),
+      makeBlock({ id: 'B2', content: 'Undated task' }),
+    ]
+
+    render(
+      <AgendaResults
+        {...defaultProps({ blocks, hasMore: true, sortBy: 'date', groupBy: 'date' })}
+      />,
+    )
+
+    expect(screen.getByTestId(NOTICE)).toHaveTextContent(t('agenda.partialOrderNotice'))
+  })
+
+  it('#3291: shows no warning when there are no results to mis-order', () => {
+    render(<AgendaResults {...defaultProps({ blocks: [], hasMore: true, sortBy: 'priority' })} />)
+
+    expect(screen.queryByTestId(NOTICE)).not.toBeInTheDocument()
+  })
+
+  // The copy tells the user to load more; following that instruction to
+  // exhaustion must retire the warning.
+  it('#3291: the warning clears after the remaining tasks are loaded', async () => {
+    const user = userEvent.setup()
+    const onLoadMore = vi.fn()
+    const blocks = [makeBlock({ id: 'B1', content: 'First batch', priority: '2' })]
+
+    const { rerender } = render(
+      <AgendaResults
+        {...defaultProps({ blocks, hasMore: true, sortBy: 'priority', onLoadMore })}
+      />,
+    )
+    expect(screen.getByTestId(NOTICE)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /load more tasks/i }))
+    expect(onLoadMore).toHaveBeenCalledOnce()
+
+    const allBlocks = [...blocks, makeBlock({ id: 'B2', content: 'Second batch', priority: '1' })]
+    rerender(
+      <AgendaResults
+        {...defaultProps({ blocks: allBlocks, hasMore: false, sortBy: 'priority', onLoadMore })}
+      />,
+    )
+
+    expect(screen.getByText('Second batch')).toBeInTheDocument()
+    expect(screen.queryByTestId(NOTICE)).not.toBeInTheDocument()
+  })
+
+  // No separate axe audit for the notice: the pre-existing `a11y: no
+  // violations` case below already renders with `hasMore: true`, so it
+  // already runs axe over the notice. A dedicated one could not fail unless
+  // that one did — coverage-shaped, but with no discriminating power.
+
   // 7c. Loading skeleton on initial load
   it('shows loading skeleton during initial load', () => {
     const { container } = render(<AgendaResults {...defaultProps({ blocks: [], loading: true })} />)
@@ -380,7 +476,13 @@ describe('AgendaResults', () => {
 
     render(<AgendaResults {...defaultProps({ blocks })} />)
 
-    const statusRegion = screen.getByRole('status')
+    // `getAllByRole`, not `getByRole`: with `hasMore: true` this component
+    // renders TWO polite live regions — this sr-only count and the #3291
+    // partial-order notice — and the singular query throws on multiple
+    // matches. This case passes `hasMore: false`, so it sees one today; the
+    // plural form keeps it from becoming a trap for whoever next flips that
+    // prop for an unrelated reason.
+    const [statusRegion] = screen.getAllByRole('status')
     expect(statusRegion).toHaveTextContent('2 results')
   })
 
