@@ -225,12 +225,16 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
   const caseSensitive = opts.caseSensitive
   return {
     kind: 'literal',
-    matcher: (text) => scanLiteral(text, needle, wholeWord, caseSensitive),
+    // `query` (raw, unfolded) is threaded through alongside the
+    // whole-string-folded `needle` so the slow path can re-fold it
+    // per-code-point — see the note in `scanLiteral`.
+    matcher: (text) => scanLiteral(text, query, needle, wholeWord, caseSensitive),
   }
 }
 
 function scanLiteral(
   text: string,
+  rawQuery: string,
   needle: string,
   wholeWord: boolean,
   caseSensitive: boolean,
@@ -255,7 +259,18 @@ function scanLiteral(
   if (haystack.length === text.length) {
     return scanIndexOf(text, haystack, needle, wholeWord)
   }
-  return scanLiteralFolded(text, needle, wholeWord)
+  // Slow path: fold the RAW needle per-code-point too (#3812), not the
+  // already-whole-string-folded `needle` above. `scanLiteralFolded` folds
+  // the haystack one code point at a time, which drops context sensitivity
+  // by construction (e.g. Greek `Σ` always folds to non-final `σ` in
+  // isolation, never the word-final `ς` that whole-string folding would
+  // give it). If the needle used the whole-string fold while the haystack
+  // used the per-code-point fold, the two could disagree on exactly the
+  // context-sensitive cases and silently miss a match. Folding both sides
+  // with the same context-*insensitive* algorithm on this path trades full
+  // correctness for consistency between the two fold call sites — see the
+  // module-level discussion in `scanLiteralFolded`.
+  return scanLiteralFolded(text, rawQuery, wholeWord)
 }
 
 /**
@@ -294,10 +309,44 @@ function scanIndexOf(
  * found in the folded string are then mapped back to original offsets, so
  * a length-changing fold early in the node (`İ` U+0130) no longer
  * shifts every later highlight span.
+ *
+ * `rawNeedle` is the UNFOLDED query text (not the whole-string-folded
+ * `needle` used by the fast path above). It is folded here one code point
+ * at a time, with the exact same loop as the haystack fold below, so both
+ * sides of the comparison use the same context-*insensitive* algorithm
+ * (#3812). Whole-string folding (`rawNeedle.toLowerCase()`) is
+ * context-sensitive — e.g. Greek `Σ` folds to word-final `ς` or mid-word
+ * `σ` depending on what follows it in the string — while folding
+ * code-point-by-code-point can never see that context and always produces
+ * the mid-word form. Folding the needle whole-string while the haystack is
+ * folded per-code-point (as this function used to) let exactly those
+ * context-sensitive cases disagree and silently miss a match; folding both
+ * sides the same way trades full correctness for guaranteed agreement
+ * between the two call sites, which is what this path actually needs.
+ *
+ * That trade is NOT free, and it is not only a fix for missed matches — it
+ * opens a symmetric FALSE POSITIVE, verified live rather than reasoned
+ * about:
+ *
+ *     text  = 'οδοσ İ'   // authored with MID sigma U+03C3
+ *     query = 'ΟΔΟΣ'     // trailing Σ is in a word-final context
+ *
+ * Whole-string folding gives the needle a word-final `ς`, which does NOT
+ * occur in the haystack, so the old code correctly found nothing. Folding
+ * the needle per code point gives a mid `σ`, which DOES match — so the
+ * search can no longer distinguish genuinely-final-sigma text from text
+ * literally spelled with a mid sigma.
+ *
+ * Accepted deliberately: reaching it needs a co-occurring U+0130 in the
+ * same text node to force this path at all, and a silent miss is the worse
+ * failure of the two. Recorded so the next reader sees the whole trade
+ * rather than only the half that motivated it, and pinned by
+ * `scanLiteralFolded folds the needle per code point …` in the tests, so
+ * this behaviour cannot change silently.
  */
 function scanLiteralFolded(
   text: string,
-  needle: string,
+  rawNeedle: string,
   wholeWord: boolean,
 ): Array<{ start: number; end: number }> {
   // foldedStart[j] / foldedEnd[j] — original [start, end) span of the code
@@ -314,6 +363,10 @@ function scanLiteralFolded(
     }
     folded += f
     oi += ch.length
+  }
+  let needle = ''
+  for (const ch of rawNeedle) {
+    needle += ch.toLowerCase()
   }
   const out: Array<{ start: number; end: number }> = []
   let from = 0

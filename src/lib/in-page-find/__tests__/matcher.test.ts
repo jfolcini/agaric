@@ -250,6 +250,53 @@ describe('compileQuery — Unicode correctness (#756)', () => {
     expect(compiled.matcher('ΑΣ')).toEqual([{ start: 0, end: 2 }])
   })
 
+  it('scanLiteralFolded folds the needle per code point too, so it agrees with the haystack fold (#3812)', () => {
+    // The slow (length-changing-fold) path folds the haystack one code
+    // point at a time, which drops context sensitivity by construction:
+    // `'ΑΣ'.toLowerCase()` (whole string) is context-sensitive 'ας' (final
+    // ς), but folding 'Σ' in isolation always yields non-final 'σ'. Before
+    // the fix, `compileQuery` folded the NEEDLE as a whole string (getting
+    // 'ας') while `scanLiteralFolded` folded the HAYSTACK per code point
+    // (getting 'ασ') — the two disagreed and the match was silently
+    // missed. This needs a leading U+0130 ('İ') to force the slow path at
+    // all: under `toLowerCase()` it is the only code point in all of
+    // Unicode whose fold changes length (#3800), which is what selects
+    // `scanLiteralFolded` over the fast `indexOf` path.
+    const text = 'İstanbul ΑΣ'
+    // Precondition: confirm this input really forces the slow path (a
+    // length-preserving haystack would run the fast path instead and this
+    // test would prove nothing).
+    expect(text.toLowerCase().length).not.toBe(text.length)
+    const compiled = compileQuery('ΑΣ', defaultOpts) as Extract<CompiledQuery, { kind: 'literal' }>
+    expect(compiled.matcher(text)).toEqual([{ start: 9, end: 11 }])
+  })
+
+  it('ACCEPTED COST of #3812: a final-sigma query now also matches literal mid-sigma text', () => {
+    // Characterization, not an endorsement. Folding both sides per code
+    // point removed the silent MISS above, but it opens the symmetric
+    // false positive, and this pins it so it cannot change unnoticed.
+    //
+    // The haystack is authored with a MID sigma (U+03C3). The query ends in
+    // a capital Σ in a word-final context, so whole-string folding would
+    // give it a FINAL ς (U+03C2) — which does not occur in the haystack, so
+    // before #3812 this correctly found nothing. Per-code-point folding
+    // gives a mid σ instead, which matches.
+    //
+    // Accepted because reaching it requires a co-occurring U+0130 to force
+    // the slow path at all, and a silent miss is the worse of the two
+    // failures. If the fold strategy is ever revisited, this test should
+    // fail — that is the point of it.
+    const text = 'οδοσ İ'
+    expect(text).toContain('σ') // mid sigma, NOT final ς
+    expect(text.toLowerCase().length).not.toBe(text.length) // slow path forced
+
+    const compiled = compileQuery('ΟΔΟΣ', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    expect(compiled.matcher(text)).toEqual([{ start: 0, end: 4 }])
+  })
+
   it('wholeWord filters partial matches on the length-changing fold path', () => {
     // Kills the whole-word arm of matcher.ts:301 (the folded-path emit guard):
     // 301:9 [ConditionalExpression → true], 301:9 [LogicalOperator `&&` → `||`],
