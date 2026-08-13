@@ -1,4 +1,4 @@
-import { unwrap } from '@/lib/app-error'
+import { isAppError, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type {
   BlockRow,
@@ -260,9 +260,25 @@ export class PartialPurgeError extends Error {
   readonly affectedCount: number
 
   constructor(affectedCount: number, cause: unknown) {
-    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    super(PartialPurgeError.messageOf(cause), { cause })
     this.name = 'PartialPurgeError'
     this.affectedCount = affectedCount
+  }
+
+  /**
+   * The `isAppError` arm is the REALISTIC one, not a defensive extra:
+   * `unwrap` throws the raw `{ kind, message }` AppError envelope, which is
+   * a plain object and NOT an `Error`. Without it every IPC-originated
+   * chunk failure — i.e. the whole reason this class exists — would take
+   * the `String(cause)` arm and degrade to `"[object Object]"`, silently
+   * discarding the backend's message. `cause instanceof Error` only ever
+   * held for locally-constructed errors, which is exactly the shape the
+   * tests happened to use.
+   */
+  private static messageOf(cause: unknown): string {
+    if (isAppError(cause)) return cause.message
+    if (cause instanceof Error) return cause.message
+    return String(cause)
   }
 }
 

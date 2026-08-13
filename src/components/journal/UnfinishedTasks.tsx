@@ -240,7 +240,11 @@ async function resolvePageTitles(parentIds: string[]): Promise<Map<string, strin
  * ahead of a genuinely-past `scheduled_date` (`''` sorts before any real
  * date string, so a naive `.at(0)` picked the blank over the usable one) —
  * so a full-component test could not observe this expression on its own
- * (#3816). It can now: see the "#3841" describe block in the test file.
+ * (#3816). It can now: see the two `(#3841)` cases in the test file —
+ * "renders a block whose due_date is blank but has a real scheduled_date…"
+ * and "buckets a blank due_date with only a FUTURE scheduled_date under
+ * Older…". They are `it` cases in the existing `describe`, not a describe
+ * block of their own.
  */
 export function effectiveDisplayDate(block: BlockRow): string | null {
   return block.due_date || block.scheduled_date || null
