@@ -143,10 +143,23 @@ pub(crate) async fn daemon_loop(
         cancel,
         lifecycle,
     } = ctx;
+    // #3847: the first thing the daemon does on Android is state whether
+    // `JNI_OnLoad` installed the JavaVM + Application context. This is the
+    // one-line device check for the abort this daemon used to die from
+    // (`adb logcat | grep android_context_installed`) and it also predicts
+    // whether iroh got the device's real nameservers or its fallbacks — both
+    // read the same `ndk_context` global.
+    #[cfg(target_os = "android")]
+    tracing::info!(
+        android_context_installed = crate::android_context::is_installed(),
+        "sync daemon starting"
+    );
     // Acquire WifiManager.MulticastLock on Android so the
     // `mdns-sd` crate's UDP multicast sockets receive packets. Held in
     // a local binding so `Drop` releases it on function exit (graceful
     // shutdown or error return). On non-Android targets this is a no-op.
+    // A missing context degrades to `Err` here (it no longer aborts the
+    // process), and the daemon carries on without peer discovery.
     #[cfg(target_os = "android")]
     let _multicast_lock = match super::android_multicast::MulticastLock::acquire() {
         Ok(lock) => Some(lock),

@@ -1,3 +1,8 @@
+// #3847 — `JNI_OnLoad`, exported from this crate's `cdylib` (`libagaric_lib.so`)
+// so the Android JavaVM + Application context are installed before any Rust
+// code runs. Must live in the cdylib root crate; see the module docs.
+#[cfg(target_os = "android")]
+mod android_jni;
 #[cfg(target_os = "linux")]
 pub mod appimage_integration;
 // #3334 — the ONE seam that resolves the app-data directory ("the vault"),
