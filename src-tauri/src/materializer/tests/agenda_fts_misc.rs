@@ -1033,3 +1033,126 @@ async fn fts_optimize_restamps_fts_last_optimize_ms() {
 
     mat.flush_background().await.unwrap();
 }
+
+// ======================================================================
+// #3296 gap 2 — the UNHINTED `edit_block` fan-out must reindex FTS
+// references, because that is the fan-out UNDO/REDO takes.
+// ======================================================================
+
+/// The `fts_blocks.stripped` text currently indexed for `block_id`.
+async fn stripped_fts_text(pool: &SqlitePool, block_id: &str) -> String {
+    // dynamic-sql: test-only read-back of the FTS shadow table.
+    sqlx::query_scalar::<_, String>("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+        .bind(block_id)
+        .fetch_one(pool)
+        .await
+        .expect("fts_blocks row for the referencing block")
+}
+
+/// Run PRODUCTION's whole background fan-out for an `edit_block` on `block_id`
+/// with the given `block_type_hint` — the real dispatch table, not a
+/// hand-picked task list, so a task the table forgets is a task this driver
+/// does not run.
+async fn drive_edit_block_fan_out(pool: &SqlitePool, block_id: &str, hint: Option<&str>) {
+    let record = fake_op_record("edit_block", &format!(r#"{{"block_id":"{block_id}"}}"#));
+    for task in invalidations_for_op(&record, hint, None).unwrap() {
+        handle_background_task(pool, &task, None, None)
+            .await
+            .unwrap_or_else(|e| panic!("background task {task:?} failed: {e}"));
+    }
+}
+
+/// #3296: rename a tag, then UNDO the rename, driving each step through the
+/// fan-out production actually uses for it — and assert the referencing
+/// block's FTS text follows BOTH ways.
+///
+/// The forward rename goes through `edit_block_inner` →
+/// `enqueue_edit_background(record, "tag")`, i.e. `block_type_hint =
+/// Some("tag")`. The UNDO goes through `revert_ops_inner` (and the two other
+/// revert sites in `commands/history.rs`), which enqueue the reverse op via the
+/// UNHINTED `CommandTx::enqueue_background` → `Materializer::dispatch_background`
+/// → `enqueue_background_tasks(record, None, None)`. Remote replay, inbound
+/// sync and boot take the same unhinted path.
+///
+/// `agaric_store::fts::reindex_fts_references` is the ONLY thing that
+/// re-resolves a referencing block's inline `#[ULID]` token to the tag's
+/// current human-readable name — the unconditional `UpdateFtsBlock` refreshes
+/// the renamed block's OWN row and nothing else. So a fan-out that omits
+/// `ReindexFtsReferences` leaves every referencing block indexed under the name
+/// the user just undid: searching the restored name misses them, searching the
+/// undone name still matches them, and it survives restart.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_a_tag_rename_reindexes_fts_references_3296() {
+    let (pool, _dir) = test_pool().await;
+
+    // 26-char ULID-shaped ids so the `#[ULID]` TAG_REF regex matches.
+    let tag_id = "01AAAAAAAAAAAAAAAAAAAA3296";
+    let blk_id = "01AAAAAAAAAAAAAAAAAAB3296A";
+    insert_block_direct(&pool, tag_id, "tag", "project").await;
+    insert_block_direct(
+        &pool,
+        blk_id,
+        "content",
+        &format!("notes about #[{tag_id}]"),
+    )
+    .await;
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(blk_id)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Index the referencing block once, so there is a resolved name to go stale.
+    handle_background_task(
+        &pool,
+        &MaterializeTask::UpdateFtsBlock {
+            block_id: StdArc::from(blk_id),
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let indexed = stripped_fts_text(&pool, blk_id).await;
+    assert!(
+        indexed.contains("project") && !indexed.contains("projects"),
+        "fixture precondition: the referencing block must be indexed under the \
+         ORIGINAL tag name, got {indexed:?}"
+    );
+
+    // --- forward rename: the HINTED fan-out (`enqueue_edit_background`) ---
+    sqlx::query("UPDATE blocks SET content = 'projects' WHERE id = ?")
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    drive_edit_block_fan_out(&pool, tag_id, Some("tag")).await;
+    let renamed = stripped_fts_text(&pool, blk_id).await;
+    assert!(
+        renamed.contains("projects"),
+        "control: the Some(\"tag\") arm DOES enqueue ReindexFtsReferences, so the \
+         referencing block must pick the new name up, got {renamed:?}"
+    );
+
+    // --- undo: the UNHINTED fan-out (`CommandTx::enqueue_background`) ---
+    sqlx::query("UPDATE blocks SET content = 'project' WHERE id = ?")
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    drive_edit_block_fan_out(&pool, tag_id, None).await;
+    let undone = stripped_fts_text(&pool, blk_id).await;
+    assert!(
+        !undone.contains("projects"),
+        "#3296: undoing a tag rename must re-resolve every REFERENCING block's \
+         FTS text — the no-hint edit_block fan-out omitted ReindexFtsReferences, \
+         so fts_blocks.stripped still holds the post-rename name after the undo. \
+         got {undone:?}"
+    );
+    assert!(
+        undone.contains("project"),
+        "the referencing block must be indexed under the RESTORED tag name after \
+         the undo, got {undone:?}"
+    );
+}

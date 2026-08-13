@@ -494,6 +494,8 @@ async fn drive_blob_sequence(actions: &[BlobAction]) -> Result<OracleCoverage, S
         hashed_attachment_rows: 0,
         soft_deleted_attachment_rows: 0,
         attachment_blob_rows: 0,
+        page_link_cache_rows: 0,
+        page_link_edges: 0,
     };
 
     for (step, action) in actions.iter().enumerate() {
@@ -957,4 +959,184 @@ async fn reparent_block(pool: &sqlx::SqlitePool, id: &str, new_parent: Option<&s
         .execute(pool)
         .await
         .expect("reparent block");
+}
+
+// ---------------------------------------------------------------------------
+// `page_link_cache` — the page-level `block_links` roll-up (#3296)
+// ---------------------------------------------------------------------------
+
+/// Record one outbound edge the way the in-tx `reindex_block_links_conn` arm
+/// does — a `block_links` row, and nothing else. `page_link_cache` is
+/// deliberately left alone: NOTHING inside `apply_op_tx` maintains it, so this
+/// is exactly the state a vault is in between the edge landing and whichever
+/// background task the dispatch table decided to enqueue.
+async fn insert_block_link(pool: &sqlx::SqlitePool, source: &str, target: &str) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(source)
+        .bind(target)
+        .execute(pool)
+        .await
+        .expect("seed block_links edge");
+}
+
+/// **`page_link_cache`.** The roll-up must equal a from-base fold of
+/// `block_links` — in both key-set directions AND by value, flags included.
+///
+/// Every state below is one production reaches. The starting state is the
+/// #3296 bug itself: edges written by an op whose arm enqueued no link
+/// maintainer, so the roll-up the Graph view reads never learns about them.
+/// The later ones are a source block soft-deleted before its page's rebuild
+/// lands, and a link TARGET soft-deleted — which must flip a denormalised flag
+/// the read path filters on, not merely leave `edge_count` alone.
+///
+/// Production's own rebuild repairs each one, which is the other half of the
+/// claim: this fold agrees with `rebuild_page_link_cache` on a tree with a
+/// two-block roll-up, a nested-page boundary and a tombstone, so it can be
+/// trusted to be reporting a bug rather than holding a different opinion.
+#[tokio::test]
+async fn page_link_cache_reconciles_and_reports_an_unmaintained_rollup() {
+    let (pool, _dir) = page_fixture().await;
+    settle_pages_cache(&pool).await;
+    assert_reconciled(&pool, "fixture as seeded, before any link exists").await;
+
+    // Two blocks on PAGE_A link to PAGE_B (so the roll-up must AGGREGATE), and
+    // one block behind the nested-page boundary links there too (so the
+    // roll-up must attribute it to NESTED_PAGE, not to the host page).
+    insert_block_link(&pool, A_CHILD, PAGE_B).await;
+    insert_block_link(&pool, A_GRAND, PAGE_B).await;
+    insert_block_link(&pool, N_CHILD, PAGE_B).await;
+    // The counts artefact reads the same `block_links` rows; settle it so the
+    // page-link divergence below is the FIRST one and cannot be a side effect.
+    settle_pages_cache(&pool).await;
+
+    // NON-VACUITY, by value not just by size: a fold that ignored the nested
+    // page boundary would report ONE row of edge_count 3 and still be
+    // "non-empty".
+    let expected = rebuild_page_link_cache_from_base(&pool)
+        .await
+        .expect("page-link rebuild");
+    assert_eq!(
+        expected,
+        [
+            (
+                (PAGE_A.to_owned(), PAGE_B.to_owned()),
+                PageLinkEdge {
+                    edge_count: 2,
+                    src_deleted: false,
+                    tgt_deleted: false,
+                    tgt_is_page: true,
+                },
+            ),
+            (
+                (NESTED_PAGE.to_owned(), PAGE_B.to_owned()),
+                PageLinkEdge {
+                    edge_count: 1,
+                    src_deleted: false,
+                    tgt_deleted: false,
+                    tgt_is_page: true,
+                },
+            ),
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>(),
+        "the roll-up must aggregate the two PAGE_A blocks into ONE row and stop at \
+         the nested page boundary"
+    );
+    let coverage = oracle_coverage(&pool).await.expect("coverage");
+    assert_eq!(
+        (coverage.page_link_edges, coverage.page_link_cache_rows),
+        (2, 0),
+        "the fold must see 2 edges while the cache is still empty, so the \
+         MISSING-row direction is reachable, got {coverage:?}"
+    );
+
+    // Direction 1 — MISSING row: this is #3296. The edges are in `block_links`
+    // (the in-tx arm wrote them) but no background link maintainer ever ran.
+    let missing = reconciliation_failure(&pool, "edges written, no link maintainer enqueued")
+        .await
+        .expect("oracle must report the unmaintained roll-up");
+    assert!(
+        missing.contains("page_link_cache.row") && missing.contains("no row in page_link_cache"),
+        "expected a missing-row divergence, got:\n{missing}"
+    );
+    assert!(
+        missing.contains("in 2 place(s)"),
+        "both source pages must be reported, got:\n{missing}"
+    );
+
+    settle_page_link_cache_rebuild(&pool)
+        .await
+        .expect("page_link_cache rebuild");
+    assert_reconciled(&pool, "after the production roll-up rebuild").await;
+    let settled = oracle_coverage(&pool).await.expect("coverage");
+    assert_eq!(
+        (settled.page_link_edges, settled.page_link_cache_rows),
+        (2, 2),
+        "the rebuild must materialise exactly the folded edges, got {settled:?}"
+    );
+
+    // Direction 2 — WRONG VALUE: a soft-deleted SOURCE block stops holding its
+    // edge up, so PAGE_A's row must drop to 1 while the cache still says 2.
+    soft_delete_block(&pool, A_GRAND).await;
+    settle_pages_cache(&pool).await;
+    let stale_count = reconciliation_failure(&pool, "source block deleted before the rebuild")
+        .await
+        .expect("oracle must report the stale edge_count");
+    assert!(
+        stale_count.contains("page_link_cache.edge") && stale_count.contains(PAGE_A),
+        "expected an edge divergence naming the source page, got:\n{stale_count}"
+    );
+    assert!(
+        stale_count.contains("edge_count: 1") && stale_count.contains("edge_count: 2"),
+        "the report must name both counts so the reader knows which way it drifted, \
+         got:\n{stale_count}"
+    );
+    settle_page_link_cache_rebuild(&pool)
+        .await
+        .expect("page_link_cache rebuild");
+    assert_reconciled(&pool, "after the rebuild dropped the deleted source's edge").await;
+
+    // Direction 3 — EXTRA row: delete the LAST live source on PAGE_A and its
+    // row must go entirely, not merely drop to zero.
+    soft_delete_block(&pool, A_CHILD).await;
+    settle_pages_cache(&pool).await;
+    let extra = reconciliation_failure(&pool, "last source on the page deleted")
+        .await
+        .expect("oracle must report the orphaned roll-up row");
+    assert!(
+        extra.contains("page_link_cache.row") && extra.contains("a row in page_link_cache"),
+        "expected the EXTRA-row direction, got:\n{extra}"
+    );
+    settle_page_link_cache_rebuild(&pool)
+        .await
+        .expect("page_link_cache rebuild");
+    assert_reconciled(&pool, "after the rebuild dropped the emptied page's row").await;
+
+    // Direction 4 — a stale FLAG. `tgt_deleted` is not decoration: the hot
+    // unscoped read filters on it with a partial index and ZERO `blocks`
+    // joins, so a flag left at 0 is a link to a tombstone the Graph view keeps
+    // drawing. `edge_count` is unchanged here, so the flag is the only thing
+    // this divergence can be about.
+    soft_delete_block(&pool, PAGE_B).await;
+    settle_pages_cache(&pool).await;
+    let stale_flag = reconciliation_failure(&pool, "link target soft-deleted")
+        .await
+        .expect("oracle must report the stale tgt_deleted flag");
+    assert!(
+        stale_flag.contains("page_link_cache.edge")
+            && stale_flag.contains("tgt_deleted: true")
+            && stale_flag.contains("tgt_deleted: false"),
+        "expected a flag divergence naming both states of tgt_deleted, got:\n{stale_flag}"
+    );
+    settle_page_link_cache_rebuild(&pool)
+        .await
+        .expect("page_link_cache rebuild");
+    assert_reconciled(&pool, "after the rebuild refreshed the denormalised flags").await;
+    let end = oracle_coverage(&pool).await.expect("coverage");
+    assert_eq!(
+        (end.page_link_edges, end.page_link_cache_rows),
+        (1, 1),
+        "only NESTED_PAGE -> PAGE_B should survive, flagged tgt_deleted, got {end:?}"
+    );
 }

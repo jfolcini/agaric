@@ -400,12 +400,17 @@ impl ChainDriver {
     /// own tx (the production engine path). After a create, stamp the new
     /// block's `parent_id`/`page_id`/`space_id` so the NEXT op resolves a space
     /// in-line (the discipline `move_convergence_tests` uses).
+    ///
+    /// Returns the appended [`OpRecord`] so a caller can drive the SAME op's
+    /// production background fan-out (B6 does, for `page_link_cache` — the one
+    /// derived artefact with no synchronous arm at all). Callers that only
+    /// assert on settled SQL state ignore it.
     async fn drive(
         &mut self,
         pool: &SqlitePool,
         state: &agaric_engine::loro::shared::LoroState,
         mut payload: OpPayload,
-    ) {
+    ) -> OpRecord {
         let ts = self.next_ts(&mut payload);
         let created: Option<(String, String)> = match &payload {
             OpPayload::CreateBlock(c) => Some((
@@ -466,6 +471,7 @@ impl ChainDriver {
                 .await
                 .expect("stamp created block space");
         }
+        record
     }
 
     /// Drive `payload` through the LOCAL command path: call the matching
@@ -899,6 +905,18 @@ async fn page_count_column(pool: &SqlitePool, page_id: &str, column: &str) -> i6
         .unwrap_or(0)
 }
 
+/// Rows currently in `page_link_cache`. Used only by B6's non-vacuity
+/// tracking (the PEAK across the chain — a chain may add a link and then edit
+/// or delete it away, so the end-of-chain count is not evidence of what the
+/// oracle observed mid-chain). The oracle itself never reads this count.
+async fn page_link_cache_rows(pool: &SqlitePool) -> i64 {
+    // dynamic-sql: test-only harness read-back (not a production query path)
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM page_link_cache")
+        .fetch_one(pool)
+        .await
+        .expect("page_link_cache row count")
+}
+
 /// Does this op defer its `pages_cache` count maintenance to the background
 /// `RebuildPagesCacheCounts` task?
 ///
@@ -971,12 +989,14 @@ proptest! {
 
             let mut peak_child_count: i64 = 0;
             let mut peak_inbound_count: i64 = 0;
+            let mut peak_page_link_rows: i64 = 0;
+            let mut page_link_maintainers_run: usize = 0;
 
             let mut driver = ChainDriver::new(HARNESS_DEVICE);
             for (index, payload) in payloads.into_iter().enumerate() {
                 let op_type = payload.op_type().as_str();
                 let deferred = defers_pages_cache_counts(&payload);
-                driver.drive(&pool, state, payload).await;
+                let record = driver.drive(&pool, state, payload).await;
 
                 if deferred {
                     // Production's deferred cohort pass — the DECREMENT arm.
@@ -984,6 +1004,21 @@ proptest! {
                         .await
                         .expect("deferred pages_cache count pass");
                 }
+
+                // #3296/#3345: `page_link_cache` has NO synchronous arm — its
+                // only maintainers are background tasks the DISPATCH TABLE
+                // decides to enqueue. Ask production's table which ones this op
+                // needs and run exactly those, with the `None`/`None` hints this
+                // driver's remote/`apply_op_tx` path carries. An arm that
+                // forgets to enqueue `ReindexBlockLinks` therefore runs nothing
+                // and the oracle sees the missing roll-up row, instead of a
+                // hand-written settle list quietly repairing it.
+                page_link_maintainers_run +=
+                    crate::reconciliation_oracle::settle_page_link_cache_for_op(
+                        &pool, &record, None, None,
+                    )
+                    .await
+                    .expect("page_link_cache fan-out");
 
                 let context = format!("op #{index} ({op_type})");
                 if let Some(report) =
@@ -995,6 +1030,7 @@ proptest! {
                 peak_child_count = peak_child_count.max(page_count_column(&pool, PAGE_ID, "child_block_count").await);
                 peak_inbound_count =
                     peak_inbound_count.max(page_count_column(&pool, LINK_PAGE_ID, "inbound_link_count").await);
+                peak_page_link_rows = peak_page_link_rows.max(page_link_cache_rows(&pool).await);
             }
 
             // ENGINE-PATH GUARD (#891): no op silently degraded to sql_only.
@@ -1057,6 +1093,52 @@ proptest! {
                 "chain wrote {} link tokens at LINK_PAGE_ID but its \
                  pages_cache.inbound_link_count never left 0 — the oracle diffed 0 against 0",
                 chain_links
+            );
+            // #3296 page_link_cache non-vacuity, in three independent places so
+            // no single harness regression can quietly empty the artefact:
+            //
+            //  1. production's fan-out table asked for at least one link
+            //     maintainer across the chain (zero would mean the settle was a
+            //     no-op loop and the roll-up was never even attempted);
+            //  2. the from-base rebuild folded at least one edge (a zero here
+            //     means the key-set diff compared `{}` against `{}`);
+            //  3. the maintained table actually held rows at some point (a zero
+            //     while (2) is non-zero is the #3296 bug itself, not vacuity —
+            //     and it fails as a DIVERGENCE above, before reaching here).
+            //
+            // Two honest limits on what (1)-(3) prove, measured rather than
+            // assumed (64-case instrumented run: 40/68 chains carried a link
+            // token, and every one of those materialised a row):
+            //
+            //  * Check (1) is near-tautological POST-#3296: every create and
+            //    every edit now enqueues `ReindexBlockLinks` unconditionally,
+            //    so any chain with a link token satisfies it trivially. It is a
+            //    future-proofing backstop against a later arm dropping the
+            //    task, not an independent third observation.
+            //  * This generator only ever reaches ONE `(source_page, target)`
+            //    key — every chain block lives on `PAGE_ID` and the only link
+            //    target is `LINK_PAGE_ID` — so `peak_page_link_rows` never
+            //    exceeds 1. B6 therefore exercises `edge_count` and the three
+            //    flags on a single row, and NEVER multi-page aggregation, the
+            //    nested-page boundary, or the `COALESCE(page_id, parent_id,
+            //    id)` attribution chain. Those come only from the hand-written
+            //    `page_link_cache_reconciles_and_reports_an_unmaintained_rollup`
+            //    in `reconciliation_oracle/tests.rs`. Do not read a green B6 as
+            //    broad page-link coverage.
+            prop_assert!(
+                chain_links == 0 || page_link_maintainers_run > 0,
+                "chain wrote {} link tokens but production's fan-out table asked for ZERO \
+                 page_link_cache maintainers across the whole chain — the roll-up was never \
+                 maintained, so the oracle audited an artefact nothing writes (#3296)",
+                chain_links
+            );
+            prop_assert!(
+                chain_links == 0 || coverage.page_link_edges > 0 || peak_page_link_rows > 0,
+                "chain wrote {} link tokens at LINK_PAGE_ID but no page_link_cache edge was \
+                 ever folded from base OR materialised — the page-link diff compared empty \
+                 against empty, got {:?}",
+                chain_links,
+                coverage
             );
             Ok(())
         })?;

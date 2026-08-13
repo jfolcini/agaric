@@ -4393,6 +4393,26 @@ async fn list_page_links_optimized_matches_oracle() {
             .unwrap();
     }
 
+    // #3296: the fixture above writes `block_links` rows with RAW SQL — in
+    // particular the direct page→page edge `p2 → p1`, which no block content
+    // ever produced — so no per-block `ReindexBlockLinks` can know about them.
+    // Roll them into `page_link_cache` with the same full rebuild production
+    // runs whenever `block_links` moves outside the per-block reindex path
+    // (every delete / restore / purge / cross-page move and the inbound-sync
+    // set all enqueue `RebuildPageLinkCache`).
+    //
+    // Until #3296 this line was unnecessary — but only by accident: `create_block`
+    // enqueued NO link reindex at all, so the cache was still ENTIRELY empty
+    // here and `list_page_links_inner`'s lazy self-heal (which fires only on a
+    // completely empty table) rebuilt it from `block_links` as a side effect.
+    // With creates now maintaining the roll-up, the cache is non-empty, the lazy
+    // path correctly does not fire, and the fixture has to settle its own
+    // hand-written edges instead of relying on a bug to do it.
+    mat.enqueue_background(crate::materializer::MaterializeTask::RebuildPageLinkCache)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
     // -- Compare optimized vs oracle --
     let mut optimized = list_page_links_inner(&pool, &SpaceScope::Global, None)
         .await
