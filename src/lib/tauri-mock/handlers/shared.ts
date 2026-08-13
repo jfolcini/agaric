@@ -854,7 +854,16 @@ export function pageLastModifiedAt(b: Record<string, unknown>): string | null {
   return maxOp ?? seeded
 }
 
-/** Assemble one `PageMetaRow` from a page block + its (already-filtered) descendants. */
+/**
+ * Assemble one `PageMetaRow` from a block + its (already-filtered) descendants.
+ *
+ * Despite the name, `b` need not be a `block_type: 'page'` row: `run_advanced_query`
+ * (#3821) calls this for EVERY active, in-space block so its `FilterExpr`
+ * interpreter can evaluate primitives (incl. `BlockType`) against the row.
+ * `blockType` therefore always mirrors the source block's real `block_type` —
+ * hardcoding `'page'` here made the `BlockType` filter a no-op (every row
+ * compared equal to the constant).
+ */
 export function buildPageMetaRow(
   b: Record<string, unknown>,
   descendants: Array<Record<string, unknown>>,
@@ -865,7 +874,7 @@ export function buildPageMetaRow(
   const { inbound, hasOutbound } = pageLinkStats(pageId, pageScopeIds, edges)
   return {
     id: b['id'] as string,
-    blockType: 'page',
+    blockType: (b['block_type'] as string | null) ?? 'page',
     content: (b['content'] as string | null) ?? null,
     parentId: (b['parent_id'] as string | null) ?? null,
     position: (b['position'] as number | null) ?? null,

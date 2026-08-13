@@ -34,9 +34,11 @@ export const searchHandlers = {
   // The FLAT path (no `groupBy`) now evaluates the `FilterExpr` against every
   // active, in-space block via `metaRowMatchesExpr` (which reuses the
   // conformance-guarded per-primitive matrix) and returns the matched blocks in
-  // the engine's `b.id ASC` keyset-tiebreaker order, keyset-paginated. The mock
-  // applies the tiebreaker only — full `SortKey` ordering is a follow-up — but
-  // this lets dev-preview + e2e exercise `AdvancedQueryView` against real seed
+  // the engine's `b.id DESC` recency keyset order (#3821 — the DEFAULT sort,
+  // per `agaric-store/src/query/engine.rs`'s "no `sort` + no full-text ⇒
+  // `b.id DESC`" rule), keyset-paginated. The mock applies the tiebreaker
+  // only — full `SortKey` ordering is a follow-up — but this lets dev-preview
+  // + e2e exercise `AdvancedQueryView` against real seed
   // data instead of an always-empty page.
   run_advanced_query: (args) => {
     const request = ((args as Record<string, unknown>)['request'] ?? {}) as Record<string, unknown>
@@ -101,8 +103,9 @@ export const searchHandlers = {
       const row = buildPageMetaRow(b, descendants, edges)
       if (metaRowMatchesExpr(row, filterExpr)) matched.push(b)
     }
-    // Stable `b.id ASC` keyset order (the engine's terminal tiebreaker).
-    matched.sort((x, y) => (x['id'] as string).localeCompare(y['id'] as string))
+    // Default `b.id DESC` recency keyset (the engine's default sort when no
+    // `sort` and no full-text term are requested — see the comment above).
+    matched.sort((x, y) => (y['id'] as string).localeCompare(x['id'] as string))
 
     // Keyset cursor over the id order: skip up to AND INCLUDING the anchor id.
     let startIdx = 0
