@@ -1320,6 +1320,15 @@ describe('effectiveDisplayDate', () => {
   it('returns null when both dates are absent', () => {
     expect(effectiveDisplayDate(makeBlock({ due_date: null, scheduled_date: null }))).toBeNull()
   })
+
+  // #3845 — the docstring claims this matches agenda-sort.ts's `effectiveDate`,
+  // which ends `|| null`. Before that trailing `|| null` was added here too,
+  // `''  || '' ` evaluates to `''` (the second operand, since both sides are
+  // falsy) instead of falling through to `null` — the one input pair where
+  // the two functions actually disagreed despite the docstring's claim.
+  it('returns null (not a blank string) when both dates are blank strings', () => {
+    expect(effectiveDisplayDate(makeBlock({ due_date: '', scheduled_date: '' }))).toBeNull()
+  })
 })
 
 // ── DailyView integration tests ──────────────────────────────────────

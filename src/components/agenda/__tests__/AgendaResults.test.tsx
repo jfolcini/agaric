@@ -111,7 +111,12 @@ vi.mock('@/components/ui/button', async (importOriginal) => {
 })
 
 import { makeBlock as _makeBlock } from '@/__tests__/fixtures'
-import { AgendaResults, type AgendaResultsProps } from '@/components/agenda/AgendaResults'
+import {
+  AgendaResults,
+  type AgendaResultsProps,
+  groupI18nKey,
+} from '@/components/agenda/AgendaResults'
+import type { AgendaGroup } from '@/lib/agenda-sort'
 import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -417,6 +422,37 @@ describe('AgendaResults', () => {
     // Should see group headers
     expect(screen.getByText(/Overdue/)).toBeInTheDocument()
     expect(screen.getByText(/Today/)).toBeInTheDocument()
+  })
+
+  // #3845 — `GROUP_I18N` (the label → i18n-key lookup for grouped headers)
+  // used to be a plain `Record<string, string>` object literal indexed by
+  // the raw, unsanitized `group.label`. `{}['constructor']` resolves
+  // through the prototype chain to `Object.prototype.constructor`, a
+  // function, which is truthy — so the header called `t(aFunction)`
+  // instead of falling back to the raw label. Verified at runtime (not
+  // just by reading): real i18next's `t()` given that function returns
+  // `''`, so the header lost its heading text entirely.
+  //
+  // Driven through `groupBy="page"`, NOT `groupBy="date"`, and that choice
+  // is load-bearing. A DATE bucket carries `special: null`, so
+  // `groupI18nKey` early-returns before the lookup is ever touched — a
+  // date-driven version of this test stays GREEN with the `Map` reverted
+  // to a `Record` and therefore proves nothing. The non-date groupers
+  // (`page`/`state`/`priority`) set no `special`, so their labels are the
+  // only ones that still reach the lookup, which makes a page TITLED
+  // `constructor` the live hazard.
+  it('renders "constructor" as a literal group label, not Object.prototype.constructor (#3845)', () => {
+    const blocks = [makeBlock({ id: 'B1', page_id: 'PCTOR', todo_state: 'TODO' })]
+
+    render(
+      <AgendaResults
+        {...defaultProps({ blocks, pageTitles: new Map([['PCTOR', 'constructor']]) })}
+        groupBy="page"
+      />,
+    )
+
+    const header = screen.getByTestId('agenda-group-header')
+    expect(header).toHaveTextContent('constructor')
   })
 
   it('renders flat list when groupBy=none', () => {
@@ -785,5 +821,40 @@ describe('AgendaResults', () => {
     const badge = document.querySelector('.agenda-results-priority')
     expect(badge).not.toBeNull()
     expect(badge?.className).toContain('[@media(pointer:coarse)]:text-sm')
+  })
+})
+
+describe('groupI18nKey (#3845)', () => {
+  // The i18n lookup is not observable through a rendered header: the app
+  // pins a single locale, so `t('agenda.today')` renders the literal
+  // string "Today" — identical to the raw label a date bucket would show.
+  // Testing the decision directly is what makes it covered rather than
+  // merely written. (An earlier draft of this PR asserted the rendered
+  // text instead; that test passed with the fix reverted.)
+  const LOOKUP = new Map([
+    ['Overdue', 'agenda.overdue'],
+    ['Today', 'agenda.today'],
+    ['No page', 'agenda.noPage'],
+  ])
+  const group = (over: Partial<AgendaGroup>): AgendaGroup =>
+    ({ label: 'x', blocks: [], ...over }) as AgendaGroup
+
+  it('translates a genuine special bucket', () => {
+    expect(groupI18nKey(group({ label: 'Today', special: 'Today' }), LOOKUP)).toBe('agenda.today')
+  })
+
+  it('NEVER translates a date bucket, even one labelled like a special', () => {
+    // The whole point. `special: null` marks a groupByDate DATE bucket;
+    // its label spelling "Today" must not resolve to agenda.today.
+    expect(groupI18nKey(group({ label: 'Today', special: null }), LOOKUP)).toBeUndefined()
+  })
+
+  it('falls back to the label when there is no discriminant', () => {
+    // groupByPage/Priority/State set no `special`; the label IS the key.
+    expect(groupI18nKey(group({ label: 'No page' }), LOOKUP)).toBe('agenda.noPage')
+  })
+
+  it('returns undefined for an unknown label with no discriminant', () => {
+    expect(groupI18nKey(group({ label: 'Mon, Jun 15' }), LOOKUP)).toBeUndefined()
   })
 })
