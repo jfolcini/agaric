@@ -158,9 +158,13 @@ export interface BulkTrashResponse {
  * Mirrors `restoreBlock` but accepts an array of ids; the backend runs one
  * IMMEDIATE transaction with one op_log scope instead of N. Each id is
  * treated as a cascade root (matches the TrashView's `listTrash` source).
- * Non-deleted / missing ids are
- * silently skipped (no error). Returns the number of blocks (roots +
- * descendants) whose `deleted_at` was actually cleared.
+ * Missing ids are silently skipped; a LIVE (not soft-deleted) id REJECTS the
+ * whole call with `InvalidOperation` and restores nothing (#3838 — it used to
+ * be silently skipped, where `restoreBlock` refuses the same id), exactly as
+ * `purgeBlocksByIds` rejects a live id. Callers sourcing ids from a trash
+ * listing should reload on that error: it means the listing went stale.
+ * Returns the number of blocks (roots + descendants) whose `deleted_at` was
+ * actually cleared.
  */
 export async function restoreBlocksByIds(blockIds: string[]): Promise<number> {
   const resp = unwrap(await commands.restoreBlocksByIds(blockIds))

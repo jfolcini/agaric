@@ -2588,36 +2588,134 @@ async fn restore_blocks_by_ids_restores_descendants_too() {
     }
 }
 
+/// A MISSING id is still silently skipped — there is nothing to restore, and
+/// the chunked "restore all in this space" flow legitimately races a
+/// concurrent purge of the same row. Mirrors
+/// `purge_blocks_by_ids_skips_missing`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restore_blocks_by_ids_skips_non_deleted() {
+async fn restore_blocks_by_ids_skips_missing() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    // Mix: one alive, one missing. Both should be silent no-ops.
-    insert_block(&pool, "RBBIALIVE", "content", "alive", None, Some(1)).await;
+    let resp = restore_blocks_by_ids_inner(&pool, DEV, &mat, vec!["RBBIGHOST".into()])
+        .await
+        .unwrap();
+    assert_eq!(resp.affected_count, 0, "missing ids skip; count must be 0");
+}
 
-    let resp = restore_blocks_by_ids_inner(
+/// #3838: a LIVE id is REFUSED, not skipped — `restore_block_inner` refuses
+/// the same id with `block '<id>' is not deleted`, and a batch that silently
+/// skipped it left a permanent batch-vs-fold output divergence (the mirror
+/// image of the #3819 purge asymmetry, one function away).
+///
+/// This test previously asserted the OPPOSITE (`restore_blocks_by_ids_skips_
+/// non_deleted`, "alive + missing ids both skip"). The two halves of that
+/// claim were never the same claim: nothing is destroyed by naming a
+/// nonexistent id, whereas a live id is a caller whose input disagrees with
+/// the world, which the single path treats as an error. The missing half is
+/// kept above; the live half is inverted here.
+///
+/// The refusal must hold in a MIXED batch, where a valid soft-deleted root
+/// would otherwise carry the call through — that is the shape that diverged
+/// from the fold, and this asserts the whole batch rolls back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_refuses_a_live_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "RBBIALIVE", "content", "alive", None, Some(1)).await;
+    insert_block(&pool, "RBBIDEAD", "content", "dead", None, Some(2)).await;
+    delete_block_inner(&pool, DEV, &mat, "RBBIDEAD".into())
+        .await
+        .expect("soft-delete the restorable root");
+
+    let err = restore_blocks_by_ids_inner(
         &pool,
         DEV,
         &mat,
-        vec!["RBBIALIVE".into(), "RBBIGHOST".into()],
+        vec!["RBBIALIVE".into(), "RBBIDEAD".into(), "RBBIGHOST".into()],
     )
     .await
-    .unwrap();
-
-    assert_eq!(
-        resp.affected_count, 0,
-        "alive + missing ids both skip; count must be 0"
+    .expect_err("a live id must be refused, not silently skipped");
+    assert!(
+        matches!(err, AppError::InvalidOperation(ref m) if m == "block 'RBBIALIVE' is not deleted"),
+        "refusal must reproduce restore_block_inner's message byte-for-byte: {err:?}"
     );
 
-    // Live block is still alive (i.e. NOT now soft-deleted by the call).
+    // Nothing was restored: the refusal aborts the whole transaction, so the
+    // soft-deleted root that shared the batch is still tombstoned.
+    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", "RBBIDEAD")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        row.deleted_at.is_some(),
+        "RBBIDEAD must stay tombstoned after a refused batch restore"
+    );
     let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", "RBBIALIVE")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert!(
         row.deleted_at.is_none(),
-        "live block must remain alive after no-op restore call"
+        "live block must remain alive after a refused restore call"
+    );
+}
+
+/// The refusal above claims to reproduce the single path's message
+/// "byte-for-byte". With ONE live id that is trivially true; with TWO it is a
+/// claim about WHICH id gets named, and the fold and the batch answer
+/// differently unless the probe is ordered.
+///
+/// The fold refuses the first live id in INPUT order. The probe that shipped
+/// was `SELECT b.id FROM blocks b WHERE b.id IN (SELECT value FROM json_each)
+/// … LIMIT 1`, which SQLite plans as `SEARCH b` driving a `LIST SUBQUERY` — it
+/// walks the `blocks` PK index and takes the lowest matching id, ignoring input
+/// order entirely. So the ids here are deliberately in DESCENDING order: input
+/// order names `ZZZ`, index order names `AAA`. Ascending input would pass
+/// either way, which is why it is not the case under test.
+///
+/// What this test actually distinguishes, stated precisely because the
+/// distinction is not the obvious one: reverting the probe to that shipped
+/// shape reddens it (verified on both paths, separately). Deleting ONLY the
+/// `ORDER BY je.key` from the current shape does NOT redden it, because
+/// `FROM json_each(?1) je JOIN blocks b` plans as `SCAN je` → `SEARCH b`, so
+/// the driving table is already the input array and rows arrive in input order
+/// by luck of the plan. The `ORDER BY` is retained precisely because that is
+/// luck: it is not free to depend on which table SQLite chooses to drive, and
+/// nothing here would notice if a future index or SQLite release flipped it.
+///
+/// Both batch paths are covered: the restore probe (#3838) and the purge probe
+/// (#3819, which shipped unordered). Pinning only one would leave the identical
+/// defect standing in its twin — the exact shape of the divergence #3838 exists
+/// to close.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_live_id_refusal_names_the_first_id_in_input_order() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Two LIVE blocks whose id order is the REVERSE of their input order.
+    insert_block(&pool, "AAALIVE", "content", "a", None, Some(1)).await;
+    insert_block(&pool, "ZZZLIVE", "content", "z", None, Some(2)).await;
+
+    let err =
+        restore_blocks_by_ids_inner(&pool, DEV, &mat, vec!["ZZZLIVE".into(), "AAALIVE".into()])
+            .await
+            .expect_err("a live id must be refused");
+    assert!(
+        matches!(err, AppError::InvalidOperation(ref m) if m == "block 'ZZZLIVE' is not deleted"),
+        "restore must refuse the FIRST live id in INPUT order, as the fold does \
+         (an unordered LIMIT 1 names 'AAALIVE' instead): {err:?}"
+    );
+
+    let err = purge_blocks_by_ids_inner(&pool, DEV, &mat, vec!["ZZZLIVE".into(), "AAALIVE".into()])
+        .await
+        .expect_err("a live id must be refused");
+    assert!(
+        matches!(err, AppError::InvalidOperation(ref m)
+            if m == "block 'ZZZLIVE' must be soft-deleted before purging"),
+        "purge must refuse the FIRST live id in INPUT order, as the fold does \
+         (an unordered LIMIT 1 names 'AAALIVE' instead): {err:?}"
     );
 }
 

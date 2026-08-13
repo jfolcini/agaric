@@ -12,7 +12,15 @@
 //! (#2325/#2250 — fanning out into N `apply_op_projected` calls would lose the
 //! single-pass combined cascade). For restore the SAME fork exists with no such
 //! comment; see `restore_blocks_by_ids_omits_the_1884_ancestor_chain_restore`
-//! for what that costs.
+//! and `restore_blocks_by_ids_skips_a_live_block_the_single_path_refuses` for
+//! what that costs.
+//!
+//! Two tests at the end of this file are NOT oracle scenarios: the #3834 pair
+//! asserts an ABSOLUTE invariant (the per-space Loro engine agrees with SQL
+//! about the restored ancestor chain after a local restore) rather than arm
+//! equality, because on that defect batch and fold were equally wrong and
+//! `batch ≡ fold` held while both diverged from the CRDT. They live here for
+//! the fixture, which is the one that seeds every block into the engine.
 //!
 //! Purge is a THIRD fork, and a less obvious one. Its satellite-table DELETE
 //! chain really is converged — all three purge variants call the one
@@ -182,6 +190,24 @@ async fn deleted_at_of(pool: &SqlitePool, label: &str) -> i64 {
         .await
         .expect("read deleted_at")
         .expect("block must be soft-deleted at this point")
+}
+
+/// Like [`deleted_at_of`], but tolerates a LIVE block instead of panicking.
+///
+/// Needed by the #3838 mixed-batch scenario: its fold arm feeds a LIVE id to
+/// `restore_block_inner`, which demands a `deleted_at_ref` positionally but
+/// checks "is this block deleted at all?" FIRST and refuses before the ref is
+/// ever compared. `0` is therefore an honest stand-in — no live block can
+/// carry it — and using it keeps the fold arm exercising the refusal rather
+/// than the fixture's own `expect`.
+async fn deleted_at_or_zero(pool: &SqlitePool, label: &str) -> i64 {
+    // dynamic-sql: test-only oracle readback (not a production query path)
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(id(label))
+        .fetch_one(pool)
+        .await
+        .expect("read deleted_at")
+        .unwrap_or(0)
 }
 
 fn block_ids(labels: &[&str]) -> Vec<BlockId> {
@@ -637,6 +663,130 @@ async fn purge_blocks_by_ids_purges_a_live_block_the_single_path_refuses() {
 // The undocumented half of fork #2
 // ---------------------------------------------------------------------------
 
+/// Render a restore outcome into the compared surface.
+///
+/// Unlike [`purge_outcome`] this renders the error MESSAGE as well as the
+/// kind. That is deliberate and specific to #3838: the fix is not merely
+/// "the batch also fails", it is that the batch raises `restore_block_inner`'s
+/// refusal *byte-for-byte*, so the message is part of the contract under test.
+/// The purge pair could not do this — the batch there explicitly declines to
+/// name the offending root — but both restore paths name it, and with the LIVE
+/// id fed FIRST (see below) both arms refuse on the SAME id, so the two
+/// messages are comparable rather than incidentally different.
+fn restore_outcome(count: Result<u64, AppError>) -> String {
+    match count {
+        Ok(n) => format!("rows_restored={n}"),
+        Err(e) => format!("rows_restored=ERR({:?}: {e})", e.kind()),
+    }
+}
+
+/// **#3838 — a FIXED divergence. This is now its regression guard.**
+///
+/// The mirror image of the asymmetry #3819/#3832 closed for purge, which sat
+/// one function away for as long.
+///
+/// `restore_block_inner` REFUSES a live (non-deleted) id:
+/// `AppError::InvalidOperation("block '<id>' is not deleted")`.
+/// `restore_blocks_by_ids_inner` selected its roots with
+///
+/// ```sql
+/// SELECT b.id, b.deleted_at, b.block_type FROM blocks b
+///  WHERE b.id IN (SELECT value FROM json_each(?1)) AND b.deleted_at IS NOT NULL
+/// ```
+///
+/// …so a live id simply fell out of the root set and was SILENTLY SKIPPED. The
+/// batch skipped what the single path refuses: a permanent, deliberate-looking
+/// output divergence between `batch` and `fold`, i.e. exactly the class of
+/// drift this oracle exists to detect.
+///
+/// This is strictly less severe than the purge case and was filed rather than
+/// hot-fixed: skipping a restore is NON-DESTRUCTIVE (the block stays
+/// tombstoned) where the purge bug physically erased live rows. But the
+/// argument that decided the purge fix — filtering trades a silent wrong for a
+/// silent no-op and keeps diverging; only refusal makes the two agree — applies
+/// verbatim, so the batch now refuses too.
+///
+/// **Why it was not caught before.** No committed scenario fed a live id to the
+/// restore pair, so `batch ≡ fold` held over what was actually exercised, and
+/// the baseline's `restore_blocks_by_ids_inner` entry listed only the
+/// `rederive_page_and_space_ids` gap under "STILL UNCOVERED" — the record
+/// overstated the coverage. That entry now names this asymmetry too.
+///
+/// **Why the LIVE id goes FIRST.** Same reason as the purge scenario: the batch
+/// is ONE transaction and refusing rolls the whole call back, while the fold is
+/// N transactions and cannot roll back what already committed. With the deleted
+/// id first the fold would restore R1's subtree and THEN refuse, ending in a
+/// state no atomic batch can reproduce — the diff would then be about
+/// transactionality rather than about the refusal. Live-first makes the refusal
+/// precede any commit on BOTH arms. It loses no teeth: against the pre-fix code
+/// this ordering diverges on the returned value AND on every row R1's subtree
+/// owns (the batch restored them; the fold refused before restoring anything).
+///
+/// Run with: `cargo nextest run -E 'test(restore_blocks_by_ids_skips_a_live)'`
+#[tokio::test]
+async fn restore_blocks_by_ids_skips_a_live_block_the_single_path_refuses() {
+    // R1 is soft-deleted by the seed; R3 is the untouched CONTROL block and is
+    // still LIVE. Both are handed to the batch call, LIVE id first (see above).
+    let inputs = [R3, R1];
+    assert_batch_equals_fold(
+        "restore_blocks_by_ids/live_input_id",
+        &Normalisation::default(),
+        |env| {
+            Box::pin(async move {
+                seed_tree(Arc::clone(&env)).await;
+                delete_block_inner(
+                    &env.pool,
+                    ARM_DEVICE,
+                    &env.materializer,
+                    BlockId::from_trusted(&id(R1)),
+                )
+                .await
+                .expect("fixture soft-delete");
+                env.settle().await;
+            })
+        },
+        move |env| {
+            Box::pin(async move {
+                vec![restore_outcome(
+                    restore_blocks_by_ids_inner(
+                        &env.pool,
+                        ARM_DEVICE,
+                        &env.materializer,
+                        block_ids(&inputs),
+                    )
+                    .await
+                    .map(|r| r.affected_count),
+                )]
+            })
+        },
+        move |env| {
+            Box::pin(async move {
+                let mut total: u64 = 0;
+                for label in inputs {
+                    let deleted_at_ref = deleted_at_or_zero(&env.pool, label).await;
+                    match restore_block_inner(
+                        &env.pool,
+                        ARM_DEVICE,
+                        &env.materializer,
+                        BlockId::from_trusted(&id(label)),
+                        deleted_at_ref,
+                    )
+                    .await
+                    {
+                        Ok(r) => total += r.restored_count,
+                        // The single path REFUSES the live id. Rendering the
+                        // refusal (rather than unwrapping it) is what puts the
+                        // divergence in the compared surface.
+                        Err(e) => return vec![restore_outcome(Err(e))],
+                    }
+                }
+                vec![restore_outcome(Ok(total))]
+            })
+        },
+    )
+    .await;
+}
+
 /// **#3818 — a FIXED divergence. This is now its regression guard.**
 ///
 /// `restore_block_inner` calls
@@ -724,4 +874,182 @@ async fn restore_blocks_by_ids_omits_the_1884_ancestor_chain_restore() {
         },
     )
     .await;
+}
+
+// ---------------------------------------------------------------------------
+// #3834 — the restored ancestor chain must reach the ENGINE, not just SQL
+// ---------------------------------------------------------------------------
+//
+// These two are NOT batch-vs-fold scenarios, and deliberately so. The oracle
+// cannot see this defect: both arms were EQUALLY wrong, so `batch ≡ fold` held
+// while the CRDT diverged from SQL on both. What is asserted instead is an
+// absolute invariant — after a LOCAL restore, the per-space Loro engine and
+// SQL agree about the restored ancestor chain — driven once through each
+// restore path. They live here rather than in `command_integration_tests`
+// because this module's fixture is the one that seeds every block into the
+// per-space engine (see `seed_block`); a SQL-only fixture would make the
+// engine assertions vacuous.
+
+/// Both arms of the live-orphan shape #1884 fixed: delete the CHILD first,
+/// THEN the PARENT (whose cascade skips the already-tombstoned child, so the
+/// child becomes its own trash root under a still-tombstoned parent).
+/// Restoring the child then has to walk UP and restore the parent chain.
+async fn seed_tree_with_a_tombstoned_ancestor(env: Arc<ArmEnv>) {
+    seed_tree(Arc::clone(&env)).await;
+    for label in [R1C1, R1] {
+        delete_block_inner(
+            &env.pool,
+            ARM_DEVICE,
+            &env.materializer,
+            BlockId::from_trusted(&id(label)),
+        )
+        .await
+        .expect("fixture soft-delete");
+    }
+    env.settle().await;
+}
+
+/// This arm's per-space Loro engine's view of `label`: whether it is
+/// tombstoned, and the raw `deleted_at` marker a reproject would be driven
+/// from.
+fn engine_deleted_state(env: &ArmEnv, label: &str) -> (bool, Option<String>) {
+    let space = SpaceId::from_trusted(&id(SPACE));
+    let state = env.materializer.loro_state();
+    let mut guard = state
+        .registry
+        .for_space(&space, ARM_DEVICE)
+        .expect("for_space (engine readback)");
+    let engine = guard.engine_mut();
+    let block_id = id(label);
+    (
+        engine.read_deleted(&block_id).expect("read_deleted"),
+        engine.read_deleted_at(&block_id).expect("read_deleted_at"),
+    )
+}
+
+/// SQL's view of `label`'s tombstone.
+async fn sql_deleted_at(pool: &SqlitePool, label: &str) -> Option<i64> {
+    // dynamic-sql: test-only oracle readback (not a production query path)
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(id(label))
+        .fetch_one(pool)
+        .await
+        .expect("read deleted_at")
+}
+
+/// **The assertion #3834 is about**, shared by both restore paths.
+///
+/// `path` names the caller so a failure says which of the two regressed.
+///
+/// Note what is NOT the point: R1 being live in SQL. SQL was always right —
+/// `restore_deleted_ancestor_chain` cleared it in-tx, before and after the fix
+/// — so a test that stopped there would be vacuous. It is asserted only as the
+/// precondition that makes the engine assertions meaningful (if SQL had not
+/// restored R1 there would be no divergence to detect).
+async fn assert_restored_ancestor_converged(env: &ArmEnv, path: &str) {
+    assert_eq!(
+        sql_deleted_at(&env.pool, R1).await,
+        None,
+        "precondition ({path}): the #1884 upward walk must clear R1 in SQL",
+    );
+
+    // (a) THE CORE: R1 is alive IN THE ENGINE, not just in SQL. Before the fix
+    // nothing in either local command reached the engine for the chain — the
+    // `apply_op` → `dispatch_restore_ancestors` arm the code cited never runs
+    // for a locally authored op (the local path leaves the apply cursor put, so
+    // the op only replays at boot, by which point the chain is already live in
+    // SQL and the projection returns an empty chain).
+    let (engine_deleted, engine_deleted_at) = engine_deleted_state(env, R1);
+    assert!(
+        !engine_deleted,
+        "#3834 ({path}): restoring R1C1 must restore its R1 ancestor IN THE \
+         ENGINE — it was SQL-only, leaving the block live in SQL and tombstoned \
+         in the per-space CRDT",
+    );
+    assert!(
+        engine_deleted_at.is_none(),
+        "#3834 ({path}): the engine must report R1 alive (deleted_at None); \
+         got {engine_deleted_at:?}",
+    );
+
+    // (b) THE GUARD, and the reason (a) matters: a reproject driven by the
+    // ENGINE's view of R1 must not re-delete it in SQL. With a stale engine
+    // tombstone this call re-stamps `deleted_at` on every reproject —
+    // self-perpetuating divergence, and the user-visible symptom (a restored
+    // subtree whose ancestors silently revert to deleted).
+    {
+        let mut tx = env.pool.begin().await.expect("begin reproject");
+        agaric_engine::loro::projection::reproject_block_deleted_at_from_engine(
+            &mut tx,
+            &BlockId::from_trusted(&id(R1)),
+            engine_deleted_at.as_deref(),
+        )
+        .await
+        .expect("reproject R1 from the engine");
+        tx.commit().await.expect("commit reproject");
+    }
+    assert_eq!(
+        sql_deleted_at(&env.pool, R1).await,
+        None,
+        "#3834 GUARD ({path}): reprojecting R1 from the engine must NOT \
+         re-delete the restored ancestor in SQL",
+    );
+}
+
+/// #3834, single path. `restore_block_inner` discarded
+/// `restore_deleted_ancestor_chain`'s returned `chain`, citing an `apply_op`
+/// arm that never fires locally.
+///
+/// Run with: `cargo nextest run -E 'test(restore_block_inner_fans_the_restored_ancestor)'`
+#[tokio::test]
+async fn restore_block_inner_fans_the_restored_ancestor_chain_to_the_engine() {
+    let env = Arc::new(ArmEnv::new().await);
+    seed_tree_with_a_tombstoned_ancestor(Arc::clone(&env)).await;
+
+    let (deleted_before, _) = engine_deleted_state(&env, R1);
+    assert!(
+        deleted_before,
+        "precondition: R1 must be tombstoned in the engine after the fixture \
+         delete — otherwise there is no divergence for the restore to close",
+    );
+
+    let deleted_at_ref = deleted_at_of(&env.pool, R1C1).await;
+    restore_block_inner(
+        &env.pool,
+        ARM_DEVICE,
+        &env.materializer,
+        BlockId::from_trusted(&id(R1C1)),
+        deleted_at_ref,
+    )
+    .await
+    .expect("single restore");
+    env.settle().await;
+
+    assert_restored_ancestor_converged(&env, "restore_block_inner").await;
+}
+
+/// #3834, batch path. `restore_blocks_by_ids_inner` had the same defect — and
+/// was internally inconsistent about it, since it already hand-rolls the
+/// post-commit `dispatch_restore_descendants` fan-out for exactly this reason
+/// and simply did not do the symmetric upward one.
+///
+/// Run with: `cargo nextest run -E 'test(restore_blocks_by_ids_inner_fans_the_restored_ancestor)'`
+#[tokio::test]
+async fn restore_blocks_by_ids_inner_fans_the_restored_ancestor_chain_to_the_engine() {
+    let env = Arc::new(ArmEnv::new().await);
+    seed_tree_with_a_tombstoned_ancestor(Arc::clone(&env)).await;
+
+    let (deleted_before, _) = engine_deleted_state(&env, R1);
+    assert!(
+        deleted_before,
+        "precondition: R1 must be tombstoned in the engine after the fixture \
+         delete — otherwise there is no divergence for the restore to close",
+    );
+
+    restore_blocks_by_ids_inner(&env.pool, ARM_DEVICE, &env.materializer, block_ids(&[R1C1]))
+        .await
+        .expect("bulk restore");
+    env.settle().await;
+
+    assert_restored_ancestor_converged(&env, "restore_blocks_by_ids_inner").await;
 }
