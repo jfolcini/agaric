@@ -83,9 +83,16 @@
 # (ignore list emptied, four findings, same two step types in the same order)
 # and checked line-for-line before committing.
 #
-# Twice now the same shape: an unrelated comment edit high in ci.yml turns
-# four suppressed findings into four `high` failures. That is the argument
-# for #3737 — line anchors are a poor key for "this specific step".
+# Re-anchored again the same day (#3849 review follow-up), +12 each:
+# `301/324/454/486` -> `313/336/466/498`. Same cause a third time — the
+# `android_re` comment block grew while repairing the trigger itself.
+#
+# THREE times in one day, every time from an unrelated comment edit high in
+# ci.yml, and every time turning four suppressed findings into four `high`
+# failures on a diff that touches no cache step. Same count, same two step
+# types, same order on each re-derivation. That is the argument for #3737:
+# a line number is a poor key for "this specific step", and the procedure
+# below is a workaround for the key, not a fix.
 
 rules:
   cache-poisoning:
@@ -100,10 +107,10 @@ rules:
     #
     # Keep this block under 32 comment lines; see the file header.
     ignore:
-      - ci.yml:301
-      - ci.yml:324
-      - ci.yml:454
-      - ci.yml:486
+      - ci.yml:313
+      - ci.yml:336
+      - ci.yml:466
+      - ci.yml:498
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot
