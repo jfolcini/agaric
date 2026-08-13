@@ -98,14 +98,17 @@
 //   covered      — an equivalence test exists; `test` names it and the guard
 //                  verifies that test still RUNS: a `fn <test>` exists, carries
 //                  a test attribute (`#[test]` / `#[tokio::test]` / …), and is
-//                  not `#[ignore]`d. Name-existence alone was not enough. This
-//                  module ships two DELIBERATELY `#[ignore]`d reproducers that
-//                  document unfixed bugs (#3818, #3819), so "an `#[ignore]`d
-//                  test in bulk_equivalence/" is a shape that already looks
-//                  normal here — a real covering test silenced with `#[ignore]`
-//                  would have been indistinguishable from the intended pattern,
-//                  and a `fn` renamed on top of a deleted test would have kept
-//                  the claim alive with nothing behind it.
+//                  not `#[ignore]`d. Name-existence alone was not enough.
+//                  `#[ignore]` matters acutely in THIS module specifically:
+//                  when the oracle finds a bug it cannot fix in the same PR,
+//                  the reproducer lands here `#[ignore]`d and deliberately
+//                  failing (that is how #3818 and #3819 were first committed,
+//                  before the fixes un-ignored them). So "an `#[ignore]`d test
+//                  in bulk_equivalence/" is a shape that looks normal here —
+//                  which is exactly why a real covering test silenced with
+//                  `#[ignore]` must not be allowed to hide among them, and why
+//                  a `fn` renamed on top of a deleted test must not keep the
+//                  claim alive with nothing behind it.
 //                  An optional `reason` records anything the word "covered"
 //                  would otherwise overstate — e.g. a KNOWN divergence that the
 //                  named test does not exercise.
@@ -884,9 +887,10 @@ function runSelfTest() {
   } else fail('same-file expansion is call-scoped', JSON.stringify(scanFile(noHopSrc)))
 
   // A `covered` entry is only a claim if the test it names RUNS. These are the
-  // shapes that decide it. `#[ignore]` matters acutely in this module: it ships
-  // two DELIBERATELY ignored reproducers, so a real covering test silenced with
-  // `#[ignore]` would otherwise have looked exactly like the intended pattern.
+  // shapes that decide it. `#[ignore]` matters acutely in this module: it is
+  // where deliberately-ignored, deliberately-failing reproducers land when the
+  // oracle finds a bug it cannot fix in the same PR, so a real covering test
+  // silenced with `#[ignore]` would otherwise look exactly like that pattern.
   const kindOf = (src, name) => {
     const structural = blank(src, { blankStrings: true })
     return testKindOf(attrsBefore(structural, structural.indexOf(`fn ${name}`)))

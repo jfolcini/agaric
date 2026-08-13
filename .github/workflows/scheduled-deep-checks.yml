@@ -739,18 +739,28 @@ jobs:
         # The 20k-row perf gates are `#[ignore]`d so the per-PR suite doesn't
         # pay for 20k-row seeding; they assert wall-clock budgets and fail on
         # regression. BUT `--run-ignored=only` runs EVERY `#[ignore]`d test, not
-        # just the perf gates — so it also sweeps in intentionally-failing
-        # documented oracles kept `#[ignore]`d AND failing on purpose as
-        # greppable design-divergence markers (see `src/reverse/tests.rs`'s
-        # `create_block_apply_then_reverse_round_trip_i_lifecycle_3`: reverse of
-        # a create is a soft-delete, so a strict identity round-trip cannot hold
-        # — a deliberate design choice, not a bug). Those must NOT red this gate,
-        # so exclude them via `-E`. Add any future such failing oracle here too.
-        # The batch-vs-fold oracle's two committed reproducers (#3818, #3819)
-        # used to be excluded here; both bugs are FIXED, so both tests lost
-        # their `#[ignore]` and their exclusion together — leaving an exclusion
-        # behind for a now-passing test silently un-gates it. Same rule for any
-        # future entry: the `#[ignore]` and the exclusion go together.
+        # just the perf gates — so it would also sweep in any intentionally-
+        # failing documented oracle kept `#[ignore]`d AND failing on purpose as
+        # a greppable design-divergence marker. Such a test must NOT red this
+        # gate, so it gets excluded via `-E`.
+        #
+        # THE RULE: the `#[ignore]` and the `-E` exclusion go together. Adding a
+        # failing oracle means adding its exclusion; un-`#[ignore]`ing it (or
+        # renaming it) means removing that exclusion in the same commit. A stale
+        # exclusion is worse than none: `-E 'not test(<name>)'` for a name that
+        # no longer exists matches nothing and fails silently, and if the name
+        # DOES come back it silently un-gates a test that is now expected to
+        # pass.
+        #
+        # There are currently NO such oracles, so the list is deliberately
+        # empty and no `-E` is passed. It was last non-empty for the batch-vs-
+        # fold reproducers (#3818, #3819) and for a reverse-round-trip oracle;
+        # all three were fixed or rewritten to pin the real behaviour, and lost
+        # their `#[ignore]` and their exclusion together. (The reverse one had
+        # been left behind here under its pre-rename name — the exact silent-
+        # no-op this rule exists to prevent.) Every remaining `#[ignore]`d test
+        # in the workspace is a perf gate, a measurement harness, or a manual
+        # codegen task, and all of them are expected to PASS in this sweep.
         # `--workspace` (#3212): bare form is package-scoped to `agaric` only. No
         # #[ignore]d test currently lives outside that package (verified via
         # `cargo nextest list --workspace`), so this is a no-op today, but it
@@ -758,7 +768,6 @@ jobs:
         # from being silently skipped by this sweep.
         run: >-
           cargo nextest run --workspace --run-ignored=only --no-fail-fast
-          -E 'not test(create_block_apply_then_reverse_round_trip_i_lifecycle_3)'
 
   # ---------------------------------------------------------------------------
   # mutants (#649) — cargo-mutants scoped (via `.cargo/mutants.toml`'s
