@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlock } from '@/__tests__/fixtures'
 import {
   compareGroupSortKeys,
+  getAgendaGroupKey,
   GROUP_RANK,
   groupByDate,
   groupByPage,
@@ -251,9 +252,27 @@ describe('groupByDate', () => {
     // and is not claimed here. Pinned so the gap is visible rather than
     // implied by the test's silence.
     expect(groups.map((g) => g.label)).toEqual(['Today', 'Today'])
+
+    // #3845 — the duplicate LABEL pinned above is cosmetic; the duplicate
+    // RENDER KEY it produces downstream is the more consequential half.
+    // `AgendaResults` derives its React key from `getAgendaGroupKey`
+    // (`header:${...}`, see `useVirtualizedGroupedRows`), which used to be
+    // `(g) => g.label` — identical for both groups here, so React would
+    // receive two `header:Today` siblings. `getAgendaGroupKey` must
+    // disambiguate them using `special` (only the real "Today" bucket
+    // carries it; the literal-string bucket is an ordinary date group with
+    // `special: null`) even though their `label`s are the same string.
+    const keys = groups.map(getAgendaGroupKey)
+    expect(keys[0]).not.toBe(keys[1])
+    expect(new Set(keys).size).toBe(2)
   })
 
-  it('handles due_date values of "__proto__" / "constructor" without prototype pollution (#3814)', () => {
+  // Title narrowed (#3845): this covers only `groupByDate`'s bucket-KEY
+  // namespace, not the display-layer label→i18n-key lookup one layer
+  // downstream (`AgendaResults`'s `GROUP_I18N`) — that hazard is separate
+  // and is pinned by AgendaResults.test.tsx's "renders 'constructor' as a
+  // literal group label" test instead.
+  it('handles due_date values of "__proto__" / "constructor" without prototype pollution in the bucket-key Map (#3814)', () => {
     // Same unreachable-through-validated-writes class as the "Today" test
     // above. `specialGroups`/`specialSortKey` are keyed ONLY by the fixed
     // `SpecialLabel` union ('Overdue' | 'Today' | 'Tomorrow' | 'No date'), so

@@ -181,13 +181,22 @@ async function resolvePageTitles(parentIds: string[]): Promise<Map<string, strin
  * The date shown on a block's badge: `due_date`, falling back to
  * `scheduled_date`. Uses `||`, not `??` — a blank `due_date` (`''`) is a
  * valid `string`, so `??` would return it and never reach the fallback.
- * Matches `effectiveDate` in `agenda-sort.ts` (#3815). Exported so this
- * idiom can be pinned directly: `groupByAge` (above) drops any block whose
- * only qualifying date is a blank string before it reaches a render, so a
- * full-component test cannot observe this expression on its own (#3816).
+ * Ends `|| null` to match `effectiveDate` in `agenda-sort.ts` (#3815) for
+ * real: without it, a block with `due_date: ''` AND `scheduled_date: ''`
+ * would return `''` here vs. `null` there — harmless today (`BlockListItem`
+ * guards `{dueDate && ...}`, so `''` renders no chip same as `null`), but a
+ * caller relying on the documented parity would trip on it (#3845).
+ *
+ * Exported so this idiom can be pinned directly: `groupByAge` (above) drops
+ * a block before it reaches a render whenever it has no qualifying PAST
+ * date — either because its only due/scheduled value is a blank string, OR
+ * because a blank `due_date` sits ahead of a genuinely-past `scheduled_date`
+ * (`''` sorts before any real date string, so `.at(0)` picks the blank over
+ * the usable one — #3841, not fixed here) — so a full-component test cannot
+ * observe this expression on its own (#3816).
  */
 export function effectiveDisplayDate(block: BlockRow): string | null {
-  return block.due_date || block.scheduled_date
+  return block.due_date || block.scheduled_date || null
 }
 
 // ── Component ──────────────────────────────────────────────────────────

@@ -92,6 +92,38 @@ export interface AgendaGroup {
   /** CSS class for the group header */
   className?: string | undefined
   blocks: BlockRow[]
+  /**
+   * Which fixed `SpecialLabel` bucket this group is (`groupByDate` only);
+   * `null`/absent for a raw date bucket and for every group produced by
+   * the other `groupBy*` functions. Exists so callers can derive a render
+   * key that does not collide when a raw date bucket's (possibly
+   * unformatted, #3814) label happens to spell a special label verbatim —
+   * see `getAgendaGroupKey` (#3845).
+   */
+  special?: SpecialLabel | null | undefined
+}
+
+/**
+ * Unique, stable identity for a group — the source `getGroupKey` for the
+ * `header:${...}` React key built by `useVirtualizedGroupedRows` (#2252).
+ *
+ * `label` ALONE is not safe to key on: `groupByDate` can produce two
+ * groups that render the identical display label. A raw `due_date` that
+ * literally spells `'Today'` lands in its own date bucket (`special:
+ * null`) — separate data from the real "Today" special bucket (`special:
+ * 'Today'`) — but `formatGroupDate` falls back to the raw string for a
+ * non-`YYYY-MM-DD` input, so BOTH groups render the heading "Today"
+ * (`#3814`'s known, deliberately-unfixed display gap). A label-keyed
+ * `header:Today` would collide for the two — duplicate React keys, not
+ * just a repeated heading (#3845).
+ *
+ * Namespacing by `special` before falling back to `label` keeps the two
+ * apart: the four fixed `SpecialLabel` values and an arbitrary `label`
+ * string can never collide here even when their raw text is identical,
+ * because they are tagged into different namespaces before being joined.
+ */
+export function getAgendaGroupKey(group: AgendaGroup): string {
+  return group.special ? `special:${group.special}` : `label:${group.label}`
 }
 
 /**
@@ -148,7 +180,7 @@ export function compareGroupSortKeys(a: GroupSortKey, b: GroupSortKey): number {
  * reaching a collision needs a hand-edited database or a sync-protocol bug
  * — the same reachability class as the `effectiveDate` fix above.
  */
-type SpecialLabel = 'Overdue' | 'Today' | 'Tomorrow' | 'No date'
+export type SpecialLabel = 'Overdue' | 'Today' | 'Tomorrow' | 'No date'
 
 /**
  * Group blocks by effective date. Returns groups in date order.
@@ -255,6 +287,7 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
     .map(({ label, blocks: groupBlocks, special }) => ({
       label,
       blocks: groupBlocks,
+      special,
       className:
         special === 'Overdue'
           ? 'text-destructive'

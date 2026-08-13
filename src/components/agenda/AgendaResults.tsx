@@ -25,7 +25,9 @@ import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 import {
+  type AgendaGroup,
   type AgendaSortBy,
+  getAgendaGroupKey,
   groupByDate,
   groupByPage,
   groupByPriority,
@@ -68,6 +70,38 @@ export interface AgendaResultsProps {
   sortBy?: AgendaSortBy | undefined
   /** Callback fired when a date is changed inline (e.g. to refresh blocks). */
   onDateChanged?: (() => void) | undefined
+}
+
+/**
+ * Which i18n key (if any) a group header should be translated with.
+ *
+ * Keyed off the DISCRIMINANT, not the display label. Three states, and the
+ * middle one is the whole point (#3845):
+ *
+ *   `SpecialLabel` — a genuine special bucket; translate it.
+ *   `null`         — a `groupByDate` DATE bucket; NEVER translate, whatever
+ *                    it happens to be labelled. A hand-edited `due_date`
+ *                    spelling `'Today'` formats to the label `Today` and
+ *                    would otherwise resolve to `agenda.today`.
+ *   `undefined`    — the group came from a grouper with no discriminant
+ *                    (`groupByPage` / `groupByPriority` / `groupByState`),
+ *                    where the label IS the key (e.g. `'No page'`).
+ *
+ * `special ?? label` alone would collapse `null` into the label path and
+ * leave the collision exactly as it was — a discriminant that exists but is
+ * not consulted reads as fixed while behaving as before.
+ *
+ * Exported for tests: under the app's single pinned locale
+ * `t('agenda.today')` renders the literal string `Today`, identical to the
+ * raw label, so this decision is NOT observable through a rendered header.
+ * Testing it directly is what makes it covered rather than merely written.
+ */
+export function groupI18nKey(
+  group: AgendaGroup,
+  lookup: ReadonlyMap<string, string>,
+): string | undefined {
+  if (group.special === null) return undefined
+  return lookup.get(group.special ?? group.label)
 }
 
 // ── Component ──────────────────────────────────────────────────────────
@@ -175,14 +209,27 @@ export function AgendaResults({
   // Map group labels to i18n keys for known groups; consumed by the
   // grouped-header render path below (display label is derived from the
   // raw `group.label` per visible header at render time).
-  const GROUP_I18N: Record<string, string> = useMemo(
-    () => ({
-      Overdue: 'agenda.overdue',
-      Today: 'agenda.today',
-      Tomorrow: 'agenda.tomorrow',
-      'No date': 'agenda.noDate',
-      'No page': 'agenda.noPage',
-    }),
+  //
+  // A `Map`, not a plain object literal: the key is the raw, unsanitized
+  // `group.label`, and a date group can carry a hand-edited/imported
+  // `due_date` that literally spells `'constructor'` (or `'__proto__'`)
+  // — see `groupByDate`'s own `Map`-not-object-literal note (#3814). A
+  // `Record<string, string>` indexed by that label would resolve
+  // `'constructor'` through the prototype chain to `Object.prototype
+  // .constructor` (a function, therefore truthy), handing `t()` a
+  // function instead of a translation key — the exact hazard #3814 fixed
+  // one layer up, reappearing here (#3845). `Map#get` has no prototype
+  // chain to leak through: an absent key returns `undefined`, same as
+  // today's fallback.
+  const GROUP_I18N: Map<string, string> = useMemo(
+    () =>
+      new Map([
+        ['Overdue', 'agenda.overdue'],
+        ['Today', 'agenda.today'],
+        ['Tomorrow', 'agenda.tomorrow'],
+        ['No date', 'agenda.noDate'],
+        ['No page', 'agenda.noPage'],
+      ]),
     [],
   )
 
@@ -198,7 +245,7 @@ export function AgendaResults({
   const { virtualRows, virtualizer } = useVirtualizedGroupedRows({
     groups,
     ungroupedItems: sortedBlocks,
-    getGroupKey: (g) => g.label,
+    getGroupKey: getAgendaGroupKey,
     getGroupItems: (g) => g.blocks,
     // Header rows are ~36px (`px-3 py-1` + sm text); item rows render a
     // `BlockListItem` whose default touch min-height is 44px, but with
@@ -392,7 +439,7 @@ export function AgendaResults({
                 transform: `translateY(${virtualRow.start}px)`,
               }
               if (row.kind === 'group-header') {
-                const i18nKey = GROUP_I18N[row.group.label]
+                const i18nKey = groupI18nKey(row.group, GROUP_I18N)
                 const displayLabel = i18nKey ? t(i18nKey) : row.group.label
                 return (
                   // Group headers ride a `<li>` so they're a valid
