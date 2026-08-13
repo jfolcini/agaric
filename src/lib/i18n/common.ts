@@ -165,11 +165,21 @@ export const common: Record<string, string> = {
   'announce.allRestored_one': 'All items restored — {{count}} block',
   'announce.allRestored_other': 'All items restored — {{count}} blocks',
   'announce.emptyTrashFailed': 'Empty trash failed',
+  // #3835 — `purgeAllDeletedInSpace` failing part-way through still
+  // committed the chunks before the failure; distinct from
+  // `emptyTrashFailed` (which implies nothing happened).
+  'announce.emptyTrashPartial_one':
+    'Trash partially emptied — {{count}} item permanently deleted before an error interrupted it',
+  'announce.emptyTrashPartial_other':
+    'Trash partially emptied — {{count}} items permanently deleted before an error interrupted it',
   'announce.restoreAllFailed': 'Restore all failed',
   'announce.restoreFailed': 'Restore failed',
   'announce.purgeFailed': 'Purge failed',
   'announce.batchRestoreFailed': 'Batch restore failed',
   'announce.batchPurgeFailed': 'Batch purge failed',
+  // #3835 — `purge_blocks_by_ids` rejected the batch because the trash
+  // listing this selection came from is stale (a restore landed elsewhere).
+  'announce.batchPurgeStale': 'Trash listing was out of date and has been refreshed',
   'announce.opsReverted_one': '{{count}} operation reverted',
   'announce.opsReverted_other': '{{count}} operations reverted',
   'announce.revertFailed': 'Revert failed',

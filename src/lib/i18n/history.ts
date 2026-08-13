@@ -99,6 +99,11 @@ export const history: Record<string, string> = {
   'trash.allRestored': '{{count}} items restored',
   'trash.allPurged': 'Trash emptied ({{count}} items permanently deleted)',
   'trash.emptyTrashFailed': 'Failed to empty trash',
+  // #3835 — surfaces PARTIAL progress from `PartialPurgeError`: earlier
+  // chunks already committed before a later chunk failed, so this is
+  // deliberately distinct copy from `emptyTrashFailed` (which implies
+  // nothing happened).
+  'trash.emptyTrashPartial': 'Removed {{count}} items before an error interrupted emptying trash',
   'trash.restoreAllFailed': 'Failed to restore all items',
   'trash.selectItemLabel': 'Select {{content}}',
   'trash.listLabel': 'Trash items',
@@ -108,6 +113,12 @@ export const history: Record<string, string> = {
   'trash.batchPurged': '{{count}} blocks permanently deleted',
   'trash.batchRestoreFailed': 'Failed to restore selected blocks',
   'trash.batchPurgeFailed': 'Failed to purge selected blocks',
+  // #3835 — `purge_blocks_by_ids` rejected the batch because the trash
+  // listing this selection came from is stale (a restore landed elsewhere
+  // between the listing render and this purge). Distinct from the generic
+  // `batchPurgeFailed` above: a retry with the same selection fails
+  // identically until the listing is refreshed, which this path now does.
+  'trash.batchPurgeStale': 'The trash listing was out of date and has been refreshed',
   'trash.batchPurgeDescription':
     'This action cannot be undone. {{count}} blocks will be permanently deleted.',
   'trash.batchPurgeTitle': 'Permanently delete {{count}} items?',

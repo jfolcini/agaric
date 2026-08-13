@@ -1095,12 +1095,90 @@ describe('UnfinishedTasks', () => {
     //   * `block.due_date ?? block.scheduled_date` (#3816's bug) -> PASSES
     //
     // `due_date` is `null` here, and `??` and `||` are identical on `null`.
-    // The `??`/`||` distinction is only observable with a BLANK STRING, and
-    // such a block never reaches a render at all: `groupByAge` drops it
-    // before grouping (#3841). That is why #3816 itself is pinned as a unit
-    // test on `effectiveDisplayDate`, and why this assertion is a separate,
-    // weaker guarantee — that the component-level fallback exists at all.
+    // The `??`/`||` distinction is only observable with a BLANK STRING — see
+    // the dedicated blank-`due_date` test below (#3841), which is what makes
+    // that case reachable at the component level at all.
     expect(screen.getByText(formatCompactDate(daysAgo(2)))).toBeInTheDocument()
+  })
+
+  // #3841 — before the fix, `groupByAge` treated a blank `due_date` (`''`)
+  // as the "past-most" qualifying date (`'' < todayStr` always holds), then
+  // dropped the block via `if (!dateStr) continue` because `''` is falsy.
+  // A block with a blank `due_date` and a real, past `scheduled_date` was
+  // therefore silently missing from every group — not just missing its
+  // badge (#3816), missing entirely. This is also the first component-level
+  // test able to observe #3816's `||` fallback on a BLANK (not `null`)
+  // `due_date`, since such a block could never reach a render before now.
+  it('renders a block whose due_date is blank but has a real scheduled_date, instead of silently dropping it (#3841)', async () => {
+    const user = userEvent.setup()
+    const scheduledDate = daysAgo(2)
+    const block = makeBlock({
+      id: 'BLANK_DUE',
+      content: 'Blank due date task',
+      todo_state: 'TODO',
+      due_date: '',
+      scheduled_date: scheduledDate,
+      page_id: null,
+    })
+    mockInvokeForBlocks([block])
+
+    render(<UnfinishedTasks />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { expanded: false }))
+
+    // Bucketed by the real scheduled_date (2 days ago -> "This Week"), not
+    // dropped, and not miscategorized into "Older" by the now-excluded
+    // blank due_date.
+    expect(
+      within(screen.getByTestId('unfinished-group-thisWeek')).getByText('Blank due date task'),
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('unfinished-group-older')).not.toBeInTheDocument()
+
+    // #3816 — the badge falls back to scheduled_date, now observable
+    // end-to-end because the row actually renders.
+    expect(screen.getByText(formatCompactDate(scheduledDate))).toBeInTheDocument()
+  })
+
+  // #3841, residual arm. The fix's fallback only runs when NO real past date
+  // exists. Pinned because the outcome is deliberate but surprising: a block
+  // whose only real date is in the FUTURE lands under "Older".
+  //
+  // `classifyAge` sends anything `>= todayStr` to `older`, so every residual
+  // shape (both dates blank, or a lone future date) buckets there. That is
+  // the least-alarming bucket, which is the right direction to fail in — the
+  // row can never look MORE recent than it is — and it is strictly better
+  // than the pre-fix behaviour, which dropped the row from the panel
+  // entirely. If someone later decides a future-dated task deserves its own
+  // bucket, this test should fail and make them say so.
+  it('buckets a blank due_date with only a FUTURE scheduled_date under Older, not dropped (#3841)', async () => {
+    const user = userEvent.setup()
+    const future = new Date()
+    future.setDate(future.getDate() + 7)
+    const block = makeBlock({
+      id: 'BLANK_DUE_FUTURE',
+      content: 'Future scheduled task',
+      todo_state: 'TODO',
+      due_date: '',
+      scheduled_date: toLocalDateStr(future),
+      page_id: null,
+    })
+    mockInvokeForBlocks([block])
+
+    render(<UnfinishedTasks />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { expanded: false }))
+
+    expect(
+      within(screen.getByTestId('unfinished-group-older')).getByText('Future scheduled task'),
+    ).toBeInTheDocument()
   })
 
   it('groups a past scheduled date with a future due date under Yesterday', async () => {
@@ -1288,14 +1366,12 @@ describe('UnfinishedTasks', () => {
 // the visible badge, matching agenda-sort.ts's `effectiveDate` `||` idiom
 // (#3815). `??` would stop at the empty string and never reach the fallback.
 //
-// This is unit-tested directly against `effectiveDisplayDate` rather than
-// through a full `<UnfinishedTasks />` render: `groupByAge` treats a blank
-// `due_date` as the "past-most" qualifying date (`''` sorts before any real
-// date string) and then drops the block via its `if (!dateStr) continue`
-// guard — so a block with a blank due_date can never reach a rendered group
-// regardless of this fix. That is a separate, adjacent latent defect in
-// `groupByAge`, out of scope here; it does not affect `effectiveDisplayDate`
-// itself, which is exercised directly below.
+// Unit-tested directly against `effectiveDisplayDate` here (fast, exhaustive
+// over the null/blank/present combinations), AND covered end-to-end by the
+// "renders a block whose due_date is blank..." component test above (#3841)
+// — before that fix, `groupByAge` dropped a blank-`due_date` block before it
+// ever reached a render, so this idiom was previously unobservable through a
+// full `<UnfinishedTasks />` render at all.
 describe('effectiveDisplayDate', () => {
   it('uses due_date when present', () => {
     expect(
