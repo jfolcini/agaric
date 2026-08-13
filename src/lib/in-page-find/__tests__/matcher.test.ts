@@ -271,21 +271,36 @@ describe('compileQuery — Unicode correctness (#756)', () => {
     expect(compiled.matcher(text)).toEqual([{ start: 9, end: 11 }])
   })
 
-  it('ACCEPTED COST of #3812: a final-sigma query now also matches literal mid-sigma text', () => {
-    // Characterization, not an endorsement. Folding both sides per code
-    // point removed the silent MISS above, but it opens the symmetric
-    // false positive, and this pins it so it cannot change unnoticed.
+  // #3812 — the slow path folds BOTH sides through `foldCodePoint`, which
+  // canonicalises the two Greek sigma forms onto one (ς → σ). These two
+  // tests are a pair and must be read together: whichever spelling the
+  // TEXT uses, and whichever the QUERY implies, the match is found.
+  //
+  // An earlier version of this fix folded both sides per code point WITHOUT
+  // canonicalising, and its comment claimed the only cost was a false
+  // positive. That was wrong: it silently MISSED the first case below —
+  // natural Greek orthography, the more common spelling of the two.
+  it('matches WORD-FINAL ς in the text from an all-caps query (#3812)', () => {
+    const text = 'οδος İ' // natural orthography: word-final ς (U+03C2)
+    expect(text).toContain('ς') // final sigma, not mid σ
+    expect(text.toLowerCase().length).not.toBe(text.length) // slow path forced
+
+    const compiled = compileQuery('ΟΔΟΣ', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    expect(compiled.matcher(text)).toEqual([{ start: 0, end: 4 }])
+  })
+
+  it('ACCEPTED COST of #3812: ς and σ are conflated, so mid-sigma text matches too', () => {
+    // Characterization, not an endorsement. Canonicalising the sigmas is
+    // what removes the miss in BOTH directions; the price is that the two
+    // forms can no longer be told apart on this path. That is the single
+    // deliberate imprecision, and it is pinned here so it cannot change
+    // unnoticed.
     //
-    // The haystack is authored with a MID sigma (U+03C3). The query ends in
-    // a capital Σ in a word-final context, so whole-string folding would
-    // give it a FINAL ς (U+03C2) — which does not occur in the haystack, so
-    // before #3812 this correctly found nothing. Per-code-point folding
-    // gives a mid σ instead, which matches.
-    //
-    // Accepted because reaching it requires a co-occurring U+0130 to force
-    // the slow path at all, and a silent miss is the worse of the two
-    // failures. If the fold strategy is ever revisited, this test should
-    // fail — that is the point of it.
+    // Same query as the test above, but the text is spelled with a MID
+    // sigma. Both spellings match — that is the whole point.
     const text = 'οδοσ İ'
     expect(text).toContain('σ') // mid sigma, NOT final ς
     expect(text.toLowerCase().length).not.toBe(text.length) // slow path forced

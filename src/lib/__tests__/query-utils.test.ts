@@ -232,8 +232,16 @@ describe('parseQueryExpression', () => {
     // Previously this token was dropped entirely (not parsed, not recorded
     // in params, no error). #3795: it now falls through to the same
     // "unrecognised token" handling as any other prefix, so the source
-    // text survives. `'property:' + result.params.property` round-trips
-    // the original input verbatim.
+    // text survives. `'property:' + result.params.property` reconstructs
+    // this token verbatim.
+    //
+    // Scoped claim, deliberately: `params` is keyed by PREFIX, so two
+    // malformed `property:` tokens in one query overwrite each other and
+    // the earlier one is still dropped — the very class #3795 is about,
+    // surviving for multi-token input. That matches the pre-existing
+    // `else` for every other unrecognised prefix, so it is consistent
+    // rather than newly broken, but this test does NOT cover it and the
+    // fix does not claim to.
     const result = parseQueryExpression('property:=key=value')
     expect(result).toEqual({
       type: 'unknown',

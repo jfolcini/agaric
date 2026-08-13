@@ -324,26 +324,48 @@ function scanIndexOf(
  * sides the same way trades full correctness for guaranteed agreement
  * between the two call sites, which is what this path actually needs.
  *
- * That trade is NOT free, and it is not only a fix for missed matches — it
- * opens a symmetric FALSE POSITIVE, verified live rather than reasoned
- * about:
+ * Agreeing on the fold is necessary but NOT sufficient, and an earlier
+ * version of this fix stopped there and was wrong. Per-code-point folding
+ * makes both sides agree on `Σ` (always mid `σ`), but `'ς'.toLowerCase()`
+ * is `'ς'` — so text written in natural Greek orthography, ending a word
+ * in `ς`, folds to `οδος` while the query `ΟΔΟΣ` folds to `οδοσ`, and the
+ * match is silently MISSED. That trades one silent miss for another, in
+ * the direction that occurs more often in real text.
  *
- *     text  = 'οδοσ İ'   // authored with MID sigma U+03C3
- *     query = 'ΟΔΟΣ'     // trailing Σ is in a word-final context
- *
- * Whole-string folding gives the needle a word-final `ς`, which does NOT
- * occur in the haystack, so the old code correctly found nothing. Folding
- * the needle per code point gives a mid `σ`, which DOES match — so the
- * search can no longer distinguish genuinely-final-sigma text from text
- * literally spelled with a mid sigma.
- *
- * Accepted deliberately: reaching it needs a co-occurring U+0130 in the
- * same text node to force this path at all, and a silent miss is the worse
- * failure of the two. Recorded so the next reader sees the whole trade
- * rather than only the half that motivated it, and pinned by
- * `scanLiteralFolded folds the needle per code point …` in the tests, so
- * this behaviour cannot change silently.
+ * [`foldCodePoint`] therefore canonicalises the two sigma forms onto one,
+ * on BOTH sides. `οδος`, `ΟΔΟΣ` and `οδοσ` all fold to `οδοσ`. The single
+ * deliberate imprecision left is that ς and σ cannot be told apart on this
+ * path — pinned by the pair of sigma tests, so it cannot change silently.
  */
+/**
+ * Fold ONE code point for the slow path, canonicalising Greek sigma.
+ *
+ * `toLowerCase()` on a single code point is context-free, so `Σ` always
+ * yields the mid-word `σ` (U+03C3) and never the word-final `ς` (U+03C2)
+ * that whole-string folding would produce. Folding both sides
+ * per-code-point makes them agree on `Σ`, but on its own it does NOT make
+ * them agree on text that already CONTAINS a final `ς` — natural Greek
+ * orthography — because `'ς'.toLowerCase()` is `'ς'`. Searching `ΟΔΟΣ`
+ * over `οδος` would then fold to `οδοσ` vs `οδος` and silently miss.
+ *
+ * So the two sigma forms are collapsed onto one here. `οδος`, `ΟΔΟΣ` and
+ * `οδοσ` all fold to `οδοσ`: no miss in either direction, and no false
+ * positive introduced beyond the ς/σ conflation itself, which is the one
+ * deliberate imprecision (pinned in the tests).
+ *
+ * This costs nothing in offset mapping — both sigmas are a single UTF-16
+ * code unit, so the folded length is unchanged and `foldedStart` /
+ * `foldedEnd` stay aligned.
+ *
+ * The needle MUST use this same function, not `toLowerCase()` on the whole
+ * string: mixing a context-SENSITIVE needle fold with a context-FREE
+ * haystack fold is the original #3812 defect.
+ */
+function foldCodePoint(ch: string): string {
+  const f = ch.toLowerCase()
+  return f === 'ς' ? 'σ' : f
+}
+
 function scanLiteralFolded(
   text: string,
   rawNeedle: string,
@@ -351,12 +373,14 @@ function scanLiteralFolded(
 ): Array<{ start: number; end: number }> {
   // foldedStart[j] / foldedEnd[j] — original [start, end) span of the code
   // point that produced folded code unit `j`.
+  //
+  // See `foldCodePoint` for why both sides fold through the SAME helper.
   const foldedStart: number[] = []
   const foldedEnd: number[] = []
   let folded = ''
   let oi = 0
   for (const ch of text) {
-    const f = ch.toLowerCase()
+    const f = foldCodePoint(ch)
     for (let k = 0; k < f.length; k++) {
       foldedStart.push(oi)
       foldedEnd.push(oi + ch.length)
@@ -366,7 +390,7 @@ function scanLiteralFolded(
   }
   let needle = ''
   for (const ch of rawNeedle) {
-    needle += ch.toLowerCase()
+    needle += foldCodePoint(ch)
   }
   const out: Array<{ start: number; end: number }> = []
   let from = 0

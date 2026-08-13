@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { tokenize } from '@/lib/search-query/tokenize'
+import { assertAdvanced, tokenize } from '@/lib/search-query/tokenize'
 
 describe('tokenize', () => {
   it('returns no tokens for empty input', () => {
@@ -218,5 +218,26 @@ describe('tokenize', () => {
     expect(tokens).toHaveLength(2)
     expect(tokens[0]).toMatchObject({ kind: 'word', text: 'ab', span: [0, 2] })
     expect(tokens[1]).toMatchObject({ kind: 'quoted', text: '"cd"', span: [3, 7] })
+  })
+})
+
+describe('assertAdvanced (the forward-progress guard, #3786)', () => {
+  // The guard can only fire against already-broken code, so no `tokenize`
+  // input reaches it and its body was a mutation survivor. These pin it
+  // directly. Without them, deleting the body or flipping `<=` to `<`
+  // costs nothing.
+  it('throws when the cursor does not move', () => {
+    expect(() => assertAdvanced('tokenize/word', 8, 8)).toThrow(/failed to advance/)
+  })
+
+  it('throws when the cursor moves BACKWARD', () => {
+    // The real #3786 mutant (`close + 1` -> `close - 1`) moves it back.
+    expect(() => assertAdvanced('tokenize/word', 8, 7)).toThrow(/was 8, now 7/)
+  })
+
+  it('does not throw on genuine forward progress', () => {
+    // The other half of the pair: a guard that always threw would pass
+    // both tests above and break every valid input.
+    expect(() => assertAdvanced('tokenize/outer', 3, 4)).not.toThrow()
   })
 })

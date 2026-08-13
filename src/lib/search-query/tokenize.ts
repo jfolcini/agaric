@@ -138,7 +138,12 @@ export function tokenize(input: string): RawToken[] {
  * top of {@link tokenize} for why this is dev-only and why an invariant
  * check was chosen over a bounded-iterations cap.
  */
-function assertAdvanced(where: string, prev: number, cur: number): void {
+// Exported for tests ONLY. The guard fires only against code that is
+// already broken, so no input to `tokenize` can reach it — which left the
+// body a mutation survivor (deleting it failed no test). Testing it
+// directly is what makes the guard itself covered rather than merely
+// present.
+export function assertAdvanced(where: string, prev: number, cur: number): void {
   if (import.meta.env.DEV && cur <= prev) {
     throw new Error(
       `tokenize(): scan cursor failed to advance at ${where} (was ${prev}, now ${cur}) — this would otherwise hang forever`,
