@@ -196,9 +196,14 @@ jobs:
           # `agaric-store/src/db/mod.rs`, `agaric-sync/src/android_context.rs`,
           # and `agaric-sync/src/sync_daemon/{android_multicast,
           # session_supervisor}.rs` — and the patch script; `release.yml`
-          # covers the rest at tag time. (`src/lifecycle.rs` is also matched
-          # and carries NO android gate today: over-triggering costs one
-          # build, under-triggering misses a break, so it stays.)
+          # covers the rest at tag time.
+          #
+          # Two matched files carry NO android gate today and stay anyway:
+          # `src/lifecycle.rs` and `agaric-sync/src/sync_daemon/mod.rs`
+          # (the latter only references one in a comment). Over-triggering
+          # costs one build; under-triggering misses a break. Listed
+          # explicitly so the set above reads as exhaustive because it IS,
+          # rather than by omitting its own exceptions.
           #
           # #3847: the sync_daemon paths below were STALE — they still
           # named `src-tauri/src/sync_daemon/…`, which the #2621 crate
