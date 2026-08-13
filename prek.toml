@@ -1679,7 +1679,24 @@ name = "unsafe-code allowlist"
 entry = "bash scripts/check-unsafe-allowlist.sh"
 language = "system"
 pass_filenames = false
-files = "^(src-tauri/src/.*\\.rs|src-tauri/unsafe-allowlist\\.txt)$"
+# Matches every member crate, not just `src-tauri/src/` (#3847 follow-up).
+# The walk inside the script was widened to all of `src-tauri/`, but this
+# trigger was left at the app crate — so a new `unsafe` in `agaric-sync/`
+# would not have run the hook that audits it. Same shape as the bug this
+# whole chain is about: the checker was fixed, its trigger was not.
+files = "^(src-tauri/.*\\.rs|src-tauri/unsafe-allowlist\\.txt)$"
+stages = ["pre-commit"]
+
+# `android_re` liveness: every literal path in ci.yml's android-build
+# trigger must still exist. A dead path matches nothing and silently
+# stops the Android build from running (#3847).
+[[repos.hooks]]
+id = "android-trigger-paths"
+name = "ci.yml android_re paths exist"
+entry = "node scripts/check-android-trigger.mjs"
+language = "system"
+pass_filenames = false
+files = "^(\\.github/workflows/ci\\.yml|scripts/check-android-trigger\\.mjs)$"
 stages = ["pre-commit"]
 
 # Rust: cargo-machete (unused dependency detection)

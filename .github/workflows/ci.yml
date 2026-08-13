@@ -191,12 +191,39 @@ jobs:
           # files, the cross-compile dependency graph (`Cargo.toml` +
           # `Cargo.lock` — the `[target.'cfg(target_os = "android")']` deps
           # live in the manifest), the Rust files carrying
-          # `cfg(target_os = "android")` / `cfg(mobile)` gates (lib.rs,
-          # db.rs, lifecycle.rs, and the sync_daemon multicast shim +
-          # mod/orchestrator), and the patch script; `release.yml` covers
-          # the rest at tag time.
+          # `cfg(target_os = "android")` / `cfg(mobile)` gates — as of
+          # 2026-08-13 that is exactly: `src/lib.rs`, `src/android_jni.rs`,
+          # `agaric-store/src/db/mod.rs`, `agaric-sync/src/android_context.rs`,
+          # and `agaric-sync/src/sync_daemon/{android_multicast,
+          # session_supervisor}.rs` — and the patch script; `release.yml`
+          # covers the rest at tag time.
+          #
+          # Two matched files carry NO android gate today and stay anyway:
+          # `src/lifecycle.rs` and `agaric-sync/src/sync_daemon/mod.rs`
+          # (the latter only references one in a comment). Over-triggering
+          # costs one build; under-triggering misses a break. Listed
+          # explicitly so the set above reads as exhaustive because it IS,
+          # rather than by omitting its own exceptions.
+          #
+          # #3847: the sync_daemon paths below were STALE — they still
+          # named `src-tauri/src/sync_daemon/…`, which the #2621 crate
+          # split moved to `src-tauri/agaric-sync/src/sync_daemon/…`. So a
+          # PR touching only the Android multicast shim silently skipped
+          # `android-build` entirely. A path-keyed trigger whose paths no
+          # longer exist does not fail — it just stops firing, which is why
+          # this went unnoticed. Anything matching an android-only source
+          # file MUST be listed here; if you move one of these files, move
+          # its entry in the same commit.
+          #
+          # The first cut of THIS repair was itself incomplete in the same
+          # way: it verified only the alternatives it added and left `db`
+          # (moved to `agaric-store/src/db/mod.rs`, which carries two real
+          # android gates) and `orchestrator` (deleted outright) pointing at
+          # nothing. `scripts/check-android-trigger.mjs` now asserts every
+          # literal path here still exists, so the class is closed rather
+          # than this instance of it.
           desktop_re='^(src-tauri/|\.cargo/config\.toml\.example$|scripts/(fix-appimage-icons\.sh|prepare-external-bins\.mjs)$|package(-lock)?\.json$|\.github/workflows/ci\.yml$)'
-          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/src/(lib|db|lifecycle)\.rs$|src-tauri/src/sync_daemon/(android_multicast|mod|orchestrator)\.rs$|scripts/patch-android-build\.sh$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$)'
+          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/src/(lib|lifecycle|android_jni)\.rs$|src-tauri/agaric-store/src/db/mod\.rs$|src-tauri/agaric-sync/src/android_context\.rs$|src-tauri/agaric-sync/src/sync_daemon/(android_multicast|mod|session_supervisor)\.rs$|scripts/patch-android-build\.sh$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$)'
 
           desktop=false
           android=false

@@ -74,6 +74,29 @@
 # `actions/setup-node` step as the old one, and the count is still four. That
 # check is the point — re-anchoring blind is how a dead anchor becomes a
 # blanket file-wide suppression. The line-anchoring itself is #3737.
+#
+# Re-anchored 2026-08-13 (#3847 follow-up), +10 lines each:
+# `291/314/444/476` → `301/324/454/486`. Same cause as #3672 and the same
+# non-cause: no cache step moved and none was added — a ten-line comment was
+# added above ci.yml's `android_re`, explaining why that trigger had gone
+# stale, and every anchor below it drifted. Re-derived by the procedure below
+# (ignore list emptied, four findings, same two step types in the same order)
+# and checked line-for-line before committing.
+#
+# Re-anchored again the same day (#3849 review follow-up), +12 each:
+# `301/324/454/486` -> `313/336/466/498`. Same cause a third time — the
+# `android_re` comment block grew while repairing the trigger itself.
+#
+# FOUR times in one day (`313/336/466/498` -> `318/341/471/503` on the
+# fourth), every time from an unrelated comment edit high in ci.yml, and
+# every time turning four suppressed findings into four `high` failures on
+# a diff that touches no cache step. Same count, same two step types, same
+# order on every re-derivation.
+#
+# Four drifts and zero real findings is the whole case for #3737: a line
+# number is a poor key for "this specific step". The procedure below is a
+# workaround for the key, not a fix, and its cost is paid by every PR that
+# edits a comment anywhere above line ~500 of ci.yml.
 
 rules:
   cache-poisoning:
@@ -88,10 +111,10 @@ rules:
     #
     # Keep this block under 32 comment lines; see the file header.
     ignore:
-      - ci.yml:291
-      - ci.yml:314
-      - ci.yml:444
-      - ci.yml:476
+      - ci.yml:318
+      - ci.yml:341
+      - ci.yml:471
+      - ci.yml:503
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot
