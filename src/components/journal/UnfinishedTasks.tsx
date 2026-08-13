@@ -88,6 +88,57 @@ function classifyAge(dateStr: string, todayStr: string): 'yesterday' | 'thisWeek
   return 'older'
 }
 
+/**
+ * The date used to place a block into an age bucket.
+ *
+ * Primary rule (unchanged): among `due_date` / `scheduled_date`, pick
+ * whichever is chronologically PAST-MOST (`< todayStr`). The query returns
+ * a task when EITHER date is in the past, and if the other date is future
+ * it must not demote the task out of the bucket its genuinely-past date
+ * belongs in — see the "past-most date wins" / "past scheduled date with a
+ * future due date" tests below.
+ *
+ * #3841 — a blank string (`''`) is now EXCLUDED from that candidate set.
+ * `'' < todayStr` is always true, so treating a blank `due_date` as a real
+ * candidate made it win the past-most pick over a genuinely-past
+ * `scheduled_date` every time (`''` sorts before any real date string) —
+ * and the old code then discarded the block outright (`if (!dateStr)
+ * continue`) because `''` is falsy. This is the exact same "`''` is not a
+ * date" defect #3815/#3816 fixed for `agenda-sort.ts`'s `effectiveDate` and
+ * this file's own `effectiveDisplayDate` (below); it had NOT been fixed
+ * here despite sharing the root cause, because this bucket-selection logic
+ * additionally has to preserve the past-most rule above it, which a
+ * blanket switch to `effectiveDisplayDate` would NOT do — `due_date`
+ * unconditionally beats `scheduled_date` there, which is wrong when
+ * `due_date` is a real FUTURE date and `scheduled_date` is the genuinely
+ * past, bucket-determining one.
+ *
+ * Fallback: if neither date qualifies as a real past date (both
+ * blank/null, or the only date at all is blank) — latent, corrupted-data
+ * territory per #3841/#3814, since every validated write path rejects
+ * `''` — fall back to `effectiveDisplayDate`, and ultimately to
+ * `todayStr`, so the block always resolves to SOME bucket rather than the
+ * silent `continue` this replaces. `classifyAge(todayStr, todayStr)`
+ * lands in "older" (matches neither "yesterday" nor "thisWeek"), a
+ * deliberately conservative landing spot: the block stays visible instead
+ * of asserting a probably-wrong recency.
+ */
+function bucketDateFor(block: BlockRow, todayStr: string): string {
+  const past = [block.due_date, block.scheduled_date]
+    .filter((date): date is string => date != null && date !== '' && date < todayStr)
+    .toSorted()
+    .at(0)
+  if (past) return past
+  // No REAL past date. Fall back so the block is still bucketed rather than
+  // dropped (#3841). Both residual shapes land in `older` by construction —
+  // `classifyAge` sends anything `>= todayStr` there, and `todayStr` itself
+  // too — so a corrupted or future-dated row can never appear MORE recent
+  // than it is. `older` is the least-alarming bucket, which is the right
+  // direction to fail in; it also renders with no date badge, since blank
+  // and null both suppress it.
+  return effectiveDisplayDate(block) ?? todayStr
+}
+
 /** Group blocks by age: Yesterday, This Week, Older. */
 function groupByAge(blocks: BlockRow[], todayStr: string): AgeGroup[] {
   const yesterday: BlockRow[] = []
@@ -95,14 +146,8 @@ function groupByAge(blocks: BlockRow[], todayStr: string): AgeGroup[] {
   const older: BlockRow[] = []
 
   for (const block of blocks) {
-    // The query returns a task when either date is in the past. If the other
-    // date is future, it must not demote the task to Older; among qualifying
-    // dates, use the past-most date for the age bucket.
-    const dateStr = [block.due_date, block.scheduled_date]
-      .filter((date): date is string => date != null && date < todayStr)
-      .toSorted()
-      .at(0)
-    if (!dateStr) continue
+    // #3841 — every block is now bucketed; none are silently dropped.
+    const dateStr = bucketDateFor(block, todayStr)
     const age = classifyAge(dateStr, todayStr)
     if (age === 'yesterday') yesterday.push(block)
     else if (age === 'thisWeek') thisWeek.push(block)
@@ -187,13 +232,15 @@ async function resolvePageTitles(parentIds: string[]): Promise<Map<string, strin
  * guards `{dueDate && ...}`, so `''` renders no chip same as `null`), but a
  * caller relying on the documented parity would trip on it (#3845).
  *
- * Exported so this idiom can be pinned directly: `groupByAge` (above) drops
- * a block before it reaches a render whenever it has no qualifying PAST
- * date — either because its only due/scheduled value is a blank string, OR
- * because a blank `due_date` sits ahead of a genuinely-past `scheduled_date`
- * (`''` sorts before any real date string, so `.at(0)` picks the blank over
- * the usable one — #3841, not fixed here) — so a full-component test cannot
- * observe this expression on its own (#3816).
+ * Exported so this idiom can be pinned directly, and reused by
+ * `bucketDateFor` (above) as the fallback once `groupByAge` has no
+ * qualifying PAST date to bucket by. Before #3841, `groupByAge` dropped
+ * such a block before it ever reached a render — either because its only
+ * due/scheduled value was a blank string, OR because a blank `due_date` sat
+ * ahead of a genuinely-past `scheduled_date` (`''` sorts before any real
+ * date string, so a naive `.at(0)` picked the blank over the usable one) —
+ * so a full-component test could not observe this expression on its own
+ * (#3816). It can now: see the "#3841" describe block in the test file.
  */
 export function effectiveDisplayDate(block: BlockRow): string | null {
   return block.due_date || block.scheduled_date || null

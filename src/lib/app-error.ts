@@ -110,6 +110,22 @@ export function isValidation(err: unknown): err is TypedAppError & { kind: 'vali
 }
 
 /**
+ * Was this a "the request conflicts with the current state" rejection?
+ * #3835 — `purge_blocks_by_ids` (#3832) rejects a batch containing a live
+ * (non-deleted) id with this kind rather than silently skipping it, and its
+ * JSDoc tells callers the rejection means their listing is stale (an id was
+ * restored elsewhere between the listing render and the purge). Callers
+ * sourcing ids from a cached listing — trash batch-purge, "empty trash" —
+ * should use this predicate to refresh that listing and tell the user why,
+ * instead of showing the same generic failure toast a retry would also hit.
+ */
+export function isInvalidOperation(
+  err: unknown,
+): err is TypedAppError & { kind: 'invalid_operation' } {
+  return isAppError(err) && err.kind === 'invalid_operation'
+}
+
+/**
  * Was this an "op has no applicable inverse" rejection? #3353 —
  * `undoOp`/`undoOps`/`redoPageOp` reject with this kind when the backend
  * cannot reverse the target: `purge_block` has no inverse at all

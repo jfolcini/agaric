@@ -38,6 +38,7 @@ import { useTrashDescendantCounts } from '@/hooks/useTrashDescendantCounts'
 import { useTrashFilter } from '@/hooks/useTrashFilter'
 import { useTrashListShortcuts } from '@/hooks/useTrashListShortcuts'
 import { announce } from '@/lib/announcer'
+import { isInvalidOperation } from '@/lib/app-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -45,6 +46,7 @@ import { queryClient } from '@/lib/query-client'
 import type { BlockRow, PageResponse } from '@/lib/tauri'
 import {
   listTrash,
+  PartialPurgeError,
   purgeAllDeletedInSpace,
   purgeBlock,
   purgeBlocksByIds,
@@ -340,10 +342,24 @@ export function TrashView(): React.ReactElement {
     try {
       purged = await purgeBlocksByIds(selectedIds)
     } catch (err) {
+      logger.error('TrashView', 'Batch purge failed', { count: selectedIds.length }, err)
+      // #3835 — `purge_blocks_by_ids` (#3832) rejects the WHOLE batch with
+      // `invalid_operation` when it contains a live (already-restored) id:
+      // the listing this selection came from is stale (e.g. a restore on
+      // another device/window landed after it rendered). Retrying the same
+      // ids fails identically, so — unlike the generic branch below — clear
+      // the stale selection and refresh the listing instead of keeping it
+      // for a doomed retry.
+      if (isInvalidOperation(err)) {
+        reload()
+        clearSelection()
+        notify.error(t('trash.batchPurgeStale'))
+        announce(t('announce.batchPurgeStale'))
+        return
+      }
       // Surface the failure (matching the single-item path) and KEEP the
       // selection so the user can retry — clearing it here would silently
       // discard the user's selection on an error they couldn't see.
-      logger.error('TrashView', 'Batch purge failed', { count: selectedIds.length }, err)
       notify.error(t('trash.batchPurgeFailed'))
       announce(t('announce.batchPurgeFailed'))
       return
@@ -375,6 +391,20 @@ export function TrashView(): React.ReactElement {
       }
     } catch (err) {
       logger.error('TrashView', 'Failed to empty trash', undefined, err)
+      // #3835 — `purgeAllDeletedInSpace` chunks the purge; each chunk is its
+      // own committed transaction, so a `PartialPurgeError` with a positive
+      // `affectedCount` means SOME of the trash was actually removed before
+      // the failing chunk, even though the call rejected. Say so (and
+      // refresh the now-stale listing) instead of the plain failure toast,
+      // which would tell the user nothing changed when it did.
+      if (err instanceof PartialPurgeError && err.affectedCount > 0) {
+        reload()
+        clearSelection()
+        setConfirmEmptyTrash(false)
+        notify.error(t('trash.emptyTrashPartial', { count: err.affectedCount }))
+        announce(t('announce.emptyTrashPartial', { count: err.affectedCount }))
+        return
+      }
       notify.error(t('trash.emptyTrashFailed'))
       announce(t('announce.emptyTrashFailed'))
     }

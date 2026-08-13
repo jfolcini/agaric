@@ -1497,6 +1497,49 @@ describe('TrashView', () => {
     })
   })
 
+  // #3835 — `purgeAllDeletedInSpace` chunks the purge into
+  // `MAX_TRASH_BATCH_IDS`-sized (1000) batches, each its OWN committed
+  // transaction. A later chunk failing must surface what the earlier,
+  // already-committed chunk(s) removed instead of the plain
+  // `emptyTrashFailed` toast, which implies nothing happened at all.
+  it('shows partial-progress toast (not the generic failure) when a later empty-trash chunk fails', async () => {
+    const user = userEvent.setup()
+    // 1001 ids -> two purge_blocks_by_ids chunks: 1000 (succeeds), then 1
+    // (fails).
+    const trashItems = Array.from({ length: 1001 }, (_, i) =>
+      i === 0
+        ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
+        : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
+    )
+    let purgeCalls = 0
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash')
+        return { items: trashItems, next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_blocks_by_ids') {
+        purgeCalls += 1
+        if (purgeCalls === 1) return { affected_count: 1000 }
+        throw new Error('db error on second chunk')
+      }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        'Removed 1000 items before an error interrupted emptying trash',
+      )
+    })
+    // NOT the generic "nothing happened" copy.
+    expect(toast.error).not.toHaveBeenCalledWith('Failed to empty trash')
+    expect(purgeCalls).toBe(2)
+  })
+
   it('opens confirmation dialog when Restore All header is clicked', async () => {
     const user = userEvent.setup()
     mockListAndResolve([makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })])
@@ -1999,6 +2042,66 @@ describe('TrashView screen reader announcements', () => {
     for (const cb of screen.getAllByTestId('trash-item-checkbox')) {
       expect(cb).toBeChecked()
     }
+  })
+
+  // #3835 — `purge_blocks_by_ids` (#3832) rejects the whole batch with
+  // `invalid_operation` when it contains an already-restored (live) id: the
+  // listing this selection came from is stale. Unlike the generic failure
+  // above, a retry of the same selection would fail identically, so this
+  // path must refresh the listing and clear the stale selection instead of
+  // the generic toast + kept-selection contract.
+  it('batch purge InvalidOperation refreshes the listing and clears the stale selection', async () => {
+    const { announce } = await import('@/lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const mockedToastError = vi.mocked(toast.error)
+    const user = userEvent.setup()
+    const blocks = [
+      makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
+      makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
+    ]
+    let listTrashCalls = 0
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash') {
+        listTrashCalls += 1
+        return { items: blocks, next_cursor: null, has_more: false }
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_blocks_by_ids') {
+        // Raw AppError wire shape (unwrap() throws it verbatim) — B2 was
+        // restored elsewhere between the listing render and this purge.
+        throw { kind: 'invalid_operation', message: 'batch contains a live block' }
+      }
+      return undefined
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+    const listTrashCallsBeforePurge = listTrashCalls
+    const checkboxes = screen.getAllByTestId('trash-item-checkbox')
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Purge selected/i }))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(
+        'The trash listing was out of date and has been refreshed',
+      )
+    })
+    expect(mockedAnnounce).toHaveBeenCalledWith(
+      'Trash listing was out of date and has been refreshed',
+    )
+    // NOT the generic failure copy — a retry-worded toast would be
+    // misleading here since the same selection would fail identically.
+    expect(mockedToastError).not.toHaveBeenCalledWith('Failed to purge selected blocks')
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+
+    // The listing was refreshed…
+    await waitFor(() => {
+      expect(listTrashCalls).toBeGreaterThan(listTrashCallsBeforePurge)
+    })
+    // …and the stale selection cleared (no toolbar, nothing checked).
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
   })
 
   it('announces trash emptied count on Empty Trash success', async () => {

@@ -243,6 +243,30 @@ export async function restoreAllDeletedInSpace(spaceId: string): Promise<BulkTra
 }
 
 /**
+ * Thrown by {@link purgeAllDeletedInSpace} when a chunk fails part-way
+ * through the drain. #3835 — each chunk is its own backend IMMEDIATE
+ * transaction, so any chunk before the failing one has ALREADY committed:
+ * a plain rethrow of the chunk's error discarded that count, so a
+ * partially-completed "empty trash" surfaced to the caller as a pure
+ * failure with no sign that most of it succeeded. `affectedCount` carries
+ * what actually landed so a caller can tell "removed 0 of N, nothing
+ * happened" apart from "removed N-1 of N, one chunk away from done" and
+ * word its toast (and its retry) accordingly. `cause` is the triggering
+ * error (also available via the standard `Error.cause`), preserved so
+ * existing `.message`-based assertions on the underlying failure still see
+ * it — this wraps the failure, it does not replace it.
+ */
+export class PartialPurgeError extends Error {
+  readonly affectedCount: number
+
+  constructor(affectedCount: number, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    this.name = 'PartialPurgeError'
+    this.affectedCount = affectedCount
+  }
+}
+
+/**
  * Permanently purge every soft-deleted block in `spaceId`. Irreversible.
  *
  * #2544 — mirrors {@link restoreAllDeletedInSpace}'s rationale: the
@@ -250,12 +274,22 @@ export async function restoreAllDeletedInSpace(spaceId: string): Promise<BulkTra
  * trash in every space, not just the active one shown (and confirmed) by
  * the Trash view's "Empty trash" dialog. Scoped here the same way, via
  * `purgeBlocksByIds`.
+ *
+ * #3835 — a chunk failing part-way through (e.g. `InvalidOperation` from a
+ * concurrently-restored id, or any other backend rejection) throws
+ * {@link PartialPurgeError} instead of the bare chunk error, carrying
+ * whatever `affectedCount` the EARLIER, already-committed chunks purged, so
+ * that progress is not discarded from the caller's view of the outcome.
  */
 export async function purgeAllDeletedInSpace(spaceId: string): Promise<BulkTrashResponse> {
   const ids = await collectAllTrashRootIds(spaceId)
   let affectedCount = 0
   for (let i = 0; i < ids.length; i += MAX_TRASH_BATCH_IDS) {
-    affectedCount += await purgeBlocksByIds(ids.slice(i, i + MAX_TRASH_BATCH_IDS))
+    try {
+      affectedCount += await purgeBlocksByIds(ids.slice(i, i + MAX_TRASH_BATCH_IDS))
+    } catch (err) {
+      throw new PartialPurgeError(affectedCount, err)
+    }
   }
   return { affected_count: affectedCount }
 }

@@ -78,6 +78,7 @@ import {
   logFrontend,
   moveBlock,
   paginationLimit,
+  PartialPurgeError,
   purgeAllDeletedInSpace,
   purgeBlock,
   purgeBlocksByIds,
@@ -2781,6 +2782,36 @@ describe('purgeAllDeletedInSpace', () => {
       throw new Error(`unexpected invoke: ${cmd}`)
     })
     await expect(purgeAllDeletedInSpace('SPACE_B')).rejects.toThrow('db error')
+  })
+
+  // #3835 — each chunk is its own committed backend transaction, so a LATER
+  // chunk failing must not discard the count of EARLIER chunks that already
+  // landed. A plain rethrow of the chunk error (the pre-fix behaviour)
+  // surfaces a partially-completed purge as a pure failure with no sign
+  // that most of it succeeded.
+  it('surfaces the earlier chunks’ committed count via PartialPurgeError when a later chunk fails', async () => {
+    const ids = Array.from({ length: 1500 }, (_, i) => `B${i}`)
+    let purgeCalls = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_trash')
+        return { items: ids.map((id) => ({ id })), next_cursor: null, has_more: false }
+      if (cmd === 'purge_blocks_by_ids') {
+        purgeCalls += 1
+        // First chunk (1000 ids) commits successfully; the second (500
+        // ids) fails.
+        if (purgeCalls === 1) return { affected_count: 1000 }
+        throw new Error('db error on second chunk')
+      }
+      throw new Error(`unexpected invoke: ${cmd}`)
+    })
+
+    const rejection: unknown = await purgeAllDeletedInSpace('SPACE_B').catch((e: unknown) => e)
+
+    expect(rejection).toBeInstanceOf(PartialPurgeError)
+    expect((rejection as PartialPurgeError).affectedCount).toBe(1000)
+    // The underlying failure is still readable — this wraps, not replaces.
+    expect((rejection as PartialPurgeError).message).toBe('db error on second chunk')
+    expect(purgeCalls).toBe(2)
   })
 })
 
