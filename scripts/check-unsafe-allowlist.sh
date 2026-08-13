@@ -57,6 +57,36 @@ done < <(grep -rl --include='*.rs' \
     --exclude-dir=target --exclude-dir=.stryker-tmp --exclude-dir=gen \
     '#!\[allow(unsafe_code)\]' "$REPO_ROOT/src-tauri/" 2>/dev/null || true)
 
+# Second direction: every ALLOWLIST entry must still name a real file.
+#
+# #3847: the entry for the multicast shim went stale when #2621 moved it
+# into `agaric-sync/`, and nothing noticed — the loop above only walks
+# discovered files and asks "is this one allowed?", so an entry pointing at
+# a path that no longer exists is simply never consulted. That is how an
+# audit hook silently stops auditing: not by failing, but by matching
+# nothing. Walking the allowlist itself is what makes the rot loud.
+dangling=()
+while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    case "$entry" in \#*) continue ;; esac
+    if [ ! -e "$REPO_ROOT/src-tauri/$entry" ]; then
+        dangling+=("$entry")
+    fi
+done < <(sed 's/#.*//' "$ALLOWLIST" | tr -d '[:blank:]')
+
+if [ "${#dangling[@]}" -gt 0 ]; then
+    {
+        echo "ERROR: $ALLOWLIST has entries that no longer name an existing file:"
+        for f in "${dangling[@]}"; do
+            echo "  - $f"
+        done
+        echo
+        echo "The file was moved or deleted. Update the entry to the new path, or drop it."
+        echo "A dangling entry silently un-audits whatever it used to cover (#3847)."
+    } >&2
+    exit 1
+fi
+
 if [ "${#unallowed[@]}" -gt 0 ]; then
     {
         echo "ERROR: the following files carry \`#![allow(unsafe_code)]\` without an entry in $ALLOWLIST:"

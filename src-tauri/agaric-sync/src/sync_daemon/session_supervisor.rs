@@ -158,8 +158,13 @@ pub(crate) async fn daemon_loop(
     // `mdns-sd` crate's UDP multicast sockets receive packets. Held in
     // a local binding so `Drop` releases it on function exit (graceful
     // shutdown or error return). On non-Android targets this is a no-op.
-    // A missing context degrades to `Err` here (it no longer aborts the
-    // process), and the daemon carries on without peer discovery.
+    // A missing context degrades to `Err` HERE, and the daemon carries on
+    // without peer discovery — but that is a statement about this call
+    // site, not about the process. `hickory-resolver` and `netdev` still
+    // call the panicking `ndk_context::android_context()` directly, so
+    // under `panic = "abort"` a later iroh DNS lookup would abort anyway.
+    // Installing the context is the fix; this guard only stops US from
+    // being the one to kill the app (#3847).
     #[cfg(target_os = "android")]
     let _multicast_lock = match super::android_multicast::MulticastLock::acquire() {
         Ok(lock) => Some(lock),

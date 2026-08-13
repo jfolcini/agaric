@@ -74,6 +74,18 @@
 # `actions/setup-node` step as the old one, and the count is still four. That
 # check is the point — re-anchoring blind is how a dead anchor becomes a
 # blanket file-wide suppression. The line-anchoring itself is #3737.
+#
+# Re-anchored 2026-08-13 (#3847 follow-up), +10 lines each:
+# `291/314/444/476` → `301/324/454/486`. Same cause as #3672 and the same
+# non-cause: no cache step moved and none was added — a ten-line comment was
+# added above ci.yml's `android_re`, explaining why that trigger had gone
+# stale, and every anchor below it drifted. Re-derived by the procedure below
+# (ignore list emptied, four findings, same two step types in the same order)
+# and checked line-for-line before committing.
+#
+# Twice now the same shape: an unrelated comment edit high in ci.yml turns
+# four suppressed findings into four `high` failures. That is the argument
+# for #3737 — line anchors are a poor key for "this specific step".
 
 rules:
   cache-poisoning:
@@ -88,10 +100,10 @@ rules:
     #
     # Keep this block under 32 comment lines; see the file header.
     ignore:
-      - ci.yml:291
-      - ci.yml:314
-      - ci.yml:444
-      - ci.yml:476
+      - ci.yml:301
+      - ci.yml:324
+      - ci.yml:454
+      - ci.yml:486
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot

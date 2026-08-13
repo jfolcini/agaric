@@ -127,10 +127,19 @@ pub fn require() -> Result<AndroidContext, String> {
 /// Records why the context could not be installed (first reason wins).
 #[cfg(target_os = "android")]
 fn record_failure(reason: String) {
+    // Deliberately does NOT promise graceful degradation. OUR callers
+    // degrade — `MulticastLock::acquire` returns `Err` and the daemon runs
+    // without peer discovery. But `hickory-resolver` (via `iroh-dns`) and
+    // `netdev` call the panicking `ndk_context::android_context()` directly,
+    // and under `[profile.release] panic = "abort"` that is a SIGABRT, just
+    // from a different frame. The "iroh falls back to default nameservers"
+    // behaviour those crates document depends on unwinding, i.e. dev builds
+    // only. Saying otherwise here would repeat the exact conflation #3847
+    // was filed to correct.
     tracing::warn!(
         reason = %reason,
-        "Android context not installed; sync will run without a multicast lock \
-         and iroh will fall back to default nameservers"
+        "Android context not installed; sync will run without a multicast lock, \
+         and any later iroh DNS lookup is expected to abort in a release build"
     );
     let _ = INSTALL_FAILURE.set(reason);
 }

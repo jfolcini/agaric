@@ -192,11 +192,21 @@ jobs:
           # `Cargo.lock` — the `[target.'cfg(target_os = "android")']` deps
           # live in the manifest), the Rust files carrying
           # `cfg(target_os = "android")` / `cfg(mobile)` gates (lib.rs,
-          # db.rs, lifecycle.rs, and the sync_daemon multicast shim +
-          # mod/orchestrator), and the patch script; `release.yml` covers
-          # the rest at tag time.
+          # db.rs, lifecycle.rs, the JNI entry point, and the sync_daemon
+          # multicast shim + mod/orchestrator), and the patch script;
+          # `release.yml` covers the rest at tag time.
+          #
+          # #3847: the sync_daemon paths below were STALE — they still
+          # named `src-tauri/src/sync_daemon/…`, which the #2621 crate
+          # split moved to `src-tauri/agaric-sync/src/sync_daemon/…`. So a
+          # PR touching only the Android multicast shim silently skipped
+          # `android-build` entirely. A path-keyed trigger whose paths no
+          # longer exist does not fail — it just stops firing, which is why
+          # this went unnoticed. Anything matching an android-only source
+          # file MUST be listed here; if you move one of these files, move
+          # its entry in the same commit.
           desktop_re='^(src-tauri/|\.cargo/config\.toml\.example$|scripts/(fix-appimage-icons\.sh|prepare-external-bins\.mjs)$|package(-lock)?\.json$|\.github/workflows/ci\.yml$)'
-          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/src/(lib|db|lifecycle)\.rs$|src-tauri/src/sync_daemon/(android_multicast|mod|orchestrator)\.rs$|scripts/patch-android-build\.sh$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$)'
+          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/src/(lib|db|lifecycle|android_jni)\.rs$|src-tauri/agaric-sync/src/android_context\.rs$|src-tauri/agaric-sync/src/sync_daemon/(android_multicast|mod|orchestrator|session_supervisor)\.rs$|scripts/patch-android-build\.sh$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$)'
 
           desktop=false
           android=false
