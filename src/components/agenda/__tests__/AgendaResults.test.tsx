@@ -426,22 +426,30 @@ describe('AgendaResults', () => {
 
   // #3845 — `GROUP_I18N` (the label → i18n-key lookup for grouped headers)
   // used to be a plain `Record<string, string>` object literal indexed by
-  // the raw, unsanitized `group.label`. `groupByDate` can hand it a date
-  // bucket labelled the literal string `'constructor'` (unreachable through
-  // validated writes — same class as #3814's `__proto__`/`constructor`
-  // bucket-key case — but real for a hand-edited DB / sync-protocol bug).
-  // `{}['constructor']` resolves through the prototype chain to
-  // `Object.prototype.constructor`, a function, which is truthy — so the
-  // header called `t(aFunction)` instead of falling back to the raw label.
-  // Verified at runtime (not just by reading): real i18next's `t()` given a
-  // function argument returns `''`, so the group header lost its heading
-  // text entirely rather than showing "constructor". This is #3814's
-  // prototype hazard reappearing one layer downstream of the `Map` that
-  // fixed it there.
+  // the raw, unsanitized `group.label`. `{}['constructor']` resolves
+  // through the prototype chain to `Object.prototype.constructor`, a
+  // function, which is truthy — so the header called `t(aFunction)`
+  // instead of falling back to the raw label. Verified at runtime (not
+  // just by reading): real i18next's `t()` given that function returns
+  // `''`, so the header lost its heading text entirely.
+  //
+  // Driven through `groupBy="page"`, NOT `groupBy="date"`, and that choice
+  // is load-bearing. A DATE bucket carries `special: null`, so
+  // `groupI18nKey` early-returns before the lookup is ever touched — a
+  // date-driven version of this test stays GREEN with the `Map` reverted
+  // to a `Record` and therefore proves nothing. The non-date groupers
+  // (`page`/`state`/`priority`) set no `special`, so their labels are the
+  // only ones that still reach the lookup, which makes a page TITLED
+  // `constructor` the live hazard.
   it('renders "constructor" as a literal group label, not Object.prototype.constructor (#3845)', () => {
-    const blocks = [makeBlock({ id: 'ctorDue', due_date: 'constructor', todo_state: 'TODO' })]
+    const blocks = [makeBlock({ id: 'B1', page_id: 'PCTOR', todo_state: 'TODO' })]
 
-    render(<AgendaResults {...defaultProps({ blocks })} groupBy="date" />)
+    render(
+      <AgendaResults
+        {...defaultProps({ blocks, pageTitles: new Map([['PCTOR', 'constructor']]) })}
+        groupBy="page"
+      />,
+    )
 
     const header = screen.getByTestId('agenda-group-header')
     expect(header).toHaveTextContent('constructor')

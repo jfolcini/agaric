@@ -123,7 +123,11 @@ export interface AgendaGroup {
  * because they are tagged into different namespaces before being joined.
  */
 export function getAgendaGroupKey(group: AgendaGroup): string {
-  return group.special ? `special:${group.special}` : `label:${group.label}`
+  // `!= null`, not truthiness: every current `SpecialLabel` is a non-empty
+  // string, but a future `''` member would fall silently into the `label:`
+  // namespace — the exact collision class this function exists to prevent.
+  // Matches how `groupI18nKey` already discriminates the same field.
+  return group.special != null ? `special:${group.special}` : `label:${group.label}`
 }
 
 /**

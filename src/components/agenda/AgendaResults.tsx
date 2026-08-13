@@ -211,16 +211,22 @@ export function AgendaResults({
   // raw `group.label` per visible header at render time).
   //
   // A `Map`, not a plain object literal: the key is the raw, unsanitized
-  // `group.label`, and a date group can carry a hand-edited/imported
-  // `due_date` that literally spells `'constructor'` (or `'__proto__'`)
-  // — see `groupByDate`'s own `Map`-not-object-literal note (#3814). A
-  // `Record<string, string>` indexed by that label would resolve
-  // `'constructor'` through the prototype chain to `Object.prototype
-  // .constructor` (a function, therefore truthy), handing `t()` a
-  // function instead of a translation key — the exact hazard #3814 fixed
-  // one layer up, reappearing here (#3845). `Map#get` has no prototype
-  // chain to leak through: an absent key returns `undefined`, same as
-  // today's fallback.
+  // `group.label`. A `Record<string, string>` indexed by that label
+  // resolves `'constructor'` (or `'__proto__'`) through the prototype
+  // chain to `Object.prototype.constructor` — a function, therefore
+  // truthy — handing `t()` a function instead of a translation key, which
+  // renders as `''` and strips the header's text. The exact hazard #3814
+  // fixed one layer up, reappearing here (#3845). `Map#get` has no
+  // prototype chain to leak through.
+  //
+  // Which labels actually reach this lookup is worth being precise about,
+  // because the obvious answer is wrong: NOT `groupByDate`'s. A date
+  // bucket carries `special: null`, so `groupI18nKey` early-returns before
+  // touching the map. The live hazard is the groupers that set no
+  // discriminant — `groupByPage` / `groupByState` / `groupByPriority` —
+  // whose labels are user-controlled, e.g. a page TITLED `constructor`.
+  // That is the case the regression test drives; a date-driven one stays
+  // green with the `Record` restored and proves nothing.
   const GROUP_I18N: Map<string, string> = useMemo(
     () =>
       new Map([
