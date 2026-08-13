@@ -285,6 +285,22 @@ function scanLiteral(
   // context-*insensitive* algorithm on this path trades full correctness
   // for consistency between the two fold call sites — see the
   // module-level discussion in `scanLiteralFolded`.
+  //
+  // `compileQuery` leaves `foldedNeedle` as `''` for a case-SENSITIVE query,
+  // and that is inert only because of the `caseSensitive` early return ~30
+  // lines above — a non-local coupling nothing here would notice breaking.
+  // It would not hang if it were broken (`from` still advances), but
+  // `indexOf('', from)` matches at EVERY position, so it would silently emit
+  // a bogus span per character rather than failing. Stated as a dev-only
+  // invariant, matching the `import.meta.env.DEV` idiom used elsewhere in
+  // this codebase: this branch is unreachable today by construction, so it
+  // is an assertion about the coupling, not a covered code path.
+  if (import.meta.env.DEV && foldedNeedle === '') {
+    throw new Error(
+      'in-page-find: scanLiteral reached the folded slow path with an empty folded needle — ' +
+        'the caseSensitive early return above must keep this unreachable',
+    )
+  }
   return scanLiteralFolded(text, foldedNeedle, wholeWord)
 }
 

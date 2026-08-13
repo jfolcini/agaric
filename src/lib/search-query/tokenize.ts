@@ -66,16 +66,21 @@ export function tokenize(input: string): RawToken[] {
   //
   // MEASURED, not assumed: a real `vite build` of this repo (which minifies
   // with `oxc`, not esbuild — see `vite.config.ts`'s Track B note) contains
-  // ZERO occurrences of `assertAdvanced`, `tokenize/outer`, `tokenize/word`
+  // ZERO occurrences of the string literals `tokenize/outer`, `tokenize/word`
   // or `scan cursor failed` anywhere in the bundle. The per-iteration calls,
   // their string arguments AND the `prevOuter` / `prevInner` bookkeeping are
   // all eliminated — the production hot loop pays literally nothing.
   //
+  // Re-measure by grepping the built bundle for those three STRING LITERALS.
+  // Do not add the `assertAdvanced` identifier to that list: the minifier
+  // mangles internal names, so it is absent from the bundle whether or not
+  // the calls survive, and a search term that cannot appear either way would
+  // report "eliminated" for a guard that is still running. String literals
+  // are the only terms here that carry evidence.
+  //
   // (An earlier revision of this comment claimed the call survived and cost
   // "a function call plus two integer comparisons per iteration". That was
-  // inferred rather than checked, and it is false. If you change the
-  // minifier or the shape of this guard, re-measure by grepping the built
-  // bundle for those strings rather than reasoning about it.)
+  // inferred rather than checked, and it is false.)
   //
   // This is a pure safety net either way: every branch below already
   // advances `i` for all valid input, so the guard never fires on correct
