@@ -173,8 +173,13 @@ export async function restoreBlocksByIds(blockIds: string[]): Promise<number> {
  *
  * Mirrors `purgeBlock` but accepts an array of ids; the backend runs one
  * IMMEDIATE transaction with the ~13-table cleanup chain executed once
- * instead of N times. Non-deleted / missing ids are silently skipped (no
- * error). Returns the number of `blocks` rows physically removed.
+ * instead of N times. Missing ids are silently skipped; a LIVE (not
+ * soft-deleted) id REJECTS the whole call with `InvalidOperation` and
+ * purges nothing (#3819 — it used to hard-delete that block's subtree with
+ * no op and no sync), exactly as `purgeBlock` rejects the same id. Callers
+ * sourcing ids from a trash listing should reload on that error: it means
+ * the listing went stale. Returns the number of `blocks` rows physically
+ * removed.
  */
 export async function purgeBlocksByIds(blockIds: string[]): Promise<number> {
   const resp = unwrap(await commands.purgeBlocksByIds(blockIds))

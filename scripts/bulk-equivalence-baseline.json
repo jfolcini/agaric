@@ -155,7 +155,7 @@
     "kind": "mutating",
     "status": "covered",
     "test": "purge_blocks_by_ids_matches_per_block_fold",
-    "reason": "NOT a clean bill of health. The named test covers the soft-deleted-cohort scenario and passes; a second committed scenario, purge_blocks_by_ids_purges_a_live_block_the_single_path_refuses, FAILS and is #[ignore]d as a reproducer for #3819 (the batch path hard-deletes a LIVE input id the single path refuses, with no op and no sync). Un-ignore it when #3819 is fixed"
+    "reason": "Three committed scenarios, all green and all RUNNING (no #[ignore], no scheduled-deep-checks exclusion): the named soft-deleted-cohort fold, purge_blocks_by_ids_refuses_a_saturating_subtree_like_the_single_path, and purge_blocks_by_ids_purges_a_live_block_the_single_path_refuses — the former #3819 reproducer, now its regression guard. #3819 was: the op ROOT set filtered to soft-deleted rows while the physical cascade was seeded from the RAW input list, so a LIVE input id was hard-deleted with its whole subtree, emitting no op and no engine fan-out (unsynced local data loss). Fixed by REFUSING a live id (AppError::InvalidOperation, the same refusal purge_block_inner raises) rather than filtering it out of the cascade: filtering would have stopped the loss but left the batch silently skipping what the single path refuses, i.e. permanently divergent from the fold. MISSING ids are still silently dropped by design (nothing to destroy; the chunked empty-trash flow races a concurrent purge) — that asymmetry is deliberate and unoracled"
   },
   {
     "fn": "src-tauri/src/commands/blocks/crud.rs::restore_blocks_by_ids",
@@ -168,7 +168,7 @@
     "kind": "mutating",
     "status": "covered",
     "test": "restore_blocks_by_ids_matches_per_block_fold",
-    "reason": "NOT a clean bill of health. The named test covers the sibling-cohort scenario and passes; a second committed scenario, restore_blocks_by_ids_omits_the_1884_ancestor_chain_restore, FAILS and is #[ignore]d as a reproducer for #3818 (the batch path skips the #1884 ancestor-chain restore, orphaning a block restored under a still-deleted parent). Un-ignore it when #3818 is fixed"
+    "reason": "STILL not a clean bill of health, but for a smaller reason than before. Two committed scenarios, both green and both RUNNING (no #[ignore], no scheduled-deep-checks exclusion): the named sibling-cohort fold and restore_blocks_by_ids_omits_the_1884_ancestor_chain_restore — the former #3818 reproducer, now its regression guard. #3818 was: the batch cleared deleted_at DOWNWARD only, skipping the #1884 restore_deleted_ancestor_chain the single path runs, so a block restored under a separately-tombstoned parent came back live under an invisible one — absent from the tree render AND from list_trash. Mirroring restore_all_deleted_inner is what hid it: the all-variant restores every tombstone, so the upward walk is vacuous THERE. Fixed by calling the helper once per root (idempotent + op-free, so overlapping chains collapse) and rooting the inheritance recompute at the topmost restored ancestor. STILL UNCOVERED: this path also skips the in-tx rederive_page_and_space_ids refresh restore_block_inner runs; the ancestor-chain fixture cannot see it (seeded page_id/space_id are already correct on both arms) — catching it needs a scenario that MOVES a block while it is soft-deleted"
   },
   {
     "fn": "src-tauri/src/commands/blocks/move_ops.rs::move_blocks_batch",

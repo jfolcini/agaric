@@ -517,50 +517,65 @@ async fn purge_blocks_by_ids_refuses_a_saturating_subtree_like_the_single_path()
 // What the purge oracle turned up
 // ---------------------------------------------------------------------------
 
-/// **A CONFIRMED, UNFIXED DIVERGENCE — this test documents a production bug.**
+/// **#3819 — a FIXED divergence. This is now its regression guard.**
 ///
-/// `purge_blocks_by_ids_inner` filters its input to actually-soft-deleted rows
-/// when it picks the ROOTS it appends `PurgeBlock` ops for:
+/// Before the fix, `purge_blocks_by_ids_inner` filtered its input to
+/// actually-soft-deleted rows when it picked the ROOTS it appends
+/// `PurgeBlock` ops for:
 ///
 /// ```sql
 /// SELECT b.id, b.block_type FROM blocks b
 ///  WHERE b.id IN (SELECT value FROM json_each(?1)) AND b.deleted_at IS NOT NULL
 /// ```
 ///
-/// …and then seeds the MEMBER-SET CTE it hands to the physical cascade from the
-/// RAW input list instead, `SELECT id, 0 FROM blocks WHERE id IN (SELECT value
-/// FROM json_each(?1))`, with no `deleted_at` predicate anywhere. A LIVE block
-/// id in the input is therefore physically erased — it and its whole subtree,
-/// out of every satellite table — while contributing NO `PurgeBlock` op, no
-/// engine fan-out, and nothing to the returned count's provenance. The doc
-/// comment's claim that "non-deleted or missing ids in the input are silently
-/// dropped" holds for the op log only; the cascade does not drop them.
+/// …and then seeded the MEMBER-SET CTE it hands to the physical cascade from
+/// the RAW input list instead, `SELECT id, 0 FROM blocks WHERE id IN (SELECT
+/// value FROM json_each(?1))`, with no `deleted_at` predicate anywhere. A LIVE
+/// block id in the input was therefore physically erased — it and its whole
+/// subtree, out of every satellite table — while contributing NO `PurgeBlock`
+/// op, no engine fan-out, and nothing to the returned count's provenance. The
+/// doc comment's claim that "non-deleted or missing ids in the input are
+/// silently dropped" held for the op log only; the cascade did not drop them.
 ///
 /// `purge_block_inner` refuses the same id outright
 /// (`AppError::InvalidOperation`, "must be soft-deleted before purging"), which
-/// is what makes this a batch-vs-fold divergence and not a product decision.
+/// is what made this a batch-vs-fold divergence and not a product decision.
 ///
-/// The consequence is unsynced local data loss: the rows are gone from SQL, no
-/// op describes their removal, so no peer ever learns of it and the next sync
+/// The consequence was unsynced local data loss: the rows gone from SQL, no
+/// op describing their removal, so no peer ever learns of it and the next sync
 /// re-materialises a tree the local device no longer has. The command is an IPC
 /// entry point; "the TrashView only surfaces deleted rows" is a caller-side
 /// convention, and a TrashView holding a selection while the block is restored
 /// in another window (or by an inbound sync) hands it exactly this input.
 ///
-/// It is `#[ignore]`d because it FAILS against current `main` — it is a
-/// reproducer for a production bug, filed out of #3346, not a regression guard.
-/// Do not "fix" it by relaxing the comparison; un-ignore it once the batch
-/// path's member-set CTE is seeded from the same filtered root set its op log
-/// is.
+/// **The fix, and why this scenario feeds the LIVE id FIRST.**
 ///
-/// Run with: `cargo nextest run -E 'test(purge_blocks_by_ids_purges_a_live)' \
-///            --run-ignored all`
+/// The batch path now REFUSES a live input id (`AppError::InvalidOperation`,
+/// the same refusal `purge_block_inner` raises) instead of seeding its cascade
+/// from the raw list. Seeding the cascade from the already-filtered root set
+/// would have stopped the data loss too, but it could never make this oracle
+/// green: the batch would then SKIP what the single path REFUSES, i.e. it
+/// would trade a silent hard delete for a silent no-op and keep diverging from
+/// the fold. Refusal is what makes the two agree.
+///
+/// The id ORDER is load-bearing and was changed with the fix. The batch is ONE
+/// transaction: refusing rolls the whole call back. The fold is N transactions
+/// and cannot roll back the ones that already committed — with the deleted id
+/// first it purges R1's subtree, THEN refuses, so it ends in a state no atomic
+/// batch can reproduce (verified: that ordering leaves 5 divergences, all of
+/// them the fold's own partial commit, with both arms already agreeing on the
+/// returned `ERR(InvalidOperation)`). Feeding the LIVE id first makes the
+/// refusal precede any commit on BOTH arms, which is the comparison this
+/// scenario is actually about. It loses no teeth: against the pre-fix code
+/// this ordering diverges HARDER than the original (the batch purged all 5
+/// rows and returned a count while the fold refused and purged nothing).
+///
+/// Run with: `cargo nextest run -E 'test(purge_blocks_by_ids_purges_a_live)'`
 #[tokio::test]
-#[ignore = "#3346: reproduces a REAL divergence — bulk purge hard-deletes a LIVE input id the single path refuses"]
 async fn purge_blocks_by_ids_purges_a_live_block_the_single_path_refuses() {
     // R1 is soft-deleted by the seed; R3 is the untouched CONTROL block and is
-    // still LIVE. Both are handed to the batch call.
-    let inputs = [R1, R3];
+    // still LIVE. Both are handed to the batch call, LIVE id first (see above).
+    let inputs = [R3, R1];
     assert_batch_equals_fold(
         "purge_blocks_by_ids/live_input_id",
         &Normalisation::default(),
@@ -622,7 +637,7 @@ async fn purge_blocks_by_ids_purges_a_live_block_the_single_path_refuses() {
 // The undocumented half of fork #2
 // ---------------------------------------------------------------------------
 
-/// **A CONFIRMED, UNFIXED DIVERGENCE — this test documents a production bug.**
+/// **#3818 — a FIXED divergence. This is now its regression guard.**
 ///
 /// `restore_block_inner` calls
 /// `block_descendants::restore_deleted_ancestor_chain` (#1884): after clearing
@@ -631,26 +646,26 @@ async fn purge_blocks_by_ids_purges_a_live_block_the_single_path_refuses() {
 /// separately tombstoned makes the child LIVE under an invisible parent —
 /// absent from the tree AND from trash.
 ///
-/// `restore_blocks_by_ids_inner` does not call it. It also skips the
-/// `rederive_page_and_space_ids` refresh the single path runs in-tx. The
-/// batch's doc comment claims it "mirrors `restore_all_deleted_inner`'s body";
-/// nothing claims it mirrors `restore_block_inner`, and the #2325-style
-/// "documented deliberate exception" comment that delete's fork carries is
-/// absent here.
+/// `restore_blocks_by_ids_inner` did not call it. The batch's doc comment
+/// claimed it "mirrors `restore_all_deleted_inner`'s body"; nothing claimed it
+/// mirrors `restore_block_inner`, and the #2325-style "documented deliberate
+/// exception" comment that delete's fork carries is absent here. Mirroring the
+/// *all* variant is exactly the trap: that variant restores EVERY tombstone,
+/// so an upward walk is vacuous there and load-bearing here. It now calls the
+/// helper once per root (idempotent + op-free, so overlapping chains collapse).
 ///
 /// This test drives the shape that separates them: delete the CHILD first,
 /// then delete the PARENT (whose cascade skips the already-tombstoned child,
 /// making the child its own trash root), then restore the CHILD.
 ///
-/// It is `#[ignore]`d because it FAILS against current `main` — it is a
-/// reproducer for a production bug, filed out of #3346, not a regression
-/// guard. Do not "fix" it by relaxing the comparison; un-ignore it once
-/// `restore_blocks_by_ids_inner` restores its ancestor chain.
+/// Still uncovered here, and NOT what this test asserts: the batch path also
+/// skips the `rederive_page_and_space_ids` refresh the single path runs in-tx.
+/// This fixture cannot see it (the seeded `page_id` / `space_id` are already
+/// correct on both arms) — a scenario that moves a block while it is
+/// soft-deleted would be needed.
 ///
-/// Run with: `cargo nextest run -E 'test(restore_blocks_by_ids_omits)' \
-///            --run-ignored all`
+/// Run with: `cargo nextest run -E 'test(restore_blocks_by_ids_omits)'`
 #[tokio::test]
-#[ignore = "#3346: reproduces a REAL divergence — bulk restore skips the #1884 ancestor-chain restore"]
 async fn restore_blocks_by_ids_omits_the_1884_ancestor_chain_restore() {
     let targets = [R1C1];
     assert_batch_equals_fold(
