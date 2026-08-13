@@ -1,0 +1,31 @@
+# Session 1300 — claims whose falsification was never run (2026-08-14)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-08-14 |
+| **Subagents** | 4 build, 3 review |
+| **Items advanced** | `#3834`, `#3838`, `#3837`, `#3853`, `#3854`, `#3855` |
+| **Items filed** | `#3859`, `#3860` |
+| **PRs opened** | `#3857`, `#3858` |
+
+**Summary:** An overnight batch that landed on a single theme, arriving from four independent directions: *a stated falsification that nobody re-ran is worth about as much as no test at all.* Three separate diffs this session carried a RED/GREEN claim that did not reproduce, and in each case the gap was found only because a reviewer re-ran the experiment rather than reading the report.
+
+**Process notes:**
+
+**A byte-for-byte claim that was true for one input and false for two.** The #3838 batch guard raises `restore_block_inner`'s "block '<id>' is not deleted" message, and its comment claimed to reproduce it byte-for-byte. With one live id that is trivially true. With two it is a claim about *which* id gets named, and the shipped probe answered differently from the fold: `FROM blocks b WHERE b.id IN (SELECT … json_each)` plans as `SEARCH b` + `LIST SUBQUERY`, so `LIMIT 1` returns the lowest id by PK index, while the fold refuses the first id in *input* order. The oracle scenario used exactly one live id, so it could never see it — and the builder had nonetheless made the message part of the compared contract.
+
+**The fix for that was itself nearly a vacuous test.** The first version of the regression test passed against the reverted `ORDER BY`. Investigating rather than adjusting the assertion turned up why: the rewrite from `IN (subquery)` to `FROM json_each(?1) je JOIN blocks b` changes the *driving table*, so rows already arrive in input order under the current plan. `EXPLAIN QUERY PLAN` confirms `SCAN je` → `SEARCH b` versus `SEARCH b` → `LIST SUBQUERY`. The `ORDER BY` is retained anyway — depending on which table SQLite chooses to drive is not free, and nothing in the suite would notice it flipping — but the test's comment now states precisely what it does and does not distinguish, rather than implying the `ORDER BY` is what it pins. A test that passes for a reason other than the one written above it is a future misreading waiting to happen.
+
+**The same defect, one function away.** The #3819 purge probe shipped with the identical unordered `LIMIT 1`. Fixing only the restore twin would have left the same bug one function over — which is the exact shape #3838 exists to close, and the second time this pairing has produced a "left standing one function away" finding. Both were fixed, and both arms falsified independently.
+
+**A scope extension that was dead code with a green suite.** The #3853 LAN-selection work claimed a falsification for its `lan_only` locality gate — "14 passed, 1 failed". Re-run, it was **29 passed, 0 failed**, and `cargo check` then reported all three new helpers as never used: the entire extension could be deleted with nothing going red. Its test's docstring asserted it was "the assertion that fails if the locality gate is reverted"; that test never called `lan_only`. The mDNS half was equally unpinned — reverting it outright left 272 tests passing.
+
+**And the fixture did not match the hardware it was named for.** The desktop shape test invented `virbr0`/`virbr1`, names the virtual-interface denylist catches. The real machine has `lxdbr0` and `incusbr0`, which it does not — so `decide([lxdbr0 10.0.6.1/24, wlp2s0 192.160.160.80/24], None)` reproduces #3853 verbatim on the reporter's own desktop whenever there is no default route. The fix appeared to work only via the route hint. A synthetic fixture is the right technique here — the alternative reads the host's interfaces and passes only on one machine — but it inherits a new obligation: the fixture has to be *derived* from the real data, not plausibly shaped like it.
+
+**A security widening that arrived as a side effect.** The same work relaxed `lan_only` from "refuse publicly-routable" to "accept any address the host holds", which is necessary — the reporter's LAN genuinely uses non-RFC1918 space — but means a host with a real public address now runs an internet-facing sync listener where it previously refused to start. `SECURITY.md` names that class explicitly. There is no address-shaped signal separating "my LAN uses public space" from "I'm on a VPS", so the mitigation has to be loudness; today that path logs at the module's single quietest level, and mutating the level to always-`Warn` leaves the suite green. Sent back rather than shipped.
+
+**Two doc claims that pointed at nothing.** An `isInvalidOperation` JSDoc named "empty trash" among callers that should use the predicate; that call site does not exist. An `effectiveDisplayDate` comment pointed at a "#3841 describe block" in the test file; both cases are `it`s in the existing describe. Small, but the same family as the session-1299 guards: text that describes a thing which is no longer (or was never) there, and which no check can notice.
+
+**A recipe that could only ever confirm itself.** A DCE comment told the reader to verify elimination by grepping the built bundle for `assertAdvanced` alongside three string literals. The minifier mangles internal identifiers, so that term is absent whether or not the calls survive — the check reports "eliminated" for a guard that is still running. Dropped, with a note saying why it must not be re-added. Re-measured against a real `vite build` rather than restating the previous claim.
+
+**What generalises:** the falsification step is only load-bearing if someone other than its author runs it. Every instance above was a *stated* RED that a reviewer could not reproduce, and none would have been caught by reading the diff. Two cheap habits fell out: state in the test comment what the test does **not** distinguish (the `ORDER BY` case), and derive fixtures from captured real data rather than from a mental model of it (the interface case).
