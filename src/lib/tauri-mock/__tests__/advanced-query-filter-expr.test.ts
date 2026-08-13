@@ -150,12 +150,47 @@ describe('run_advanced_query — FLAT FilterExpr interpretation', () => {
     return res.rows.map((r) => r['id'] as string).toSorted()
   }
 
+  /** Like `runIds`, but preserves the handler's row order (no `.toSorted()`). */
+  function runIdsOrdered(filter: Record<string, unknown> | undefined): string[] {
+    const res = dispatch('run_advanced_query', {
+      request: { spaceId: SPACE_A, ...(filter ? { filter } : {}) },
+    }) as { rows: Array<Record<string, unknown>> }
+    return res.rows.map((r) => r['id'] as string)
+  }
+
   it('a filterless query returns every block in the space (incl. the page)', () => {
     expect(runIds(undefined)).toEqual([PAGE_A, B1, B2, B3].toSorted())
   })
 
   it('scopes to the requested space (Space B blocks never appear)', () => {
     expect(runIds(undefined)).not.toContain(B4)
+  })
+
+  // #3821 defect 1 — `blockType` on the row the `FilterExpr` interpreter
+  // evaluates against must mirror the block's REAL `block_type`, not a
+  // hardcoded `'page'` constant (which made `BlockType` a no-op: every row
+  // compared equal to the filter's `'page'` value regardless of its actual
+  // type). PAGE_A is a `page`; B1/B2/B3 are `text` children.
+  it('a BlockType leaf filters to matching blocks (not a no-op over block_type)', () => {
+    expect(runIds({ type: 'Leaf', primitive: { type: 'BlockType', values: ['page'] } })).toEqual([
+      PAGE_A,
+    ])
+    expect(runIds({ type: 'Leaf', primitive: { type: 'BlockType', values: ['text'] } })).toEqual(
+      [B1, B2, B3].toSorted(),
+    )
+    // No `values: ['tag']` leg: the space seeds no `tag` block, so it returns
+    // `[]` with AND without the fix — decoration, not coverage. (A
+    // page/text PARTITION assertion is vacuous here for the same reason:
+    // under the bug `['page']` matches all four and `['text']` matches none,
+    // so the union still equals the filterless set. Both legs above are
+    // individually discriminating, which is what actually pins the fix.)
+  })
+
+  // #3821 defect 2 — the FLAT path's default order is the backend's
+  // `b.id DESC` recency keyset (`agaric-store/src/query/engine.rs`: no
+  // `sort` + no full-text ⇒ `b.id DESC`), NOT `b.id ASC`.
+  it('defaults to id DESC (the backend recency keyset), not id ASC', () => {
+    expect(runIdsOrdered(undefined)).toEqual([PAGE_A, B1, B2, B3].toSorted().toReversed())
   })
 
   it('a Priority leaf filters to matching blocks', () => {
