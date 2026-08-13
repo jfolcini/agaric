@@ -223,18 +223,31 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
   const needle = opts.caseSensitive ? query : query.toLowerCase()
   const wholeWord = opts.wholeWord
   const caseSensitive = opts.caseSensitive
+  // Per-code-point-folded needle for the slow path (`scanLiteralFolded`),
+  // computed once here rather than re-folded on every call as it used to
+  // be — `compileQuery` is the compile-once/match-many seam, not the
+  // per-text-node scan. Skipped for `caseSensitive` queries, which never
+  // reach the slow path. See the note in `scanLiteral` for why a
+  // code-point fold, not `toLowerCase()`, is required here.
+  let foldedNeedle = ''
+  if (!caseSensitive) {
+    for (const ch of query) {
+      foldedNeedle += foldCodePoint(ch)
+    }
+  }
   return {
     kind: 'literal',
-    // `query` (raw, unfolded) is threaded through alongside the
-    // whole-string-folded `needle` so the slow path can re-fold it
-    // per-code-point — see the note in `scanLiteral`.
-    matcher: (text) => scanLiteral(text, query, needle, wholeWord, caseSensitive),
+    // `foldedNeedle` (pre-folded once, above) is threaded through
+    // alongside the whole-string-folded `needle` so the slow path can use
+    // it directly instead of re-folding per call — see the note in
+    // `scanLiteral`.
+    matcher: (text) => scanLiteral(text, foldedNeedle, needle, wholeWord, caseSensitive),
   }
 }
 
 function scanLiteral(
   text: string,
-  rawQuery: string,
+  foldedNeedle: string,
   needle: string,
   wholeWord: boolean,
   caseSensitive: boolean,
@@ -259,18 +272,20 @@ function scanLiteral(
   if (haystack.length === text.length) {
     return scanIndexOf(text, haystack, needle, wholeWord)
   }
-  // Slow path: fold the RAW needle per-code-point too (#3812), not the
-  // already-whole-string-folded `needle` above. `scanLiteralFolded` folds
-  // the haystack one code point at a time, which drops context sensitivity
-  // by construction (e.g. Greek `Σ` always folds to non-final `σ` in
-  // isolation, never the word-final `ς` that whole-string folding would
-  // give it). If the needle used the whole-string fold while the haystack
-  // used the per-code-point fold, the two could disagree on exactly the
-  // context-sensitive cases and silently miss a match. Folding both sides
-  // with the same context-*insensitive* algorithm on this path trades full
-  // correctness for consistency between the two fold call sites — see the
+  // Slow path: use the per-code-point-folded needle (#3812), not the
+  // already-whole-string-folded `needle` above. `compileQuery` folds it
+  // once, code-point-by-code-point, through the same algorithm
+  // `scanLiteralFolded` uses below to fold the haystack, which drops
+  // context sensitivity by construction (e.g. Greek `Σ` always folds to
+  // non-final `σ` in isolation, never the word-final `ς` that
+  // whole-string folding would give it). If the needle used the
+  // whole-string fold while the haystack used the per-code-point fold,
+  // the two could disagree on exactly the context-sensitive cases and
+  // silently miss a match. Folding both sides with the same
+  // context-*insensitive* algorithm on this path trades full correctness
+  // for consistency between the two fold call sites — see the
   // module-level discussion in `scanLiteralFolded`.
-  return scanLiteralFolded(text, rawQuery, wholeWord)
+  return scanLiteralFolded(text, foldedNeedle, wholeWord)
 }
 
 /**
@@ -302,42 +317,6 @@ function scanIndexOf(
 }
 
 /**
- * Slow literal path for haystacks whose lowercase fold changes length.
- *
- * Folds the text one code point at a time and records, for every folded
- * code unit, the original span of the code point that produced it. Matches
- * found in the folded string are then mapped back to original offsets, so
- * a length-changing fold early in the node (`İ` U+0130) no longer
- * shifts every later highlight span.
- *
- * `rawNeedle` is the UNFOLDED query text (not the whole-string-folded
- * `needle` used by the fast path above). It is folded here one code point
- * at a time, with the exact same loop as the haystack fold below, so both
- * sides of the comparison use the same context-*insensitive* algorithm
- * (#3812). Whole-string folding (`rawNeedle.toLowerCase()`) is
- * context-sensitive — e.g. Greek `Σ` folds to word-final `ς` or mid-word
- * `σ` depending on what follows it in the string — while folding
- * code-point-by-code-point can never see that context and always produces
- * the mid-word form. Folding the needle whole-string while the haystack is
- * folded per-code-point (as this function used to) let exactly those
- * context-sensitive cases disagree and silently miss a match; folding both
- * sides the same way trades full correctness for guaranteed agreement
- * between the two call sites, which is what this path actually needs.
- *
- * Agreeing on the fold is necessary but NOT sufficient, and an earlier
- * version of this fix stopped there and was wrong. Per-code-point folding
- * makes both sides agree on `Σ` (always mid `σ`), but `'ς'.toLowerCase()`
- * is `'ς'` — so text written in natural Greek orthography, ending a word
- * in `ς`, folds to `οδος` while the query `ΟΔΟΣ` folds to `οδοσ`, and the
- * match is silently MISSED. That trades one silent miss for another, in
- * the direction that occurs more often in real text.
- *
- * [`foldCodePoint`] therefore canonicalises the two sigma forms onto one,
- * on BOTH sides. `οδος`, `ΟΔΟΣ` and `οδοσ` all fold to `οδοσ`. The single
- * deliberate imprecision left is that ς and σ cannot be told apart on this
- * path — pinned by the pair of sigma tests, so it cannot change silently.
- */
-/**
  * Fold ONE code point for the slow path, canonicalising Greek sigma.
  *
  * `toLowerCase()` on a single code point is context-free, so `Σ` always
@@ -366,9 +345,47 @@ function foldCodePoint(ch: string): string {
   return f === 'ς' ? 'σ' : f
 }
 
+/**
+ * Slow literal path for haystacks whose lowercase fold changes length.
+ *
+ * Folds the text one code point at a time and records, for every folded
+ * code unit, the original span of the code point that produced it. Matches
+ * found in the folded string are then mapped back to original offsets, so
+ * a length-changing fold early in the node (`İ` U+0130) no longer
+ * shifts every later highlight span.
+ *
+ * `foldedNeedle` is the query text already folded by `compileQuery` (not
+ * the whole-string-folded `needle` used by the fast path above).
+ * `compileQuery` folds it once, code-point-by-code-point via
+ * `foldCodePoint` — the exact same algorithm this function uses below to
+ * fold the haystack — so both sides of the comparison use the same
+ * context-*insensitive* algorithm (#3812). Whole-string folding
+ * (`query.toLowerCase()`) is context-sensitive — e.g. Greek `Σ` folds to
+ * word-final `ς` or mid-word `σ` depending on what follows it in the
+ * string — while folding code-point-by-code-point can never see that
+ * context and always produces the mid-word form. Folding the needle
+ * whole-string while the haystack is folded per-code-point (as this
+ * function used to do internally) let exactly those context-sensitive
+ * cases disagree and silently miss a match; folding both sides the same
+ * way trades full correctness for guaranteed agreement between the two
+ * fold call sites, which is what this path actually needs.
+ *
+ * Agreeing on the fold is necessary but NOT sufficient, and an earlier
+ * version of this fix stopped there and was wrong. Per-code-point folding
+ * makes both sides agree on `Σ` (always mid `σ`), but `'ς'.toLowerCase()`
+ * is `'ς'` — so text written in natural Greek orthography, ending a word
+ * in `ς`, folds to `οδος` while the query `ΟΔΟΣ` folds to `οδοσ`, and the
+ * match is silently MISSED. That trades one silent miss for another, in
+ * the direction that occurs more often in real text.
+ *
+ * [`foldCodePoint`] therefore canonicalises the two sigma forms onto one,
+ * on BOTH sides. `οδος`, `ΟΔΟΣ` and `οδοσ` all fold to `οδοσ`. The single
+ * deliberate imprecision left is that ς and σ cannot be told apart on this
+ * path — pinned by the pair of sigma tests, so it cannot change silently.
+ */
 function scanLiteralFolded(
   text: string,
-  rawNeedle: string,
+  foldedNeedle: string,
   wholeWord: boolean,
 ): Array<{ start: number; end: number }> {
   // foldedStart[j] / foldedEnd[j] — original [start, end) span of the code
@@ -388,17 +405,13 @@ function scanLiteralFolded(
     folded += f
     oi += ch.length
   }
-  let needle = ''
-  for (const ch of rawNeedle) {
-    needle += foldCodePoint(ch)
-  }
   const out: Array<{ start: number; end: number }> = []
   let from = 0
   while (from <= folded.length) {
-    const idx = folded.indexOf(needle, from)
+    const idx = folded.indexOf(foldedNeedle, from)
     if (idx === -1) break
     const start = foldedStart[idx]
-    const end = foldedEnd[idx + needle.length - 1]
+    const end = foldedEnd[idx + foldedNeedle.length - 1]
     if (start !== undefined && end !== undefined && (!wholeWord || isWholeWord(text, start, end))) {
       // Two folded offsets can map to the same original span (a match
       // starting inside a multi-unit fold) — emit each span once.
