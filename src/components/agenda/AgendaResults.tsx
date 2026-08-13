@@ -469,7 +469,15 @@ export function AgendaResults({
           // under the scrollbar. The `<ul>` is a block child of the viewport,
           // so this right padding narrows the `width:100%` absolute rows with
           // it — keeping all four border sides visible.
-          viewportClassName="agenda-results-scroll max-h-[calc(100dvh-260px)] pr-2.5"
+          // The vertical budget grows by the notice's own height when the
+          // notice is shown. Without this the notice pushes `LoadMoreButton`
+          // — the exact control its copy tells the user to press — further
+          // down the page, which is self-defeating. Nothing is clipped either
+          // way (`App.tsx` wraps the main content in a scroller), so this is
+          // about keeping the button where the user last saw it.
+          viewportClassName={`agenda-results-scroll pr-2.5 ${
+            hasMore ? 'max-h-[calc(100dvh-300px)]' : 'max-h-[calc(100dvh-260px)]'
+          }`}
         >
           <ul
             className="agenda-results-list relative m-0 p-0 list-none"

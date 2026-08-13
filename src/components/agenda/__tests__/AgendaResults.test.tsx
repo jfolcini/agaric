@@ -476,7 +476,13 @@ describe('AgendaResults', () => {
 
     render(<AgendaResults {...defaultProps({ blocks })} />)
 
-    const statusRegion = screen.getByRole('status')
+    // `getAllByRole`, not `getByRole`: with `hasMore: true` this component
+    // renders TWO polite live regions — this sr-only count and the #3291
+    // partial-order notice — and the singular query throws on multiple
+    // matches. This case passes `hasMore: false`, so it sees one today; the
+    // plural form keeps it from becoming a trap for whoever next flips that
+    // prop for an unrelated reason.
+    const [statusRegion] = screen.getAllByRole('status')
     expect(statusRegion).toHaveTextContent('2 results')
   })
 
