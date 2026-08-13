@@ -13,7 +13,23 @@
 # Paths are relative to `src-tauri/`. Comments (lines starting with `#`)
 # and blank lines are ignored.
 
-src/sync_daemon/android_multicast.rs
+# Android WiFi multicast lock: JNI FFI into `WifiManager` is the only way to
+# acquire it. Moved out of the app crate with the rest of the sync cluster in
+# #2621 Sync-D; the stale `src/sync_daemon/…` entry this replaces had made the
+# file invisible to the hook, which only walked `src-tauri/src/` until #3847
+# widened it to every workspace member.
+agaric-sync/src/sync_daemon/android_multicast.rs
+
+# #3847: installs the process-global Android `JavaVM` + Application `Context`
+# from `JNI_OnLoad` (`ndk_context::initialize_android_context` and
+# `JavaVM::from_raw` are both `unsafe`). Without it the first sync task to ask
+# `ndk_context` for the context aborted the process.
+agaric-sync/src/android_context.rs
+
+# #3847: the exported `JNI_OnLoad` symbol itself. Must be defined in the crate
+# that produces the `cdylib` to be exported reliably; `#[unsafe(no_mangle)]` is
+# what trips the lint here.
+src/android_jni.rs
 
 # #2720: Windows named-pipe security descriptor. The `#[cfg(windows)]`
 # `win_security` module uses inline Win32 FFI (advapi32/kernel32) to build a

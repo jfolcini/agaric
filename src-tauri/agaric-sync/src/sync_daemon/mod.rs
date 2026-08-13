@@ -19,8 +19,11 @@ mod session_supervisor;
 pub mod snapshot_transfer;
 
 // Android-only: acquire WifiManager.MulticastLock at daemon start so the
-// `mdns-sd` crate's UDP multicast sockets receive packets.
-#[cfg(target_os = "android")]
+// `mdns-sd` crate's UDP multicast sockets receive packets. The module carries
+// its own `#![cfg(any(target_os = "android", test))]`, so it is empty on a
+// non-test host build but still compiles (and is tested) under `cargo test` —
+// that is how the "no Android context" degrade path of #3847 is covered
+// without a device.
 pub(crate) mod android_multicast;
 
 use std::sync::Arc;

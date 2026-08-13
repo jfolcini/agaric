@@ -24,6 +24,13 @@ pub mod foreground;
 /// timeouts) shared across the sync stack. Pure constants; no dependencies.
 pub mod sync_constants;
 
+/// Process-global Android `JavaVM` + Application `Context` (#3847). Installed
+/// from `JNI_OnLoad` (exported by the app crate's `android_jni` module) and
+/// read by the multicast lock; iroh's DNS resolver reads the same handles via
+/// `ndk_context`. Compiles everywhere — off Android it is permanently "not
+/// installed", which is what makes the degrade path testable on the host.
+pub mod android_context;
+
 // ---------------------------------------------------------------------------
 // Sync-D (#2621): the mutually-recursive net / protocol / daemon / files
 // cluster + `snapshot`, `apply_host`, and the pure `sync_events` types. The app

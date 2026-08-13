@@ -31,8 +31,15 @@ while IFS= read -r line; do
     allowed+=("$line")
 done < "$ALLOWLIST"
 
-# Find every Rust file under `src-tauri/src/` that carries the
+# Find every Rust file under `src-tauri/` that carries the
 # `#![allow(unsafe_code)]` directive at the inner-attribute scope.
+#
+# #3847: this used to walk `src-tauri/src/` only, so the six workspace member
+# crates (`agaric-core`, `agaric-store`, `agaric-engine`, `agaric-sync`,
+# `agaric-observability`, `diagnostics`) were unaudited — and the #2621 split
+# had already moved `android_multicast.rs` out of `src/`, leaving a dangling
+# allowlist entry and a real `unsafe` file nobody was checking. Build outputs
+# and the Stryker sandboxes are excluded: they are copies/artifacts, not source.
 unallowed=()
 while IFS= read -r filepath; do
     rel="${filepath#"$REPO_ROOT/src-tauri/"}"
@@ -46,7 +53,9 @@ while IFS= read -r filepath; do
     if [ "$found" -eq 0 ]; then
         unallowed+=("$rel")
     fi
-done < <(grep -rl '#!\[allow(unsafe_code)\]' "$REPO_ROOT/src-tauri/src/" 2>/dev/null || true)
+done < <(grep -rl --include='*.rs' \
+    --exclude-dir=target --exclude-dir=.stryker-tmp --exclude-dir=gen \
+    '#!\[allow(unsafe_code)\]' "$REPO_ROOT/src-tauri/" 2>/dev/null || true)
 
 if [ "${#unallowed[@]}" -gt 0 ]; then
     {
