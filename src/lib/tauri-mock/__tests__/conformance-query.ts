@@ -18,9 +18,12 @@
  * runner stamps out-of-band with `assign_all_to_test_space`. The mock scopes a
  * block via a `space` REF PROPERTY on its owning page. `stampMockSpace` is the
  * mirror image of the Rust stamp — without it every space-scoped read returns
- * empty on the mock and the two stacks would "agree" only on emptiness. It runs
- * AFTER the state snapshot is built and writes the `properties` store directly
- * (no op-log entry), so it cannot perturb the #763 snapshot assertion.
+ * empty on the mock and the two stacks would "agree" only on emptiness. It is
+ * called BOTH before and after the op replay (mirroring the Rust runner's two
+ * `assign_all_to_test_space` calls) and writes the `properties` store directly
+ * with no op-log entry. It cannot perturb the #763 snapshot assertion — but the
+ * reason is that the snapshot builder skips the `space` key outright, NOT the
+ * call ordering; see `stampMockSpace`'s own docstring below.
  */
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
