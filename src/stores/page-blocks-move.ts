@@ -12,7 +12,7 @@
 
 import type { MoveResponse } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { buildFlatTree, getDragDescendants, type FlatBlock } from '@/lib/tree-utils'
+import { buildFlatTree, buildIndexById, getDragDescendants, type FlatBlock } from '@/lib/tree-utils'
 import { cloneBlocksByIdWith } from '@/stores/page-blocks-map'
 import type { PageBlockState } from '@/stores/page-blocks-types'
 
@@ -112,7 +112,10 @@ export function wouldCreateMoveCycle(
 ): boolean {
   if (wantParent == null) return false
   if (orderedIds.includes(wantParent)) return true
-  return orderedIds.some((id) => getDragDescendants(blocks, id).has(wantParent))
+  // Build the index once rather than letting each getDragDescendants call redo an
+  // O(n) findIndex — otherwise this is O(m*n) for an m-id selection on an n-block page.
+  const indexById = buildIndexById(blocks)
+  return orderedIds.some((id) => getDragDescendants(blocks, id, indexById).has(wantParent))
 }
 
 export function reconcileBatchMove(
