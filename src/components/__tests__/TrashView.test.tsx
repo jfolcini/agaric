@@ -1621,7 +1621,12 @@ describe('TrashView', () => {
     // NOT the generic "nothing happened" copy.
     expect(toast.error).not.toHaveBeenCalledWith('Failed to empty trash')
     expect(purgeCalls).toBe(2)
-  })
+    // 60s, not the 20s global. Deriving the fixture from MAX_TRASH_BATCH_IDS makes
+    // it self-describing but NOT smaller — the chunking loop closes over the
+    // module's own const, so no test can shrink N without DI (#3885). Still 1001
+    // rendered items, measured 7.4s-31.9s in isolation, and it tips over 20s under
+    // the pre-push gate's parallelism.
+  }, 60_000)
 
   // #3860 — `trash.emptyTrashPartial` had the same missing-plural defect as
   // `trash.allPurged`; pins the singular wording for a 1-item partial purge.
