@@ -175,6 +175,11 @@ export const syncHandlers = {
   // with working mDNS would.
   get_mdns_status: () => ({ disabled: false, reason: null }),
 
+  // #3864 — internet-facing-bind status. The mock has no QUIC endpoint and
+  // therefore no bind at all, which reports the same way a device on an
+  // ordinary private LAN does: nothing to warn about.
+  get_bind_exposure_status: () => ({ internet_facing: null }),
+
   // ---------------------------------------------------------------------------
   // Task properties (todo/priority/due/scheduled)
   // ---------------------------------------------------------------------------
@@ -257,6 +262,7 @@ export const syncHandlers = {
   | 'start_sync'
   | 'cancel_sync'
   | 'get_mdns_status'
+  | 'get_bind_exposure_status'
   | 'update_peer_name'
   | 'set_peer_address'
   | 'get_mcp_status'

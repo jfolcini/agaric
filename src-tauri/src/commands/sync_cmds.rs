@@ -14,7 +14,9 @@ use agaric_store::peer_refs::{self, PeerRef};
 use agaric_sync::device::DeviceId;
 use agaric_sync::pairing::PairingSession;
 use agaric_sync::pairing::{generate_qr_svg, pairing_qr_payload};
-use agaric_sync::sync_events::{MdnsStatus, MdnsStatusState};
+use agaric_sync::sync_events::{
+    BindExposureStatus, BindExposureStatusState, MdnsStatus, MdnsStatusState,
+};
 use agaric_sync::sync_scheduler::SyncScheduler;
 
 use super::*;
@@ -706,6 +708,26 @@ pub async fn cancel_sync(
 #[tauri::command]
 #[specta::specta]
 pub async fn get_mdns_status(state: State<'_, MdnsStatusState>) -> Result<MdnsStatus, AppError> {
+    let guard = state
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(guard.clone())
+}
+
+/// Tauri command: return whether the sync endpoint bound a globally-routable
+/// address (#3864).
+///
+/// The device-management surface backfills its "reachable from outside your
+/// local network" banner from this on mount. Unlike the mDNS case the backfill
+/// is not a fallback — the endpoint binds within the first moments of
+/// `daemon_loop`, so a webview that is still mounting misses the live
+/// `sync:internet_facing_bind` event essentially every time.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_bind_exposure_status(
+    state: State<'_, BindExposureStatusState>,
+) -> Result<BindExposureStatus, AppError> {
     let guard = state
         .0
         .lock()

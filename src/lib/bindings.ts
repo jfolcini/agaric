@@ -540,6 +540,17 @@ export const commands = {
 	 *  same race `get_recovery_status` covers for `recovery:degraded`).
 	 */
 	getMdnsStatus: () => typedError<MdnsStatus, AppError>(__TAURI_INVOKE("get_mdns_status")),
+	/**
+	 *  Tauri command: return whether the sync endpoint bound a globally-routable
+	 *  address (#3864).
+	 * 
+	 *  The device-management surface backfills its "reachable from outside your
+	 *  local network" banner from this on mount. Unlike the mDNS case the backfill
+	 *  is not a fallback — the endpoint binds within the first moments of
+	 *  `daemon_loop`, so a webview that is still mounting misses the live
+	 *  `sync:internet_facing_bind` event essentially every time.
+	 */
+	getBindExposureStatus: () => typedError<BindExposureStatus, AppError>(__TAURI_INVOKE("get_bind_exposure_status")),
 	/**  Tauri command: batch-count agenda items per date. Delegates to [`count_agenda_batch_inner`]. */
 	countAgendaBatch: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppError>(__TAURI_INVOKE("count_agenda_batch", { dates, scope })),
 	/**  Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`]. */
@@ -1597,6 +1608,27 @@ export type BacklinkQueryResponse = {
 export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir };
 
 /**
+ *  #3864: durable, user-visible "the sync listener may be reachable from off
+ *  the LAN" status.
+ * 
+ *  Mirrors [`SyncEvent::InternetFacingBind`] and is returned by the
+ *  `get_bind_exposure_status` command. It exists for the **same boot race**
+ *  [`MdnsStatus`] exists for, and more acutely: the bind happens within the
+ *  first moments of `daemon_loop`, long before a webview that is still
+ *  mounting can have registered a `sync:internet_facing_bind` listener. A live
+ *  event alone would therefore be a signal the user usually never sees.
+ * 
+ *  Unlike [`MdnsStatus`] there is no separate boolean discriminator: `None`
+ *  (the default) means either the bind is not globally routable or the daemon
+ *  has not bound yet, and those are the same thing from the frontend's side —
+ *  nothing to warn about.
+ */
+export type BindExposureStatus = {
+	/**  `Some` once the daemon has bound a globally-routable address. */
+	internet_facing: InternetFacingBind | null,
+};
+
+/**
  *  Newtype wrapper around ULID for type safety and consistent serialisation.
  *  Stores the canonical uppercase Crockford base32 representation.
  * 
@@ -2292,6 +2324,26 @@ export type ImportResult = {
 	 *  `warn!` on completion so a lossy import is never silent.
 	 */
 	warnings: string[],
+};
+
+/**
+ *  The globally-routable endpoint the sync daemon is currently listening on.
+ * 
+ *  Both fields are always present together — an internet-facing bind without
+ *  an address is not a state the daemon can be in — which is why they live in
+ *  one struct behind a single `Option` rather than as two independent
+ *  `Option` fields on [`BindExposureStatus`]. Two optionals that must agree
+ *  admit three unrepresentable-but-typeable states, and a frontend guard
+ *  against one of them is a branch no production input can take.
+ */
+export type InternetFacingBind = {
+	/**  The bound IPv4 address, e.g. `"192.160.160.80"`. */
+	address: string,
+	/**
+	 *  The UDP port of that listener. OS-assigned (the bind requests port 0),
+	 *  so it changes on every daemon start.
+	 */
+	port: number,
 };
 
 /**

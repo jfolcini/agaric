@@ -8,8 +8,9 @@
 //! leaves that module free of any Tauri dependency.
 
 use agaric_sync::sync_events::{
-    EVENT_SYNC_COMPLETE, EVENT_SYNC_ERROR, EVENT_SYNC_MDNS_DISABLED, EVENT_SYNC_PROGRESS,
-    MdnsStatus, MdnsStatusState, SyncEvent, SyncEventSink, SyncProgressUpdate,
+    BindExposureStatus, BindExposureStatusState, EVENT_SYNC_COMPLETE, EVENT_SYNC_ERROR,
+    EVENT_SYNC_INTERNET_FACING_BIND, EVENT_SYNC_MDNS_DISABLED, EVENT_SYNC_PROGRESS,
+    InternetFacingBind, MdnsStatus, MdnsStatusState, SyncEvent, SyncEventSink, SyncProgressUpdate,
 };
 
 // ---------------------------------------------------------------------------
@@ -27,6 +28,7 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             SyncEvent::Complete { .. } => EVENT_SYNC_COMPLETE,
             SyncEvent::Error { .. } => EVENT_SYNC_ERROR,
             SyncEvent::MdnsDisabled { .. } => EVENT_SYNC_MDNS_DISABLED,
+            SyncEvent::InternetFacingBind { .. } => EVENT_SYNC_INTERNET_FACING_BIND,
             // File-transfer progress was never on the
             // legacy `app.emit` bus, so this sink drops it. The
             // canonical path is `ChannelEventSink` → `Channel<…>::Files`;
@@ -55,6 +57,24 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             *guard = MdnsStatus {
                 disabled: true,
                 reason: Some(reason.clone()),
+            };
+        }
+
+        // #3864: same backfill, same reason, sharper race. The endpoint binds
+        // in the opening moments of `daemon_loop` — well before a webview that
+        // is still mounting could have registered a
+        // `sync:internet_facing_bind` listener — so without this write the
+        // banner would essentially never appear. `try_state` for the same
+        // reason as above.
+        if let SyncEvent::InternetFacingBind { address, port } = &event
+            && let Some(status) = self.0.try_state::<BindExposureStatusState>()
+            && let Ok(mut guard) = status.0.lock()
+        {
+            *guard = BindExposureStatus {
+                internet_facing: Some(InternetFacingBind {
+                    address: address.clone(),
+                    port: *port,
+                }),
             };
         }
 
@@ -214,8 +234,9 @@ mod tests {
 
     use super::{ChannelEventSink, TauriEventSink};
     use agaric_sync::sync_events::{
-        EVENT_SYNC_MDNS_DISABLED, MdnsStatus, MdnsStatusState, RecordingEventSink, SyncEvent,
-        SyncEventSink, SyncProgressUpdate,
+        BindExposureStatus, BindExposureStatusState, EVENT_SYNC_INTERNET_FACING_BIND,
+        EVENT_SYNC_MDNS_DISABLED, InternetFacingBind, MdnsStatus, MdnsStatusState,
+        RecordingEventSink, SyncEvent, SyncEventSink, SyncProgressUpdate,
     };
     use std::sync::Arc;
     use tauri::{Listener, Manager};
@@ -310,6 +331,93 @@ mod tests {
         assert!(
             payloads[0].contains("not managed in this host"),
             "the emitted payload must carry the disable reason, got {}",
+            payloads[0]
+        );
+    }
+
+    /// #3864 boot race: the endpoint binds in the opening moments of
+    /// `daemon_loop`, so a webview that is still mounting misses the live
+    /// `sync:internet_facing_bind` event outright. The listener here registers
+    /// **after** the emission on purpose — that is the production ordering, not
+    /// a contrived one — and the assertions are the two halves of the fix: the
+    /// late listener genuinely receives nothing, and the managed status the
+    /// `get_bind_exposure_status` command reads still carries the bind.
+    ///
+    /// Without the durable status this feature would be a banner nobody ever
+    /// sees, and a test that only emitted-then-listened would not notice.
+    #[test]
+    fn internet_facing_bind_status_survives_a_listener_that_registers_late() {
+        let app = tauri::test::mock_app();
+        app.manage(BindExposureStatusState(std::sync::Mutex::new(
+            BindExposureStatus::default(),
+        )));
+        let sink = TauriEventSink(app.handle().clone());
+
+        // The daemon binds and emits while the frontend is still mounting.
+        sink.on_sync_event(SyncEvent::InternetFacingBind {
+            address: "192.160.160.80".into(),
+            port: 54321,
+        });
+
+        // …and only now does the frontend get its listener up.
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_clone = Arc::clone(&seen);
+        app.listen(EVENT_SYNC_INTERNET_FACING_BIND, move |event| {
+            seen_clone.lock().unwrap().push(event.payload().to_string());
+        });
+
+        assert!(
+            seen.lock()
+                .expect("late-listener capture not poisoned")
+                .is_empty(),
+            "a listener registered after the emission must miss it — if it did not, \
+             this test would not be exercising the race the durable status exists for"
+        );
+
+        let status = app.state::<BindExposureStatusState>();
+        let actual = status.0.lock().expect("bind exposure mutex not poisoned");
+        assert_eq!(
+            *actual,
+            BindExposureStatus {
+                internet_facing: Some(InternetFacingBind {
+                    address: "192.160.160.80".into(),
+                    port: 54321,
+                }),
+            },
+            "the status a late-mounting frontend queries must carry the exact bind"
+        );
+    }
+
+    /// The mirror of the mDNS case: a host that manages no
+    /// `BindExposureStatusState` must still get the live event, with its
+    /// address and port intact. Asserting on the emission (not on
+    /// `try_state().is_none()`, which only restates this setup) is what makes
+    /// a regression to `state()` — a panic — or to an early return visible.
+    #[test]
+    fn tauri_event_sink_internet_facing_bind_without_managed_status_still_emits() {
+        let app = tauri::test::mock_app();
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_clone = Arc::clone(&seen);
+        app.listen(EVENT_SYNC_INTERNET_FACING_BIND, move |event| {
+            seen_clone.lock().unwrap().push(event.payload().to_string());
+        });
+        let sink = TauriEventSink(app.handle().clone());
+
+        sink.on_sync_event(SyncEvent::InternetFacingBind {
+            address: "203.0.113.9".into(),
+            port: 41234,
+        });
+
+        let payloads = seen.lock().expect("emitted-event capture not poisoned");
+        assert_eq!(
+            payloads.len(),
+            1,
+            "the sink must still emit `{EVENT_SYNC_INTERNET_FACING_BIND}` exactly once \
+             when the host manages no `BindExposureStatusState`, got {payloads:?}"
+        );
+        assert!(
+            payloads[0].contains("203.0.113.9") && payloads[0].contains("41234"),
+            "the emitted payload must carry the bound address and port, got {}",
             payloads[0]
         );
     }

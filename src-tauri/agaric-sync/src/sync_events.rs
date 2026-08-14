@@ -127,6 +127,29 @@ pub enum SyncEvent {
     /// frontend should surface this to the user instead of showing an
     /// Empty peer list. See.
     MdnsDisabled { reason: String },
+    /// #3864: emitted once per daemon start when the sync endpoint bound a
+    /// **globally-routable** address, so the QUIC listener may be reachable
+    /// from outside the local network.
+    ///
+    /// #3853 had to widen `lan_only`'s locality gate from "RFC 1918" to "an
+    /// address this host holds", because the reporting user's home LAN is
+    /// numbered out of public space (`192.160.160.0/24`). On a host that is
+    /// genuinely internet-facing — a VPS, a cloud box, a non-NAT ISP link —
+    /// that starts a listener where the daemon previously refused to bind at
+    /// all, which is the "opens a listening port the user did not ask for"
+    /// class in `SECURITY.md` § In scope. Nothing observable from inside the
+    /// host separates the two situations, so this event states only what is
+    /// known (the address is outside the private ranges) and leaves the
+    /// verdict to the user. A `tracing::warn!` alone was not a user-visible
+    /// signal, which is what this variant exists to be.
+    InternetFacingBind {
+        /// The bound IPv4 address, e.g. `"192.160.160.80"`.
+        address: String,
+        /// The UDP port the listener actually got. The bind requests port 0,
+        /// so this is assigned by the OS **and differs on every start** — it
+        /// identifies the current listener, it is not a stable firewall rule.
+        port: u16,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +162,9 @@ pub const EVENT_SYNC_ERROR: &str = "sync:error";
 /// Emitted when mDNS peer discovery is unavailable on this device
 /// Payload is [`SyncEvent::MdnsDisabled`].
 pub const EVENT_SYNC_MDNS_DISABLED: &str = "sync:mdns_disabled";
+/// Emitted when the sync endpoint bound a globally-routable address (#3864).
+/// Payload is [`SyncEvent::InternetFacingBind`].
+pub const EVENT_SYNC_INTERNET_FACING_BIND: &str = "sync:internet_facing_bind";
 
 // ---------------------------------------------------------------------------
 // mDNS status (#2506) — backfill for the peers/device-management surface
@@ -170,6 +196,55 @@ pub struct MdnsStatus {
 /// command. Wrapped in a `Mutex` only to satisfy `Send + Sync` for Tauri
 /// managed state — mirrors `recovery::RecoveryStatusState`.
 pub struct MdnsStatusState(pub std::sync::Mutex<MdnsStatus>);
+
+// ---------------------------------------------------------------------------
+// Bind exposure status (#3864) — backfill for the same surface
+// ---------------------------------------------------------------------------
+
+/// The globally-routable endpoint the sync daemon is currently listening on.
+///
+/// Both fields are always present together — an internet-facing bind without
+/// an address is not a state the daemon can be in — which is why they live in
+/// one struct behind a single `Option` rather than as two independent
+/// `Option` fields on [`BindExposureStatus`]. Two optionals that must agree
+/// admit three unrepresentable-but-typeable states, and a frontend guard
+/// against one of them is a branch no production input can take.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct InternetFacingBind {
+    /// The bound IPv4 address, e.g. `"192.160.160.80"`.
+    pub address: String,
+    /// The UDP port of that listener. OS-assigned (the bind requests port 0),
+    /// so it changes on every daemon start.
+    pub port: u16,
+}
+
+/// #3864: durable, user-visible "the sync listener may be reachable from off
+/// the LAN" status.
+///
+/// Mirrors [`SyncEvent::InternetFacingBind`] and is returned by the
+/// `get_bind_exposure_status` command. It exists for the **same boot race**
+/// [`MdnsStatus`] exists for, and more acutely: the bind happens within the
+/// first moments of `daemon_loop`, long before a webview that is still
+/// mounting can have registered a `sync:internet_facing_bind` listener. A live
+/// event alone would therefore be a signal the user usually never sees.
+///
+/// Unlike [`MdnsStatus`] there is no separate boolean discriminator: `None`
+/// (the default) means either the bind is not globally routable or the daemon
+/// has not bound yet, and those are the same thing from the frontend's side —
+/// nothing to warn about.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct BindExposureStatus {
+    /// `Some` once the daemon has bound a globally-routable address.
+    pub internet_facing: Option<InternetFacingBind>,
+}
+
+/// #3864: managed-state holder for the current [`BindExposureStatus`].
+///
+/// Written by `TauriEventSink::on_sync_event` whenever a
+/// `SyncEvent::InternetFacingBind` is emitted, and read by the
+/// `get_bind_exposure_status` command. `Mutex` only for `Send + Sync` —
+/// mirrors [`MdnsStatusState`].
+pub struct BindExposureStatusState(pub std::sync::Mutex<BindExposureStatus>);
 
 /// Event emitted when block properties change (for panel invalidation).
 pub const EVENT_PROPERTY_CHANGED: &str = "block:properties-changed";
@@ -618,6 +693,44 @@ mod tests {
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["disabled"], true);
         assert_eq!(json["reason"], "sandboxed platform");
+    }
+
+    // ── InternetFacingBind / BindExposureStatus (#3864) ─────────────
+
+    /// The frontend reads `address` and `port` off the raw event payload, so
+    /// those key names are wire contract, not implementation detail.
+    #[test]
+    fn internet_facing_bind_serializes_address_and_port() {
+        let event = SyncEvent::InternetFacingBind {
+            address: "192.160.160.80".into(),
+            port: 54321,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "internet_facing_bind");
+        assert_eq!(json["address"], "192.160.160.80");
+        assert_eq!(json["port"], 54321);
+    }
+
+    #[test]
+    fn bind_exposure_status_default_is_not_internet_facing() {
+        let status = BindExposureStatus::default();
+        assert_eq!(
+            status.internet_facing, None,
+            "a device that has not bound a routable address must have nothing to warn about"
+        );
+    }
+
+    #[test]
+    fn bind_exposure_status_serializes_the_nested_bind() {
+        let status = BindExposureStatus {
+            internet_facing: Some(InternetFacingBind {
+                address: "203.0.113.9".into(),
+                port: 41234,
+            }),
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["internet_facing"]["address"], "203.0.113.9");
+        assert_eq!(json["internet_facing"]["port"], 41234);
     }
 
     #[test]
