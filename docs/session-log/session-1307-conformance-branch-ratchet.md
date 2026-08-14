@@ -1,8 +1,8 @@
-# Session 1307 — conformance ratchet: key on the branch, not the command (2026-08-15)
+# Session 1307 — conformance ratchet: key on the branch, not the command (2026-08-14/15)
 
 | Metadata | Value |
 |----------|-------|
-| **Date** | 2026-08-15 |
+| **Date** | 2026-08-14/15 |
 | **Subagents** | 1 build + 1 review |
 | **Items closed** | `#3878` |
 | **Items modified** | filed `#3892` |
@@ -17,7 +17,7 @@ covered arms.
 
 **Files touched (this session):**
 - `src/lib/tauri-mock/__tests__/conformance-coverage.test.ts`
-- `docs/session-log/session-1303-conformance-branch-ratchet.md` (new)
+- `docs/session-log/session-1307-conformance-branch-ratchet.md` (new)
 
 **Verification:**
 - `npx vitest run src/lib/tauri-mock/__tests__` — 24 files, 365 tests, all passed.

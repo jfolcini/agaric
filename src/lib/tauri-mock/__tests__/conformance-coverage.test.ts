@@ -502,6 +502,17 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
     'agenda_cache rows require set_due_date/set_scheduled_date OPS before the ' +
     'query step, not just a seed — no query_*.json fixture does that yet (#3878)',
 }
+// NOTE for whoever lifts the two agenda waivers above: `list_blocks_inner`'s
+// `agenda-range` and `agenda-date` arms both sub-dispatch a SECOND time on
+// `agenda_source` (`pagination::list_agenda[_range](…, agenda_source.as_deref(), …)`
+// in `queries.rs`, keyed on `due_date` / `scheduled_date` / no source) once
+// inside `pagination::list_agenda[_range]`. This manifest only models the
+// top-level `filter_count` chain, so a single query step with ANY
+// `agenda_source` value will credit the WHOLE arm the moment it gets a query
+// step — exactly the branch-invisible-coverage shape #3878 exists to catch,
+// one level down. Lifting these waivers needs `agenda_source` modelled as its
+// own sub-branch (e.g. `list_blocks::agenda-date::due_date`), not just a step
+// with a non-null `date`/`dateRange`.
 
 // ---------------------------------------------------------------------------
 // Commands whose query steps run on the BACKEND leg only (#3826)
@@ -652,7 +663,8 @@ const RUST_QUERIES_PATH = path.resolve(RUST_COMMANDS_DIR, 'commands', 'blocks', 
  *  unnoticed). */
 function extractFilterCountIdentifiers(): string[] {
   const source = readFileSync(RUST_QUERIES_PATH, 'utf8')
-  const start = source.indexOf('let filter_count = [')
+  const needle = 'let filter_count = ['
+  const start = source.indexOf(needle)
   if (start < 0) {
     throw new Error(
       `could not find "let filter_count = [" in ${RUST_QUERIES_PATH} — this guard ` +
@@ -660,7 +672,24 @@ function extractFilterCountIdentifiers(): string[] {
         `source moved, don't shrink the expectation.`,
     )
   }
-  const end = source.indexOf(']', start)
+  // Balance-scan the brackets from the opening `[`, mirroring
+  // `extractRustCommandSignatures`'s paren-balancing above — a plain
+  // `indexOf(']', start)` would stop at the FIRST `]`, which truncates (and
+  // silently under-reports) the moment any element is itself an index
+  // expression or a nested array literal.
+  let depth = 0
+  let end = -1
+  for (let i = start + needle.length - 1; i < source.length; i++) {
+    const ch = source[i]
+    if (ch === '[') depth++
+    else if (ch === ']') {
+      depth--
+      if (depth === 0) {
+        end = i
+        break
+      }
+    }
+  }
   if (end < 0) {
     throw new Error(`unterminated filter_count array in ${RUST_QUERIES_PATH}`)
   }
@@ -973,7 +1002,7 @@ describe('#3083 conformance-coverage ratchet', () => {
   // three of five arms covered read as fully green here. The requirement is
   // now expressed per coverage UNIT (`branchUnitsOf`: `${command}::${branch}`
   // for a manifested command, or just `command` — unchanged — for the other
-  // ~63 that carry no branch manifest), waived either at the branch level
+  // 73 that carry no branch manifest), waived either at the branch level
   // (`READ_QUERY_BRANCH_ALLOWLIST`) or, still, at the whole-command level
   // (`READ_NO_QUERY_ALLOWLIST` continues to exempt every branch of a command
   // that has no query coverage whatsoever).
@@ -1071,6 +1100,41 @@ describe('#3083 conformance-coverage ratchet', () => {
     // the Rust exclusive-filter set size, so a new arm can't be added on one
     // side without the other.
     expect((spec?.discriminators.length ?? 0) + 1).toBe(rustParams.length)
+  })
+
+  // #3878 review note 4 — `stepBranchKey` falls through to `defaultBranch`
+  // when a step's `args.request` carries none of the declared discriminator
+  // fields. That is CORRECT for a step that legitimately omits every filter
+  // (`list_blocks::children` from `{ parentId: null }` still has a request
+  // object; the discriminators just aren't in it) — but the same fallthrough
+  // fires identically for a fixture step that simply forgot its
+  // `args.request` altogether, which would then silently credit the default
+  // branch instead of failing loud. This guard is scoped to MANIFESTED
+  // commands only: an unmanifested read-only command's steps carry no
+  // discriminator shape requirement, so `args.request`'s presence there is
+  // not this guard's business.
+  it('every query step for a manifested command declares an args.request object', () => {
+    const missing: string[] = []
+    for (const fx of fixtures) {
+      for (const step of fx.querySteps) {
+        if (!(step.command in QUERY_STEP_BRANCH_DISCRIMINATORS)) continue
+        const request = step.args?.['request']
+        if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+          missing.push(`${fx.name}/${step.name}`)
+        }
+      }
+    }
+    expect(
+      missing,
+      `These query steps drive a branch-manifested command ` +
+        `(${JSON.stringify(Object.keys(QUERY_STEP_BRANCH_DISCRIMINATORS))}) but carry no ` +
+        `\`args.request\` object: ${JSON.stringify(missing)}. stepBranchKey falls through ` +
+        `to defaultBranch when no discriminator field is present, which is correct for a ` +
+        `step that legitimately omits every filter — but a step that simply forgot its ` +
+        `args would silently credit that same default branch instead of failing. FIX by ` +
+        `adding \`args: { request: {...} }\` to the step (an empty \`{}\` is a legitimate ` +
+        `default-branch request).`,
+    ).toEqual([])
   })
 
   it('read allowlist stays honest (no stale, mutating, or now-covered entries)', () => {
