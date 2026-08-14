@@ -522,10 +522,12 @@ describe('useSyncEvents', () => {
         },
       })
 
-      // Preload now takes (spaceId, forceRefresh). The
+      // Preload takes (spaceId, forceRefresh, changedPageIds). The
       // sync-events hook reads currentSpaceId from useSpaceStore (mocked
-      // to 'SPACE_TEST' above) and forwards forceRefresh=true.
-      expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true)
+      // to 'SPACE_TEST' above) and forwards forceRefresh=true. This payload
+      // carries NO `changed_page_ids`, so the third argument is `undefined`
+      // and the resolve store runs its full pages+tags walk (#3321).
+      expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true, undefined)
 
       unmount()
     })
@@ -683,7 +685,10 @@ describe('useSyncEvents', () => {
         },
       })
 
-      expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true)
+      // #3321 — the SAME targeted set that drove the page-store reloads above
+      // is forwarded, so the preload's page half re-resolves just `PAGE_1`
+      // instead of paginating the whole space. Its tag half still runs.
+      expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true, new Set(['PAGE_1']))
 
       unmount()
     })
@@ -708,8 +713,9 @@ describe('useSyncEvents', () => {
       expect(mockLoad2).not.toHaveBeenCalled()
       expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_1')
       expect(mockReanchorUndo).not.toHaveBeenCalledWith('PAGE_2')
-      // Same resolve-preload side effect as sync:complete.
-      expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true)
+      // Same resolve-preload side effect as sync:complete, including the
+      // #3321 targeted set.
+      expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true, new Set(['PAGE_1']))
 
       unmount()
     })

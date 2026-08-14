@@ -645,6 +645,431 @@ describe('preload in-flight coalescing (#753)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// preload — targeted rescan (#3321)
+// ---------------------------------------------------------------------------
+//
+// `reloadChangedPageStores` already computes the owning-page id set an inbound
+// sync / MCP write touched, uses it to target the page-store reloads, and used
+// to throw it away before calling `preload`. The scan then paginated the WHOLE
+// space (`LIST_BLOCKS_MAX = 100` per round-trip, so 30 sequential round-trips
+// in a 3,000-page vault) on every `sync:complete` with `ops_received > 0` —
+// roughly every 3 s while a peer types.
+//
+// The page half of the scan now collapses to ONE `batch_resolve` when the set
+// is present. The TAG half deliberately does not: tags carry no changed-id
+// signal, so skipping them would leave a remotely-renamed tag rendering its old
+// name until the next space switch. That trade was the reason this half of
+// #3321 was held back, and the tag test below is what pins it.
+describe('preload targeted rescan (#3321)', () => {
+  const PAGE_SIZE = 100
+
+  function countCalls(cmd: string): number {
+    return mockedInvoke.mock.calls.filter(([c]) => c === cmd).length
+  }
+
+  /**
+   * Install a backend mock for a space of `pageCount` pages plus `tags`, wired
+   * so the full walk (`list_blocks`), the targeted half (`batch_resolve`) and
+   * the tag fetch all read the SAME mutable source of truth. A remote rename is
+   * therefore visible to whichever half of the scan actually runs, which is what
+   * makes "the targeted path still sees real changes" a meaningful assertion.
+   *
+   * `missing` models an id the backend does not return (purged, or moved to
+   * another space) — `batch_resolve` drops it exactly as the space-scoped
+   * `list_blocks` walk would.
+   */
+  function installSpaceMock(pageCount: number, tags: Array<{ tag_id: string; name: string }> = []) {
+    const titles = new Map<string, string | null>()
+    const deleted = new Set<string>()
+    const missing = new Set<string>()
+    const tagRows = tags.map((t) => ({ ...t, usage_count: 1, updated_at: '2025-01-01' }))
+    for (let i = 0; i < pageCount; i++) titles.set(`PAGE_${i}`, `Page ${i}`)
+
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      const params = args as Record<string, unknown> | undefined
+      // #2277 item 7 — list_blocks params nest under the `request` DTO.
+      const req = (params?.['request'] as Record<string, unknown> | undefined) ?? params
+      if (cmd === 'list_blocks') {
+        // The real `list_blocks_by_type` filters `deleted_at IS NULL`
+        // (`src-tauri/agaric-store/src/pagination/hierarchy.rs`), so the full
+        // walk can never observe a soft-deleted page — only the targeted
+        // `batch_resolve` half can (it applies no `deleted_at` predicate).
+        // Mirror that here, or the soft-delete assertion below would pass on
+        // either arm and stop distinguishing them.
+        const ids = [...titles.keys()].filter((id) => !missing.has(id) && !deleted.has(id))
+        const offset = Number(req?.['cursor'] ?? 0)
+        const next = offset + PAGE_SIZE
+        return {
+          items: ids.slice(offset, next).map((id) => ({
+            id,
+            content: titles.get(id) ?? null,
+            deleted_at: null,
+          })),
+          next_cursor: next < ids.length ? String(next) : null,
+          has_more: next < ids.length,
+        }
+      }
+      if (cmd === 'batch_resolve') {
+        const ids = (params?.['ids'] as string[] | undefined) ?? []
+        return ids
+          .filter((id) => titles.has(id) && !missing.has(id))
+          .map((id) => ({
+            id,
+            title: titles.get(id) ?? null,
+            block_type: 'page',
+            deleted: deleted.has(id),
+          }))
+      }
+      if (cmd === 'list_all_tags_in_space') return tagRows
+      return null
+    })
+
+    return { titles, deleted, missing, tagRows }
+  }
+
+  it('collapses a 3,000-page walk into ONE batch_resolve round-trip', async () => {
+    const PAGE_COUNT = 3000
+    installSpaceMock(PAGE_COUNT)
+
+    // The boot scan — and, before this change, EVERY sync tick — paginates the
+    // whole space: 3,000 / 100 = 30 sequential `list_blocks` round-trips.
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    expect(countCalls('list_blocks')).toBe(PAGE_COUNT / PAGE_SIZE)
+    expect(countCalls('list_all_tags_in_space')).toBe(1)
+    expect(useResolveStore.getState().cache.size).toBe(PAGE_COUNT)
+
+    // The sync tick: one page changed, so exactly one page is re-resolved.
+    mockedInvoke.mockClear()
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_7']))
+
+    expect(countCalls('list_blocks')).toBe(0)
+    expect(countCalls('batch_resolve')).toBe(1)
+    // The tag half is unconditional — see the tag test below.
+    expect(countCalls('list_all_tags_in_space')).toBe(1)
+  })
+
+  it('applies a remote rename of a targeted page (version bumps)', async () => {
+    const { titles } = installSpaceMock(3)
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    const versionAfterBoot = useResolveStore.getState().version
+
+    titles.set('PAGE_1', 'Renamed by peer')
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    expect(useResolveStore.getState().resolveTitle('PAGE_1')).toBe('Renamed by peer')
+    expect(useResolveStore.getState().version).toBe(versionAfterBoot + 1)
+  })
+
+  it('applies a remote soft-delete of a targeted page', async () => {
+    const { deleted } = installSpaceMock(3)
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    expect(useResolveStore.getState().resolveStatus('PAGE_1')).toBe('active')
+
+    deleted.add('PAGE_1')
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    expect(useResolveStore.getState().resolveStatus('PAGE_1')).toBe('deleted')
+  })
+
+  it('does not bump version when the targeted page is unchanged', async () => {
+    installSpaceMock(3)
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    const versionAfterBoot = useResolveStore.getState().version
+
+    let versionNotifications = 0
+    const unsubscribe = useResolveStore.subscribe((state, prev) => {
+      if (state.version !== prev.version) versionNotifications++
+    })
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+    unsubscribe()
+
+    expect(versionNotifications).toBe(0)
+    expect(useResolveStore.getState().version).toBe(versionAfterBoot)
+    expect(useResolveStore.getState().resolveTitle('PAGE_1')).toBe('Page 1')
+  })
+
+  it('still refreshes tags on a targeted rescan (tags have no changed-id signal)', async () => {
+    const { tagRows } = installSpaceMock(3, [{ tag_id: 'TAG_1', name: 'tag-one' }])
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    const versionAfterBoot = useResolveStore.getState().version
+
+    // A peer renames the tag. No page changed except the one carrying the op,
+    // and the tag id is NOT in `changed_page_ids` — the exact case that made
+    // skipping the tag half a correctness regression.
+    const firstTag = tagRows[0]
+    if (firstTag) firstTag.name = 'tag-one-renamed'
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    expect(countCalls('list_all_tags_in_space')).toBe(2)
+    expect(useResolveStore.getState().resolveTitle('TAG_1')).toBe('tag-one-renamed')
+    expect(useResolveStore.getState().version).toBe(versionAfterBoot + 1)
+  })
+
+  it('falls back to the full walk when the changed set is empty', async () => {
+    installSpaceMock(3)
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    mockedInvoke.mockClear()
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set())
+
+    expect(countCalls('list_blocks')).toBe(1)
+    expect(countCalls('batch_resolve')).toBe(0)
+  })
+
+  it('targets at the batch cap and falls back to the full walk past it', async () => {
+    installSpaceMock(3)
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+
+    // Exactly `TARGETED_PRELOAD_MAX_IDS` (1000) — still one batch_resolve.
+    mockedInvoke.mockClear()
+    const atCap = new Set(Array.from({ length: 1000 }, (_, i) => `PAGE_${i}`))
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, atCap)
+    expect(countCalls('batch_resolve')).toBe(1)
+    expect(countCalls('list_blocks')).toBe(0)
+
+    // One past the cap — `batch_resolve` would reject, so walk instead.
+    mockedInvoke.mockClear()
+    const pastCap = new Set(Array.from({ length: 1001 }, (_, i) => `PAGE_${i}`))
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, pastCap)
+    expect(countCalls('batch_resolve')).toBe(0)
+    expect(countCalls('list_blocks')).toBe(1)
+  })
+
+  it('leaves a cached entry untouched when the backend returns no row for it', async () => {
+    const { missing } = installSpaceMock(3)
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    const versionAfterBoot = useResolveStore.getState().version
+
+    // Purged, or moved to another space: `batch_resolve` drops the id.
+    missing.add('PAGE_1')
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    // Merge-only semantics, identical to the full walk: the stale entry stays
+    // rather than being wiped, and nothing re-renders.
+    expect(useResolveStore.getState().resolveTitle('PAGE_1')).toBe('Page 1')
+    expect(useResolveStore.getState().version).toBe(versionAfterBoot)
+  })
+
+  it('does not mark _preloaded — a targeted rescan is not a full preload', async () => {
+    const { titles } = installSpaceMock(3)
+
+    titles.set('PAGE_1', 'Changed so the commit path runs')
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+    expect(useResolveStore.getState().version).toBe(1)
+    expect(useResolveStore.getState()._preloaded).toBe(false)
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    expect(useResolveStore.getState()._preloaded).toBe(true)
+  })
+
+  it('leaves _preloaded false when a targeted rescan fetches nothing at all', async () => {
+    installSpaceMock(3)
+
+    // The backend returns no row for the id (purged / moved), so nothing
+    // merges and the scan takes the "unmutated" early return. THAT arm must
+    // not claim `_preloaded` either — it is still not a full scan.
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['GONE']))
+
+    expect(useResolveStore.getState()._preloaded).toBe(false)
+    expect(useResolveStore.getState().version).toBe(0)
+  })
+
+  // A scan that THREW consumed its scope without applying it. A full walk
+  // self-heals — the next one re-reads the whole space — but a targeted scan's
+  // ids are the only thing that would ever have re-resolved those pages, since
+  // the next tick carries the NEXT write's ids. Without an escalation, one
+  // transient `batch_resolve` failure leaves a peer-renamed page rendering its
+  // old title until a space switch.
+  it('escalates a FAILED targeted rescan to the full walk', async () => {
+    installSpaceMock(3)
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    mockedInvoke.mockClear()
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'batch_resolve') throw new Error('transport failure')
+      if (cmd === 'list_blocks')
+        return {
+          items: [{ id: 'PAGE_1', content: 'Renamed by peer', deleted_at: null }],
+          next_cursor: null,
+          has_more: false,
+        }
+      if (cmd === 'list_all_tags_in_space') return []
+      return null
+    })
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    expect(countCalls('batch_resolve')).toBe(1)
+    expect(countCalls('list_blocks')).toBe(1)
+    expect(useResolveStore.getState().resolveTitle('PAGE_1')).toBe('Renamed by peer')
+  })
+
+  it('does not re-escalate a FAILED full walk — the retry chain is bounded', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'batch_resolve' || cmd === 'list_blocks') throw new Error('transport failure')
+      if (cmd === 'list_all_tags_in_space') return []
+      return null
+    })
+
+    // targeted (fails) → ONE full walk (fails) → stop. A test timeout here
+    // means the escalation loops forever against a down backend.
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    expect(countCalls('batch_resolve')).toBe(1)
+    expect(countCalls('list_blocks')).toBe(1)
+  })
+
+  // The coalescing hazard this change introduces: #753 collapses every caller
+  // arriving mid-scan into ONE trailing re-scan. With every scan full that was
+  // lossless. With targeted scans, a joiner's ids must survive into that
+  // trailing scan or its page renders a stale title until the next space
+  // switch. The three tests below pin the widening rule.
+  describe('mid-scan coalescing keeps every joiner’s scope', () => {
+    /** Make `batch_resolve` deferrable; records the ids of each call. */
+    function deferBatchResolve() {
+      const deferred: Array<(v: unknown) => void> = []
+      const batchIds: string[][] = []
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        const params = args as Record<string, unknown> | undefined
+        if (cmd === 'batch_resolve') {
+          batchIds.push((params?.['ids'] as string[] | undefined) ?? [])
+          return new Promise((resolve) => deferred.push(resolve))
+        }
+        if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+        if (cmd === 'list_all_tags_in_space') return []
+        return null
+      })
+      return { deferred, batchIds }
+    }
+
+    it('unions two mid-scan targeted callers into one trailing rescan', async () => {
+      const { deferred, batchIds } = deferBatchResolve()
+
+      const p1 = useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_0']))
+      const p2 = useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+      const p3 = useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_2']))
+
+      await vi.waitFor(() => expect(deferred).toHaveLength(1))
+      deferred[0]?.([])
+      await vi.waitFor(() => expect(deferred).toHaveLength(2))
+      deferred[1]?.([
+        { id: 'PAGE_1', title: 'One renamed', block_type: 'page', deleted: false },
+        { id: 'PAGE_2', title: 'Two renamed', block_type: 'page', deleted: false },
+      ])
+      await Promise.all([p1, p2, p3])
+
+      expect(batchIds).toHaveLength(2)
+      expect(batchIds[0]).toEqual(['PAGE_0'])
+      expect((batchIds[1] ?? []).toSorted()).toEqual(['PAGE_1', 'PAGE_2'])
+      expect(useResolveStore.getState().resolveTitle('PAGE_1')).toBe('One renamed')
+      expect(useResolveStore.getState().resolveTitle('PAGE_2')).toBe('Two renamed')
+    })
+
+    it('a mid-scan force caller with no set upgrades the trailing rescan to a full walk', async () => {
+      const { deferred, batchIds } = deferBatchResolve()
+
+      const p1 = useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_0']))
+      const p2 = useResolveStore.getState().preload(TEST_SPACE_ID, true)
+
+      await vi.waitFor(() => expect(deferred).toHaveLength(1))
+      deferred[0]?.([])
+      await vi.waitFor(() => expect(countCalls('list_blocks')).toBe(1))
+      await Promise.all([p1, p2])
+
+      expect(batchIds).toHaveLength(1)
+    })
+
+    it('a full-scan demand arriving AFTER a targeted one still wins', async () => {
+      const { deferred, batchIds } = deferBatchResolve()
+
+      // Leading scan targeted; then a targeted joiner (so the trailing scan is
+      // already a Set), then a force caller with no set. The trailing scan must
+      // widen to the full walk rather than keep the accumulated Set.
+      const p1 = useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_0']))
+      const p2 = useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+      const p3 = useResolveStore.getState().preload(TEST_SPACE_ID, true)
+
+      await vi.waitFor(() => expect(deferred).toHaveLength(1))
+      deferred[0]?.([])
+      // Assert on the trailing scan's IPC as soon as it starts: a targeted
+      // trailing scan would call the (deferred) `batch_resolve` instead and
+      // never reach `list_blocks`.
+      await vi.waitFor(() => expect(countCalls('list_blocks')).toBe(1))
+      await Promise.all([p1, p2, p3])
+
+      expect(batchIds).toHaveLength(1)
+    })
+
+    it('a targeted demand arriving AFTER a full one does not narrow it back', async () => {
+      const { deferred, batchIds } = deferBatchResolve()
+
+      const p1 = useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_0']))
+      const p2 = useResolveStore.getState().preload(TEST_SPACE_ID, true)
+      const p3 = useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+      await vi.waitFor(() => expect(deferred).toHaveLength(1))
+      deferred[0]?.([])
+      // Still exactly one targeted call (the leading one) and a full trailing
+      // walk — the late targeted set must not downgrade the pending full scan.
+      await vi.waitFor(() => expect(countCalls('list_blocks')).toBe(1))
+      await Promise.all([p1, p2, p3])
+
+      expect(batchIds).toHaveLength(1)
+    })
+
+    it('a mid-scan plain caller (boot / space switch) upgrades it to a full walk too', async () => {
+      const { deferred, batchIds } = deferBatchResolve()
+
+      const p1 = useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_0']))
+      const p2 = useResolveStore.getState().preload(TEST_SPACE_ID)
+
+      await vi.waitFor(() => expect(deferred).toHaveLength(1))
+      deferred[0]?.([])
+      await vi.waitFor(() => expect(countCalls('list_blocks')).toBe(1))
+      await Promise.all([p1, p2])
+
+      expect(batchIds).toHaveLength(1)
+      expect(useResolveStore.getState()._preloaded).toBe(true)
+    })
+
+    it('a plain caller joining a TARGETED trailing scan still gets a full walk', async () => {
+      // The leading scan here is FULL, so the only thing that can flip the
+      // entry back to "currently targeted" is the TRAILING scan. A plain caller
+      // (boot / space switch, right after `clearAllForSpace` flushed this
+      // space) arriving while that trailing targeted scan runs must still be
+      // served a full walk — otherwise it resolves against a cache holding
+      // nothing but the handful of targeted ids and every other chip in the
+      // space renders `[[ULID]]`.
+      const listDeferred: Array<(v: unknown) => void> = []
+      const batchDeferred: Array<(v: unknown) => void> = []
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_blocks') return new Promise((resolve) => listDeferred.push(resolve))
+        if (cmd === 'batch_resolve') return new Promise((resolve) => batchDeferred.push(resolve))
+        if (cmd === 'list_all_tags_in_space') return []
+        return null
+      })
+
+      const p1 = useResolveStore.getState().preload(TEST_SPACE_ID)
+      const p2 = useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_0']))
+
+      await vi.waitFor(() => expect(listDeferred).toHaveLength(1))
+      listDeferred[0]?.({ items: [], next_cursor: null, has_more: false })
+      // Trailing scan is now targeted.
+      await vi.waitFor(() => expect(batchDeferred).toHaveLength(1))
+
+      const p3 = useResolveStore.getState().preload(TEST_SPACE_ID)
+      batchDeferred[0]?.([])
+      await vi.waitFor(() => expect(listDeferred).toHaveLength(2))
+      listDeferred[1]?.({ items: [], next_cursor: null, has_more: false })
+      await Promise.all([p1, p2, p3])
+
+      expect(countCalls('list_blocks')).toBe(2)
+      expect(countCalls('batch_resolve')).toBe(1)
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // set
 // ---------------------------------------------------------------------------
 describe('set', () => {

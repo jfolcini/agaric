@@ -348,8 +348,11 @@ export async function firstChildForBlocks(blockIds: string[]): Promise<Record<st
  * `scheduled_date`, `content`, `parent_id`, `position`, etc. collapse a
  * per-row `getBlock` IPC fan-out into a single query.
  *
- * Soft-deleted rows are INCLUDED (unlike `batchResolve` which filters
- * them out).
+ * Soft-deleted rows are INCLUDED — as they are in `batchResolve`, which
+ * surfaces them with `deleted: true` (`batch_resolve_inner` in
+ * `src-tauri/src/commands/blocks/queries.rs` applies no `deleted_at` filter).
+ * The difference from `batchResolve` is the projection width and the scoping,
+ * not the tombstone handling: this command is NOT space-scoped.
  *
  * IDs that don't exist are silently omitted from the response — callers
  * must map by `id` and treat missing keys as "unknown / lost". Returned
