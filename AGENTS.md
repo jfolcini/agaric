@@ -331,12 +331,21 @@ If a release tag fails at `verify-version`: delete it (`git push --delete origin
 
 ### Acceptance is falsification, not assertion
 
-"Add a test" is satisfiable by a test that cannot fail. State the acceptance criterion as **the failure you expect to see**, then produce it: break the production code the test covers, run it, read the RED output, restore. A test whose failure you cannot demonstrate has not been shown to cover anything. Where mutation testing reaches the code (`node scripts/run-mutation.mjs <module>`, or `cd src-tauri && cargo mutants` — scoping lives in `src-tauri/.cargo/mutants.toml` and is silently ignored when run from anywhere else), "the mutant dies" is the strongest form of this and cannot be satisfied vacuously.
+"Add a test" is satisfiable by a test that cannot fail. State the acceptance criterion as **the failure you expect to see**, then produce it: break the production code the test covers, run it, read the RED output, restore. A test whose failure you cannot demonstrate has not been shown to cover anything.
 
-Three failure modes recur, are cheap to spot, and each has a recorded instance. Issue numbers get closed and re-scoped, so each cites the append-only session log holding the run itself:
+Where mutation testing reaches the code, "the mutant dies" is the strongest form of this and cannot be satisfied vacuously:
+
+```bash
+node scripts/run-mutation.mjs <module>      # frontend; <module> validated against stryker.modules.mjs
+cd src-tauri && cargo mutants --workspace   # Rust; --workspace is MANDATORY, not a tuning flag
+```
+
+**`--workspace` is load-bearing.** `src-tauri/`'s root manifest is itself the `agaric` package with no `default-members`, so a bare `cargo mutants` generates mutants only in `agaric`: three of the four `examine_globs` in `src-tauri/.cargo/mutants.toml` match nothing and the surface collapses to `src/reverse/**` — **137 mutants instead of 607** (measured with `cargo mutants --list`, recorded in `.github/workflows/scheduled-deep-checks.yml`). Without it you run the strongest form of acceptance verification over a quarter of the intended surface, see no survivors, and conclude the mutants died — shape 1 below, committed by the tool meant to prevent it. `scripts/check-mutants-scope.mjs` fails CI when the flag is absent, so the scope is stated rather than inherited. The config is keyed to the workspace root by its *path*, so any cwd inside `src-tauri/` finds it (#3386).
+
+Three failure modes recur, are cheap to spot, and each has a recorded instance. Issue numbers get closed and re-scoped, so where a session log records the run, it is cited alongside — that log is append-only:
 
 1. **The vacuous assertion** — restates a precondition the test itself established. Ask: *what production change would redden this?* If the answer is "none", it is decoration. #3454 *proposed* a test for the `exact_match_nocase` gap ("insert `Urgent`, query prefix `urgent`, assert the exact match is returned and hoisted") that passes with the function stubbed to `Ok(None)`, because the code then falls through to `exact_match_normalized`, which matches the same ASCII case-variant — caught by reading the issue, before the test was ever written ([session 1269](docs/session-log/session-1269-tag-query-mutants.md)).
-2. **The unreachable condition** — a guard whose branch cannot be taken reads as coverage and supplies none. This is not a test gap; deleting the code is the only thing that clears its mutants (#3809, [session 1292](docs/session-log/session-1292-locale-independent-folding.md) for the run that established it, [session 1302](docs/session-log/session-1302-statements-that-read-as-verified.md) for the deletion).
+2. **The unreachable condition** — a guard whose branch cannot be taken reads as coverage and supplies none. This is not a test gap; deleting the code is the only thing that clears its mutants (#3809, [session 1292](docs/session-log/session-1292-locale-independent-folding.md)).
 3. **The half-covered pair** — one arm of a symmetric property pinned and the other left open: a snapshot's column set checked while the restore projection is not (PR #3425, [session 1263](docs/session-log/session-1263-spaces-rebuild-guard.md)), a guard body tested while its invocation is not (#3435, `src-tauri/src/commands/attachments.rs`). Ask of every guard: *is the call site covered as well as the body?*
 
 Shape 1 is the general case of "Assert durable, re-queried effect — never call-shape" in [Testing invariants (anti-drift)](#testing-invariants-anti-drift): a call-shape assertion is a vacuous assertion whose precondition is "the frontend asked".
