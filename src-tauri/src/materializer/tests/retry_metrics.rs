@@ -546,10 +546,6 @@ async fn retry_with_backoff_first_failure_does_not_emit_error_log_when_retry_suc
         "retry-success path must set succeeded = true"
     );
     assert!(
-        !outcome.panicked,
-        "retry-success path must leave panicked = false"
-    );
-    assert!(
         outcome.last_error_msg.is_none(),
         "retry-success path must clear last_error_msg, got {:?}",
         outcome.last_error_msg
@@ -611,10 +607,6 @@ async fn retry_with_backoff_emits_error_log_when_all_retries_fail() {
         "all-retries-fail path must leave succeeded = false"
     );
     assert!(
-        !outcome.panicked,
-        "non-panic failure must leave panicked = false"
-    );
-    assert!(
         outcome.last_error_msg.is_some(),
         "all-retries-fail path must capture last_error_msg"
     );
@@ -622,6 +614,13 @@ async fn retry_with_backoff_emits_error_log_when_all_retries_fail() {
     assert!(
         last_msg.contains("permanent failure"),
         "last_error_msg should embed the closure's error, got: {last_msg:?}"
+    );
+    // #3295: `RetryOutcome::panicked` is gone, so the `"panic: "` prefix is
+    // now the only thing distinguishing an unwound handler panic from an
+    // ordinary `Err`. A returned error must not be mislabelled as one.
+    assert!(
+        !last_msg.starts_with("panic:"),
+        "a returned Err must not be classified as a panic, got: {last_msg:?}"
     );
     assert_eq!(
         attempts.load(AtomicOrdering::Relaxed),
@@ -638,5 +637,180 @@ async fn retry_with_backoff_emits_error_log_when_all_retries_fail() {
     assert!(
         contents.contains("error processing materializer task"),
         "retry-exhausted path must emit the canonical error message, captured: {contents:?}"
+    );
+}
+
+/// #3295: the panic-isolation contract, pinned on the one side where it is
+/// observable.
+///
+/// `retry_with_backoff` runs every attempt in its own `tokio::task::spawn`.
+/// In an unwinding build a handler panic therefore comes back to the
+/// awaiting consumer as `Err(JoinError)`: the loop survives, the attempt is
+/// reported as a failure (never as success), it is NOT retried, and the
+/// next task drains. That is what this test pins.
+///
+/// **The release half is deliberately not asserted here, because it cannot
+/// be.** The shipped binary sets `panic = "abort"` in the workspace root's
+/// `[profile.release]`, where the same panic is a process abort and nothing
+/// returns to assert on — and no in-process test can reproduce that,
+/// because Cargo ignores a profile's `panic` key for test targets, so every
+/// test binary unwinds, `cargo nextest run --release` included. (The first
+/// assertion below is that fact made executable: if it ever fails, this
+/// test would abort the process rather than fail.) Observing the abort
+/// would take an out-of-process harness that runs a release-profile binary
+/// and checks for SIGABRT. `release_profile_still_sets_panic_abort` guards
+/// that side as far as it can be guarded: by pinning the profile flag
+/// itself, so a change to the contract cannot land silently.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retry_with_backoff_isolates_a_panicking_attempt_where_the_build_unwinds() {
+    use std::sync::atomic::AtomicU32;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    assert!(
+        std::panic::catch_unwind(|| panic!("#3295 unwind probe")).is_err(),
+        "this test binary does not unwind, so the isolation contract below \
+         is unobservable — see the doc comment"
+    );
+
+    let writer = LogBufWriter::default();
+    let subscriber = tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .with_writer(writer.clone())
+            .with_ansi(false)
+            .with_level(true)
+            .with_target(false),
+    );
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let attempts = StdArc::new(AtomicU32::new(0));
+    let attempts_for_closure = StdArc::clone(&attempts);
+    let outcome = super::super::consumer::retry_with_backoff(
+        "fg",
+        1,
+        |_| Duration::from_millis(0),
+        move || {
+            let attempts = StdArc::clone(&attempts_for_closure);
+            async move {
+                attempts.fetch_add(1, AtomicOrdering::Relaxed);
+                panic!("deliberate test panic — #3295 isolation probe")
+            }
+        },
+    )
+    .await;
+
+    // Reaching this line at all is half the contract: the panic stayed
+    // inside the spawned attempt instead of unwinding this task.
+    assert!(
+        !outcome.succeeded,
+        "a panicked attempt must never be reported as success"
+    );
+    let msg = outcome.last_error_msg.as_deref().unwrap_or_default();
+    assert!(
+        msg.starts_with("panic:"),
+        "a panicked attempt must be classified via the `panic: ` prefix \
+         (the only panic signal left after #3382 / #3295), got: {msg:?}"
+    );
+    assert_eq!(
+        attempts.load(AtomicOrdering::Relaxed),
+        1,
+        "a panicking attempt must not be retried — re-running a handler that \
+         violated its own invariants just re-runs the bug"
+    );
+
+    let contents = String::from_utf8_lossy(&writer.0.lock().unwrap()).into_owned();
+    assert!(
+        contents.contains("materializer task panicked"),
+        "the unwind-only panic arm must log at ERROR, captured: {contents:?}"
+    );
+    assert!(
+        contents.contains("ERROR"),
+        "a panic must not be demoted below ERROR, captured: {contents:?}"
+    );
+
+    // …and the other half: the helper is not poisoned, so the next task
+    // still drains through it.
+    let next = super::super::consumer::retry_with_backoff(
+        "fg",
+        1,
+        |_| Duration::from_millis(0),
+        move || async move { Ok(()) },
+    )
+    .await;
+    assert!(
+        next.succeeded,
+        "a task following a panicked one must still drain, got: {next:?}"
+    );
+}
+
+/// #3295: the release half of the panic contract, guarded where it *is*
+/// checkable — the build configuration.
+///
+/// This test asserts nothing about runtime panic behaviour (see
+/// `retry_with_backoff_isolates_a_panicking_attempt_where_the_build_unwinds`
+/// for why no in-process test can). What it does is fail the moment
+/// `[profile.release]` stops setting `panic = "abort"`, and hand the person
+/// who changed it the list of prose that has to move with it.
+///
+/// It deliberately does NOT also assert that the architecture doc agrees.
+/// That coupling existed and was removed — see the comment at the assertion
+/// for why a substring check over a long document cannot tell a meaning
+/// inversion from a synonym swap.
+#[test]
+fn release_profile_still_sets_panic_abort() {
+    // `CARGO_MANIFEST_DIR` is `<repo>/src-tauri`, which is the workspace
+    // root manifest — the one whose `[profile.release]` every shipped
+    // build inherits.
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    let manifest = std::fs::read_to_string(&manifest_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", manifest_path.display()));
+    let after_header = manifest
+        .split("[profile.release]")
+        .nth(1)
+        .expect("workspace-root Cargo.toml must have a [profile.release] section");
+    let release_section = after_header.split("\n[").next().unwrap_or(after_header);
+    // The trailing comment is stripped BEFORE the key/value split, and the
+    // value is compared for equality rather than by `contains`. Both matter:
+    // the rationale block above the key quotes `panic = "abort"` many times,
+    // and a substring test that only skipped whole-line comments would read
+    // `panic = "unwind"  # was "abort" before #3295` as abort — passing this
+    // guard while the shipped profile unwinds and the doc says it aborts,
+    // which is exactly the false-health signal this test exists to prevent.
+    let profile_aborts = release_section.lines().any(|line| {
+        let code = line.split('#').next().unwrap_or_default();
+        let Some((key, value)) = code.split_once('=') else {
+            return false;
+        };
+        key.trim() == "panic" && value.trim() == "\"abort\""
+    });
+
+    // This deliberately does NOT also grep the architecture doc for agreeing
+    // prose. That coupling was tried and removed: substring checks over a
+    // 1000-line document PASS a bullet rewritten to assert the OPPOSITE (the
+    // quoted terms survive a meaning inversion) and FAIL a semantically
+    // identical synonym swap. A guard that cannot tell those two apart reads
+    // as coverage and supplies none, which is the same shape as the dead
+    // panic-isolation machinery this issue removed — reproducing it inside
+    // the fix would be its own punchline.
+    //
+    // So the assertion is on the manifest alone, where the value is exact and
+    // machine-checkable, and the PROSE INVENTORY lives in the failure message
+    // instead. Flipping the flag still fails, and still hands the next person
+    // the full list of what to update — which was the only real value the doc
+    // half was reaching for.
+    //
+    // `scripts/check-metric-provable.mjs` pins the same manifest key (#3349).
+    // The duplication is intentional: that guard fails with a metrics-shaped
+    // message, this one fails next to the machinery whose contract changes.
+    assert!(
+        profile_aborts,
+        "[profile.release] no longer sets panic = \"abort\". That is option (a) \
+         of #3295 and it is a real choice, not necessarily a mistake — but the \
+         panic contract is documented in several places that must move with it: \
+         the 'Panic isolation' bullet in docs/architecture/data-and-events.md, \
+         the `RetryOutcome` / `AbortOnDrop` / `retry_with_backoff` doc comments \
+         in materializer/consumer.rs, the `fg_errors` doc in \
+         materializer/metrics.rs, and the rationale block in Cargo.toml above \
+         the flag itself. Also reconsider the panic counters deleted by #3382: \
+         under unwind they could actually fire, and would be worth restoring."
     );
 }
