@@ -1300,7 +1300,13 @@ pub async fn restore_block_inner(
         agaric_store::block_descendants::DescendantWalkFilter::Cohort(deleted_at_ref),
     )
     .await?;
-    let restore_cohort_json = serde_json::Value::from(restore_cohort).to_string();
+    // #3856: the walked cohort is KEPT (it used to be CONSUMED building this
+    // JSON payload) — it is exactly the set the post-commit engine fan-out
+    // below must drive, and re-deriving it after the UPDATE is impossible: the
+    // `deleted_at = ?` filter no longer identifies a cohort whose rows are all
+    // NULL again. `to_string(&…)` serialises the same JSON array the consuming
+    // `Value::from` did, and is the form the batch path already uses.
+    let restore_cohort_json = serde_json::to_string(&restore_cohort)?;
     // #2895 slice 2: the json_each cohort restore UPDATE now lives behind the
     // `blocks`-owning engine crate (byte-identical SQL).
     let restored_rows = agaric_engine::block_ops::write_cohort_deleted_at_json(
@@ -1397,6 +1403,56 @@ pub async fn restore_block_inner(
     let op_record = Arc::new(op_record);
     tx.enqueue_lifecycle_background(Arc::clone(&op_record), block_type);
     tx.commit_and_dispatch(materializer).await?;
+
+    // #3856 POST-COMMIT engine fan-out for the restored SEED + DESCENDANT
+    // cohort — the LOCAL counterpart of the `dispatch_restore_descendants` call
+    // `apply_op` runs after ITS commit, and the exact fan-out
+    // `restore_blocks_by_ids_inner` has hand-rolled since #1257.
+    //
+    // This command performs NO in-tx engine work of its own: unlike
+    // `delete_block_inner` it does not route through `apply_op_projected`, so
+    // nothing here reached the engine for the seed or its descendants — the SQL
+    // walk above only cleared `deleted_at`. #3834 added the UPWARD half below
+    // and made the asymmetry sharper rather than smaller: the ancestors came
+    // back in the CRDT while the seed and its cohort stayed tombstoned, so the
+    // next `reproject_block_deleted_at_from_engine` re-deleted a CHILD under a
+    // now-live PARENT — the inverse of the #1884 live-orphan the upward walk
+    // exists to prevent.
+    //
+    // Deliberately a POST-COMMIT fan-out rather than an in-tx
+    // `apply_op_projected` route (the other option #3856 lists).
+    //
+    // Stated precisely, because the obvious version of this claim is too
+    // strong: the ROUTE was never the problem. `apply_op_projected` would have
+    // handed back the ingredients either way — its kernel runs
+    // `collect_restore_cohort` before the Loro apply and sets
+    // `effects.restored_cohort` unconditionally, and the sql_only fallback
+    // returns `Ok`, so nothing short-circuits. A caller that routed through it
+    // AND fanned the cohort out post-commit would also have worked. What was
+    // missing was the post-commit fan-out, which is what this is.
+    //
+    // What routing in-tx could NOT have done is carry the engine write itself:
+    // `apply_restore_block_via_loro` resolves the space BEFORE the rows are
+    // alive, so it anchors on the seed's PARENT — and in the #1884 shape (child
+    // trashed first, parent trashed after) that parent is itself tombstoned,
+    // `resolve_block_space` filters `deleted_at IS NULL`, and the apply degrades
+    // to the `sql_only` fallback: no engine work at all, silently. Its in-tx
+    // apply is also seed-only by design, so it could never have reached a
+    // grandchild. Post-commit the cohort is alive again, so the fan-out's inline
+    // resolve always succeeds — the restore/delete asymmetry `ApplyEffects`
+    // documents (delete must capture its space PRE-UPDATE for the mirror
+    // reason). Going through `apply_op_projected` as well would stack a second,
+    // redundant cohort UPDATE on top of this function's own.
+    // Engine `apply_restore_block` is idempotent, so re-applying an already-live
+    // member is a no-op. Infallible / log-only, mirroring `apply_op`'s call shape
+    // and ordering (descendants first, then ancestors).
+    crate::materializer::dispatch_restore_descendants(
+        pool,
+        &op_record,
+        &restore_cohort,
+        materializer.loro_state(),
+    )
+    .await;
 
     // #3834 POST-COMMIT engine fan-out for the restored ANCESTOR chain — the
     // LOCAL counterpart of the `dispatch_restore_ancestors` call `apply_op`
@@ -1745,6 +1801,17 @@ pub async fn restore_all_deleted_inner(
     }
 
     let now = crate::db::now_ms();
+    // #3856: per-root (op record, PRE-UPDATE cohort) pairs for the post-commit
+    // engine fan-out below. Like the other two restore paths, this command does
+    // no engine work in-tx, so without this every block it un-deletes stays
+    // tombstoned in the per-space CRDT and the next
+    // `reproject_block_deleted_at_from_engine` re-deletes the whole trash in
+    // SQL. Capture is per ROOT, not one flat list of every tombstone: the
+    // fan-out resolves its target space from the ROOT op's block, so a flat list
+    // would drive one space's engine with another space's ids ("empty trash" is
+    // cross-space by construction).
+    let mut restore_fanout: Vec<(Arc<op_log::OpRecord>, Vec<String>)> =
+        Vec::with_capacity(roots.len());
     // Append one RestoreBlock op per root for sync compatibility.
     for root in &roots {
         // The selecting query filters `WHERE deleted_at IS NOT NULL`, so this
@@ -1756,12 +1823,30 @@ pub async fn restore_all_deleted_inner(
                 root.id
             ))
         })?;
-        let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
+        let inner_payload = RestoreBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
             deleted_at_ref,
-        });
-        let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-        tx.enqueue_lifecycle_background(Arc::new(op_record), root.block_type.clone());
+        };
+        let op_record = Arc::new(
+            op_log::append_local_op_in_tx(
+                &mut tx,
+                device_id,
+                OpPayload::RestoreBlock(inner_payload.clone()),
+                now,
+            )
+            .await?,
+        );
+        tx.enqueue_lifecycle_background(Arc::clone(&op_record), root.block_type.clone());
+        // #3856 PRE-UPDATE capture of this root's connected delete cohort — the
+        // same `collect_restore_cohort` walk the batch path uses. It MUST run
+        // before `clear_all_deleted_at` below: once every tombstone is NULL the
+        // `deleted_at = deleted_at_ref` filter matches nothing and the cohort is
+        // unrecoverable. Roots partition the tombstones (a cascade descendant
+        // carries its root's timestamp and is reached by the contiguous walk; a
+        // separately-trashed descendant carries its own and is itself a root),
+        // so the union of these cohorts is the set the UPDATE clears.
+        let cohort = crate::materializer::collect_restore_cohort(&mut tx, &inner_payload).await?;
+        restore_fanout.push((op_record, cohort));
     }
 
     // Bulk restore: clear deleted_at on ALL deleted blocks. #2895 slice 2:
@@ -1802,6 +1887,27 @@ pub async fn restore_all_deleted_inner(
 
     // Commit + drain enqueued background dispatches in FIFO order.
     tx.commit_and_dispatch(materializer).await?;
+
+    // #3856 POST-COMMIT engine fan-out: drive every restored cohort onto its
+    // per-space Loro engine, mirroring `restore_block_inner` and
+    // `restore_blocks_by_ids_inner`. There is no upward `dispatch_restore_ancestors`
+    // companion here and that is not an omission: this variant clears EVERY
+    // tombstone, so an ancestor chain is either inside a root's cohort or is a
+    // root of its own — the #1884 upward walk is vacuous on this path (the same
+    // reason `restore_all_deleted_inner` never called it, which is what hid
+    // #3818 on the batch path that copied it). The fan-out resolves each root's
+    // space inline — valid because the rows are alive again post-commit — and
+    // engine `apply_restore_block` is idempotent, so overlapping cohorts are
+    // harmless. Infallible / log-only.
+    for (op_record, cohort) in &restore_fanout {
+        crate::materializer::dispatch_restore_descendants(
+            pool,
+            op_record,
+            cohort,
+            materializer.loro_state(),
+        )
+        .await;
+    }
 
     Ok(BulkTrashResponse {
         affected_count: count,
