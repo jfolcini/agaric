@@ -1658,7 +1658,10 @@ describe('TrashView', () => {
       )
     })
     expect(purgeCalls).toBe(2)
-  })
+    // 60s, not the 20s global — same structural 1001-block fixture as below. This
+    // test predates #3860 and was already flaking under full-suite parallelism;
+    // the timeout is the fix for the flake, not for anything #3860 changed. #3885.
+  }, 60_000)
 
   // #3860 — the issue's actual complaint: at N=1 the toast and the
   // screen-reader announcement must AGREE within the SAME user action, not
@@ -1706,7 +1709,11 @@ describe('TrashView', () => {
     // Neither channel fell back to the "_other"-shaped plural wording.
     expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining('Removed 1 items'))
     expect(mockedAnnounce).not.toHaveBeenCalledWith(expect.stringContaining('1 items permanently'))
-  })
+    // 60s, not the 20s global: `MAX_TRASH_BATCH_IDS` is 1000 and module-private,
+    // so provoking a SECOND purge chunk requires a genuine 1001-block fixture —
+    // the size is structural, not incidental. Measured 7.4s-31.9s in isolation,
+    // and it tips over 20s under full-suite parallelism. See #3885.
+  }, 60_000)
 
   it('opens confirmation dialog when Restore All header is clicked', async () => {
     const user = userEvent.setup()
