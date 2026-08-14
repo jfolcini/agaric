@@ -1,0 +1,220 @@
+{
+  "description": "#3826 — the PAGINATED half of the read differential: three consecutive `list_blocks` pages over one parent's five children, each page after the first driven by the `next_cursor` the previous page returned (`cursor_from`). A single-page fixture would pin nothing about pagination: per #3821, a keyset-ordering divergence changes WHICH rows a page contains, not merely their order, so the boundary only becomes visible once a second page is fetched with the first page's cursor. `has_more` flips false on the last page, and the pages are `ordered` because `list_children` keysets on `(position, id)` over seed blocks whose ids are byte-identical on both stacks.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Paged",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "c1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "c2",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "c3",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "c4",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "c5",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 0,
+      "ops": []
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "has_more": true,
+      "name": "children_page_1",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "has_more": true,
+      "name": "children_page_2",
+      "rows": [
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "children_page_3",
+      "rows": ["B6#parent_id=B1#page_id=B1#position=5#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "query_list_blocks_pagination",
+  "ops": [],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "limit": 2,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "First page of two rows out of five, so `has_more` is true and a `next_cursor` exists to chain from.",
+      "name": "children_page_1",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 2,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The middle page — the one that only exists if the cursor was both emitted and honoured. Its rows are the pin: a limit the command ignores returns all five here, and a keyset that resumes from the wrong side of the boundary returns an overlapping or skipped pair.",
+      "cursor_from": "children_page_1",
+      "name": "children_page_2",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 2,
+          "parentId": "S1"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The short final page: one row, `has_more` false. Pins the end-of-results signal the FE stops on.",
+      "cursor_from": "children_page_2",
+      "name": "children_page_3",
+      "ordered": true
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Paged",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "c1",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "c2",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "c3",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "c4",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "c5",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

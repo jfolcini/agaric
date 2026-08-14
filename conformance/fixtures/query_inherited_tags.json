@@ -1,0 +1,132 @@
+{
+  "description": "#3826 — `list_inherited_tags_for_block` over the DERIVED `block_tag_inherited` table, the one command in this group whose rows the #763 snapshot does not model at all (the snapshot covers blocks / block_properties / block_tags / block_links / op_log). Tagging the PAGE makes its child inherit the tag via `propagate_tag_to_descendants`, and the two steps pin the #1423 contract that the inherited list and the DIRECT list are disjoint: the child holds the tag in one and not the other. The tag edge is driven as an OP over a `page`-typed tag target, the idiom every existing tag fixture uses: a root-level `tag`-typed seed block would take a `page_id` from the raw seed insert that the mock's seed loader does not reproduce, a harness asymmetry unrelated to the command under test.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B1",
+        "tag_id": "B3"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Inherit",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "child",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "urgent",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "op_type": "add_tag"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "has_more": null,
+      "name": "inherited_tag_reaches_the_descendant",
+      "rows": ["B3"],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "inherited_tag_is_not_a_direct_tag",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_inherited_tags",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S1",
+        "tagId": "S3"
+      },
+      "command": "add_tag"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "list_inherited_tags_for_block",
+      "comment": "S1 carries the tag directly; S2 is its descendant, so `block_tag_inherited` holds (S2, S3, inherited_from = S1) and the read returns it. Nothing else in the harness observes this table, so without this step the derived cache is unpinned on the mock side entirely.",
+      "name": "inherited_tag_reaches_the_descendant"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "list_tags_for_block",
+      "comment": "The disjointness half of #1423: the same block that inherits S3 holds NO direct tag, so the direct reader answers empty. Meaningful only next to the non-empty step above — together they pin that the two readers do not fall back to one another.",
+      "expect_empty": true,
+      "name": "inherited_tag_is_not_a_direct_tag"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Inherit",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "child",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "urgent",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

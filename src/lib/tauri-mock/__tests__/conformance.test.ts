@@ -238,6 +238,60 @@ const DRIFT_SKIP = new Set<string>([
   // skipped and now assert mock == backend.
 ])
 
+/**
+ * Fixtures whose QUERY leg is a known divergence but whose SNAPSHOT leg agrees.
+ *
+ * Kept separate from {@link DRIFT_SKIP} deliberately. A read divergence says
+ * nothing about the op replay behind it, and skipping a whole fixture for one
+ * would darken assertions that PASS — the same "a skip that reads like
+ * coverage" failure the `QUERY_STEPS_BACKEND_ONLY` guard in
+ * `conformance-coverage.test.ts` exists to prevent. Every name here therefore
+ * still asserts `mock == backend` on its snapshot; only its query steps are
+ * unasserted. Each entry needs a `// DRIFT(#763): …` note naming the issue.
+ *
+ * ## Why the granularity is the FIXTURE and not the step
+ *
+ * A per-STEP skip set lived here briefly, to keep a diverging command from
+ * darkening its passing siblings. It was removed because per-step skipping is
+ * UNSOUND for the step shape this harness leans on hardest: a PAIR, where a
+ * non-empty step and an `expect_empty` step are only meaningful TOGETHER.
+ * `query_inherited_tags` is the case in point — its empty step pins that the
+ * direct-tag reader does NOT answer the inherited tag, which proves something
+ * only while the inherited reader is asserted to return that tag. Skip the
+ * non-empty half and the survivor asserts `[] == []`: a mock whose
+ * `list_tags_for_block` is a constant `() => []` passes it. The `expect_empty`
+ * vacuity guard in `conformance-coverage.test.ts` cannot catch that, because
+ * the step legitimately declared itself empty; the skip is what hollowed it.
+ *
+ * So: skipping any step of a pair must skip BOTH, and since a pair is the
+ * normal shape here, the honest unit is the fixture. If per-step skipping is
+ * ever reintroduced, it must name every step of the pair — and the guard that
+ * decides which commands are differentially covered must count a step's
+ * recorded ROWS, not merely its presence (see `QUERY_STEPS_BACKEND_ONLY`).
+ */
+const QUERY_DRIFT_SKIP = new Set<string>([
+  // #3826 — three READ divergences the first honest query fixtures found. Each
+  // is FILED, not accommodated: the fixture states the backend's behaviour and
+  // stays in the tree with its backend-authored expectation, so the mock fix
+  // only has to delete the line below.
+  //
+  // DRIFT(#763): #3870 — the mock's `list_blocks` reads neither `limit` nor
+  // `cursor` and always answers `has_more: false`, so it has no pagination at
+  // all: page 2 and page 3 return the whole child list.
+  'query_list_blocks_pagination',
+  // DRIFT(#763): #3871 — the mock's `list_inherited_tags_for_block` is a
+  // hard-coded `() => []`, so `inherited_tag_reaches_the_descendant` diverges.
+  // Its sibling `inherited_tag_is_not_a_direct_tag` passes on the mock, but it
+  // is the `expect_empty` HALF OF A PAIR and asserts nothing alone (see the
+  // granularity note above), so the fixture is skipped whole rather than
+  // leaving a survivor that reads like coverage.
+  'query_inherited_tags',
+  // DRIFT(#763): #3872 — the mock's `get_batch_properties` keys its map off the
+  // REQUEST, so a property-less block comes back bound to `[]` where
+  // `get_batch_properties_inner` omits it entirely.
+  'query_batch_properties_empty_entry',
+])
+
 describe('tauri-mock ⇄ backend conformance (#763)', () => {
   beforeEach(() => {
     clearMock()
@@ -269,7 +323,9 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
   // fixture so a query divergence names the query, not the snapshot.
   for (const { fixture } of fixtures) {
     if (!fixture.queries || fixture.queries.length === 0) continue
-    const run = DRIFT_SKIP.has(fixture.name) ? it.skip : it
+    // A snapshot divergence invalidates the state the reads run over, so the
+    // query leg skips for EITHER set.
+    const run = DRIFT_SKIP.has(fixture.name) || QUERY_DRIFT_SKIP.has(fixture.name) ? it.skip : it
     run(
       `fixture '${fixture.name}' — mock reproduces the backend-authored query results`,
       async () => {

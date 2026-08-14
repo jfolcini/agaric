@@ -341,22 +341,18 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
  */
 const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // ── Point reads over blocks / properties / tags ──
-  // The ROWS these serve are already diffed row-for-row by the #763 snapshot;
-  // what is NOT diffed is each command's own projection, pagination and
-  // filtering of them. That residual is real, so these are fixture candidates.
-  batch_resolve: 'fixture candidate: point resolve over rows the #763 snapshot already diffs',
-  first_child_for_blocks: 'fixture candidate: point read over rows the #763 snapshot already diffs',
-  get_block: 'fixture candidate: point read over rows the #763 snapshot already diffs',
-  get_blocks: 'fixture candidate: point read over rows the #763 snapshot already diffs',
-  get_batch_properties:
-    'fixture candidate: point read over properties the #763 snapshot already diffs',
-  get_properties: 'fixture candidate: point read over properties the #763 snapshot already diffs',
-  get_property: 'fixture candidate: point read over properties the #763 snapshot already diffs',
-  list_blocks: 'fixture candidate: paginated block list; pagination is the uncovered part',
-  list_tags_for_block: 'fixture candidate: point read over block_tags the snapshot already diffs',
-  list_inherited_tags_for_block:
-    'fixture candidate: block_tag_inherited is derived state the snapshot does not model',
-  load_page_subtree: 'fixture candidate: subtree read over rows the #763 snapshot already diffs',
+  //
+  // #3826 CLOSED this group. Eleven commands (`batch_resolve`,
+  // `first_child_for_blocks`, `get_block`, `get_blocks`, `get_batch_properties`,
+  // `get_properties`, `get_property`, `list_blocks`, `list_tags_for_block`,
+  // `list_inherited_tags_for_block`, `load_page_subtree`) were waived here as
+  // "point reads over rows the #763 snapshot already diffs". True, and not a
+  // reason to skip them: the snapshot diffs the ROWS, never each command's own
+  // projection, pagination and filtering of them. They are now driven by the
+  // `query_point_reads_*`, `query_list_blocks_pagination`,
+  // `query_inherited_tags` and `query_batch_properties_empty_entry` fixtures,
+  // and the residual turned out to hold three real divergences (#3870, #3871,
+  // #3872) that the waiver had been quietly covering for.
 
   // ── Legacy tag / property query surface ──
   query_by_property: 'fixture candidate: superseded by filtered_blocks_query, still IPC-reachable',
@@ -468,6 +464,70 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   get_mcp_socket_path: 'no domain state — MCP transport path',
   get_mcp_rw_socket_path: 'no domain state — MCP transport path',
   get_mcp_recent_activity: 'no domain state — in-memory MCP activity ring buffer',
+}
+
+// ---------------------------------------------------------------------------
+// Commands whose query steps run on the BACKEND leg only (#3826)
+// ---------------------------------------------------------------------------
+
+/**
+ * A fixture whose query leg is skipped in `conformance.test.ts` (either whole-
+ * fixture via `DRIFT_SKIP` or query-leg-only via `QUERY_DRIFT_SKIP`) still runs
+ * against the real backend (the Rust runner has no skip list) but is NOT
+ * asserted against the mock. So a read command whose ONLY query steps live in
+ * skipped fixtures is pinned on one stack, not diffed across two — which is
+ * exactly the shape the #3331 lesson warns about: a waiver that reads like
+ * coverage.
+ *
+ * Each entry names the DIVERGENCE issue that makes the mock leg red, so the
+ * exemption cannot quietly become the resting state. The guard below fails both
+ * ways: an undeclared backend-only command, and a declared one that has since
+ * gained a live (non-skipped) fixture — delete the entry when its issue lands.
+ */
+const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
+  list_blocks:
+    '#3870 — the mock reads neither `limit` nor `cursor`, so it has no pagination; ' +
+    'query_list_blocks_pagination is QUERY_DRIFT_SKIPped until it does',
+  list_inherited_tags_for_block:
+    '#3871 — the mock handler is a hard-coded `() => []`; query_inherited_tags is ' +
+    'QUERY_DRIFT_SKIPped until `block_tag_inherited` is modelled',
+}
+
+const CONFORMANCE_TEST_PATH = path.resolve(import.meta.dirname, 'conformance.test.ts')
+
+/** Parse one `new Set([...])` declaration out of `conformance.test.ts` — reading
+ *  the real set rather than a second copy that could drift from it. Comment
+ *  lines are dropped first: the reasons contain apostrophes.
+ *
+ *  The needle includes the ` = ` deliberately. On a bare `const ${name}` prefix,
+ *  one set name that PREFIXES another (`DRIFT_SKIP` vs a hypothetical
+ *  `DRIFT_SKIP_STEPS`) resolves to whichever is declared FIRST in the file, so
+ *  the parser silently reads the wrong set when someone reorders declarations.
+ *  Anchoring on the assignment makes each name match only its own declaration. */
+function loadSkipSet(name: string): Set<string> {
+  const source = readFileSync(CONFORMANCE_TEST_PATH, 'utf8')
+  const start = source.indexOf(`const ${name} =`)
+  const end = source.indexOf('])', start)
+  if (start < 0 || end < 0) {
+    throw new Error(
+      `could not find the ${name} set in ${CONFORMANCE_TEST_PATH} — this guard ` +
+        `parses it; update the parser if the declaration moved.`,
+    )
+  }
+  return new Set(
+    source
+      .slice(start, end)
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//'))
+      .flatMap((line) => [...line.matchAll(/'([^']+)'/g)].map((m) => m[1] as string)),
+  )
+}
+
+/** Every fixture whose QUERY leg is unasserted on the mock — the union of the
+ *  whole-fixture and query-leg-only skip sets, matching the `run` predicate the
+ *  query leg of `conformance.test.ts` actually uses. */
+function loadDriftSkip(): Set<string> {
+  return new Set([...loadSkipSet('DRIFT_SKIP'), ...loadSkipSet('QUERY_DRIFT_SKIP')])
 }
 
 // ---------------------------------------------------------------------------
@@ -833,6 +893,82 @@ describe('#3083 conformance-coverage ratchet', () => {
       `These query steps declare "expect_empty": true but recorded rows ` +
         `${JSON.stringify(staleEmptyClaim)}. Drop the stale declaration.`,
     ).toEqual([])
+  })
+
+  // #3826 — a query step in a DRIFT_SKIPped fixture is backend-only, not a
+  // differential. Say so explicitly, per command, with the issue that will make
+  // it one.
+  it('every read command whose query steps are all DRIFT_SKIPped is declared backend-only', () => {
+    const skipped = loadDriftSkip()
+    const staleSkip = [...skipped].filter((name) => !fixtures.some((fx) => fx.name === name))
+    expect(
+      staleSkip,
+      `DRIFT_SKIP / QUERY_DRIFT_SKIP name fixtures that no longer exist ${JSON.stringify(staleSkip)}. ` +
+        `Remove the stale entries from conformance.test.ts.`,
+    ).toEqual([])
+
+    // Live == the step actually asserts mock-vs-backend over DATA. Two ways to
+    // fail that, and counting only the first is this guard's own bug repeated
+    // one level down:
+    //
+    //   1. the step's fixture is query-skipped, so the mock leg never runs it;
+    //   2. the step runs but recorded ZERO rows, so the comparison is `[] == []`
+    //      and a constant-`[]` handler satisfies it.
+    //
+    // (2) is why `rows.length` is consulted here rather than mere step
+    // PRESENCE. An `expect_empty` step is a legitimate assertion next to a
+    // populated sibling — the vacuity guard above enforces the declaration —
+    // but it is not, on its own, evidence that the command was differentially
+    // exercised. A command whose only unskipped step is empty is exactly as
+    // undiffed as one with no unskipped step at all, and must be declared.
+    const liveCommands = new Set<string>()
+    for (const fx of fixtures) {
+      if (skipped.has(fx.name)) continue
+      for (const [i, step] of fx.querySteps.entries()) {
+        // Index-aligned with `querySteps`; the vacuity guard above fails first
+        // if that alignment ever breaks, so a missing entry here is treated as
+        // no evidence rather than silently counted.
+        if ((fx.expectedQueries[i]?.rows.length ?? 0) === 0) continue
+        liveCommands.add(step.command)
+      }
+    }
+    const backendOnly = [...fixtureQueryCommands].filter((c) => !liveCommands.has(c)).toSorted()
+    const undeclared = backendOnly.filter((c) => !(c in QUERY_STEPS_BACKEND_ONLY))
+    expect(
+      undeclared,
+      `These commands have NO query step that is both unskipped on the mock leg and ` +
+        `non-empty ${JSON.stringify(undeclared)} — either every step lives in a ` +
+        `query-skipped fixture, or the ones that run recorded zero rows. Both mean ` +
+        `the command is pinned on one stack, not diffed across two. FIX by EITHER ` +
+        `adding a live fixture step that SELECTS ROWS, OR declaring the command in ` +
+        `QUERY_STEPS_BACKEND_ONLY with the divergence issue that keeps it skipped.`,
+    ).toEqual([])
+
+    const stale = Object.keys(QUERY_STEPS_BACKEND_ONLY).filter((c) => liveCommands.has(c))
+    expect(
+      stale,
+      `QUERY_STEPS_BACKEND_ONLY declares commands that now have a LIVE, non-empty ` +
+        `query step ${JSON.stringify(stale)}. The divergence is fixed — delete the entry.`,
+    ).toEqual([])
+
+    // The sibling allowlists both audit for entries that no longer name
+    // anything real; without the same check here, deleting the last fixture
+    // that drives a declared command leaves its waiver behind, still reading
+    // as a live exemption for a command nothing exercises.
+    const orphaned = Object.keys(QUERY_STEPS_BACKEND_ONLY)
+      .filter((c) => !fixtureQueryCommands.has(c))
+      .toSorted()
+    expect(
+      orphaned,
+      `QUERY_STEPS_BACKEND_ONLY declares commands that NO fixture drives a query ` +
+        `step for ${JSON.stringify(orphaned)}. The waiver describes a backend-only ` +
+        `step that no longer exists — remove the entry (or restore the fixture).`,
+    ).toEqual([])
+
+    expect(
+      Object.keys(QUERY_STEPS_BACKEND_ONLY).every((c) => QUERY_STEPS_BACKEND_ONLY[c]?.trim()),
+      'Every QUERY_STEPS_BACKEND_ONLY entry needs a non-empty reason naming the issue.',
+    ).toBe(true)
   })
 
   // Every command wired into the query runner must be reachable as a read: a

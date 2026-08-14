@@ -21,6 +21,19 @@
 //! SAME steps through the tauri-mock and asserts the SAME recorded values. One
 //! backend-authored expectation therefore binds both implementations.
 //!
+//! A row may carry ATTRIBUTES (`B2#page_id=B1#deleted_at=DELETED`) when the
+//! ids alone cannot see the command's projection; the grammar and its two
+//! comparability rules are documented at "Row tokens" below.
+//!
+//! ## Pagination: `cursor_from`
+//!
+//! A step may declare `"cursor_from": "<earlier step name>"`, which feeds that
+//! step's own `next_cursor` into this one (at the command's [`cursor_path`]).
+//! The cursor itself is never recorded — it is an opaque per-stack keyset blob,
+//! so comparing encodings would prove nothing — but the ROWS of the second page
+//! are, and per #3821 that is exactly what a keyset-ordering divergence
+//! changes. A single-page step pins nothing about pagination.
+//!
 //! ## Why `rows` is a list of canonical tokens
 //!
 //! Op-created blocks get a random ULID on the backend and a mock-local id in the
@@ -56,6 +69,12 @@
 //!    reddening on a real divergence. When #3821 lands, set `"ordered": true`
 //!    on the three `run_advanced_query` steps and re-author; the fixture is
 //!    already shaped to pin the order.
+//! 3. #3873 — `list_tags_for_block` sorts `ORDER BY tag_id` on the backend and
+//!    returns `blockTags` INSERTION order on the mock. Same shape as (2):
+//!    `query_point_reads_tags`'s `tags_two_surviving_in_id_order` step applies
+//!    its two tags in descending id order precisely so the sequences differ,
+//!    and flipping it to `"ordered": true` after #3873 lands makes it a real
+//!    order pin without touching the fixture's data.
 //!
 //! Steps whose sort key is fixture-controlled data (page title, …) set
 //! `ordered` and DO compare sequences.
@@ -64,6 +83,7 @@ use super::common::pages::list_pages_with_metadata_inner;
 use super::common::*;
 use super::conformance::seed_label_to_id;
 use super::conformance_snapshot::token_key;
+use agaric_core::ulid::BlockId;
 use agaric_store::query::{AdvancedQueryRequest, compile_and_run};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -107,6 +127,12 @@ struct RawResult {
     rows: Vec<String>,
     has_more: Option<bool>,
     total_count: Option<i64>,
+    /// The envelope's `next_cursor`, kept OUT of the recorded projection: it is
+    /// an opaque per-stack blob (the backend base64s a versioned JSON keyset,
+    /// the mock encodes its own), so recording it would compare two encodings
+    /// rather than two result sets. It is threaded to the next step instead —
+    /// see `cursor_from` in [`run_query_steps`].
+    next_cursor: Option<String>,
 }
 
 /// Pull `<id_key>` out of each row of an already-located row array.
@@ -119,6 +145,228 @@ fn ids_in(rows: &[Value], id_key: &str) -> Vec<String> {
                 .to_owned()
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Row tokens (#3826)
+// ---------------------------------------------------------------------------
+//
+// A row token is
+//
+//     token := head ("#" attr-name "=" attr-value)*
+//     head  := <id> | <id> "->" <id> | <opaque key>
+//
+// `relabel_token` rewrites BOTH sides of an arrow head and every attr VALUE
+// through the canonical `Bn` map, so `B1->B3#page_id=B1` reads the same on
+// either stack. Attributes exist because an id-only token cannot see a
+// projection bug: a command that returns the right rows with the wrong
+// `page_id`, the wrong `deleted` flag or the wrong typed value would compare
+// equal. Two rules keep an attribute comparable across the stacks:
+//
+//   * NEVER attach a clock-derived column verbatim. `deleted_at` is an
+//     epoch-ms stamp that differs on every run, so it is normalised to the
+//     `DELETED` sentinel the #763 snapshot already uses.
+//   * NEVER attach content carrying `#` or `->`; the grammar would not survive
+//     the round trip. Fixture-authored ASCII words are fine.
+//
+// The TS twin implements the same grammar in `conformance-query.ts`.
+
+/// The `deleted_at` sentinel — mirrors `conformance_snapshot`'s normalisation
+/// of the epoch-ms tombstone stamp.
+const DELETED_SENTINEL: &str = "DELETED";
+
+/// Attributes carried by every `BlockRow`-shaped row. `parent_id` / `page_id`
+/// are relabeled ids, so a command that serves the right blocks with the wrong
+/// tree links (the #1775 class) still reddens; `deleted_at` says whether the
+/// command's SQL filters tombstones. MUST match `BLOCK_ATTRS` in the TS twin.
+const BLOCK_ATTRS: &[&str] = &["parent_id", "page_id", "position", "deleted_at"];
+
+/// Attributes of a `ResolvedBlock` — the lightweight chip projection.
+/// `title` is the RENAMED `content` column and `deleted` the derived tombstone
+/// flag: both are projection decisions an id-only token cannot see.
+const RESOLVED_ATTRS: &[&str] = &["title", "block_type", "deleted"];
+
+/// The half-open magnitude range in which Rust's `f64` `Display` and the TS
+/// twin's `String(n)` provably produce the same characters.
+///
+/// JS switches to exponent notation at `|v| >= 1e21` and at `0 < |v| < 1e-6`
+/// (`String(1e-7) === '1e-7'`), and prints `-0` as `'0'`; Rust's `Display` does
+/// neither (`(1e-7_f64).to_string() == "0.0000001"`, `format!("{:.0}", -0.0) ==
+/// "-0"`). A `value_num` out there would therefore token DIFFERENTLY on the two
+/// runners and redden a fixture that holds no divergence at all — the one way
+/// this harness can lie. Zero is comparable, negative zero is not.
+const JS_PLAIN_RANGE: std::ops::Range<f64> = 1e-6..1e21;
+
+/// Render one attribute value as a token segment.
+///
+/// Numbers are printed the way `String(n)` prints them in the TS twin. Rust's
+/// `Display` for `f64` already matches inside [`JS_PLAIN_RANGE`] — it prints
+/// `3.0` as `3` (the trailing `.0` is `Debug`, not `Display`) and never uses
+/// exponent form — so no integral special-case is needed, and an earlier one
+/// here was dead code justified by serde_json's rendering, which the
+/// `as_f64` hop means never reaches the output. A magnitude the two
+/// formatters DO disagree on is REFUSED at authoring time rather than
+/// recorded — see [`JS_PLAIN_RANGE`].
+///
+/// The rendered value is also refused if it contains `#` or `->`, the two
+/// sequences the token grammar uses as separators. That failure mode is not a
+/// red/green flip — both runners build the identical string — it is token
+/// ALIASING: content `a#b` renders `B2#title=a#b#block_type=…`, which a
+/// differently-split row can match, so a real projection bug in that column
+/// could compare EQUAL. `RESOLVED_ATTRS` carries `title`, i.e. the raw
+/// `content` column, and `#` is ordinary text in this app — this is reachable,
+/// not theoretical.
+fn attr_value(name: &str, v: Option<&Value>) -> String {
+    let rendered = match v {
+        None | Some(Value::Null) => "null".to_owned(),
+        Some(_) if name == "deleted_at" => DELETED_SENTINEL.to_owned(),
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Number(n)) => n.as_f64().map_or_else(
+            || n.to_string(),
+            |f| {
+                assert!(
+                    (f == 0.0 && !f.is_sign_negative()) || JS_PLAIN_RANGE.contains(&f.abs()),
+                    "query attribute '{name}' holds {f}, whose Rust and JS renderings \
+                     differ (exponent form / signed zero), so the two conformance \
+                     runners could never agree on its token. Give the fixture a value \
+                     in ±[1e-6, 1e21) or exactly 0."
+                );
+                f.to_string()
+            },
+        ),
+        Some(other) => other.to_string(),
+    };
+    assert!(
+        !rendered.contains('#') && !rendered.contains("->"),
+        "query attribute '{name}' renders as {rendered:?}, which contains a token \
+         separator ('#' or '->'). Both runners would build the SAME string, so this \
+         does not redden — it ALIASES: a differently-split row can match the same \
+         token, and a real projection bug in this column would compare equal. Pick \
+         fixture content without those sequences."
+    );
+    rendered
+}
+
+/// Refuse a token HEAD carrying a separator, for the same reason [`attr_value`]
+/// refuses one in a value.
+///
+/// [`attr_value`] guards only the ATTRIBUTE side of
+/// `head ("#" attr-name "=" attr-value)*`, but the head is concatenated with
+/// those segments and aliases across the join just as readily. The property key
+/// `a#b` holding `value_text: "x"` renders `a#b#Text=x` — byte-identical to the
+/// key `a` carrying a `b#Text=x` segment — so the two compare EQUAL and a
+/// projection bug that swaps one for the other is invisible. `->` is the same
+/// hazard against the arrow heads of the map projections.
+///
+/// Reachable, not theoretical: `set_property` takes its key straight from the
+/// caller, so property keys are USER-AUTHORED text in which `#` is ordinary.
+fn token_head(what: &str, head: &str) -> String {
+    assert!(
+        !head.contains('#') && !head.contains("->"),
+        "query {what} {head:?} contains a token separator ('#' or '->'). Both \
+         runners would build the SAME string, so this does not redden — it \
+         ALIASES: the head runs straight into the '#'-joined attribute segments \
+         (and into the '->' of a map pair), so a differently-split token matches \
+         it and a real projection bug compares equal. Pick fixture keys without \
+         those sequences."
+    );
+    head.to_owned()
+}
+
+/// Build `<row[id_key]>#<attr>=<value>…` for one serialized row.
+fn row_token(row: &Value, id_key: &str, attrs: &[&str]) -> String {
+    let mut token = token_head(
+        "row id",
+        row.get(id_key)
+            .and_then(Value::as_str)
+            .unwrap_or("<missing-id>"),
+    );
+    for attr in attrs {
+        token.push('#');
+        token.push_str(attr);
+        token.push('=');
+        token.push_str(&attr_value(attr, row.get(*attr)));
+    }
+    token
+}
+
+/// Build `<key>#<ValueType>=<value>` for one serialized `PropertyRow`.
+///
+/// The `(value_type, value)` derivation is the SAME first-non-null-column
+/// precedence the #763 snapshot uses (`property_typed_value` in
+/// `conformance_snapshot.rs`), so a property read and the snapshot row it comes
+/// from disagree only when the command's own projection is wrong. `Bool` keeps
+/// SQLite's raw `0` / `1` INTEGER — both stacks store the integer.
+fn property_token(row: &Value) -> String {
+    let key = token_head(
+        "property key",
+        row.get("key")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing-key>"),
+    );
+    for (column, tag) in [
+        ("value_text", "Text"),
+        ("value_num", "Num"),
+        ("value_date", "Date"),
+        ("value_ref", "Ref"),
+        ("value_bool", "Bool"),
+    ] {
+        if row.get(column).is_some_and(|v| !v.is_null()) {
+            return format!("{key}#{tag}={}", attr_value(column, row.get(column)));
+        }
+    }
+    format!("{key}#null=null")
+}
+
+/// Project a `HashMap<K, Row>` response (`first_child_for_blocks`) into
+/// `<map-key>-><row id>` tokens.
+fn map_row_tokens(v: &Value, id_key: &str, attrs: &[&str]) -> Vec<String> {
+    v.as_object().map_or_else(Vec::new, |map| {
+        map.iter()
+            .map(|(k, row)| {
+                format!(
+                    "{}->{}",
+                    token_head("map key", k),
+                    row_token(row, id_key, attrs)
+                )
+            })
+            .collect()
+    })
+}
+
+/// Project a `HashMap<K, Vec<Row>>` response (`get_batch_properties`) into
+/// `<map-key>-><row token>` tokens.
+///
+/// A key present with an EMPTY array projects to `<map-key>->(none)`. That is
+/// the whole point of the shape: `get_batch_properties_inner` OMITS a block
+/// with no properties, and "key absent" vs "key present holding `[]`" is
+/// exactly the distinction a reimplementation gets wrong — flattening the map
+/// would make the two look identical.
+fn map_rows_tokens(v: &Value, token: &dyn Fn(&Value) -> String) -> Vec<String> {
+    v.as_object().map_or_else(Vec::new, |map| {
+        map.iter()
+            .flat_map(|(k, rows)| {
+                let head = token_head("map key", k);
+                let rows = rows.as_array().cloned().unwrap_or_default();
+                if rows.is_empty() {
+                    return vec![format!("{head}->(none)")];
+                }
+                rows.iter()
+                    .map(|r| format!("{head}->{}", token(r)))
+                    .collect()
+            })
+            .collect()
+    })
+}
+
+/// Project a bare `Vec<String>` response (the tag-id readers) — the row IS the
+/// token, relabeled like any other id.
+fn scalar_tokens(v: &Value) -> Vec<String> {
+    v.as_array().map_or_else(Vec::new, |rows| {
+        rows.iter()
+            .map(|r| r.as_str().unwrap_or("<not-a-string>").to_owned())
+            .collect()
+    })
 }
 
 /// Pull `<rows_key>[].<id_key>` out of a serialized response. A missing key
@@ -166,6 +414,10 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 rows: ids_at(&v, "rows", "id"),
                 has_more: v.get("hasMore").and_then(Value::as_bool),
                 total_count: v.get("totalCount").and_then(Value::as_i64),
+                next_cursor: v
+                    .get("nextCursor")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
             }
         }
         "filtered_blocks_query" => {
@@ -264,6 +516,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 rows,
                 has_more: v.get("truncated").and_then(Value::as_bool),
                 total_count: v.get("total").and_then(Value::as_i64),
+                next_cursor: None,
             }
         }
         // ── Journal reads (#3347) ──
@@ -298,6 +551,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                     .collect(),
                 has_more: None,
                 total_count: None,
+                next_cursor: None,
             }
         }
         "list_journal_pages_in_range" => {
@@ -319,6 +573,212 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 rows: v.as_array().map(|a| ids_in(a, "id")).unwrap_or_default(),
                 has_more: None,
                 total_count: None,
+                next_cursor: None,
+            }
+        }
+        // ── Point reads over blocks / properties / tags (#3826) ──
+        //
+        // The #763 snapshot already diffs the ROWS these serve. What it does
+        // NOT diff is each command's own projection, filtering and pagination
+        // of them, which is where a reimplementation drifts — so every step
+        // below is aimed at a specific decision the SQL makes: tombstones in
+        // or out, missing ids dropped or surfaced, reserved keys column-routed
+        // or not, a map key absent or present-but-empty, a page boundary.
+        "list_blocks" => {
+            let request = args.get("request").cloned().unwrap_or(Value::Null);
+            let field = |k: &str| request.get(k).filter(|v| !v.is_null()).cloned();
+            let text = |k: &str| field(k).and_then(|v| v.as_str().map(str::to_owned));
+            let scope: SpaceScope = arg_req(args, "scope");
+            let space_id = scope
+                .require_active()
+                .expect("list_blocks requires an active scope");
+            let range = field("dateRange");
+            let range_end = |k: &str| {
+                range
+                    .as_ref()
+                    .and_then(|r| r.get(k))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            };
+            let resp = list_blocks_inner(
+                pool,
+                text("parentId").map(|s| BlockId::from(s.as_str())),
+                text("blockType"),
+                text("tagId"),
+                text("date"),
+                range_end("start"),
+                range_end("end"),
+                text("source"),
+                text("cursor"),
+                field("limit").and_then(|v| v.as_i64()),
+                space_id.as_str().to_owned(),
+            )
+            .await
+            .expect("list_blocks");
+            page_result_with(
+                &serde_json::to_value(&resp).expect("serialize PageResponse"),
+                &|row| row_token(row, "id", BLOCK_ATTRS),
+            )
+        }
+        "get_block" => {
+            // `get_block_inner` is the PERMISSIVE reader: it serves a
+            // soft-deleted row rather than 404ing on it (the `deleted_at IS
+            // NULL` twin is `get_active_block_inner`). A step reading a
+            // tombstone is what pins which of the two the command uses.
+            let row = get_block_inner(pool, arg_req::<BlockId>(args, "blockId"))
+                .await
+                .expect("get_block");
+            let v = serde_json::to_value(&row).expect("serialize BlockRow");
+            RawResult {
+                rows: vec![row_token(&v, "id", BLOCK_ATTRS)],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "get_blocks" => {
+            let rows = get_blocks_inner(pool, arg_req::<Vec<BlockId>>(args, "ids"))
+                .await
+                .expect("get_blocks");
+            let v = serde_json::to_value(&rows).expect("serialize Vec<BlockRow>");
+            RawResult {
+                rows: v.as_array().map_or_else(Vec::new, |a| {
+                    a.iter().map(|r| row_token(r, "id", BLOCK_ATTRS)).collect()
+                }),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "batch_resolve" => {
+            let rows = batch_resolve_inner(
+                pool,
+                arg_req::<Vec<BlockId>>(args, "ids"),
+                &arg_or::<SpaceScope>(args, "scope"),
+            )
+            .await
+            .expect("batch_resolve");
+            let v = serde_json::to_value(&rows).expect("serialize Vec<ResolvedBlock>");
+            RawResult {
+                rows: v.as_array().map_or_else(Vec::new, |a| {
+                    a.iter()
+                        .map(|r| row_token(r, "id", RESOLVED_ATTRS))
+                        .collect()
+                }),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "first_child_for_blocks" => {
+            let map = first_child_for_blocks_inner(pool, arg_req::<Vec<BlockId>>(args, "blockIds"))
+                .await
+                .expect("first_child_for_blocks");
+            let v = serde_json::to_value(&map).expect("serialize HashMap<String, BlockRow>");
+            RawResult {
+                rows: map_row_tokens(&v, "id", BLOCK_ATTRS),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "get_properties" => {
+            let rows = get_properties_inner(pool, arg_req::<BlockId>(args, "blockId"))
+                .await
+                .expect("get_properties");
+            let v = serde_json::to_value(&rows).expect("serialize Vec<PropertyRow>");
+            RawResult {
+                rows: v
+                    .as_array()
+                    .map_or_else(Vec::new, |a| a.iter().map(property_token).collect()),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "get_property" => {
+            let row = get_property_inner(
+                pool,
+                &arg_req::<BlockId>(args, "blockId"),
+                &arg_req::<String>(args, "key"),
+            )
+            .await
+            .expect("get_property");
+            // `Option<PropertyRow>`: a hit projects to one token, a miss to
+            // none — the present-vs-absent distinction the step pins.
+            let v = serde_json::to_value(&row).expect("serialize Option<PropertyRow>");
+            RawResult {
+                rows: if v.is_null() {
+                    Vec::new()
+                } else {
+                    vec![property_token(&v)]
+                },
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "get_batch_properties" => {
+            let map = get_batch_properties_inner(pool, arg_req::<Vec<BlockId>>(args, "blockIds"))
+                .await
+                .expect("get_batch_properties");
+            let v =
+                serde_json::to_value(&map).expect("serialize HashMap<String, Vec<PropertyRow>>");
+            RawResult {
+                rows: map_rows_tokens(&v, &property_token),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "list_tags_for_block" => {
+            let rows = list_tags_for_block_inner(pool, arg_req::<BlockId>(args, "blockId"))
+                .await
+                .expect("list_tags_for_block");
+            RawResult {
+                rows: scalar_tokens(&serde_json::to_value(&rows).expect("serialize Vec<String>")),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "list_inherited_tags_for_block" => {
+            let rows =
+                list_inherited_tags_for_block_inner(pool, arg_req::<BlockId>(args, "blockId"))
+                    .await
+                    .expect("list_inherited_tags_for_block");
+            RawResult {
+                rows: scalar_tokens(&serde_json::to_value(&rows).expect("serialize Vec<String>")),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
+        "load_page_subtree" => {
+            let scope: SpaceScope = arg_req(args, "scope");
+            let space_id = scope
+                .require_active()
+                .expect("load_page_subtree requires an active scope");
+            let subtree = load_page_subtree_inner(
+                pool,
+                &arg_req::<String>(args, "rootBlockId"),
+                space_id.as_str(),
+            )
+            .await
+            .expect("load_page_subtree");
+            let v = serde_json::to_value(&subtree).expect("serialize PageSubtree");
+            RawResult {
+                rows: v
+                    .get("blocks")
+                    .and_then(Value::as_array)
+                    .map_or_else(Vec::new, |a| {
+                        a.iter().map(|r| row_token(r, "id", BLOCK_ATTRS)).collect()
+                    }),
+                // `truncated` / `total` are the cap signal, mapping onto the
+                // same two scalars every other command reports.
+                has_more: v.get("truncated").and_then(Value::as_bool),
+                total_count: v.get("total").and_then(Value::as_i64),
+                next_cursor: None,
             }
         }
         other => panic!(
@@ -331,26 +791,93 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
 /// Project a serialized `PageResponse<T>` (the snake_case envelope shared by
 /// every cursor-paginated read command).
 fn page_result(v: &Value) -> RawResult {
+    page_result_with(v, &|row| row_token(row, "id", &[]))
+}
+
+/// [`page_result`] with an explicit per-row token builder, for paginated
+/// commands whose rows carry attributes.
+fn page_result_with(v: &Value, token: &dyn Fn(&Value) -> String) -> RawResult {
     RawResult {
-        rows: ids_at(v, "items", "id"),
+        rows: v
+            .get("items")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().map(token).collect())
+            .unwrap_or_default(),
         has_more: v.get("has_more").and_then(Value::as_bool),
         total_count: v.get("total_count").and_then(Value::as_i64),
+        next_cursor: v
+            .get("next_cursor")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     }
 }
 
-/// Relabel a raw id (or an `a->b` edge token) through the canonical map.
-fn relabel_token(token: &str, labels: &BTreeMap<String, String>) -> String {
-    if let Some((src, tgt)) = token.split_once("->") {
+/// Where a command's opaque page cursor lives in its args. Mirrors
+/// `CURSOR_PATH` in the TS twin.
+///
+/// A second page cannot be spelled out in the fixture: the cursor is an opaque
+/// keyset blob each stack encodes for itself. A step therefore declares
+/// `"cursor_from": "<earlier step name>"` and BOTH runners feed that step's own
+/// `next_cursor` back in — so each stack paginates through its own cursor and
+/// the recorded comparison is between the ROWS the second page contains, which
+/// is what a keyset-ordering divergence changes (#3821).
+fn cursor_path(command: &str) -> &'static [&'static str] {
+    match command {
+        // `list_blocks` nests every query param under the `request` DTO.
+        "list_blocks" => &["request", "cursor"],
+        _ => &["cursor"],
+    }
+}
+
+/// Write `cursor` into `args` at the command's [`cursor_path`], creating the
+/// intermediate object if the fixture omitted it.
+fn inject_cursor(command: &str, args: &mut Value, cursor: Option<String>) {
+    let path = cursor_path(command);
+    if !args.is_object() {
+        *args = json!({});
+    }
+    let mut node = args;
+    for key in &path[..path.len() - 1] {
+        if !node[*key].is_object() {
+            node[*key] = json!({});
+        }
+        node = node.get_mut(*key).expect("cursor path segment");
+    }
+    let leaf = path[path.len() - 1];
+    node[leaf] = cursor.map_or(Value::Null, Value::String);
+}
+
+/// Relabel one raw id (or an `a->b` pair) through the canonical map.
+fn relabel_head(head: &str, labels: &BTreeMap<String, String>) -> String {
+    if let Some((src, tgt)) = head.split_once("->") {
         return format!(
             "{}->{}",
             labels.get(src).map_or(src, String::as_str),
             labels.get(tgt).map_or(tgt, String::as_str),
         );
     }
-    labels
-        .get(token)
-        .cloned()
-        .unwrap_or_else(|| token.to_owned())
+    labels.get(head).cloned().unwrap_or_else(|| head.to_owned())
+}
+
+/// Relabel a full row token: the head (an id, or an `a->b` pair) and every
+/// attribute VALUE, so id-valued attributes like `page_id` read `B1` rather
+/// than a stack-local ULID. Attribute NAMES pass through untouched.
+fn relabel_token(token: &str, labels: &BTreeMap<String, String>) -> String {
+    let mut parts = token.split('#');
+    let head = parts.next().unwrap_or(token);
+    let mut out = relabel_head(head, labels);
+    for attr in parts {
+        out.push('#');
+        match attr.split_once('=') {
+            Some((name, value)) => {
+                out.push_str(name);
+                out.push('=');
+                out.push_str(&relabel_head(value, labels));
+            }
+            None => out.push_str(attr),
+        }
+    }
+    out
 }
 
 /// Run every query step of a fixture and return the projected `expected_queries`
@@ -365,16 +892,24 @@ pub async fn run_query_steps(
         return Value::Null;
     };
     let mut out: Vec<Value> = Vec::with_capacity(steps.len());
+    let mut cursors: BTreeMap<String, Option<String>> = BTreeMap::new();
     for step in steps {
         let name = step["name"].as_str().expect("query step name").to_owned();
         let command = step["command"].as_str().expect("query step command");
-        let args = expand_query_args(step.get("args").unwrap_or(&Value::Null));
+        let mut args = expand_query_args(step.get("args").unwrap_or(&Value::Null));
+        if let Some(from) = step.get("cursor_from").and_then(Value::as_str) {
+            let cursor = cursors.get(from).cloned().unwrap_or_else(|| {
+                panic!("query step '{name}' reads `cursor_from` '{from}', which is not an EARLIER step in this fixture")
+            });
+            inject_cursor(command, &mut args, cursor);
+        }
         let ordered = step
             .get("ordered")
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
         let raw = run_step(pool, command, &args).await;
+        cursors.insert(name.clone(), raw.next_cursor.clone());
         let mut rows: Vec<String> = raw.rows.iter().map(|t| relabel_token(t, labels)).collect();
         if !ordered {
             // Set comparison, not sequence comparison — see "Ordering" in the
@@ -390,4 +925,131 @@ pub async fn run_query_steps(
         }));
     }
     Value::Array(out)
+}
+
+#[cfg(test)]
+mod attr_value_tests {
+    use super::{attr_value, map_rows_tokens, property_token};
+    use serde_json::json;
+
+    /// Every rendering here is byte-identical to `String(n)` in the TS twin —
+    /// the whole point of the token grammar is that ONE recorded expectation
+    /// binds both runners, so a formatting difference is a silent harness lie
+    /// rather than a real divergence.
+    #[test]
+    fn numbers_render_the_way_js_string_renders_them() {
+        for (v, expected) in [
+            (json!(3), "3"),
+            (json!(3.0), "3"),
+            (json!(0), "0"),
+            (json!(0.5), "0.5"),
+            (json!(-1.25), "-1.25"),
+            (json!(1e15), "1000000000000000"),
+            (json!(1e20), "100000000000000000000"),
+            (json!(1e-6), "0.000001"),
+        ] {
+            assert_eq!(attr_value("value_num", Some(&v)), expected, "for {v}");
+        }
+    }
+
+    /// `String(1e21) === '1e+21'` but Rust prints the digits out, so the guard
+    /// must REFUSE the value instead of recording a token only one stack can
+    /// produce.
+    #[test]
+    #[should_panic(expected = "whose Rust and JS renderings differ")]
+    fn a_magnitude_js_prints_in_exponent_form_is_refused() {
+        attr_value("value_num", Some(&json!(1e21)));
+    }
+
+    /// The other end of the range: `String(1e-7) === '1e-7'`.
+    #[test]
+    #[should_panic(expected = "whose Rust and JS renderings differ")]
+    fn a_magnitude_below_the_js_plain_floor_is_refused() {
+        attr_value("value_num", Some(&json!(1e-7)));
+    }
+
+    /// A `#` in an attribute value is NOT a red/green flip — both runners build
+    /// the same string — it is token ALIASING, so the guard has to refuse it at
+    /// authoring time or a projection bug in that column can compare EQUAL.
+    /// `RESOLVED_ATTRS` carries `title`, the raw `content` column, and `#` is
+    /// ordinary text in this app, so this is reachable rather than theoretical.
+    #[test]
+    #[should_panic(expected = "contains a token separator")]
+    fn a_hash_in_an_attribute_value_is_refused() {
+        attr_value("title", Some(&json!("a#b")));
+    }
+
+    /// `->` is the other separator: it splits an arrow HEAD, so a value
+    /// carrying it can alias against a `parent->child` token.
+    #[test]
+    #[should_panic(expected = "contains a token separator")]
+    fn an_arrow_in_an_attribute_value_is_refused() {
+        attr_value("title", Some(&json!("a->b")));
+    }
+
+    /// The guard must not be so broad it refuses ordinary text — a lone `-` or
+    /// `>` is fine, and refusing them would make the harness unusable for real
+    /// content while proving nothing.
+    #[test]
+    fn ordinary_punctuation_is_not_refused() {
+        for v in [json!("a-b"), json!("a > b"), json!("a_b"), json!("plain")] {
+            let _ = attr_value("title", Some(&v));
+        }
+    }
+
+    /// The head is the OTHER half of the grammar, and it was unguarded while
+    /// values were guarded. A property key `a#b` with `value_text: "x"` renders
+    /// `a#b#Text=x`, which is exactly what the key `a` carrying a `b#Text=x`
+    /// segment renders — so the two tokens compare EQUAL and a projection bug
+    /// between them is invisible. `set_property` takes the key from the caller,
+    /// so this is user-authored text.
+    #[test]
+    #[should_panic(expected = "contains a token separator")]
+    fn a_hash_in_a_property_key_is_refused() {
+        let _ = property_token(&json!({ "key": "a#b", "value_text": "x" }));
+    }
+
+    /// `->` heads the map projections (`first_child_for_blocks`,
+    /// `get_batch_properties`), so a key carrying one splits the pair wrongly.
+    #[test]
+    #[should_panic(expected = "contains a token separator")]
+    fn an_arrow_in_a_map_key_is_refused() {
+        let _ = map_rows_tokens(
+            &json!({ "a->b": [{ "key": "k", "value_text": "x" }] }),
+            &property_token,
+        );
+    }
+
+    /// The empty-array branch of `map_rows_tokens` builds its own token, so it
+    /// needs the guard too — it would otherwise be the one head that escapes.
+    #[test]
+    #[should_panic(expected = "contains a token separator")]
+    fn a_hash_in_an_empty_entry_map_key_is_refused() {
+        let _ = map_rows_tokens(&json!({ "a#b": [] }), &property_token);
+    }
+
+    /// Ordinary keys must still pass, or the guard is just breakage.
+    #[test]
+    fn ordinary_keys_are_not_refused() {
+        assert_eq!(
+            property_token(&json!({ "key": "status", "value_text": "open" })),
+            "status#Text=open"
+        );
+        assert_eq!(
+            map_rows_tokens(&json!({ "B2": [] }), &property_token),
+            vec!["B2->(none)".to_owned()]
+        );
+    }
+
+    /// `deleted_at` is normalised BEFORE the number branch, so a tombstone
+    /// stamp (an epoch-ms value well outside the plain range in seconds terms,
+    /// and a clock value regardless) never reaches the guard.
+    #[test]
+    fn deleted_at_is_normalised_before_the_numeric_guard() {
+        assert_eq!(
+            attr_value("deleted_at", Some(&json!(1_760_000_000_000_i64))),
+            "DELETED"
+        );
+        assert_eq!(attr_value("deleted_at", None), "null");
+    }
 }

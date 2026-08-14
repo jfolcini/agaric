@@ -1,0 +1,208 @@
+{
+  "description": "#3826 — READ-command differential over the block point-read surface: `get_block`, `get_blocks`, `first_child_for_blocks`, `batch_resolve` and `load_page_subtree`. The #763 snapshot already diffs these ROWS; what it does not diff is each command's own decision about them, so every step targets one such decision — whether a tombstone is served or filtered, whether a missing id is dropped or surfaced, whether `page_id` is the ROOT page or the immediate parent, and whether a subtree read walks `page_id` (grandchildren included) or just direct children. Every queried block is a SEED block, so ids are byte-identical on both stacks and the tokens are comparable.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "one",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "two-a",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "has_more": null,
+      "name": "get_block_serves_tombstone",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=DELETED"],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "get_blocks_keeps_tombstone_drops_missing",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=DELETED",
+        "B4#parent_id=B3#page_id=B1#position=1#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "first_child_skips_tombstoned_first_sibling",
+      "rows": [
+        "B1->B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B3->B4#parent_id=B3#page_id=B1#position=1#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "batch_resolve_flags_tombstone",
+      "rows": [
+        "B2#title=one#block_type=content#deleted=true",
+        "B3#title=two#block_type=content#deleted=false"
+      ],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "load_page_subtree_walks_page_id",
+      "rows": [
+        "B4#parent_id=B3#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"
+      ],
+      "total_count": 2
+    }
+  ],
+  "name": "query_point_reads_blocks",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "get_block",
+      "comment": "`get_block_inner` is the PERMISSIVE reader — it returns a soft-deleted row rather than 404ing on it; the `deleted_at IS NULL` twin is `get_active_block_inner`. Reading the block the ops just tombstoned is what pins which of the two the command uses. The `page_id` attribute does NOT pin the #1775 class here: this row is a direct child of the page, so `page_id == parent_id` and returning the parent would be indistinguishable. It still catches a nulled `page_id`. The #1775 class is covered by `get_blocks_keeps_tombstone_drops_missing`, whose B4 sits deeper.",
+      "name": "get_block_serves_tombstone"
+    },
+    {
+      "args": {
+        "ids": ["S4", "S2", "00000000000000000000000ZZZ"]
+      },
+      "command": "get_blocks",
+      "comment": "Three ids: a live grandchild, a tombstone, and an id that exists nowhere. `get_blocks_inner` documents both halves — no `deleted_at` filter, and unknown ids silently omitted — so a mock that filtered tombstones OR echoed a placeholder row for the unknown id reddens. Unordered: the backend's `id IN (json_each(…))` does not guarantee input order.",
+      "name": "get_blocks_keeps_tombstone_drops_missing"
+    },
+    {
+      "args": {
+        "blockIds": ["S1", "S3", "S2"]
+      },
+      "command": "first_child_for_blocks",
+      "comment": "S1's position-1 child is the tombstone, so the first ACTIVE child is S3 — the CTE pre-filters `deleted_at IS NULL` before `ROW_NUMBER()`, and a mock ranking before filtering would answer B2 here. S2 is requested too and must be ABSENT from the map (a parent with no active children is omitted, not mapped to null).",
+      "name": "first_child_skips_tombstoned_first_sibling"
+    },
+    {
+      "args": {
+        "ids": ["S3", "S2", "00000000000000000000000ZZZ"],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "batch_resolve",
+      "comment": "The chip resolver keeps a tombstoned target and marks it `deleted: true` (the FE renders a broken chip from that flag) rather than dropping it; the unknown id IS dropped. `title` is the renamed `content` column — an id-only token could not see either projection.",
+      "name": "batch_resolve_flags_tombstone"
+    },
+    {
+      "args": {
+        "rootBlockId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "load_page_subtree",
+      "comment": "`load_page_subtree_inner` selects on `page_id = root`, so the GRANDCHILD S4 is in the result even though its parent is S3 — a mock that listed direct children would drop it. The root itself and the tombstone are excluded. `ordered` because the sort key is `(position, id)` over seed blocks whose ids are byte-identical on both stacks.",
+      "name": "load_page_subtree_walks_page_id",
+      "ordered": true
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "one",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "two-a",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
