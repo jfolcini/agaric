@@ -512,6 +512,177 @@ describe('run_advanced_query — cursor payload shape (#3863)', () => {
 })
 
 /**
+ * #3863 — cursor byte fidelity for values that are not plain ASCII.
+ *
+ * The cursor payload carries USER TEXT: the `Title` term is the raw page
+ * title (`SORT_COLUMN_GETTERS.title` → `row.content`) and `Priority` is a
+ * user-configurable label. The engine encodes
+ * `URL_SAFE_NO_PAD.encode(json.as_bytes())` (`engine.rs:176`) — i.e. the
+ * UTF-8 bytes of the JSON. `btoa` cannot do that: it throws
+ * `InvalidCharacterError` above U+00FF and silently encodes the LATIN-1 byte
+ * for U+0080–U+00FF, so the two failure modes are DIFFERENT and both are
+ * asserted below:
+ *
+ *   - em dash (U+2014): `btoa` throws, and `dispatch` (`handlers.ts`) has no
+ *     try/catch, so a raw DOMException escapes the IPC boundary instead of
+ *     the mock's structured `validationRejection`.
+ *   - `é` (U+00E9): `btoa` emits one 0xE9 byte where the engine emits the
+ *     UTF-8 pair 0xC3 0xA9 — no throw, just cursor bytes that differ from
+ *     the backend's for the same row.
+ *
+ * The expected string is computed from an INDEPENDENT base64url encoder over
+ * `TextEncoder` bytes (below), not from the production helper, so this cannot
+ * become a tautology that stays green if both drifted together.
+ */
+describe('run_advanced_query — cursor byte fidelity for non-ASCII values (#3863)', () => {
+  const ZULU = id('D9') // 'Zulu' — sorts after every fixture title below
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(ZULU, makeBlock(ZULU, 'page', 'Zulu', null, 9))
+    setSpace(ZULU, SPACE_A)
+  })
+
+  /** URL-safe, unpadded base64 alphabet — `base64::URL_SAFE_NO_PAD`. */
+  const B64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+
+  /**
+   * Independent `URL_SAFE_NO_PAD.encode(json.as_bytes())`: UTF-8 encode, then
+   * hand-rolled base64 over the raw bytes. Deliberately does NOT go through
+   * `btoa`/`atob` or any production helper.
+   */
+  function rustCursorBytes(json: string): string {
+    const bytes = new TextEncoder().encode(json)
+    let out = ''
+    for (let i = 0; i < bytes.length; i += 3) {
+      const b0 = bytes[i] ?? 0
+      const b1 = bytes[i + 1]
+      const b2 = bytes[i + 2]
+      out += B64URL[b0 >> 2] ?? ''
+      out += B64URL[((b0 & 0x03) << 4) | ((b1 ?? 0) >> 4)] ?? ''
+      if (b1 === undefined) break
+      out += B64URL[((b1 & 0x0f) << 2) | ((b2 ?? 0) >> 6)] ?? ''
+      if (b2 === undefined) break
+      out += B64URL[b2 & 0x3f] ?? ''
+    }
+    return out
+  }
+
+  /** The exact bytes the engine would emit for a `[Title, Id]` cursor tuple. */
+  function expectedTitleCursor(title: string, blockId: string): string {
+    return rustCursorBytes(
+      JSON.stringify({
+        version: 1,
+        values: [
+          { t: 'Text', v: title },
+          { t: 'Text', v: blockId },
+        ],
+      }),
+    )
+  }
+
+  /** Seed one page and return the first page of a `title ASC`, `limit: 1` query. */
+  function firstTitlePage(blockId: string, title: string): QueryResponse {
+    blocks.set(blockId, makeBlock(blockId, 'page', title, null, 0))
+    setSpace(blockId, SPACE_A)
+    return run({ sort: [{ source: { type: 'Column', name: 'title' } }], limit: 1 })
+  }
+
+  it('encodes an above-U+00FF title (em dash) instead of throwing InvalidCharacterError', () => {
+    const EM = id('D1')
+    const TITLE = 'Q3 — Roadmap' // U+2014; sorts before 'Zulu'
+    const page1 = firstTitlePage(EM, TITLE)
+    expect(page1.rows.map((r) => r['id'])).toEqual([EM])
+    expect(page1.hasMore).toBe(true)
+    expect(page1.nextCursor).toBe(expectedTitleCursor(TITLE, EM))
+  })
+
+  it('encodes a U+0080–U+00FF title (é) as UTF-8, not as a single Latin-1 byte', () => {
+    const ACCENT = id('D2')
+    const TITLE = 'Café Notes' // U+00E9; sorts before 'Zulu'
+    const page1 = firstTitlePage(ACCENT, TITLE)
+    expect(page1.rows.map((r) => r['id'])).toEqual([ACCENT])
+    expect(page1.nextCursor).toBe(expectedTitleCursor(TITLE, ACCENT))
+  })
+
+  it('round-trips a non-ASCII cursor back through the handler (page 2 resumes, not restarts)', () => {
+    // Resume is what a wrong DECODER would break even with a right encoder:
+    // a Latin-1 read of UTF-8 bytes yields a mojibake title and a mangled id.
+    const EM = id('D1')
+    const page1 = firstTitlePage(EM, 'Q3 — Roadmap')
+    const page2 = run({
+      sort: [{ source: { type: 'Column', name: 'title' } }],
+      limit: 1,
+      cursor: page1.nextCursor,
+    })
+    expect(page2.rows.map((r) => r['id'])).toEqual([ZULU])
+    expect(page2.hasMore).toBe(false)
+  })
+
+  it('encodes an emoji title (astral plane, surrogate pair) as its 4 UTF-8 bytes', () => {
+    const EMOJI = id('D3')
+    const TITLE = '🎯 Goals' // U+1F3AF — outside the BMP, so a surrogate PAIR
+    // JS string comparison is by UTF-16 code unit, and the leading surrogate
+    // (0xD83C) sorts AFTER 'Z' (0x5A), so under title ASC the emoji row is
+    // last and 'Zulu' is page 1's boundary row. Sort DESC instead, so the
+    // emoji title is the one that actually reaches the cursor.
+    const page1 = firstTitlePage(EMOJI, TITLE)
+    expect(page1.rows.map((r) => r['id'])).toEqual([ZULU])
+    const desc = run({
+      sort: [{ source: { type: 'Column', name: 'title' }, desc: true }],
+      limit: 1,
+    })
+    expect(desc.rows.map((r) => r['id'])).toEqual([EMOJI])
+    expect(desc.nextCursor).toBe(expectedTitleCursor(TITLE, EMOJI))
+  })
+
+  /**
+   * #3863 note 1 — `EngineRow::cursor_value` (`engine.rs:322`) reads the
+   * COALESCE'd `last_edited: i64` and can only ever emit `CursorValue::Int`;
+   * `CursorValue::Null` is UNREACHABLE for that column. The mock's
+   * "no op-log activity" sentinel must therefore encode as the engine's
+   * `Int(0)` — the value `COALESCE(…, 0)` actually produces — not as `Null`.
+   *
+   * The Int-vs-Text gap for a row that HAS op-log activity is the separate,
+   * pre-existing ISO-string representation divergence documented on
+   * `CursorKind`; only the sentinel is this change's own choice, and it has
+   * an exact engine answer.
+   */
+  it('encodes the never-edited lastEdited sentinel as the engine Int(0), not Null', () => {
+    const NEVER = id('E1')
+    const b = makeBlock(NEVER, 'text', null, null, 0)
+    b['page_id'] = ZULU
+    blocks.set(NEVER, b)
+    opLog.push({
+      device_id: 'mock-device',
+      seq: 1,
+      op_type: 'UpdateBlock',
+      payload: JSON.stringify({ block_id: ZULU }),
+      created_at: '2024-05-01T00:00:00.000Z',
+    })
+
+    // ASC: the sentinel sorts first, so page 1's boundary row is NEVER.
+    const page1 = run({
+      sort: [{ source: { type: 'Column', name: 'lastEdited' } }],
+      limit: 1,
+    })
+    expect(page1.rows.map((r) => r['id'])).toEqual([NEVER])
+    const decoded = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(
+          atob(
+            (page1.nextCursor as string).replaceAll('-', '+').replaceAll('_', '/') +
+              '='.repeat((4 - ((page1.nextCursor as string).length % 4)) % 4),
+          ),
+          (c) => c.codePointAt(0) ?? 0,
+        ),
+      ),
+    ) as { values: Array<Record<string, unknown>> }
+    expect(decoded.values[0]).toEqual({ t: 'Int', v: 0 })
+  })
+})
+
+/**
  * The `SortColumn` set is CLOSED. The mock resolves a key's getter by name, and
  * an object-literal index would resolve `constructor` / `valueOf` / `toString`
  * to an inherited `Object.prototype` method — truthy, so accepted and pushed as

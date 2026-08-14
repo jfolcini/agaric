@@ -3,11 +3,11 @@
 | Metadata | Value |
 |----------|-------|
 | **Date** | 2026-08-15 |
-| **Subagents** | 1 build + 1 review |
+| **Subagents** | 1 build + 2 review + 1 review-fix |
 | **Items closed** | `#3863` |
 | **Items modified** | filed `#3884` |
-| **Tests added** | +3 (frontend) / +0 (backend) |
-| **Files touched** | 4 |
+| **Tests added** | +8 (frontend) / +0 (backend) |
+| **Files touched** | 6 |
 
 **Summary:** Closed the two `run_advanced_query` divergences #3863 named — the
 `lastEdited` seed fallback and the cursor payload shape — by deriving what the engine
@@ -18,13 +18,21 @@ On the cursor, those two disagreed, and the source won.
 - `src/lib/tauri-mock/handlers/shared.ts`
 - `src/lib/tauri-mock/handlers/search.ts`
 - `src/lib/tauri-mock/__tests__/advanced-query-sort.test.ts`
+- `src/lib/base64url.ts` (new — extracted, see the review round below)
+- `src/lib/inline-query-spec.ts`
 - `docs/session-log/session-1303-tauri-mock-query-divergences.md` (new)
 
 **Verification:**
-- `npx vitest run src/lib/tauri-mock src/lib/__tests__/tauri-mock.test.ts src/hooks` —
-  2314 tests run, 2314 passed (148 files), including the conformance harness (57) and the
-  `useAdvancedQuery`/`useQueryExecution` hook suites.
-- `npx tsc -b` — clean.
+- `npx vitest run src/lib/tauri-mock src/lib/__tests__/tauri-mock.test.ts src/hooks
+  src/lib/__tests__/inline-query-spec.test.ts` — 2327 tests run, 2327 passed (149 files),
+  including the conformance harness and the `useAdvancedQuery`/`useQueryExecution` hook
+  suites.
+- `npx vitest run src/components/dialogs/__tests__/QueryBuilderModal.test.tsx
+  src/components/query src/lib/__tests__` — 3178 passed (124 files); the consumers of the
+  base64url codec that moved.
+- `npx tsc -b --noEmit` — clean.
+- `node scripts/check-lib-layering.mjs` / `check-import-cycles.mjs` — clean (the new
+  `lib` → `lib` edge adds no violation and no cycle).
 - pre-commit hook — all staged-file checks pass.
 - pre-push hook — full clippy + push-staged checks pass.
 
@@ -61,11 +69,62 @@ On the cursor, those two disagreed, and the source won.
   value relabelled through the same canonical map the row tokens already use. Not done
   here — it is a design change to a shared TS/Rust harness, outside #3863's scope.
 
-- **Coverage stated with its denominator.** `SortColumn` has exactly 5 variants
-  (`agaric-store/src/query/mod.rs:357-371`) and the TS `SORT_COLUMN_CURSOR_KIND` map covers
-  5/5. `CursorKind` has 6 (`engine.rs:123-138`) — the 5 above plus `Rank`, which is sourced
-  from `SortSource::Relevance` rather than from a `SortColumn`; the TS mirrors that split,
-  so 6/6.
+- **Coverage stated with its denominator — and the denominator was the wrong one.**
+  `SortColumn` has exactly 5 variants (`agaric-store/src/query/mod.rs:357-371`) and the TS
+  `SORT_COLUMN_CURSOR_KIND` map covers 5/5. `CursorKind` has 6 (`engine.rs:123-138`) — the
+  5 above plus `Rank`, sourced from `SortSource::Relevance` rather than from a
+  `SortColumn`; the TS mirrors that split, so the DISCRIMINATOR coverage is 6/6. The second
+  review round pointed out that this says nothing about the values actually emitted: it is
+  5/6 there, because `LastEditedMs` on a row WITH op-log activity emits `Text` (ISO-8601)
+  where the engine emits `Int` (epoch-ms). See the round-2 note below.
+
+**Review round 2 (CHANGES_REQUESTED — encoder), and what it changed:**
+
+- **BLOCKING: `encodeCursor` used `btoa` on a payload that now carries user text.** Safe
+  while the payload was `{id}` (a ULID); not safe once `values` carries the `Title` term
+  (the raw page title) and `Priority` (a user-configurable label). `btoa` maps each string
+  CODE UNIT to one byte, so it (a) THREW `InvalidCharacterError` above U+00FF — an em-dash
+  or CJK or emoji title, sorted by title with `limit` below the match count, produced a
+  raw DOMException escaping the IPC boundary, since `dispatch` wraps handlers in no
+  try/catch — and (b) silently emitted the single Latin-1 byte for U+0080–U+00FF (`é` ⇒
+  `0xE9` where `QueryCursor::encode` has UTF-8 `0xC3 0xA9`), i.e. the exact cursor-byte
+  divergence this PR exists to close, still open. Both now go through
+  `utf8ToBase64Url`/`base64UrlToUtf8`, and four tests pin them: em dash, `é`, an emoji
+  (astral-plane surrogate pair), and a non-ASCII round trip through page 2. Every one was
+  confirmed RED first — the em-dash/emoji cases as the verbatim `InvalidCharacterError`,
+  the `é` case as a byte mismatch — which is what the original shape test could not see,
+  because every value in it was an ASCII ULID or an integer.
+
+- **Where the codec lives.** The correct pair already existed as module-private helpers in
+  `inline-query-spec.ts`. Rather than duplicate them or widen a FEATURE module's API so the
+  backend mock could reach into it, both were extracted verbatim to a leaf module,
+  `src/lib/base64url.ts`, and both consumers now import it. `check-lib-layering.mjs` permits
+  either direction (both are rank-0 `lib`), so this was a coupling decision, not a legality
+  one: the mock already depends on shared primitives of exactly this class
+  (`fold-for-search`, `search-query/glob-validate`, `task-states`) and now on one more,
+  instead of on the inline `{{query …}}` block payload format.
+
+- **The `LastEditedMs` sentinel now encodes as the engine's `Int(0)`, not `Null`.**
+  `EngineRow::cursor_value` (`engine.rs:322`) reads the COALESCE'd `last_edited: i64` and
+  can only ever emit `CursorValue::Int` for that column — `Null` is unreachable there, and
+  `COALESCE(…, 0)` makes `0` the exact value an op-log-free row carries. The `Text`-vs-`Int`
+  gap for a row that HAS activity is the inherited ISO-string representation divergence and
+  is left documented; the `Null`-vs-`Int(0)` gap was this change's own sentinel choice and
+  had an exact engine answer, so it was fixed rather than documented.
+
+- **The `lastEdited` getter no longer rescans `opLog` per comparison.**
+  `rawOpLogLastEditedAt` linearly scans `opLog` with a `JSON.parse` per entry, and the
+  getter runs inside the sort comparator — O(N log N · |opLog|). It is now memoized per
+  matched row (`rawLastEditedOf`), lazily, so a query that does not sort by `lastEdited`
+  pays nothing. Measured on a throwaway harness (N=200 rows, |opLog|=1000): **232 ms →
+  73-77 ms** for one `run_advanced_query` dispatch, ~3.1x, and the gap widens with both N
+  and |opLog|.
+
+- **Two review notes deliberately NOT fixed here**, filed instead: a malformed cursor
+  restarts silently where `QueryCursor::decode` returns a validation error, and
+  `idTermIndex` is resolved against the current request rather than against the cursor
+  (benign today — the anchor is matched by exact id — but load-bearing on an unstated
+  assumption).
 
 - **One divergence deliberately left in place, now tracked.** `pageLastModifiedAt`'s seeded
   fallback still feeds `list_pages_with_metadata`'s `RecentlyModified` sort, which has the

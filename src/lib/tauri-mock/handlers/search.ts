@@ -9,6 +9,7 @@
  * store.
  */
 
+import { base64UrlToUtf8, utf8ToBase64Url } from '@/lib/base64url'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import {
   type PageMetaRow,
@@ -39,6 +40,32 @@ import { blocks, properties } from '@/lib/tauri-mock/seed'
 interface MatchedEntry {
   b: Record<string, unknown>
   row: PageMetaRow
+  /**
+   * Memoized {@link rawOpLogLastEditedAt} for this row — see
+   * {@link rawLastEditedOf}. `undefined` means "not computed yet"; `null` is
+   * the computed "no op-log activity" answer.
+   */
+  lastEditedRaw?: string | null
+}
+
+/**
+ * `rawOpLogLastEditedAt(b.id)`, computed AT MOST ONCE per matched row.
+ *
+ * That function linearly scans `opLog` with a `JSON.parse` per entry. Calling
+ * it from inside the sort comparator (which is where the `lastEdited` getter
+ * runs) makes a `lastEdited` sort O(N log N · |opLog|) with a parse per entry
+ * per comparison — fine for the seed, but `opLog` grows on every edit in a
+ * long dev-preview session. Memoizing on the entry restores the old
+ * O(N · |opLog|) shape while keeping the engine-faithful value.
+ *
+ * Lazy rather than computed in the match loop on purpose: a query that does
+ * NOT sort by `lastEdited` must not pay for a scan it never reads.
+ */
+function rawLastEditedOf(m: MatchedEntry): string | null {
+  if (m.lastEditedRaw === undefined) {
+    m.lastEditedRaw = rawOpLogLastEditedAt(m.b['id'] as string)
+  }
+  return m.lastEditedRaw
 }
 
 type SortValue = string | number | null
@@ -52,6 +79,13 @@ type SortValue = string | number | null
  * divergence `SORT_COLUMN_GETTERS.lastEdited` already carries; only the
  * discriminator identity (which term IS the last-edited term) matters for
  * cursor typing here, not the on-wire integer/string distinction.
+ *
+ * That inherited gap is the ONE place where this mock's cursor VALUES depart
+ * from the engine's: all six discriminators are covered, and every emitted
+ * value matches the engine's tag except `LastEditedMs` on a row that HAS
+ * op-log activity (`Text` here, `Int` there). Its no-activity sentinel does
+ * match — see {@link cursorValueFor}, which encodes it as the engine's
+ * `Int(0)`.
  */
 type CursorKind = 'Id' | 'LastEditedMs' | 'Position' | 'Priority' | 'Title' | 'Rank'
 
@@ -164,7 +198,8 @@ const SORT_COLUMN_GETTERS = new Map<string, (m: MatchedEntry) => SortValue>(
     // ULID id == creation order (`resolve_sort`'s `SortColumn::Created`).
     created: (m) => m.row.id,
     // #3863 — reads `rawOpLogLastEditedAt` DIRECTLY (the raw `MAX(op_log.created_at)`
-    // scan), NOT `m.row.lastModifiedAt` (`pageLastModifiedAt`). The engine's
+    // scan, memoized per row by `rawLastEditedOf` because this getter runs inside
+    // the sort comparator), NOT `m.row.lastModifiedAt` (`pageLastModifiedAt`). The engine's
     // `LastEdited` sort key is `COALESCE((SELECT MAX(created_at) FROM op_log
     // WHERE block_id = b.id), 0)` (`agaric-store/src/query/engine.rs:229`) — NO
     // other data source. `pageLastModifiedAt` layers a mock-only seeded-stamp
@@ -176,7 +211,7 @@ const SORT_COLUMN_GETTERS = new Map<string, (m: MatchedEntry) => SortValue>(
     // `0` (never actually NULL); `''` is this mock's matching "no op-log
     // activity" sentinel over its ISO-8601 string representation — it sorts
     // before every real ISO-8601 timestamp string, preserving relative order.
-    lastEdited: (m) => rawOpLogLastEditedAt(m.b['id'] as string) ?? '',
+    lastEdited: (m) => rawLastEditedOf(m) ?? '',
     position: (m) => m.row.position,
     priority: (m) => m.row.priority,
     // `pc.title` comes from the `pages_cache` row whose `page_id = b.id` — the
@@ -267,8 +302,23 @@ function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorValue {
   // activity" sentinel (see `SORT_COLUMN_GETTERS.lastEdited`'s doc) — the
   // ONE column where an empty string is the null case rather than a genuine
   // value, so it needs its own check ahead of the general `raw === null`.
+  //
+  // The sentinel encodes as the engine's `Int(0)`, NOT `Null`:
+  // `EngineRow::cursor_value` (`engine.rs:322`) reads the COALESCE'd
+  // `last_edited: i64` and can only ever emit `CursorValue::Int` for this
+  // column — `Null` is UNREACHABLE there, and `COALESCE(…, 0)` makes `0` the
+  // exact value an op-log-free row carries. Emitting a tag the engine cannot
+  // produce would be a new divergence of this mock's own making.
+  //
+  // A row that HAS op-log activity still emits `Text` (an ISO-8601 string)
+  // where the engine emits `Int` (epoch-ms). That one is the PRE-EXISTING,
+  // documented representation divergence carried by `SORT_COLUMN_GETTERS`
+  // (see the `CursorKind` doc); closing it needs the mock's last-edited
+  // representation changed to epoch-ms everywhere, not a cursor-local cast.
+  // So `CursorKind` coverage is 6/6 on the DISCRIMINATOR set and 5/6 on the
+  // emitted VALUES — `LastEditedMs` is faithful only in its sentinel case.
   if (term.column === 'LastEditedMs') {
-    return raw === null || raw === '' ? { t: 'Null' } : { t: 'Text', v: raw as string }
+    return raw === null || raw === '' ? { t: 'Int', v: 0 } : { t: 'Text', v: raw as string }
   }
   if (raw === null) return { t: 'Null' }
   switch (term.column) {
@@ -291,10 +341,20 @@ function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorValue {
  * `QueryCursor::encode` (`engine.rs:175-178`): URL-safe, unpadded base64 of
  * the JSON `{ version, values }` envelope (`base64::URL_SAFE_NO_PAD`, not the
  * standard alphabet `btoa` produces on its own).
+ *
+ * Goes through `utf8ToBase64Url` (`@/lib/base64url`) rather than a bare
+ * `btoa`, because `values` carries USER TEXT — the `Title` term is the raw
+ * page title and `Priority` is a user-configurable label. The engine encodes
+ * `json.as_bytes()`, i.e. UTF-8; `btoa` maps each string CODE UNIT to a byte,
+ * which THROWS `InvalidCharacterError` above U+00FF (an em dash, CJK or emoji
+ * title would have escaped the IPC boundary as a raw DOMException, since
+ * `dispatch` wraps handlers in no try/catch) and silently emits the Latin-1
+ * byte for U+0080–U+00FF (`é` ⇒ `0xE9` where Rust has `0xC3 0xA9`) — the
+ * exact cursor-byte divergence this fix exists to close.
  */
 function encodeCursor(values: CursorValue[]): string {
   const json = JSON.stringify({ version: CURSOR_VERSION, values } satisfies QueryCursorPayload)
-  return btoa(json).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+  return utf8ToBase64Url(json)
 }
 
 /**
@@ -306,9 +366,11 @@ function encodeCursor(values: CursorValue[]): string {
  */
 function decodeCursor(s: string): QueryCursorPayload | null {
   try {
-    let b64 = s.replaceAll('-', '+').replaceAll('_', '/')
-    while (b64.length % 4 !== 0) b64 += '='
-    const parsed = JSON.parse(atob(b64)) as QueryCursorPayload
+    // `base64UrlToUtf8`, not `atob`: the inverse of {@link encodeCursor}'s
+    // UTF-8 encoding. A bare `atob` reads the UTF-8 bytes of a non-ASCII
+    // title back as Latin-1 code units (mojibake), which would silently
+    // corrupt the anchor value on resume.
+    const parsed = JSON.parse(base64UrlToUtf8(s)) as QueryCursorPayload
     if (parsed.version !== CURSOR_VERSION || !Array.isArray(parsed.values)) return null
     return parsed
   } catch {

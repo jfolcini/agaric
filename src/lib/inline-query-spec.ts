@@ -25,6 +25,7 @@
  *      the structured form; old blocks keep rendering exactly as before.
  */
 
+import { base64UrlToUtf8, utf8ToBase64Url } from '@/lib/base64url'
 import type { FilterExpr } from '@/lib/bindings'
 
 /** The decoded structured payload of a `v2:` inline query block. */
@@ -38,23 +39,12 @@ export interface InlineQuerySpec {
 /** Marker prefix that distinguishes a structured payload from legacy text. */
 export const INLINE_QUERY_V2_PREFIX = 'v2:'
 
-/** UTF-8 string → unpadded base64url (markdown-safe alphabet). */
-function utf8ToBase64Url(s: string): string {
-  const bytes = new TextEncoder().encode(s)
-  let binary = ''
-  for (const b of bytes) binary += String.fromCharCode(b)
-  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
-}
-
-/** Unpadded base64url → UTF-8 string (inverse of {@link utf8ToBase64Url}). */
-function base64UrlToUtf8(b64url: string): string {
-  const padded = b64url.replaceAll('-', '+').replaceAll('_', '/')
-  // Re-add the `=` padding base64 needs (length up to the next multiple of 4).
-  const fullLength = Math.ceil(padded.length / 4) * 4
-  const binary = atob(padded.padEnd(fullLength, '='))
-  const bytes = Uint8Array.from(binary, (c) => c.codePointAt(0) ?? 0)
-  return new TextDecoder().decode(bytes)
-}
+// The base64url codec this payload format is built on lives in
+// `@/lib/base64url` (extracted in #3863, when the tauri mock's keyset cursor
+// became a second consumer of the identical `URL_SAFE_NO_PAD` encoding).
+// Its markdown-safety argument is the one stated at the top of this file:
+// the `A–Z a–z 0–9 - _` alphabet contains none of the characters the markdown
+// serializer escapes.
 
 /**
  * Serialize a spec into the inner payload of `{{query <payload>}}` (i.e. the
