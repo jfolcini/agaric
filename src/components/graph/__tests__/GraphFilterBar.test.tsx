@@ -12,6 +12,7 @@ import { GraphFilterBar } from '@/components/graph/GraphFilterBar'
 import { canonicalToGraphFilters, type FilterPredicate } from '@/lib/filters/model'
 import type { GraphFilter } from '@/lib/graph-filters'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 // Silence the logger.warn calls emitted by readPersistedFilters /
@@ -738,6 +739,74 @@ describe('GraphFilterBar', () => {
       render(<StatefulHarness onChange={onChange} />)
 
       await waitFor(() => {
+        expect(onChange).not.toHaveBeenCalled()
+      })
+      expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+    })
+
+    // #3791 — the persisted value is `unknown` fresh out of `JSON.parse`;
+    // an entry can carry a recognised `kind` while its other fields are
+    // wrong-typed or borrowed from a different variant. The boundary
+    // validator must drop such entries instead of letting them reach
+    // `canonicalToGraphFilters` unchecked.
+    it('drops a canonical predicate whose kind is unrecognised, keeping the valid siblings, and logs the drop count', async () => {
+      const stored: (FilterPredicate | { kind: string })[] = [
+        { kind: 'status', values: ['TODO'], isNull: false, exclude: false },
+        { kind: 'totallyMadeUp' },
+      ]
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+      vi.mocked(logger.warn).mockClear()
+
+      const onChange = vi.fn<(filters: GraphFilter[]) => void>()
+      render(<StatefulHarness onChange={onChange} />)
+
+      await waitFor(() => {
+        expect(onChange).toHaveBeenCalledWith([{ type: 'status', values: ['TODO'] }])
+      })
+      await waitFor(() => {
+        expect(screen.getByText(/Status.*TODO/)).toBeInTheDocument()
+      })
+      // The unrecognised-kind entry is rejected outright (#3791) rather than
+      // silently passed through — the boundary logs the drop so a corrupted
+      // localStorage value doesn't fail perfectly silently.
+      expect(logger.warn).toHaveBeenCalledWith(
+        'GraphFilterBar',
+        'Dropped invalid persisted filter predicates',
+        { key: STORAGE_KEY, droppedCount: 1 },
+      )
+    })
+
+    it('drops a canonical predicate whose kind is recognised but whose fields are wrong-typed', async () => {
+      const stored = [
+        // `values` should be a string[]; this entry is malformed and must be dropped.
+        { kind: 'status', values: [1, 2], isNull: false, exclude: false },
+        { kind: 'hasBacklinks', value: true },
+      ]
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+
+      const onChange = vi.fn<(filters: GraphFilter[]) => void>()
+      render(<StatefulHarness onChange={onChange} />)
+
+      await waitFor(() => {
+        expect(onChange).toHaveBeenCalledWith([{ type: 'hasBacklinks', value: true }])
+      })
+      // The malformed entry must not have reached the model as a status
+      // filter — only the valid hasBacklinks pill renders. (The add-filter
+      // dropdown always has a plain "Status" option, so match on the pill's
+      // "Status: …" label shape, not the bare word.)
+      expect(screen.queryByText(/Status:/)).not.toBeInTheDocument()
+    })
+
+    it('yields no filters (not a crash) when every persisted entry is invalid', async () => {
+      const stored = [{ kind: 'status', values: 'not-an-array' }]
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+
+      const onChange = vi.fn<(filters: GraphFilter[]) => void>()
+      render(<StatefulHarness onChange={onChange} />)
+
+      await waitFor(() => {
+        // An empty hydrated list is never dispatched (readPersistedFilters
+        // returns [] and the mount effect only dispatches non-empty lists).
         expect(onChange).not.toHaveBeenCalled()
       })
       expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()

@@ -30,11 +30,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
-import {
-  canonicalToGraphFilters,
-  type FilterPredicate,
-  graphFiltersToCanonical,
-} from '@/lib/filters/model'
+import { canonicalToGraphFilters, graphFiltersToCanonical } from '@/lib/filters/model'
+import { parseFilterPredicates } from '@/lib/filters/validate'
 import {
   GRAPH_STATUS_VALUES,
   type GraphFilter,
@@ -74,6 +71,16 @@ export interface GraphFilterBarTag {
  * A legacy stored value (pre-migration `GraphFilter[]`, lacking a `kind`
  * discriminant) is still accepted: it is read straight through as
  * `GraphFilter[]`, then re-persisted in canonical form on the next write.
+ *
+ * #3791: the `looksCanonical` sniff below only confirms each entry has a
+ * string `kind` — it does not check that the entry's other fields match the
+ * shape that `kind` claims. `parsed` is `unknown` fresh out of `JSON.parse`,
+ * so a stale entry from an older schema, a hand-edited devtools value, or a
+ * future migration can pass the sniff while carrying wrong-typed or
+ * borrowed-from-another-variant fields. `parseFilterPredicates` runs the
+ * real per-`kind` validator (`src/lib/filters/validate.ts`) over the array
+ * and drops any entry that fails — including one with an unrecognised
+ * `kind` — before the survivors ever reach `canonicalToGraphFilters`.
  */
 function readPersistedFilters(): GraphFilter[] | null {
   if (typeof window === 'undefined') return null
@@ -85,10 +92,19 @@ function readPersistedFilters(): GraphFilter[] | null {
     // Canonical predicates carry a `kind` discriminant; legacy graph filters
     // carry `type`. Detect and project canonical → graph; pass legacy through.
     const looksCanonical = parsed.every(
-      (e): e is FilterPredicate =>
+      (e): e is Record<string, unknown> =>
         typeof e === 'object' && e !== null && 'kind' in e && typeof e.kind === 'string',
     )
-    if (looksCanonical) return canonicalToGraphFilters(parsed as FilterPredicate[])
+    if (looksCanonical) {
+      const { predicates, droppedCount } = parseFilterPredicates(parsed)
+      if (droppedCount > 0) {
+        logger.warn('GraphFilterBar', 'Dropped invalid persisted filter predicates', {
+          key: STORAGE_KEY,
+          droppedCount,
+        })
+      }
+      return canonicalToGraphFilters(predicates)
+    }
     return parsed as GraphFilter[]
   } catch (err) {
     logger.warn('GraphFilterBar', 'Failed to read persisted filters', { key: STORAGE_KEY }, err)

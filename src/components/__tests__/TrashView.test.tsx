@@ -749,6 +749,29 @@ describe('TrashView', () => {
     })
   })
 
+  // #3860 — `trash.batchRestored` had the same missing-plural defect; pins
+  // the singular wording for a 1-item batch restore.
+  it('shows singular batch restore toast when exactly 1 item is selected', async () => {
+    const user = userEvent.setup()
+    const blocks = [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })]
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-item-checkbox'))
+    await user.click(screen.getByRole('button', { name: /Restore selected/i }))
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('1 block restored')
+    })
+  })
+
   // Batch purge is one IPC. Previous test pinned a
   // per-row `purge_block` loop; collapsed to `purge_blocks_by_ids`.
   it('batch purge shows confirmation then fires ONE purge_blocks_by_ids IPC', async () => {
@@ -796,6 +819,34 @@ describe('TrashView', () => {
     // Should show batch toast
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('2 blocks permanently deleted')
+    })
+  })
+
+  // #3860 — `trash.batchPurgeTitle` / `trash.batchPurged` had the same
+  // missing-plural defect; pins the singular wording (dialog title AND
+  // success toast) for a 1-item batch purge.
+  it('shows singular batch purge dialog title and toast when exactly 1 item is selected', async () => {
+    const user = userEvent.setup()
+    const blocks = [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })]
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash') return { items: blocks, next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_blocks_by_ids') return { affected_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-item-checkbox'))
+    await user.click(screen.getByRole('button', { name: /Purge selected/i }))
+
+    expect(screen.getByText('Permanently delete 1 item?')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('1 block permanently deleted')
     })
   })
 
@@ -1471,6 +1522,35 @@ describe('TrashView', () => {
     })
   })
 
+  // #3860 — `trash.allPurged` interpolated {{count}} with no _one/_other
+  // plural forms, so N=1 rendered the "_other"-shaped English text verbatim
+  // ("Trash emptied (1 items...)"). Pins the singular wording explicitly.
+  it('shows singular success toast when empty trash affects exactly 1 item', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash')
+        return {
+          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_blocks_by_ids') return { affected_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Trash emptied (1 item permanently deleted)')
+    })
+  })
+
   it('shows error toast on empty trash failure', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
@@ -1538,6 +1618,94 @@ describe('TrashView', () => {
     // NOT the generic "nothing happened" copy.
     expect(toast.error).not.toHaveBeenCalledWith('Failed to empty trash')
     expect(purgeCalls).toBe(2)
+  })
+
+  // #3860 — `trash.emptyTrashPartial` had the same missing-plural defect as
+  // `trash.allPurged`; pins the singular wording for a 1-item partial purge.
+  // Mirrors the multi-chunk shape of the test above (1001 ids -> two
+  // `purge_blocks_by_ids` chunks) but has the FIRST (successful) chunk
+  // report `affected_count: 1` so the partial-progress toast renders the
+  // singular form.
+  it('shows singular partial-progress toast when exactly 1 item was removed before the error', async () => {
+    const user = userEvent.setup()
+    const trashItems = Array.from({ length: 1001 }, (_, i) =>
+      i === 0
+        ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
+        : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
+    )
+    let purgeCalls = 0
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash')
+        return { items: trashItems, next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_blocks_by_ids') {
+        purgeCalls += 1
+        if (purgeCalls === 1) return { affected_count: 1 }
+        throw new Error('db error on second chunk')
+      }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        'Removed 1 item before an error interrupted emptying trash',
+      )
+    })
+    expect(purgeCalls).toBe(2)
+  })
+
+  // #3860 — the issue's actual complaint: at N=1 the toast and the
+  // screen-reader announcement must AGREE within the SAME user action, not
+  // merely each independently say "1" somewhere. Before the fix, the toast
+  // rendered the "_other"-shaped "Removed 1 items…" while `announce()` (which
+  // already had `_one`/`_other`) correctly said "…1 item…" — the two channels
+  // disagreed for one purge. Asserts both mocks together so a regression in
+  // either alone reddens this test.
+  it('toast and screen-reader announcement agree on singular wording for a 1-item partial purge', async () => {
+    const { announce } = await import('@/lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const user = userEvent.setup()
+    const trashItems = Array.from({ length: 1001 }, (_, i) =>
+      i === 0
+        ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
+        : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
+    )
+    let purgeCalls = 0
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash')
+        return { items: trashItems, next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'purge_blocks_by_ids') {
+        purgeCalls += 1
+        if (purgeCalls === 1) return { affected_count: 1 }
+        throw new Error('db error on second chunk')
+      }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-empty-trash-btn'))
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        'Removed 1 item before an error interrupted emptying trash',
+      )
+    })
+    expect(mockedAnnounce).toHaveBeenCalledWith(
+      'Trash partially emptied — 1 item permanently deleted before an error interrupted it',
+    )
+    // Neither channel fell back to the "_other"-shaped plural wording.
+    expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining('Removed 1 items'))
+    expect(mockedAnnounce).not.toHaveBeenCalledWith(expect.stringContaining('1 items permanently'))
   })
 
   it('opens confirmation dialog when Restore All header is clicked', async () => {
@@ -1714,6 +1882,35 @@ describe('TrashView', () => {
 
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('3 items restored')
+    })
+  })
+
+  // #3860 — `trash.allRestored` had the same missing-plural defect; pins the
+  // singular wording for a 1-item restore-all.
+  it('shows singular success toast when restore all affects exactly 1 item', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash')
+        return {
+          items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_blocks_by_ids') return { affected_count: 1 }
+      return undefined
+    })
+
+    render(<TrashView />)
+
+    await screen.findByText('item 1')
+    await user.click(screen.getByTestId('trash-restore-all-btn'))
+    const dialog = screen.getByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: /^Restore$/i }))
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('1 item restored')
     })
   })
 

@@ -1335,10 +1335,12 @@ describe('PageBlockStore', () => {
       expect(store.getState().blocksById.get('X')?.depth).toBe(1)
     })
 
-    // #3759 — unlike `moveToParent`, `moveBlocks` has NO `canSplice` cycle
-    // guard (see the pinned "selection roots only" test above: it accepts any
-    // ids at all), so the post-rebuild presence check is the only thing between
-    // a cyclic request and a store that silently lost the whole subtree.
+    // #3759/#3799 — `moveBlocks` now has a `wouldCreateMoveCycle` guard that
+    // rejects a cyclic request up front, so this reload is no longer the only
+    // thing standing between such a request and a lost subtree. The two are
+    // outcome-equivalent (a moved id whose new parent is its own descendant is
+    // always absent from the rebuilt tree, so the presence check always caught
+    // it too); this test still pins the backstop independently of the guard.
     it('falls back to a reload when a moved id would fall OUT of the rebuilt tree', async () => {
       store.setState({
         blocks: [
