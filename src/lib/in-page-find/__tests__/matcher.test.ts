@@ -479,12 +479,12 @@ describe('compileQuery — surrogate-aware word boundaries', () => {
   }
 
   it('reads the immediately preceding unit when it is not a low surrogate', () => {
-    // Kills matcher.ts:361:7 [ConditionalExpression → true], 361:7
-    // [LogicalOperator `(low>=0xdc00 && low<=0xdfff) && index>=2` → `|| index>=2`],
-    // 361:7-37 [ConditionalExpression → true], 361:7-37 [LogicalOperator `&&` →
-    // `||`] and 361:7-20 [ConditionalExpression → true] — every mutant that
-    // lets the step-back run when the preceding unit is NOT a trailing
-    // surrogate. Here 'bc' is preceded by the letter 'a', so it is not a whole
+    // Kills every mutant of `codePointBefore`'s `low >= 0xdc00 && low <= 0xdfff`
+    // that lets the step-back run when the preceding unit is NOT a trailing
+    // surrogate — the whole condition forced true, either operand forced true,
+    // and `&&` → `||`. (The mutants of a third `index >= 2` operand used to be
+    // listed here too; that operand was deleted as provably dead in #3809.)
+    // Here 'bc' is preceded by the letter 'a', so it is not a whole
     // word; the mutants instead read the lone LEAD surrogate at index 0 (not a
     // word character) and wrongly emit the match.
     expect(wholeWordLiteral('bc').matcher('\uD800abc')).toEqual([])
@@ -1290,22 +1290,15 @@ describe('runWalker', () => {
  *    532:11 [ConditionalExpression] `!node` → false — `textNodes[i]` is read
  *      under `i < Math.min(cursor + CHUNK_SIZE, textNodes.length)`.
  *
- * B. 221:7 [ConditionalExpression] `needle.length === 0` → false, and
- *    221:35 [ArrayDeclaration] `[]` → ["Stryker was here"] — `scanLiteral` is
- *    reached only through `compileQuery`, which returns `{kind:'empty'}` for
- *    `query.length === 0`; and no case fold shrinks a string (verified for
- *    `toLowerCase()` over all 0x110000 code points: zero mappings with
- *    `f.length < ch.length`). So the needle is never empty and
- *    the early return never runs.
- *
  * C. 251:10 and 296:10 [EqualityOperator] `from <= haystack.length` /
  *    `from <= folded.length` → `<`. The two differ only on the final iteration
- *    where `from === length`; with a non-empty needle (see B) `indexOf` then
+ *    where `from === length`; with a non-empty needle (`scanLiteral` is reached
+ *    only through `compileQuery`, which returns `{kind:'empty'}` for
+ *    `query.length === 0`, and no case fold shrinks a string) `indexOf` then
  *    returns -1 and the loop breaks without emitting, which is exactly what the
  *    mutant's loop test does. Same output either way.
  *
- * D. The folded (length-changing case fold) path's index guards and its
- *    duplicate-span filter.
+ * D. The folded (length-changing case fold) path's index guards.
  *
  *    THE UNDERLYING FACT. U+0130 'İ' → 'i' + U+0307 is the only code point
  *    whose `toLowerCase()` mapping expands (verified by exhaustive scan over
@@ -1315,26 +1308,19 @@ describe('runWalker', () => {
  *    no locale the expanding set followed the runtime's default locale — tr/az
  *    expanded NOTHING (the folded path was dead there) and lt expanded FOUR
  *    (U+00CC, U+00CD, U+0128, U+0130, e.g. 'Ì' → 'i' + U+0307 + U+0300). The
- *    verdicts below held in all of those cases too, because what they actually
- *    need is weaker: (i) `idx <= folded.length - needle.length` bounds every
- *    lookup whatever the fold widths are, and (ii) no fold contains two
- *    ADJACENT IDENTICAL code units, which is what a duplicate span would
- *    require.
+ *    verdict below held in all of those cases too, because what it actually
+ *    needs is weaker: `idx <= folded.length - needle.length` bounds every
+ *    lookup whatever the fold widths are.
  *
- *    Both defences are therefore unreachable:
- *      - `foldedStart`/`foldedEnd` have exactly `folded.length` entries and the
- *        indices used are bounded by `idx <= folded.length - needle.length`, so
- *        neither lookup is ever `undefined`;
- *      - a duplicate span needs two match offsets inside one code point's fold
- *        at BOTH ends, which forces the needle to be periodic with period 1
- *        while its first two folded units are 'i' and U+0307 — a contradiction.
+ *    This defence is therefore unreachable: `foldedStart`/`foldedEnd` have
+ *    exactly `folded.length` entries and the indices used are bounded by
+ *    `idx <= folded.length - needle.length`, so neither lookup is ever
+ *    `undefined`.
  *    Confirmed by differential sweep: 4,422,600 (text, needle, wholeWord) cases
  *    over an alphabet saturated with İ / i / U+0307 / astral letters produced
- *    zero undefined lookups, zero duplicate spans, and — the near-miss canaries
- *    that matter for the sub-expression mutants — zero cases where only the
- *    start or only the end repeated. The same harness detects 1,160 differences
- *    for a mutant the suite already kills (`from = idx + 1` → `+ needle.length`),
- *    so it is not blind.
+ *    zero undefined lookups. The same harness detects 1,160 differences for a
+ *    mutant the suite already kills (`from = idx + 1` → `+ needle.length`), so
+ *    it is not blind.
  *      301:9  [ConditionalExpression] `start !== undefined && end !== undefined`
  *             → true
  *      301:9  [LogicalOperator] `start !== undefined && end !== undefined` →
@@ -1354,15 +1340,6 @@ describe('runWalker', () => {
  *             Verified by splicing each reading separately.
  *      301:9  [ConditionalExpression] `start !== undefined` → true
  *      301:32 [ConditionalExpression] `end !== undefined` → true
- *      304:27 [UnaryOperator] `-1` → `+1` (`out.at(-1)` → `out.at(+1)`): the
- *             guard's verdict is "push" for every reachable input, so which
- *             element it inspects cannot change the output.
- *      305:11 [ConditionalExpression] `!last || last.start !== start ||
- *             last.end !== end` → true
- *      305:20 [ConditionalExpression] `last.start !== start` → false
- *      305:20 [EqualityOperator] `last.start !== start` → `last.start === start`
- *      305:44 [ConditionalExpression] `last.end !== end` → false
- *      305:44 [EqualityOperator] `last.end !== end` → `last.end === end`
  *
  * E. Rewrites that are value-identical rather than merely untested.
  *      327:19 [ConditionalExpression] `text.length > REGEX_NODE_SCAN_MAX` → true,
@@ -1370,25 +1347,18 @@ describe('runWalker', () => {
  *        string equal to `text` whenever `text.length <= N`, so both the
  *        always-slice mutant and the boundary shift hand `re.exec` the same
  *        input, including at exactly `REGEX_NODE_SCAN_MAX`.
- *      361:41 [ConditionalExpression] `index >= 2` → true — `codePointBefore`
- *        already returned for `index <= 0`, so the only extra case is
- *        `index === 1`, where `charCodeAt(-1)` is NaN and `NaN >= 0xd800` is
- *        false; the block falls through to the same `return low`.
  *      363:27 [EqualityOperator] `high <= 0xdbff` → `high < 0xdbff` — differs
  *        only at `high === 0xdbff`, i.e. code points U+10FC00…U+10FFFF. That
  *        whole plane-16 range is Private Use / noncharacter: exhaustively
  *        checked, none of the 1,024 code points matches `/[\p{L}\p{N}_]/u`, and
  *        the bare trailing surrogate the mutant returns instead is not a word
  *        character either. Both readings classify as "not a word char".
- *      370:17 [ConditionalExpression] `end >= text.length` → false,
- *      370:17 [EqualityOperator] same → `>` — `String.prototype.codePointAt`
- *        already returns `undefined` for any index at or past the end, so the
- *        ternary's guard is redundant with the call it guards.
  *
  * Follow-up-worthy (redundant / unreachable production code, not test gaps):
- * the whole of group A, the `needle.length === 0` early return (B), the folded
- * path's duplicate-span filter (D), and the redundant guards in E (361:41,
- * 370:17).
+ * the whole of group A. (The `needle.length === 0` early return, the folded
+ * path's duplicate-span filter, and the redundant guards formerly noted at
+ * `codePointBefore`'s `index >= 2` and the whole-word `end >= text.length`
+ * ternary were removed in #3809.)
  *
  * RESOLVED (#3800): the three fold sites (`compileQuery`, `scanLiteral`,
  * `scanLiteralFolded`) used to call `toLocaleLowerCase()` with no locale, so
@@ -1398,11 +1368,6 @@ describe('runWalker', () => {
  * widget does. The `locale-independent case folding (#3800)` describe pins the
  * invariant, and the ambient-locale precondition guards those tests needed are
  * gone.
- *
- * Note that the duplicate-span filter in `scanLiteralFolded` (D) is now
- * provably rather than empirically dead: with a single expanding code point,
- * fixed across all hosts, no needle can produce two match offsets whose
- * folded spans coincide. Removing it is tracked in #3809.
  *
  * Note on 385:11 (`!(node instanceof Text)` → false, listed under A): the guard
  * is redundant under `SHOW_TEXT` and would additionally misfire across realms,

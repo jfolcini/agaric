@@ -252,7 +252,6 @@ function scanLiteral(
   wholeWord: boolean,
   caseSensitive: boolean,
 ): Array<{ start: number; end: number }> {
-  if (needle.length === 0) return []
   if (caseSensitive) return scanIndexOf(text, text, needle, wholeWord)
   // Locale-independent fold — must stay in lockstep with the needle fold
   // in `compileQuery` (see the note there).
@@ -429,12 +428,7 @@ function scanLiteralFolded(
     const start = foldedStart[idx]
     const end = foldedEnd[idx + foldedNeedle.length - 1]
     if (start !== undefined && end !== undefined && (!wholeWord || isWholeWord(text, start, end))) {
-      // Two folded offsets can map to the same original span (a match
-      // starting inside a multi-unit fold) — emit each span once.
-      const last = out.at(-1)
-      if (!last || last.start !== start || last.end !== end) {
-        out.push({ start, end })
-      }
+      out.push({ start, end })
     }
     from = idx + 1
   }
@@ -488,7 +482,7 @@ function isWordCodePoint(cp: number | undefined): boolean {
 function codePointBefore(text: string, index: number): number | undefined {
   if (index <= 0) return undefined
   const low = text.charCodeAt(index - 1)
-  if (low >= 0xdc00 && low <= 0xdfff && index >= 2) {
+  if (low >= 0xdc00 && low <= 0xdfff) {
     const high = text.charCodeAt(index - 2)
     if (high >= 0xd800 && high <= 0xdbff) return text.codePointAt(index - 2)
   }
@@ -497,7 +491,7 @@ function codePointBefore(text: string, index: number): number | undefined {
 
 function isWholeWord(text: string, start: number, end: number): boolean {
   const before = codePointBefore(text, start)
-  const after = end >= text.length ? undefined : text.codePointAt(end)
+  const after = text.codePointAt(end)
   return !isWordCodePoint(before) && !isWordCodePoint(after)
 }
 
