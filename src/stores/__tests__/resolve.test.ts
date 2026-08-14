@@ -690,7 +690,7 @@ describe('preload targeted rescan (#3321)', () => {
       // #2277 item 7 — list_blocks params nest under the `request` DTO.
       const req = (params?.['request'] as Record<string, unknown> | undefined) ?? params
       if (cmd === 'list_blocks') {
-        // The real `list_blocks_by_type` filters `deleted_at IS NULL`
+        // The real `pagination::list_by_type` (hierarchy.rs:112) filters `deleted_at IS NULL`
         // (`src-tauri/agaric-store/src/pagination/hierarchy.rs`), so the full
         // walk can never observe a soft-deleted page — only the targeted
         // `batch_resolve` half can (it applies no `deleted_at` predicate).
@@ -902,6 +902,37 @@ describe('preload targeted rescan (#3321)', () => {
     expect(countCalls('batch_resolve')).toBe(1)
     expect(countCalls('list_blocks')).toBe(1)
     expect(useResolveStore.getState().resolveTitle('PAGE_1')).toBe('Renamed by peer')
+  })
+
+  // The escalation above is for the PAGE half. A tag failure must not trigger
+  // it: escalating re-runs the same failing tag IPC inside a 30-round-trip
+  // walk, so the "cheap targeted rescan" becomes ~33 IPCs — worse than the 31
+  // this whole change exists to replace.
+  it('does not escalate to a full walk when only the TAG half fails', async () => {
+    installSpaceMock(3)
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    mockedInvoke.mockClear()
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'batch_resolve')
+        return [{ id: 'PAGE_1', title: 'Renamed by peer', deleted: false }]
+      if (cmd === 'list_all_tags_in_space') throw new Error('tag transport failure')
+      if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+      return null
+    })
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    expect(countCalls('batch_resolve')).toBe(1)
+    // The escalation would show up here as a `list_blocks` walk.
+    expect(countCalls('list_blocks')).toBe(0)
+    // The page result is deliberately NOT applied: a tag failure still aborts
+    // the whole scan and leaves the cache untouched, which is the pre-existing
+    // contract (`logs a warning when listAllTagsInSpace rejects` pins it, and
+    // the next unconditional tick re-fetches both halves). Only the ESCALATION
+    // decision was made half-aware — asserting the stale title here keeps this
+    // test honest about what did and did not change.
+    expect(useResolveStore.getState().resolveTitle('PAGE_1')).toBe('Page 1')
   })
 
   it('does not re-escalate a FAILED full walk — the retry chain is bounded', async () => {

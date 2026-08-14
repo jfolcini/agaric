@@ -111,6 +111,16 @@ function touch<K, V>(cache: Map<K, V>, key: K, value: V): void {
   cache.set(key, value)
 }
 
+/**
+ * Outcome of one preload scan. `pageHalfFailed` distinguishes a page-half
+ * failure (worth escalating a targeted scan to the full walk) from a tag-half
+ * failure (not worth it — the walk re-runs the same failing tag IPC).
+ */
+interface PreloadScanResult {
+  applied: boolean
+  pageHalfFailed: boolean
+}
+
 interface ResolveEntry {
   title: string
   deleted: boolean
@@ -269,7 +279,11 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
    * `batchResolve` round-trip) instead of walking the whole space; null for
    * the full paginated walk. See {@link narrowToTargetedIds}.
    */
-  async function runPreloadScan(spaceId: string, targetedIds: string[] | null): Promise<boolean> {
+  async function runPreloadScan(
+    spaceId: string,
+    targetedIds: string[] | null,
+  ): Promise<PreloadScanResult> {
+    let pageHalfSucceeded = false
     try {
       const fetchedPages = new Map<string, ResolveEntry>()
       if (targetedIds) {
@@ -316,6 +330,16 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       // 200 tags rendered broken in large vaults. We key the rows under
       // `spaceId` so a `clearAllForSpace` flush wipes them too — the next
       // preload re-fetches them under the new space's prefix.
+      // #3321 — the page half is done; anything that throws from here on is
+      // the TAG half. Recorded so the escalate-to-full-walk retry below can
+      // tell the two apart: that retry exists only for pages, and escalating
+      // on a tag failure re-runs the same failing tag IPC inside a
+      // 30-round-trip walk — ~33 IPCs where this change exists to spend 2.
+      // The abort semantics are unchanged (a tag failure still aborts the
+      // scan and leaves `_preloaded` false, per the pre-existing contract);
+      // only the escalation decision is now aware of which half failed.
+      pageHalfSucceeded = true
+
       const tags = await listAllTagsInSpace(spaceId)
       const fetchedTags = new Map<string, ResolveEntry>()
       for (const t of tags) {
@@ -373,7 +397,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         // space, whose scan legitimately fetches nothing, is not stuck
         // retrying).
         if (fullScan && !get()._preloaded) set({ _preloaded: true })
-        return true
+        return { applied: true, pageHalfFailed: false }
       }
       // #3321 — the bulk path enforces `MAX_CACHE_SIZE` too. `set`/`batchSet`
       // both evict after writing; preload used to be the one writer that
@@ -386,10 +410,10 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         version: state.version + 1,
         _preloaded: state._preloaded || fullScan,
       }))
-      return true
+      return { applied: true, pageHalfFailed: false }
     } catch (err) {
       logger.warn('ResolveStore', 'preload failed, using fallback', {}, err)
-      return false
+      return { applied: false, pageHalfFailed: !pageHalfSucceeded }
     }
   }
 
@@ -444,15 +468,19 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
           // failure to the full walk (a superset) exactly once — a failing full
           // walk does not re-escalate, so the chain is bounded at one retry.
           let scanIds = leadingIds
-          let applied = await runPreloadScan(spaceId, scanIds)
-          if (!applied && scanIds !== null) foldIntoTrailing(entry, undefined)
+          let result = await runPreloadScan(spaceId, scanIds)
+          // Escalate ONLY when the page half is what failed (see
+          // `runPreloadScan`): a tag failure would otherwise turn a 2-IPC
+          // targeted rescan into a ~33-IPC walk that re-runs the same
+          // failing tag call.
+          if (result.pageHalfFailed && scanIds !== null) foldIntoTrailing(entry, undefined)
           while (entry.trailingForce) {
             scanIds = narrowToTargetedIds(entry.trailingIds ?? undefined)
             entry.currentFull = scanIds === null
             entry.trailingForce = false
             entry.trailingIds = null
-            applied = await runPreloadScan(spaceId, scanIds)
-            if (!applied && scanIds !== null) foldIntoTrailing(entry, undefined)
+            result = await runPreloadScan(spaceId, scanIds)
+            if (result.pageHalfFailed && scanIds !== null) foldIntoTrailing(entry, undefined)
           }
         } finally {
           // Runs synchronously with the body's completion — before any
