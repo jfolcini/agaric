@@ -106,8 +106,15 @@ function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
 
   // Resolve-cache preload — a changed page's / tag's title may have moved.
   // Takes the active space id so the re-fetch only re-keys current-space pages.
+  //
+  // #3321 — forward the SAME `targeted` set used above instead of discarding
+  // it. The preload's page half then re-resolves exactly those ids in one
+  // `batchResolve` instead of paginating the whole space (30 sequential
+  // `list_blocks` round-trips in a 3,000-page vault, every ~3 s while a peer
+  // types); its tag half still runs unconditionally because tags carry no
+  // changed-id signal. `null` (the fallback branch) keeps the full scan.
   const refreshSpaceId = useSpaceStore.getState().currentSpaceId
-  useResolveStore.getState().preload(refreshSpaceId ?? undefined, true)
+  useResolveStore.getState().preload(refreshSpaceId ?? undefined, true, targeted ?? undefined)
 
   // #1530 — out-of-band ops also change the page-link graph topology; bump the
   // graph-structure signal so a mounted GraphView refetches (stale-while-
