@@ -248,6 +248,26 @@ const DRIFT_SKIP = new Set<string>([
  * `conformance-coverage.test.ts` exists to prevent. Every name here therefore
  * still asserts `mock == backend` on its snapshot; only its query steps are
  * unasserted. Each entry needs a `// DRIFT(#763): …` note naming the issue.
+ *
+ * ## Why the granularity is the FIXTURE and not the step
+ *
+ * A per-STEP skip set lived here briefly, to keep a diverging command from
+ * darkening its passing siblings. It was removed because per-step skipping is
+ * UNSOUND for the step shape this harness leans on hardest: a PAIR, where a
+ * non-empty step and an `expect_empty` step are only meaningful TOGETHER.
+ * `query_inherited_tags` is the case in point — its empty step pins that the
+ * direct-tag reader does NOT answer the inherited tag, which proves something
+ * only while the inherited reader is asserted to return that tag. Skip the
+ * non-empty half and the survivor asserts `[] == []`: a mock whose
+ * `list_tags_for_block` is a constant `() => []` passes it. The `expect_empty`
+ * vacuity guard in `conformance-coverage.test.ts` cannot catch that, because
+ * the step legitimately declared itself empty; the skip is what hollowed it.
+ *
+ * So: skipping any step of a pair must skip BOTH, and since a pair is the
+ * normal shape here, the honest unit is the fixture. If per-step skipping is
+ * ever reintroduced, it must name every step of the pair — and the guard that
+ * decides which commands are differentially covered must count a step's
+ * recorded ROWS, not merely its presence (see `QUERY_STEPS_BACKEND_ONLY`).
  */
 const QUERY_DRIFT_SKIP = new Set<string>([
   // #3826 — three READ divergences the first honest query fixtures found. Each
@@ -259,37 +279,17 @@ const QUERY_DRIFT_SKIP = new Set<string>([
   // `cursor` and always answers `has_more: false`, so it has no pagination at
   // all: page 2 and page 3 return the whole child list.
   'query_list_blocks_pagination',
-  // #3871 is NOT here: only one of `query_inherited_tags`'s two steps
-  // diverges, so it is skipped per-STEP in QUERY_DRIFT_SKIP_STEPS and its
-  // sibling assertion stays live.
+  // DRIFT(#763): #3871 — the mock's `list_inherited_tags_for_block` is a
+  // hard-coded `() => []`, so `inherited_tag_reaches_the_descendant` diverges.
+  // Its sibling `inherited_tag_is_not_a_direct_tag` passes on the mock, but it
+  // is the `expect_empty` HALF OF A PAIR and asserts nothing alone (see the
+  // granularity note above), so the fixture is skipped whole rather than
+  // leaving a survivor that reads like coverage.
+  'query_inherited_tags',
   // DRIFT(#763): #3872 — the mock's `get_batch_properties` keys its map off the
   // REQUEST, so a property-less block comes back bound to `[]` where
   // `get_batch_properties_inner` omits it entirely.
   'query_batch_properties_empty_entry',
-])
-
-/**
- * Per-STEP query drift, keyed `<fixture>::<step>`.
- *
- * {@link QUERY_DRIFT_SKIP} is fixture-granular, which reproduces the very
- * failure it was split out to fix, one level down: `query_inherited_tags` is
- * skipped for #3871, but its second step drives `list_tags_for_block`, which
- * the mock implements CORRECTLY and which would pass. Skipping the fixture
- * darkened a live assertion.
- *
- * A step named here is dropped from BOTH sides of the comparison, so the rest
- * of its fixture still asserts `mock == backend`. Prefer this over
- * {@link QUERY_DRIFT_SKIP} whenever the divergence is one command's, and over
- * moving the step to another fixture, which would break the disjointness
- * pairing a step is often written to establish. Each entry needs a
- * `// DRIFT(#763): …` note naming the issue.
- */
-const QUERY_DRIFT_SKIP_STEPS = new Set<string>([
-  // DRIFT(#763): #3871 — `list_inherited_tags_for_block` is a hard-coded
-  // `() => []`, so only THIS step diverges. Its sibling
-  // `inherited_tag_is_not_a_direct_tag` drives `list_tags_for_block`, which is
-  // correct in the mock and is deliberately left asserted.
-  'query_inherited_tags::inherited_tag_reaches_the_descendant',
 ])
 
 describe('tauri-mock ⇄ backend conformance (#763)', () => {
@@ -348,18 +348,9 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
         stampMockSpace()
 
         const labels = canonicalLabelMap(canonicalOrder(fixture))
-        // Drop per-step drift from BOTH sides so the rest of the fixture still
-        // asserts mock == backend. Filtering the RECORDING (rather than not
-        // running the step) keeps the mock executing it, so a step that starts
-        // throwing is still noticed.
-        const skipStep = (name: string): boolean =>
-          QUERY_DRIFT_SKIP_STEPS.has(`${fixture.name}::${name}`)
-        const actual = (await runQuerySteps(fixture.queries ?? [], labels)).filter(
-          (r) => !skipStep(r.name),
-        )
-        const expected = (fixture.expected_queries ?? []).filter((r) => !skipStep(r.name))
+        const actual = await runQuerySteps(fixture.queries ?? [], labels)
 
-        expect(actual).toEqual(expected)
+        expect(actual).toEqual(fixture.expected_queries)
       },
     )
   }

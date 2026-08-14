@@ -247,13 +247,40 @@ fn attr_value(name: &str, v: Option<&Value>) -> String {
     rendered
 }
 
+/// Refuse a token HEAD carrying a separator, for the same reason [`attr_value`]
+/// refuses one in a value.
+///
+/// [`attr_value`] guards only the ATTRIBUTE side of
+/// `head ("#" attr-name "=" attr-value)*`, but the head is concatenated with
+/// those segments and aliases across the join just as readily. The property key
+/// `a#b` holding `value_text: "x"` renders `a#b#Text=x` — byte-identical to the
+/// key `a` carrying a `b#Text=x` segment — so the two compare EQUAL and a
+/// projection bug that swaps one for the other is invisible. `->` is the same
+/// hazard against the arrow heads of the map projections.
+///
+/// Reachable, not theoretical: `set_property` takes its key straight from the
+/// caller, so property keys are USER-AUTHORED text in which `#` is ordinary.
+fn token_head(what: &str, head: &str) -> String {
+    assert!(
+        !head.contains('#') && !head.contains("->"),
+        "query {what} {head:?} contains a token separator ('#' or '->'). Both \
+         runners would build the SAME string, so this does not redden — it \
+         ALIASES: the head runs straight into the '#'-joined attribute segments \
+         (and into the '->' of a map pair), so a differently-split token matches \
+         it and a real projection bug compares equal. Pick fixture keys without \
+         those sequences."
+    );
+    head.to_owned()
+}
+
 /// Build `<row[id_key]>#<attr>=<value>…` for one serialized row.
 fn row_token(row: &Value, id_key: &str, attrs: &[&str]) -> String {
-    let mut token = row
-        .get(id_key)
-        .and_then(Value::as_str)
-        .unwrap_or("<missing-id>")
-        .to_owned();
+    let mut token = token_head(
+        "row id",
+        row.get(id_key)
+            .and_then(Value::as_str)
+            .unwrap_or("<missing-id>"),
+    );
     for attr in attrs {
         token.push('#');
         token.push_str(attr);
@@ -271,10 +298,12 @@ fn row_token(row: &Value, id_key: &str, attrs: &[&str]) -> String {
 /// from disagree only when the command's own projection is wrong. `Bool` keeps
 /// SQLite's raw `0` / `1` INTEGER — both stacks store the integer.
 fn property_token(row: &Value) -> String {
-    let key = row
-        .get("key")
-        .and_then(Value::as_str)
-        .unwrap_or("<missing-key>");
+    let key = token_head(
+        "property key",
+        row.get("key")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing-key>"),
+    );
     for (column, tag) in [
         ("value_text", "Text"),
         ("value_num", "Num"),
@@ -294,7 +323,13 @@ fn property_token(row: &Value) -> String {
 fn map_row_tokens(v: &Value, id_key: &str, attrs: &[&str]) -> Vec<String> {
     v.as_object().map_or_else(Vec::new, |map| {
         map.iter()
-            .map(|(k, row)| format!("{k}->{}", row_token(row, id_key, attrs)))
+            .map(|(k, row)| {
+                format!(
+                    "{}->{}",
+                    token_head("map key", k),
+                    row_token(row, id_key, attrs)
+                )
+            })
             .collect()
     })
 }
@@ -311,11 +346,14 @@ fn map_rows_tokens(v: &Value, token: &dyn Fn(&Value) -> String) -> Vec<String> {
     v.as_object().map_or_else(Vec::new, |map| {
         map.iter()
             .flat_map(|(k, rows)| {
+                let head = token_head("map key", k);
                 let rows = rows.as_array().cloned().unwrap_or_default();
                 if rows.is_empty() {
-                    return vec![format!("{k}->(none)")];
+                    return vec![format!("{head}->(none)")];
                 }
-                rows.iter().map(|r| format!("{k}->{}", token(r))).collect()
+                rows.iter()
+                    .map(|r| format!("{head}->{}", token(r)))
+                    .collect()
             })
             .collect()
     })
@@ -891,7 +929,7 @@ pub async fn run_query_steps(
 
 #[cfg(test)]
 mod attr_value_tests {
-    use super::attr_value;
+    use super::{attr_value, map_rows_tokens, property_token};
     use serde_json::json;
 
     /// Every rendering here is byte-identical to `String(n)` in the TS twin —
@@ -957,6 +995,50 @@ mod attr_value_tests {
         for v in [json!("a-b"), json!("a > b"), json!("a_b"), json!("plain")] {
             let _ = attr_value("title", Some(&v));
         }
+    }
+
+    /// The head is the OTHER half of the grammar, and it was unguarded while
+    /// values were guarded. A property key `a#b` with `value_text: "x"` renders
+    /// `a#b#Text=x`, which is exactly what the key `a` carrying a `b#Text=x`
+    /// segment renders — so the two tokens compare EQUAL and a projection bug
+    /// between them is invisible. `set_property` takes the key from the caller,
+    /// so this is user-authored text.
+    #[test]
+    #[should_panic(expected = "contains a token separator")]
+    fn a_hash_in_a_property_key_is_refused() {
+        let _ = property_token(&json!({ "key": "a#b", "value_text": "x" }));
+    }
+
+    /// `->` heads the map projections (`first_child_for_blocks`,
+    /// `get_batch_properties`), so a key carrying one splits the pair wrongly.
+    #[test]
+    #[should_panic(expected = "contains a token separator")]
+    fn an_arrow_in_a_map_key_is_refused() {
+        let _ = map_rows_tokens(
+            &json!({ "a->b": [{ "key": "k", "value_text": "x" }] }),
+            &property_token,
+        );
+    }
+
+    /// The empty-array branch of `map_rows_tokens` builds its own token, so it
+    /// needs the guard too — it would otherwise be the one head that escapes.
+    #[test]
+    #[should_panic(expected = "contains a token separator")]
+    fn a_hash_in_an_empty_entry_map_key_is_refused() {
+        let _ = map_rows_tokens(&json!({ "a#b": [] }), &property_token);
+    }
+
+    /// Ordinary keys must still pass, or the guard is just breakage.
+    #[test]
+    fn ordinary_keys_are_not_refused() {
+        assert_eq!(
+            property_token(&json!({ "key": "status", "value_text": "open" })),
+            "status#Text=open"
+        );
+        assert_eq!(
+            map_rows_tokens(&json!({ "B2": [] }), &property_token),
+            vec!["B2->(none)".to_owned()]
+        );
     }
 
     /// `deleted_at` is normalised BEFORE the number branch, so a tombstone

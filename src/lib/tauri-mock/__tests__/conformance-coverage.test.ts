@@ -497,10 +497,16 @@ const CONFORMANCE_TEST_PATH = path.resolve(import.meta.dirname, 'conformance.tes
 
 /** Parse one `new Set([...])` declaration out of `conformance.test.ts` — reading
  *  the real set rather than a second copy that could drift from it. Comment
- *  lines are dropped first: the reasons contain apostrophes. */
+ *  lines are dropped first: the reasons contain apostrophes.
+ *
+ *  The needle includes the ` = ` deliberately. On a bare `const ${name}` prefix,
+ *  one set name that PREFIXES another (`DRIFT_SKIP` vs a hypothetical
+ *  `DRIFT_SKIP_STEPS`) resolves to whichever is declared FIRST in the file, so
+ *  the parser silently reads the wrong set when someone reorders declarations.
+ *  Anchoring on the assignment makes each name match only its own declaration. */
 function loadSkipSet(name: string): Set<string> {
   const source = readFileSync(CONFORMANCE_TEST_PATH, 'utf8')
-  const start = source.indexOf(`const ${name}`)
+  const start = source.indexOf(`const ${name} =`)
   const end = source.indexOf('])', start)
   if (start < 0 || end < 0) {
     throw new Error(
@@ -522,16 +528,6 @@ function loadSkipSet(name: string): Set<string> {
  *  query leg of `conformance.test.ts` actually uses. */
 function loadDriftSkip(): Set<string> {
   return new Set([...loadSkipSet('DRIFT_SKIP'), ...loadSkipSet('QUERY_DRIFT_SKIP')])
-}
-
-/**
- * The PER-STEP drift set, `<fixture>::<step>`. Parsed from the same source of
- * truth as the fixture-level sets so it cannot drift into a hand-maintained
- * copy. Without this, a step skipped per-step reads as LIVE here and the
- * backend-only declaration for its command looks stale.
- */
-function loadDriftSkipSteps(): Set<string> {
-  return loadSkipSet('QUERY_DRIFT_SKIP_STEPS')
 }
 
 // ---------------------------------------------------------------------------
@@ -911,30 +907,28 @@ describe('#3083 conformance-coverage ratchet', () => {
         `Remove the stale entries from conformance.test.ts.`,
     ).toEqual([])
 
-    // Live == the step actually asserts mock-vs-backend. A step is dead if its
-    // whole fixture is skipped OR if it is named per-step; both must count, or
-    // a per-step skip silently reads as coverage — the exact failure the
-    // fixture/query split was introduced to fix.
-    const skippedSteps = loadDriftSkipSteps()
-    const staleStep = [...skippedSteps]
-      .filter((key) => {
-        const [fxName, stepName] = key.split('::')
-        return !fixtures.some(
-          (fx) => fx.name === fxName && fx.querySteps.some((q) => q.name === stepName),
-        )
-      })
-      .toSorted()
-    expect(
-      staleStep,
-      `QUERY_DRIFT_SKIP_STEPS names steps that no longer exist ${JSON.stringify(staleStep)}. ` +
-        `Remove the stale entries from conformance.test.ts.`,
-    ).toEqual([])
-
+    // Live == the step actually asserts mock-vs-backend over DATA. Two ways to
+    // fail that, and counting only the first is this guard's own bug repeated
+    // one level down:
+    //
+    //   1. the step's fixture is query-skipped, so the mock leg never runs it;
+    //   2. the step runs but recorded ZERO rows, so the comparison is `[] == []`
+    //      and a constant-`[]` handler satisfies it.
+    //
+    // (2) is why `rows.length` is consulted here rather than mere step
+    // PRESENCE. An `expect_empty` step is a legitimate assertion next to a
+    // populated sibling — the vacuity guard above enforces the declaration —
+    // but it is not, on its own, evidence that the command was differentially
+    // exercised. A command whose only unskipped step is empty is exactly as
+    // undiffed as one with no unskipped step at all, and must be declared.
     const liveCommands = new Set<string>()
     for (const fx of fixtures) {
       if (skipped.has(fx.name)) continue
-      for (const step of fx.querySteps) {
-        if (skippedSteps.has(`${fx.name}::${step.name}`)) continue
+      for (const [i, step] of fx.querySteps.entries()) {
+        // Index-aligned with `querySteps`; the vacuity guard above fails first
+        // if that alignment ever breaks, so a missing entry here is treated as
+        // no evidence rather than silently counted.
+        if ((fx.expectedQueries[i]?.rows.length ?? 0) === 0) continue
         liveCommands.add(step.command)
       }
     }
@@ -942,18 +936,33 @@ describe('#3083 conformance-coverage ratchet', () => {
     const undeclared = backendOnly.filter((c) => !(c in QUERY_STEPS_BACKEND_ONLY))
     expect(
       undeclared,
-      `These commands have query steps ONLY in query-skipped fixtures ${JSON.stringify(
-        undeclared,
-      )}, so the mock leg never runs them and the "coverage" is one-sided. FIX by ` +
-        `EITHER adding a live fixture step, OR declaring the command in ` +
+      `These commands have NO query step that is both unskipped on the mock leg and ` +
+        `non-empty ${JSON.stringify(undeclared)} — either every step lives in a ` +
+        `query-skipped fixture, or the ones that run recorded zero rows. Both mean ` +
+        `the command is pinned on one stack, not diffed across two. FIX by EITHER ` +
+        `adding a live fixture step that SELECTS ROWS, OR declaring the command in ` +
         `QUERY_STEPS_BACKEND_ONLY with the divergence issue that keeps it skipped.`,
     ).toEqual([])
 
     const stale = Object.keys(QUERY_STEPS_BACKEND_ONLY).filter((c) => liveCommands.has(c))
     expect(
       stale,
-      `QUERY_STEPS_BACKEND_ONLY declares commands that now have a LIVE query step ` +
-        `${JSON.stringify(stale)}. The divergence is fixed — delete the entry.`,
+      `QUERY_STEPS_BACKEND_ONLY declares commands that now have a LIVE, non-empty ` +
+        `query step ${JSON.stringify(stale)}. The divergence is fixed — delete the entry.`,
+    ).toEqual([])
+
+    // The sibling allowlists both audit for entries that no longer name
+    // anything real; without the same check here, deleting the last fixture
+    // that drives a declared command leaves its waiver behind, still reading
+    // as a live exemption for a command nothing exercises.
+    const orphaned = Object.keys(QUERY_STEPS_BACKEND_ONLY)
+      .filter((c) => !fixtureQueryCommands.has(c))
+      .toSorted()
+    expect(
+      orphaned,
+      `QUERY_STEPS_BACKEND_ONLY declares commands that NO fixture drives a query ` +
+        `step for ${JSON.stringify(orphaned)}. The waiver describes a backend-only ` +
+        `step that no longer exists — remove the entry (or restore the fixture).`,
     ).toEqual([])
 
     expect(
