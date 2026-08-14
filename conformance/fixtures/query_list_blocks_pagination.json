@@ -113,6 +113,12 @@
       "name": "children_page_3",
       "rows": ["B6#parent_id=B1#page_id=B1#position=5#deleted_at=null"],
       "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "roots_only_for_null_parent",
+      "rows": ["B1#parent_id=null#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
     }
   ],
   "name": "query_list_blocks_pagination",
@@ -166,6 +172,21 @@
       "comment": "The short final page: one row, `has_more` false. Pins the end-of-results signal the FE stops on.",
       "cursor_from": "children_page_2",
       "name": "children_page_3",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "parentId": null
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "A NULL `parentId` is not 'no parent filter' — `list_children` binds `WHERE parent_id IS ?1`, so it selects the ROOT blocks and nothing else. This step is the discriminator: the seed has ONE root (the page) above five children, so an implementation that reads null as 'unfiltered' answers all six rows here instead of one. It is also why the default page size is not a safe fallback for that reading: with `limit` omitted the wrong answer is not merely a superset but the first 50 of one.",
+      "name": "roots_only_for_null_parent",
       "ordered": true
     }
   ],

@@ -17,6 +17,110 @@ import {
 } from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, properties, pushOp } from '@/lib/tauri-mock/seed'
 
+// ---------------------------------------------------------------------------
+// #3871 — tag inheritance (`block_tag_inherited`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Backend `BLOCK_TAG_CAP` (`tag_query::query`) — the typeahead insurance cap
+ * both tag readers truncate their row list at.
+ */
+const BLOCK_TAG_CAP = 1000
+
+/**
+ * How far above a block a tag-bearing ancestor may sit and still propagate to
+ * it, mirroring `MAX_TAG_INHERITANCE_DEPTH` (= 100) as the backend's recursive
+ * CTEs actually apply it. Derivation, from `tag_inh_descendant_tags_full!()`:
+ * the seed emits `depth = 0` rows for the tagged block's CHILDREN (distance 1),
+ * and the recursive member extends a `depth = k` row only `WHILE k < 100`, so
+ * the deepest row it can emit is `depth = 100` — distance 101. A chain longer
+ * than that stops propagating rather than recursing forever on a corrupted
+ * `parent_id` cycle.
+ */
+const MAX_INHERITED_ANCESTOR_DISTANCE = 101
+
+/**
+ * The inherited tag ids of `blockId`, DERIVED from the current block tree and
+ * `blockTags` rather than cached.
+ *
+ * ## Why derive instead of maintaining a table
+ *
+ * The backend keeps `block_tag_inherited` as a materialised CACHE, updated
+ * incrementally by `apply_op_tag_inheritance` on five op types (AddTag,
+ * RemoveTag, CreateBlock, DeleteBlock, MoveBlock/RestoreBlock) and periodically
+ * recomputed from scratch by `tag_inheritance::rebuild_all`. Mirroring the five
+ * incremental hooks in the mock would mean five more places to keep in sync,
+ * each able to drift on its own; deriving at READ time makes the answer a pure
+ * function of state the mock already models, so no mock mutation can leave it
+ * stale and there is no cache to invalidate.
+ *
+ * The relation implemented here is `rebuild_all`'s — the backend's own
+ * ground-truth definition of what the cache should contain. Note the backend
+ * is INTERNALLY inconsistent about one case and this follows `rebuild_all`:
+ * for a block holding a tag both directly and by inheritance, `rebuild_all`
+ * keeps the inherited row while `recompute_subtree_inheritance` (move/restore)
+ * excludes it. Filed as #3876 — a fixture exercising "direct + inherited, then
+ * move" would surface as an apparent MOCK divergence when the real
+ * disagreement is between two backend paths.
+ *
+ *   `(B, T)` is inherited iff some STRICT ancestor `A` of `B` holds `T`
+ *   directly in `block_tags`, where `A`, `B` and every block between them is
+ *   active (`deleted_at IS NULL`).
+ *
+ * Hence the walk below stops at the first deleted ancestor: the backend's
+ * recursion joins active rows only, so a tombstoned block breaks the chain for
+ * everything above it as well as for itself.
+ */
+function inheritedTagIds(blockId: string): string[] {
+  const self = blocks.get(blockId)
+  // A tombstoned (or absent) block holds no inherited rows: the backend's walk
+  // only ever emits rows for an active descendant.
+  if (!self || self['deleted_at']) return []
+
+  const out = new Set<string>()
+  const seen = new Set<string>([blockId])
+  let cursor = (self['parent_id'] as string | null) ?? null
+  for (
+    let distance = 1;
+    cursor != null && distance <= MAX_INHERITED_ANCESTOR_DISTANCE;
+    distance++
+  ) {
+    // Cycle guard — NOT equivalent to the backend's depth bound, and the
+    // difference is observable on corrupt data. The CTE has no `seen` set: it
+    // walks a cycle round and round, emitting a row each pass, and only stops
+    // at `depth = 100`. So on `A.parent = B, B.parent = A` with A holding T
+    // directly, the seed emits `(B, T, depth 0)` and the recursion then emits
+    // `(A, T, depth 1)` — A inherits its OWN tag — where this walk revisits A,
+    // breaks, and answers nothing for it. (B agrees on both stacks.)
+    //
+    // Reachable only through a `parent_id` cycle, which the block tree forbids
+    // and no mock mutation path can create, so it is documented rather than
+    // mirrored: reproducing it would mean walking a cycle 101 times to stay
+    // bug-compatible with a bound that exists purely to stop the recursion.
+    //
+    // Recorded because this guard has already eaten one falsification attempt
+    // during the #3871 work: a cycle was introduced to try to make the derived
+    // walk disagree with the cache, the guard swallowed it, the walk returned
+    // `[]`, and the test PASSED — reading as protection when it was silence. A
+    // conformance fixture cannot restore the check either: the fixture seed
+    // inserts through the engine, which will not accept a cycle.
+    if (seen.has(cursor)) break
+    seen.add(cursor)
+    const ancestor = blocks.get(cursor)
+    // Chain broken — a missing or deleted ancestor stops propagation from
+    // ITSELF and from everything above it (see the doc comment).
+    if (!ancestor || ancestor['deleted_at']) break
+    for (const tagId of blockTags.get(cursor) ?? []) out.add(tagId)
+    cursor = (ancestor['parent_id'] as string | null) ?? null
+  }
+
+  // `ORDER BY tag_id` + the shared `BLOCK_TAG_CAP` truncation, exactly as
+  // `list_tags_for_block` (#3873) — the backend applies the identical
+  // `ORDER BY tag_id LIMIT 1001` + `truncate(1000)` to both readers, so both
+  // mock readers apply it too.
+  return [...out].toSorted().slice(0, BLOCK_TAG_CAP)
+}
+
 export const tagsHandlers = {
   add_tag: (args) => {
     const a = args as Record<string, unknown>
@@ -252,20 +356,37 @@ export const tagsHandlers = {
     return tagRows
   },
 
+  // #3873 — `ORDER BY tag_id`, not insertion order. `blockTags` is a `Set`, so
+  // spreading it yields the order the `add_tag` ops ran, where the backend
+  // (`tag_query::list_tags_for_block`) sorts. Tag ids are ULIDs (uppercase
+  // base32), so a plain lexical sort matches SQLite's BINARY collation.
+  //
+  // The `BLOCK_TAG_CAP` truncation is the same statement's `LIMIT 1001` +
+  // `rows.truncate(1000)`. The backend applies it to BOTH tag readers, so this
+  // one caps as well as `list_inherited_tags_for_block` does — the mock used to
+  // cap only the inherited reader while claiming the readers shared the rule.
   list_tags_for_block: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const tagSet = blockTags.get(blockId)
     if (!tagSet || tagSet.size === 0) return []
-    return [...tagSet]
+    return [...tagSet].toSorted().slice(0, BLOCK_TAG_CAP)
   },
 
-  // #1423 — inherited (derived) tag IDs. The mock models only direct
-  // associations (`blockTags`); tag inheritance via `block_tag_inherited`
-  // is intentionally not modelled here, so this always returns an empty
-  // list. Inherited-chip rendering is exercised by component unit tests
-  // that pass the flag directly rather than through this mock.
-  list_inherited_tags_for_block: () => [],
+  // #1423 / #3871 — inherited (DERIVED) tag ids, computed from the parent
+  // chain by {@link inheritedTagIds}. Returns ONLY inherited tags: a direct tag
+  // the block itself holds is `list_tags_for_block`'s answer, not this one
+  // (the #1423 disjointness contract) — but a tag held BOTH directly and by an
+  // ancestor appears in BOTH lists, and nothing here suppresses that: the walk
+  // starts at the block's PARENT and only ever reads ancestors' direct tags, so
+  // the block's own `block_tags` row is never consulted either to add or to
+  // subtract. (An earlier version of this comment described a "filter below" on
+  // the ancestor's direct tags; there is no filter — the starting point is the
+  // whole mechanism.)
+  list_inherited_tags_for_block: (args) => {
+    const a = args as Record<string, unknown>
+    return inheritedTagIds(a['blockId'] as string)
+  },
 } satisfies Pick<
   TypedHandlers,
   | 'add_tag'

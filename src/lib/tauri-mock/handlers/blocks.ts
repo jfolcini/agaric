@@ -89,54 +89,318 @@ function purgeCohortAndSatellites(cohort: Iterable<string>): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// #3870 — `list_blocks` pagination (a keyset PER DISPATCH BRANCH)
+// ---------------------------------------------------------------------------
+//
+// `list_blocks_inner` (`commands/blocks/queries.rs`) is an if/else CHAIN, not a
+// conjunction of filters: it picks exactly ONE pagination helper and each helper
+// brings its own `ORDER BY`, hence its own keyset:
+//
+//   dateRange (start+end) → `pagination::list_agenda_range` → `ac.date ASC, b.id ASC`
+//   date                  → `pagination::list_agenda`       → `b.id ASC`
+//   tagId                 → `pagination::list_by_tag`       → `bt.block_id ASC`
+//   blockType             → `pagination::list_by_type`      → `id ASC`
+//   else (parentId)       → `pagination::list_children`     → `COALESCE(position, ?N) ASC, id ASC`
+//
+// The `(position, id)` keyset therefore belongs to the parentId branch ALONE.
+// Applying it to the other three would resume a page from a key the backend
+// never ordered on, so the same `next_cursor` chain lands the two stacks on
+// DIFFERENT pages — a divergence the fixtures below (`…_pagination`,
+// `…_pagination_by_type`) are shaped to catch.
+//
+// The mock mirrors the CHAIN as well as the orders: a request carrying two
+// exclusive filters resolves to the higher-precedence one and the other is
+// ignored, exactly as the backend's `else if` would — see the handler's note on
+// the conflicting-filter validation the mock does NOT yet implement.
+
+/**
+ * Position substituted for a NULL `position`, mirroring the backend's
+ * `NULL_POSITION_SENTINEL` (`i64::MAX`). Both the `ORDER BY` and the keyset
+ * comparison wrap `position` in `COALESCE(position, ?sentinel)`, so a genuine
+ * NULL sorts LAST at a fixed key rather than being mis-ordered or dropped
+ * across a page boundary. `Number.MAX_SAFE_INTEGER` stands in for `i64::MAX`:
+ * the sentinel is never compared against the backend's (each stack pages with
+ * its OWN opaque cursor), only against other mock positions, and no mock
+ * position comes near it.
+ */
+const NULL_POSITION_SENTINEL = Number.MAX_SAFE_INTEGER
+
+/** Backend `DEFAULT_PAGE_SIZE` — the limit `PageRequest::new(_, None)` falls to. */
+const DEFAULT_PAGE_SIZE = 50
+
+/** Backend cap for `list_blocks_inner`, which REJECTS a limit outside `[1, 100]`. */
+const LIST_BLOCKS_MAX_LIMIT = 100
+
+/** `COALESCE(position, ?sentinel)` for one block row. */
+function keysetPosition(row: Record<string, unknown>): number {
+  const pos = row['position'] as number | null | undefined
+  return pos ?? NULL_POSITION_SENTINEL
+}
+
+/**
+ * One row's sort key: its `ORDER BY` columns, in `ORDER BY` order, ending with
+ * the id tiebreak. A branch's key function IS its `ORDER BY` clause — writing
+ * them as tuples is what lets one comparator, one cursor encoding and one
+ * paginator serve all five branches without any of them silently inheriting
+ * another's order.
+ *
+ * Every branch's key ends in `id` because every backend `ORDER BY` here does:
+ * a keyset page over a non-total order can duplicate or skip a row across the
+ * boundary, so the tiebreak is what makes the cursor sound rather than tidy.
+ */
+type SortKey = readonly (string | number)[]
+
+/** Lexicographic compare of two {@link SortKey}s, component by component. Each
+ *  position holds the same column on both sides, so the types line up. */
+function compareSortKeys(x: SortKey, y: SortKey): number {
+  const width = Math.max(x.length, y.length)
+  for (let i = 0; i < width; i++) {
+    const a = x[i]
+    const b = y[i]
+    if (a === undefined) return b === undefined ? 0 : -1
+    if (b === undefined) return 1
+    if (a === b) continue
+    if (typeof a === 'number' && typeof b === 'number') return a - b
+    return String(a) < String(b) ? -1 : 1
+  }
+  return 0
+}
+
+/** `ORDER BY COALESCE(position, ?sentinel) ASC, id ASC` — `list_children`. */
+function positionThenIdKey(row: Record<string, unknown>): SortKey {
+  return [keysetPosition(row), (row['id'] as string) ?? '']
+}
+
+/** `ORDER BY id ASC` — `list_by_type`, `list_by_tag` (`bt.block_id` ≡ `b.id`)
+ *  and `list_agenda`. */
+function idKey(row: Record<string, unknown>): SortKey {
+  return [(row['id'] as string) ?? '']
+}
+
+/**
+ * Validate a `list_blocks` limit exactly as `list_blocks_inner` does: absent
+ * falls to {@link DEFAULT_PAGE_SIZE}, anything outside `[1, 100]` is a loud
+ * `Validation` error rather than a silent clamp (limit-clamp-followup Phase 1 —
+ * the whole point of the strict bound is that an over-large ask FAILS instead of
+ * being truncated with no signal, so a mock that accepted it would train callers
+ * on a contract the backend rejects).
+ */
+function listBlocksLimit(raw: unknown): number {
+  if (raw == null) return DEFAULT_PAGE_SIZE
+  const limit = raw as number
+  if (!Number.isInteger(limit) || limit < 1 || limit > LIST_BLOCKS_MAX_LIMIT) {
+    throw validationRejection(
+      `list_blocks limit must be in [1, ${LIST_BLOCKS_MAX_LIMIT}]; got ${String(raw)}. ` +
+        `For larger result sets, use cursor pagination.`,
+    )
+  }
+  return limit
+}
+
+/**
+ * The mock's page cursor: the {@link SortKey} of the last row on the page it
+ * was minted for. OPAQUE and mock-local by design — the backend's `Cursor` is a
+ * base64 JSON blob of its own, and neither stack ever decodes the other's: the
+ * conformance runner threads each implementation its OWN `next_cursor` (see
+ * `conformance-query.ts`'s `cursor_from`). What must match is the PAGE the
+ * cursor lands on, not the bytes that name it.
+ *
+ * Carrying the whole key (rather than named `id` / `position` fields) is what
+ * keeps the cursor honest across branches: an `id ASC` branch mints a 1-tuple
+ * and a `(position, id)` branch a 2-tuple, so a cursor cannot be silently
+ * reinterpreted under the wrong order.
+ */
+function encodeBlocksCursor(key: SortKey): string {
+  return btoa(JSON.stringify({ key, version: 1 }))
+}
+
+/** Decode a cursor minted by {@link encodeBlocksCursor}; a malformed one is a
+ *  `Validation` error, as `Cursor::decode` is on the backend. */
+function decodeBlocksCursor(raw: unknown): SortKey | null {
+  if (raw == null) return null
+  if (typeof raw !== 'string') throw validationRejection('invalid pagination cursor')
+  let decoded: unknown
+  try {
+    decoded = JSON.parse(atob(raw)) as unknown
+  } catch {
+    throw validationRejection('invalid pagination cursor')
+  }
+  const key = (decoded as Record<string, unknown> | null)?.['key']
+  if (
+    !Array.isArray(key) ||
+    key.some((part) => typeof part !== 'string' && typeof part !== 'number')
+  ) {
+    throw validationRejection('invalid pagination cursor')
+  }
+  return key as SortKey
+}
+
+/**
+ * Order `rows` by `keyOf` and take one keyset page, mirroring the backend's
+ * `ORDER BY … LIMIT ?limit + 1` + `build_page_response`: keep the rows strictly
+ * after the cursor key, fetch one more than asked, and let that extra row —
+ * present or not — decide `has_more`. `next_cursor` is minted ONLY when
+ * `has_more`, exactly as `build_page_response` does, so a last page cannot hand
+ * the caller a cursor that would fetch nothing.
+ *
+ * `totalCount` is a PARAMETER rather than a hard-coded `null` because
+ * `build_page_response` is not the last word on it: it always returns
+ * `total_count: None`, and `list_blocks_inner`'s `block_type` arm then
+ * OVERWRITES that with `Some(count_blocks_by_type(…))` to drive the PageBrowser
+ * "X of Y" chip. Four of the five branches pass `null` here; the `blockType`
+ * branch passes the count.
+ */
+function paginateKeyset(
+  rows: Record<string, unknown>[],
+  keyOf: (row: Record<string, unknown>) => SortKey,
+  limit: number,
+  rawCursor: unknown,
+  totalCount: number | null,
+): {
+  items: Record<string, unknown>[]
+  next_cursor: string | null
+  has_more: boolean
+  total_count: number | null
+} {
+  const ordered = rows.toSorted((x, y) => compareSortKeys(keyOf(x), keyOf(y)))
+  const cursorKey = decodeBlocksCursor(rawCursor)
+  const after =
+    cursorKey === null ? ordered : ordered.filter((b) => compareSortKeys(keyOf(b), cursorKey) > 0)
+  const fetched = after.slice(0, limit + 1)
+  const hasMore = fetched.length > limit
+  const items = hasMore ? fetched.slice(0, limit) : fetched
+  const last = items.at(-1)
+  return {
+    items,
+    next_cursor: hasMore && last ? encodeBlocksCursor(keyOf(last)) : null,
+    has_more: hasMore,
+    total_count: totalCount,
+  }
+}
+
+/**
+ * The `agenda_cache.date` a block would carry for a range query, or `null` when
+ * it holds none inside `[start, end]`. This is the `ac.date` that
+ * `list_agenda_range` ORDERS ON, so it is the leading component of that
+ * branch's keyset.
+ *
+ * KNOWN MODELLING GAP (pre-existing, not introduced by the keyset work): the
+ * mock has no `agenda_cache` table, only the two date COLUMNS. The backend's
+ * cache is keyed `(date, block_id)`, so a block whose `due_date` and
+ * `scheduled_date` are two DIFFERENT in-range dates has TWO rows there and is
+ * returned TWICE by an unsourced range query; the mock returns it once, at the
+ * earlier of the two dates. A `source`-qualified range query has exactly one
+ * candidate column and is unaffected.
+ */
+function agendaRangeDate(
+  row: Record<string, unknown>,
+  range: { start: string; end: string },
+  source: string | null,
+): string | null {
+  const inRange = (d: unknown): string | null =>
+    typeof d === 'string' && d >= range.start && d <= range.end ? d : null
+  if (source === 'column:due_date') return inRange(row['due_date'])
+  if (source === 'column:scheduled_date') return inRange(row['scheduled_date'])
+  const candidates = [inRange(row['due_date']), inRange(row['scheduled_date'])].filter(
+    (d): d is string => d !== null,
+  )
+  return candidates.length === 0 ? null : (candidates.toSorted()[0] as string)
+}
+
 export const blocksHandlers = {
+  // #3870 — mirrors `list_blocks_inner`'s DISPATCH CHAIN, not a conjunction of
+  // filters: exactly one branch runs, and each brings its own `ORDER BY` and
+  // therefore its own keyset (see the header block above). Branch precedence is
+  // the backend's `if / else if` order.
+  //
+  // KNOWN GAP (pre-existing): `list_blocks_inner` REJECTS a request carrying
+  // more than one exclusive filter (`conflicting filters: only one of parent_id,
+  // block_type, tag_id, agenda_date, agenda_date_start+end may be set`). The
+  // mock still answers such a request, from the highest-precedence branch — so
+  // it is permissive where the backend is strict, and a caller that sends two
+  // filters gets rows here and an error in production. Filed as #3878; the
+  // fix is a `filter_count > 1` guard ahead of the chain.
   list_blocks: (args) => {
     const a = args as Record<string, unknown>
     // #2277 item 7 — every list_blocks query param now nests under the
     // single `request` DTO (the agenda knobs flatten in as `date` /
     // `dateRange` / `source`); `scope` stays a separate top-level arg.
     const req = (a['request'] as Record<string, unknown>) ?? a
-    let items: Record<string, unknown>[] = [...blocks.values()].filter(
-      (b) => !(b['deleted_at'] as string | null),
-    )
-    if (req['blockType']) items = items.filter((b) => b['block_type'] === req['blockType'])
-    if (req['parentId']) items = items.filter((b) => b['parent_id'] === req['parentId'])
-    // Tag filtering
-    if (req['tagId']) {
-      const tagId = req['tagId'] as string
-      items = items.filter((b) => {
-        const tags = blockTags.get(b['id'] as string)
-        return tags?.has(tagId) ?? false
+    const limit = listBlocksLimit(req['limit'])
+    const cursor = req['cursor'] as unknown
+    const active = [...blocks.values()].filter((b) => !(b['deleted_at'] as string | null))
+    const source = (req['source'] as string | null) ?? null
+
+    // `has_agenda_range` — the backend treats the range as present only when
+    // BOTH ends are, and rejects a half-open one; the FE DTO carries them as a
+    // single `{ start, end }` object, so presence of the object IS both ends.
+    const range = (req['dateRange'] as { start: string; end: string } | null | undefined) ?? null
+    if (range != null) {
+      // `list_agenda_range` — `ORDER BY ac.date ASC, b.id ASC`.
+      const dateOf = new Map<Record<string, unknown>, string>()
+      const items = active.filter((b) => {
+        const date = agendaRangeDate(b, range, source)
+        if (date === null) return false
+        dateOf.set(b, date)
+        return true
       })
+      return paginateKeyset(
+        items,
+        (b) => [dateOf.get(b) ?? '', (b['id'] as string) ?? ''],
+        limit,
+        cursor,
+        null,
+      )
     }
-    // Agenda date filtering — matches blocks by due_date or scheduled_date
-    if (req['date']) {
-      const dateStr = req['date'] as string
-      const source = (req['source'] as string | null) ?? null
-      if (source === 'column:due_date') {
-        items = items.filter((b) => b['due_date'] === dateStr)
-      } else if (source === 'column:scheduled_date') {
-        items = items.filter((b) => b['scheduled_date'] === dateStr)
-      } else {
-        items = items.filter((b) => b['due_date'] === dateStr || b['scheduled_date'] === dateStr)
-      }
-    }
-    // Agenda date range filtering — for weekly/monthly views
-    if (req['dateRange']) {
-      const range = req['dateRange'] as { start: string; end: string }
-      const source = (req['source'] as string | null) ?? null
-      items = items.filter((b) => {
-        const due = b['due_date'] as string | null
-        const sched = b['scheduled_date'] as string | null
-        const inRange = (d: string | null) => d != null && d >= range.start && d <= range.end
-        if (source === 'column:due_date') return inRange(due)
-        if (source === 'column:scheduled_date') return inRange(sched)
-        return inRange(due) || inRange(sched)
+
+    const date = (req['date'] as string | null | undefined) ?? null
+    if (date != null) {
+      // `list_agenda` — `ORDER BY b.id ASC`.
+      const items = active.filter((b) => {
+        if (source === 'column:due_date') return b['due_date'] === date
+        if (source === 'column:scheduled_date') return b['scheduled_date'] === date
+        return b['due_date'] === date || b['scheduled_date'] === date
       })
+      return paginateKeyset(items, idKey, limit, cursor, null)
     }
-    // Sort by position for consistent ordering (matches real backend)
-    items.sort((x, y) => ((x['position'] as number) ?? 0) - ((y['position'] as number) ?? 0))
-    return { items, next_cursor: null, has_more: false, total_count: null }
+
+    const tagId = (req['tagId'] as string | null | undefined) ?? null
+    if (tagId != null) {
+      // `list_by_tag` — `ORDER BY bt.block_id ASC`, and `bt.block_id` is the
+      // join key, so it is `b.id` under another name.
+      const items = active.filter((b) => blockTags.get(b['id'] as string)?.has(tagId) ?? false)
+      return paginateKeyset(items, idKey, limit, cursor, null)
+    }
+
+    const blockType = (req['blockType'] as string | null | undefined) ?? null
+    if (blockType != null) {
+      // `list_by_type` — `ORDER BY id ASC`, and the ONE branch that answers a
+      // `total_count`: `list_blocks_inner` overwrites `build_page_response`'s
+      // `None` with `count_blocks_by_type`, which counts every match under the
+      // SAME predicates as the row fetch, independent of the page.
+      //
+      // KNOWN GAP (pre-existing): `list_by_type` and `count_blocks_by_type` also
+      // carry a `NOT EXISTS (… bp.key = 'view_type' AND bp.value_text =
+      // 'query-view')` clause (#1460) excluding saved-view marker blocks from
+      // both the rows and the count. The mock does not model it, so a mock
+      // saved-view page would show up here where the backend hides it. Not
+      // covered by a fixture step either — filed as #3878 rather than fixed
+      // silently.
+      const items = active.filter((b) => b['block_type'] === blockType)
+      return paginateKeyset(items, idKey, limit, cursor, items.length)
+    }
+
+    // `list_children` — `WHERE parent_id IS ?1`, i.e. an ABSENT or NULL
+    // `parentId` selects the ROOT blocks, NOT "every block". The old
+    // truthiness test (`if (req['parentId'])`) read null/absent as "no parent
+    // filter" and returned the whole active set; once the default limit landed
+    // that became the first 50 of every active block, so a `listBlocks({})` in
+    // the mock answered a wrong TRUNCATED superset. `?? null` is the whole fix:
+    // the branch always filters, on `null` when no parent was named.
+    const parentId = (req['parentId'] as string | null | undefined) ?? null
+    const items = active.filter((b) => ((b['parent_id'] as string | null) ?? null) === parentId)
+    return paginateKeyset(items, positionThenIdKey, limit, cursor, null)
   },
 
   // Paginate soft-deleted blocks, space-scoped. Mirrors backend

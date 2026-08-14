@@ -270,26 +270,17 @@ const DRIFT_SKIP = new Set<string>([
  * recorded ROWS, not merely its presence (see `QUERY_STEPS_BACKEND_ONLY`).
  */
 const QUERY_DRIFT_SKIP = new Set<string>([
-  // #3826 — three READ divergences the first honest query fixtures found. Each
-  // is FILED, not accommodated: the fixture states the backend's behaviour and
-  // stays in the tree with its backend-authored expectation, so the mock fix
-  // only has to delete the line below.
-  //
-  // DRIFT(#763): #3870 — the mock's `list_blocks` reads neither `limit` nor
-  // `cursor` and always answers `has_more: false`, so it has no pagination at
-  // all: page 2 and page 3 return the whole child list.
-  'query_list_blocks_pagination',
-  // DRIFT(#763): #3871 — the mock's `list_inherited_tags_for_block` is a
-  // hard-coded `() => []`, so `inherited_tag_reaches_the_descendant` diverges.
-  // Its sibling `inherited_tag_is_not_a_direct_tag` passes on the mock, but it
-  // is the `expect_empty` HALF OF A PAIR and asserts nothing alone (see the
-  // granularity note above), so the fixture is skipped whole rather than
-  // leaving a survivor that reads like coverage.
-  'query_inherited_tags',
-  // DRIFT(#763): #3872 — the mock's `get_batch_properties` keys its map off the
-  // REQUEST, so a property-less block comes back bound to `[]` where
-  // `get_batch_properties_inner` omits it entirely.
-  'query_batch_properties_empty_entry',
+  // #3826 found four READ divergences and filed them rather than accommodating
+  // them; #3870 / #3871 / #3872 / #3873 fixed all four in the MOCK, so this set
+  // is now empty and every query fixture in the tree asserts mock == backend:
+  //   - #3870 `list_blocks` honours `limit` + the `(position, id)` keyset
+  //     cursor (`query_list_blocks_pagination`),
+  //   - #3871 the mock derives `block_tag_inherited` (`query_inherited_tags`),
+  //   - #3872 `get_batch_properties` omits a property-less block
+  //     (`query_batch_properties_empty_entry`),
+  //   - #3873 `list_tags_for_block` sorts by tag id, so
+  //     `query_point_reads_tags`'s `tags_two_surviving_in_id_order` step is now
+  //     an `"ordered": true` pin.
 ])
 
 describe('tauri-mock ⇄ backend conformance (#763)', () => {

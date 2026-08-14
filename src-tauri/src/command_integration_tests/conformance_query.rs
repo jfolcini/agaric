@@ -69,12 +69,14 @@
 //!    reddening on a real divergence. When #3821 lands, set `"ordered": true`
 //!    on the three `run_advanced_query` steps and re-author; the fixture is
 //!    already shaped to pin the order.
-//! 3. #3873 — `list_tags_for_block` sorts `ORDER BY tag_id` on the backend and
-//!    returns `blockTags` INSERTION order on the mock. Same shape as (2):
-//!    `query_point_reads_tags`'s `tags_two_surviving_in_id_order` step applies
-//!    its two tags in descending id order precisely so the sequences differ,
-//!    and flipping it to `"ordered": true` after #3873 lands makes it a real
-//!    order pin without touching the fixture's data.
+//!
+//! #3873 used to be a third reason here — `list_tags_for_block` returned
+//! `blockTags` INSERTION order on the mock against the backend's `ORDER BY
+//! tag_id`. The mock now sorts, so `query_point_reads_tags`'s
+//! `tags_two_surviving_in_id_order` step is `"ordered": true` and pins the
+//! sequence for real: it applies its two tags in DESCENDING id order, so an
+//! implementation that answers in application order fails it. The flip needed
+//! no re-authoring, exactly as this note predicted.
 //!
 //! Steps whose sort key is fixture-controlled data (page title, …) set
 //! `ordered` and DO compare sequences.
