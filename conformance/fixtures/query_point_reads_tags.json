@@ -260,8 +260,9 @@
         "blockId": "S7"
       },
       "command": "list_tags_for_block",
-      "comment": "The only block that keeps TWO tags, applied in DESCENDING id order — so it is the one step whose SEQUENCE could distinguish the backend's `ORDER BY tag_id` from the mock's insertion order. The comparison is deliberately left UNORDERED because that divergence is REAL and filed as #3873 (same treatment #3821 gets for `run_advanced_query`): what it pins today is that BOTH tags survive on a block that lost none, and the fixture is already shaped so that flipping `\"ordered\": true` and re-authoring turns it into an order pin the day the mock sorts.",
-      "name": "tags_two_surviving_in_id_order"
+      "comment": "The only block that keeps TWO tags, applied in DESCENDING id order — so it is the one step whose SEQUENCE distinguishes the backend's `ORDER BY tag_id` from the insertion order the mock used to return (#3873). It is `ordered` now that the mock sorts too: the recorded rows are ascending by tag id while the ops applied them descending, so an implementation that returns application order fails here. It also still pins that BOTH tags survive on a block that lost none.",
+      "name": "tags_two_surviving_in_id_order",
+      "ordered": true
     }
   ],
   "seed": {

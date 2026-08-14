@@ -89,6 +89,142 @@ function purgeCohortAndSatellites(cohort: Iterable<string>): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// #3870 — `list_blocks` pagination (keyset over `(position, id)`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Position substituted for a NULL `position`, mirroring the backend's
+ * `NULL_POSITION_SENTINEL` (`i64::MAX`). Both the `ORDER BY` and the keyset
+ * comparison wrap `position` in `COALESCE(position, ?sentinel)`, so a genuine
+ * NULL sorts LAST at a fixed key rather than being mis-ordered or dropped
+ * across a page boundary. `Number.MAX_SAFE_INTEGER` stands in for `i64::MAX`:
+ * the sentinel is never compared against the backend's (each stack pages with
+ * its OWN opaque cursor), only against other mock positions, and no mock
+ * position comes near it.
+ */
+const NULL_POSITION_SENTINEL = Number.MAX_SAFE_INTEGER
+
+/** Backend `DEFAULT_PAGE_SIZE` — the limit `PageRequest::new(_, None)` falls to. */
+const DEFAULT_PAGE_SIZE = 50
+
+/** Backend cap for `list_blocks_inner`, which REJECTS a limit outside `[1, 100]`. */
+const LIST_BLOCKS_MAX_LIMIT = 100
+
+/** `COALESCE(position, ?sentinel)` for one block row. */
+function keysetPosition(row: Record<string, unknown>): number {
+  const pos = row['position'] as number | null | undefined
+  return pos ?? NULL_POSITION_SENTINEL
+}
+
+/** `ORDER BY COALESCE(position, ?sentinel) ASC, id ASC`. */
+function compareByPositionThenId(x: Record<string, unknown>, y: Record<string, unknown>): number {
+  const dp = keysetPosition(x) - keysetPosition(y)
+  if (dp !== 0) return dp
+  const xi = (x['id'] as string) ?? ''
+  const yi = (y['id'] as string) ?? ''
+  return xi < yi ? -1 : xi > yi ? 1 : 0
+}
+
+/**
+ * Validate a `list_blocks` limit exactly as `list_blocks_inner` does: absent
+ * falls to {@link DEFAULT_PAGE_SIZE}, anything outside `[1, 100]` is a loud
+ * `Validation` error rather than a silent clamp (limit-clamp-followup Phase 1 —
+ * the whole point of the strict bound is that an over-large ask FAILS instead of
+ * being truncated with no signal, so a mock that accepted it would train callers
+ * on a contract the backend rejects).
+ */
+function listBlocksLimit(raw: unknown): number {
+  if (raw == null) return DEFAULT_PAGE_SIZE
+  const limit = raw as number
+  if (!Number.isInteger(limit) || limit < 1 || limit > LIST_BLOCKS_MAX_LIMIT) {
+    throw validationRejection(
+      `list_blocks limit must be in [1, ${LIST_BLOCKS_MAX_LIMIT}]; got ${String(raw)}. ` +
+        `For larger result sets, use cursor pagination.`,
+    )
+  }
+  return limit
+}
+
+/**
+ * The mock's `(position, id)` page cursor. OPAQUE and mock-local by design: the
+ * backend's `Cursor` is a base64 JSON blob of its own, and neither stack ever
+ * decodes the other's — the conformance runner threads each implementation its
+ * OWN `next_cursor` (see `conformance-query.ts`'s `cursor_from`). What must
+ * match is the PAGE the cursor lands on, not the bytes that name it.
+ */
+interface BlocksCursor {
+  id: string
+  position: number
+}
+
+function encodeBlocksCursor(last: Record<string, unknown>): string {
+  const cursor: BlocksCursor & { version: number } = {
+    id: (last['id'] as string) ?? '',
+    position: keysetPosition(last),
+    version: 1,
+  }
+  return btoa(JSON.stringify(cursor))
+}
+
+/** Decode a cursor minted by {@link encodeBlocksCursor}; a malformed one is a
+ *  `Validation` error, as `Cursor::decode` is on the backend. */
+function decodeBlocksCursor(raw: unknown): BlocksCursor | null {
+  if (raw == null) return null
+  if (typeof raw !== 'string') throw validationRejection('invalid pagination cursor')
+  let decoded: Record<string, unknown>
+  try {
+    decoded = JSON.parse(atob(raw)) as Record<string, unknown>
+  } catch {
+    throw validationRejection('invalid pagination cursor')
+  }
+  const id = decoded['id']
+  const position = decoded['position']
+  if (typeof id !== 'string' || typeof position !== 'number') {
+    throw validationRejection('invalid pagination cursor')
+  }
+  return { id, position }
+}
+
+/**
+ * Take one keyset page out of an ALREADY-ordered row list, mirroring the
+ * backend's `LIMIT ?limit + 1` + `build_page_response`: keep the rows strictly
+ * after the cursor key, fetch one more than asked, and let that extra row —
+ * present or not — decide `has_more`. `next_cursor` is minted ONLY when
+ * `has_more`, exactly as `build_page_response` does, so a last page cannot hand
+ * the caller a cursor that would fetch nothing.
+ */
+function paginateKeyset(
+  ordered: Record<string, unknown>[],
+  limit: number,
+  rawCursor: unknown,
+): {
+  items: Record<string, unknown>[]
+  next_cursor: string | null
+  has_more: boolean
+  total_count: null
+} {
+  const cursor = decodeBlocksCursor(rawCursor)
+  const after =
+    cursor === null
+      ? ordered
+      : ordered.filter((b) => {
+          const pos = keysetPosition(b)
+          if (pos !== cursor.position) return pos > cursor.position
+          return ((b['id'] as string) ?? '') > cursor.id
+        })
+  const fetched = after.slice(0, limit + 1)
+  const hasMore = fetched.length > limit
+  const items = hasMore ? fetched.slice(0, limit) : fetched
+  const last = items.at(-1)
+  return {
+    items,
+    next_cursor: hasMore && last ? encodeBlocksCursor(last) : null,
+    has_more: hasMore,
+    total_count: null,
+  }
+}
+
 export const blocksHandlers = {
   list_blocks: (args) => {
     const a = args as Record<string, unknown>
@@ -134,9 +270,13 @@ export const blocksHandlers = {
         return inRange(due) || inRange(sched)
       })
     }
-    // Sort by position for consistent ordering (matches real backend)
-    items.sort((x, y) => ((x['position'] as number) ?? 0) - ((y['position'] as number) ?? 0))
-    return { items, next_cursor: null, has_more: false, total_count: null }
+    // #3870 — order on the FULL keyset the backend's `list_children` orders on,
+    // `COALESCE(position, ?sentinel) ASC, id ASC`. Position alone is not a total
+    // order, and a keyset page over a non-total order can duplicate or skip a
+    // row across the boundary, so the `id` tiebreak is what makes the cursor
+    // below sound rather than merely tidy.
+    items.sort(compareByPositionThenId)
+    return paginateKeyset(items, listBlocksLimit(req['limit']), req['cursor'] as unknown)
   },
 
   // Paginate soft-deleted blocks, space-scoped. Mirrors backend

@@ -485,12 +485,11 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
  * gained a live (non-skipped) fixture — delete the entry when its issue lands.
  */
 const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
-  list_blocks:
-    '#3870 — the mock reads neither `limit` nor `cursor`, so it has no pagination; ' +
-    'query_list_blocks_pagination is QUERY_DRIFT_SKIPped until it does',
-  list_inherited_tags_for_block:
-    '#3871 — the mock handler is a hard-coded `() => []`; query_inherited_tags is ' +
-    'QUERY_DRIFT_SKIPped until `block_tag_inherited` is modelled',
+  // Empty, and worth keeping empty. `list_blocks` (#3870) and
+  // `list_inherited_tags_for_block` (#3871) were the only two entries: both
+  // fixtures were `QUERY_DRIFT_SKIP`ped for a real mock divergence, and both
+  // divergences are now FIXED IN THE MOCK rather than waived, so every read
+  // command with a query step is diffed across both stacks again.
 }
 
 const CONFORMANCE_TEST_PATH = path.resolve(import.meta.dirname, 'conformance.test.ts')

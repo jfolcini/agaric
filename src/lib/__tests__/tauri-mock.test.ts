@@ -850,7 +850,18 @@ describe('get_batch_properties', () => {
     }) as Record<string, Record<string, unknown>[]>
     expect(result[SEED_IDS.BLOCK_GS_1]).toHaveLength(1)
     expect(result[SEED_IDS.BLOCK_GS_2]).toHaveLength(1)
-    expect(result[SEED_IDS.BLOCK_GS_3]).toHaveLength(0)
+    // #3872 — a requested block that owns NO properties is OMITTED from the
+    // map, not bound to `[]`: `get_batch_properties_inner` builds its map from
+    // the rows it read (`map.entry(row.block_id)`), so the key never appears.
+    // This assertion used to read `toHaveLength(0)`, which passed against the
+    // mock's manufactured empty entry and encoded the divergence as if it were
+    // the contract. `toBeUndefined` alone would be weak (a typo'd id also
+    // yields `undefined`), so pin the KEY SET too — that distinguishes
+    // "absent because property-less" from "absent because we asked wrong".
+    expect(result[SEED_IDS.BLOCK_GS_3]).toBeUndefined()
+    expect(Object.keys(result).toSorted()).toEqual(
+      [SEED_IDS.BLOCK_GS_1, SEED_IDS.BLOCK_GS_2].toSorted(),
+    )
   })
 })
 
@@ -970,6 +981,87 @@ describe('add_tag + list_tags_for_block', () => {
     const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
     expect(typeof tags[0]).toBe('string')
     expect(tags[0]).toBe(SEED_IDS.TAG_WORK)
+  })
+})
+
+/**
+ * #3871 — `list_inherited_tags_for_block` derives `block_tag_inherited` from
+ * the parent chain. The `query_inherited_tags` conformance fixture pins the
+ * backend-authored answer for ONE case (a tagged page, its direct child); these
+ * cover the branches of the derivation that fixture never reaches — a
+ * multi-level chain, the strict-ancestor rule, ordering across levels, and the
+ * chain-break a tombstoned ancestor causes.
+ */
+describe('list_inherited_tags_for_block (#3871)', () => {
+  /** Build `PAGE_QUICK_NOTES > mid > leaf` and return the two created ids. */
+  function makeChain(): { mid: string; leaf: string } {
+    const mid = (
+      invoke('create_block', {
+        blockType: 'content',
+        content: 'mid',
+        parentId: SEED_IDS.PAGE_QUICK_NOTES,
+      }) as Record<string, unknown>
+    )['id'] as string
+    const leaf = (
+      invoke('create_block', { blockType: 'content', content: 'leaf', parentId: mid }) as Record<
+        string,
+        unknown
+      >
+    )['id'] as string
+    return { mid, leaf }
+  }
+
+  it('propagates a tag down MULTIPLE levels, not just to direct children', () => {
+    const { leaf } = makeChain()
+    invoke('add_tag', { blockId: SEED_IDS.PAGE_QUICK_NOTES, tagId: SEED_IDS.TAG_WORK })
+    expect(invoke('list_inherited_tags_for_block', { blockId: leaf })).toEqual([SEED_IDS.TAG_WORK])
+  })
+
+  it('is STRICT-ancestor: the block that holds the tag directly does not inherit it', () => {
+    invoke('add_tag', { blockId: SEED_IDS.PAGE_QUICK_NOTES, tagId: SEED_IDS.TAG_WORK })
+    // #1423 disjointness: the tag is the DIRECT reader's answer here, and the
+    // inherited reader must not double-report it.
+    expect(invoke('list_tags_for_block', { blockId: SEED_IDS.PAGE_QUICK_NOTES })).toEqual([
+      SEED_IDS.TAG_WORK,
+    ])
+    expect(invoke('list_inherited_tags_for_block', { blockId: SEED_IDS.PAGE_QUICK_NOTES })).toEqual(
+      [],
+    )
+  })
+
+  it('unions tags from every ancestor level, deduped and ordered by tag id', () => {
+    const { mid, leaf } = makeChain()
+    // Applied in DESCENDING id order and across two levels, with TAG_WORK
+    // applied at BOTH — so insertion order, level order and a duplicate would
+    // each show up as a different answer than the sorted, deduped one.
+    invoke('add_tag', { blockId: mid, tagId: SEED_IDS.TAG_IDEA })
+    invoke('add_tag', { blockId: mid, tagId: SEED_IDS.TAG_WORK })
+    invoke('add_tag', { blockId: SEED_IDS.PAGE_QUICK_NOTES, tagId: SEED_IDS.TAG_PERSONAL })
+    invoke('add_tag', { blockId: SEED_IDS.PAGE_QUICK_NOTES, tagId: SEED_IDS.TAG_WORK })
+    expect(invoke('list_inherited_tags_for_block', { blockId: leaf })).toEqual([
+      SEED_IDS.TAG_WORK, // TAG01
+      SEED_IDS.TAG_PERSONAL, // TAG02
+      SEED_IDS.TAG_IDEA, // TAG03
+    ])
+  })
+
+  it('stops propagating through a TOMBSTONED intermediate ancestor', () => {
+    const { mid, leaf } = makeChain()
+    invoke('add_tag', { blockId: SEED_IDS.PAGE_QUICK_NOTES, tagId: SEED_IDS.TAG_WORK })
+    // Guard: the tag really does reach the leaf while the chain is intact, so
+    // the assertion after the tombstone is a CHANGE and not a constant empty.
+    expect(invoke('list_inherited_tags_for_block', { blockId: leaf })).toEqual([SEED_IDS.TAG_WORK])
+
+    // Tombstone ONLY the middle block. `delete_block` would cascade the
+    // tombstone onto `leaf` too, which would make the read empty for the
+    // uninteresting reason (the block itself is deleted) and hide the branch
+    // under test — the backend's recursive walk joins active rows only, so a
+    // deleted block breaks propagation for everything BELOW it as well.
+    const midRow = blocks.get(mid)
+    if (!midRow) throw new Error('mid block missing')
+    midRow['deleted_at'] = '2026-04-15T12:00:00Z'
+
+    expect(invoke('list_inherited_tags_for_block', { blockId: leaf })).toEqual([])
   })
 })
 

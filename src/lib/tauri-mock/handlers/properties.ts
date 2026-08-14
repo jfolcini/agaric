@@ -292,13 +292,20 @@ export const propertiesHandlers = {
     return propMap?.get(key) ?? null
   },
 
+  // #3872 — the map is keyed off the ROWS READ, not off the REQUEST:
+  // `get_batch_properties_inner` builds it with `map.entry(row.block_id)`, so a
+  // requested block that owns no properties is ABSENT from the response rather
+  // than present bound to `[]`. Callers that treat a missing key as "unknown,
+  // re-fetch" (as opposed to "known to have none") see the two cases
+  // differently, so the mock must not manufacture the empty entry.
   get_batch_properties: (args) => {
     const a = args as Record<string, unknown>
     const blockIds = a['blockIds'] as string[]
     const result: Record<string, Record<string, unknown>[]> = {}
     for (const id of blockIds) {
       const blockProps = properties.get(id)
-      result[id] = blockProps ? [...blockProps.values()] : []
+      if (blockProps == null || blockProps.size === 0) continue
+      result[id] = [...blockProps.values()]
     }
     return result
   },
