@@ -126,7 +126,7 @@
         "blockId": "S2"
       },
       "command": "get_block",
-      "comment": "`get_block_inner` is the PERMISSIVE reader — it returns a soft-deleted row rather than 404ing on it; the `deleted_at IS NULL` twin is `get_active_block_inner`. Reading the block the ops just tombstoned is what pins which of the two the command uses, and the `page_id` attribute pins the #1775 class (root page, not immediate parent).",
+      "comment": "`get_block_inner` is the PERMISSIVE reader — it returns a soft-deleted row rather than 404ing on it; the `deleted_at IS NULL` twin is `get_active_block_inner`. Reading the block the ops just tombstoned is what pins which of the two the command uses. The `page_id` attribute does NOT pin the #1775 class here: this row is a direct child of the page, so `page_id == parent_id` and returning the parent would be indistinguishable. It still catches a nulled `page_id`. The #1775 class is covered by `get_blocks_keeps_tombstone_drops_missing`, whose B4 sits deeper.",
       "name": "get_block_serves_tombstone"
     },
     {

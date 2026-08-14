@@ -471,11 +471,13 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
 // ---------------------------------------------------------------------------
 
 /**
- * A fixture listed in `conformance.test.ts`'s `DRIFT_SKIP` still runs against
- * the real backend (the Rust runner has no skip list) but is NOT asserted
- * against the mock. So a read command whose ONLY query steps live in skipped
- * fixtures is pinned on one stack, not diffed across two — which is exactly the
- * shape the #3331 lesson warns about: a waiver that reads like coverage.
+ * A fixture whose query leg is skipped in `conformance.test.ts` (either whole-
+ * fixture via `DRIFT_SKIP` or query-leg-only via `QUERY_DRIFT_SKIP`) still runs
+ * against the real backend (the Rust runner has no skip list) but is NOT
+ * asserted against the mock. So a read command whose ONLY query steps live in
+ * skipped fixtures is pinned on one stack, not diffed across two — which is
+ * exactly the shape the #3331 lesson warns about: a waiver that reads like
+ * coverage.
  *
  * Each entry names the DIVERGENCE issue that makes the mock leg red, so the
  * exemption cannot quietly become the resting state. The guard below fails both
@@ -485,24 +487,24 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
 const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
   list_blocks:
     '#3870 — the mock reads neither `limit` nor `cursor`, so it has no pagination; ' +
-    'query_list_blocks_pagination is DRIFT_SKIPped until it does',
+    'query_list_blocks_pagination is QUERY_DRIFT_SKIPped until it does',
   list_inherited_tags_for_block:
     '#3871 — the mock handler is a hard-coded `() => []`; query_inherited_tags is ' +
-    'DRIFT_SKIPped until `block_tag_inherited` is modelled',
+    'QUERY_DRIFT_SKIPped until `block_tag_inherited` is modelled',
 }
 
 const CONFORMANCE_TEST_PATH = path.resolve(import.meta.dirname, 'conformance.test.ts')
 
-/** Parse the `DRIFT_SKIP` fixture names out of `conformance.test.ts` — reading
+/** Parse one `new Set([...])` declaration out of `conformance.test.ts` — reading
  *  the real set rather than a second copy that could drift from it. Comment
  *  lines are dropped first: the reasons contain apostrophes. */
-function loadDriftSkip(): Set<string> {
+function loadSkipSet(name: string): Set<string> {
   const source = readFileSync(CONFORMANCE_TEST_PATH, 'utf8')
-  const start = source.indexOf('const DRIFT_SKIP')
+  const start = source.indexOf(`const ${name}`)
   const end = source.indexOf('])', start)
   if (start < 0 || end < 0) {
     throw new Error(
-      `could not find the DRIFT_SKIP set in ${CONFORMANCE_TEST_PATH} — this guard ` +
+      `could not find the ${name} set in ${CONFORMANCE_TEST_PATH} — this guard ` +
         `parses it; update the parser if the declaration moved.`,
     )
   }
@@ -513,6 +515,13 @@ function loadDriftSkip(): Set<string> {
       .filter((line) => !line.trimStart().startsWith('//'))
       .flatMap((line) => [...line.matchAll(/'([^']+)'/g)].map((m) => m[1] as string)),
   )
+}
+
+/** Every fixture whose QUERY leg is unasserted on the mock — the union of the
+ *  whole-fixture and query-leg-only skip sets, matching the `run` predicate the
+ *  query leg of `conformance.test.ts` actually uses. */
+function loadDriftSkip(): Set<string> {
+  return new Set([...loadSkipSet('DRIFT_SKIP'), ...loadSkipSet('QUERY_DRIFT_SKIP')])
 }
 
 // ---------------------------------------------------------------------------
@@ -888,7 +897,7 @@ describe('#3083 conformance-coverage ratchet', () => {
     const staleSkip = [...skipped].filter((name) => !fixtures.some((fx) => fx.name === name))
     expect(
       staleSkip,
-      `DRIFT_SKIP names fixtures that no longer exist ${JSON.stringify(staleSkip)}. ` +
+      `DRIFT_SKIP / QUERY_DRIFT_SKIP name fixtures that no longer exist ${JSON.stringify(staleSkip)}. ` +
         `Remove the stale entries from conformance.test.ts.`,
     ).toEqual([])
 
@@ -901,7 +910,7 @@ describe('#3083 conformance-coverage ratchet', () => {
     const undeclared = backendOnly.filter((c) => !(c in QUERY_STEPS_BACKEND_ONLY))
     expect(
       undeclared,
-      `These commands have query steps ONLY in DRIFT_SKIPped fixtures ${JSON.stringify(
+      `These commands have query steps ONLY in query-skipped fixtures ${JSON.stringify(
         undeclared,
       )}, so the mock leg never runs them and the "coverage" is one-sided. FIX by ` +
         `EITHER adding a live fixture step, OR declaring the command in ` +

@@ -186,11 +186,24 @@ const BLOCK_ATTRS: &[&str] = &["parent_id", "page_id", "position", "deleted_at"]
 /// flag: both are projection decisions an id-only token cannot see.
 const RESOLVED_ATTRS: &[&str] = &["title", "block_type", "deleted"];
 
+/// The half-open magnitude range in which Rust's `f64` `Display` and the TS
+/// twin's `String(n)` provably produce the same characters.
+///
+/// JS switches to exponent notation at `|v| >= 1e21` and at `0 < |v| < 1e-6`
+/// (`String(1e-7) === '1e-7'`), and prints `-0` as `'0'`; Rust's `Display` does
+/// neither (`(1e-7_f64).to_string() == "0.0000001"`, `format!("{:.0}", -0.0) ==
+/// "-0"`). A `value_num` out there would therefore token DIFFERENTLY on the two
+/// runners and redden a fixture that holds no divergence at all — the one way
+/// this harness can lie. Zero is comparable, negative zero is not.
+const JS_PLAIN_RANGE: std::ops::Range<f64> = 1e-6..1e21;
+
 /// Render one attribute value as a token segment.
 ///
 /// Numbers are printed the way `String(n)` prints them in the TS twin: an
 /// integral float loses its `.0` (serde_json renders `f64` 3.0 as `3.0`, JS
 /// renders it `3`), so a `value_num` property compares equal on both stacks.
+/// A magnitude the two formatters disagree on is REFUSED at authoring time
+/// rather than recorded — see [`JS_PLAIN_RANGE`].
 fn attr_value(name: &str, v: Option<&Value>) -> String {
     match v {
         None | Some(Value::Null) => "null".to_owned(),
@@ -199,6 +212,13 @@ fn attr_value(name: &str, v: Option<&Value>) -> String {
         Some(Value::Number(n)) => n.as_f64().map_or_else(
             || n.to_string(),
             |f| {
+                assert!(
+                    (f == 0.0 && !f.is_sign_negative()) || JS_PLAIN_RANGE.contains(&f.abs()),
+                    "query attribute '{name}' holds {f}, whose Rust and JS renderings \
+                     differ (exponent form / signed zero), so the two conformance \
+                     runners could never agree on its token. Give the fixture a value \
+                     in ±[1e-6, 1e21) or exactly 0."
+                );
                 // `{:.0}` rather than a cast to i64: the value is already
                 // integral (`fract() == 0.0`) so nothing is rounded, and it
                 // keeps the formatting total instead of relying on a bound.
@@ -853,4 +873,58 @@ pub async fn run_query_steps(
         }));
     }
     Value::Array(out)
+}
+
+#[cfg(test)]
+mod attr_value_tests {
+    use super::attr_value;
+    use serde_json::json;
+
+    /// Every rendering here is byte-identical to `String(n)` in the TS twin —
+    /// the whole point of the token grammar is that ONE recorded expectation
+    /// binds both runners, so a formatting difference is a silent harness lie
+    /// rather than a real divergence.
+    #[test]
+    fn numbers_render_the_way_js_string_renders_them() {
+        for (v, expected) in [
+            (json!(3), "3"),
+            (json!(3.0), "3"),
+            (json!(0), "0"),
+            (json!(0.5), "0.5"),
+            (json!(-1.25), "-1.25"),
+            (json!(1e15), "1000000000000000"),
+            (json!(1e20), "100000000000000000000"),
+            (json!(1e-6), "0.000001"),
+        ] {
+            assert_eq!(attr_value("value_num", Some(&v)), expected, "for {v}");
+        }
+    }
+
+    /// `String(1e21) === '1e+21'` but Rust prints the digits out, so the guard
+    /// must REFUSE the value instead of recording a token only one stack can
+    /// produce.
+    #[test]
+    #[should_panic(expected = "whose Rust and JS renderings differ")]
+    fn a_magnitude_js_prints_in_exponent_form_is_refused() {
+        attr_value("value_num", Some(&json!(1e21)));
+    }
+
+    /// The other end of the range: `String(1e-7) === '1e-7'`.
+    #[test]
+    #[should_panic(expected = "whose Rust and JS renderings differ")]
+    fn a_magnitude_below_the_js_plain_floor_is_refused() {
+        attr_value("value_num", Some(&json!(1e-7)));
+    }
+
+    /// `deleted_at` is normalised BEFORE the number branch, so a tombstone
+    /// stamp (an epoch-ms value well outside the plain range in seconds terms,
+    /// and a clock value regardless) never reaches the guard.
+    #[test]
+    fn deleted_at_is_normalised_before_the_numeric_guard() {
+        assert_eq!(
+            attr_value("deleted_at", Some(&json!(1_760_000_000_000_i64))),
+            "DELETED"
+        );
+        assert_eq!(attr_value("deleted_at", None), "null");
+    }
 }

@@ -236,13 +236,24 @@ const DRIFT_SKIP = new Set<string>([
   // independently-deleted descendant. The `cascade_delete_subtree` and
   // `restore_after_cascade_independent_child` fixtures are therefore no longer
   // skipped and now assert mock == backend.
-  //
+])
+
+/**
+ * Fixtures whose QUERY leg is a known divergence but whose SNAPSHOT leg agrees.
+ *
+ * Kept separate from {@link DRIFT_SKIP} deliberately. A read divergence says
+ * nothing about the op replay behind it, and skipping a whole fixture for one
+ * would darken assertions that PASS — the same "a skip that reads like
+ * coverage" failure the `QUERY_STEPS_BACKEND_ONLY` guard in
+ * `conformance-coverage.test.ts` exists to prevent. Every name here therefore
+ * still asserts `mock == backend` on its snapshot; only its query steps are
+ * unasserted. Each entry needs a `// DRIFT(#763): …` note naming the issue.
+ */
+const QUERY_DRIFT_SKIP = new Set<string>([
   // #3826 — three READ divergences the first honest query fixtures found. Each
   // is FILED, not accommodated: the fixture states the backend's behaviour and
   // stays in the tree with its backend-authored expectation, so the mock fix
-  // only has to delete the line below. Both the snapshot AND the query leg of
-  // these fixtures are skipped (the skip is per fixture); their snapshot legs
-  // pass today, so nothing else is being hidden here.
+  // only has to delete the line below.
   //
   // DRIFT(#763): #3870 — the mock's `list_blocks` reads neither `limit` nor
   // `cursor` and always answers `has_more: false`, so it has no pagination at
@@ -288,7 +299,9 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
   // fixture so a query divergence names the query, not the snapshot.
   for (const { fixture } of fixtures) {
     if (!fixture.queries || fixture.queries.length === 0) continue
-    const run = DRIFT_SKIP.has(fixture.name) ? it.skip : it
+    // A snapshot divergence invalidates the state the reads run over, so the
+    // query leg skips for EITHER set.
+    const run = DRIFT_SKIP.has(fixture.name) || QUERY_DRIFT_SKIP.has(fixture.name) ? it.skip : it
     run(
       `fixture '${fixture.name}' — mock reproduces the backend-authored query results`,
       async () => {

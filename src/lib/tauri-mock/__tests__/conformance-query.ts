@@ -435,7 +435,14 @@ export function stampMockSpace(): void {
  */
 const DELETED_SENTINEL = 'DELETED'
 
-/** Render one attribute value as a token segment (mirror of `attr_value`). */
+/**
+ * Render one attribute value as a token segment (mirror of `attr_value`).
+ *
+ * `String(n)` switches to exponent notation outside ±[1e-6, 1e21) and prints
+ * `-0` as `0`, where Rust's `Display` does neither. The Rust twin ASSERTS the
+ * magnitude is inside that range before recording, so no expectation can exist
+ * for a value the two renderings disagree on — hence no guard is needed here.
+ */
 function attrValue(name: string, v: unknown): string {
   if (v == null) return 'null'
   if (name === 'deleted_at') return DELETED_SENTINEL
