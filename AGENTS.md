@@ -329,6 +329,34 @@ If a release tag fails at `verify-version`: delete it (`git push --delete origin
 - **React 19 test timing:** state updates originating from non-React event sources — worker `dispatchEvent`, `window.setTimeout` / `setInterval` callbacks, IPC promise resolutions chained off external events — no longer flush within a bare `await new Promise(r => setTimeout(r, 0))` tick. Wrap such waits in `act(async () => { ... })`, switch sync `getByText` to async `findByText`, or `waitFor` on the observable end state. Do not add arbitrary sleeps.
 - **Detailed conventions:** `src-tauri/tests/AGENTS.md` (Rust), `src/__tests__/AGENTS.md` (frontend)
 
+### Acceptance is falsification, not assertion
+
+"Add a test" is satisfiable by a test that cannot fail. State the acceptance criterion as **the failure you expect to see**, then produce it: break the production code the test covers, run it, read the RED output, restore. A test whose failure you cannot demonstrate has not been shown to cover anything.
+
+Where mutation testing reaches the code, "the mutant dies" is the strongest form of this and cannot be satisfied vacuously:
+
+```bash
+node scripts/run-mutation.mjs <module>      # frontend; <module> validated against stryker.modules.mjs
+cd src-tauri && cargo mutants --workspace   # Rust; --workspace is MANDATORY, not a tuning flag
+```
+
+**`--workspace` is load-bearing.** `src-tauri/`'s root manifest is itself the `agaric` package with no `default-members`, so a bare `cargo mutants` generates mutants only in `agaric`: three of the four `examine_globs` in `src-tauri/.cargo/mutants.toml` match nothing and the surface collapses to `src/reverse/**` — a small fraction of the mutants the config asks for (the measured before/after counts live with the measurement, in `.github/workflows/scheduled-deep-checks.yml`; don't copy them here, they drift). Without it you run the strongest form of acceptance verification over a fraction of the intended surface, see no survivors, and conclude the mutants died — shape 1 below, committed by the tool meant to prevent it. Nothing catches this locally: `scripts/check-mutants-scope.mjs` reads only the CI lane's invocation, so a bare local run just quietly gives you the smaller surface. An explicit `-p` per package works too; what the guard rejects is leaving the scope inherited from cargo's default-member rules. The config is keyed to the workspace root by its *path*, so any cwd inside `src-tauri/` finds it (#3386).
+
+Three failure modes recur, are cheap to spot, and each has a recorded instance. Issue numbers get closed and re-scoped, so where a session log records the run, it is cited alongside — that log is append-only:
+
+1. **The vacuous assertion** — restates a precondition the test itself established. Ask: *what production change would redden this?* If the answer is "none", it is decoration. #3454 *proposed* a test for the `exact_match_nocase` gap ("insert `Urgent`, query prefix `urgent`, assert the exact match is returned and hoisted") that passes with the function stubbed to `Ok(None)`, because the code then falls through to `exact_match_normalized`, which matches the same ASCII case-variant — caught by reading the issue, before the test was ever written ([session 1269](docs/session-log/session-1269-tag-query-mutants.md)).
+2. **The unreachable condition** — a guard whose branch cannot be taken reads as coverage and supplies none. This is not a test gap; deleting the code is the only thing that clears its mutants (#3809, [session 1292](docs/session-log/session-1292-locale-independent-folding.md)).
+3. **The half-covered pair** — one arm of a symmetric property pinned and the other left open: a snapshot's column set checked while the restore projection is not (PR #3425, [session 1263](docs/session-log/session-1263-spaces-rebuild-guard.md)), a guard body tested while its invocation is not (#3435, `src-tauri/src/commands/attachments.rs`). Ask of every guard: *is the call site covered as well as the body?*
+
+Shape 1 is the general case of "Assert durable, re-queried effect — never call-shape" in [Testing invariants (anti-drift)](#testing-invariants-anti-drift): a call-shape assertion is a vacuous assertion whose precondition is "the frontend asked".
+
+**The same defect appears in prose, where it is easier to miss.** A comment, ledger entry, or issue body asserting that something has been checked reads as already-verified and so gets re-read rather than re-run. Treat the assertion as the hypothesis and the run as the evidence — re-reading reasoning reproduces the reasoning, including its mistake. Concretely:
+
+- A citation must resolve: "filed separately" with no issue number is a dead end wearing the costume of diligence. Cite the number, and put the explanation in the code comment rather than the PR body — the comment is what a future reader hits first.
+- A comment must not describe code that no longer exists. When deleting code, grep the whole file (not just the diff) for text quoting it; equivalence ledgers must be **edited down**, never left describing deleted fragments.
+- Prefer naming the *condition* over a `line:col`, which drifts silently.
+- When something genuinely cannot be tested, write that into the module docs with the reason — a residual-coverage note that lives with the code, not an assertion left to be read as a result.
+
 ### Testing invariants (anti-drift)
 
 The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained **second implementation** of the Rust backend that silently drifts from it (create_block page_id, purge_block cascade, reserved-key property routing, the tag-space bug all shipped past a mock that looked fine). Three invariants keep the two implementations honest:
