@@ -231,13 +231,29 @@ describe('list_blocks with parentId', () => {
     expect(result.items.some((b) => b['content'] === 'new child')).toBe(true)
   })
 
-  it('combines parentId and blockType filters', () => {
-    // No tags under Getting Started — only content blocks
-    const result = invoke('list_blocks', {
+  // #3870 follow-up — this used to assert the mock INTERSECTS `parentId` and
+  // `blockType` ("no tags under Getting Started" → 0 rows). The backend does
+  // neither: `list_blocks_inner` is an if/else chain in which `block_type`
+  // outranks the `parent_id` fallthrough, so it answers ALL tag blocks and the
+  // parent is never consulted. (Strictly it answers a `conflicting filters`
+  // validation error, which the mock does not yet raise — filed separately;
+  // until it does, the honest behaviour is the branch the backend would pick.)
+  it('resolves parentId + blockType to the blockType branch, ignoring the parent', () => {
+    const combined = invoke('list_blocks', {
       parentId: SEED_IDS.PAGE_GETTING_STARTED,
       blockType: 'tag',
     }) as { items: Record<string, unknown>[] }
-    expect(result.items).toHaveLength(0)
+    const typeOnly = invoke('list_blocks', { blockType: 'tag' }) as {
+      items: Record<string, unknown>[]
+    }
+
+    // Guard the guard: an empty seed would make every assertion below vacuous.
+    expect(typeOnly.items.length).toBeGreaterThan(0)
+    expect(combined.items.map((b) => b['id'])).toEqual(typeOnly.items.map((b) => b['id']))
+    // The discriminator against the old intersecting behaviour, which returned
+    // zero rows precisely because no tag block is parented to that page: every
+    // row served here has a parent OTHER than the one the request named.
+    expect(combined.items.every((b) => b['parent_id'] !== SEED_IDS.PAGE_GETTING_STARTED)).toBe(true)
   })
 
   it('returns PageResponse shape', () => {
@@ -981,6 +997,31 @@ describe('add_tag + list_tags_for_block', () => {
     const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
     expect(typeof tags[0]).toBe('string')
     expect(tags[0]).toBe(SEED_IDS.TAG_WORK)
+  })
+
+  // #3871 follow-up — `tag_query::list_tags_for_block` is `ORDER BY tag_id
+  // LIMIT 1001` + `rows.truncate(1000)`, the SAME `BLOCK_TAG_CAP` insurance the
+  // inherited reader applies. The mock capped only the inherited reader while
+  // its comment claimed "both readers share the rule"; this pins the direct one.
+  //
+  // Not a conformance fixture: driving 1001 distinct tag blocks through the
+  // fixture seed would dwarf every other fixture in the tree for one boundary.
+  // It is a mock-side regression guard, not backend parity evidence.
+  it('caps list_tags_for_block at BLOCK_TAG_CAP (1000), keeping the lowest tag ids', () => {
+    const tagIds = Array.from({ length: 1001 }, (_, i) => `TAG${String(i).padStart(23, '0')}`)
+    // Applied in DESCENDING id order, so insertion order is the exact reverse
+    // of tag-id order. That is what makes the two boundary assertions below
+    // real: a `.slice(0, 1000)` taken BEFORE the sort would keep the 1000
+    // id-GREATEST tags, and the backend's `ORDER BY tag_id LIMIT 1001` keeps
+    // the 1000 id-LEAST. Applied in ascending order the two are indistinguishable.
+    for (const tagId of tagIds.toReversed()) {
+      invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId })
+    }
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as string[]
+    expect(tags).toHaveLength(1000)
+    expect(tags[0]).toBe(tagIds[0])
+    expect(tags.at(-1)).toBe(tagIds[999])
+    expect(tags).not.toContain(tagIds[1000])
   })
 })
 

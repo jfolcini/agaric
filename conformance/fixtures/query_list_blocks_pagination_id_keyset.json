@@ -1,0 +1,410 @@
+{
+  "description": "#3870 follow-up — the `blockType` and `tagId` DISPATCH BRANCHES of `list_blocks`, paginated. `query_list_blocks_pagination` drives only the `parentId` branch, whose helper (`pagination::list_children`) keysets on `(COALESCE(position, ?N), id)`. That is NOT the order the other branches use: `list_by_type` and `list_by_tag` are `ORDER BY id ASC` / `ORDER BY bt.block_id ASC`, and `list_agenda` / `list_agenda_range` key on `b.id` too. A mock that applies the `(position, id)` keyset to all of them resumes every page from a column the backend never ordered on, and — per #3821 — that changes WHICH rows a page holds, not merely their order. This fixture makes the difference maximal rather than incidental: the six content blocks are seeded with positions ANTI-CORRELATED to their ids (`p1` holds the greatest id, `p6` the least), so id order and position order are exact reverses and the recorded pages are DISJOINT from the pages a position keyset would return. There is no overlap to accidentally agree on, and a single-page step would not show it at all. `total_count` is pinned by the `blockType` steps: that arm is the one place `list_blocks_inner` overwrites `build_page_response`'s `None` with `count_blocks_by_type`, so a helper that hard-codes `null` fails here. The tag steps leave `p6` untagged so the tag result is a strict subset of the type result — a `tagId` the mock ignored would answer six rows where five are recorded.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B2",
+        "tag_id": "B8"
+      },
+      {
+        "block_id": "B3",
+        "tag_id": "B8"
+      },
+      {
+        "block_id": "B4",
+        "tag_id": "B8"
+      },
+      {
+        "block_id": "B5",
+        "tag_id": "B8"
+      },
+      {
+        "block_id": "B6",
+        "tag_id": "B8"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "IdKeyset",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "p1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "p2",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "p3",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "p4",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "p5",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "p6",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "topic",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B8",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "has_more": true,
+      "name": "by_type_page_1",
+      "rows": [
+        "B7#parent_id=B1#page_id=B1#position=6#deleted_at=null",
+        "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null"
+      ],
+      "total_count": 6
+    },
+    {
+      "has_more": true,
+      "name": "by_type_page_2",
+      "rows": [
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null",
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null"
+      ],
+      "total_count": 6
+    },
+    {
+      "has_more": false,
+      "name": "by_type_page_3",
+      "rows": [
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"
+      ],
+      "total_count": 6
+    },
+    {
+      "has_more": true,
+      "name": "by_tag_page_1",
+      "rows": [
+        "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "has_more": true,
+      "name": "by_tag_page_2",
+      "rows": [
+        "B4#parent_id=B1#page_id=B1#position=3#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "by_tag_page_3",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    }
+  ],
+  "name": "query_list_blocks_pagination_id_keyset",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S7",
+        "tagId": "S8"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "tagId": "S8"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "tagId": "S8"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "tagId": "S8"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "tagId": "S8"
+      },
+      "command": "add_tag"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "blockType": "content",
+          "limit": 2
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "First page of two rows out of six, ordered by `id ASC` — which is DESCENDING position here. `total_count` is the full six regardless of page size.",
+      "name": "by_type_page_1",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "blockType": "content",
+          "limit": 2
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The middle page — the one that exists only if the cursor was minted on the id keyset AND resumed on it. A `(position, id)` cursor reads the wrong column and lands on rows from the opposite end of the ordering.",
+      "cursor_from": "by_type_page_1",
+      "name": "by_type_page_2",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "blockType": "content",
+          "limit": 2
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The final page: `has_more` false, no `next_cursor`. Exactly two rows, so the end-of-results signal is not conflated with a short page.",
+      "cursor_from": "by_type_page_2",
+      "name": "by_type_page_3",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 2,
+          "tagId": "S8"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The `tagId` branch — `list_by_tag`, `ORDER BY bt.block_id ASC`, which is `b.id` under the join key's name. Five of the six content blocks carry the tag, so this also pins that the filter is applied at all.",
+      "name": "by_tag_page_1",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 2,
+          "tagId": "S8"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The tag branch's boundary page. Same argument as `by_type_page_2`: with positions reversed against ids, a position keyset returns a disjoint pair here.",
+      "cursor_from": "by_tag_page_1",
+      "name": "by_tag_page_2",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 2,
+          "tagId": "S8"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The short final tag page: one row, `has_more` false. `total_count` stays null — `list_by_tag` never sets it, only the `blockType` arm does.",
+      "cursor_from": "by_tag_page_2",
+      "name": "by_tag_page_3",
+      "ordered": true
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "IdKeyset",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "p1",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "p2",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "p3",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "p4",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "p5",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "p6",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "page",
+        "content": "topic",
+        "id": "S8",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

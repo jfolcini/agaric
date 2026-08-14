@@ -79,8 +79,25 @@ function inheritedTagIds(blockId: string): string[] {
     cursor != null && distance <= MAX_INHERITED_ANCESTOR_DISTANCE;
     distance++
   ) {
-    // Cycle guard: a corrupted `parent_id` loop would otherwise spin until the
-    // distance cap. The backend's depth bound is its equivalent defence.
+    // Cycle guard — NOT equivalent to the backend's depth bound, and the
+    // difference is observable on corrupt data. The CTE has no `seen` set: it
+    // walks a cycle round and round, emitting a row each pass, and only stops
+    // at `depth = 100`. So on `A.parent = B, B.parent = A` with A holding T
+    // directly, the seed emits `(B, T, depth 0)` and the recursion then emits
+    // `(A, T, depth 1)` — A inherits its OWN tag — where this walk revisits A,
+    // breaks, and answers nothing for it. (B agrees on both stacks.)
+    //
+    // Reachable only through a `parent_id` cycle, which the block tree forbids
+    // and no mock mutation path can create, so it is documented rather than
+    // mirrored: reproducing it would mean walking a cycle 101 times to stay
+    // bug-compatible with a bound that exists purely to stop the recursion.
+    //
+    // Recorded because this guard has already eaten one falsification attempt
+    // during the #3871 work: a cycle was introduced to try to make the derived
+    // walk disagree with the cache, the guard swallowed it, the walk returned
+    // `[]`, and the test PASSED — reading as protection when it was silence. A
+    // conformance fixture cannot restore the check either: the fixture seed
+    // inserts through the engine, which will not accept a cycle.
     if (seen.has(cursor)) break
     seen.add(cursor)
     const ancestor = blocks.get(cursor)
@@ -92,7 +109,9 @@ function inheritedTagIds(blockId: string): string[] {
   }
 
   // `ORDER BY tag_id` + the shared `BLOCK_TAG_CAP` truncation, exactly as
-  // `list_tags_for_block` (#3873) — both readers share the rule.
+  // `list_tags_for_block` (#3873) — the backend applies the identical
+  // `ORDER BY tag_id LIMIT 1001` + `truncate(1000)` to both readers, so both
+  // mock readers apply it too.
   return [...out].toSorted().slice(0, BLOCK_TAG_CAP)
 }
 
@@ -335,20 +354,29 @@ export const tagsHandlers = {
   // spreading it yields the order the `add_tag` ops ran, where the backend
   // (`tag_query::list_tags_for_block`) sorts. Tag ids are ULIDs (uppercase
   // base32), so a plain lexical sort matches SQLite's BINARY collation.
+  //
+  // The `BLOCK_TAG_CAP` truncation is the same statement's `LIMIT 1001` +
+  // `rows.truncate(1000)`. The backend applies it to BOTH tag readers, so this
+  // one caps as well as `list_inherited_tags_for_block` does — the mock used to
+  // cap only the inherited reader while claiming the readers shared the rule.
   list_tags_for_block: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const tagSet = blockTags.get(blockId)
     if (!tagSet || tagSet.size === 0) return []
-    return [...tagSet].toSorted()
+    return [...tagSet].toSorted().slice(0, BLOCK_TAG_CAP)
   },
 
   // #1423 / #3871 — inherited (DERIVED) tag ids, computed from the parent
   // chain by {@link inheritedTagIds}. Returns ONLY inherited tags: a direct tag
   // the block itself holds is `list_tags_for_block`'s answer, not this one
   // (the #1423 disjointness contract) — but a tag held BOTH directly and by an
-  // ancestor appears in both lists, which is why the filter below is on the
-  // ANCESTOR's direct tags rather than on the block's own.
+  // ancestor appears in BOTH lists, and nothing here suppresses that: the walk
+  // starts at the block's PARENT and only ever reads ancestors' direct tags, so
+  // the block's own `block_tags` row is never consulted either to add or to
+  // subtract. (An earlier version of this comment described a "filter below" on
+  // the ancestor's direct tags; there is no filter — the starting point is the
+  // whole mechanism.)
   list_inherited_tags_for_block: (args) => {
     const a = args as Record<string, unknown>
     return inheritedTagIds(a['blockId'] as string)
