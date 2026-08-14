@@ -319,7 +319,7 @@ export const blocksHandlers = {
   // block_type, tag_id, agenda_date, agenda_date_start+end may be set`). The
   // mock still answers such a request, from the highest-precedence branch — so
   // it is permissive where the backend is strict, and a caller that sends two
-  // filters gets rows here and an error in production. Filed separately; the
+  // filters gets rows here and an error in production. Filed as #3878; the
   // fix is a `filter_count > 1` guard ahead of the chain.
   list_blocks: (args) => {
     const a = args as Record<string, unknown>
@@ -385,7 +385,7 @@ export const blocksHandlers = {
       // 'query-view')` clause (#1460) excluding saved-view marker blocks from
       // both the rows and the count. The mock does not model it, so a mock
       // saved-view page would show up here where the backend hides it. Not
-      // covered by a fixture step either — filed separately rather than fixed
+      // covered by a fixture step either — filed as #3878 rather than fixed
       // silently.
       const items = active.filter((b) => b['block_type'] === blockType)
       return paginateKeyset(items, idKey, limit, cursor, items.length)

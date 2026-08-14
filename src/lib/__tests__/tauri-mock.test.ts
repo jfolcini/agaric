@@ -236,8 +236,13 @@ describe('list_blocks with parentId', () => {
   // neither: `list_blocks_inner` is an if/else chain in which `block_type`
   // outranks the `parent_id` fallthrough, so it answers ALL tag blocks and the
   // parent is never consulted. (Strictly it answers a `conflicting filters`
-  // validation error, which the mock does not yet raise — filed separately;
+  // validation error, which the mock does not yet raise — filed as #3878;
   // until it does, the honest behaviour is the branch the backend would pick.)
+  //
+  // So this test pins the PERMISSIVE resolution deliberately, which means it
+  // has to move together with that fix: when the mock starts raising the
+  // validation error, this becomes a `toThrow` and the comment above stops
+  // being true. Flagged here so the two are not found out of sync later.
   it('resolves parentId + blockType to the blockType branch, ignoring the parent', () => {
     const combined = invoke('list_blocks', {
       parentId: SEED_IDS.PAGE_GETTING_STARTED,
