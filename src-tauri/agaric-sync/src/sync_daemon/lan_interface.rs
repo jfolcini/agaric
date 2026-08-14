@@ -119,12 +119,15 @@
 //!   point-to-point interface carrying IPv4. The reporting desktop has all three
 //!   (`192.160.160.80`, `docker0`/`incusbr0`, `zcctun0`); a plain CI runner has none.
 //!   The `operstate unknown ⇒ up` direction is asserted to have run, so the branch this
-//!   module's `is_up` mapping turns on is never vacuous on Linux.
-//! * **Non-Linux flag mappings.** The cross-check reads `/sys/class/net` and is Linux
-//!   only. On Windows `if_addrs` reports the adapter's real RFC 2863 status, where
-//!   `Unknown` means "the adapter did not say" rather than POSIX's "no carrier", so
-//!   rejecting it there is stricter than it needs to be. Untestable from here, and not
-//!   changed on speculation.
+//!   module's `is_up` mapping turns on is never vacuous on any Linux host that exposes
+//!   `/sys/class/net`.
+//! * **Non-Linux flag mappings, and Linux without `/sys`.** The cross-check reads
+//!   `/sys/class/net` and is Linux only, and skips where a hardened container runtime
+//!   masks that directory — there is no kernel answer to compare against, and a test with
+//!   no oracle that fails is reporting on the sandbox, not on this code. On Windows
+//!   `if_addrs` reports the adapter's real RFC 2863 status, where `Unknown` means "the
+//!   adapter did not say" rather than POSIX's "no carrier", so rejecting it there is
+//!   stricter than it needs to be. Untestable from here, and not changed on speculation.
 //! * **The production route probe's destination.** `route_source_ipv4` is pinned against
 //!   loopback; that TEST-NET-1 is the right target for the real probe is an argument
 //!   about which routes could capture it, and no test on one machine can settle it.
@@ -199,6 +202,36 @@ impl LanInterface {
 /// `br-` carries its hyphen deliberately. Docker's user-defined networks are
 /// `br-<hash>`, while a plain `br0` is the conventional name for a bridge a user built
 /// on purpose and may well be their LAN.
+///
+/// `bridge` is the macOS form and is safe to take whole, because every `bridgeN` there is
+/// system-created: `bridge0` is the Thunderbolt/AWDL bridge and `bridge100`+ are Internet
+/// Sharing, which is otherwise an ordinary-looking `192.168.2.1` outranking nothing. It
+/// does not collide with Linux's user-built `br0` (see
+/// `bare_br0_is_not_treated_as_a_docker_network`), and a Mac that *is* sharing its
+/// connection still binds `bridge100` when that is its only rankable interface.
+///
+/// # This list is best-effort, and deprioritisation is what makes that acceptable
+///
+/// A name cannot actually tell you what an interface is for, and several entries here are
+/// *wrong on some hosts*: `vmbr0` on Proxmox, `lxdbr0` on an LXD host and `incusbr0` on an
+/// Incus one are frequently the machine's real LAN bridge, with the physical port enslaved
+/// to them and carrying no address of its own. Because a hit only reorders, the case that
+/// matters most is still correct: when such a bridge is the only rankable candidate it is
+/// selected anyway, and when the machine also has an addressed physical NIC the bridge
+/// losing to it is the right answer.
+///
+/// **The residual case**, stated rather than papered over: a Proxmox/LXD host where
+/// `vmbr0`/`lxdbr0` *is* the LAN **and** some other deprioritised interface is also
+/// addressed and up — a Tailscale or Docker interface, say. Both are then class 2, so the
+/// class ordering has nothing left to say and the default-route hint alone decides. On
+/// such a host the route normally leaves via the LAN bridge, which is the right answer;
+/// with no default route (isolated LAN, router down) the tie falls to enumeration order
+/// and the choice is arbitrary. That is loud rather than silent — more than one candidate
+/// is rankable, so the decision is a WARN carrying the full `passed_over` list — and
+/// fixing it properly needs the routing table, not a name.
+///
+/// Adding a prefix is therefore cheap only when the name is *system-assigned*: entries
+/// that a user could plausibly have chosen for their own LAN interface do not belong here.
 const VIRTUAL_NAME_PREFIXES: &[&str] = &[
     "docker",    // Docker's default bridge + gwbridge
     "br-",       // Docker user-defined networks (NOT bare `br0`, see above)
@@ -206,6 +239,7 @@ const VIRTUAL_NAME_PREFIXES: &[&str] = &[
     "lxd",       // LXD bridges (`lxdbr0`)
     "incusbr",   // Incus bridges (`incusbr0`)
     "vmbr",      // Proxmox bridges
+    "bridge",    // macOS system bridges: `bridge0` AWDL, `bridge100`+ Internet Sharing
     "vEthernet", // Hyper-V / WSL2 host adapters (`vEthernet (WSL)`)
     "veth",      // container veth pairs
     "vmnet",     // VMware
@@ -279,6 +313,13 @@ pub(crate) enum Verdict {
     PassedOverVirtual,
     /// Rankable, but CGNAT and a better class existed.
     PassedOverCgnat,
+    /// Rankable, but *both* virtual / point-to-point **and** CGNAT (the worst class).
+    ///
+    /// Its own variant rather than folding into [`Self::PassedOverVirtual`]: the reporting
+    /// desktop's `zcctun0 100.64.0.1` is exactly this pair, and a log line that names only
+    /// the tunnel half sends the reader looking for the address reason that is already
+    /// known. Selection is unaffected — [`class`] already ranks the pair last.
+    PassedOverVirtualCgnat,
     /// Rankable and in the winning class, but it lost the default-route tiebreak.
     PassedOverLowerPriority,
 }
@@ -296,6 +337,9 @@ impl Verdict {
             Self::PrefixTooBroad => "prefix too broad to describe a LAN",
             Self::PassedOverVirtual => "virtual or point-to-point interface",
             Self::PassedOverCgnat => "CGNAT 100.64/10 — a carrier network, not a LAN",
+            Self::PassedOverVirtualCgnat => {
+                "virtual or point-to-point interface, on CGNAT 100.64/10"
+            }
             Self::PassedOverLowerPriority => "does not carry the default route",
         }
     }
@@ -472,14 +516,24 @@ pub(crate) fn decide(candidates: Vec<LanInterface>, route_hint: Option<Ipv4Addr>
             continue;
         }
         let candidate = &verdicts[idx].0;
-        verdicts[idx].1 = if class(candidate) > winning_class {
+        verdicts[idx].1 = if class(candidate) <= winning_class {
+            // Same class as the winner — a strictly better class is impossible, the
+            // winner holds the minimum — so what it lost was the route tiebreak or,
+            // failing that, enumeration order.
+            Verdict::PassedOverLowerPriority
+        } else if is_cgnat(candidate.ip) {
+            // Class 1 or class 3. Class 3 is *both* things and says so: the reporting
+            // desktop's `zcctun0 100.64.0.1` is exactly that pair, and a line naming only
+            // one half sends the reader looking for a second reason that is already there.
             if candidate.is_p2p || has_virtual_name(&candidate.name) {
-                Verdict::PassedOverVirtual
+                Verdict::PassedOverVirtualCgnat
             } else {
                 Verdict::PassedOverCgnat
             }
         } else {
-            Verdict::PassedOverLowerPriority
+            // Class 2: virtual, ordinary address. Class 0 cannot reach here — it is the
+            // best class, so `class(candidate) > winning_class` already excluded it.
+            Verdict::PassedOverVirtual
         };
     }
 
@@ -494,12 +548,24 @@ pub(crate) fn decide(candidates: Vec<LanInterface>, route_hint: Option<Ipv4Addr>
     // the one case where the decision can be entirely unanimous and still deserve a
     // warning, because what it widens is the attack surface, not the odds of pairing.
     let internet_facing = is_publicly_routable(&bind);
-    // WARN whenever the decision was not unanimous — either there was something to pass
-    // over (rejected or merely outranked), or the winner is itself a virtual / CGNAT
-    // interface that peers on the physical LAN are unlikely to reach — or when the
-    // address we bound is internet-facing. A host with one ordinary private NIC and
-    // nothing else is the only quiet case.
-    let level = if internet_facing || verdicts.len() > 1 || winning_class > 0 {
+    // WARN whenever the decision was not unanimous — either more than one candidate was
+    // genuinely in contention, or the winner is itself a virtual / CGNAT interface that
+    // peers on the physical LAN are unlikely to reach — or when the address we bound is
+    // internet-facing.
+    //
+    // The count is over `rankable`, not `verdicts`. `verdicts` holds every enumerated
+    // address including loopback, which every host has and none can bind as a LAN, so
+    // `verdicts.len() > 1` was true on every real machine: the daemon warned on every
+    // start and the `Info` arm was reachable only from a synthetic list with no loopback
+    // in it. That made the internet-facing warning — the whole mitigation for a bind that
+    // may be reachable off-LAN — indistinguishable from routine noise. A rejected
+    // candidate could never have been bound, so it is not something that was "passed
+    // over" in any sense the reader can act on; it still appears in `passed_over()` when
+    // one of the other clauses does fire.
+    //
+    // The quiet case is therefore a host with exactly one rankable ordinary private NIC,
+    // whatever else it enumerates alongside — loopback, a NO-CARRIER bridge, a `/32` VPN.
+    let level = if internet_facing || rankable.len() > 1 || winning_class > 0 {
         Level::Warn
     } else {
         Level::Info
@@ -720,7 +786,9 @@ mod tests {
                 ("docker0", Verdict::NotUp),
                 ("lxdbr0", Verdict::PassedOverVirtual),
                 ("incusbr0", Verdict::NotUp),
-                ("zcctun0", Verdict::PassedOverVirtual),
+                // Point-to-point *and* CGNAT: the log must say both, not just the first
+                // of the two the classifier happens to test for.
+                ("zcctun0", Verdict::PassedOverVirtualCgnat),
             ],
             "the audit trail must distinguish 'down' from 'deprioritised'; #3853's whole \
              difficulty was that nothing said what was passed over"
@@ -768,6 +836,8 @@ mod tests {
             "lxdbr0",
             "incusbr0",
             "vmbr0",
+            "bridge0",   // macOS Thunderbolt/AWDL bridge
+            "bridge100", // macOS Internet Sharing
             "vEthernet (WSL)",
             "veth7a1b",
             "vmnet1",
@@ -895,27 +965,53 @@ mod tests {
     /// …but it is never selected *quietly*, and every other clause of the level rule is
     /// pinned here beside it (#3853, SECURITY.md § In scope).
     ///
+    /// **Every fixture carries loopback**, because every host does. An earlier revision
+    /// omitted it, and that single omission is what let the level rule count
+    /// `verdicts.len()` — which includes loopback — and still look pinned: the `Info` arm
+    /// was reachable *only* from a list no machine can produce, so in production the
+    /// daemon warned on every start and the internet-facing warning below meant nothing.
+    /// A fixture that is easier than the hardware tests the hardware's easier twin.
+    ///
     /// One assertion per clause, deliberately, so a dead clause names itself. Delete
-    /// `internet_facing` or `verdicts.len() > 1` and exactly one line here goes red;
+    /// `internet_facing` or `rankable.len() > 1` and exactly one line here goes red;
     /// delete `winning_class > 0` and two do — the `bridge_only` line below *and*
     /// `a_virtual_interface_is_still_chosen_when_it_is_the_only_candidate`, which
     /// asserts the same WARN from the other side. Mutating `level` to always-`Warn`
-    /// kills the first assertion here, which nothing did before, because the `Info` arm
-    /// was reachable by no test at all.
+    /// kills the first assertion here, and widening the count back to `verdicts.len()`
+    /// kills it too, since loopback is now in the list.
     #[test]
     fn only_a_single_ordinary_private_nic_is_decided_quietly() {
-        // INFO: one ordinary private NIC, nothing passed over, nothing internet-facing.
-        let quiet = decide(vec![LanInterface::new("eth0", "192.168.1.10", 24)], None);
+        // INFO: one ordinary private NIC, nothing in contention, nothing internet-facing.
+        // Loopback is present and rejected, as it is on every host; a NO-CARRIER bridge
+        // is too, because that is what an idle Docker install leaves behind. Neither was
+        // ever a candidate for the bind, so neither is worth waking the user for.
+        let quiet = decide(
+            vec![
+                LanInterface::new("lo", "127.0.0.1", 8),
+                LanInterface::new("eth0", "192.168.1.10", 24),
+                down(LanInterface::new("docker0", "172.17.0.1", 16)),
+            ],
+            None,
+        );
         assert_eq!(
             quiet.level,
             Level::Info,
-            "an unambiguous private LAN bind is the one case worth no warning"
+            "an unambiguous private LAN bind is the one case worth no warning — and it \
+             has to survive the interfaces every real host carries alongside it, or the \
+             quiet case exists only in this file; passed over: {}",
+            quiet.passed_over()
+        );
+        assert!(
+            quiet.verdicts.len() > 1,
+            "precondition: the fixture must be the production shape, i.e. more entries \
+             than the one that won"
         );
         assert!(!quiet.internet_facing);
 
-        // WARN, clause 1: something was passed over, so the choice was not unanimous.
+        // WARN, clause 1: a second candidate was genuinely in contention.
         let with_a_loser = decide(
             vec![
+                LanInterface::new("lo", "127.0.0.1", 8),
                 LanInterface::new("eth0", "192.168.1.10", 24),
                 LanInterface::new("docker0", "172.17.0.1", 16),
             ],
@@ -924,22 +1020,38 @@ mod tests {
         assert_eq!(
             with_a_loser.level,
             Level::Warn,
-            "if something was passed over, the log must say so — that list is the whole \
-             diagnostic #3853 lacked"
+            "if something rankable was passed over, the log must say so — that list is \
+             the whole diagnostic #3853 lacked"
         );
 
         // WARN, clause 2: the winner is itself virtual, i.e. the #3853 symptom.
-        let bridge_only = decide(vec![LanInterface::new("docker0", "172.17.0.1", 16)], None);
+        let bridge_only = decide(
+            vec![
+                LanInterface::new("lo", "127.0.0.1", 8),
+                LanInterface::new("docker0", "172.17.0.1", 16),
+            ],
+            None,
+        );
         assert_eq!(bridge_only.level, Level::Warn);
 
-        // WARN, clause 3: the winner is globally routable. Unanimous — one candidate,
-        // best class, nothing rejected — so every other clause is false and this is the
-        // only thing that can raise the level.
-        let public = decide(vec![LanInterface::new("eth0", "192.160.160.80", 24)], None);
+        // WARN, clause 3: the winner is globally routable. Unanimous — one rankable
+        // candidate, best class, nothing else in contention — so every other clause is
+        // false and this is the only thing that can raise the level.
+        let public = decide(
+            vec![
+                LanInterface::new("lo", "127.0.0.1", 8),
+                LanInterface::new("eth0", "192.160.160.80", 24),
+            ],
+            None,
+        );
         assert_eq!(
-            public.verdicts.len(),
-            1,
-            "precondition: nothing to pass over"
+            public
+                .verdicts
+                .iter()
+                .map(|(_, verdict)| *verdict)
+                .collect::<Vec<_>>(),
+            vec![Verdict::Loopback, Verdict::Chosen],
+            "precondition: nothing in contention but the winner"
         );
         assert!(
             public.internet_facing,
@@ -1080,6 +1192,57 @@ mod tests {
         assert_eq!(
             decide(alone, None).lan_ip,
             Some("100.64.0.1".parse::<Ipv4Addr>().unwrap())
+        );
+    }
+
+    /// Each losing class states *its own* reason, and the worst class states both halves.
+    ///
+    /// One list, one winner, one loser per class, so an arm that collapses into another
+    /// names itself. Class 3 is why this exists: it was reported as `PassedOverVirtual`
+    /// alone, so the log said "virtual or point-to-point interface" about the desktop's
+    /// `zcctun0 100.64.0.1` and never mentioned that the address is a carrier one too —
+    /// leaving the reader to work out which of the two ordering rules had applied.
+    /// Selection was never affected; [`class`] already ranks the pair last.
+    #[test]
+    fn every_passed_over_class_states_its_own_reason() {
+        let decision = decide(
+            vec![
+                LanInterface::new("eth0", "192.168.1.10", 24), // class 0, wins on order
+                LanInterface::new("eth1", "192.168.2.10", 24), // class 0, lost the tiebreak
+                LanInterface::new("rmnet0", "100.64.0.1", 16), // class 1, CGNAT only
+                LanInterface::new("docker0", "172.17.0.1", 16), // class 2, virtual only
+                p2p(LanInterface::new("zcctun0", "100.64.1.1", 16)), // class 3, both
+            ],
+            None,
+        );
+
+        let reasons: Vec<(&str, Verdict)> = decision
+            .verdicts
+            .iter()
+            .map(|(candidate, verdict)| (candidate.name.as_str(), *verdict))
+            .collect();
+        assert_eq!(
+            reasons,
+            vec![
+                ("eth0", Verdict::Chosen),
+                ("eth1", Verdict::PassedOverLowerPriority),
+                ("rmnet0", Verdict::PassedOverCgnat),
+                ("docker0", Verdict::PassedOverVirtual),
+                ("zcctun0", Verdict::PassedOverVirtualCgnat),
+            ],
+            "a candidate that is both virtual and CGNAT must not be filed under either \
+             half alone; passed over: {}",
+            decision.passed_over()
+        );
+
+        // …and the distinction has to survive into the text the user actually reads.
+        let passed_over = decision.passed_over();
+        assert!(
+            passed_over.contains(
+                "zcctun0=100.64.1.1/16 (virtual or point-to-point interface, on CGNAT \
+                 100.64/10)"
+            ),
+            "the log line is the only place this reason is ever seen, got: {passed_over}"
         );
     }
 
@@ -1250,7 +1413,10 @@ mod tests {
     /// (`zcctun0`). Both are conditional on the machine and are listed as residual
     /// coverage. Nothing here pins the Windows mapping, where `IfOperStatus::Unknown` is
     /// the adapter's real answer rather than "no carrier"; rejecting it there is stricter
-    /// than needed and is also residual.
+    /// than needed and is also residual. Where `/sys/class/net` is masked entirely — some
+    /// hardened container runtimes do that — there is no oracle to compare against and the
+    /// test skips; see the early return for why that does not weaken the guarantee on the
+    /// hosts that do expose it.
     ///
     /// `/sys/class/net/*/flags` is `dev->flags`, which does **not** carry the derived
     /// `IFF_RUNNING` / `IFF_LOWER_UP` bits — hence reconstructing the rule from
@@ -1293,6 +1459,20 @@ mod tests {
         let before = kernel_snapshot();
         let candidates = host_candidates();
         let after = kernel_snapshot();
+
+        if before.is_empty() {
+            // No `/sys/class/net` at all — a hardened container runtime can mask it, and
+            // some do. There is then no kernel answer to cross-check against, which is
+            // an absent oracle, not a failing one, so skip rather than fail.
+            //
+            // The non-vacuity guarantee is preserved by *where* this returns: the
+            // `checked > 0` assertion below still runs on every host that exposes the
+            // directory, and an empty snapshot is the only way to reach it having checked
+            // nothing. A host that publishes interfaces but whose names do not line up
+            // with what `host_candidates` reports still goes red there — which is the
+            // mapping bug that assertion exists to catch.
+            return;
+        }
 
         let mut checked = 0_usize;
         let mut unknown_operstate_seen = 0_usize;
