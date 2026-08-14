@@ -613,13 +613,20 @@ describe('PairingDialog', () => {
   })
 
   it('shows loading state while the host is initializing', async () => {
-    // Make start_pairing hang
-    mockedInvoke.mockImplementation(() => new Promise(() => {})) // never resolves
+    // Make every invoke call hang until we release it below (rather than
+    // `new Promise(() => {})`, which never resolves at all — see #3810).
+    const pendingInvokes: Array<(value: unknown) => void> = []
+    mockedInvoke.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          pendingInvokes.push(resolve)
+        }),
+    )
 
     // #3463 (review): the host session now starts automatically on mount —
     // there is no button to click to reach this loading state, it's the
     // very first thing rendered.
-    render(<PairingDialog open onOpenChange={vi.fn()} />)
+    const { unmount } = render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       const loadingEl = document.querySelector('.pairing-loading')
@@ -630,6 +637,28 @@ describe('PairingDialog', () => {
       expect(loadingEl?.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
       expect(loadingEl?.querySelector('[data-slot="spinner"]')).toBeFalsy()
     })
+
+    // #3810 — drain before the test ends, don't leave `start_pairing`
+    // hanging forever. `initHost` arms `backendArmedRef` before dispatching
+    // it (#3628), so RTL's global `afterEach(cleanup())` unmounting this
+    // still-open dialog queues a `cancel_pairing` BEHIND the still-pending
+    // `start_pairing` in the module-level mutation queue
+    // (`src/lib/pairing-mutations.ts`). That queued clear is bounded only by
+    // the mutation queue's REAL `PAIRING_MUTATION_TIMEOUT_MS` (15s) timer —
+    // a `new Promise(() => {})` that's never settled and never unmounted
+    // leaves that timer armed past this test's end. This file's own process
+    // exits well before 15s in an isolated run, so the queued
+    // `cancel_pairing` never actually dispatches — invisible. Under
+    // full-suite load, though, wall-clock execution stretches enough that
+    // the timer can fire while a LATER, unrelated test in this file is
+    // running, dispatching a phantom `cancel_pairing` invoke that inflates
+    // *that* test's count by exactly one. That is the mechanism behind
+    // #3810's "1 in isolation, 2 (or 3 under heavier load) under full-suite
+    // load" — settle, unmount, and drain here, like every other "hangs
+    // forever" test in this file already does.
+    pendingInvokes.forEach((resolve) => resolve(undefined))
+    unmount()
+    await flushMicrotasks()
   })
 
   it('has no a11y violations on the host path with pairing info', async () => {

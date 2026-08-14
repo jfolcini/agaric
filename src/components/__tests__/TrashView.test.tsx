@@ -28,6 +28,7 @@ import { axe } from 'vitest-axe'
 import { emptyPage, makeBlock } from '@/__tests__/fixtures'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { TrashView } from '@/components/TrashView'
+import { MAX_TRASH_BATCH_IDS } from '@/lib/tauri/blocks'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -1578,15 +1579,17 @@ describe('TrashView', () => {
   })
 
   // #3835 — `purgeAllDeletedInSpace` chunks the purge into
-  // `MAX_TRASH_BATCH_IDS`-sized (1000) batches, each its OWN committed
+  // `MAX_TRASH_BATCH_IDS`-sized batches, each its OWN committed
   // transaction. A later chunk failing must surface what the earlier,
   // already-committed chunk(s) removed instead of the plain
   // `emptyTrashFailed` toast, which implies nothing happened at all.
   it('shows partial-progress toast (not the generic failure) when a later empty-trash chunk fails', async () => {
     const user = userEvent.setup()
-    // 1001 ids -> two purge_blocks_by_ids chunks: 1000 (succeeds), then 1
-    // (fails).
-    const trashItems = Array.from({ length: 1001 }, (_, i) =>
+    // MAX_TRASH_BATCH_IDS + 1 ids -> two purge_blocks_by_ids chunks:
+    // MAX_TRASH_BATCH_IDS (succeeds), then 1 (fails). #3885 — sized off the
+    // exported constant rather than a hardcoded 1001 so this stays exactly
+    // "one over the batch cap" if the cap ever changes.
+    const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
       i === 0
         ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
         : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
@@ -1598,7 +1601,7 @@ describe('TrashView', () => {
       if (cmd === 'batch_resolve') return []
       if (cmd === 'purge_blocks_by_ids') {
         purgeCalls += 1
-        if (purgeCalls === 1) return { affected_count: 1000 }
+        if (purgeCalls === 1) return { affected_count: MAX_TRASH_BATCH_IDS }
         throw new Error('db error on second chunk')
       }
       return undefined
@@ -1612,7 +1615,7 @@ describe('TrashView', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
-        'Removed 1000 items before an error interrupted emptying trash',
+        `Removed ${MAX_TRASH_BATCH_IDS} items before an error interrupted emptying trash`,
       )
     })
     // NOT the generic "nothing happened" copy.

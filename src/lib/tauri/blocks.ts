@@ -196,9 +196,13 @@ export async function purgeBlocksByIds(blockIds: string[]): Promise<number> {
  * `src-tauri/src/commands/mod.rs`). Mirrored here so
  * {@link restoreAllDeletedInSpace} / {@link purgeAllDeletedInSpace} can
  * chunk an arbitrarily large trash into backend-accepted batches instead
- * of surfacing `AppError::Validation` for a busy trash.
+ * of surfacing `AppError::Validation` for a busy trash. Exported (#3885)
+ * purely so tests of the chunked path can build a fixture sized off this
+ * constant — `MAX_TRASH_BATCH_IDS + 1` — instead of a magic literal that
+ * silently stops meaning "one over the batch cap" if this value ever
+ * changes.
  */
-const MAX_TRASH_BATCH_IDS = 1000
+export const MAX_TRASH_BATCH_IDS = 1000
 
 /**
  * Collect every trash-root id belonging to `spaceId` by walking
