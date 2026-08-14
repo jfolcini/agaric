@@ -11,7 +11,7 @@
  * Follows StatusPanel.tsx layout patterns.
  */
 
-import { Copy, Globe, RefreshCw, Smartphone, X } from 'lucide-react'
+import { Copy, Globe, RefreshCw, ShieldAlert, Smartphone, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -25,6 +25,7 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
+import { useBindExposure } from '@/hooks/useBindExposure'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { useMdnsStatus } from '@/hooks/useMdnsStatus'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
@@ -37,6 +38,7 @@ import { formatErrorForDisplay } from '@/lib/error-display'
 import { truncateId } from '@/lib/format'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { PREFERENCES, usePreference } from '@/lib/preferences'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { startSync } from '@/lib/tauri'
 import { useSyncStore } from '@/stores/sync'
@@ -94,6 +96,22 @@ export function DeviceManagement(): React.ReactElement {
   const [, setTick] = useState(0)
   const { execute: executeSyncWithTimeout } = useSyncWithTimeout()
   const mdnsStatus = useMdnsStatus()
+
+  // #3864 — internet-facing sync bind. Dismissal is stored as the
+  // acknowledged *address*, so a later bind to a different public address
+  // warns again; see `PREFERENCES.internetFacingBindAck` for why it is
+  // dismissible at all and why the port is not part of the key.
+  const internetFacingBind = useBindExposure()
+  const [acknowledgedBindAddress, setAcknowledgedBindAddress] = usePreference(
+    PREFERENCES.internetFacingBindAck,
+  )
+  // Narrowed to one nullable value rather than a boolean + a null check, so
+  // the render has a single condition and no second guard that can never be
+  // the reason the banner is hidden.
+  const unacknowledgedBind =
+    internetFacingBind !== null && internetFacingBind.address !== acknowledgedBindAddress
+      ? internetFacingBind
+      : null
 
   // #437: Auto-clear stale errors after 10 seconds
   useEffect(() => {
@@ -327,6 +345,38 @@ export function DeviceManagement(): React.ReactElement {
                   <Globe className="inline h-3 w-3 mr-1 align-text-bottom" />
                   {t('device.mdnsDisabledHint', { reason: mdnsStatus.reason ?? '' })}
                 </p>
+              )}
+
+              {/* #3864 — internet-facing sync bind. Rendered only once the
+                  daemon has reported a globally-routable bind AND the user has
+                  not already acknowledged that exact address; a notice a user
+                  cannot clear is a notice they stop reading, and the reporting
+                  maintainer's own desktop hits this branch on every boot. */}
+              {unacknowledgedBind !== null && (
+                <div
+                  className="internet-facing-bind-hint rounded-md border border-destructive/40 p-3 mb-4"
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level banner with mb-4 stacking; native <output> is inline-level and would collapse it
+                  role="status"
+                  data-testid="internet-facing-bind-hint"
+                >
+                  <p className="text-xs text-destructive">
+                    <ShieldAlert className="inline h-3 w-3 mr-1 align-text-bottom" />
+                    {t('device.internetFacingBindHint', {
+                      address: unacknowledgedBind.address,
+                      port: unacknowledgedBind.port,
+                    })}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="internet-facing-bind-dismiss mt-2 h-7 text-xs"
+                    onClick={() => setAcknowledgedBindAddress(unacknowledgedBind.address)}
+                    aria-label={t('device.internetFacingBindAckLabel')}
+                    data-testid="internet-facing-bind-dismiss"
+                  >
+                    {t('device.internetFacingBindAck')}
+                  </Button>
+                </div>
               )}
 
               {/* Manual IP hint */}

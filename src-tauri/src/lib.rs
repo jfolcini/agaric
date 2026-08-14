@@ -220,6 +220,11 @@ macro_rules! agaric_commands {
             // device-management surface (its `sync:mdns_disabled` listener
             // may register after the sync daemon already emitted).
             $crate::commands::sync_cmds::get_mdns_status,
+            // #3864 — internet-facing-bind status backfill for the same
+            // surface. The endpoint binds before the webview can register a
+            // `sync:internet_facing_bind` listener, so this query is how the
+            // banner gets on screen at all, not a fallback.
+            $crate::commands::sync_cmds::get_bind_exposure_status,
             // Batch count commands (#604)
             $crate::commands::agenda::count_agenda_batch,
             $crate::commands::agenda::count_agenda_batch_by_source,
@@ -2244,6 +2249,16 @@ pub fn run() {
                 // mounts after that first emission.
                 app.manage(agaric_sync::sync_events::MdnsStatusState(
                     std::sync::Mutex::new(agaric_sync::sync_events::MdnsStatus::default()),
+                ));
+
+                // #3864: same deal for the internet-facing-bind status, and the
+                // ordering matters more here — the endpoint binds within the
+                // first moments of `daemon_loop`, so this must be managed
+                // before the daemon spawns or the one emission of
+                // `SyncEvent::InternetFacingBind` lands nowhere and
+                // `get_bind_exposure_status` reports a clean device that isn't.
+                app.manage(agaric_sync::sync_events::BindExposureStatusState(
+                    std::sync::Mutex::new(agaric_sync::sync_events::BindExposureStatus::default()),
                 ));
 
                 // #2696 — sweep orphaned `snapshot-recv-*.tmp` files left in

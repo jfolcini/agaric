@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { comparePeers, DeviceManagement } from '@/components/peers/DeviceManagement'
+import { PREFERENCES } from '@/lib/preferences'
 import type { PeerRef } from '@/lib/tauri'
 
 // #2506: DeviceManagement now mounts `useMdnsStatus`, which registers a
@@ -1338,6 +1339,172 @@ describe('DeviceManagement', () => {
 
       const hint = await screen.findByTestId('mdns-disabled-hint')
       expect(hint.textContent).toContain('iOS sandbox blocks raw UDP')
+    })
+  })
+
+  // --- internet-facing-bind banner (#3864) ---
+
+  describe('internet-facing-bind banner (#3864)', () => {
+    // Same `__TAURI_INTERNALS__` gate as `useMdnsStatus`: `useBindExposure`
+    // registers neither its listener nor its backfill without it.
+    let hadTauriInternals: boolean
+
+    beforeEach(() => {
+      hadTauriInternals = '__TAURI_INTERNALS__' in window
+      if (!hadTauriInternals) {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          value: {},
+          writable: true,
+          configurable: true,
+        })
+      }
+      // The dismissal is persisted, so it leaks between cases unless cleared.
+      localStorage.removeItem(PREFERENCES.internetFacingBindAck.key)
+    })
+
+    afterEach(() => {
+      localStorage.removeItem(PREFERENCES.internetFacingBindAck.key)
+      if (!hadTauriInternals) {
+        delete (window as any).__TAURI_INTERNALS__
+      }
+    })
+
+    /**
+     * The half of the pair that matters most: pinning only the "banner
+     * appears" case would pass a component that renders it unconditionally,
+     * which is precisely the outcome this feature must avoid — the
+     * overwhelming majority of devices are on an ordinary private LAN and must
+     * see nothing.
+     */
+    it('does not show the banner when the sync bind is not internet-facing', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [],
+        get_bind_exposure_status: { internet_facing: null },
+      })
+
+      const { container } = render(<DeviceManagement />)
+
+      await screen.findByText(mockDeviceId)
+      expect(container.querySelector('[data-testid="internet-facing-bind-hint"]')).toBeNull()
+    })
+
+    /**
+     * The boot race in its production shape: the daemon bound (and emitted)
+     * before this component existed, so the ONLY thing that can put the banner
+     * on screen is the durable status the mount-time query reads.
+     */
+    it('shows the banner from the mount-time durable status, naming the address and port', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [],
+        get_bind_exposure_status: {
+          internet_facing: { address: '192.160.160.80', port: 54321 },
+        },
+      })
+
+      render(<DeviceManagement />)
+
+      await screen.findByText(mockDeviceId)
+      const hint = await screen.findByTestId('internet-facing-bind-hint')
+      expect(hint.textContent).toContain('192.160.160.80')
+      expect(hint.textContent).toContain('54321')
+      // The copy must say "may be reachable", never assert exposure: a router
+      // handing public space to a home LAN and a real VPS are indistinguishable
+      // from inside the app, and the reporting maintainer is the former.
+      expect(hint.textContent).toContain('may be reachable')
+    })
+
+    it('shows the banner when the live sync:internet_facing_bind event fires', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [],
+        get_bind_exposure_status: { internet_facing: null },
+      })
+
+      render(<DeviceManagement />)
+
+      await screen.findByText(mockDeviceId)
+      expect(screen.queryByTestId('internet-facing-bind-hint')).toBeNull()
+
+      const handler = mdnsListeners.get('sync:internet_facing_bind')
+      expect(handler).toBeDefined()
+      await act(async () => {
+        handler?.({ payload: { address: '203.0.113.9', port: 41234 } })
+      })
+
+      const hint = await screen.findByTestId('internet-facing-bind-hint')
+      expect(hint.textContent).toContain('203.0.113.9')
+    })
+
+    /**
+     * Dismissal has to outlive the render, or it is not a dismissal — the
+     * daemon re-emits on every start and the maintainer's own desktop is
+     * internet-facing on every boot.
+     */
+    it('stays dismissed across a remount once the address is acknowledged', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [],
+        get_bind_exposure_status: {
+          internet_facing: { address: '192.160.160.80', port: 54321 },
+        },
+      })
+
+      const first = render(<DeviceManagement />)
+      await screen.findByTestId('internet-facing-bind-hint')
+      await userEvent.click(screen.getByTestId('internet-facing-bind-dismiss'))
+      await waitFor(() => {
+        expect(screen.queryByTestId('internet-facing-bind-hint')).toBeNull()
+      })
+      first.unmount()
+
+      render(<DeviceManagement />)
+      await screen.findByText(mockDeviceId)
+      // Give the backfill a turn to resolve before concluding it stayed hidden.
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(screen.queryByTestId('internet-facing-bind-hint')).toBeNull()
+    })
+
+    /**
+     * …and the dismissal is scoped to the address, not to the notice. Moving
+     * onto a different public address — a new network, a DHCP change, a cloud
+     * host — is new information and must warn again. A blanket "never show
+     * this again" flag would silence exactly the case worth surfacing.
+     */
+    it('warns again when a different public address is bound after a dismissal', async () => {
+      localStorage.setItem(PREFERENCES.internetFacingBindAck.key, '192.160.160.80')
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [],
+        get_bind_exposure_status: {
+          internet_facing: { address: '198.51.100.4', port: 41234 },
+        },
+      })
+
+      render(<DeviceManagement />)
+
+      await screen.findByText(mockDeviceId)
+      const hint = await screen.findByTestId('internet-facing-bind-hint')
+      expect(hint.textContent).toContain('198.51.100.4')
+    })
+
+    it('has no a11y violations while the banner is shown', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [],
+        get_bind_exposure_status: {
+          internet_facing: { address: '192.160.160.80', port: 54321 },
+        },
+      })
+
+      const { container } = render(<DeviceManagement />)
+
+      await screen.findByTestId('internet-facing-bind-hint')
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 

@@ -74,6 +74,10 @@ const ALLOWLIST = new Map([
   ['recovery.rs:get_recovery_status', 'clones a lock-guarded boot-status value'],
   ['sync_cmds.rs:get_mdns_status', 'clones a lock-guarded mDNS-status value (#2506)'],
   [
+    'sync_cmds.rs:get_bind_exposure_status',
+    'clones a lock-guarded bind-exposure value; same shape as get_mdns_status (#3864)',
+  ],
+  [
     'mod.rs:is_flatpak',
     'trivial /.flatpak-info exists() check; no fallible work worth a span (#2974)',
   ],

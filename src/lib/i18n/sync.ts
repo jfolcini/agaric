@@ -102,6 +102,17 @@ export const sync: Record<string, string> = {
   'device.noPairedDevices': 'No paired devices. Click "Pair New Device" to get started.',
   'device.mdnsDisabledHint':
     'Automatic discovery unavailable: {{reason}}. Add peers by address instead.',
+  // #3864. Deliberately states only what the app can actually observe — the
+  // address is outside the private ranges — and stops short of asserting the
+  // device IS exposed, which it cannot know: a router handing out public
+  // space to a home LAN and a VPS look identical from in here. The action is
+  // conditional for the same reason. No plural forms: every interpolation is
+  // a single address / single port.
+  'device.internetFacingBindHint':
+    'Sync is listening on {{address}}, UDP port {{port}} — outside the private network ranges, so it may be reachable from beyond your local network. That is expected if your router hands out public addresses. On a VPS or other public host, block inbound UDP to this device or turn sync off. The port changes on every restart.',
+  'device.internetFacingBindAck': 'Got it',
+  'device.internetFacingBindAckLabel':
+    'Acknowledge this sync address; the notice returns if the address changes',
   'device.noAddress': 'No address',
   'device.editAddressLabel': 'Edit address for {{name}}',
   'device.renameDeviceLabel': 'Rename device {{name}}',

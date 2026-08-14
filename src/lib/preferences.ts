@@ -600,6 +600,32 @@ const TAB_INDENTS_BLOCKS_PREFERENCE: PreferenceDefinition<boolean> = {
   serialize: jsonSerialize<boolean>,
 }
 
+/**
+ * `sync-internet-facing-bind-ack` — the sync bind address the user has
+ * acknowledged as expected (#3864). Empty string on disk = nothing
+ * acknowledged.
+ *
+ * The value is the **address**, not a boolean, and that is the whole point:
+ * the notice returns by itself when the device binds a *different* public
+ * address (new network, DHCP change, moved onto a cloud host), which is
+ * exactly when it has something new to say. Keying it on the address:port
+ * instead would be equivalent to not being dismissible at all — the bind
+ * requests port 0, so the port changes on every restart.
+ *
+ * `scope: 'device'` because what is being acknowledged is this machine's
+ * position on the network, which no space or document has any bearing on.
+ *
+ * Stored bare (not JSON-wrapped), matching `pinned_search_scope`.
+ */
+const INTERNET_FACING_BIND_ACK_PREFERENCE: PreferenceDefinition<string> = {
+  key: 'sync-internet-facing-bind-ack',
+  scope: 'device',
+  version: 1,
+  defaultValue: '',
+  parse: (raw) => raw,
+  serialize: (value) => value,
+}
+
 /** `starred-pages` — starred (favorited) page ids (`src/lib/starred-pages.ts`). */
 const STARRED_PAGES_PREFERENCE: PreferenceDefinition<string[]> = {
   key: 'starred-pages',
@@ -1092,6 +1118,7 @@ export const PREFERENCES = {
   pinnedSearchScope: PINNED_SEARCH_SCOPE_PREFERENCE,
   emojiPickerEnabled: EMOJI_PICKER_ENABLED_PREFERENCE,
   tabIndentsBlocks: TAB_INDENTS_BLOCKS_PREFERENCE,
+  internetFacingBindAck: INTERNET_FACING_BIND_ACK_PREFERENCE,
   starredPages: STARRED_PAGES_PREFERENCE,
   savedPagesViews: SAVED_PAGES_VIEWS_PREFERENCE,
   quickCaptureShortcut: QUICK_CAPTURE_SHORTCUT_PREFERENCE,
