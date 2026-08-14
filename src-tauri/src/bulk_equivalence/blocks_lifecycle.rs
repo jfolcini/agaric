@@ -15,12 +15,16 @@
 //! and `restore_blocks_by_ids_skips_a_live_block_the_single_path_refuses` for
 //! what that costs.
 //!
-//! Two tests at the end of this file are NOT oracle scenarios: the #3834 pair
-//! asserts an ABSOLUTE invariant (the per-space Loro engine agrees with SQL
-//! about the restored ancestor chain after a local restore) rather than arm
-//! equality, because on that defect batch and fold were equally wrong and
-//! `batch ≡ fold` held while both diverged from the CRDT. They live here for
-//! the fixture, which is the one that seeds every block into the engine.
+//! Three tests at the end of this file are NOT oracle scenarios: the
+//! #3834/#3856 trio asserts an ABSOLUTE invariant (the per-space Loro engine
+//! agrees with SQL about the whole restored subtree — ancestor chain, seed and
+//! descendant cohort — after a local restore) rather than arm equality. On
+//! #3834 batch and fold were equally wrong, so `batch ≡ fold` held while both
+//! diverged from the CRDT; on #3856 they were UNEQUALLY wrong (the fold left
+//! the seed and its cohort tombstoned where the batch did not) and `batch ≡
+//! fold` STILL held, because the divergence lives in the LoroDoc and this
+//! harness snapshots SQL + op_log. They live here for the fixture, which is the
+//! one that seeds every block into the engine.
 //!
 //! Purge is a THIRD fork, and a less obvious one. Its satellite-table DELETE
 //! chain really is converged — all three purge variants call the one
@@ -937,81 +941,134 @@ async fn sql_deleted_at(pool: &SqlitePool, label: &str) -> Option<i64> {
         .expect("read deleted_at")
 }
 
-/// **The assertion #3834 is about**, shared by both restore paths.
+/// **The assertion #3834 / #3856 are about**, applied to ONE block of the
+/// restored subtree.
 ///
-/// `path` names the caller so a failure says which of the two regressed.
+/// `path` names the caller and `role` the block's position in the restore
+/// (ancestor / seed / descendant) so a failure says which path regressed and
+/// where.
 ///
-/// Note what is NOT the point: R1 being live in SQL. SQL was always right —
-/// `restore_deleted_ancestor_chain` cleared it in-tx, before and after the fix
-/// — so a test that stopped there would be vacuous. It is asserted only as the
-/// precondition that makes the engine assertions meaningful (if SQL had not
-/// restored R1 there would be no divergence to detect).
-async fn assert_restored_ancestor_converged(env: &ArmEnv, path: &str) {
+/// Note what is NOT the point: the block being live in SQL. SQL was always
+/// right — the cohort UPDATE and `restore_deleted_ancestor_chain` cleared it
+/// in-tx, before and after either fix — so a test that stopped there would be
+/// vacuous. It is asserted only as the precondition that makes the engine
+/// assertions meaningful (with no SQL restore there would be no divergence to
+/// detect).
+async fn assert_member_converged(env: &ArmEnv, path: &str, role: &str, label: &str) {
     assert_eq!(
-        sql_deleted_at(&env.pool, R1).await,
+        sql_deleted_at(&env.pool, label).await,
         None,
-        "precondition ({path}): the #1884 upward walk must clear R1 in SQL",
+        "precondition ({path}): the restore must clear {label} ({role}) in SQL",
     );
 
-    // (a) THE CORE: R1 is alive IN THE ENGINE, not just in SQL. Before the fix
-    // nothing in either local command reached the engine for the chain — the
-    // `apply_op` → `dispatch_restore_ancestors` arm the code cited never runs
-    // for a locally authored op (the local path leaves the apply cursor put, so
-    // the op only replays at boot, by which point the chain is already live in
-    // SQL and the projection returns an empty chain).
-    let (engine_deleted, engine_deleted_at) = engine_deleted_state(env, R1);
+    // (a) THE CORE: the block is alive IN THE ENGINE, not just in SQL.
+    //
+    // #3834 (ancestor): nothing in either local command reached the engine for
+    // the chain — the `apply_op` → `dispatch_restore_ancestors` arm the code
+    // cited never runs for a locally authored op (the local path leaves the
+    // apply cursor put, so the op only replays at boot, by which point the
+    // chain is already live in SQL and the projection returns an empty chain).
+    //
+    // #3856 (seed + descendant cohort): `restore_block_inner` and
+    // `restore_all_deleted_inner` performed NO engine work of their own at all —
+    // they never route through `apply_op_projected` the way `delete_block_inner`
+    // does — so after #3834 the ancestor came back in the CRDT while the seed
+    // and its descendants stayed tombstoned: a tombstoned CHILD under a live
+    // PARENT, the inverse of the #1884 live-orphan.
+    let (engine_deleted, engine_deleted_at) = engine_deleted_state(env, label);
     assert!(
         !engine_deleted,
-        "#3834 ({path}): restoring R1C1 must restore its R1 ancestor IN THE \
-         ENGINE — it was SQL-only, leaving the block live in SQL and tombstoned \
-         in the per-space CRDT",
+        "#3834/#3856 ({path}): restoring R1C1 must leave {label} ({role}) alive \
+         IN THE ENGINE — a SQL-only restore leaves the block live in SQL and \
+         tombstoned in the per-space CRDT",
     );
     assert!(
         engine_deleted_at.is_none(),
-        "#3834 ({path}): the engine must report R1 alive (deleted_at None); \
-         got {engine_deleted_at:?}",
+        "#3834/#3856 ({path}): the engine must report {label} ({role}) alive \
+         (deleted_at None); got {engine_deleted_at:?}",
     );
 
-    // (b) THE GUARD, and the reason (a) matters: a reproject driven by the
-    // ENGINE's view of R1 must not re-delete it in SQL. With a stale engine
-    // tombstone this call re-stamps `deleted_at` on every reproject —
-    // self-perpetuating divergence, and the user-visible symptom (a restored
-    // subtree whose ancestors silently revert to deleted).
+    // (b) DEMONSTRATION, not independent evidence — labelled so because it
+    // reads like a second check and is not one. A reproject driven by the
+    // ENGINE's view must not re-delete the block in SQL; with a stale engine
+    // tombstone this call re-stamps `deleted_at` on every reproject, which is
+    // the self-perpetuating divergence and the user-visible symptom (a restored
+    // subtree that silently reverts to deleted).
+    //
+    // But it CANNOT fail once (a) passes: it feeds (a)'s already-asserted
+    // `None` back in, and `reproject_block_deleted_at_from_engine` only
+    // re-deletes inside `if let Some(ts)`. (a) is strictly stronger. This is
+    // kept because it spells out the consequence the assertion above is
+    // guarding against, in the one place a reader will look for it — not
+    // because it adds coverage. Do not count it as a second assertion, and do
+    // not "strengthen" it by re-reading the engine: a fresh read of a value (a)
+    // just proved is `None` is equally tautological.
     {
         let mut tx = env.pool.begin().await.expect("begin reproject");
         agaric_engine::loro::projection::reproject_block_deleted_at_from_engine(
             &mut tx,
-            &BlockId::from_trusted(&id(R1)),
+            &BlockId::from_trusted(&id(label)),
             engine_deleted_at.as_deref(),
         )
         .await
-        .expect("reproject R1 from the engine");
+        .expect("reproject from the engine");
         tx.commit().await.expect("commit reproject");
     }
     assert_eq!(
-        sql_deleted_at(&env.pool, R1).await,
+        sql_deleted_at(&env.pool, label).await,
         None,
-        "#3834 GUARD ({path}): reprojecting R1 from the engine must NOT \
-         re-delete the restored ancestor in SQL",
+        "#3834/#3856 GUARD ({path}): reprojecting {label} ({role}) from the \
+         engine must NOT re-delete the restored block in SQL",
     );
 }
 
-/// #3834, single path. `restore_block_inner` discarded
-/// `restore_deleted_ancestor_chain`'s returned `chain`, citing an `apply_op`
-/// arm that never fires locally.
+/// The whole restored subtree must converge — asserted as ONE unit on every
+/// restore path, deliberately.
 ///
-/// Run with: `cargo nextest run -E 'test(restore_block_inner_fans_the_restored_ancestor)'`
+/// The three roles failed independently and were fixed in separate changes
+/// (`R1` the upward ancestor chain, #3834; `R1C1` the seed and `R1C1G1` its
+/// descendant cohort, #3856), by two different mechanisms (an upward fan-out
+/// vs a downward one). Asserting them together is what makes a fix that
+/// converges one while regressing another visible: the #3856 probe found
+/// exactly that shape, `R1` converged and `R1C1`/`R1C1G1` not.
+async fn assert_restored_subtree_converged(env: &ArmEnv, path: &str) {
+    // #3834 — the contiguous soft-deleted ANCESTOR chain the #1884 upward walk
+    // un-deletes in SQL.
+    assert_member_converged(env, path, "ancestor", R1).await;
+    // #3856 — the SEED the caller actually named.
+    assert_member_converged(env, path, "seed", R1C1).await;
+    // #3856 — one DESCENDANT from the seed's delete cohort. The seed alone
+    // would not catch a fan-out driven with a one-element list.
+    assert_member_converged(env, path, "descendant", R1C1G1).await;
+}
+
+/// Assert every block the restore is about to un-delete starts TOMBSTONED in
+/// the engine — otherwise there is no divergence for the restore to close and
+/// every convergence assertion downstream is vacuous.
+fn assert_subtree_tombstoned_in_engine(env: &ArmEnv) {
+    for (role, label) in [("ancestor", R1), ("seed", R1C1), ("descendant", R1C1G1)] {
+        let (deleted_before, _) = engine_deleted_state(env, label);
+        assert!(
+            deleted_before,
+            "precondition: {label} ({role}) must be tombstoned in the engine \
+             after the fixture delete",
+        );
+    }
+}
+
+/// #3834 + #3856, single path. `restore_block_inner` discarded
+/// `restore_deleted_ancestor_chain`'s returned `chain`, citing an `apply_op`
+/// arm that never fires locally (#3834) — and, beyond that, performed no engine
+/// work of ANY kind: it never routes through `apply_op_projected` the way
+/// `delete_block_inner` does, so the seed it was handed and that seed's whole
+/// descendant cohort stayed tombstoned in the CRDT too (#3856).
+///
+/// Run with: `cargo nextest run -E 'test(restore_block_inner_fans_the_restored_subtree)'`
 #[tokio::test]
-async fn restore_block_inner_fans_the_restored_ancestor_chain_to_the_engine() {
+async fn restore_block_inner_fans_the_restored_subtree_to_the_engine() {
     let env = Arc::new(ArmEnv::new().await);
     seed_tree_with_a_tombstoned_ancestor(Arc::clone(&env)).await;
-
-    let (deleted_before, _) = engine_deleted_state(&env, R1);
-    assert!(
-        deleted_before,
-        "precondition: R1 must be tombstoned in the engine after the fixture \
-         delete — otherwise there is no divergence for the restore to close",
-    );
+    assert_subtree_tombstoned_in_engine(&env);
 
     let deleted_at_ref = deleted_at_of(&env.pool, R1C1).await;
     restore_block_inner(
@@ -1025,31 +1082,66 @@ async fn restore_block_inner_fans_the_restored_ancestor_chain_to_the_engine() {
     .expect("single restore");
     env.settle().await;
 
-    assert_restored_ancestor_converged(&env, "restore_block_inner").await;
+    assert_restored_subtree_converged(&env, "restore_block_inner").await;
 }
 
-/// #3834, batch path. `restore_blocks_by_ids_inner` had the same defect — and
-/// was internally inconsistent about it, since it already hand-rolls the
-/// post-commit `dispatch_restore_descendants` fan-out for exactly this reason
-/// and simply did not do the symmetric upward one.
+/// #3834 + #3856, batch path. `restore_blocks_by_ids_inner` had the ANCESTOR
+/// defect too — and was internally inconsistent about it, since it already
+/// hand-rolls the post-commit `dispatch_restore_descendants` fan-out for
+/// exactly this reason and simply did not do the symmetric upward one.
 ///
-/// Run with: `cargo nextest run -E 'test(restore_blocks_by_ids_inner_fans_the_restored_ancestor)'`
+/// The seed/cohort half of this assertion is a REGRESSION GUARD rather than a
+/// reproducer: this path has fanned its descendant cohort out since #1257, and
+/// #3856's measured probe found it already converged where the single path was
+/// not. It is asserted here anyway, through the same helper — the fix for the
+/// single path is the batch path's own mechanism, so a change that moved the
+/// shared fan-out could converge one and break the other.
+///
+/// Run with: `cargo nextest run -E 'test(restore_blocks_by_ids_inner_fans_the_restored_subtree)'`
 #[tokio::test]
-async fn restore_blocks_by_ids_inner_fans_the_restored_ancestor_chain_to_the_engine() {
+async fn restore_blocks_by_ids_inner_fans_the_restored_subtree_to_the_engine() {
     let env = Arc::new(ArmEnv::new().await);
     seed_tree_with_a_tombstoned_ancestor(Arc::clone(&env)).await;
-
-    let (deleted_before, _) = engine_deleted_state(&env, R1);
-    assert!(
-        deleted_before,
-        "precondition: R1 must be tombstoned in the engine after the fixture \
-         delete — otherwise there is no divergence for the restore to close",
-    );
+    assert_subtree_tombstoned_in_engine(&env);
 
     restore_blocks_by_ids_inner(&env.pool, ARM_DEVICE, &env.materializer, block_ids(&[R1C1]))
         .await
         .expect("bulk restore");
     env.settle().await;
 
-    assert_restored_ancestor_converged(&env, "restore_blocks_by_ids_inner").await;
+    assert_restored_subtree_converged(&env, "restore_blocks_by_ids_inner").await;
+}
+
+/// #3856, restore-ALL path. `restore_all_deleted_inner` had the TOTAL gap: no
+/// in-tx engine apply and no post-commit fan-out, so every block it un-deleted
+/// — the whole trash — stayed tombstoned in the per-space CRDT. Measured on the
+/// #3856 probe as `engine_deleted=true` for all three roles, the ancestor
+/// included (the other two paths at least converged R1 via #3834's upward
+/// fan-out; this one restores everything downward and had nothing at all).
+///
+/// It takes no arguments, so the assertion is driven through the same fixture
+/// and the same helper: "empty the trash" must converge the identical subtree.
+///
+/// Run with: `cargo nextest run -E 'test(restore_all_deleted_inner_fans_the_restored_subtree)'`
+#[tokio::test]
+async fn restore_all_deleted_inner_fans_the_restored_subtree_to_the_engine() {
+    let env = Arc::new(ArmEnv::new().await);
+    seed_tree_with_a_tombstoned_ancestor(Arc::clone(&env)).await;
+    assert_subtree_tombstoned_in_engine(&env);
+
+    let restored = crate::commands::blocks::crud::restore_all_deleted_inner(
+        &env.pool,
+        ARM_DEVICE,
+        &env.materializer,
+    )
+    .await
+    .expect("restore all")
+    .affected_count;
+    // R1, R1C2, R1C1, R1C1G1 — the two delete cohorts the fixture leaves in the
+    // trash. Pins that the call under test actually restored the subtree the
+    // engine assertions below then read, rather than finding nothing to do.
+    assert_eq!(restored, 4, "restore_all must clear all four tombstones");
+    env.settle().await;
+
+    assert_restored_subtree_converged(&env, "restore_all_deleted_inner").await;
 }
