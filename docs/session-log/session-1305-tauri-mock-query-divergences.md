@@ -1,4 +1,4 @@
-# Session 1303 — tauri-mock run_advanced_query divergences (2026-08-15)
+# Session 1305 — tauri-mock run_advanced_query divergences (2026-08-15)
 
 | Metadata | Value |
 |----------|-------|
