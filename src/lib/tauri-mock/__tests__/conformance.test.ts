@@ -236,6 +236,25 @@ const DRIFT_SKIP = new Set<string>([
   // independently-deleted descendant. The `cascade_delete_subtree` and
   // `restore_after_cascade_independent_child` fixtures are therefore no longer
   // skipped and now assert mock == backend.
+  //
+  // #3826 — three READ divergences the first honest query fixtures found. Each
+  // is FILED, not accommodated: the fixture states the backend's behaviour and
+  // stays in the tree with its backend-authored expectation, so the mock fix
+  // only has to delete the line below. Both the snapshot AND the query leg of
+  // these fixtures are skipped (the skip is per fixture); their snapshot legs
+  // pass today, so nothing else is being hidden here.
+  //
+  // DRIFT(#763): #3870 — the mock's `list_blocks` reads neither `limit` nor
+  // `cursor` and always answers `has_more: false`, so it has no pagination at
+  // all: page 2 and page 3 return the whole child list.
+  'query_list_blocks_pagination',
+  // DRIFT(#763): #3871 — `list_inherited_tags_for_block` is a hard-coded
+  // `() => []` in `handlers/tags.ts`; `block_tag_inherited` is not modelled.
+  'query_inherited_tags',
+  // DRIFT(#763): #3872 — the mock's `get_batch_properties` keys its map off the
+  // REQUEST, so a property-less block comes back bound to `[]` where
+  // `get_batch_properties_inner` omits it entirely.
+  'query_batch_properties_empty_entry',
 ])
 
 describe('tauri-mock ⇄ backend conformance (#763)', () => {

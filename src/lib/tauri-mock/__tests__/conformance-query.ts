@@ -9,8 +9,15 @@
  * so one recorded expectation binds both implementations.
  *
  * Keep the two in lockstep: the arg-token expansion, the per-command wire-key
- * table, the canonical relabeling and the sort rule are duplicated deliberately,
- * exactly as `conformance-snapshot.ts` duplicates the snapshot builder.
+ * table, the row-token grammar, the canonical relabeling and the sort rule are
+ * duplicated deliberately, exactly as `conformance-snapshot.ts` duplicates the
+ * snapshot builder.
+ *
+ * Two capabilities beyond "read the ids out of the envelope" (#3826): a row
+ * token may carry ATTRIBUTES so a projection bug that keeps the right ids is
+ * still visible ({@link TokenSpec}), and a step may take its page cursor from
+ * an earlier step's `next_cursor` ({@link QueryStep.cursor_from}) so a fixture
+ * can pin a SECOND page — the cursor is threaded, never recorded.
  *
  * ## The space model is fabricated on both sides
  *
@@ -47,10 +54,21 @@ export interface QueryStep {
    * Compare `rows` in the order the command returned them. Default: canonical
    * sort, i.e. a SET comparison that cannot see an ordering divergence — see
    * the "Ordering" section of the Rust twin's module docs for what that
-   * currently costs (#3821: the mock's `run_advanced_query` orders `b.id ASC`,
-   * the engine `b.id DESC`; set `ordered` on those steps once it is fixed).
+   * currently costs — two LIVE mock ordering bugs are invisible to an
+   * unordered step today: #3821 (`run_advanced_query` orders `b.id ASC`, the
+   * engine `b.id DESC`) and #3873 (`list_tags_for_block` returns insertion
+   * order, the backend `ORDER BY tag_id`). Both have a fixture step already
+   * shaped to pin the order: set `ordered` and re-author once they are fixed.
    */
   ordered?: boolean
+  /**
+   * Take this step's page cursor from the `next_cursor` an EARLIER step of the
+   * same fixture returned — the only honest way to spell "the second page",
+   * since the cursor is an opaque per-stack keyset blob. Both runners feed each
+   * stack its OWN cursor, so the recorded comparison is over the rows the page
+   * contains (#3821: an ordering divergence changes WHICH rows a page holds).
+   */
+  cursor_from?: string
 }
 
 export interface QueryResult {
@@ -102,17 +120,65 @@ type RowsLocation =
   | { readonly kind: 'bare-array' }
   /** The response IS one row, or null/undefined for a miss (`Option<T>`). */
   | { readonly kind: 'bare-row' }
+  /** The response is a `HashMap<K, Row>`; each entry projects `K-><row>`. */
+  | { readonly kind: 'map-of-row' }
+  /**
+   * The response is a `HashMap<K, Row[]>`; each entry projects one `K-><row>`
+   * per element, and `K->(none)` when the key is present holding an EMPTY
+   * array. That last case is the point: `get_batch_properties_inner` OMITS a
+   * block with no properties, so "key absent" vs "key present holding `[]`" is
+   * a real difference a flattened projection would hide.
+   */
+  | { readonly kind: 'map-of-rows' }
+
+/**
+ * How one row becomes a token.
+ *
+ *     token := head ("#" attr-name "=" attr-value)*
+ *     head  := <id> | <id> "->" <id> | <opaque key>
+ *
+ * {@link relabelToken} rewrites both sides of an arrow head AND every attr
+ * value through the canonical `Bn` map. Attributes exist because an id-only
+ * token cannot see a projection bug — the right rows with the wrong `page_id`,
+ * the wrong `deleted` flag or the wrong typed value compare equal. Two rules
+ * keep them comparable: never attach a clock-derived column verbatim
+ * (`deleted_at` normalises to the `DELETED` sentinel the #763 snapshot uses),
+ * and never attach content containing `#` or `->`.
+ */
+type TokenSpec =
+  /** `row[idKey]`, plus one `#key=value` segment per `attrKeys` entry. */
+  | { readonly kind: 'id'; readonly idKey: string; readonly attrKeys?: readonly string[] }
+  /** The `list_page_links` edge pair — an edge's stable name is both ends. */
+  | { readonly kind: 'pair' }
+  /** A `PropertyRow`: `key#<ValueType>=<value>`. */
+  | { readonly kind: 'property' }
+  /** The row IS a bare string (the tag-id readers) — relabeled like any id. */
+  | { readonly kind: 'scalar' }
 
 interface WireShape {
   /** How the row array is located in the response. */
   rows: RowsLocation
-  /** Row key holding the block id, or `null` for the `list_page_links` pair form. */
-  idKey: string | null
+  /** How each located row becomes a comparable token. */
+  token: TokenSpec
   /** Envelope key for the scalar, or `null` when the response has no envelope
    *  to carry one — both runners then report `null`. */
   hasMoreKey: string | null
   totalKey: string | null
+  /** Envelope key holding the next page cursor. Defaults to the `PageResponse`
+   *  key `next_cursor`; `run_advanced_query` answers in camelCase. Read only to
+   *  thread a `cursor_from` chain — never recorded. */
+  cursorKey?: string
 }
+
+/**
+ * Attributes carried by every `BlockRow`-shaped row. MUST match `BLOCK_ATTRS`
+ * in the Rust twin.
+ */
+const BLOCK_ATTRS = ['parent_id', 'page_id', 'position', 'deleted_at'] as const
+
+/** Attributes of a `ResolvedBlock` — `title` is the RENAMED `content` column
+ *  and `deleted` the derived tombstone flag. Mirrors `RESOLVED_ATTRS`. */
+const RESOLVED_ATTRS = ['title', 'block_type', 'deleted'] as const
 
 /**
  * The wire keys each command's response is read through. Deliberately literal:
@@ -121,36 +187,39 @@ interface WireShape {
  * agreement by a shape-tolerant extractor.
  */
 const PAGED = { kind: 'key', key: 'items' } as const
+const ID_TOKEN = { kind: 'id', idKey: 'id' } as const
+const BLOCK_TOKEN = { kind: 'id', idKey: 'id', attrKeys: BLOCK_ATTRS } as const
 
 const WIRE: Readonly<Record<string, WireShape>> = {
   run_advanced_query: {
     rows: { kind: 'key', key: 'rows' },
-    idKey: 'id',
+    token: ID_TOKEN,
     hasMoreKey: 'hasMore',
     totalKey: 'totalCount',
+    cursorKey: 'nextCursor',
   },
   filtered_blocks_query: {
     rows: PAGED,
-    idKey: 'id',
+    token: ID_TOKEN,
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },
   list_pages_with_metadata: {
     rows: PAGED,
-    idKey: 'id',
+    token: ID_TOKEN,
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },
-  search_blocks: { rows: PAGED, idKey: 'id', hasMoreKey: 'has_more', totalKey: 'total_count' },
+  search_blocks: { rows: PAGED, token: ID_TOKEN, hasMoreKey: 'has_more', totalKey: 'total_count' },
   list_unfinished_tasks: {
     rows: PAGED,
-    idKey: 'id',
+    token: ID_TOKEN,
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },
   list_undated_tasks: {
     rows: PAGED,
-    idKey: 'id',
+    token: ID_TOKEN,
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },
@@ -158,7 +227,7 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   // `total` map onto the same two scalars every other command reports.
   list_page_links: {
     rows: { kind: 'key', key: 'edges' },
-    idKey: null,
+    token: { kind: 'pair' },
     hasMoreKey: 'truncated',
     totalKey: 'total',
   },
@@ -167,16 +236,108 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   // envelope, so neither scalar exists and both runners report `null`.
   get_journal_page_by_date: {
     rows: { kind: 'bare-row' },
-    idKey: 'id',
+    token: ID_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },
   list_journal_pages_in_range: {
     rows: { kind: 'bare-array' },
-    idKey: 'id',
+    token: ID_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },
+
+  // ── Point reads over blocks / properties / tags (#3826) ──
+  //
+  // The #763 snapshot already diffs the ROWS these serve; what it does not
+  // diff is each command's own projection, filtering and pagination of them.
+  // Hence the block attributes on every row token: an id-only comparison
+  // cannot tell a correct `page_id` from a stale one, or a served tombstone
+  // from a filtered one.
+  list_blocks: {
+    rows: PAGED,
+    token: BLOCK_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
+  get_block: { rows: { kind: 'bare-row' }, token: BLOCK_TOKEN, hasMoreKey: null, totalKey: null },
+  get_blocks: {
+    rows: { kind: 'bare-array' },
+    token: BLOCK_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  batch_resolve: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'id', idKey: 'id', attrKeys: RESOLVED_ATTRS },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  first_child_for_blocks: {
+    rows: { kind: 'map-of-row' },
+    token: BLOCK_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  get_properties: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'property' },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  get_property: {
+    rows: { kind: 'bare-row' },
+    token: { kind: 'property' },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  get_batch_properties: {
+    rows: { kind: 'map-of-rows' },
+    token: { kind: 'property' },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_tags_for_block: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'scalar' },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  list_inherited_tags_for_block: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'scalar' },
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  // `truncated` / `total` are the PAGE_SUBTREE_MAX_BLOCKS cap signal, mapping
+  // onto the same two scalars every other command reports.
+  load_page_subtree: {
+    rows: { kind: 'key', key: 'blocks' },
+    token: BLOCK_TOKEN,
+    hasMoreKey: 'truncated',
+    totalKey: 'total',
+  },
+}
+
+/**
+ * Where a command's opaque page cursor lives in its args (mirror of
+ * `cursor_path` in the Rust twin) — `list_blocks` nests every query param under
+ * its `request` DTO, everything else takes a top-level `cursor`.
+ */
+function cursorPath(command: string): readonly string[] {
+  return command === 'list_blocks' ? ['request', 'cursor'] : ['cursor']
+}
+
+/** Write `cursor` into `args` at the command's {@link cursorPath}, creating the
+ *  intermediate object when the fixture omitted it. */
+function injectCursor(command: string, args: Record<string, unknown>, cursor: string | null): void {
+  const path = cursorPath(command)
+  let node = args
+  for (const key of path.slice(0, -1)) {
+    if (typeof node[key] !== 'object' || node[key] === null) node[key] = {}
+    node = node[key] as Record<string, unknown>
+  }
+  node[path.at(-1) as string] = cursor
 }
 
 // ---------------------------------------------------------------------------
@@ -197,14 +358,30 @@ function cmpTokens(a: string, b: string): number {
   return as_ < bs ? -1 : as_ > bs ? 1 : 0
 }
 
-function relabelToken(token: string, labels: ReadonlyMap<string, string>): string {
-  const arrow = token.indexOf('->')
+/** Relabel one raw id (or an `a->b` pair) through the canonical map. */
+function relabelHead(head: string, labels: ReadonlyMap<string, string>): string {
+  const arrow = head.indexOf('->')
   if (arrow >= 0) {
-    const src = token.slice(0, arrow)
-    const tgt = token.slice(arrow + 2)
+    const src = head.slice(0, arrow)
+    const tgt = head.slice(arrow + 2)
     return `${labels.get(src) ?? src}->${labels.get(tgt) ?? tgt}`
   }
-  return labels.get(token) ?? token
+  return labels.get(head) ?? head
+}
+
+/**
+ * Relabel a full row token: the head and every attribute VALUE, so id-valued
+ * attributes like `page_id` read `B1` rather than a stack-local id. Attribute
+ * NAMES pass through untouched. Mirror of `relabel_token` in the Rust twin.
+ */
+function relabelToken(token: string, labels: ReadonlyMap<string, string>): string {
+  const [head, ...attrs] = token.split('#')
+  let out = relabelHead(head ?? token, labels)
+  for (const attr of attrs) {
+    const eq = attr.indexOf('=')
+    out += eq < 0 ? `#${attr}` : `#${attr.slice(0, eq)}=${relabelHead(attr.slice(eq + 1), labels)}`
+  }
+  return out
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +429,69 @@ export function stampMockSpace(): void {
 // Runner
 // ---------------------------------------------------------------------------
 
+/**
+ * The `deleted_at` sentinel — mirrors the #763 snapshot's normalisation of the
+ * epoch-ms tombstone stamp, which is never comparable verbatim.
+ */
+const DELETED_SENTINEL = 'DELETED'
+
+/** Render one attribute value as a token segment (mirror of `attr_value`). */
+function attrValue(name: string, v: unknown): string {
+  if (v == null) return 'null'
+  if (name === 'deleted_at') return DELETED_SENTINEL
+  if (typeof v === 'string') return v
+  return String(v)
+}
+
+/** Build `<row[idKey]>#<attr>=<value>…` for one row. */
+function idToken(row: Record<string, unknown>, idKey: string, attrKeys: readonly string[]): string {
+  let token = (row[idKey] as string | undefined) ?? '<missing-id>'
+  for (const attr of attrKeys) {
+    token += `#${attr}=${attrValue(attr, row[attr])}`
+  }
+  return token
+}
+
+/**
+ * Build `<key>#<ValueType>=<value>` for one `PropertyRow`. The
+ * first-non-null-column precedence is the SAME rule the #763 snapshot uses
+ * (`propertyTypedValue` in `conformance-snapshot.ts`), so a property read and
+ * the snapshot row behind it disagree only when the command's own projection is
+ * wrong. `Bool` keeps SQLite's raw `0`/`1` INTEGER — both stacks store it.
+ */
+function propertyToken(row: Record<string, unknown>): string {
+  const key = (row['key'] as string | undefined) ?? '<missing-key>'
+  for (const [column, tag] of [
+    ['value_text', 'Text'],
+    ['value_num', 'Num'],
+    ['value_date', 'Date'],
+    ['value_ref', 'Ref'],
+    ['value_bool', 'Bool'],
+  ] as const) {
+    if (row[column] != null) return `${key}#${tag}=${attrValue(column, row[column])}`
+  }
+  return `${key}#null=null`
+}
+
+/** Turn one located row into its token, per the command's {@link TokenSpec}. */
+function rowToken(raw: unknown, spec: TokenSpec): string {
+  if (spec.kind === 'scalar') return typeof raw === 'string' ? raw : '<not-a-string>'
+  const row = (raw ?? {}) as Record<string, unknown>
+  switch (spec.kind) {
+    case 'id': {
+      return idToken(row, spec.idKey, spec.attrKeys ?? [])
+    }
+    case 'pair': {
+      const src = (row['source_id'] as string | undefined) ?? '?'
+      const tgt = (row['target_id'] as string | undefined) ?? '?'
+      return `${src}->${tgt}`
+    }
+    case 'property': {
+      return propertyToken(row)
+    }
+  }
+}
+
 /** Locate the row array in a response, per the command's {@link RowsLocation}. */
 function locateRows(response: unknown, where: RowsLocation): unknown {
   switch (where.kind) {
@@ -265,21 +505,39 @@ function locateRows(response: unknown, where: RowsLocation): unknown {
       // A miss (`null` / `undefined`) is zero rows, a hit is exactly one.
       return response == null ? [] : [response]
     }
+    case 'map-of-row':
+    case 'map-of-rows': {
+      // Handled by `rawRows` — the map KEY is half of every token, so the
+      // entries cannot be flattened into a bare row array first.
+      return response
+    }
   }
 }
 
 function rawRows(response: unknown, shape: WireShape): string[] {
+  if (shape.rows.kind === 'map-of-row' || shape.rows.kind === 'map-of-rows') {
+    const map = (response ?? {}) as Record<string, unknown>
+    if (typeof map !== 'object') return []
+    const out: string[] = []
+    for (const [key, value] of Object.entries(map)) {
+      if (shape.rows.kind === 'map-of-row') {
+        out.push(`${key}->${rowToken(value, shape.token)}`)
+        continue
+      }
+      const rows = Array.isArray(value) ? value : []
+      if (rows.length === 0) {
+        out.push(`${key}->(none)`)
+        continue
+      }
+      for (const r of rows) {
+        out.push(`${key}->${rowToken(r, shape.token)}`)
+      }
+    }
+    return out
+  }
   const rows = locateRows(response, shape.rows)
   if (!Array.isArray(rows)) return []
-  return rows.map((r) => {
-    const row = (r ?? {}) as Record<string, unknown>
-    if (shape.idKey === null) {
-      const src = (row['source_id'] as string | undefined) ?? '?'
-      const tgt = (row['target_id'] as string | undefined) ?? '?'
-      return `${src}->${tgt}`
-    }
-    return (row[shape.idKey] as string | undefined) ?? '<missing-id>'
-  })
+  return rows.map((r) => rowToken(r, shape.token))
 }
 
 /**
@@ -291,6 +549,7 @@ export async function runQuerySteps(
   labels: ReadonlyMap<string, string>,
 ): Promise<QueryResult[]> {
   const out: QueryResult[] = []
+  const cursors = new Map<string, string | null>()
   for (const step of steps) {
     const shape = WIRE[step.command]
     if (!shape) {
@@ -301,7 +560,22 @@ export async function runQuerySteps(
       )
     }
     const args = expandQueryArgs(step.args ?? {}) as Record<string, unknown>
+    if (step.cursor_from != null) {
+      if (!cursors.has(step.cursor_from)) {
+        throw new Error(
+          `query step '${step.name}' reads \`cursor_from\` '${step.cursor_from}', which is ` +
+            `not an EARLIER step in this fixture`,
+        )
+      }
+      injectCursor(step.command, args, cursors.get(step.cursor_from) ?? null)
+    }
     const response = (await dispatch(step.command, args)) as unknown
+    cursors.set(
+      step.name,
+      (((response ?? {}) as Record<string, unknown>)[shape.cursorKey ?? 'next_cursor'] as
+        | string
+        | null) ?? null,
+    )
     const rows = rawRows(response, shape).map((t) => relabelToken(t, labels))
     // Scalars are read off the ENVELOPE; a bare response has none, and the
     // Rust twin reports `None` for those commands.

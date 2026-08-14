@@ -1,0 +1,322 @@
+{
+  "description": "#3826 — READ-command differential over `list_tags_for_block`. The #763 snapshot diffs the `block_tags` EDGES; these steps diff the per-block read built on them: that a removed edge is gone (not returned with a flag), that a removal on one block leaves an identical edge on another block untouched, and that a block whose every tag was removed answers with an empty list rather than a stale one. Tag edges are driven as OPS over `page`-typed tag targets, the idiom every existing tag fixture uses: a root-level `tag`-typed seed block would take a `page_id` from the raw seed insert that the mock's seed loader does not reproduce, a harness asymmetry unrelated to the command under test.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B2",
+        "tag_id": "B6"
+      },
+      {
+        "block_id": "B3",
+        "tag_id": "B7"
+      },
+      {
+        "block_id": "B5",
+        "tag_id": "B6"
+      },
+      {
+        "block_id": "B5",
+        "tag_id": "B7"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tagged",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "first",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "second",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "third",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "fourth",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "alpha",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "beta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B7",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 8,
+      "ops": [
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "remove_tag"
+        },
+        {
+          "op_type": "remove_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "has_more": null,
+      "name": "tags_after_partial_remove",
+      "rows": ["B6"],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "tags_of_untouched_sibling",
+      "rows": ["B7"],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "tags_after_removing_the_only_tag",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "tags_two_surviving_in_id_order",
+      "rows": ["B6", "B7"],
+      "total_count": null
+    }
+  ],
+  "name": "query_point_reads_tags",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S5"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S6"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "tagId": "S6"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "tagId": "S5"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S6"
+      },
+      "command": "remove_tag"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "tagId": "S5"
+      },
+      "command": "remove_tag"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "tagId": "S6"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "tagId": "S5"
+      },
+      "command": "add_tag"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "list_tags_for_block",
+      "comment": "S2 held both tags and lost one. The surviving edge must be the one that was NOT removed — a mock that removed by tag_id across blocks, or that kept the removed edge with a tombstone flag, answers differently.",
+      "name": "tags_after_partial_remove"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "list_tags_for_block",
+      "comment": "S3 holds the SAME tag the previous op removed from S2. It must still be there: this is the pin against a removal keyed on tag_id alone. Ordering is deliberately not compared here — the backend sorts `ORDER BY tag_id` while the mock returns insertion order, and every block in this fixture holds at most one surviving tag, so the two are indistinguishable by construction rather than by a weakened assertion.",
+      "name": "tags_of_untouched_sibling"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "list_tags_for_block",
+      "comment": "S4's only tag was removed, so the read answers an EMPTY list — the negative that the two non-empty steps above make meaningful: an implementation that never dropped the edge would return a row here.",
+      "expect_empty": true,
+      "name": "tags_after_removing_the_only_tag"
+    },
+    {
+      "args": {
+        "blockId": "S7"
+      },
+      "command": "list_tags_for_block",
+      "comment": "The only block that keeps TWO tags, applied in DESCENDING id order — so it is the one step whose SEQUENCE could distinguish the backend's `ORDER BY tag_id` from the mock's insertion order. The comparison is deliberately left UNORDERED because that divergence is REAL and filed as #3873 (same treatment #3821 gets for `run_advanced_query`): what it pins today is that BOTH tags survive on a block that lost none, and the fixture is already shaped so that flipping `\"ordered\": true` and re-authoring turns it into an order pin the day the mock sorts.",
+      "name": "tags_two_surviving_in_id_order"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tagged",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "first",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "second",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "third",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "fourth",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "page",
+        "content": "alpha",
+        "id": "S5",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "beta",
+        "id": "S6",
+        "parent_id": null,
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -1,0 +1,291 @@
+{
+  "description": "#3826 — READ-command differential over the property point-read surface: `get_properties`, `get_property` (a present-but-falsy hit AND an absent miss) and `get_batch_properties`. The #763 snapshot diffs the `block_properties` ROWS; these steps diff what each command RETURNS from them — the typed-value projection (`Text` / `Num` / `Ref` / `Bool`), the reserved-key exclusion (a column-routed key must not surface as a property row), and the per-block grouping of the batch map.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Props",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "sibling",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 8,
+      "ops": [
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "estimate",
+          "op_type": "set_property"
+        },
+        {
+          "key": "linked",
+          "op_type": "set_property"
+        },
+        {
+          "key": "flag",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "key": "temp",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "estimate",
+        "value": 3.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B2",
+        "key": "flag",
+        "value": false,
+        "value_type": "Bool"
+      },
+      {
+        "block_id": "B2",
+        "key": "linked",
+        "value": "B3",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B2",
+        "key": "status",
+        "value": "open",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "status",
+        "value": "closed",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "has_more": null,
+      "name": "get_properties_excludes_column_routed_key",
+      "rows": ["estimate#Num=3", "flag#Bool=0", "linked#Ref=B3", "status#Text=open"],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "get_property_present_but_falsy",
+      "rows": ["flag#Bool=0"],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "get_property_absent_after_delete",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "has_more": null,
+      "name": "get_batch_properties_groups_by_block",
+      "rows": [
+        "B2->estimate#Num=3",
+        "B2->flag#Bool=0",
+        "B2->linked#Ref=B3",
+        "B2->status#Text=open",
+        "B3->status#Text=closed"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "query_point_reads_properties",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "status",
+        "value": {
+          "value_text": "open"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "estimate",
+        "value": {
+          "value_num": 3
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "linked",
+        "value": {
+          "value_ref": "S3"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "flag",
+        "value": {
+          "value_bool": false
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "todo_state",
+        "value": {
+          "value_text": "TODO"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "temp",
+        "value": {
+          "value_text": "x"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "temp"
+      },
+      "command": "delete_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "status",
+        "value": {
+          "value_text": "closed"
+        }
+      },
+      "command": "set_property"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "get_properties",
+      "comment": "`get_properties_inner` reads `block_properties` and nothing else, so the reserved key `todo_state` — which the projection routes to the block's own COLUMN — must be ABSENT here even though the op that set it looks identical to the others. The deleted `temp` key must be absent too. The remaining four pin the typed-value projection, including the `Ref` whose value is relabeled to a canonical token.",
+      "name": "get_properties_excludes_column_routed_key"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "flag"
+      },
+      "command": "get_property",
+      "comment": "`flag` is stored `false` (SQLite `0`). A hit must project as a ROW, not as a miss — the classic reimplementation bug is a truthiness test on the value that collapses a present-but-falsy property into `null`. Paired with the next step, this is the present-vs-absent distinction.",
+      "name": "get_property_present_but_falsy"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "temp"
+      },
+      "command": "get_property",
+      "comment": "The other half of the pair: `temp` was set and then deleted, so the PK lookup misses and the command answers `None`. Empty on purpose — what it pins is that a deleted key is absent rather than present-with-a-null-value, which the previous step's non-empty result makes a real distinction instead of a vacuous one.",
+      "expect_empty": true,
+      "name": "get_property_absent_after_delete"
+    },
+    {
+      "args": {
+        "blockIds": ["S2", "S3"]
+      },
+      "command": "get_batch_properties",
+      "comment": "Both requested blocks own properties, so this pins the GROUPING: every key must land under its own block, and S3's `status` must not leak into S2's bucket (both blocks carry a key of that name with different values). The present-but-empty map entry is pinned separately in `query_batch_properties_empty_entry`.",
+      "name": "get_batch_properties_groups_by_block"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Props",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "sibling",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
