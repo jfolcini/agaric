@@ -329,6 +329,23 @@ If a release tag fails at `verify-version`: delete it (`git push --delete origin
 - **React 19 test timing:** state updates originating from non-React event sources — worker `dispatchEvent`, `window.setTimeout` / `setInterval` callbacks, IPC promise resolutions chained off external events — no longer flush within a bare `await new Promise(r => setTimeout(r, 0))` tick. Wrap such waits in `act(async () => { ... })`, switch sync `getByText` to async `findByText`, or `waitFor` on the observable end state. Do not add arbitrary sleeps.
 - **Detailed conventions:** `src-tauri/tests/AGENTS.md` (Rust), `src/__tests__/AGENTS.md` (frontend)
 
+### Acceptance is falsification, not assertion
+
+"Add a test" is satisfiable by a test that cannot fail. State the acceptance criterion as **the failure you expect to see**, then produce it: break the production code the test covers, run it, read the RED output, restore. A test whose failure you cannot demonstrate has not been shown to cover anything. Where mutation testing reaches the code (`node scripts/run-mutation.mjs <module>`, `cargo mutants`), "the mutant dies" is the strongest form of this and cannot be satisfied vacuously.
+
+Three failure modes recur, are cheap to spot, and have each shipped at least once:
+
+1. **The vacuous assertion** — restates a precondition the test itself established. Ask: *what production change would redden this?* If the answer is "none", it is decoration (#3452: a test passed against the stubbed-out function, because the fallback produced an identical result).
+2. **The unreachable condition** — a guard whose branch cannot be taken reads as coverage and supplies none. These are not test gaps; the fix is to delete the code, which is the only thing that clears its mutants (#3809).
+3. **The half-covered pair** — one arm of a symmetric property pinned and the other left open: a snapshot's column set checked while the restore projection is not (#3425), a guard body tested while its invocation is not (#3435). Ask of every guard: *is the call site covered as well as the body?*
+
+**The same defect appears in prose, where it is easier to miss.** A comment, ledger entry, or issue body asserting that something has been checked reads as already-verified and so gets re-read rather than re-run. Treat the assertion as the hypothesis and the run as the evidence — re-reading reasoning reproduces the reasoning, including its mistake. Concretely:
+
+- A citation must resolve: "filed separately" with no issue number is a dead end wearing the costume of diligence. Cite the number, and put the explanation in the code comment rather than the PR body — the comment is what a future reader hits first.
+- A comment must not describe code that no longer exists. When deleting code, grep the whole file (not just the diff) for text quoting it; equivalence ledgers must be **edited down**, never left describing deleted fragments.
+- Prefer naming the *condition* over a `line:col`, which drifts silently.
+- When something genuinely cannot be tested, write that into the module docs with the reason — a residual-coverage note that lives with the code, not an assertion left to be read as a result.
+
 ### Testing invariants (anti-drift)
 
 The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained **second implementation** of the Rust backend that silently drifts from it (create_block page_id, purge_block cascade, reserved-key property routing, the tag-space bug all shipped past a mock that looked fine). Three invariants keep the two implementations honest:
