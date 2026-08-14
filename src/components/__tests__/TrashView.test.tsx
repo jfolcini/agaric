@@ -1636,7 +1636,7 @@ describe('TrashView', () => {
   // singular form.
   it('shows singular partial-progress toast when exactly 1 item was removed before the error', async () => {
     const user = userEvent.setup()
-    const trashItems = Array.from({ length: 1001 }, (_, i) =>
+    const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
       i === 0
         ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
         : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
@@ -1682,7 +1682,7 @@ describe('TrashView', () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
-    const trashItems = Array.from({ length: 1001 }, (_, i) =>
+    const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
       i === 0
         ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
         : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
