@@ -25,6 +25,7 @@ import {
   blocks,
   makeBlock,
   opLog,
+  pageLastModified,
   properties,
   propertyDefs,
   seedBlocks,
@@ -382,6 +383,131 @@ describe('run_advanced_query — request.sort by lastEdited', () => {
         sort: [{ source: { type: 'Column', name: 'lastEdited' }, desc: true }],
       }),
     ).toEqual([OLD, NEW, MIDDLE, NEVER])
+  })
+
+  /**
+   * #3863 — `pageLastModifiedAt`'s mock-only seeded-stamp fallback (kept for
+   * `list_pages_with_metadata`'s dev-preview differentiation) has no engine
+   * analogue: `run_advanced_query`'s `LastEdited` sort key is
+   * `COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)`
+   * (`agaric-store/src/query/engine.rs:229`) with NO other data source, so
+   * an op-log-free row on the backend ALWAYS ties with every other
+   * op-log-free row at the same sentinel. Before the fix, the sort getter
+   * read `pageLastModifiedAt` (which layers the seeded fallback on top), so
+   * an op-log-free row with a seeded `pageLastModified` stamp sorted by that
+   * stamp instead of tying at the sentinel — ordering by something the
+   * engine cannot see.
+   */
+  it('ignores the mock-only pageLastModified seed fallback the engine has no analogue for — a never-edited row ties at the sentinel, not the seeded stamp', () => {
+    const SEEDED = id('B5')
+    const seededBlock = makeBlock(SEEDED, 'text', null, PAGE, 0)
+    seededBlock['page_id'] = PAGE
+    blocks.set(SEEDED, seededBlock)
+    // No op-log entry for SEEDED — but a seeded `pageLastModified` stamp
+    // between OLD's (Jan 1) and MIDDLE's (Feb 1) edits. If the sort getter
+    // used that fallback, SEEDED would slot in between them.
+    pageLastModified.set(SEEDED, '2024-01-15T00:00:00.000Z')
+
+    // Engine-faithful ASC order: NEVER and SEEDED both coalesce to the same
+    // "no op-log activity" sentinel and TIE, decided only by the id DESC
+    // tiebreak (SEEDED's id `…B5` > NEVER's `…B4`, so SEEDED sorts first
+    // among the tied pair) — SEEDED must NOT land between OLD and MIDDLE by
+    // its seeded stamp.
+    expect(
+      orderedIds({ filter: TEXT_ONLY, sort: [{ source: { type: 'Column', name: 'lastEdited' } }] }),
+    ).toEqual([SEEDED, NEVER, OLD, MIDDLE, NEW])
+  })
+})
+
+/**
+ * #3863 — the keyset cursor's WIRE SHAPE. The engine's `QueryCursor`
+ * (`agaric-store/src/query/engine.rs:141-196`) encodes `{ version, values }`
+ * — one TAGGED `CursorValue` per resolved sort term, in ORDER BY order — as
+ * URL-safe, unpadded base64 (`base64::URL_SAFE_NO_PAD`). Before the fix the
+ * mock's cursor was `btoa(JSON.stringify({ id }))`: a DIFFERENT JSON shape
+ * (no `version`, no per-term `values`) over the STANDARD base64 alphabet
+ * (`+`/`/`/`=`-padded) — an opaque token that never round-trips cross-stack,
+ * but whose byte shape a wire-fidelity assertion CAN observe.
+ *
+ * Decodes with a hand-rolled URL-safe-base64 reader deliberately independent
+ * of the handler's own `decodeCursor` — asserting against the PRODUCTION
+ * decoder would make this a tautology that passes even if both drifted
+ * together from the engine's actual encoding.
+ */
+describe('run_advanced_query — cursor payload shape (#3863)', () => {
+  const PAGE = id('C0')
+  const LOW = id('C1')
+  const MID = id('C2')
+  const HIGH = id('C3')
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    for (const [blockId, position] of [
+      [LOW, 20],
+      [MID, 5],
+      [HIGH, 10],
+    ] as const) {
+      const b = makeBlock(blockId, 'text', null, PAGE, position)
+      b['page_id'] = PAGE
+      b['position'] = position
+      blocks.set(blockId, b)
+    }
+  })
+
+  const TEXT_ONLY = { type: 'Leaf', primitive: { type: 'BlockType', values: ['text'] } }
+
+  /** Independent URL-safe-no-pad base64 → JSON reader (see the module doc above). */
+  function decodeCursorIndependently(cursor: string): Record<string, unknown> {
+    let b64 = cursor.replaceAll('-', '+').replaceAll('_', '/')
+    while (b64.length % 4 !== 0) b64 += '='
+    return JSON.parse(atob(b64)) as Record<string, unknown>
+  }
+
+  it('encodes { version, values } — a tagged CursorValue per resolved sort term, not just { id }', () => {
+    const page1 = run({
+      filter: TEXT_ONLY,
+      sort: [{ source: { type: 'Column', name: 'position' } }],
+      limit: 1,
+    })
+    expect(page1.hasMore).toBe(true)
+    expect(page1.nextCursor).not.toBeNull()
+    const decoded = decodeCursorIndependently(page1.nextCursor as string)
+
+    // Engine cursor schema: a version tag, not a bare `{ id }` object.
+    expect(decoded['version']).toBe(1)
+    expect(Array.isArray(decoded['values'])).toBe(true)
+    const values = decoded['values'] as Array<Record<string, unknown>>
+    // Two resolved terms: the explicit Position sort, then the appended id
+    // DESC tiebreak (mirrors `resolve_sort` always terminating in `b.id`).
+    expect(values).toHaveLength(2)
+    // Position ASC's first row is MID (position 5) — its cursor value is
+    // TAGGED as an Int (`CursorKind::Position`, `engine.rs:232`), not folded
+    // into an untyped `{ id }` object.
+    expect(values[0]).toEqual({ t: 'Int', v: 5 })
+    // The trailing tiebreak term carries the id, TAGGED as Text
+    // (`CursorKind::Id`, `engine.rs:220`).
+    expect(values[1]).toEqual({ t: 'Text', v: MID })
+  })
+
+  it('still resumes pagination correctly under a non-id sort with the new cursor shape', () => {
+    const page1 = run({
+      filter: TEXT_ONLY,
+      sort: [{ source: { type: 'Column', name: 'position' } }],
+      limit: 2,
+    })
+    expect(page1.rows.map((r) => r['id'])).toEqual([MID, HIGH]) // Position ASC: 5, 10
+    expect(page1.hasMore).toBe(true)
+
+    const page2 = run({
+      filter: TEXT_ONLY,
+      sort: [{ source: { type: 'Column', name: 'position' } }],
+      limit: 2,
+      cursor: page1.nextCursor,
+    })
+    expect(page2.rows.map((r) => r['id'])).toEqual([LOW]) // position 20
+    expect(page2.hasMore).toBe(false)
   })
 })
 

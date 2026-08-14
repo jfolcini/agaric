@@ -19,6 +19,7 @@ import {
   fbqPropertyFilterMatches,
   fbqTagFilterMatches,
   metaRowMatchesExpr,
+  rawOpLogLastEditedAt,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import { blocks, properties } from '@/lib/tauri-mock/seed'
@@ -42,9 +43,43 @@ interface MatchedEntry {
 
 type SortValue = string | number | null
 
+/**
+ * Mirrors the engine's `CursorKind` (`agaric-store/src/query/engine.rs:123`)
+ * — which SQL column/expression a resolved sort term reads, driving how its
+ * value is typed into the keyset cursor (#3863). `LastEditedMs` keeps the
+ * engine's name though this mock's value is an ISO-8601 STRING, not an
+ * epoch-ms integer — the SAME pre-existing, documented representation
+ * divergence `SORT_COLUMN_GETTERS.lastEdited` already carries; only the
+ * discriminator identity (which term IS the last-edited term) matters for
+ * cursor typing here, not the on-wire integer/string distinction.
+ */
+type CursorKind = 'Id' | 'LastEditedMs' | 'Position' | 'Priority' | 'Title' | 'Rank'
+
 interface ResolvedSortTerm {
   desc: boolean
   get: (m: MatchedEntry) => SortValue
+  /** Drives {@link cursorValueFor}'s tagging of this term's cursor value. */
+  column: CursorKind
+}
+
+/**
+ * One component of an encoded keyset cursor. Mirrors the engine's
+ * `CursorValue` (`agaric-store/src/query/engine.rs:143`): a tagged union so a
+ * NULL sort value round-trips distinctly from a real value of any type.
+ */
+type CursorValue =
+  | { t: 'Text'; v: string }
+  | { t: 'Int'; v: number }
+  | { t: 'Real'; v: number }
+  | { t: 'Null' }
+
+/** Cursor schema version — mirrors `CURSOR_VERSION` (`engine.rs:64`). */
+const CURSOR_VERSION = 1
+
+/** The decoded keyset cursor. Mirrors the engine's `QueryCursor` (`engine.rs:167`). */
+interface QueryCursorPayload {
+  version: number
+  values: CursorValue[]
 }
 
 /**
@@ -128,12 +163,20 @@ const SORT_COLUMN_GETTERS = new Map<string, (m: MatchedEntry) => SortValue>(
   Object.entries({
     // ULID id == creation order (`resolve_sort`'s `SortColumn::Created`).
     created: (m) => m.row.id,
-    // The engine applies COALESCE to the op_log MAX to epoch-ms `0` (never actually
-    // NULL); `lastModifiedAt` is this mock's pre-existing ISO-8601 string
-    // representation of the same value (`pageLastModifiedAt`), so `''` is the
-    // matching "no op-log activity" sentinel — it sorts before every real
-    // ISO-8601 timestamp string, preserving relative order.
-    lastEdited: (m) => m.row.lastModifiedAt ?? '',
+    // #3863 — reads `rawOpLogLastEditedAt` DIRECTLY (the raw `MAX(op_log.created_at)`
+    // scan), NOT `m.row.lastModifiedAt` (`pageLastModifiedAt`). The engine's
+    // `LastEdited` sort key is `COALESCE((SELECT MAX(created_at) FROM op_log
+    // WHERE block_id = b.id), 0)` (`agaric-store/src/query/engine.rs:229`) — NO
+    // other data source. `pageLastModifiedAt` layers a mock-only seeded-stamp
+    // fallback on top (for `list_pages_with_metadata`'s dev-preview
+    // differentiation) that the engine has no analogue for; using it here made
+    // an op-log-free block sort by a seeded dev-preview timestamp the backend
+    // cannot see, instead of tying at the sentinel like every other
+    // op-log-free row does on the engine. The engine coalesces to epoch-ms
+    // `0` (never actually NULL); `''` is this mock's matching "no op-log
+    // activity" sentinel over its ISO-8601 string representation — it sorts
+    // before every real ISO-8601 timestamp string, preserving relative order.
+    lastEdited: (m) => rawOpLogLastEditedAt(m.b['id'] as string) ?? '',
     position: (m) => m.row.position,
     priority: (m) => m.row.priority,
     // `pc.title` comes from the `pages_cache` row whose `page_id = b.id` — the
@@ -141,6 +184,23 @@ const SORT_COLUMN_GETTERS = new Map<string, (m: MatchedEntry) => SortValue>(
     // page. Non-page rows get `null` (NULLS LAST), mirroring the LEFT JOIN.
     title: (m) => (m.row.blockType === 'page' ? m.row.content : null),
   }),
+)
+
+/**
+ * `SortColumn` name → {@link CursorKind}, mirroring `resolve_sort`'s
+ * `SortColumn::*` ⇒ `CursorKind::*` mapping (`engine.rs:216-243`). Keys match
+ * {@link SORT_COLUMN_GETTERS} exactly (both are keyed off the same closed
+ * `SortColumn` set); a `Map`, not an object literal, for the same
+ * prototype-pollution reason documented on `SORT_COLUMN_GETTERS`.
+ */
+const SORT_COLUMN_CURSOR_KIND = new Map<string, CursorKind>(
+  Object.entries({
+    created: 'Id',
+    lastEdited: 'LastEditedMs',
+    position: 'Position',
+    priority: 'Priority',
+    title: 'Title',
+  } satisfies Record<string, CursorKind>),
 )
 
 /**
@@ -165,7 +225,11 @@ function resolveSortTerms(
       if (!hasFulltext) {
         throw validationRejection('InvalidSort: `Relevance` requires a `fulltext` term to rank on')
       }
-      terms.push({ desc, get: (m) => approximateFtsRank(m.row.content, foldedQuery) })
+      terms.push({
+        desc,
+        get: (m) => approximateFtsRank(m.row.content, foldedQuery),
+        column: 'Rank',
+      })
       continue
     }
     // Only a `Column` source carries a `name`. The engine's `SortSource` is a
@@ -174,18 +238,82 @@ function resolveSortTerms(
     if (source['type'] !== 'Column') continue
     const name = source['name'] as string | undefined
     const getter = name === undefined ? undefined : SORT_COLUMN_GETTERS.get(name)
-    if (!getter) continue
+    const column = name === undefined ? undefined : SORT_COLUMN_CURSOR_KIND.get(name)
+    if (!getter || !column) continue
     if (name === 'created') hasCreated = true
-    terms.push({ desc, get: getter })
+    terms.push({ desc, get: getter, column })
   }
   // Default sort when the request gave none.
   if (terms.length === 0 && hasFulltext) {
-    terms.push({ desc: false, get: (m) => approximateFtsRank(m.row.content, foldedQuery) })
+    terms.push({
+      desc: false,
+      get: (m) => approximateFtsRank(m.row.content, foldedQuery),
+      column: 'Rank',
+    })
   }
   if (!hasCreated) {
-    terms.push({ desc: true, get: (m) => m.row.id })
+    terms.push({ desc: true, get: (m) => m.row.id, column: 'Id' })
   }
   return terms
+}
+
+/**
+ * Read one resolved term's value off `m` and tag it into a {@link
+ * CursorValue}, mirroring `EngineRow::cursor_value` (`engine.rs:310-332`).
+ */
+function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorValue {
+  const raw = term.get(m)
+  // `LastEditedMs`'s getter uses `''` (not `null`) as its "no op-log
+  // activity" sentinel (see `SORT_COLUMN_GETTERS.lastEdited`'s doc) — the
+  // ONE column where an empty string is the null case rather than a genuine
+  // value, so it needs its own check ahead of the general `raw === null`.
+  if (term.column === 'LastEditedMs') {
+    return raw === null || raw === '' ? { t: 'Null' } : { t: 'Text', v: raw as string }
+  }
+  if (raw === null) return { t: 'Null' }
+  switch (term.column) {
+    case 'Position': {
+      return { t: 'Int', v: raw as number }
+    }
+    case 'Rank': {
+      return { t: 'Real', v: raw as number }
+    }
+    default: {
+      // Id / Priority / Title: this mock represents every one of these as a
+      // string (ULID or plain text).
+      return { t: 'Text', v: raw as string }
+    }
+  }
+}
+
+/**
+ * Encode a keyset cursor from one row's resolved sort-term values, mirroring
+ * `QueryCursor::encode` (`engine.rs:175-178`): URL-safe, unpadded base64 of
+ * the JSON `{ version, values }` envelope (`base64::URL_SAFE_NO_PAD`, not the
+ * standard alphabet `btoa` produces on its own).
+ */
+function encodeCursor(values: CursorValue[]): string {
+  const json = JSON.stringify({ version: CURSOR_VERSION, values } satisfies QueryCursorPayload)
+  return btoa(json).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+}
+
+/**
+ * Decode a keyset cursor produced by {@link encodeCursor}. `null` on any
+ * malformed input (mirrors the engine's decode being infallible on ITS OWN
+ * encoded cursors, but never trusting a foreign string) rather than throwing
+ * — a stale or foreign cursor degrades to "start from the top", same as the
+ * pre-#3863 `{ id }` decode's `try/catch`.
+ */
+function decodeCursor(s: string): QueryCursorPayload | null {
+  try {
+    let b64 = s.replaceAll('-', '+').replaceAll('_', '/')
+    while (b64.length % 4 !== 0) b64 += '='
+    const parsed = JSON.parse(atob(b64)) as QueryCursorPayload
+    if (parsed.version !== CURSOR_VERSION || !Array.isArray(parsed.values)) return null
+    return parsed
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -321,16 +449,26 @@ export const searchHandlers = {
     const sortTerms = resolveSortTerms(sortKeys, hasFulltext, foldedQuery)
     matched.sort(compareByTerms(sortTerms))
 
+    // #3863 — the cursor now carries the FULL resolved sort-term tuple
+    // (`{ version, values }`, one tagged `CursorValue` per term, in ORDER BY
+    // order), mirroring the engine's `QueryCursor` (`engine.rs:166-196`) —
+    // not just `{ id }`. `resolveSortTerms` guarantees exactly one term is
+    // tagged `column: 'Id'` (either an explicit `created` key, or the
+    // appended tiebreak), so the anchor id always has a well-defined slot to
+    // read back regardless of which sort produced the cursor.
+    const idTermIndex = sortTerms.findIndex((t) => t.column === 'Id')
     // Keyset cursor over the resolved sort order: skip up to AND INCLUDING
-    // the anchor id.
+    // the anchor id. The mock still resumes by re-locating the anchor ROW in
+    // the freshly-resolved order (rather than replaying the engine's
+    // OR-of-AND keyset predicate over the full tuple) — every resolved order
+    // here terminates in a unique `id`, so `id` alone is a total,
+    // unambiguous resume point; only the WIRE ENCODING needed to change to
+    // stop pinning the mock-only `{ id }` shape as if it were the engine's.
     let startIdx = 0
     if (cursor != null) {
-      let anchorId: string | null = null
-      try {
-        anchorId = (JSON.parse(atob(cursor)) as Record<string, unknown>)['id'] as string
-      } catch {
-        anchorId = null
-      }
+      const decoded = decodeCursor(cursor)
+      const anchorValue = decoded?.values[idTermIndex]
+      const anchorId = anchorValue?.t === 'Text' ? anchorValue.v : null
       if (anchorId != null) {
         const idx = matched.findIndex((m) => m.b['id'] === anchorId)
         if (idx >= 0) startIdx = idx + 1
@@ -342,7 +480,7 @@ export const searchHandlers = {
     const pageRows = pageEntries.map((m) => m.b)
     const lastRow = pageEntries.at(-1)
     const nextCursor =
-      hasMore && lastRow ? btoa(JSON.stringify({ id: lastRow.b['id'] as string })) : null
+      hasMore && lastRow ? encodeCursor(sortTerms.map((t) => cursorValueFor(t, lastRow))) : null
     return {
       rows: pageRows,
       nextCursor,

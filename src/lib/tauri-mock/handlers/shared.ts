@@ -830,14 +830,30 @@ export function encodeNextCursor(last: PageMetaRow, sort: string): string {
 }
 
 /**
- * Resolve a page's `last_modified_at`, mirroring the backend's
- * `MAX(op_log.created_at) WHERE block_id = b.id`: scan `opLog` for the latest
- * entry whose payload `block_id` is this page, then fall back to the
- * deterministic seeded `last_modified_at` stamp (set in `seed.ts`), and
- * finally `null` for a page with neither.
+ * Scan `opLog` for the latest entry whose payload `block_id` is `blockId`,
+ * i.e. `MAX(created_at) WHERE block_id = ?`. `null` when the block has no
+ * op-log activity. Mirrors the RAW subquery the engine uses for last-edited
+ * everywhere it appears — verbatim in `run_advanced_query`'s `LastEdited`
+ * sort key (`COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id =
+ * b.id), 0)`, `agaric-store/src/query/engine.rs:229`) and reused by
+ * `list_pages_with_metadata`'s `RecentlyModified` keyset
+ * (`LAST_MOD_NULL_SENTINEL = 0`, `src-tauri/src/commands/pages/metadata.rs:220,351`).
+ * NO other data source feeds this on the backend — a block with no op-log row
+ * coalesces to the SAME epoch sentinel as every other op-log-free block.
+ *
+ * `run_advanced_query`'s `SORT_COLUMN_GETTERS.lastEdited` (search.ts) calls
+ * this directly rather than going through {@link pageLastModifiedAt} below,
+ * because that function layers a mock-only seeded-stamp fallback on top that
+ * the engine has no analogue for (#3863) — using it for the SORT key made
+ * blocks with no op-log activity order by a seeded dev-preview timestamp the
+ * backend cannot see, instead of tying at the sentinel like the engine does.
+ * `pageLastModifiedAt`'s fallback is UNCHANGED here: #3863 names only the
+ * `run_advanced_query` sort getter, and the fallback also feeds
+ * `list_pages_with_metadata`'s own (separately divergent, NOT fixed by this
+ * change) `RecentlyModified` sort/`LastEdited` filter, which real e2e /
+ * dev-preview fixtures rely on for differentiated timestamps. Filed as #3884.
  */
-export function pageLastModifiedAt(b: Record<string, unknown>): string | null {
-  const pageId = b['id'] as string
+export function rawOpLogLastEditedAt(blockId: string): string | null {
   let maxOp: string | null = null
   for (const o of opLog) {
     let payload: Record<string, unknown>
@@ -846,9 +862,24 @@ export function pageLastModifiedAt(b: Record<string, unknown>): string | null {
     } catch {
       continue
     }
-    if (payload['block_id'] !== pageId) continue
+    if (payload['block_id'] !== blockId) continue
     if (maxOp === null || o.created_at > maxOp) maxOp = o.created_at
   }
+  return maxOp
+}
+
+/**
+ * Resolve a page's `last_modified_at` for `list_pages_with_metadata` /
+ * `buildPageMetaRow` consumers: {@link rawOpLogLastEditedAt}, falling back to
+ * the deterministic seeded `last_modified_at` stamp (set in `seed.ts`) when
+ * the block has no op-log activity, and finally `null` for a page with
+ * neither. The seeded fallback is a MOCK-ONLY convenience with no engine
+ * analogue — see the doc on {@link rawOpLogLastEditedAt} for why
+ * `run_advanced_query`'s `lastEdited` sort key does not use this function.
+ */
+export function pageLastModifiedAt(b: Record<string, unknown>): string | null {
+  const pageId = b['id'] as string
+  const maxOp = rawOpLogLastEditedAt(pageId)
   const seeded = pageLastModified.get(pageId) ?? null
   if (maxOp !== null && seeded !== null) return maxOp > seeded ? maxOp : seeded
   return maxOp ?? seeded
