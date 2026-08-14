@@ -1,4 +1,4 @@
-# Session 1303 — conformance ratchet: key on the branch, not the command (2026-08-15)
+# Session 1307 — conformance ratchet: key on the branch, not the command (2026-08-15)
 
 | Metadata | Value |
 |----------|-------|
