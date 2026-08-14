@@ -14,6 +14,10 @@
 //!   prevents concurrent sync sessions with the same device.
 
 mod discovery;
+// Which local interface the sync endpoint binds (#3853). Its own module because the
+// selection is a *policy* with a table of cases, and the policy has to be a pure
+// function over synthetic interface lists or no test of it can be reproducible.
+mod lan_interface;
 pub mod server;
 mod session_supervisor;
 pub mod snapshot_transfer;

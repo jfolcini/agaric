@@ -141,6 +141,62 @@ where
         .collect()
 }
 
+/// The addresses to announce: the bound one if there is one, else the interface filter.
+///
+/// Pure so the "announced set == bound set" invariant is testable without a live mDNS
+/// daemon or the host's `getifaddrs(3)`. `fallback` is lazy because enumerating
+/// interfaces is a syscall the common path no longer needs.
+///
+/// See [`MdnsService::announce`] for why the bound address wins outright (#3853).
+fn announce_set<F>(bound: Option<std::net::Ipv4Addr>, fallback: F) -> Vec<IpAddr>
+where
+    F: FnOnce() -> Vec<IpAddr>,
+{
+    match bound {
+        // Loopback is the daemon's "there is no LAN" fallback. Announcing it would tell
+        // every peer on the link to dial an address that is, for them, themselves.
+        Some(ip) if !ip.is_loopback() && !ip.is_unspecified() => vec![IpAddr::V4(ip)],
+        _ => fallback(),
+    }
+}
+
+/// The host's own announceable addresses — the fallback when nothing bound.
+///
+/// The impure half of [`announce_set`]'s input, kept separate so the pure half stays
+/// pure and so [`announce_info`] reads as one line.
+fn host_announceable_addrs() -> Vec<IpAddr> {
+    let interfaces = if_addrs::get_if_addrs().unwrap_or_else(|e| {
+        tracing::warn!(
+            error = %e,
+            "if_addrs::get_if_addrs failed; falling back to enable_addr_auto"
+        );
+        Vec::new()
+    });
+    filter_announceable_addrs(interfaces.iter().map(if_addrs::Interface::ip))
+}
+
+/// The record [`MdnsService::announce`] registers, from the bound address in.
+///
+/// The whole address path — bound address → announce set → `ServiceInfo` — in one place
+/// with no daemon behind it, so a test can assert what actually goes on the wire.
+///
+/// The seam is the point. With the address choice inlined in `announce`, dropping
+/// `bound` on the floor (`announce_set(None, …)`) reverted the mDNS half of #3853 with
+/// the entire suite still green, because nothing that a test could call took `bound` as
+/// an argument. Now `the_announced_record_carries_exactly_the_bound_address` reddens.
+///
+/// # Errors
+/// As [`build_service_info`].
+fn announce_info(
+    device_id: &str,
+    endpoint_id: EndpointId,
+    port: u16,
+    bound: Option<std::net::Ipv4Addr>,
+) -> Result<mdns_sd::ServiceInfo, AppError> {
+    let announceable = announce_set(bound, host_announceable_addrs);
+    build_service_info(device_id, endpoint_id, port, &announceable)
+}
+
 /// Build the `ServiceInfo` [`MdnsService::announce`] registers.
 ///
 /// Split out from `announce` so the announced record — in particular the *spelling* of
@@ -238,6 +294,34 @@ impl MdnsService {
     /// address, so there is no single bound IP to pin the announcement to; we enumerate
     /// `if_addrs::get_if_addrs` and filter instead.
     ///
+    /// # `bound` — announce what is actually listening (#3853)
+    ///
+    /// The paragraph above describes the *fallback*. When the caller knows which address
+    /// the sync endpoint bound, that address — and only that address — is announced.
+    ///
+    /// Enumerating interfaces here independently of the bind was the second half of
+    /// #3853: the endpoint binds exactly one interface, so any *other* address in the
+    /// record is one nothing is listening on. On the reporting desktop the two sets did
+    /// not even intersect — the bind landed on the (non-RFC 1918) LAN while this filter
+    /// kept only the three RFC 1918 bridge addresses. A peer cannot tell an address with
+    /// no listener from a device that is asleep; it just spends its dial budget and
+    /// waits out the session TTL.
+    ///
+    /// This narrows the announced set — one address instead of every private one — but it
+    /// does **not** narrow the announced *class*, and the RFC 1918 filter (session-log
+    /// L-65, session 581) was about class: it existed to stop the device advertising
+    /// itself on interfaces the user did not intend to be discoverable on (public, guest
+    /// WiFi, cellular, VPN). A globally-routable bound address is now announced, which
+    /// L-65's filter would have dropped. That is deliberate — it is the address the user's
+    /// own LAN uses on the reporting hardware — but it is a narrower set of a broader
+    /// class, not a strict tightening. The address only ever leaves over multicast on the
+    /// link it belongs to, and the decision to bind it at all is logged at WARN by the
+    /// sync daemon's bind selection (`sync_daemon::lan_interface`).
+    ///
+    /// `None`, or a loopback address, means the endpoint has no LAN address at all. That
+    /// falls through to the interface filter and then to `enable_addr_auto()`, because
+    /// announcing `127.0.0.1` to the local link is worse than announcing nothing.
+    ///
     /// # Errors
     /// [`AppError::InvalidOperation`] if `mdns-sd` rejects the service info (malformed
     /// instance or host name) or the registration.
@@ -246,18 +330,9 @@ impl MdnsService {
         device_id: &str,
         endpoint_id: EndpointId,
         port: u16,
+        bound: Option<std::net::Ipv4Addr>,
     ) -> Result<mdns_sd::ServiceInfo, AppError> {
-        let interfaces = if_addrs::get_if_addrs().unwrap_or_else(|e| {
-            tracing::warn!(
-                error = %e,
-                "if_addrs::get_if_addrs failed; falling back to enable_addr_auto"
-            );
-            Vec::new()
-        });
-        let announceable: Vec<IpAddr> =
-            filter_announceable_addrs(interfaces.iter().map(if_addrs::Interface::ip));
-
-        let service_info = build_service_info(device_id, endpoint_id, port, &announceable)?;
+        let service_info = announce_info(device_id, endpoint_id, port, bound)?;
 
         self.daemon
             .register(service_info.clone())
@@ -505,7 +580,7 @@ mod tests {
     //! because the module they cover could not be reached from `agaric-sync`. It can
     //! now, so they live beside the code.
 
-    use std::collections::HashSet;
+    use std::collections::{BTreeSet, HashSet};
 
     use super::*;
 
@@ -1007,6 +1082,146 @@ mod tests {
             }),
             "every surviving address must be RFC 1918 private IPv4, got: {kept:?}"
         );
+    }
+
+    // -- 6b. Announced set == bound address (#3853) ---------------------------
+    //
+    // The endpoint binds exactly one interface. Announcing any *other* address puts a
+    // record on the link that nothing is listening on, and a peer cannot tell that from
+    // a device that is asleep — it just spends its dial budget and waits out the TTL.
+    // On the reporting desktop the two sets did not intersect at all.
+
+    /// The bound address wins outright, and the interface filter is not even consulted.
+    #[test]
+    fn announce_set_is_exactly_the_bound_address() {
+        let mut fallback_ran = false;
+        let set = announce_set(Some("192.160.160.80".parse().unwrap()), || {
+            fallback_ran = true;
+            vec!["192.168.32.1".parse().unwrap(), "10.0.6.1".parse().unwrap()]
+        });
+
+        assert_eq!(
+            set,
+            vec!["192.160.160.80".parse::<IpAddr>().unwrap()],
+            "the announced set must be exactly the address the endpoint bound — not the \
+             RFC 1918 bridges the old filter would have kept"
+        );
+        assert!(
+            !fallback_ran,
+            "with a known bind address the interface enumeration must not run at all"
+        );
+    }
+
+    /// A non-RFC1918 bind address is announced. Routing it through the old filter would
+    /// have dropped it and reproduced #3853 exactly.
+    #[test]
+    fn announce_set_keeps_a_bound_address_the_rfc1918_filter_would_drop() {
+        let bound: std::net::Ipv4Addr = "192.160.160.102".parse().unwrap();
+        assert!(
+            filter_announceable_addrs([IpAddr::V4(bound)]).is_empty(),
+            "precondition: this address is exactly what the RFC 1918 filter drops"
+        );
+        assert_eq!(
+            announce_set(Some(bound), Vec::new),
+            vec![IpAddr::V4(bound)],
+            "…and it must be announced anyway, because it is what we bound"
+        );
+    }
+
+    /// Loopback is the daemon's "there is no LAN" fallback. Announcing `127.0.0.1` to
+    /// the local link tells every peer to dial itself, so it must fall through instead.
+    #[test]
+    fn announce_set_never_advertises_the_loopback_fallback() {
+        let set = announce_set(Some("127.0.0.1".parse().unwrap()), || {
+            vec!["192.168.1.5".parse().unwrap()]
+        });
+        assert_eq!(
+            set,
+            vec!["192.168.1.5".parse::<IpAddr>().unwrap()],
+            "a loopback bind must fall through to the interface filter, not be announced"
+        );
+
+        assert!(
+            announce_set(Some("127.0.0.1".parse().unwrap()), Vec::new).is_empty(),
+            "and with nothing to fall back to it yields the empty set, which \
+             build_service_info turns into enable_addr_auto"
+        );
+    }
+
+    /// No bind address at all keeps the pre-existing behaviour verbatim.
+    #[test]
+    fn announce_set_without_a_bind_address_uses_the_interface_filter() {
+        let set = announce_set(None, || vec!["192.168.1.5".parse().unwrap()]);
+        assert_eq!(set, vec!["192.168.1.5".parse::<IpAddr>().unwrap()]);
+    }
+
+    /// The record that actually goes on the wire carries the bound address and nothing
+    /// else — the assertion the four `announce_set` tests above cannot make.
+    ///
+    /// They pin the *helper*; this pins that `announce_info` (and therefore `announce`)
+    /// passes `bound` to it. Reverting that call to `announce_set(None, …)` — the exact
+    /// mutation that left the whole 272-test suite green before this test existed —
+    /// reddens here: the fallback yields this host's RFC 1918 interface addresses, or an
+    /// empty set on a host that has none, and neither is `[192.160.160.80]`.
+    ///
+    /// Deliberately a non-RFC 1918 address, so the fallback path cannot accidentally
+    /// produce it on any host: `filter_announceable_addrs` drops that whole class.
+    ///
+    /// Compared as a **set**. `ServiceInfo::get_addresses` returns a `HashSet`, whose
+    /// iteration order is not stable across runs — two different orderings were observed
+    /// from the same binary — so a `Vec` equality here was safe only because the expected
+    /// set happens to have one element, and would have become a coin flip the moment a
+    /// second address was announced.
+    #[test]
+    fn the_announced_record_carries_exactly_the_bound_address() {
+        let bound: std::net::Ipv4Addr = "192.160.160.80".parse().expect("test address parses");
+        let info = announce_info("DEVICE-F", test_endpoint_id("key-bound"), 9443, Some(bound))
+            .expect("service info builds");
+
+        let announced: BTreeSet<IpAddr> = info.get_addresses().iter().copied().collect();
+
+        assert_eq!(
+            announced,
+            BTreeSet::from([IpAddr::V4(bound)]),
+            "the record must name the address the endpoint bound and no other; anything \
+             else is an address with no listener behind it, which a peer cannot tell \
+             from a sleeping device"
+        );
+    }
+
+    /// The other arm: with no bound address the record falls back to the interface
+    /// filter, which is the pre-#3853 behaviour and must survive.
+    ///
+    /// Asserted as an equality against [`host_announceable_addrs`] — the fallback's own
+    /// source — rather than by looping over the announced set. The loop this replaces had
+    /// no non-emptiness precondition, so on a host holding no RFC 1918 address it ran
+    /// zero times and asserted nothing; that host is not hypothetical, it is the device
+    /// this whole issue was reported from (`192.160.160.0/24` is not RFC 1918). The
+    /// equality is still true on such a host, but unlike the loop it *says* something:
+    /// it reddens if the fallback is rewired to the raw interface list, which on the
+    /// reporting hardware also carries `192.160.160.80`.
+    ///
+    /// Set equality, for the same `HashSet` ordering reason as the test above.
+    #[test]
+    fn the_announced_record_without_a_bind_falls_back_to_the_interface_filter() {
+        let info = announce_info("DEVICE-G", test_endpoint_id("key-unbound"), 9443, None)
+            .expect("service info builds");
+
+        let announced: BTreeSet<IpAddr> = info.get_addresses().iter().copied().collect();
+        let expected: BTreeSet<IpAddr> = host_announceable_addrs().into_iter().collect();
+        assert_eq!(
+            announced, expected,
+            "with no bound address the record must carry exactly what the interface \
+             filter yields — no more (an unfiltered interface list) and no less"
+        );
+        for &ip in &announced {
+            assert_eq!(
+                filter_announceable_addrs([ip]),
+                vec![ip],
+                "the fallback must announce only what the RFC 1918 filter accepts, got \
+                 {ip}"
+            );
+        }
     }
 
     /// An empty interface list yields an empty announce set — [`build_service_info`]

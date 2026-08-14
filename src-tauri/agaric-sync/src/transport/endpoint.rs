@@ -181,15 +181,44 @@ impl Resolver for RecordingResolver {
 /// # Errors
 /// [`LanBindError::PrefixTooBroad`] if `prefix_len` describes a block too large to be a
 /// LAN (see [`MIN_IPV4_PREFIX_LEN`] / [`MIN_IPV6_PREFIX_LEN`]);
-/// [`LanBindError::BindAddressNotPrivate`] if `bind` sits in publicly-routable space —
-/// the prefix bounds the block's *breadth*, this bounds *where* it sits, and both are
-/// needed before the doc's "confined to a LAN" reading is true;
+/// [`LanBindError::BindAddressNotPrivate`] if `bind` sits in publicly-routable space and
+/// is not an address this host has actually been assigned — the prefix bounds the
+/// block's *breadth*, this bounds *where* it sits, and both are needed before the doc's
+/// "confined to a LAN" reading is true;
 /// [`LanBindError::InvalidSocketAddr`] if `bind` is not a valid socket address for the
 /// given `prefix_len` (for IPv4 the maximum prefix is 32, for IPv6 128).
 pub fn lan_only(
     bind: SocketAddr,
     prefix_len: u8,
     resolver: DnsResolver,
+) -> Result<Builder, LanBindError> {
+    lan_only_with_host_addrs(bind, prefix_len, resolver, &host_ip_addrs())
+}
+
+/// [`lan_only`], with the host's own addresses passed in rather than enumerated.
+///
+/// The seam exists so a test can drive the **composed** gate — prefix breadth *and*
+/// locality, in the order and with the errors `lan_only` produces — against a synthetic
+/// address list. Testing [`bind_locality_ok`] alone is not the same thing: the rule can be
+/// correct and still not be applied here, and reverting the call below to a bare
+/// `is_publicly_routable` check reddens `lan_only_binds_a_public_address_the_host_holds`.
+///
+/// What it does **not** cover, and what no test taking the list as a parameter can: that
+/// [`lan_only`] passes [`host_ip_addrs`] rather than something else. Replacing that
+/// argument with `&[]` leaves every test in this file green except
+/// `lan_only_gates_on_the_addresses_this_host_actually_holds`, which is the one test that
+/// drives the public entry point against the machine's own addresses.
+///
+/// Not `pub`: callers get [`lan_only`], which reads the real host. Only the tests in this
+/// module supply the list.
+///
+/// # Errors
+/// As [`lan_only`].
+fn lan_only_with_host_addrs(
+    bind: SocketAddr,
+    prefix_len: u8,
+    resolver: DnsResolver,
+    host_addrs: &[IpAddr],
 ) -> Result<Builder, LanBindError> {
     // Layer 3 confines egress by longest-prefix match over the bound sockets. A prefix
     // that covers more than a LAN does not confine anything — at /0 every destination on
@@ -212,7 +241,16 @@ pub fn lan_only(
     // installs a route for `8.0.0.0/8` — public space, confined to a LAN-sized slice
     // of it. `MIN_IPV4_PREFIX_LEN` reasons from RFC 1918 and loopback, so without this
     // second check the doc promises a guarantee the code does not deliver.
-    if is_publicly_routable(&bind) {
+    //
+    // #3853: the locality test is "is this one of *our* addresses", not "is this in RFC
+    // 1918". Those are not the same question and the difference is not academic — the
+    // reporting LAN is `192.160.160.0/24`, real public space, and it is that user's home
+    // network. Rejecting it made the endpoint unbindable there, which is the same outage
+    // by a different route. What must stay impossible is claiming a block we do not
+    // hold, and `is_locally_assigned` is a stronger answer to that than `is_private`:
+    // `8.8.8.8` is not on anyone's interface, so it is still refused here rather than at
+    // `EADDRNOTAVAIL` with no explanation.
+    if !bind_locality_ok(bind, host_addrs) {
         return Err(LanBindError::BindAddressNotPrivate { bind });
     }
     Endpoint::builder(presets::Minimal)
@@ -228,6 +266,59 @@ pub fn lan_only(
                 .set_is_default_route(false),
         )
         .map_err(LanBindError::InvalidSocketAddr)
+}
+
+/// May [`lan_only`] bind `bind`, given the addresses this host holds?
+///
+/// The whole locality rule in one pure function, so it can be exercised against a
+/// synthetic address list. A rule that can only be tested against the interfaces of
+/// whichever machine ran the suite is a rule with no test, which is how #3853 shipped.
+#[must_use]
+fn bind_locality_ok(bind: SocketAddr, host_addrs: &[IpAddr]) -> bool {
+    !is_publicly_routable(&bind) || is_locally_assigned(bind.ip(), host_addrs)
+}
+
+/// Is `ip` one of the addresses this host has assigned to an interface?
+///
+/// Pure over `host_addrs` so the rule is testable without depending on whatever
+/// addresses the test machine happens to hold. The impure half is [`host_ip_addrs`],
+/// which is one `getifaddrs(3)` call.
+///
+/// Why this is the right locality test — and why it is *stronger* than `is_private`: an
+/// address only appears here because the operating system assigned it to a link this
+/// machine is on. You cannot squat `8.8.8.8` that way, and if the OS did hand you a
+/// globally-routable address then the netmask it came with describes your actual subnet.
+/// `is_private` answers a question about IANA registries; this answers the question
+/// `lan_only` is actually asking.
+#[must_use]
+fn is_locally_assigned(ip: IpAddr, host_addrs: &[IpAddr]) -> bool {
+    let normalise = |addr: IpAddr| match addr {
+        // Same unmapping `is_publicly_routable` performs, for the same reason: an
+        // IPv4-mapped bind address must compare equal to the v4 address it names.
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
+        v4 => v4,
+    };
+    let target = normalise(ip);
+    host_addrs.iter().any(|addr| normalise(*addr) == target)
+}
+
+/// Every IP address currently assigned to an interface on this host.
+///
+/// A failure to enumerate returns an empty list, which makes [`is_locally_assigned`]
+/// answer `false` — i.e. the guard falls closed, refusing a publicly-routable bind it
+/// cannot vouch for, rather than open.
+fn host_ip_addrs() -> Vec<IpAddr> {
+    if_addrs::get_if_addrs().map_or_else(
+        |e| {
+            tracing::warn!(
+                error = %e,
+                "if_addrs::get_if_addrs failed; a publicly-routable bind address cannot \
+                 be vouched for and will be refused"
+            );
+            Vec::new()
+        },
+        |ifaces| ifaces.iter().map(if_addrs::Interface::ip).collect(),
+    )
 }
 
 /// The smallest IPv4 prefix length [`lan_only`] will accept.
@@ -266,9 +357,12 @@ pub enum LanBindError {
         /// `"IPv4"` or `"IPv6"`, for the message.
         family: &'static str,
     },
-    /// `bind` is a publicly-routable address. The prefix check bounds how broad the
-    /// confined block is, not where it sits, so a LAN-sized slice of public space
-    /// would otherwise pass.
+    /// `bind` is a publicly-routable address that is **not assigned to any interface on
+    /// this host**. The prefix check bounds how broad the confined block is, not where it
+    /// sits, so a LAN-sized slice of public space would otherwise pass.
+    ///
+    /// A globally-routable address the OS *did* assign is accepted: it names a link this
+    /// machine is on, which is what "LAN" means here. See [`lan_only`] (#3853).
     BindAddressNotPrivate {
         /// The address the caller asked to bind.
         bind: SocketAddr,
@@ -293,9 +387,10 @@ impl std::fmt::Display for LanBindError {
             ),
             Self::BindAddressNotPrivate { bind } => write!(
                 f,
-                "bind address {bind} is publicly routable; the prefix check bounds how \
-                 broad the confined block is, not where it sits, so a LAN-sized slice of \
-                 public space would otherwise be accepted as LAN-only"
+                "bind address {bind} is publicly routable and is not assigned to any \
+                 interface on this host; the prefix check bounds how broad the confined \
+                 block is, not where it sits, so a LAN-sized slice of public space would \
+                 otherwise be accepted as LAN-only"
             ),
             // Deliberately does NOT interpolate the inner error: `source()` returns it,
             // so a chain-walking reporter (`{:#}`, `tracing`'s error chain) would print
@@ -724,6 +819,231 @@ mod tests {
         let err = lan_only(bind, 64, DnsResolver::custom(RecordingResolver::new()))
             .expect_err("a publicly-routable IPv6 bind must be rejected");
         assert!(matches!(err, LanBindError::BindAddressNotPrivate { .. }));
+    }
+
+    /// #3853: the locality test is "is it ours", not "is it RFC 1918".
+    ///
+    /// `192.160.160.0/24` looks private and is not. It is the reporting user's home LAN,
+    /// and gating on `is_private` made their endpoint unbindable — the same outage, one
+    /// layer down. What must stay refused is a public address we were never assigned.
+    ///
+    /// Pure over an explicit address list, deliberately: reading the host's real
+    /// interfaces would make this assertion depend on the machine it runs on, which is
+    /// the property that let #3853 ship with no failing test.
+    #[test]
+    fn a_locally_assigned_public_address_is_not_treated_as_foreign() {
+        let host: Vec<IpAddr> = vec![
+            "192.160.160.80".parse().unwrap(),
+            "192.168.32.1".parse().unwrap(),
+            "127.0.0.1".parse().unwrap(),
+        ];
+
+        assert!(
+            is_locally_assigned("192.160.160.80".parse().unwrap(), &host),
+            "an address the OS assigned to one of our links is local, whatever registry \
+             it belongs to"
+        );
+        assert!(
+            !is_locally_assigned("8.8.8.8".parse().unwrap(), &host),
+            "a public address nobody assigned us must stay refused"
+        );
+        assert!(
+            !is_locally_assigned("192.160.160.81".parse().unwrap(), &host),
+            "the check is per address, not per subnet — a neighbour's address is not ours"
+        );
+    }
+
+    /// An empty host list (`getifaddrs(3)` failed) must make the guard fall *closed*.
+    #[test]
+    fn an_unenumerable_host_refuses_every_public_bind() {
+        assert!(!is_locally_assigned("192.160.160.80".parse().unwrap(), &[]));
+        assert!(!bind_locality_ok("192.160.160.80:0".parse().unwrap(), &[]));
+        // …but a private address never needed vouching for in the first place.
+        assert!(bind_locality_ok("192.168.1.5:0".parse().unwrap(), &[]));
+    }
+
+    /// The composed rule [`lan_only`] applies, exercised directly.
+    ///
+    /// This pins the *rule*. It does **not** pin that `lan_only` calls it — a rule can be
+    /// right and unwired, and an earlier revision of this test claimed otherwise while
+    /// reverting the gate left the whole suite green. That claim now lives in
+    /// [`lan_only_binds_a_public_address_the_host_holds`], which drives the gate through
+    /// `lan_only` itself; this test is the unit underneath it.
+    #[test]
+    fn bind_locality_ok_accepts_a_public_address_the_host_holds() {
+        let host: Vec<IpAddr> = vec![
+            "192.160.160.80".parse().unwrap(),
+            "192.168.32.1".parse().unwrap(),
+        ];
+
+        assert!(
+            bind_locality_ok("192.160.160.80:0".parse().unwrap(), &host),
+            "the reporting user's own LAN address must be bindable; refusing it is the \
+             same outage one layer down"
+        );
+        assert!(
+            !bind_locality_ok("8.8.8.8:0".parse().unwrap(), &host),
+            "a public address the host was never assigned must stay refused"
+        );
+        assert!(
+            !bind_locality_ok("[2606:4700:4700::1111]:0".parse().unwrap(), &host),
+            "and so must a public IPv6 address"
+        );
+    }
+
+    /// The composed gate, as `lan_only_with_host_addrs` applies it (#3853).
+    ///
+    /// Both arms, because the pair is what the change is: a public address the host
+    /// **holds** must now build (it is the reporting user's LAN), and a public address it
+    /// does **not** hold must still be refused (that is the guarantee the rustdoc makes).
+    /// Reverting the gate here to `is_publicly_routable(&bind)` reddens the first arm;
+    /// deleting the gate outright reddens the second.
+    ///
+    /// What it does **not** pin — an earlier revision of this docstring claimed it did —
+    /// is that the public `lan_only` supplies the *host's* address list: this test names
+    /// the list itself, so it stays green when `lan_only` passes `&[]`. That is
+    /// [`lan_only_gates_on_the_addresses_this_host_actually_holds`]'s job, and it is the
+    /// same "right rule, not wired in" shape one level up.
+    ///
+    /// `lan_only` returns a *builder* — nothing is bound and no socket is opened — so the
+    /// address list is free to describe a machine other than the one running the test.
+    #[test]
+    fn lan_only_binds_a_public_address_the_host_holds() {
+        let host: Vec<IpAddr> = vec![
+            "192.160.160.80".parse().expect("test address parses"),
+            "192.168.32.1".parse().expect("test address parses"),
+        ];
+        let bind: SocketAddr = "192.160.160.80:0".parse().expect("test address parses");
+
+        lan_only_with_host_addrs(
+            bind,
+            24,
+            DnsResolver::custom(RecordingResolver::new()),
+            &host,
+        )
+        .expect(
+            "the reporting user's own LAN address is public space they hold; refusing it \
+             is #3853 one layer down",
+        );
+
+        let err =
+            lan_only_with_host_addrs(bind, 24, DnsResolver::custom(RecordingResolver::new()), &[])
+                .expect_err("the same address on a host that does not hold it must be refused");
+        assert!(
+            matches!(err, LanBindError::BindAddressNotPrivate { .. }),
+            "an unvouched-for public bind must be refused as such, got {err:?}"
+        );
+
+        let foreign: SocketAddr = "8.8.8.8:0".parse().expect("test address parses");
+        let err = lan_only_with_host_addrs(
+            foreign,
+            24,
+            DnsResolver::custom(RecordingResolver::new()),
+            &host,
+        )
+        .expect_err("a public address on nobody's interface must stay refused");
+        assert!(
+            matches!(err, LanBindError::BindAddressNotPrivate { .. }),
+            "8.8.8.8 must be refused even with a populated host list, got {err:?}"
+        );
+    }
+
+    /// The wiring, driven through the **public** `lan_only` against this machine (#3853).
+    ///
+    /// Every test above hands the address list in. That leaves one thing unpinned, and it
+    /// is the thing #3853 actually was: whether `lan_only` passes [`host_ip_addrs`] at
+    /// all. Replacing that argument with `&[]` compiles, keeps every other test in this
+    /// file green, and makes the public `lan_only` refuse *every* publicly-routable bind —
+    /// so on the reporting hardware `lan_only("192.160.160.80:0", 24, ..)` comes back
+    /// `BindAddressNotPrivate` and the daemon cannot bind its own LAN. That is the
+    /// original bug, one layer down, reachable and previously undetected.
+    ///
+    /// # Why this one test reads the host
+    ///
+    /// It has to: the argument being pinned *is* the host enumeration, so no synthetic
+    /// list can stand in for it. The module docs above warn that "no developer machine or
+    /// CI runner has a public address to publish" — this machine does (`192.160.160.80`,
+    /// a home LAN numbered out of public space), and so does the reporter's, which is why
+    /// the loop below is non-vacuous where it matters.
+    ///
+    /// On a host holding only RFC 1918 / loopback addresses the loop is empty — and there
+    /// the `&[]` mutation is *equivalent*, not merely uncaught: with no publicly-routable
+    /// address of its own, `bind_locality_ok` never consults the list and the two
+    /// behaviours cannot be told apart by any input. The second half of the test — a
+    /// public address nobody assigned us stays refused — holds on every host.
+    #[test]
+    fn lan_only_gates_on_the_addresses_this_host_actually_holds() {
+        let held = host_ip_addrs();
+        assert!(
+            !held.is_empty(),
+            "precondition: `getifaddrs(3)` reported no addresses at all, so this test \
+             cannot say anything about the list `lan_only` gates against"
+        );
+
+        for ip in held
+            .iter()
+            .copied()
+            .filter(|ip| is_publicly_routable(&SocketAddr::new(*ip, 0)))
+        {
+            // Both well inside the accepted range, so a failure here can only be the
+            // locality gate — never the breadth check.
+            let prefix_len = if ip.is_ipv4() { 24 } else { 64 };
+            let outcome = lan_only(
+                SocketAddr::new(ip, 0),
+                prefix_len,
+                DnsResolver::custom(RecordingResolver::new()),
+            );
+            assert!(
+                outcome.is_ok(),
+                "{ip} is publicly routable AND assigned to an interface on this host, so \
+                 `lan_only` must accept it — refusing it makes the daemon unable to bind \
+                 its own LAN, which is #3853. Got {:?}",
+                outcome.as_ref().err()
+            );
+        }
+
+        // The refusal arm needs no public interface, so it holds on every host: an
+        // address the OS never assigned us must still be refused through the public
+        // entry point, not merely through the seam.
+        let foreign: SocketAddr = "8.8.8.8:0".parse().expect("test address parses");
+        let err = lan_only(foreign, 24, DnsResolver::custom(RecordingResolver::new()))
+            .expect_err("a public address on nobody's interface must stay refused");
+        assert!(
+            matches!(err, LanBindError::BindAddressNotPrivate { .. }),
+            "8.8.8.8 must be refused as a non-local bind, got {err:?}"
+        );
+    }
+
+    /// `host_ip_addrs` is the impure half of the gate. It cannot be pinned against a
+    /// fixture, but "it returned nothing" is the failure that would silently close the
+    /// gate on every public bind — including the reporting user's own LAN — so the one
+    /// address every host has is worth asserting.
+    #[test]
+    fn host_ip_addrs_reports_at_least_the_loopback_address() {
+        let addrs = host_ip_addrs();
+        assert!(
+            addrs.iter().any(IpAddr::is_loopback),
+            "every host has a loopback address; an enumeration that reports none is \
+             `getifaddrs(3)` failing silently, which shuts the locality gate on every \
+             public bind — got {addrs:?}"
+        );
+    }
+
+    /// `::ffff:a.b.c.d` must compare equal to the v4 address it names, on both sides —
+    /// otherwise the guard's answer depends on which spelling the platform reports.
+    #[test]
+    fn locality_unmaps_ipv4_mapped_ipv6_on_both_sides() {
+        let host_v4: Vec<IpAddr> = vec!["192.160.160.80".parse().unwrap()];
+        assert!(is_locally_assigned(
+            "::ffff:192.160.160.80".parse().unwrap(),
+            &host_v4
+        ));
+
+        let host_mapped: Vec<IpAddr> = vec!["::ffff:192.160.160.80".parse().unwrap()];
+        assert!(is_locally_assigned(
+            "192.160.160.80".parse().unwrap(),
+            &host_mapped
+        ));
     }
 
     /// `LanBindError` must report the inner iroh error exactly once.

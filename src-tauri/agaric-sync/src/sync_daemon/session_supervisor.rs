@@ -177,7 +177,11 @@ pub(crate) async fn daemon_loop(
         }
     };
 
-    // 1. Start mDNS service (graceful fallback — #522)
+    // 1. Start mDNS service (graceful fallback — BUG-38, session-log session 406)
+    //
+    // The citation used to read "#522", which is a merged PR about batch delete /
+    // restore and an AppImage `Exec=` line — nothing to do with mDNS. Corrected while
+    // passing (#3853); it predates this work.
     //
     // mDNS may fail on platforms where raw UDP sockets are blocked (e.g. iOS)
     // or when the Android multicast lock is missing. When this happens we
@@ -192,7 +196,7 @@ pub(crate) async fn daemon_loop(
     // One endpoint serves both roles: it accepts here and `try_sync_with_peer` dials
     // from it. Two endpoints would mean two identities, and `peer_refs.endpoint_id`
     // pins exactly one.
-    let (bind_addr, prefix_len) = lan_bind_target();
+    let (bind_addr, prefix_len, lan_ip) = lan_bind_target();
     let service = Arc::new(
         SyncService::bind(
             bind_addr,
@@ -292,11 +296,19 @@ pub(crate) async fn daemon_loop(
     // derivation. A record advertising a key nobody is listening on is worse than no
     // record: peers spend a dial budget on it and cannot tell that outcome from a peer
     // that is merely asleep.
+    //
+    // `lan_ip` is the address the endpoint actually bound. Announcing exactly that (and
+    // nothing else) is #3853's other half: the old announce independently enumerated
+    // every RFC 1918 interface, so on the maintainer's desktop it advertised three
+    // bridge addresses and not the one the endpoint was listening on. A record naming an
+    // address nothing is bound to is indistinguishable, from the peer's side, from a
+    // device that is merely asleep.
     if let Some(ref mdns) = mdns {
-        match mdns.announce(&device_id, endpoint_id, port) {
+        match mdns.announce(&device_id, endpoint_id, port, lan_ip) {
             Ok(_) => tracing::info!(
                 port,
                 %endpoint_id,
+                bind = ?lan_ip,
                 "SyncDaemon started; announced over mDNS"
             ),
             Err(e) => tracing::warn!(
@@ -595,11 +607,21 @@ pub(crate) async fn daemon_loop(
 /// exist, turning the layer-3 confinement into a no-op while all four of its guards
 /// stayed green.
 ///
-/// The address policy is `mdns::filter_announceable_addrs`', deliberately: the endpoint
-/// we bind and the addresses we announce must be the same set, or peers dial an address
-/// nothing is listening on. The prefix comes from the interface's own netmask rather
-/// than being guessed per RFC 1918 range, because a /24 subnet inside `10.0.0.0/8` is
-/// the common home-network shape and binding it as a /8 would confine nothing useful.
+/// The prefix comes from the interface's own netmask rather than being guessed per RFC
+/// 1918 range, because a /24 subnet inside `10.0.0.0/8` is the common home-network shape
+/// and binding it as a /8 would confine nothing useful.
+///
+/// # Which interface (#3853)
+///
+/// The selection is [`super::lan_interface::decide`]'s, not this function's: it used to
+/// be "the first interface whose address is `is_private()`", which bound a Docker bridge
+/// on the maintainer's desktop and skipped the real LAN entirely because
+/// `192.160.160.0/24` is not RFC 1918. That module carries the policy, the rationale and
+/// the table of cases; this function only turns its answer into `lan_only`'s arguments.
+///
+/// The returned `lan_ip` is `None` for the loopback fallback, and is threaded into the
+/// mDNS announce so the address we advertise is by construction the address we bound —
+/// advertising a different one is exactly how #3853 stayed invisible.
 ///
 /// # The narrowing this leaves, stated rather than hidden
 ///
@@ -610,35 +632,25 @@ pub(crate) async fn daemon_loop(
 /// four LAN-posture guards are written against a single bind — so that is a change with
 /// its own test story, not a line here.
 ///
-/// The loopback fallback is what a machine with no private IPv4 interface gets. It binds
+/// The loopback fallback is what a machine with no usable IPv4 interface gets. It binds
 /// and accepts nothing from outside, which is the honest answer to "there is no LAN":
 /// failing to start the daemon would take the rest of it (scheduler, discovery,
-/// dormancy) down with it.
-fn lan_bind_target() -> (std::net::SocketAddr, u8) {
-    let interfaces = if_addrs::get_if_addrs().unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "if_addrs::get_if_addrs failed; binding loopback only");
-        Vec::new()
-    });
-    for iface in &interfaces {
-        let if_addrs::IfAddr::V4(v4) = &iface.addr else {
-            continue;
-        };
-        if !v4.ip.is_private() {
-            continue;
-        }
-        let prefix = u8::try_from(u32::from(v4.netmask).count_ones()).unwrap_or(24);
-        return (
-            std::net::SocketAddr::from((v4.ip, 0)),
-            prefix.max(crate::transport::endpoint::MIN_IPV4_PREFIX_LEN),
-        );
-    }
-    tracing::warn!(
-        "no RFC 1918 private IPv4 interface found; the sync endpoint binds loopback only"
-    );
-    (
-        std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0)),
-        crate::transport::endpoint::MIN_IPV4_PREFIX_LEN,
-    )
+/// dormancy) down with it. It is logged at WARN naming every rejected candidate.
+///
+/// # The surface this widens, also stated rather than hidden
+///
+/// `lan_only`'s locality gate now accepts a globally-routable address the host actually
+/// holds, because the reporting user's home LAN is numbered out of public space. On a
+/// host that is genuinely internet-facing — a VPS, a cloud box, a non-NAT ISP link —
+/// that starts a listener where the daemon previously refused to bind at all, which is
+/// the "opens a listening port the user didn't ask for" case in SECURITY.md § In scope.
+/// No address-shaped rule separates the two situations, so the mitigation is loudness:
+/// [`super::lan_interface::BindDecision::internet_facing`] is set and a dedicated WARN
+/// names the risk. Turning it into a refusal, or an opt-in, is a product decision and
+/// is deliberately not made here.
+fn lan_bind_target() -> (std::net::SocketAddr, u8, Option<std::net::Ipv4Addr>) {
+    let decision = super::lan_interface::select_bind_target();
+    (decision.bind, decision.prefix_len, decision.lan_ip)
 }
 
 // ---------------------------------------------------------------------------
@@ -1769,5 +1781,54 @@ mod tests {
         );
         // (Ok path cannot be exercised without real networking; the Err
         // path is the contract surface we care about.)
+    }
+
+    /// `lan_bind_target` is the delegation to the bind policy, and nothing else (#3853).
+    ///
+    /// The policy itself is pinned by `lan_interface`'s fixture table. What that table
+    /// cannot say is that *this* function consults it: replacing the whole body with
+    /// `(127.0.0.1:0, MIN_IPV4_PREFIX_LEN, None)` — the pre-#3853 loopback fallback,
+    /// with the LAN selection deleted — compiled and left the entire suite green, on a
+    /// machine whose sync would then never have been reachable by any peer. This is the
+    /// only assertion in the crate that touches `session_supervisor`'s half of the
+    /// change.
+    ///
+    /// Asserted as equality with the policy's own answer rather than against a literal
+    /// address, because which interface this machine should pick is the policy's
+    /// business, not this test's — and a literal would pin the machine instead of the
+    /// wiring. `select_bind_target` reads the host, so the equality is exact only while
+    /// the interface list is stable across the two calls; a link flapping mid-test would
+    /// be the one way this goes red without a code change.
+    ///
+    /// On a host with no usable LAN interface at all the policy itself answers with the
+    /// loopback fallback, so the mutation above becomes *equivalent* there and this test
+    /// is green for both. It is red on any machine that has a LAN — including this one
+    /// and the reporter's.
+    #[test]
+    fn lan_bind_target_returns_the_bind_policy_decision_not_a_fallback() {
+        let decision = super::super::lan_interface::select_bind_target();
+        let (bind_addr, prefix_len, lan_ip) = lan_bind_target();
+
+        assert_eq!(
+            (bind_addr, prefix_len, lan_ip),
+            (decision.bind, decision.prefix_len, decision.lan_ip),
+            "the daemon must bind and announce what `lan_interface::decide` selected; \
+             anything else silently reintroduces #3853. Passed over: {}",
+            decision.passed_over()
+        );
+
+        // …and the announced address is by construction the bound one, which is the
+        // half of #3853 the mDNS record carries.
+        match lan_ip {
+            Some(ip) => assert_eq!(
+                bind_addr.ip(),
+                std::net::IpAddr::V4(ip),
+                "the address handed to the mDNS announce must be the address bound"
+            ),
+            None => assert!(
+                bind_addr.ip().is_loopback(),
+                "no LAN address means the loopback fallback, nothing else; got {bind_addr}"
+            ),
+        }
     }
 }
