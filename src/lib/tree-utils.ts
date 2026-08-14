@@ -291,13 +291,13 @@ export function simulateProjection(
   const overIndex = items.findIndex((item) => item.id === overId)
   const activeIndex = items.findIndex((item) => item.id === activeId)
 
-  // Explicit bounds check at function entry. The `!activeItem` guard
-  // below also catches a missing active id (via `items[-1] === undefined`),
-  // but the indirection between `findIndex` and the downstream
-  // `splice(activeIndex, 1)` makes future edits risky — `splice(-1, 1)` would
-  // silently remove the last item. We only check `activeIndex` here because
-  // `overIndex === -1` is intentional when `overId === SENTINEL_ID` and is
-  // handled by the sentinel branch below.
+  // Explicit bounds check at function entry, done via `activeIndex` (rather
+  // than deferring to a post-lookup nullish check) because the indirection
+  // between `findIndex` and the downstream `splice(activeIndex, 1)` makes
+  // future edits risky — `splice(-1, 1)` would silently remove the last item.
+  // We only check `activeIndex` here because `overIndex === -1` is
+  // intentional when `overId === SENTINEL_ID` and is handled by the sentinel
+  // branch below.
   if (activeIndex < 0) {
     return {
       kind: 'fixed',
@@ -305,14 +305,11 @@ export function simulateProjection(
     }
   }
 
-  const activeItem = items[activeIndex]
-
-  if (!activeItem) {
-    return {
-      kind: 'fixed',
-      projection: { depth: 0, parentId: rootParentId, maxDepth: 0, minDepth: 0 },
-    }
-  }
+  // Non-null: `activeIndex >= 0` is guaranteed by the guard above, so this
+  // index is always in bounds. A `!activeItem` nullish re-check here would be
+  // provably unreachable (issue #3793, finding 1) — asserting instead of
+  // re-guarding keeps that redundancy out of the code.
+  const activeItem = items[activeIndex] as FlatBlock
 
   // Sentinel: drop after last item — compute depth/parent from drag offset.
   // The move puts the active item AFTER the last row, i.e. it vacates its
@@ -523,20 +520,23 @@ export function computeDropIndex(
   // The post-removal flat order: where the block lands once it vacates its slot.
   const without = items.filter((i) => i.id !== activeId)
 
-  // Flat index in `without` at which the block is inserted.
+  // Flat index in `without` at which the block is inserted. The
+  // `overId === SENTINEL_ID` case is not special-cased here: no live block is
+  // ever assigned SENTINEL_ID as its own id in practice (a fold that holds
+  // only in practice, not by a declared id contract — see the
+  // `SENTINEL_ID preconditions` ledger in tree-utils.mutants-drop.test.ts),
+  // so `overIdxInWithout` is always -1 for it and falls through to the same
+  // "unknown target → append" branch a literal sentinel check would have
+  // taken (issue #3793, finding 3).
   let insertAt: number
-  if (overId === SENTINEL_ID) {
-    insertAt = without.length
+  const overIdxInWithout = without.findIndex((i) => i.id === overId)
+  if (overIdxInWithout < 0) {
+    insertAt = without.length // unknown target (incl. the sentinel) → append
   } else {
-    const overIdxInWithout = without.findIndex((i) => i.id === overId)
-    if (overIdxInWithout < 0) {
-      insertAt = without.length // unknown target → append
-    } else {
-      // dnd-kit semantics: dragging downward (active was above the target)
-      // drops AFTER the target; dragging upward drops BEFORE it.
-      const overIdxInItems = items.findIndex((i) => i.id === overId)
-      insertAt = overIdxInItems > activeIndex ? overIdxInWithout + 1 : overIdxInWithout
-    }
+    // dnd-kit semantics: dragging downward (active was above the target)
+    // drops AFTER the target; dragging upward drops BEFORE it.
+    const overIdxInItems = items.findIndex((i) => i.id === overId)
+    insertAt = overIdxInItems > activeIndex ? overIdxInWithout + 1 : overIdxInWithout
   }
 
   // Slot = number of the parent's children that appear before `insertAt` in the
@@ -544,8 +544,12 @@ export function computeDropIndex(
   // blocks we're counting against.)
   const parentDepth = parentId === null ? -1 : (items.find((i) => i.id === parentId)?.depth ?? -1)
   const childDepth = parentDepth + 1
+  // `insertAt` is `<= without.length` by construction (both branches above
+  // cap it at `without.length`), so `i < insertAt` is always the binding
+  // condition; a second `i < without.length` bound is redundant (issue
+  // #3793, finding 2).
   let slot = 0
-  for (let i = 0; i < insertAt && i < without.length; i++) {
+  for (let i = 0; i < insertAt; i++) {
     const item = without[i] as FlatBlock
     if ((item.parent_id ?? null) === parentId && item.depth === childDepth) {
       slot += 1

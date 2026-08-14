@@ -16,36 +16,17 @@ function mkFlat(id: string, parentId: string | null, depth: number): FlatBlock {
 }
 
 describe('computeDropIndex mutants (#3142)', () => {
-  // Line 528 [ConditionalExpression]: `if (overId === SENTINEL_ID)`.
-  // Forcing the condition to always-true makes a normal drop target be
-  // treated as "append after last" — wrong insertAt/slot for a real id.
-  it('does not treat a real overId as the append-after-last sentinel', () => {
+  // Line 531 [ConditionalExpression]: `if (overIdxInWithout < 0)`. Forcing
+  // the condition to always-true makes a normal drop target be treated as
+  // "unknown target → append" — wrong insertAt/slot for a real id.
+  it('does not treat a real overId as an unknown/sentinel target', () => {
     const items: FlatBlock[] = [mkFlat('A', null, 0), mkFlat('B', null, 0), mkFlat('C', null, 0)]
     // Drag C UP onto B → before B → slot 1. A forced-true mutant would
     // instead append (slot 2).
     expect(computeDropIndex(items, null, 'B', 'C')).toBe(1)
   })
-  // Note: the always-false direction of this mutant is equivalent — SENTINEL_ID
-  // never matches a real item id, so the "unknown target" else-branch also
-  // resolves to `without.length`, identical to the sentinel branch. Differential
-  // execution over 1 082 327 generated inputs (#3765) found the only inputs that
-  // separate them are lists containing a block whose OWN id is SENTINEL_ID.
-  // That is unrepresentable — but NOT because of a declared "id contract":
-  // `blocks.id` has no CHECK constraint and the sync ingest paths never
-  // ULID-validate. What actually excludes it is (a) the client-supplied-id
-  // path parsing strictly (`BlockId::from_string` → `Ulid::from_str`,
-  // agaric-engine/src/block_ops.rs), and (b) every untrusted path
-  // (`BlockId::from_trusted` and the lenient `Deserialize` in
-  // agaric-core/src/ulid.rs) ASCII-uppercasing whatever it cannot parse, so a
-  // peer-supplied `__drop-after-last__` lands as `__DROP-AFTER-LAST__` and
-  // misses this case-sensitive `===`. The whole margin is one
-  // `to_ascii_uppercase()` that exists for hash canonicalization (#1558), not
-  // for sentinel safety: if SENTINEL_ID ever becomes uppercase, or that
-  // normalization is relaxed to preserve peer bytes, this mutant becomes
-  // killable and the collision becomes a real bug. Left alive deliberately
-  // rather than pinned as a guard on a state today's normalization forbids.
 
-  // Line 531 [EqualityOperator]: `overIdxInItems > activeIndex ? +1 : same`.
+  // Line 537 [EqualityOperator]: `overIdxInItems > activeIndex ? +1 : same`.
   it('adds one when dragging downward past the target (overIdx > activeIndex)', () => {
     const items: FlatBlock[] = [mkFlat('A', null, 0), mkFlat('B', null, 0), mkFlat('C', null, 0)]
     // Drag A DOWN onto C: overIdxInItems(2) > activeIndex(0) → drop AFTER C → slot 2.
@@ -57,8 +38,21 @@ describe('computeDropIndex mutants (#3142)', () => {
     // Drag C UP onto A: overIdxInItems(0) < activeIndex(2) → drop BEFORE A → slot 0.
     expect(computeDropIndex(items, null, 'A', 'C')).toBe(0)
   })
+  // Note: `overIdxInItems > activeIndex` -> `>=` is an equivalent mutant
+  // (survives the mutation run; tree-utils.ts:537). The extra case needs
+  // `overIdxInItems === activeIndex`. Two distinct ids can never share a
+  // first *found* index, so that requires either `overId === activeId` or
+  // both indices being -1 (neither id present in `items`). Both are excluded
+  // before this line: `without` has every `activeId` row filtered out, and
+  // an `overId` absent from `items` is absent from `without` too — so either
+  // way `overIdxInWithout` is -1 and control takes the "unknown target"
+  // branch above (line 531). Line 537 is never reached with the two indices
+  // equal. Confirmed empirically, not just by argument (#3765): a canary
+  // returning early on `overIdxInItems === activeIndex` fires 4 679 times
+  // when spliced just before the `overIdxInWithout < 0` test, and zero times
+  // at this line.
 
-  // Line 538 [ConditionalExpression forced-true] and [LogicalOperator, `??`→`&&`]:
+  // Line 543 [ConditionalExpression forced-true] and [LogicalOperator, `??`→`&&`]:
   // `parentId === null ? -1 : (find(...)?.depth ?? -1)`. Using a parent with a
   // truthy depth (1) distinguishes both: forcing -1 always, or `1 && -1` (= -1
   // since `&&` returns the right side on a truthy left), both wrongly zero out
@@ -76,12 +70,18 @@ describe('computeDropIndex mutants (#3142)', () => {
     // to 0, matching no item → slot 0.
     expect(computeDropIndex(items, 'P', 'C2', 'dragged')).toBe(1)
   })
-  // NOTE: the comment this replaces claimed the test above also kills line 543
+  // Note: `parentId === null` -> `false` is an equivalent mutant (survives
+  // the mutation run; tree-utils.ts:543). When `parentId` IS null, forcing
+  // the condition false just makes the mutant evaluate the else-arm instead:
+  // `items.find((i) => i.id === null)` matches nothing (`FlatBlock['id']` is
+  // a string), so `?? -1` yields the very -1 the then-arm would have
+  // returned directly.
+  // NOTE: the comment this replaces claimed the test above also kills line 552
   // [ConditionalExpression]. It doesn't — `insertAt` there stops the loop
   // before it ever reaches an item whose depth-check outcome would change.
   // See the dedicated test below.
 
-  // Line 538 [UnaryOperator]: `find(...)?.depth ?? -1` → `?? +1`. The literal
+  // Line 543 [UnaryOperator]: `find(...)?.depth ?? -1` → `?? +1`. The literal
   // fallback only fires when the parent id has no matching item at all, so a
   // parent with a real (found) depth can't distinguish it — need a *missing*
   // parentId, plus a decoy item recorded under that same missing id, so the
@@ -101,7 +101,7 @@ describe('computeDropIndex mutants (#3142)', () => {
     expect(computeDropIndex(items, 'GHOST', SENTINEL_ID, 'dragged')).toBe(1)
   })
 
-  // Line 543 [ConditionalExpression]: `item.depth === childDepth` forced to
+  // Line 552 [ConditionalExpression]: `item.depth === childDepth` forced to
   // `true` drops the depth half of the sibling predicate, so an item whose
   // `parent_id` matches but whose recorded `depth` is stale/inconsistent
   // would wrongly count as a sibling. Needs a decoy positioned *before*
@@ -123,16 +123,16 @@ describe('computeDropIndex mutants (#3142)', () => {
     expect(computeDropIndex(items, 'P', SENTINEL_ID, 'dragged')).toBe(1)
   })
 
-  // Line 538 [OptionalChaining]: removing `?.` from `find(...)?.depth` throws
+  // Line 543 [OptionalChaining]: removing `?.` from `find(...)?.depth` throws
   // when the parent id isn't found, instead of falling back via `?? -1`.
   it('does not throw when parentId has no matching item', () => {
     const items: FlatBlock[] = [mkFlat('A', null, 0), mkFlat('B', null, 0)]
     expect(computeDropIndex(items, 'NOPE', 'B', 'A')).toBe(0)
   })
 
-  // Line 541 [EqualityOperator]: `i < insertAt && i < without.length`. Picks a
-  // case where `without[insertAt]` itself matches the parent/depth predicate,
-  // so relaxing `i < insertAt` to `i <= insertAt` pulls in one extra match.
+  // Line 550 [EqualityOperator]: `i < insertAt`. Picks a case where
+  // `without[insertAt]` itself matches the parent/depth predicate, so
+  // relaxing `i < insertAt` to `i <= insertAt` pulls in one extra match.
   it('excludes the item exactly at insertAt from the sibling count', () => {
     const items: FlatBlock[] = [
       mkFlat('A', null, 0),
@@ -147,10 +147,6 @@ describe('computeDropIndex mutants (#3142)', () => {
     // (matches parent P, depth 2) → slot 1.
     expect(computeDropIndex(items, 'P', 'C1', 'dragged')).toBe(0)
   })
-  // Note: an `i < without.length` → `i <= without.length` mutant on the same
-  // line is equivalent — `insertAt` is always <= `without.length` by
-  // construction, so `i < insertAt` alone already guarantees `i < without.length`
-  // whenever the loop body runs; the second bound never fires more permissively.
 
   it('sanity: SENTINEL_ID still appends after the last matching sibling', () => {
     const items: FlatBlock[] = [mkFlat('A', null, 0), mkFlat('B', null, 0)]
@@ -159,18 +155,36 @@ describe('computeDropIndex mutants (#3142)', () => {
 })
 
 describe('SENTINEL_ID preconditions (#3794)', () => {
-  // Tripwire for the equivalence argument recorded in the computeDropIndex
-  // describe above. That argument is only sound while SENTINEL_ID is lowercase:
-  // the sync ingest paths accept peer-supplied block ids verbatim and
-  // ASCII-uppercase whatever they cannot parse as a ULID, so an injected
-  // `__drop-after-last__` arrives as `__DROP-AFTER-LAST__` and misses the
-  // case-sensitive `===`. Make an uppercase SENTINEL_ID fail here rather than
-  // silently invalidate a comment: the survivor at tree-utils.ts:528 would
-  // become reachable from untrusted data.
+  // Issue #3793 (finding 3) removed the dedicated `overId === SENTINEL_ID`
+  // branch: the sentinel never appears in `without` (it isn't a real block
+  // id), so it always falls into the generic "unknown target → append"
+  // path, which computes the identical `insertAt = without.length`. That
+  // fold is only sound while SENTINEL_ID stays a value no *real* block id
+  // can ever equal. Two ways that could break:
   //
-  // This covers only half the stated precondition. The other half — the Rust
-  // normalization being relaxed to preserve peer bytes — cannot be asserted
-  // from here and needs a Rust-side test (tracked on #3794).
+  // 1. A block whose own id literally equals SENTINEL_ID. `blocks.id` has no
+  //    CHECK constraint and sync ingest never ULID-validates, so this is NOT
+  //    excluded by any declared, enforced id contract — it is excluded only
+  //    in practice, by the same two mechanisms as (2) below: a
+  //    locally-created block's id is always a freshly generated, strictly
+  //    parsed ULID (`BlockId::from_string` → `Ulid::from_str`,
+  //    agaric-engine/src/block_ops.rs), and a peer-supplied block's own id
+  //    goes through the same untrusted-path ASCII-uppercasing described in
+  //    (2), so an injected lowercase `__drop-after-last__` id would land
+  //    uppercase and never collide. No test written for this case — it needs
+  //    a Rust-side fixture (tracked on #3794).
+  // 2. A peer-supplied id that COLLIDES with SENTINEL_ID after normalization
+  //    — the sync ingest paths accept peer-supplied block ids verbatim and
+  //    ASCII-uppercase whatever they cannot parse as a ULID, so an injected
+  //    `__drop-after-last__` arrives as `__DROP-AFTER-LAST__` and misses the
+  //    case-sensitive `===` in `without.findIndex((i) => i.id === overId)`.
+  //
+  // Make an uppercase SENTINEL_ID fail here rather than silently invalidate
+  // that fold.
+  //
+  // This covers only half the stated precondition. The other half — the
+  // Rust normalization being relaxed to preserve peer bytes — cannot be
+  // asserted from here and needs a Rust-side test (tracked on #3794).
   it('SENTINEL_ID is lowercase, so uppercased peer ids cannot collide', () => {
     expect(SENTINEL_ID).toBe(SENTINEL_ID.toLowerCase())
     expect(SENTINEL_ID).not.toBe(SENTINEL_ID.toUpperCase())
@@ -178,33 +192,20 @@ describe('SENTINEL_ID preconditions (#3794)', () => {
 })
 
 /*
- * Further equivalent mutants in `computeDropIndex` (issue #3765). No fixture
- * can distinguish these, so no test is added for them:
+ * Issue #3793 retired two equivalence notes that used to live here:
  *
- * - tree-utils.ts:538:18 [EqualityOperator]
- *   `overIdxInItems > activeIndex` -> `>=`. The extra case needs
- *   `overIdxInItems === activeIndex`. Two distinct ids can never share a first
- *   *found* index, so that requires either `overId === activeId` or both
- *   indices being -1 (neither id present in `items`). Both are excluded before
- *   line 538: `without` has every `activeId` row filtered out, and an `overId`
- *   absent from `items` is absent from `without` too — so either way
- *   `overIdxInWithout` is -1 and control takes the "unknown target" branch
- *   above. Line 538 is never reached with the two indices equal. Confirmed
- *   empirically, not just by argument: a canary returning early on
- *   `overIdxInItems === activeIndex` fires 4 679 times when spliced just
- *   before the `overIdxInWithout < 0` test, and zero times at line 538.
+ * - The `overId === SENTINEL_ID` branch [ConditionalExpression] equivalence
+ *   (previously tree-utils.ts:528, always-false direction): the branch
+ *   itself is gone (finding 3) — the sentinel now falls through to the same
+ *   "unknown target → append" code the equivalence argument described, so
+ *   there is no separate mutant to be equivalent about.
  *
- * - tree-utils.ts:545:23 [ConditionalExpression]
- *   `parentId === null` -> `false`. When `parentId` IS null the mutant merely
- *   evaluates the else-arm instead: `items.find((i) => i.id === null)` matches
- *   nothing (`FlatBlock['id']` is a string), so `?? -1` yields the very -1 the
- *   then-arm returns.
+ * - The `i < insertAt && i < without.length` second bound
+ *   [ConditionalExpression] equivalence (previously tree-utils.ts:548): the
+ *   clause itself is gone (finding 2) — the loop is now just `i < insertAt`.
  *
- * - tree-utils.ts:548:35 [ConditionalExpression] `i < without.length` -> `true`:
- *   the same reasoning as the `i <= without.length` note above — `insertAt` is
- *   always <= `without.length`, so `i < insertAt` is the binding bound and the
- *   second clause cannot change the iteration count.
- *
- * Verified by differential execution over 1 082 327 generated inputs: zero
- * output differences.
+ * Confirmed by the `tree-utils` mutation re-run: neither mutant exists in
+ * the regenerated mutant population any more (fewer total mutants), and the
+ * two equivalent mutants documented above (tree-utils.ts:537, :543) are the
+ * only survivors left in this function.
  */

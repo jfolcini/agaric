@@ -229,6 +229,163 @@ describe('i18n catalog parity — missing keys (#2946)', () => {
   })
 })
 
+// ── Plural forms for {{count}}-interpolating keys (#3860) ───────────────
+
+/**
+ * `trash.emptyTrashPartial` (and siblings `trash.allPurged`,
+ * `trash.allRestored`, …) interpolated `{{count}}` with no `_one`/`_other`
+ * plural forms, so a count of 1 rendered the "_other"-shaped English text
+ * verbatim ("Removed 1 items…") while the `announce.*` equivalent — which
+ * DID carry plural forms — rendered correctly ("Removed 1 item…") for the
+ * same user action. See #3860.
+ *
+ * This catalog uses two valid plural patterns, both of which i18next
+ * resolves correctly:
+ *   1. An explicit `key_one` / `key_other` pair.
+ *   2. A bare `key` doubling as the singular form, with only `key_other`
+ *      added alongside it — i18next falls back to the bare key for
+ *      count === 1 when no `key_one` variant exists (e.g.
+ *      `graph.local.depthOption` / `graph.local.depthOption_other`).
+ *
+ * The one shape that is wrong for every count is a bare `key` that
+ * interpolates `{{count}}` with NO `_other` sibling at all: every count
+ * then renders the identical (singular-shaped) string.
+ */
+function findCountPluralViolations(catalog: Record<string, string>): string[] {
+  interface Coverage {
+    hasPlain: boolean
+    hasOne: boolean
+    hasOther: boolean
+    interpolatesCount: boolean
+  }
+  const bases = new Map<string, Coverage>()
+  for (const [key, value] of Object.entries(catalog)) {
+    const suffix = PLURAL_SUFFIXES.find((s) => key.endsWith(s))
+    const base = suffix ? key.slice(0, -suffix.length) : key
+    const entry = bases.get(base) ?? {
+      hasPlain: false,
+      hasOne: false,
+      hasOther: false,
+      interpolatesCount: false,
+    }
+    if (!suffix) entry.hasPlain = true
+    if (suffix === '_one') entry.hasOne = true
+    if (suffix === '_other') entry.hasOther = true
+    if (value.includes('{{count}}')) entry.interpolatesCount = true
+    bases.set(base, entry)
+  }
+
+  const violations: string[] = []
+  for (const [base, entry] of bases) {
+    if (!entry.interpolatesCount) continue
+    const hasSingularForm = entry.hasOne || entry.hasPlain
+    if (!(hasSingularForm && entry.hasOther)) {
+      violations.push(base)
+    }
+  }
+  return violations.toSorted()
+}
+
+/**
+ * PRE_EXISTING_COUNT_WITHOUT_PLURAL — allowlist for catalog keys that
+ * interpolate `{{count}}` without complete plural forms, audited as part of
+ * #3860 but left unfixed because #3860 scoped its fix to the `trash.*`
+ * namespace (the issue explicitly asks to "report but do not necessarily
+ * fix" other namespaces with the same defect — a broader sweep is tracked
+ * separately, not shipped here).
+ *
+ * Every entry renders the same (singular- or count-agnostic-shaped) string
+ * regardless of count today — some are genuine "N items" grammar bugs
+ * (mirroring the `trash.*` ones this PR fixes), others interpolate a bare
+ * number or an abbreviated unit ("{{count}}m ago") that doesn't visibly
+ * inflect in English, so the naive text scan below flags them too even
+ * though they may not need a wording change. Left in either way so the
+ * allowlist is a complete, auditable list of every non-conforming key
+ * rather than a hand-curated subset.
+ *
+ * New entries must NOT be added here — fix the plural forms instead. The
+ * "no stale entries" test below keeps this list honest as entries get
+ * fixed over time.
+ */
+const PRE_EXISTING_COUNT_WITHOUT_PLURAL: ReadonlySet<string> = new Set([
+  'donePanel.header',
+  'agenda.resultCount',
+  'agendaFilter.filtersApplied',
+  'duePanel.header',
+  'block.attachments',
+  'block.attachmentsTip',
+  'block.showAllProperties',
+  'blockTree.deletedMessageUndo',
+  'blockTree.repeatLimitedMessage',
+  'blockContext.deleteConfirmTitle',
+  'contextMenu.deleteSelected',
+  'sidebar.trashCount',
+  'sidebar.minutesAgo',
+  'sidebar.hoursAgo',
+  'sidebar.daysAgo',
+  'history.restoreSuccess',
+  'history.restoreSkipped',
+  'history.revertTitle',
+  'history.revertDescription',
+  'history.loadedMoreEntries',
+  'compaction.totalOps',
+  'compaction.eligibleOps',
+  'compaction.confirmDescription',
+  'compaction.success',
+  'journal.agendaCountBadge',
+  'journal.backlinkCountBadge',
+  'pageBrowser.loadedMorePages',
+  'tagFilter.blockMatchOne',
+  'tagFilter.blockMatchMany',
+  'references.header',
+  'references.filtersAppliedBadge',
+  'unlinkedRefs.header',
+  'search.resultsCount',
+  'batch.selectedCount',
+  'search.matchCountInGroupPlural',
+])
+
+describe('i18n catalog — plural forms for {{count}}-interpolating keys (#3860)', () => {
+  const catalog = i18n.getResourceBundle('en', 'translation') as Record<string, string>
+
+  it('scan sanity: recognizes both plural patterns used in this catalog', () => {
+    // Explicit _one/_other pair (this PR's fix for trash.*).
+    expect(catalog['trash.allPurged_one']).toBeDefined()
+    expect(catalog['trash.allPurged_other']).toBeDefined()
+    // Bare-key-as-singular + _other pair (pre-existing pattern elsewhere).
+    expect(catalog['graph.local.depthOption']).toBeDefined()
+    expect(catalog['graph.local.depthOption_other']).toBeDefined()
+  })
+
+  it('every {{count}}-interpolating key has plural forms, outside the pre-existing allowlist', () => {
+    const violations = findCountPluralViolations(catalog).filter(
+      (base) => !PRE_EXISTING_COUNT_WITHOUT_PLURAL.has(base),
+    )
+
+    if (violations.length > 0) {
+      const report = violations.map((k) => `  - "${k}"`).join('\n')
+      expect.fail(
+        `${violations.length} i18n key(s) interpolate {{count}} without complete plural forms ` +
+          `(count === 1 will render the same "_other"-shaped wording, e.g. "1 items"):\n${report}\n` +
+          `Add "<key>_one" and "<key>_other" (or a bare "<key>" singular plus "<key>_other") to ` +
+          `the namespace file that owns each key.`,
+      )
+    }
+  })
+
+  it('PRE_EXISTING_COUNT_WITHOUT_PLURAL allowlist has no stale (already-fixed) entries', () => {
+    const stillBroken = new Set(findCountPluralViolations(catalog))
+    const stale = [...PRE_EXISTING_COUNT_WITHOUT_PLURAL].filter((base) => !stillBroken.has(base))
+
+    if (stale.length > 0) {
+      expect.fail(
+        `${stale.length} PRE_EXISTING_COUNT_WITHOUT_PLURAL entries now have complete plural ` +
+          `forms — remove them from the allowlist:\n${stale.map((k) => `  - "${k}"`).join('\n')}`,
+      )
+    }
+  })
+})
+
 // ── Orphan keys (informational, non-failing) ────────────────────────────
 
 /**

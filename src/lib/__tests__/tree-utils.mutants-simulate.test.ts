@@ -1,5 +1,5 @@
 // Targeted mutant-killing tests for `simulateProjection` (issue #3142).
-// Scope: tree-utils.ts:294, 303, 325, 328 only. Do not add unrelated coverage
+// Scope: tree-utils.ts:301, 322, 329 only. Do not add unrelated coverage
 // here — see tree-utils.test.ts for the general suite.
 
 import { describe, expect, it } from 'vitest'
@@ -31,9 +31,9 @@ const items: FlatBlock[] = [
 
 describe('simulateProjection mutant kills (#3142)', () => {
   it('projects a normal drag (C onto B) with the full structural shape', () => {
-    // Kills tree-utils.ts:294/303 ConditionalExpression forced-true: forcing
-    // either guard to always-true would short-circuit this valid drag into
-    // the 'fixed' branch instead of computing the real projection.
+    // Kills tree-utils.ts:301 ConditionalExpression forced-true: forcing the
+    // `activeIndex < 0` guard to always-true would short-circuit this valid
+    // drag into the 'fixed' branch instead of computing the real projection.
     const sim = simulateProjection(items, 'C', 'B')
     expect(sim).toEqual({
       kind: 'normal',
@@ -48,7 +48,7 @@ describe('simulateProjection mutant kills (#3142)', () => {
   })
 
   it('projects a normal drag onto the very first item (overIndex === 0)', () => {
-    // Kills tree-utils.ts:325 EqualityOperator: if `overIndex < 0` were
+    // Kills tree-utils.ts:329 EqualityOperator: if `overIndex < 0` were
     // widened to `overIndex <= 0`, dropping onto the first item (a legal,
     // in-bounds overIndex of 0) would be wrongly rejected as "not found".
     const sim = simulateProjection(items, 'C', 'A')
@@ -65,12 +65,12 @@ describe('simulateProjection mutant kills (#3142)', () => {
   })
 
   it('refuses a drop onto an overId absent from items (not the sentinel)', () => {
-    // Kills tree-utils.ts:325 BlockStatement/ConditionalExpression: skipping
+    // Kills tree-utils.ts:329 BlockStatement/ConditionalExpression: skipping
     // this guard would fall through to the splice/index math with
     // overIndex === -1 and produce a bogus 'normal' result instead of the
-    // safe fixed default. Also kills tree-utils.ts:328 ObjectLiteral: a
-    // distinctive non-null rootParentId and all-zero fields pin every
-    // literal in the returned projection.
+    // safe fixed default. Also kills the return object's ObjectLiteral
+    // mutant: a distinctive non-null rootParentId and all-zero fields pin
+    // every literal in the returned projection.
     const sim = simulateProjection(items, 'C', 'NOPE', 'page-root')
     expect(sim).toEqual({
       kind: 'fixed',
@@ -79,8 +79,8 @@ describe('simulateProjection mutant kills (#3142)', () => {
   })
 
   it('refuses a drag of an activeId absent from items', () => {
-    // Correctness coverage for tree-utils.ts:294/303: an unknown activeId
-    // must resolve to the same fixed default, keyed off the given rootParentId.
+    // Correctness coverage for tree-utils.ts:301: an unknown activeId must
+    // resolve to the same fixed default, keyed off the given rootParentId.
     const sim = simulateProjection(items, 'MISSING', 'B', 'root-x')
     expect(sim).toEqual({
       kind: 'fixed',
@@ -90,27 +90,20 @@ describe('simulateProjection mutant kills (#3142)', () => {
 })
 
 /*
- * Equivalent and unreachable mutants in `simulateProjection` (issue #3765).
- * No fixture can distinguish these, so no test is added for them:
+ * Issue #3793 (finding 1) removed the mutually-redundant `if (!activeItem)`
+ * guard that used to follow the `activeIndex < 0` check: it was provably
+ * unreachable (the earlier guard already excludes a nullish
+ * `items[activeIndex]`), and its four inner mutants reported NoCoverage as a
+ * direct consequence. `activeItem` is now obtained via a documented
+ * non-null assertion instead of a second runtime check.
  *
- * - tree-utils.ts:301:7  [ConditionalExpression] `activeIndex < 0` -> `false`
- * - tree-utils.ts:301:24 [BlockStatement]        the guard's `return` block -> `{}`
- * - tree-utils.ts:310:7  [ConditionalExpression] `!activeItem` -> `false`
- * - tree-utils.ts:310:20, 311:12, 312:13, 313:19 — reported NoCoverage
- *
- * The two guards are mutually redundant BY DESIGN; the source comment at
- * tree-utils.ts:294-300 says so explicitly. Disabling the first one lets a
- * missing `activeId` fall through to `items[-1] === undefined`, and the
- * `!activeItem` guard then returns the character-for-character identical
- * `{ kind: 'fixed', projection: { depth: 0, parentId: rootParentId,
- * maxDepth: 0, minDepth: 0 } }`. In the other direction, while the first guard
- * stands, `activeItem` is `items[activeIndex]` for an index `findIndex` just
- * matched, so it is never nullish — the `!activeItem` body is unreachable,
- * which is exactly why its four inner mutants get no coverage at all.
- *
- * Verified by differential execution over 885 205 generated inputs (items
- * lists x activeId/overId incl. absent ids x rootParentId x subtreeHeight):
- * zero output differences. The same harness flags all 211 mutants in this
- * module's functions that the suite already kills, so its blindness here is a
- * property of the code, not of the input space.
+ * That also promoted the FIRST guard's mutants from equivalent to killable:
+ * previously, disabling `activeIndex < 0` let a missing `activeId` fall
+ * through to `items[-1] === undefined`, which the (now-deleted) second guard
+ * caught and normalized back to the identical `{ kind: 'fixed', ... }`
+ * result. With only one guard left, disabling it changes the observable
+ * output, so `it('refuses a drag of an activeId absent from items', ...)`
+ * above now kills every mutant on tree-utils.ts:301 (confirmed by the
+ * `tree-utils` mutation re-run: all mutants in `simulateProjection` are
+ * Killed — 0 survivors, 0 NoCoverage).
  */

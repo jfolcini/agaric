@@ -11,7 +11,8 @@
  */
 
 import type { MoveResponse } from '@/lib/bindings'
-import { buildFlatTree, type FlatBlock } from '@/lib/tree-utils'
+import { logger } from '@/lib/logger'
+import { buildFlatTree, buildIndexById, getDragDescendants, type FlatBlock } from '@/lib/tree-utils'
 import { cloneBlocksByIdWith } from '@/stores/page-blocks-map'
 import type { PageBlockState } from '@/stores/page-blocks-types'
 
@@ -75,10 +76,48 @@ import type { PageBlockState } from '@/stores/page-blocks-types'
  * Returns the new flat array, or `null` to signal "fall back to `load()`":
  *   - the backend echoed a parent other than the one requested (or a response
  *     is missing) — a local splice would diverge from the backend tree;
- *   - a moved id vanished from the tree mid-flight (concurrent write);
- *   - a moved id fell out of the rebuilt tree (defensive: e.g. a `null`
- *     requested parent under a non-null page root).
+ *   - the requested parent is the moved run itself or a descendant of one of
+ *     the moved roots (see {@link wouldCreateMoveCycle}) — a cycle a flat
+ *     splice cannot represent;
+ *   - a moved id fell out of the rebuilt tree — the general catch-all: a
+ *     moved id vanished from the tree mid-flight (concurrent write), a
+ *     `null` requested parent under a non-null page root, or any other
+ *     divergence the cycle guard above does not itself name.
  */
+
+/**
+ * #3799 — cycle guard for `reconcileBatchMove`/`moveBlocks`, mirroring
+ * `moveToParent`'s `canSplice` (`page-blocks-reducers.ts`) for symmetry.
+ * Landing the moved run under `wantParent` would make a moved block its own
+ * ancestor when `wantParent` IS one of the moved ids, or a descendant (in the
+ * PRE-move tree) of one of them — a cycle no flat splice can represent.
+ *
+ * For this exact input shape, this predicate and the post-rebuild presence
+ * check below (`!present.has(id)`) are mathematically equivalent: a moved
+ * block whose new parent is itself or its own descendant is ALWAYS part of
+ * the cycle that results, so `buildFlatTree`'s DFS-from-root (which silently
+ * drops any component it can never reach) always fails to reach it too — the
+ * presence check would catch every case this guard does. This guard exists
+ * to reject BEFORE paying for the destination-splice + dense-renumber +
+ * rebuild this function would otherwise do only to discover the same
+ * failure, and to make the safety property a LOCAL, explicit one instead of
+ * an emergent side effect of `buildFlatTree`'s cycle-breaking `visited` set
+ * that a future refactor of that unrelated utility could silently undo.
+ * Exported for direct unit coverage.
+ */
+export function wouldCreateMoveCycle(
+  blocks: FlatBlock[],
+  orderedIds: readonly string[],
+  wantParent: string | null,
+): boolean {
+  if (wantParent == null) return false
+  if (orderedIds.includes(wantParent)) return true
+  // Build the index once rather than letting each getDragDescendants call redo an
+  // O(n) findIndex — otherwise this is O(m*n) for an m-id selection on an n-block page.
+  const indexById = buildIndexById(blocks)
+  return orderedIds.some((id) => getDragDescendants(blocks, id, indexById).has(wantParent))
+}
+
 export function reconcileBatchMove(
   state: PageBlockState,
   resp: MoveResponse[],
@@ -96,10 +135,21 @@ export function reconcileBatchMove(
     if ((r.new_parent_id ?? null) !== wantParent) return null
   }
 
-  // Every moved id must still exist in the current (commit-time) tree.
-  const byId = new Map(blocks.map((b) => [b.id, b] as const))
-  for (const id of orderedIds) {
-    if (!byId.has(id)) return null
+  // #3799 — reject a cyclic request up front (see `wouldCreateMoveCycle`'s
+  // doc comment for why this and the post-rebuild presence check below are
+  // outcome-equivalent for this input shape, and why the guard exists
+  // anyway). NOTE: an id absent from `blocks` entirely (not merely a
+  // now-nonexistent parent) is likewise not a concern here — it can only ever
+  // produce `orderedIds.includes(wantParent) === false` and an empty
+  // descendant set, so this guard correctly does not fire for it, and the
+  // presence check below remains the (sole, necessary) catch-all for that and
+  // any other divergence.
+  if (wouldCreateMoveCycle(blocks, orderedIds, wantParent)) {
+    logger.warn('page-blocks-move', 'moveBlocks: rejected — newParentId would create a cycle', {
+      orderedIds,
+      wantParent,
+    })
+    return null
   }
 
   const movedSet = new Set(orderedIds)
@@ -123,28 +173,22 @@ export function reconcileBatchMove(
   for (const id of orderedIds) parentOf.set(id, wantParent)
   destGroup.forEach((bid, i) => posOf.set(bid, i + 1))
 
-  // Dense-renumber every VACATED source group (a parent a moved id left, other
-  // than the destination — the destination was already renumbered above).
-  const sourceParents = new Set<string | null>()
-  for (const id of orderedIds) {
-    const from = oldParentOf.get(id) ?? null
-    if (from !== wantParent) sourceParents.add(from)
-  }
-  for (const sp of sourceParents) {
-    remainingChildren(sp).forEach((bid, i) => posOf.set(bid, i + 1))
-  }
-
   // #3320 — dense-renumber every OTHER sibling group too (untouched by this
-  // move), from its RENDERED array order. Without this, a group nobody
-  // touched in THIS move can still hold stale/duplicate/out-of-order
-  // `position` integers left behind by earlier optimistic same-parent movers
-  // (#404 `reorder`/`moveUp`/`moveDown`, which heal only the ONE moved
-  // block's position — see the doc comment above). Left alone, those stale
-  // integers would make `buildFlatTree`'s position sort scramble a group the
-  // user never touched. Group by FINAL parent (`parentOf`) and walk `blocks`
-  // in array order so each group gets a fresh dense rank matching what's
-  // already rendered; ids already ranked above (destination, vacated
-  // sources) are skipped via `posOf.has`.
+  // move — including every VACATED source group, a parent a moved id left
+  // other than the destination), from its RENDERED array order. Without
+  // this, a group nobody touched in THIS move can still hold stale/duplicate/
+  // out-of-order `position` integers left behind by earlier optimistic
+  // same-parent movers (#404 `reorder`/`moveUp`/`moveDown`, which heal only
+  // the ONE moved block's position — see the doc comment above). Left alone,
+  // those stale integers would make `buildFlatTree`'s position sort scramble
+  // a group the user never touched. Group by FINAL parent (`parentOf`) and
+  // walk `blocks` in array order so each group gets a fresh dense rank
+  // matching what's already rendered; ids already ranked above (the
+  // destination group, just above) are skipped via `posOf.has`. #3799 — a
+  // vacated source group's remaining children were previously renumbered by
+  // a dedicated block here too; deleted as redundant (this loop assigns the
+  // BYTE-IDENTICAL ranks — same group key `oldParentOf === parentOf` for a
+  // non-moved id, same `blocks` array order).
   const remainingByParent = new Map<string | null, string[]>()
   for (const b of blocks) {
     if (posOf.has(b.id)) continue
@@ -161,16 +205,19 @@ export function reconcileBatchMove(
   }
 
   // Materialise the updated bag and rebuild. Every block now has a `posOf`
-  // entry (destination/source groups above, every other group just above), so
-  // every sibling group gets a dense rank reproducing its rendered order, not
-  // only the group(s) this move directly touched. A block re-allocates only
-  // when its (parent, rank) actually changed — the `pos === b.position` guard
-  // below keeps the same reference for a block whose dense rank already
+  // entry (destination group above, every other group — including every
+  // vacated source — just above), so every sibling group gets a dense rank
+  // reproducing its rendered order, not only the group(s) this move directly
+  // touched. `posOf.get(b.id) ?? null` (never the pre-existing `b.position`:
+  // the #3320 loop above guarantees every block id got a `posOf` entry, so
+  // that fallback arm was dead code — Finding 3, #3799). A block re-allocates
+  // only when its (parent, rank) actually changed — the `pos === b.position`
+  // guard below keeps the same reference for a block whose dense rank already
   // matched its stored position.
   const updatedBag: FlatBlock[] = []
   for (const b of blocks) {
     const par = parentOf.get(b.id) ?? null
-    const pos = posOf.has(b.id) ? (posOf.get(b.id) ?? null) : (b.position ?? null)
+    const pos = posOf.get(b.id) ?? null
     updatedBag.push(
       par === (b.parent_id ?? null) && pos === (b.position ?? null)
         ? b
@@ -287,6 +334,20 @@ export function applyProvisionalMove(
  * move) — reconcile via `load()` instead of blindly healing. A benign
  * concurrent write that never reorders (an `edit` on another block) leaves the
  * block at the same slot+parent, so the heal proceeds and that edit survives.
+ *
+ * #3799 Finding 5 — kept, not deleted (unlike Findings 2-4 above, which were
+ * PROVABLY subsumed by other code reachable from the exact same inputs): the
+ * `#3759` triage's "never observed to matter across 96 reconciles" is an
+ * EMPIRICAL corpus result, not a proof of unreachability like Finding 3's
+ * `posOf.has` invariant. Both branches below stay reachable in production:
+ *   - `!cur` genuinely guards a block deleted (or dropped by a racing
+ *     `load()`) between the pre-await provisional splice and this resolve
+ *     callback — a real concurrent-write race, not defensive noise;
+ *   - the `state.blocks === handle.provBlocks` reference-equality disjunct is
+ *     a redundant-for-CORRECTNESS (the second disjunct would also evaluate
+ *     true whenever this one does) but genuine fast path: it skips two extra
+ *     lookups in the common no-concurrent-write case, mirroring the same
+ *     check in `rollbackProvisionalMove` below.
  */
 export async function reconcileProvisionalMoveSuccess(
   set: MoveSet,
