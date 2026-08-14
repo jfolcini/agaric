@@ -199,13 +199,25 @@ const JS_PLAIN_RANGE: std::ops::Range<f64> = 1e-6..1e21;
 
 /// Render one attribute value as a token segment.
 ///
-/// Numbers are printed the way `String(n)` prints them in the TS twin: an
-/// integral float loses its `.0` (serde_json renders `f64` 3.0 as `3.0`, JS
-/// renders it `3`), so a `value_num` property compares equal on both stacks.
-/// A magnitude the two formatters disagree on is REFUSED at authoring time
-/// rather than recorded — see [`JS_PLAIN_RANGE`].
+/// Numbers are printed the way `String(n)` prints them in the TS twin. Rust's
+/// `Display` for `f64` already matches inside [`JS_PLAIN_RANGE`] — it prints
+/// `3.0` as `3` (the trailing `.0` is `Debug`, not `Display`) and never uses
+/// exponent form — so no integral special-case is needed, and an earlier one
+/// here was dead code justified by serde_json's rendering, which the
+/// `as_f64` hop means never reaches the output. A magnitude the two
+/// formatters DO disagree on is REFUSED at authoring time rather than
+/// recorded — see [`JS_PLAIN_RANGE`].
+///
+/// The rendered value is also refused if it contains `#` or `->`, the two
+/// sequences the token grammar uses as separators. That failure mode is not a
+/// red/green flip — both runners build the identical string — it is token
+/// ALIASING: content `a#b` renders `B2#title=a#b#block_type=…`, which a
+/// differently-split row can match, so a real projection bug in that column
+/// could compare EQUAL. `RESOLVED_ATTRS` carries `title`, i.e. the raw
+/// `content` column, and `#` is ordinary text in this app — this is reachable,
+/// not theoretical.
 fn attr_value(name: &str, v: Option<&Value>) -> String {
-    match v {
+    let rendered = match v {
         None | Some(Value::Null) => "null".to_owned(),
         Some(_) if name == "deleted_at" => DELETED_SENTINEL.to_owned(),
         Some(Value::String(s)) => s.clone(),
@@ -219,18 +231,20 @@ fn attr_value(name: &str, v: Option<&Value>) -> String {
                      runners could never agree on its token. Give the fixture a value \
                      in ±[1e-6, 1e21) or exactly 0."
                 );
-                // `{:.0}` rather than a cast to i64: the value is already
-                // integral (`fract() == 0.0`) so nothing is rounded, and it
-                // keeps the formatting total instead of relying on a bound.
-                if f.fract() == 0.0 && f.abs() < 1e15 {
-                    format!("{f:.0}")
-                } else {
-                    f.to_string()
-                }
+                f.to_string()
             },
         ),
         Some(other) => other.to_string(),
-    }
+    };
+    assert!(
+        !rendered.contains('#') && !rendered.contains("->"),
+        "query attribute '{name}' renders as {rendered:?}, which contains a token \
+         separator ('#' or '->'). Both runners would build the SAME string, so this \
+         does not redden — it ALIASES: a differently-split row can match the same \
+         token, and a real projection bug in this column would compare equal. Pick \
+         fixture content without those sequences."
+    );
+    rendered
 }
 
 /// Build `<row[id_key]>#<attr>=<value>…` for one serialized row.
@@ -914,6 +928,35 @@ mod attr_value_tests {
     #[should_panic(expected = "whose Rust and JS renderings differ")]
     fn a_magnitude_below_the_js_plain_floor_is_refused() {
         attr_value("value_num", Some(&json!(1e-7)));
+    }
+
+    /// A `#` in an attribute value is NOT a red/green flip — both runners build
+    /// the same string — it is token ALIASING, so the guard has to refuse it at
+    /// authoring time or a projection bug in that column can compare EQUAL.
+    /// `RESOLVED_ATTRS` carries `title`, the raw `content` column, and `#` is
+    /// ordinary text in this app, so this is reachable rather than theoretical.
+    #[test]
+    #[should_panic(expected = "contains a token separator")]
+    fn a_hash_in_an_attribute_value_is_refused() {
+        attr_value("title", Some(&json!("a#b")));
+    }
+
+    /// `->` is the other separator: it splits an arrow HEAD, so a value
+    /// carrying it can alias against a `parent->child` token.
+    #[test]
+    #[should_panic(expected = "contains a token separator")]
+    fn an_arrow_in_an_attribute_value_is_refused() {
+        attr_value("title", Some(&json!("a->b")));
+    }
+
+    /// The guard must not be so broad it refuses ordinary text — a lone `-` or
+    /// `>` is fine, and refusing them would make the harness unusable for real
+    /// content while proving nothing.
+    #[test]
+    fn ordinary_punctuation_is_not_refused() {
+        for v in [json!("a-b"), json!("a > b"), json!("a_b"), json!("plain")] {
+            let _ = attr_value("title", Some(&v));
+        }
     }
 
     /// `deleted_at` is normalised BEFORE the number branch, so a tombstone

@@ -524,6 +524,16 @@ function loadDriftSkip(): Set<string> {
   return new Set([...loadSkipSet('DRIFT_SKIP'), ...loadSkipSet('QUERY_DRIFT_SKIP')])
 }
 
+/**
+ * The PER-STEP drift set, `<fixture>::<step>`. Parsed from the same source of
+ * truth as the fixture-level sets so it cannot drift into a hand-maintained
+ * copy. Without this, a step skipped per-step reads as LIVE here and the
+ * backend-only declaration for its command looks stale.
+ */
+function loadDriftSkipSteps(): Set<string> {
+  return loadSkipSet('QUERY_DRIFT_SKIP_STEPS')
+}
+
 // ---------------------------------------------------------------------------
 // Fixture loading
 // ---------------------------------------------------------------------------
@@ -901,10 +911,32 @@ describe('#3083 conformance-coverage ratchet', () => {
         `Remove the stale entries from conformance.test.ts.`,
     ).toEqual([])
 
+    // Live == the step actually asserts mock-vs-backend. A step is dead if its
+    // whole fixture is skipped OR if it is named per-step; both must count, or
+    // a per-step skip silently reads as coverage — the exact failure the
+    // fixture/query split was introduced to fix.
+    const skippedSteps = loadDriftSkipSteps()
+    const staleStep = [...skippedSteps]
+      .filter((key) => {
+        const [fxName, stepName] = key.split('::')
+        return !fixtures.some(
+          (fx) => fx.name === fxName && fx.querySteps.some((q) => q.name === stepName),
+        )
+      })
+      .toSorted()
+    expect(
+      staleStep,
+      `QUERY_DRIFT_SKIP_STEPS names steps that no longer exist ${JSON.stringify(staleStep)}. ` +
+        `Remove the stale entries from conformance.test.ts.`,
+    ).toEqual([])
+
     const liveCommands = new Set<string>()
     for (const fx of fixtures) {
       if (skipped.has(fx.name)) continue
-      for (const command of fx.queryCommands) liveCommands.add(command)
+      for (const step of fx.querySteps) {
+        if (skippedSteps.has(`${fx.name}::${step.name}`)) continue
+        liveCommands.add(step.command)
+      }
     }
     const backendOnly = [...fixtureQueryCommands].filter((c) => !liveCommands.has(c)).toSorted()
     const undeclared = backendOnly.filter((c) => !(c in QUERY_STEPS_BACKEND_ONLY))
