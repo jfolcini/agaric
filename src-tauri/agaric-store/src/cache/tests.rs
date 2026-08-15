@@ -4441,6 +4441,102 @@ async fn reindex_block_links_split_excludes_cross_space_375() {
     );
 }
 
+/// #3903, split arm: the owning-page fallback in the pushed-down cross-space
+/// filter must hold on `reindex_block_links_split` too.
+///
+/// The two `INSERT … SELECT` statements are textual twins — `_split`'s comment
+/// says so outright ("a verbatim copy of the single-pool variant's SQL") — but
+/// only the single-pool arm had a #3903 regression test, so nothing held the
+/// split copy to it. That is the half of the pair that could silently rot: the
+/// split path is the one the materializer actually takes whenever a read pool
+/// is configured (`task_handlers::run_reindex_block_links` picks `_split` when
+/// `read_pool` is `Some`, `reindex_block_links` otherwise), so a regression
+/// here would hit the production configuration while the covered arm stayed
+/// green.
+///
+/// Same fixture as `reindex_block_links_target_space_falls_back_to_owning_page_3903`:
+/// both targets sit on a page in the source's space, but only one has its own
+/// `blocks.space_id` materialised. The other is in the window before
+/// `SetBlockPageId`'s `set_block_space_id_from_parent` stamps it, and must
+/// still resolve — through its owning page — as same-space.
+#[tokio::test]
+async fn reindex_block_links_split_target_space_falls_back_to_owning_page_3903() {
+    let (pool, _dir) = test_pool().await;
+    let space1 = "01SPACE0000000000000000001";
+    cs375_insert_page(&pool, space1).await;
+
+    let src_page = "01SRCPAGE3903SPT000000000A";
+    cs375_insert_page(&pool, src_page).await;
+    cs375_set_space(&pool, src_page, space1).await;
+
+    // The target's owning page, in space1. `cs375_set_space` stamps the page
+    // AND everything already paged to it, so the children are inserted AFTER
+    // it to leave their own `space_id` NULL — the pre-`SetBlockPageId` state.
+    let tgt_page = "01TGTPAGE3903SPT000000000B";
+    cs375_insert_page(&pool, tgt_page).await;
+    cs375_set_space(&pool, tgt_page, space1).await;
+
+    // Target A: `space_id` not yet materialised, but its page is in space1.
+    let tgt_pending = "01TGTPEND3903SPT000000000C";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+         VALUES (?, 'content', 'pending', ?, ?)",
+    )
+    .bind(tgt_pending)
+    .bind(tgt_page)
+    .bind(tgt_page)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Target B: same page, `space_id` already stamped — the control.
+    let tgt_stamped = "01TGTSTMP3903SPT000000000D";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) \
+         VALUES (?, 'content', 'stamped', ?, ?, ?)",
+    )
+    .bind(tgt_stamped)
+    .bind(tgt_page)
+    .bind(tgt_page)
+    .bind(space1)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let src_block = "01SRCBLOK3903SPT000000000E";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) \
+         VALUES (?, 'content', ?, ?, ?, ?)",
+    )
+    .bind(src_block)
+    .bind(format!("(({tgt_pending})) (({tgt_stamped}))"))
+    .bind(src_page)
+    .bind(src_page)
+    .bind(space1)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    reindex_block_links_split(&pool, &pool, src_block)
+        .await
+        .unwrap();
+
+    let mut targets: Vec<String> =
+        sqlx::query_scalar("SELECT target_id FROM block_links WHERE source_id = ?")
+            .bind(src_block)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    targets.sort();
+    assert_eq!(
+        targets,
+        vec![tgt_pending.to_string(), tgt_stamped.to_string()],
+        "the split path must resolve an unstamped target's space through its owning \
+         page, exactly as the single-pool path does — otherwise the same-space link is \
+         dropped permanently on the very path production takes when a read pool is \
+         configured (#3903)"
+    );
+}
+
 /// #375: the production `reindex_block_tag_refs_split` path must exclude
 /// cross-space tags AND soft-deleted tags. Regression — the split INSERT
 /// previously dropped both the cross-space filter and the `deleted_at IS NULL`
@@ -4775,5 +4871,115 @@ async fn rebuild_pages_cache_recomputes_counts_c2() {
         cached("PAGEBBBB").await,
         canon_b,
         "rebuild must recompute PAGE-B counts"
+    );
+}
+
+/// #3891, the gate's SKIP branch: a stale key with no cached row is not
+/// recomputed — and that is observable, so it is pinned rather than assumed.
+///
+/// The gate's rationale reads "a key with no cached row has nothing stranded
+/// to sweep". True, but it is worth being exact about the boundary, because
+/// the skip is NOT a literal no-op: with no row under the key the zero-edge
+/// DELETE matches nothing, yet the UPSERT could still ADD rows for targets
+/// rolling up to that key from a DIFFERENT live block. This fixture is that
+/// state, and the ungated form converges on it where the gated form does not
+/// — so "no observable difference" would be the wrong reason to leave the
+/// branch untested.
+///
+/// `k` is a top-level content block (no parent, no page), so its own roll-up
+/// key is itself, and it links to `t`. `b` is its child but has `page_id`
+/// stamped to `p`, so `b`'s current key is `p` and its stale keys are
+/// `[k, b]`. `page_link_cache` starts EMPTY, modelling `k`'s own
+/// `ReindexBlockLinks` never having run (or having failed and still being
+/// pending retry) — i.e. a cache that was already divergent before this call.
+///
+/// Reindexing `b` must write `b`'s own key and leave `k` alone. The row under
+/// `k` is owed by `k`'s own ungated reindex or by the full rebuild, not by a
+/// sibling's stale-key sweep. Asserting it here means a future removal of the
+/// gate turns this red and sends the reader to the rationale, while making the
+/// skip UNCONDITIONAL turns the three #3842 tests red instead — the branch is
+/// pinned from both sides.
+#[tokio::test]
+async fn reindex_page_link_cache_for_block_skips_an_unstranded_stale_key_3891() {
+    let (pool, _dir) = test_pool().await;
+    let p = "PP000000000000000000000000";
+    let t = "TT000000000000000000000000";
+    let k = "KK000000000000000000000000";
+    let b = "BB000000000000000000000000";
+
+    for id in [p, t] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', '', ?)",
+        )
+        .bind(id)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', ?)")
+        .bind(k)
+        .bind(format!("[[{t}]]"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+         VALUES (?, 'content', ?, ?, ?)",
+    )
+    .bind(b)
+    .bind(format!("[[{t}]]"))
+    .bind(k)
+    .bind(p)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for src in [k, b] {
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(src)
+            .bind(t)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    reindex_page_link_cache_for_block(&pool, b).await.unwrap();
+
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache ORDER BY 1, 2",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(p.to_owned(), t.to_owned(), 1)],
+        "the gated sweep must write only the block's CURRENT key; the stale key `k` \
+         carries no cached row, so there is nothing stranded under it to drop, and the \
+         row `k` itself supports is owed by `k`'s own ungated reindex or the full \
+         rebuild — not by a sibling's stale-key sweep (#3891)"
+    );
+
+    // The gate is what produces that state, not the fixture: the full rebuild
+    // — the definition both paths must converge on eventually — does hold the
+    // `k` row. Pinning the difference keeps the trade-off honest rather than
+    // letting it read as agreement.
+    rebuild_page_link_cache(&pool).await.unwrap();
+    let rebuilt: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache ORDER BY 1, 2",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rebuilt,
+        vec![
+            (k.to_owned(), t.to_owned(), 1),
+            (p.to_owned(), t.to_owned(), 1),
+        ],
+        "the full rebuild defines the `k` row as belonging in the cache, so the gate \
+         forgoes an OPPORTUNISTIC repair of an already-divergent cache — it does not \
+         drop a repair the reindexed block itself owes (#3891)"
     );
 }
