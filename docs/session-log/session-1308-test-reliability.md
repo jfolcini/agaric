@@ -66,9 +66,19 @@ reduce the fixture's cost, contrary to the issue's premise.
   never-resolving promise — the identical leak shape, created by the fix meant to remove it
   (caught in review of #3895, before merge). The real population was 3 pre-existing plus 1
   self-inflicted, not 3. Fixed by draining in a loop until a full microtask flush adds
-  nothing new, and closed per the falsification standard rather than by argument: the test
-  now asserts `pendingInvokes` is empty at the end, so a fifth hop would fail the test that
-  introduced it instead of surviving invisibly. All 4 are now bounded.
+  nothing new. **The loop is the fix — the assertion that came with it was not.** The first
+  version of this guard closed with `expect(pendingInvokes).toHaveLength(0)`, and that
+  assertion was vacuous: the loop's own exit condition is `while (pendingInvokes.length > 0)`
+  with a `splice(0)` inside it, so reaching the assertion at all already proves it empty — no
+  production or test change could redden it, which is this repo's own AGENTS.md anti-pattern
+  #1 ("restates a precondition the test itself established"). It also did not pin the claim
+  it was written to make: a fifth hop enqueued *within* the flush window is simply drained by
+  the loop and never touches the assertion either way, and one enqueued *after* the loop
+  exits survives it silently. Caught in review of #3895 (not by this session), and replaced
+  with `expect(countInvokes('cancel_pairing')).toBe(1)` — falsifiable, and it pins the actual
+  invariant (the cleanup's clear was dispatched and settled inside this test), matching the
+  assertion the sibling fake-timer test already used. All 4 never-resolving promises are now
+  bounded; the guard against a fifth is the loop, not a count of what the loop already empties.
 
 - **The ruling was test-bug, and it was argued rather than assumed.** A user really can
   close a dialog mid-`start_pairing`, so the production path deserved scrutiny. It is
