@@ -664,13 +664,15 @@ async fn handle_background_task_inner(
             // every other `page_id` consumer, none of which the seeded
             // `RebuildPageLinkCache` touches.
             //
-            // Consequence for the two locals below: a refused demotion reports
-            // `changed: false`, so `vacated_page` and `moved_between_pages` now
-            // coincide — the ONLY surviving way to vacate a real page key on
-            // this path is the `P1 → P2` move. They are kept distinct anyway,
-            // because the DEGRADATION is keyed on "a real key was vacated"
-            // (true of any future transition off a page) while `P1 → P2` is the
-            // narrower shape whose reachability is argued about below.
+            // Consequence for the guard below: a refused demotion reports
+            // `changed: false`, so inside `if vacated_page` the `P1 → P2` shape
+            // is not a narrower case — it is the ONLY surviving way to vacate a
+            // real page key on this path. An earlier draft carried a
+            // `moved_between_pages` log field for it; that field was provably
+            // the constant `true` at its only use site, so it distinguished
+            // nothing and every reader filtering on it would have matched every
+            // vacate event. `previous_page_id` and `current_page_id` already
+            // carry the shape, so the field is gone rather than pinned.
             //
             // # #3909 — why this is a LOG and not a `debug_assert!`
             //
@@ -709,7 +711,6 @@ async fn handle_background_task_inner(
             // delete-path enqueue is added, which is the change that would
             // genuinely invalidate the reasoning here.
             let vacated_page = write.changed && write.previous.is_some();
-            let moved_between_pages = vacated_page && write.current.is_some();
             let mut seeded_repair = false;
             let mut seeded_full_rebuild = false;
             if write.changed {
@@ -732,17 +733,16 @@ async fn handle_background_task_inner(
                         block_id = %block_id,
                         previous_page_id = ?write.previous,
                         current_page_id = ?write.current,
-                        moved_between_pages,
                         "#3842/#3909: SetBlockPageId moved page_id OFF a real page; the \
                          per-block stale-key sweep only covers {{parent_id, own id}} and \
                          cannot reach the vacated key, so a full RebuildPageLinkCache \
-                         obligation was seeded instead. `moved_between_pages` marks the \
-                         Some(P1) → Some(P2) shape, reachable via the retry sweeper's \
-                         re-enqueue after the parent has moved on (#3909) — it is logged, \
-                         not asserted, because panicking a background worker mid-write-tx \
-                         is a worse answer than the durable rebuild this already owes. \
-                         (The Some(P) → NULL demotion that used to reach this branch is \
-                         refused at the write itself since #3908.)"
+                         obligation was seeded instead. Since #3908 refuses the \
+                         Some(P) → NULL demotion at the write itself, the shape reaching \
+                         this branch is Some(P1) → Some(P2), reachable via the retry \
+                         sweeper's re-enqueue after the parent has moved on (#3909) — it \
+                         is logged, not asserted, because panicking a background worker \
+                         mid-write-tx is a worse answer than the durable rebuild this \
+                         already owes."
                     );
                 }
             }

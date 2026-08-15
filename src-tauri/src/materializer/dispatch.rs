@@ -1730,7 +1730,8 @@ pub(crate) fn invalidations_for_op(
             // #2200 (Tier-2, same safe class as #2186): the whole-vault
             // `RebuildPageIds` recompute is dropped from this arm. A move
             // already re-derives `page_id` AND `space_id` for the moved root
-            // and its entire active subtree SYNCHRONOUSLY, in-transaction,
+            // and its entire subtree — soft-deleted descendants included since
+            // #3919 — SYNCHRONOUSLY, in-transaction,
             // via `commands::block_cleanup::rederive_page_and_space_ids`
             // (called from `commands/blocks/move_ops.rs`, `history.rs`, and
             // the undo path). No block outside the moved subtree can change
@@ -3263,6 +3264,16 @@ mod tests {
 
         for op in &all {
             for hint in [None, Some("content"), Some("page"), Some("tag")] {
+                // Honest note on this axis: for the property being pinned it
+                // re-runs one assertion four times. The create arm gates on
+                // the block type parsed from the PAYLOAD (`payload_for`
+                // hard-codes `"content"`), not on this parameter, so varying
+                // it cannot change the outcome here. The real block-type axis
+                // is covered by the `page_create` check below the loop. The
+                // sweep keeps it anyway so a future arm that starts consulting
+                // the hint is gated, but it should not be read as four
+                // independent cases.
+                //
                 // `None` = remote replay / inbound sync / boot; `Some(true)` =
                 // a proven same-page move; `Some(false)` = a proven cross-page
                 // reparent. Only `MoveBlock` consults it, but sweeping it for
