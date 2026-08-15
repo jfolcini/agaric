@@ -20,9 +20,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { base64UrlToUtf8, utf8ToBase64Url } from '@/lib/base64url'
+import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
   type CursorKind,
+  approximateFtsRank,
   compareEntryToCursor,
   cursorValueFor,
 } from '@/lib/tauri-mock/handlers/search'
@@ -1395,4 +1397,318 @@ describe('cursorValueFor — every CursorKind round-trips to a value the resume 
       }
     }
   }
+})
+
+/**
+ * #3914 review round 3 (BLOCKING) — `decodeCursor` validated the ENVELOPE
+ * (`version`, `values` is an array) but never the ELEMENTS, so
+ * `compareEntryToCursor`'s `ReadonlyArray<CursorValue>` parameter was a
+ * type-level claim about runtime input that nothing checked. Two consequences,
+ * one of them a crash:
+ *
+ *  - `{"version":1,"values":[null]}` decoded cleanly, and `isNullCursorValue`
+ *    tested `v === undefined` — which does NOT cover `null` — so `null.t`
+ *    threw a raw `TypeError`. `dispatch` (`handlers/index.ts`) wraps handlers
+ *    in no try/catch, so it escaped the IPC boundary in place of the
+ *    `AppError`-shaped rejection the #2463 kind-parity rule requires, from the
+ *    very function whose doc promises "never a crash".
+ *  - `{"version":1,"values":[{"t":"Int","v":"abc"}]}` decoded cleanly too, and
+ *    then `a.v - b.v` is `NaN`: `findIndex` never fires, `startIdx` lands past
+ *    the end and the caller gets a silently EMPTY page where the engine's
+ *    serde returns `AppError::Validation`. The same mock-is-more-permissive
+ *    divergence #3899 exists to close, one level below the four envelope modes
+ *    it enumerated.
+ *
+ * Both are reachable by exactly the route the #3899 tests already use — a
+ * hand-built cursor — which is a route any client can take, since the cursor
+ * is an opaque string it is free to persist, mangle or replay.
+ *
+ * The fixture set below is keyed off the engine's `CursorValue`
+ * (`#[serde(tag = "t", content = "v")]`, `engine.rs:143`): serde accepts
+ * exactly `Text(String)` / `Int(i64)` / `Real(f64)` / `Null` and rejects every
+ * other tag/payload pairing at deserialization.
+ */
+describe('run_advanced_query — a cursor whose `values` are not CursorValues is rejected (#3914 review)', () => {
+  const PAGE = id('M0')
+  const ONLY = id('M1')
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    const b = makeBlock(ONLY, 'text', null, PAGE, 0)
+    b['page_id'] = PAGE
+    blocks.set(ONLY, b)
+  })
+
+  /** A hand-built cursor carrying arbitrary `values` — what a client can replay. */
+  function cursorWith(values: unknown[]): string {
+    return utf8ToBase64Url(JSON.stringify({ version: 1, values }))
+  }
+
+  it('a JSON `null` element rejects as validation — it does NOT crash with a TypeError', () => {
+    const cursor = cursorWith([null])
+    // Ordered narrowest-first: a raw TypeError crossing the IPC boundary is a
+    // strictly worse failure than a wrong-but-structured rejection, and
+    // asserting only `kind: 'validation'` would report the crash as a plain
+    // mismatch rather than naming it.
+    expect(() => run({ limit: 10, cursor })).not.toThrow(TypeError)
+    expect(() => run({ limit: 10, cursor })).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+  })
+
+  it.each([
+    ['a wrong-typed payload (Int carrying a string)', [{ t: 'Int', v: 'abc' }]],
+    ['a wrong-typed payload (Text carrying a number)', [{ t: 'Text', v: 5 }]],
+    ['a fractional Int (serde rejects it for i64)', [{ t: 'Int', v: 1.5 }]],
+    ['a tag the engine has no variant for', [{ t: 'Bogus', v: 1 }]],
+    ['a missing payload on a value tag', [{ t: 'Text' }]],
+    ['a primitive where an object belongs', [42]],
+    ['a nested array where an object belongs', [[]]],
+    ['a bad element AFTER a good one', [{ t: 'Int', v: 1 }, null]],
+  ])('rejects %s', (_label, values) => {
+    expect(() => run({ limit: 10, cursor: cursorWith(values) })).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+  })
+
+  it('rejects, rather than silently returning an EMPTY page, on a NaN-producing element', () => {
+    // The pre-fix symptom, pinned as its own case: `a.v - b.v` is NaN, so no
+    // `findIndex` predicate ever holds and the page is empty with `hasMore`
+    // false — a resume that looks like "you reached the end".
+    let response: QueryResponse | null = null
+    expect(() => {
+      response = run({ limit: 10, cursor: cursorWith([{ t: 'Int', v: 'abc' }]) })
+    }).toThrow(expect.objectContaining({ kind: 'validation' }))
+    expect(response).toBeNull()
+  })
+
+  it.each([
+    ['the Null unit variant', [{ t: 'Null' }]],
+    ['the Null unit variant with an explicit null payload', [{ t: 'Null', v: null }]],
+    ['an integral Real (serde reads a JSON integer into f64)', [{ t: 'Real', v: 2 }]],
+    ['a fractional Real', [{ t: 'Real', v: 2.5 }]],
+    ['a negative Int', [{ t: 'Int', v: -7 }]],
+    ['an empty Text', [{ t: 'Text', v: '' }]],
+  ])('still ACCEPTS %s — the guard rejects malformed input, not valid input', (_label, values) => {
+    expect(() => run({ limit: 10, cursor: cursorWith(values) })).not.toThrow()
+  })
+
+  it('still accepts the handler’s OWN minted cursor (the guard is not rejecting real traffic)', () => {
+    const first = run({ limit: 1 })
+    expect(first.nextCursor).not.toBeNull()
+    expect(() => run({ limit: 1, cursor: first.nextCursor as string })).not.toThrow()
+  })
+})
+
+/**
+ * #3914 review round 3 note 2 — the rejection MESSAGE is fixed text, not the
+ * host runtime's.
+ *
+ * `describeError` spliced `e.message` from whatever threw, so the bad-base64
+ * case read one way under jsdom's `atob` ("The string to be decoded contains
+ * invalid characters."), another under Node's, and matched
+ * `QueryCursor::decode`'s wording in neither. The PREFIX is what carries the
+ * meaning — it names which of the engine's four failure modes fired
+ * (`invalid cursor:` / `invalid cursor UTF-8:` / `invalid cursor JSON:` /
+ * `cursor: unsupported version`) — so the prefixes are the engine's verbatim
+ * and the suffixes are fixed strings of our own rather than a host message
+ * masquerading as one.
+ *
+ * Asserted as EXACT equality, not `stringContaining`: a substring assertion
+ * would stay green if the host message came back on the end.
+ */
+describe('run_advanced_query — cursor rejection messages are fixed, not host-dependent (#3914 review note 2)', () => {
+  const PAGE = id('N0')
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+  })
+
+  it('bad base64 reports the engine’s first mode', () => {
+    expect(() => run({ limit: 10, cursor: '!!!not-base64!!!' })).toThrow(
+      expect.objectContaining({ kind: 'validation', message: 'invalid cursor: invalid base64' }),
+    )
+  })
+
+  it('bad UTF-8 reports the engine’s SECOND mode, distinctly from the first', () => {
+    const enc = new TextEncoder()
+    const bytes = Uint8Array.from([
+      ...enc.encode('{"version":1,"values":[{"t":"Text","v":"'),
+      0xff,
+      ...enc.encode('"}]}'),
+    ])
+    let binary = ''
+    for (const b of bytes) binary += String.fromCharCode(b)
+    const cursor = btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
+    expect(() => run({ limit: 10, cursor })).toThrow(
+      expect.objectContaining({
+        kind: 'validation',
+        message: 'invalid cursor UTF-8: invalid utf-8 sequence',
+      }),
+    )
+  })
+
+  it('non-JSON reports the engine’s third mode', () => {
+    expect(() => run({ limit: 10, cursor: utf8ToBase64Url('not json at all') })).toThrow(
+      expect.objectContaining({
+        kind: 'validation',
+        message: 'invalid cursor JSON: not valid JSON',
+      }),
+    )
+  })
+
+  it('an unsupported version reports the engine’s fourth mode, verbatim', () => {
+    expect(() =>
+      run({ limit: 10, cursor: utf8ToBase64Url(JSON.stringify({ version: 99, values: [] })) }),
+    ).toThrow(
+      expect.objectContaining({
+        kind: 'validation',
+        message: 'cursor: unsupported version 99 (expected 1)',
+      }),
+    )
+  })
+})
+
+/**
+ * #3914 review round 3 note 3 — the coupling that keeps the `Rank` non-finite
+ * guard UNREACHABLE, asserted rather than assumed.
+ *
+ * `cursorValueFor` tags a non-finite rank as `Null`, and that tag DISAGREES
+ * with how `compareSortValue` orders the raw value under `Relevance DESC`:
+ * `Infinity` is a number there, so the `desc` flip sorts it FIRST, while
+ * `Null` is NULLS-LAST in both directions and sorts LAST. A row in that state
+ * would compare BEFORE the cursor minted from it, `findIndex` would return 0,
+ * and every page would re-deliver the whole set — a `while (hasMore)` client
+ * that never terminates. It is the one place in the keyset where the two
+ * comparison domains do not agree.
+ *
+ * Nothing made that state reachable when this was written, and the reason is a
+ * coupling between two modules: `run_advanced_query` narrows with
+ * `matchesSearchFolded(content, fulltext)` and ranks with
+ * `approximateFtsRank(content, foldForSearch(fulltext))` — the same haystack
+ * through the same `foldForSearch`, against the same folded needle — so
+ * `includes` being true guarantees `split` finds ≥ 1 occurrence. That is now
+ * load-bearing for keyset monotonicity, and it lives in a file
+ * (`fold-for-search.ts`) whose own tests have no idea. Hence this.
+ *
+ * The corpus deliberately leans on cases where the fold is NOT the identity —
+ * `ß` → `ss` changes LENGTH, `İ` decomposes, a lone combining mark folds to
+ * the EMPTY string — because a coupling between two folds can only break where
+ * folding actually does something.
+ */
+describe('approximateFtsRank — every row the MATCH narrowing keeps has a FINITE rank (#3914 review note 3)', () => {
+  const CONTENTS = [
+    'Straße eins',
+    'STRASSE zwei',
+    'İstanbul',
+    'istanbul',
+    'naïve',
+    'naive',
+    'plain ascii text',
+    'Ünïcödé — em dash and 🎉 emoji',
+    '',
+    'ß',
+    'aaa',
+  ]
+  const QUERIES = [
+    'strasse',
+    'Straße',
+    'STRASSE',
+    'istanbul',
+    'İstanbul',
+    'naive',
+    'naïve',
+    'ascii',
+    'PLAIN',
+    '🎉',
+    '—',
+    'ß',
+    'ss',
+    'a',
+    'zzz-no-match',
+    // A non-empty term that folds AWAY entirely: `matchesSearchFolded` admits
+    // every row for it, so the rank side must stay finite on rows that share
+    // no character with the query at all.
+    '́',
+  ]
+
+  it.each(CONTENTS)('content %j: a kept row never ranks non-finite', (content) => {
+    for (const query of QUERIES) {
+      const kept = matchesSearchFolded(content, query)
+      const rank = approximateFtsRank(content, foldForSearch(query))
+      // The implication, not an equivalence: a row the narrowing DROPS is
+      // allowed to rank `Infinity` (that is what the guard is for), and one of
+      // the fixtures above exercises exactly that.
+      if (kept) {
+        expect(
+          Number.isFinite(rank),
+          `kept but non-finite rank: content=${JSON.stringify(content)} query=${JSON.stringify(query)}`,
+        ).toBe(true)
+      }
+    }
+  })
+
+  it('the guard IS reachable when the two sides are not coupled — so the check above is not vacuous', () => {
+    // A needle the narrowing rejects: this is the only way to reach the
+    // `Infinity` branch, and it proves the corpus is capable of producing it.
+    expect(matchesSearchFolded('aaa', 'zzz-no-match')).toBe(false)
+    expect(approximateFtsRank('aaa', foldForSearch('zzz-no-match'))).toBe(Number.POSITIVE_INFINITY)
+  })
+})
+
+/**
+ * The end-to-end half of note 3: a `Relevance DESC` walk terminates.
+ *
+ * The unit property above pins the coupling; this pins the CONSEQUENCE at the
+ * boundary that would actually hurt a client, over a fulltext term whose fold
+ * is not the identity (`STRASSE` matches `Straße` only after folding). If the
+ * `Rank` → `Null` narrowing ever became reachable through the handler, this
+ * loop would re-deliver the first row forever and abort on the page cap.
+ */
+describe('run_advanced_query — a Relevance DESC keyset walk terminates (#3914 review note 3)', () => {
+  const PAGE = id('P0')
+  const ONE = id('P1')
+  const TWO = id('P2')
+  const THREE = id('P3')
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    // Different occurrence counts and lengths ⇒ three distinct ranks.
+    for (const [blockId, content] of [
+      [ONE, 'Straße'],
+      [TWO, 'STRASSE strasse'],
+      [THREE, 'strasse and a good deal of additional unrelated content'],
+    ] as Array<[string, string]>) {
+      const b = makeBlock(blockId, 'text', content, PAGE, 0)
+      b['page_id'] = PAGE
+      b['content'] = content
+      blocks.set(blockId, b)
+    }
+  })
+
+  it.each([false, true])('desc:%s — every matched row exactly once, one page at a time', (desc) => {
+    const request = {
+      filter: { type: 'Leaf', primitive: { type: 'BlockType', values: ['text'] } },
+      fulltext: 'STRASSE',
+      sort: [{ source: { type: 'Relevance' }, desc }],
+      limit: 1,
+    }
+    const seen: string[] = []
+    let cursor: string | null = null
+    for (let page = 0; page < 12; page++) {
+      const response: QueryResponse = run(cursor === null ? request : { ...request, cursor })
+      seen.push(...response.rows.map((r) => r['id'] as string))
+      if (!response.hasMore) break
+      cursor = response.nextCursor
+      expect(cursor).not.toBeNull()
+    }
+    expect(seen).toHaveLength(3)
+    expect(new Set(seen).size).toBe(3)
+  })
 })

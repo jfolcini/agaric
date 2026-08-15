@@ -97,6 +97,61 @@ where `String::from_utf8` rejects. `base64UrlToUtf8` grew an opt-in `fatal` flag
 a changed default: its two other callers are deliberately lenient, and the doc was the
 thing that was wrong about this call site, not about theirs.
 
+### The fix that broke the rule it was written to enforce
+
+Round three found that the round-two fix introduced a crash. `compareCursorValue` reaches
+`isNullCursorValue`, which tested `v === undefined` — and `undefined` does not cover
+`null`. A cursor of `{"version":1,"values":[null]}` decoded cleanly (an object, `values` is
+an array, version 1), then `null.t` threw a raw `TypeError`. `dispatch` wraps handlers in
+no try/catch, so it left the IPC boundary as a crash where the #2463 kind-parity rule
+requires an `AppError`-shaped rejection — broken by the change written to enforce it, and
+contradicting the function's own doc, which promises "never a crash". Pre-diff the same
+cursor was benign: `anchorValue?.t` optional-chained away and the query restarted at row 0.
+
+`return v == null || …` fixes the crash and leaves the cause. The cause is that
+`compareEntryToCursor` takes `ReadonlyArray<CursorValue>` while `decodeCursor` validated
+only that `values` **is an array** — a type-level claim about a value that came off a wire
+unchecked. The other way that claim was false is quieter and was already shipping:
+`{"t":"Int","v":"abc"}` decoded fine, `a.v - b.v` is `NaN`, no `findIndex` predicate ever
+holds, and the caller gets a silently EMPTY page where serde returns
+`AppError::Validation` — the mock being *more permissive* than the thing it stands in for,
+which is the divergence class #3899 exists to close, one level below the four envelope
+modes it enumerated.
+
+So the elements are validated in `decodeCursor` — tag known, payload type matching the tag
+(`Int` must be integral, as serde's `i64` requires; `Real` accepts a JSON integer, as
+serde's `f64` does) — and rejected there with the engine's own `invalid cursor JSON:`
+prefix. `isNullCursorValue` still handles `null` anyway. Defence in depth is the right
+trade when the alternative failure is an uncaught `TypeError` crossing an IPC boundary.
+
+The rejection messages are now fixed strings. `describeError` spliced the host runtime's
+message in, so bad base64 read "The string to be decoded contains invalid characters"
+under jsdom and something else under Node, matching `QueryCursor::decode`'s wording in
+neither. Each message keeps the engine's prefix — that is the part that names *which* of
+the four modes fired — with a fixed suffix of our own. Distinguishing the first mode from
+the second also needed the base64 alphabet checked before the decode call rather than after
+it, because one combined call cannot tell them apart, and sniffing the exception type
+(`DOMException` vs `TypeError`) would have re-introduced the host-dependence in a new place.
+
+### The unreachability that turned load-bearing
+
+`cursorValueFor` tags a non-finite rank as `Null`, and that tag *disagrees* with how
+`compareSortValue` orders the raw value under `Relevance DESC`: `Infinity` is a number
+there and the `desc` flip sorts it first, while `Null` is NULLS-LAST in both directions and
+sorts last. A row in that state compares before the cursor minted from it, `findIndex`
+returns 0, and every page re-delivers the whole set.
+
+It is unreachable — but only because `run_advanced_query` narrows with
+`matchesSearchFolded(content, fulltext)` and ranks with
+`approximateFtsRank(content, foldForSearch(fulltext))`: the same haystack, the same
+`foldForSearch`, the same folded needle, so `includes` being true means `split` finds at
+least one occurrence. That is a coupling to `fold-for-search.ts`, a module whose own tests
+have no idea it is holding up a keyset invariant. It is now asserted — as a property over a
+corpus where folding actually does something (`ß` → `ss` changes length, `İ` decomposes, a
+lone combining mark folds to the empty string, which is why the `foldedQuery === ''` branch
+is on the reachable path and must return a finite length) — plus an end-to-end
+`Relevance DESC` walk that terminates. Breaking the coupling in either half turns both red.
+
 ### Left open deliberately
 
 The `groupBy` branch returns early for a non-null cursor without ever calling
