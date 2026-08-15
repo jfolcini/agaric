@@ -80,6 +80,14 @@ test.describe('WeeklyView — reschedule by drag (real gesture)', () => {
     // drop zone for it exists — and it stays true however `weekStartsOn` moves
     // that boundary, since the rendered zones are the only authority on which
     // days are on screen.
+    //
+    // `evaluateAll` does NOT auto-wait: on an empty match it returns `[]`
+    // immediately instead of retrying, so enumerating before weekly view has
+    // painted would fail with "rendered days: []" rather than waiting. This
+    // `toBeVisible()` is the barrier that the (now later) drop-zone assertion
+    // used to provide implicitly when it sat above this block.
+    await expect(page.locator('[data-testid^="reschedule-drop-zone-"]').first()).toBeVisible()
+
     const renderedDays = (
       await page
         .locator('[data-testid^="reschedule-drop-zone-"]')

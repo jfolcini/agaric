@@ -20,6 +20,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
+import { cursorValueFor } from '@/lib/tauri-mock/handlers/search'
 import {
   blockTags,
   blocks,
@@ -679,6 +680,189 @@ describe('run_advanced_query — cursor byte fidelity for non-ASCII values (#386
       ),
     ) as { values: Array<Record<string, unknown>> }
     expect(decoded.values[0]).toEqual({ t: 'Int', v: 0 })
+  })
+})
+
+/**
+ * #3888 review note 3 — `run_advanced_query`'s `LastEdited` FILTER and its
+ * `lastEdited` SORT must read the SAME column.
+ *
+ * #3863 pointed the sort getter at the raw `MAX(op_log.created_at)` scan but
+ * left `metaRowMatchesExpr`'s `LastEdited` leaf on `row.lastModifiedAt`, i.e.
+ * `pageLastModifiedAt` WITH the mock-only seeded fallback. The engine's
+ * `compile_last_edited` (`agaric-store/src/filters/primitive.rs:1035-1052`)
+ * compiles to the op-log MAX with the same COALESCE-to-epoch rule and has no
+ * seed analogue, so the split let a seeded, op-log-free block pass a
+ * `Rolling{30}` filter on a stamp the backend cannot see AND then sort at the
+ * never-edited sentinel in the same response — where the engine would have
+ * excluded it outright.
+ *
+ * `list_pages_with_metadata` KEEPS the seeded fallback (its own divergence is
+ * #3884, and its fixtures depend on the differentiated stamps) — the
+ * `list_pages_with_metadata` `LastEdited` tests in
+ * `src/lib/__tests__/tauri-mock.test.ts` are the guard that this change did
+ * not leak across the two commands.
+ */
+describe('run_advanced_query — LastEdited filter reads the op-log, not the seed (#3888 note 3)', () => {
+  const PAGE = id('G0')
+  const SEEDED = id('G1')
+  const EDITED = id('G2')
+
+  const rolling30 = {
+    type: 'Leaf',
+    primitive: { type: 'LastEdited', spec: { type: 'Rolling', days: 30 } },
+  }
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    for (const blockId of [SEEDED, EDITED]) {
+      const b = makeBlock(blockId, 'text', null, PAGE, 0)
+      b['page_id'] = PAGE
+      blocks.set(blockId, b)
+    }
+    // SEEDED: a fresh seeded stamp but NO op-log activity — the engine sees
+    // only the epoch sentinel for it.
+    pageLastModified.set(SEEDED, new Date().toISOString())
+    // EDITED: real op-log activity inside the window.
+    opLog.push({
+      device_id: 'mock-device',
+      seq: 1,
+      op_type: 'UpdateBlock',
+      payload: JSON.stringify({ block_id: EDITED }),
+      created_at: new Date().toISOString(),
+    })
+  })
+
+  it('excludes a seeded, op-log-free block from Rolling{30} (the engine coalesces it to the epoch)', () => {
+    expect(orderedIds({ filter: rolling30 })).not.toContain(SEEDED)
+  })
+
+  it('still includes a block with real op-log activity inside the window', () => {
+    expect(orderedIds({ filter: rolling30 })).toContain(EDITED)
+  })
+
+  it('includes the seeded, op-log-free block in OlderThan{30} — the epoch counts as old', () => {
+    // The mirror of the Rolling case: the engine's COALESCE-to-epoch rule
+    // makes "no op-log" OLD, not "unknown". Asserting only the Rolling side
+    // would also pass if the filter had simply started dropping the row.
+    const older = orderedIds({
+      filter: {
+        type: 'Leaf',
+        primitive: { type: 'LastEdited', spec: { type: 'OlderThan', days: 30 } },
+      },
+    })
+    expect(older).toContain(SEEDED)
+    expect(older).not.toContain(EDITED)
+  })
+
+  it('filters and sorts on one source: the row Rolling{30} keeps is not the one that ties at the sentinel', () => {
+    // The whole point of note 3 — before the fix SEEDED could appear in a
+    // Rolling{30} response AND sort at the never-edited sentinel within it.
+    const rows = run({
+      filter: rolling30,
+      sort: [{ source: { type: 'Column', name: 'lastEdited' } }],
+    }).rows.map((r) => r['id'])
+    expect(rows).toEqual([EDITED])
+  })
+})
+
+/**
+ * #3888 review note 4 — the `Rank` cursor value, the one tagged value the
+ * #3863 tests left unpinned.
+ *
+ * Two separate things are asserted here and they are NOT the same claim:
+ *
+ *  - **The non-finite guard (a real defect).** `approximateFtsRank` returns
+ *    `Number.POSITIVE_INFINITY` for a zero-occurrence row (`search.ts`).
+ *    `JSON.stringify` has no Infinity literal and emits `null`, so the
+ *    payload would be `{"t":"Real","v":null}` — which serde CANNOT
+ *    deserialize into `CursorValue::Real(f64)`, i.e. a cursor the engine
+ *    rejects outright rather than one that merely differs. The engine's own
+ *    answer for "this row has no rank" is `Null`
+ *    (`EngineRow::cursor_value`'s `self.rank.map_or(CursorValue::Null,
+ *    CursorValue::Real)`, `engine.rs:322`), so that is what the guard emits.
+ *    Unreachable through `run_advanced_query` — the MATCH narrowing
+ *    (`matchesSearchFolded`) and the ranker fold the SAME query with the SAME
+ *    function, so a surviving row always has ≥1 occurrence — which is exactly
+ *    why it is asserted against `cursorValueFor` directly.
+ *
+ *  - **Integral ranks (a documented representation difference, NOT fixed).**
+ *    `JSON.stringify(10)` is `10` where `serde_json` writes a `f64` 10.0 as
+ *    `10.0`. This is a byte difference only: serde's `f64` deserializer
+ *    accepts a JSON integer, so a cursor minted either side still decodes to
+ *    the same `Real(10.0)` and resumes at the same row. Pinned rather than
+ *    "fixed" because emitting `10.0` from JS needs hand-built JSON for one
+ *    cosmetic digit, and the epsilon band (`RANK_EPSILON = 1e-9`,
+ *    `engine.rs`) means the value is never compared exactly anyway.
+ */
+describe('run_advanced_query — Rank cursor value (#3888 note 4)', () => {
+  const PAGE = id('F0')
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+  })
+
+  it('tags a non-finite rank as the engine Null, not as an unparseable {"t":"Real","v":null}', () => {
+    // `cursorValueFor`'s `Rank` branch, driven directly: the getter stands in
+    // for `approximateFtsRank`'s zero-occurrence return. `JSON.parse(
+    // JSON.stringify(...))` is the point — it is the wire form, not the
+    // in-memory object, that has to survive serde.
+    const term = {
+      desc: false,
+      get: () => Number.POSITIVE_INFINITY,
+      column: 'Rank',
+    } as unknown as Parameters<typeof cursorValueFor>[0]
+    const onWire = JSON.parse(
+      JSON.stringify(cursorValueFor(term, {} as Parameters<typeof cursorValueFor>[1])),
+    ) as Record<string, unknown>
+    expect(onWire).toEqual({ t: 'Null' })
+  })
+
+  it('emits an integral rank as a JSON integer — a byte difference from serde 10.0 that still decodes to Real(10.0)', () => {
+    const HIT = id('F1')
+    const OTHER = id('F2')
+    // 'aa' folded length 2, one occurrence of 'aa' → rank 2/1 = 2 (integral).
+    for (const [blockId, content] of [
+      [HIT, 'aa'],
+      [OTHER, 'aaaa'],
+    ] as const) {
+      const b = makeBlock(blockId, 'text', content, PAGE, 0)
+      b['page_id'] = PAGE
+      b['content'] = content
+      blocks.set(blockId, b)
+    }
+    // Relevance ASC (lower = better): 'aa' scores 2/1 = 2, 'aaaa' scores
+    // 4/2 = 2 as well, so the id DESC tiebreak decides — F2 first.
+    const page1 = run({
+      fulltext: 'aa',
+      sort: [{ source: { type: 'Relevance' } }],
+      limit: 1,
+    })
+    expect(page1.rows).toHaveLength(1)
+    const cursorJson = new TextDecoder().decode(
+      Uint8Array.from(
+        atob(
+          (page1.nextCursor as string).replaceAll('-', '+').replaceAll('_', '/') +
+            '='.repeat((4 - ((page1.nextCursor as string).length % 4)) % 4),
+        ),
+        (c) => c.codePointAt(0) ?? 0,
+      ),
+    )
+    // The RAW bytes, not the parsed value: `2` vs serde's `2.0` is invisible
+    // after `JSON.parse`, and the raw form is what this pins.
+    expect(cursorJson).toContain('{"t":"Real","v":2}')
+    // …and the resume still works, which is the reason it stays a `2`.
+    const page2 = run({
+      fulltext: 'aa',
+      sort: [{ source: { type: 'Relevance' } }],
+      limit: 1,
+      cursor: page1.nextCursor,
+    })
+    expect(page2.rows.map((r) => r['id'])).not.toEqual(page1.rows.map((r) => r['id']))
   })
 })
 

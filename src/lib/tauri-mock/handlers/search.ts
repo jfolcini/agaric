@@ -295,8 +295,12 @@ function resolveSortTerms(
 /**
  * Read one resolved term's value off `m` and tag it into a {@link
  * CursorValue}, mirroring `EngineRow::cursor_value` (`engine.rs:310-332`).
+ *
+ * Exported ONLY as a test seam for the `Rank` non-finite guard below: that
+ * branch is unreachable through `run_advanced_query` itself (see the guard's
+ * comment), so a handler-level test cannot falsify it.
  */
-function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorValue {
+export function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorValue {
   const raw = term.get(m)
   // `LastEditedMs`'s getter uses `''` (not `null`) as its "no op-log
   // activity" sentinel (see `SORT_COLUMN_GETTERS.lastEdited`'s doc) — the
@@ -326,7 +330,27 @@ function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorValue {
       return { t: 'Int', v: raw as number }
     }
     case 'Rank': {
-      return { t: 'Real', v: raw as number }
+      // #3888 — `approximateFtsRank` returns `Number.POSITIVE_INFINITY` for a
+      // zero-occurrence row, and `JSON.stringify` has no Infinity literal: it
+      // emits `null`, producing `{"t":"Real","v":null}` — a payload serde
+      // CANNOT deserialize into `CursorValue::Real(f64)`, so the engine would
+      // reject the cursor outright rather than merely disagree with it.
+      // `Null` is the engine's OWN answer for a row with no rank
+      // (`EngineRow::cursor_value`: `self.rank.map_or(CursorValue::Null,
+      // CursorValue::Real)`, `engine.rs:322`), so the guard emits a tag the
+      // engine can actually produce.
+      //
+      // Unreachable through this handler — the MATCH narrowing
+      // (`matchesSearchFolded`) and `approximateFtsRank` fold the SAME query
+      // with the SAME function, so every surviving row has ≥1 occurrence —
+      // hence the guard is falsified against `cursorValueFor` directly.
+      //
+      // NOT guarded: an INTEGRAL rank serializes as `2` where serde_json
+      // writes an `f64` as `2.0`. That is a byte difference only — serde's
+      // `f64` deserializer accepts a JSON integer, and the keyset compares
+      // ranks inside `RANK_EPSILON = 1e-9` anyway — so it is pinned by test
+      // rather than papered over with hand-built JSON.
+      return Number.isFinite(raw as number) ? { t: 'Real', v: raw as number } : { t: 'Null' }
     }
     default: {
       // Id / Priority / Title: this mock represents every one of these as a
@@ -495,14 +519,32 @@ export const searchHandlers = {
         (d) => d['page_id'] === b['id'] && !d['deleted_at'] && d['id'] !== b['id'],
       )
       const row = buildPageMetaRow(b, descendants, edges)
-      if (!metaRowMatchesExpr(row, filterExpr)) continue
+      // #3888 note 3 — the `LastEdited` FILTER reads the same raw
+      // `MAX(op_log.created_at)` the `lastEdited` SORT does (`compile_last_edited`,
+      // `agaric-store/src/filters/primitive.rs:1035-1052`), NOT
+      // `row.lastModifiedAt`'s mock-only seeded fallback. #3863 fixed the sort
+      // getter alone, which left this one command's filter and sort reading
+      // DIFFERENT data: a seeded, op-log-free block could pass `Rolling{30}` on a
+      // stamp the backend cannot see and then sort at the never-edited sentinel in
+      // the same response, where the engine would have excluded it outright.
+      //
+      // The entry is built BEFORE the predicate so the filter and the sort share
+      // one `lastEditedRaw` memo (see `rawLastEditedOf`) — the resolver is still
+      // lazy, so a query with no `LastEdited` leaf and no `lastEdited` sort pays
+      // for no op-log scan at all.
+      //
+      // `list_pages_with_metadata` deliberately keeps the seeded-fallback default
+      // (`DEFAULT_LAST_EDITED_SOURCE`): its own divergence is #3884, and its
+      // dev-preview/e2e fixtures depend on the differentiated stamps.
+      const entry: MatchedEntry = { b, row }
+      if (!metaRowMatchesExpr(row, filterExpr, () => rawLastEditedOf(entry))) continue
       // Full-text narrowing: the engine INTERSECTS `fts_blocks MATCH ?` with
       // the structural predicate (`FROM fts_blocks fts JOIN blocks b …`).
       // The mock approximates the MATCH with a folded substring test over
       // the row's own content — see `approximateFtsRank`'s docs for what
       // that leaves out (referenced tag/page names, real FTS5 query syntax).
       if (hasFulltext && !matchesSearchFolded(row.content ?? '', fulltext)) continue
-      matched.push({ b, row })
+      matched.push(entry)
     }
     // #3837 — honour the request's `sort`, defaulting to relevance-first when
     // `fulltext` is present and to the `b.id DESC` recency keyset otherwise
