@@ -381,25 +381,60 @@ function encodeCursor(values: CursorValue[]): string {
   return utf8ToBase64Url(json)
 }
 
+/** `e.message` for an `Error`, else `String(e)` — for embedding a caught value in a rejection message. */
+function describeError(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
 /**
- * Decode a keyset cursor produced by {@link encodeCursor}. `null` on any
- * malformed input (mirrors the engine's decode being infallible on ITS OWN
- * encoded cursors, but never trusting a foreign string) rather than throwing
- * — a stale or foreign cursor degrades to "start from the top", same as the
- * pre-#3863 `{ id }` decode's `try/catch`.
+ * Decode a keyset cursor produced by {@link encodeCursor}, THROWING a
+ * {@link validationRejection} on any malformed input — mirroring
+ * `QueryCursor::decode` (`agaric-store/src/query/engine.rs:180-195`), which
+ * returns a distinct `AppError::Validation` for each of four failure modes
+ * (bad base64, invalid UTF-8, invalid JSON, unsupported version) and
+ * propagates it to the caller rather than degrading.
+ *
+ * #3899 — before this, EVERY failure mode here (including a corrupted,
+ * foreign, or version-stale cursor) returned `null` and the handler silently
+ * restarted from row 0: a client shipping a stale cursor got an error from
+ * the real backend and a silent page-1 restart from the mock — the mock
+ * being MORE permissive than the thing it stands in for, the exact
+ * divergence class this module exists to remove. `list_pages_with_metadata`
+ * (`handlers/pages.ts`) keeps its OWN cursor decode lenient on malformed
+ * input by design (its real backend command tolerates it there); this one
+ * does not, because ITS real backend command does not either.
  */
-function decodeCursor(s: string): QueryCursorPayload | null {
+function decodeCursor(s: string): QueryCursorPayload {
+  let json: string
   try {
     // `base64UrlToUtf8`, not `atob`: the inverse of {@link encodeCursor}'s
     // UTF-8 encoding. A bare `atob` reads the UTF-8 bytes of a non-ASCII
     // title back as Latin-1 code units (mojibake), which would silently
     // corrupt the anchor value on resume.
-    const parsed = JSON.parse(base64UrlToUtf8(s)) as QueryCursorPayload
-    if (parsed.version !== CURSOR_VERSION || !Array.isArray(parsed.values)) return null
-    return parsed
-  } catch {
-    return null
+    json = base64UrlToUtf8(s)
+  } catch (e) {
+    throw validationRejection(`invalid cursor: ${describeError(e)}`)
   }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch (e) {
+    throw validationRejection(`invalid cursor JSON: ${describeError(e)}`)
+  }
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    !Array.isArray((parsed as QueryCursorPayload).values)
+  ) {
+    throw validationRejection('invalid cursor JSON: missing `values` array')
+  }
+  const payload = parsed as QueryCursorPayload
+  if (payload.version !== CURSOR_VERSION) {
+    throw validationRejection(
+      `cursor: unsupported version ${payload.version} (expected ${CURSOR_VERSION})`,
+    )
+  }
+  return payload
 }
 
 /**
@@ -430,6 +465,57 @@ function compareByTerms(terms: ReadonlyArray<ResolvedSortTerm>) {
     }
     return 0
   }
+}
+
+/** A decoded {@link CursorValue} back into the {@link SortValue} domain `compareSortValue` compares over. */
+function cursorValueToSortValue(v: CursorValue | undefined): SortValue {
+  if (v === undefined || v.t === 'Null') return null
+  return v.v
+}
+
+/**
+ * #3900 — is matched entry `m` strictly AFTER the cursor's tuple, in the same
+ * total order {@link compareByTerms} sorted `matched` with?
+ *
+ * This IS the engine's OR-of-AND keyset predicate (`keyset_predicate`,
+ * `agaric-store/src/query/engine.rs:417-442`: `(t0 ▷ v0) OR (t0 = v0 AND t1 ▷
+ * v1) OR …`), just expressed as a single lexicographic comparison instead of
+ * an OR-of-AND expansion — the two are equivalent by construction because
+ * both compare term-by-term with the SAME per-term rule (`compareSortValue`,
+ * NULLS LAST in both directions) that defines `matched`'s own order: the
+ * first term that disagrees between `m` and the cursor decides, exactly like
+ * the first `AND`-clause in the predicate whose strict comparison holds.
+ *
+ * Deliberately positional over `terms`/`cursorValues` — it reads
+ * `cursorValues[i]` against `terms[i]` with NO lookup of which term the
+ * cursor was minted under, mirroring the engine's OWN indexing
+ * (`cursor.values[i]` against the CURRENT request's `terms[i]`,
+ * `engine.rs:429,434`). The prior mock code instead read the cursor's `id`
+ * out of whichever slot the CURRENT sort's `column: 'Id'` term happened to
+ * occupy — correct only when the cursor was minted under an IDENTICAL sort,
+ * and silently wrong (restarting the query from row 0 rather than resuming)
+ * when a caller changed `sort` between pages, since #3900 found this
+ * unasserted. Replaying the positional comparison instead means a
+ * sort-change between pages now degrades EXACTLY like the engine does — a
+ * deterministic, possibly-nonsensical page (comparing a stale term's value
+ * against a differently-typed CURRENT column), never a crash, never a silent
+ * restart — because both sides now run the identical positional algorithm.
+ * `cursorValues[i]` past the end of a shorter cursor (a genuinely
+ * shorter-tuple sort change) reads as `undefined` → {@link
+ * cursorValueToSortValue}'s `null`, which is a safe degrade the engine has
+ * no equivalent of (`cursor.values[i]` there is an out-of-bounds panic, not
+ * a value a mock should ever try to reproduce).
+ */
+function compareEntryToCursor(
+  terms: ReadonlyArray<ResolvedSortTerm>,
+  m: MatchedEntry,
+  cursorValues: ReadonlyArray<CursorValue>,
+): number {
+  for (const [i, term] of terms.entries()) {
+    const cmp = compareSortValue(term.get(m), cursorValueToSortValue(cursorValues[i]), term.desc)
+    if (cmp !== 0) return cmp
+  }
+  return 0
 }
 
 export const searchHandlers = {
@@ -553,30 +639,22 @@ export const searchHandlers = {
     const sortTerms = resolveSortTerms(sortKeys, hasFulltext, foldedQuery)
     matched.sort(compareByTerms(sortTerms))
 
-    // #3863 — the cursor now carries the FULL resolved sort-term tuple
+    // #3863 — the cursor carries the FULL resolved sort-term tuple
     // (`{ version, values }`, one tagged `CursorValue` per term, in ORDER BY
     // order), mirroring the engine's `QueryCursor` (`engine.rs:166-196`) —
-    // not just `{ id }`. `resolveSortTerms` guarantees exactly one term is
-    // tagged `column: 'Id'` (either an explicit `created` key, or the
-    // appended tiebreak), so the anchor id always has a well-defined slot to
-    // read back regardless of which sort produced the cursor.
-    const idTermIndex = sortTerms.findIndex((t) => t.column === 'Id')
-    // Keyset cursor over the resolved sort order: skip up to AND INCLUDING
-    // the anchor id. The mock still resumes by re-locating the anchor ROW in
-    // the freshly-resolved order (rather than replaying the engine's
-    // OR-of-AND keyset predicate over the full tuple) — every resolved order
-    // here terminates in a unique `id`, so `id` alone is a total,
-    // unambiguous resume point; only the WIRE ENCODING needed to change to
-    // stop pinning the mock-only `{ id }` shape as if it were the engine's.
+    // not just `{ id }`.
+    //
+    // #3900 — resume by REPLAYING the engine's positional keyset predicate
+    // (`compareEntryToCursor`, above) rather than by re-locating an anchor
+    // ROW by id. `decodeCursor` (#3899) now THROWS on a malformed, foreign,
+    // or version-stale cursor instead of returning `null`, mirroring
+    // `QueryCursor::decode` propagating `AppError::Validation` to the
+    // caller.
     let startIdx = 0
     if (cursor != null) {
       const decoded = decodeCursor(cursor)
-      const anchorValue = decoded?.values[idTermIndex]
-      const anchorId = anchorValue?.t === 'Text' ? anchorValue.v : null
-      if (anchorId != null) {
-        const idx = matched.findIndex((m) => m.b['id'] === anchorId)
-        if (idx >= 0) startIdx = idx + 1
-      }
+      const idx = matched.findIndex((m) => compareEntryToCursor(sortTerms, m, decoded.values) > 0)
+      startIdx = idx === -1 ? matched.length : idx
     }
     const slice = matched.slice(startIdx, startIdx + limit + 1)
     const hasMore = slice.length > limit

@@ -19,6 +19,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { utf8ToBase64Url } from '@/lib/base64url'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { cursorValueFor } from '@/lib/tauri-mock/handlers/search'
 import {
@@ -509,6 +510,120 @@ describe('run_advanced_query — cursor payload shape (#3863)', () => {
     })
     expect(page2.rows.map((r) => r['id'])).toEqual([LOW]) // position 20
     expect(page2.hasMore).toBe(false)
+  })
+})
+
+/**
+ * #3900 — resuming with a cursor minted under a DIFFERENT `sort` than the
+ * current request's must not silently restart from row 0.
+ *
+ * Before the fix, the anchor id was read out of the CURRENT request's
+ * resolved sort at `idTermIndex` — the slot `sortTerms.findIndex(t =>
+ * t.column === 'Id')` lands on for THIS request, not the sort the cursor was
+ * minted under. Adding a term shifts that index (`[Position, Id]` → id at
+ * 1; `[Position, Priority, Id]` → id at 2), so the OLD cursor's 2-value
+ * tuple has nothing at the NEW index-2 slot: `anchorValue` is `undefined`,
+ * `anchorId` falls to `null`, and the handler falls back to `startIdx = 0` —
+ * a full restart that RE-DELIVERS the row `page1` already returned.
+ *
+ * The fixture is built so `R2`/`R3` decide entirely on `position` (distinct
+ * values, term 0 alone resolves them) and only the anchor row `R1` itself
+ * ties on `position` and has to fall through to the stale `priority` slot —
+ * `R1`'s `priority` is deliberately `!R1` (`!` sorts below every digit,
+ * including the `0` every seeded ULID starts with) so that comparison
+ * resolves `R1` as NOT-after-cursor, i.e. correctly excluded, regardless of
+ * the exact ULID bytes.
+ */
+describe('run_advanced_query — cursor reused across a sort change (#3900)', () => {
+  const PAGE = id('H0')
+  const R1 = id('H1')
+  const R2 = id('H2')
+  const R3 = id('H3')
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    for (const [blockId, position, priority] of [
+      [R1, 5, '!R1'],
+      [R2, 10, null],
+      [R3, 15, null],
+    ] as const) {
+      const b = makeBlock(blockId, 'text', null, PAGE, position)
+      b['page_id'] = PAGE
+      b['position'] = position
+      b['priority'] = priority
+      blocks.set(blockId, b)
+    }
+  })
+
+  const TEXT_ONLY = { type: 'Leaf', primitive: { type: 'BlockType', values: ['text'] } }
+
+  it('does not re-deliver the anchor row when a term is added to `sort` between pages', () => {
+    // Page 1: `sort: [position]` (2 resolved terms: Position, Id-tiebreak).
+    const page1 = run({
+      filter: TEXT_ONLY,
+      sort: [{ source: { type: 'Column', name: 'position' } }],
+      limit: 1,
+    })
+    expect(page1.rows.map((r) => r['id'])).toEqual([R1])
+    expect(page1.hasMore).toBe(true)
+
+    // Page 2: `sort` gains a `priority` term (3 resolved terms: Position,
+    // Priority, Id-tiebreak) — Id's index shifts from 1 to 2.
+    const page2 = run({
+      filter: TEXT_ONLY,
+      sort: [
+        { source: { type: 'Column', name: 'position' } },
+        { source: { type: 'Column', name: 'priority' } },
+      ],
+      limit: 10,
+      cursor: page1.nextCursor,
+    })
+    // Pre-fix: R1 (page 1's row) reappears at the front of page 2. Fixed:
+    // page 2 resumes past it.
+    expect(page2.rows.map((r) => r['id'])).toEqual([R2, R3])
+  })
+})
+
+/**
+ * #3899 — `run_advanced_query` must REJECT a malformed cursor, mirroring
+ * `QueryCursor::decode` (`agaric-store/src/query/engine.rs:180-195`)
+ * returning `AppError::Validation` for bad base64 / invalid UTF-8 / invalid
+ * JSON / an unsupported version, and the command propagating it to the
+ * caller — rather than silently starting the query over from row 0.
+ */
+describe('run_advanced_query — malformed cursor is rejected, not silently restarted (#3899)', () => {
+  const PAGE = id('I0')
+  const ONLY = id('I1')
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    const b = makeBlock(ONLY, 'text', null, PAGE, 0)
+    b['page_id'] = PAGE
+    blocks.set(ONLY, b)
+  })
+
+  it('throws a validation rejection on a cursor that is not valid base64url', () => {
+    expect(() => run({ limit: 10, cursor: '!!!not-base64!!!' })).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+  })
+
+  it('throws a validation rejection on a cursor that decodes to non-JSON', () => {
+    const notJson = utf8ToBase64Url('not json at all')
+    expect(() => run({ limit: 10, cursor: notJson })).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+  })
+
+  it('throws a validation rejection on a cursor carrying an unsupported version', () => {
+    const staleVersion = utf8ToBase64Url(JSON.stringify({ version: 99, values: [] }))
+    expect(() => run({ limit: 10, cursor: staleVersion })).toThrow(
+      expect.objectContaining({ kind: 'validation', message: expect.stringContaining('version') }),
+    )
   })
 })
 
