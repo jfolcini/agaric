@@ -4643,8 +4643,10 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
     let mat_a = Materializer::new(pool_a.clone());
     let mat_b = Materializer::new(pool_b.clone());
 
-    // #602 test seam: one Loro registry per device. Leaked to match the
-    // `&'static` shape of the production process-global state.
+    // #602 test seam: one Loro registry per device. Each `Materializer`
+    // owns its own `Arc<LoroState>` (#2249: an explicitly threaded value,
+    // not a process global), so cloning the `Arc` keeps the two devices'
+    // engine state independent.
     let state_a = std::sync::Arc::clone(mat_a.loro_state());
     let state_b = std::sync::Arc::clone(mat_b.loro_state());
 

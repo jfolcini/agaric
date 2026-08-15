@@ -105,12 +105,20 @@ async fn seed_deleted_subtree(pool: &SqlitePool) {
 /// below asserts an exact delta on `descendant_fanout_dropped`, a
 /// process-global counter that `apply.rs` bumps from several sites
 /// reachable by the other tests in this binary — so that test is NOT
-/// safe under concurrent plain `cargo test`. Unlike the sibling
-/// `*_convergence_tests` files, this file is NOT listed in
-/// `.config/nextest.toml`'s `spy-counter-serial` test-group, so it has
-/// no `max-threads = 1` backstop forcing it onto its own process even
-/// under `cargo nextest run` — its exposure to counter pollution is
-/// worse than theirs, not merely equivalent.
+/// safe under concurrent plain `cargo test`, which runs the whole binary
+/// in ONE process with the tests on threads. Under `cargo nextest run`
+/// it is safe, because nextest "executes each individual test in a
+/// separate process" (nexte.st, "How nextest works").
+///
+/// This file is NOT listed in `.config/nextest.toml`'s
+/// `spy-counter-serial` test-group, unlike the sibling
+/// `*_convergence_tests` files — but that makes no difference to counter
+/// pollution either way. A test group is a concurrency semaphore over its
+/// members: `max-threads = 1` serialises the group, it does not put a test
+/// in its own process (nextest already does that for every test, grouped
+/// or not). So this file's exposure is the SAME as those siblings', not
+/// worse: safe under `cargo nextest run`, unsafe under concurrent plain
+/// `cargo test`, for all of them alike.
 fn fresh_loro_state() -> LoroState {
     // #2249: per-test isolated state (no process global).
     LoroState::new()
@@ -306,11 +314,12 @@ async fn dispatch_restore_descendants_parse_failure_bumps_divergence_metric() {
     // Non-empty cohort so the empty-list fast path is not taken.
     let cohort = [PAGE_ID.to_string(), CHILD_1.to_string()];
 
-    // Sample the process-global counter as a delta — it is monotonic and
-    // other tests in this nextest process may have bumped it concurrently
-    // (see the note on `fresh_loro_state` above: this file is not in the
-    // `spy-counter-serial` nextest group, so nothing forces this test
-    // onto its own process).
+    // Sample the process-global counter as a delta rather than an absolute:
+    // it is monotonic, and under plain `cargo test` (one process, tests on
+    // threads) other tests bump it from `apply.rs`. Under `cargo nextest
+    // run` this test owns its process, so nothing else can move the counter
+    // between the two reads — see the note on `fresh_loro_state` above for
+    // why the `spy-counter-serial` group is not what provides that.
     let before = super::descendant_fanout_dropped::count();
     super::dispatch_restore_descendants(&pool, &root, &cohort, &state).await;
     let after = super::descendant_fanout_dropped::count();

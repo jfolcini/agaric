@@ -480,8 +480,12 @@ fn from_trusted_and_deserialize_still_accept_synthetic_ids_1558() {
 /// whose id is literally `"__drop-after-last__"` only fails to collide with
 /// the frontend sentinel because it lands as `"__DROP-AFTER-LAST__"`.
 ///
-/// This pins that coupling from the Rust side: if either normalization is
-/// ever relaxed to preserve peer bytes verbatim, this test reddens. See
+/// This pins that coupling from the Rust side twice over: if either
+/// normalization is ever relaxed to preserve peer bytes verbatim, this test
+/// reddens — and because it also pins the exact normalised form
+/// (`__DROP-AFTER-LAST__`), swapping ASCII-uppercasing for some other
+/// mangling reddens it too, rather than sliding through on "not verbatim".
+/// See
 /// `SENTINEL_ID preconditions (#3794)` in
 /// `src/lib/__tests__/tree-utils.mutants-drop.test.ts` for the other half
 /// of the same precondition (SENTINEL_ID itself must stay lowercase, which
@@ -506,6 +510,17 @@ fn sentinel_id_does_not_survive_untrusted_ingest_verbatim_3794() {
          if it ever does, a peer-supplied block whose id is the sentinel string \
          would silently collide with the frontend's drop-after-last sentinel (#3794)"
     );
+    // "not verbatim" alone would also be satisfied by a normalisation that
+    // mangles the id some entirely different way. Pin the actual output, which
+    // is the property the frontend fold relies on: ASCII-uppercased, hence
+    // case-distinct from the lowercase `SENTINEL_ID`.
+    assert_eq!(
+        trusted.as_str(),
+        "__DROP-AFTER-LAST__",
+        "from_trusted must ASCII-uppercase the sentinel string (agaric-core/src/ulid.rs \
+         `to_ascii_uppercase`); any other normalisation is a change to the cross-language \
+         precondition SENTINEL_ID depends on (#3794)"
+    );
 
     // Untrusted path: the genuinely-untrusted `Deserialize` entry point that
     // remote op-log payloads / sync messages / IPC parameters reach.
@@ -516,6 +531,12 @@ fn sentinel_id_does_not_survive_untrusted_ingest_verbatim_3794() {
         FRONTEND_SENTINEL_ID,
         "Deserialize must NOT round-trip the sentinel's bytes verbatim either — \
          same #3794 hazard on the untrusted sync/IPC ingest path"
+    );
+    assert_eq!(
+        de.as_str(),
+        "__DROP-AFTER-LAST__",
+        "Deserialize must ASCII-uppercase the sentinel string, byte-identically to \
+         from_trusted (AGENTS.md invariant #8 — the two paths must agree)"
     );
 }
 

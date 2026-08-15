@@ -979,12 +979,14 @@ mod tests {
 
     /// Smoke test for the `#[cfg(test)]` `tokio::spawn` seam in
     /// [`spawn_periodic_snapshot`]. Drives the real spawned task end to
-    /// end: install the process-global state, register + mutate an
-    /// engine, spawn the periodic task with a 1-second cadence, then poll
-    /// `loro_doc_state` until the engine's snapshot row appears. The task
-    /// skips its first `interval.tick()` and pulls state from
-    /// `crate::loro::shared::get()`, so this exercises the spawn, the tick
-    /// loop, and the `save_all_engines` call the seam exists to cover.
+    /// end: construct an `Arc<LoroState>`, register + mutate an engine in
+    /// it, hand that same `Arc` to the periodic task with a 1-second
+    /// cadence, then poll `loro_doc_state` until the engine's snapshot row
+    /// appears. The task skips its first `interval.tick()` and reads the
+    /// `state` parameter it was constructed with (#2249: engine state is an
+    /// explicitly threaded value, not a process global), so this exercises
+    /// the spawn, the tick loop, and the `save_all_engines` call the seam
+    /// exists to cover.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn spawn_periodic_snapshot_persists_engine_state() {
         use std::sync::Arc;
@@ -994,8 +996,8 @@ mod tests {
         let (pool, _dir) = fresh_pool().await;
         let space = SpaceId::from_trusted(SPACE_PERIODIC);
 
-        // Install fresh process-global state and register an engine the
-        // task can find via `crate::loro::shared::get()`. Mutate it so
+        // Fresh per-test state, with an engine registered in it that the
+        // task will find through the `Arc` passed to it below. Mutate it so
         // the exported snapshot is non-trivial.
         let state = std::sync::Arc::new(crate::loro::shared::LoroState::new());
         {

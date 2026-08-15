@@ -16,8 +16,11 @@
 //!   path (a chunk-of-one each) produces the SAME final state, proving the
 //!   deferral changed only WHEN the work runs, not its result.
 //!
-//! Run under `cargo nextest run` (one process per test): the Loro `OnceLock`
-//! and the two spy counters are process-global.
+//! Run under `cargo nextest run` (one process per test): the two spy counters
+//! are process-global monotonic statics, so the invocation-count assertions in
+//! (c) are only sound when no other test can bump them between reads. (The
+//! engine state is not a concern — #2249 deleted the process-global `OnceLock`
+//! registry; `LoroState` is an ordinary per-instance value now.)
 
 // The assertions below cast small compile-time `const N: usize` fixtures (≤ 12)
 // and loop indices to `i64` for rank/count comparisons; the values are tiny, so

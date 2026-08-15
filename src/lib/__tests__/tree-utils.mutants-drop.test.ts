@@ -171,8 +171,12 @@ describe('SENTINEL_ID preconditions (#3794)', () => {
   //    agaric-engine/src/block_ops.rs), and a peer-supplied block's own id
   //    goes through the same untrusted-path ASCII-uppercasing described in
   //    (2), so an injected lowercase `__drop-after-last__` id would land
-  //    uppercase and never collide. No test written for this case — it needs
-  //    a Rust-side fixture (tracked on #3794).
+  //    uppercase and never collide. The uppercasing half of that is now
+  //    pinned Rust-side by
+  //    `sentinel_id_does_not_survive_untrusted_ingest_verbatim_3794`
+  //    (src-tauri/agaric-core/src/ulid/tests.rs, #3794); the
+  //    locally-generated-ULID half is still unasserted — it holds by
+  //    construction, not by a fixture.
   // 2. A peer-supplied id that COLLIDES with SENTINEL_ID after normalization
   //    — the sync ingest paths accept peer-supplied block ids verbatim and
   //    ASCII-uppercase whatever they cannot parse as a ULID, so an injected
@@ -182,9 +186,13 @@ describe('SENTINEL_ID preconditions (#3794)', () => {
   // Make an uppercase SENTINEL_ID fail here rather than silently invalidate
   // that fold.
   //
-  // This covers only half the stated precondition. The other half — the
-  // Rust normalization being relaxed to preserve peer bytes — cannot be
-  // asserted from here and needs a Rust-side test (tracked on #3794).
+  // This covers only half the stated precondition: SENTINEL_ID itself
+  // staying lowercase. The other half — the Rust normalization being relaxed
+  // to preserve peer bytes verbatim — cannot be asserted from here, and is
+  // pinned on the Rust side by
+  // `sentinel_id_does_not_survive_untrusted_ingest_verbatim_3794`
+  // (src-tauri/agaric-core/src/ulid/tests.rs, #3794). The two tests are a
+  // pair; neither is sufficient alone.
   it('SENTINEL_ID is lowercase, so uppercased peer ids cannot collide', () => {
     expect(SENTINEL_ID).toBe(SENTINEL_ID.toLowerCase())
     expect(SENTINEL_ID).not.toBe(SENTINEL_ID.toUpperCase())

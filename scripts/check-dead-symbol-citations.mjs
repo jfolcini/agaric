@@ -17,6 +17,21 @@
 // files. If more deleted symbols accrue stale citations, add them to
 // `DEAD_SYMBOLS` below rather than generalising prematurely.
 //
+// KNOWN COVERAGE GAP — state it rather than imply the sweep is complete.
+// #2249/#2250 deleted `shared::get()` and `shared::init()` alongside
+// `install_for_test`, and stale citations of those two recur just as often
+// (#3959's review found one in `snapshot.rs`, and a follow-up sweep found
+// three more in `session_state_machine.rs`, `create_edit_convergence_tests.rs`
+// and `sync_daemon/tests.rs`). They are NOT in `DEAD_SYMBOLS` and cannot
+// usefully be: this guard matches on the bare symbol name with `\b`
+// boundaries, and `get` / `init` are ubiquitous live identifiers, so adding
+// them would fire on essentially every file. Matching the qualified path
+// (`shared::get`) instead would miss the real citations, which are prose
+// (`... via `shared::get()``) and intra-doc links
+// (`[`agaric_engine::loro::shared::get`]`) written many different ways.
+// So: this hook covers `install_for_test` and nothing else. Dead citations
+// of the sibling symbols are caught by review, not by CI.
+//
 // One file is intentionally exempted: the sql_only_fallback module doc
 // (`src-tauri/agaric-engine/src/apply/sql_only_fallback.rs`) mentions
 // `install_for_test` BY NAME on purpose, in the past tense, as the
@@ -89,9 +104,23 @@ const SYMBOL_RE = new Map(
   DEAD_SYMBOLS.map((symbol) => [symbol, new RegExp(`\\b${escapeRegExp(symbol)}\\b`)]),
 )
 
+// `git ls-files` output today: 4,572 paths / ~278 KB, i.e. ~27% of Node's 1 MB
+// default `maxBuffer`, which the tree would cross at roughly 17k tracked files.
+// Overflow is not a graceful degradation in either direction: here the ENOBUFS
+// throw does not match /not a git repository/i, so it becomes an exit-2
+// invocation error that fails every commit; in the sibling
+// `check-architecture-citations.mjs` it is swallowed by a bare `catch` and
+// silently disables the guard. Both are raised to 64 MB (~230x current output)
+// and should stay in step.
+const GIT_LS_FILES_MAX_BUFFER = 64 * 1024 * 1024
+
 function trackedFiles() {
   try {
-    return execFileSync('git', ['ls-files'], { cwd: REPO_ROOT, encoding: 'utf8' })
+    return execFileSync('git', ['ls-files'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      maxBuffer: GIT_LS_FILES_MAX_BUFFER,
+    })
       .trim()
       .split('\n')
       .filter(Boolean)

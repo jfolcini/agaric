@@ -47,9 +47,13 @@ path (the #891 false-drift source).
 > **Note on #891.** The original issue framing linked #891 to this file. That
 > was a misattribution: #891 was a conformance test silently running the
 > fallback, fixed by the `engine_path_tests` convention below, not by touching
-> the fallback itself. The lesson it teaches — *an apply test with no engine
-> installed silently exercises the fallback, not production* — is the
-> cornerstone of the test strategy.
+> the fallback itself. The lesson it teaches — *an apply test that never checks
+> whether the engine path actually ran can silently pass on the SQL-only
+> fallback instead of production* — is the cornerstone of the test strategy.
+> (Pre-#2249 that was phrased as "a test with no engine **installed**". There is
+> no install step anymore: engine state is a required `&LoroState` parameter, so
+> the failure mode is no longer a missing install but an unasserted one — hence
+> the `sql_only_fallback::count()` delta-zero checks.)
 
 ## What converged (#1323)
 

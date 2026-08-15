@@ -437,7 +437,11 @@ stages = ["pre-commit"]
 # doc docs/architecture/sql-only-convergence.md. Narrow and
 # incident-specific by design — see scripts/check-dead-symbol-citations.mjs
 # for the rationale and how to add another dead symbol if this recurs
-# elsewhere.
+# elsewhere. Coverage is `install_for_test` ONLY: the sibling symbols
+# deleted by the same change (`shared::get()` / `shared::init()`) cannot be
+# added, because `get` / `init` are too generic to word-match without firing
+# on every file, so stale citations of THOSE are review-caught, not
+# CI-caught (see the script's "KNOWN COVERAGE GAP" note).
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -447,6 +451,20 @@ entry = "node scripts/check-dead-symbol-citations.mjs"
 language = "system"
 pass_filenames = false
 files = "\\.(rs|md)$"
+stages = ["pre-commit"]
+
+# Self-test the guard's own exit-2 invocation-error path (spawns itself with
+# `git` stripped from PATH and asserts exit 2 + an "invocation error" stderr)
+# whenever the guard script itself changes. Without this the exit-2 branch is
+# reachable only by hand, so a regression that re-swallowed a genuine git
+# failure as fail-open-clean would land unnoticed.
+[[repos.hooks]]
+id = "dead-symbol-citations-selftest"
+name = "dead-symbol citation guard self-test (#3817 exit-2 path)"
+entry = "node scripts/check-dead-symbol-citations.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-dead-symbol-citations\\.mjs$"
 stages = ["pre-commit"]
 
 # Frontend import-cycle guard (#761). The `src/` module graph was driven to

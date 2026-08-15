@@ -25,9 +25,27 @@
 //!     for the `RunEvent::Exit` snapshot save,
 //!   - captured by the maintenance jobs and the periodic snapshot task.
 //! * **Tests** — construct a fresh `LoroState` (or let
-//!   `Materializer::new` build one) per test. Isolation is per-instance
-//!   now, so engine-path tests run safely under plain `cargo test` in
-//!   one process across threads; the nextest-only constraint is gone.
+//!   `Materializer::new` build one) per test. ENGINE-STATE isolation is
+//!   per-instance now, so on that count engine-path tests run safely
+//!   under plain `cargo test` in one process across threads; the #1079
+//!   registry-race constraint is gone.
+//!
+//!   That is not a blanket "nextest no longer required", and the
+//!   distinction matters: a test that asserts a DELTA on one of the
+//!   process-global observability counters (`sql_only_fallback::count()`,
+//!   `descendant_fanout_dropped`, the reproject/recompute spies) is still
+//!   only sound when nothing else can bump that counter between its two
+//!   reads. Those tests must run under `cargo nextest run`, which
+//!   "executes each individual test in a separate process" (nexte.st,
+//!   "How nextest works"), not under concurrent plain `cargo test`, which
+//!   runs a whole test binary in ONE process with the tests on threads.
+//!   Note that the `[test-groups.spy-counter-serial]` `max-threads = 1`
+//!   entry in `src-tauri/.config/nextest.toml` is NOT what supplies that:
+//!   a test group is a concurrency semaphore over its members, so one
+//!   permit serialises the group — nextest gives every test its own
+//!   process regardless of group membership. See the module docs of
+//!   `materializer::handlers::create_edit_convergence_tests` and its
+//!   delta-asserting peers for the per-file statement of this.
 //!
 //! `crate::merge::engine_apply` stays Tauri-agnostic: it takes
 //! `&LoroState` as a parameter and never touches an `AppHandle`.

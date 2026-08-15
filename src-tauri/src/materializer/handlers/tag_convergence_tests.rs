@@ -30,16 +30,24 @@
 //! engine tree is missing the block.
 //!
 //! HOWEVER, the `count() == delta` guard above reads the process-global
-//! `sql_only_fallback::count()` counter, which is a monotonic `AtomicU64`
-//! shared across every test in the binary: two count-measuring tests
-//! running CONCURRENTLY in one process pollute each other's delta. That
-//! isolation requirement did not disappear with the registry — it MOVED
-//! to an explicit nextest test-group. Run these under `cargo nextest run`
-//! (as CI and the pre-push hook do), NOT concurrent plain `cargo test`:
-//! `src-tauri/.config/nextest.toml` pins this file (and its
-//! delta-asserting peers) into `[test-groups.spy-counter-serial]`
-//! `max-threads = 1`, and `test-groups` is a nextest-only feature — plain
-//! `cargo test` runs the whole binary on all cores with no such grouping.
+//! `sql_only_fallback::count()` counter, a monotonic `AtomicU64` shared by
+//! every test running in the SAME process: two count-measuring tests
+//! interleaving in one process corrupt each other's delta. Run these under
+//! `cargo nextest run` (as CI and the pre-push hook do), NOT concurrent
+//! plain `cargo test` — nextest "executes each individual test in a
+//! separate process" (nexte.st, "How nextest works"), so each test gets a
+//! fresh counter and no sibling can land between its two reads, whereas
+//! plain `cargo test` runs the whole binary in ONE process with the tests
+//! on threads. (`cargo test -- --test-threads=1` is sound for the same
+//! reason serialisation is; it just costs the binary's parallelism.)
+//!
+//! Note what does NOT supply that isolation: `src-tauri/.config/nextest.toml`
+//! pins this file (and its delta-asserting peers) into
+//! `[test-groups.spy-counter-serial]` `max-threads = 1`, but a test group is
+//! a concurrency semaphore over its members — one permit serialises the
+//! group, it does not put a test in its own process, because nextest already
+//! does that for every test, grouped or not. Group membership is not what
+//! makes this delta valid.
 
 use super::*;
 use crate::db::init_pool;
