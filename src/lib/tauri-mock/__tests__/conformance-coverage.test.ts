@@ -485,19 +485,18 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
  * PARTIALLY covered.
  */
 const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
-  // `list_blocks`'s two agenda arms (#3878, found while fixing #3877's review
-  // notes). Not a structural blocker on the query SIDE — `list_blocks_inner`
-  // takes explicit `agenda_date` / `agenda_date_start`+`agenda_date_end`
-  // arguments, so those are trivially seedable as ARGS. The blocker is the
-  // DATA those arms read: both go through `pagination::list_agenda[_range]`,
-  // which reads the `agenda_cache` table, not `blocks` directly. A fixture
-  // `seed` only inserts into `blocks`/`properties`/`tags` — populating
-  // `agenda_cache` needs `set_due_date` / `set_scheduled_date` OPS run first,
-  // i.e. an ops-then-query fixture shape no existing `query_*` fixture uses
-  // yet. Tracked as a follow-up; see the PR/issue this waiver shipped with.
-  'list_blocks::agenda-range':
-    'agenda_cache rows require set_due_date/set_scheduled_date OPS before the ' +
-    'query step, not just a seed — no query_*.json fixture does that yet (#3878)',
+  // `list_blocks`'s single-date agenda arm (#3878, found while fixing #3877's
+  // review notes). Not a structural blocker on the query SIDE —
+  // `list_blocks_inner` takes an explicit `agenda_date` argument, so that is
+  // trivially seedable as an ARG. The blocker is the DATA the arm reads: it
+  // goes through `pagination::list_agenda`, which reads the `agenda_cache`
+  // table, not `blocks` directly. A fixture `seed` only inserts into
+  // `blocks`/`properties`/`tags` — populating `agenda_cache` needs
+  // `set_due_date` / `set_scheduled_date` OPS run first, i.e. an ops-then-
+  // query fixture shape. Its sibling `agenda-range` arm got exactly that
+  // shape in `query_list_blocks_pagination_id_keyset.json`'s
+  // `agenda_range_page_1`/`_2` steps (#3942 review note 7); this waiver is
+  // what remains once that one lifted.
   'list_blocks::agenda-date':
     'agenda_cache rows require set_due_date/set_scheduled_date OPS before the ' +
     'query step, not just a seed — no query_*.json fixture does that yet (#3878)',
@@ -525,7 +524,8 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
     'request shape rather than computing one (handlers/search.ts), so the step would ' +
     'need that implemented too (#3927)',
 }
-// NOTE for whoever lifts the two agenda waivers above: `list_blocks_inner`'s
+// NOTE for whoever lifts the remaining agenda-date waiver above (and for
+// `agenda-range`'s own steps, added by #3942 review note 7): `list_blocks_inner`'s
 // `agenda-range` and `agenda-date` arms both sub-dispatch a SECOND time on
 // `agenda_source` (`pagination::list_agenda[_range](…, agenda_source.as_deref(), …)`
 // in `queries.rs`, keyed on `due_date` / `scheduled_date` / no source) once
@@ -533,9 +533,13 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
 // top-level `filter_count` chain, so a single query step with ANY
 // `agenda_source` value will credit the WHOLE arm the moment it gets a query
 // step — exactly the branch-invisible-coverage shape #3878 exists to catch,
-// one level down. Lifting these waivers needs `agenda_source` modelled as its
-// own sub-branch (e.g. `list_blocks::agenda-date::due_date`), not just a step
-// with a non-null `date`/`dateRange`.
+// one level down. `agenda_range_page_1`/`_2` pass no `source` (the "no
+// source" case), so `agenda-range`'s `due_date`/`scheduled_date`-source
+// sub-arms are credited but not actually exercised — the SAME residual gap
+// this note already named, now realised on the arm that lifted first.
+// Closing it needs `agenda_source` modelled as its own sub-branch (e.g.
+// `list_blocks::agenda-date::due_date`), not just a step with a non-null
+// `date`/`dateRange`.
 
 // ---------------------------------------------------------------------------
 // Commands whose query steps run on the BACKEND leg only (#3826)
@@ -1524,7 +1528,7 @@ interface FixtureShape {
   /** #3347 — post-op READ steps (see `conformance-query.ts`). */
   queries?: Array<QueryStepShape>
   /** #3347 — the backend-authored projection of each `queries` step. */
-  expected_queries?: Array<{ name: string; rows: string[] }>
+  expected_queries?: Array<{ name: string; rows: string[]; error?: string | null }>
   /** Additive, replay-inert string tags declaring which scenarios this fixture
    *  pins (see `REQUIRED_SCENARIOS`). Absent on fixtures that predate the tag. */
   scenarios?: string[]
@@ -1547,7 +1551,7 @@ interface LoadedFixture {
   opCommands: Set<string>
   queryCommands: Set<string>
   querySteps: QueryStepShape[]
-  expectedQueries: Array<{ name: string; rows: string[] }>
+  expectedQueries: Array<{ name: string; rows: string[]; error?: string | null }>
   scenarios: Set<string>
 }
 
@@ -2304,6 +2308,7 @@ describe('#3083 conformance-coverage ratchet', () => {
   it('every conformance query step records a non-empty result (or declares itself empty)', () => {
     const vacuous: string[] = []
     const staleEmptyClaim: string[] = []
+    const misdeclaredRefusal: string[] = []
     const misaligned: string[] = []
     for (const fx of fixtures) {
       if (fx.querySteps.length === 0) continue
@@ -2313,9 +2318,20 @@ describe('#3083 conformance-coverage ratchet', () => {
           misaligned.push(`${fx.name}/${step.name}`)
           continue
         }
+        // #3928 — a step that recorded an `error` is NOT vacuous, and must not
+        // be made to declare `expect_empty`. Its comparison is the
+        // `AppErrorKind`, which a constant-`[]` handler does NOT satisfy: the
+        // mock has to REFUSE the same call with the same kind. Its rows are
+        // empty as a CONSEQUENCE of the refusal, not as the pinned negative,
+        // so `expect_empty` on such a step would misdescribe what it proves.
+        const isRefusal = (recorded.error ?? null) !== null
         const isEmpty = recorded.rows.length === 0
-        if (isEmpty && step.expect_empty !== true) vacuous.push(`${fx.name}/${step.name}`)
+        if (isEmpty && !isRefusal && step.expect_empty !== true) {
+          vacuous.push(`${fx.name}/${step.name}`)
+        }
         if (!isEmpty && step.expect_empty === true) staleEmptyClaim.push(`${fx.name}/${step.name}`)
+        if (isRefusal && step.expect_empty === true)
+          misdeclaredRefusal.push(`${fx.name}/${step.name}`)
       }
     }
 
@@ -2341,6 +2357,22 @@ describe('#3083 conformance-coverage ratchet', () => {
       staleEmptyClaim,
       `These query steps declare "expect_empty": true but recorded rows ` +
         `${JSON.stringify(staleEmptyClaim)}. Drop the stale declaration.`,
+    ).toEqual([])
+
+    // NOT load-bearing today, said plainly rather than left to read as
+    // verified: no step in the suite declares `expect_empty` on a refusal, so
+    // deleting this accumulator and its assertion leaves every ratchet green
+    // (checked, not assumed). Unlike the `!isRefusal` clause above — which IS
+    // load-bearing, since without it `get_block_404s_on_tombstone` is reported
+    // vacuous — this one only forbids a combination nobody has written yet. It
+    // stays because the two declarations mean different things and a fixture
+    // author who conflates them would otherwise be told nothing.
+    expect(
+      misdeclaredRefusal,
+      `These query steps declare "expect_empty": true but recorded an \`error\` ` +
+        `${JSON.stringify(misdeclaredRefusal)}. A REFUSAL is not an empty result: ` +
+        `what the step pins is the AppErrorKind, and the empty rows follow from it. ` +
+        `Drop the declaration — the recorded error is already the non-vacuous claim.`,
     ).toEqual([])
   })
 
@@ -2381,7 +2413,22 @@ describe('#3083 conformance-coverage ratchet', () => {
         // Index-aligned with `querySteps`; the vacuity guard above fails first
         // if that alignment ever breaks, so a missing entry here is treated as
         // no evidence rather than silently counted.
-        if ((fx.expectedQueries[i]?.rows.length ?? 0) === 0) continue
+        // #3928 — a REFUSAL counts as live. A command that 404s is differentially
+        // exercised: the mock must reject the same call with the same kind, and
+        // a constant-`[]` handler fails it. Only a step that is empty AND did
+        // not refuse is no evidence.
+        //
+        // NOT load-bearing today, and worth saying so rather than letting it
+        // read as verified: the only refusal step in the suite is
+        // `get_block_404s_on_tombstone`, and `get_block` is kept live by its
+        // populated sibling `get_block_serves_a_live_block` regardless. Deleting
+        // the `error` clause here leaves every ratchet green. It is here because
+        // the rule this guard states is "differentially exercised", and a
+        // refusal is — so a command whose ONLY step is a refusal would otherwise
+        // be accused of being backend-only, which is a wrong verdict rather than
+        // a missing one.
+        const rec = fx.expectedQueries[i]
+        if ((rec?.rows.length ?? 0) === 0 && (rec?.error ?? null) === null) continue
         for (const unit of stepBranchKeys(step.command, step)) liveCommands.add(unit)
       }
     }

@@ -146,24 +146,32 @@
   },
   "expected_queries": [
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "tags_after_partial_remove",
       "rows": ["B6"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "tags_of_untouched_sibling",
       "rows": ["B7"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "tags_after_removing_the_only_tag",
       "rows": [],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "tags_two_surviving_in_id_order",
       "rows": ["B6", "B7"],

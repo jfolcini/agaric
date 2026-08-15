@@ -166,30 +166,40 @@
   },
   "expected_queries": [
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "filtered_value_text_in_matches_either_member",
       "rows": ["B2", "B3", "B4"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "filtered_value_date_exact",
       "rows": ["B2"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "filtered_value_date_range_is_half_open",
       "rows": ["B2", "B5"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "filtered_key_presence_only",
       "rows": ["B2", "B3", "B5", "B6"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "filtered_reserved_key_presence_only",
       "rows": ["B2"],

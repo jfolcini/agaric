@@ -95,18 +95,24 @@
   },
   "expected_queries": [
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "journal_page_hit",
       "rows": ["B3"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "journal_page_miss",
       "rows": [],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "journal_pages_january",
       "rows": ["B2", "B3", "B1", "B6"],

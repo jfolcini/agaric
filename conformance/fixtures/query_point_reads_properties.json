@@ -114,24 +114,32 @@
   },
   "expected_queries": [
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "get_properties_excludes_column_routed_key",
       "rows": ["estimate#Num=3", "flag#Bool=0", "linked#Ref=B3", "status#Text=open"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "get_property_present_but_falsy",
       "rows": ["flag#Bool=0"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "get_property_absent_after_delete",
       "rows": [],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "get_batch_properties_groups_by_block",
       "rows": [

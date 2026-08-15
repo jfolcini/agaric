@@ -9,7 +9,7 @@
  * store.
  */
 
-import { base64UrlToUtf8, utf8ToBase64Url } from '@/lib/base64url'
+import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import {
   type PageMetaRow,
@@ -426,33 +426,11 @@ function encodeCursor(values: CursorValue[]): string {
   return utf8ToBase64Url(json)
 }
 
-/**
- * The unpadded base64url alphabet, plus the length rule
- * `URL_SAFE_NO_PAD.decode` enforces — a remainder of 1 symbol carries no
- * whole byte, so Rust rejects it as `InvalidLength`.
- *
- * Checked ahead of {@link base64UrlToUtf8} rather than relying on `atob` to
- * throw, for two reasons: it separates the engine's FIRST failure mode (bad
- * base64) from its SECOND (invalid UTF-8), which the single combined call
- * cannot, and it does so without sniffing the host's exception type —
- * `atob` throws a `DOMException` and a fatal `TextDecoder` a `TypeError`, but
- * which of those is observable is a runtime detail (jsdom vs Node), the same
- * host-dependence #3914 review note 2 objects to in the message.
- *
- * Deliberately NOT mirrored: Rust's base64 also rejects non-canonical
- * trailing bits — a final symbol whose leftover bits are not zero, such as
- * `"AB"` (12 bits for one byte, and the spare 4 are `0001`) — which `atob`
- * silently discards instead. That is a strictly narrower acceptance on the
- * engine's side and a cursor with such bytes cannot be minted by
- * {@link encodeCursor}, so the residual divergence is unreachable except by a
- * hand-built cursor whose payload would then have to also be valid UTF-8,
- * valid JSON and a valid `CursorValue` list to reach the keyset at all.
- */
-const BASE64URL_NO_PAD = /^[A-Za-z0-9_-]*$/
-
-function isBase64UrlNoPad(s: string): boolean {
-  return BASE64URL_NO_PAD.test(s) && s.length % 4 !== 1
-}
+// {@link isBase64UrlNoPad} (`@/lib/base64url`) is the alphabet/length gate
+// checked ahead of {@link base64UrlToUtf8} below — moved there once
+// `decodeBlocksCursor` (`handlers/blocks.ts`) needed the identical check
+// (#3942 review note 5). See its doc comment for what the gate does and does
+// not catch (non-canonical trailing bits are deliberately NOT mirrored).
 
 /**
  * Each `CursorValue` tag → the JSON type its `v` payload must carry, mirroring

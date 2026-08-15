@@ -64,6 +64,8 @@
   },
   "expected_queries": [
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "batch_properties_omits_the_property_less_block",
       "rows": ["B2->status#Text=open"],

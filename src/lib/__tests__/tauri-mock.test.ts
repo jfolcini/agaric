@@ -36,6 +36,29 @@ function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
   return ipcHandler(cmd, args)
 }
 
+/**
+ * Read a block that may be TOMBSTONED, through the IPC surface that is allowed
+ * to serve one.
+ *
+ * #3928 — `get_block` is ACTIVE-only on both stacks (it delegates to
+ * `get_active_block_inner`, whose SQL carries `AND deleted_at IS NULL`), so it
+ * answers `not_found` for a soft-deleted row and cannot be used to inspect a
+ * `deleted_at` stamp. `get_blocks` (plural) is the genuinely permissive reader
+ * — `get_blocks_inner` has no `deleted_at` filter and documents that — so it is
+ * what a tombstone assertion has to go through.
+ *
+ * The tests below used `get_block` for this until the mock was aligned to
+ * production; they were reading a tombstone off a public read surface that
+ * never serves one, so they passed against the mock and described something the
+ * app cannot do.
+ */
+function getRow(id: string): Record<string, unknown> {
+  const rows = invoke('get_blocks', { ids: [id] }) as Array<Record<string, unknown>>
+  const row = rows[0]
+  if (row === undefined) throw new Error(`block '${id}' not found`)
+  return row
+}
+
 // Pin the clock to a fixed non-midnight-boundary moment so that
 // any `new Date()` calls in the mock's seed code and this file's assertions
 // always see the same YYYY-MM-DD / week boundaries. Prevents cross-midnight
@@ -166,6 +189,44 @@ describe('get_block', () => {
 
   it('throws for non-existent block ID', () => {
     expect(() => invoke('get_block', { blockId: 'NONEXISTENT' })).toThrow('not found')
+  })
+
+  /**
+   * #3928 — the shipped `get_block` delegates to `get_active_block_inner`
+   * (`AND deleted_at IS NULL`), so a soft-deleted block is a `not_found` on the
+   * IPC surface, not an apparently-live row with `deleted_at` set. The mock
+   * served the tombstone until #3928 because the conformance harness was
+   * calling the PERMISSIVE `get_block_inner` and the mock had been aligned to
+   * the harness.
+   *
+   * Asserted alongside the plural reader on the same id, because the pair is
+   * the point: `get_blocks_inner` genuinely has no `deleted_at` filter, so the
+   * two handlers disagreeing here is the backend's own documented split. A
+   * "get_block 404s a tombstone" test on its own would be satisfied by a mock
+   * that had simply lost the row.
+   */
+  it('404s a soft-deleted block, while the plural reader still serves it', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+
+    expect(() => invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 })).toThrow('not found')
+    const err = (() => {
+      try {
+        invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+      } catch (e) {
+        return e as Record<string, unknown>
+      }
+      return null
+    })()
+    // The KIND, not just the message: the conformance projection records
+    // `AppErrorKind`, so a bare `Error` here would pass the `toThrow` above and
+    // still fail the differential.
+    expect(err?.['kind']).toBe('not_found')
+
+    const rows = invoke('get_blocks', { ids: [SEED_IDS.BLOCK_GS_1] }) as Array<
+      Record<string, unknown>
+    >
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.['deleted_at']).not.toBeNull()
   })
 
   it('returns dynamically created blocks', () => {
@@ -561,7 +622,7 @@ describe('delete_block', () => {
       unknown
     >
     expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
-    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    const block = getRow(SEED_IDS.BLOCK_GS_1)
     expect(block['deleted_at']).not.toBeNull()
   })
 
@@ -617,7 +678,7 @@ describe('delete_block', () => {
     expect(result['descendants_affected']).toBe(3)
     const cohort = result['deleted_at'] as string
 
-    const getBlock = (id: string) => invoke('get_block', { blockId: id }) as Record<string, unknown>
+    const getBlock = getRow
     // A, A1, A1a all tombstoned with the SAME cohort timestamp.
     expect(getBlock(aId)['deleted_at']).toBe(cohort)
     expect(getBlock(a1Id)['deleted_at']).toBe(cohort)
@@ -661,7 +722,7 @@ describe('delete_block', () => {
     expect(second['descendants_affected']).toBe(1)
     expect(laterCohort).not.toBe(earlierCohort)
 
-    const getBlock = (id: string) => invoke('get_block', { blockId: id }) as Record<string, unknown>
+    const getBlock = getRow
     expect(getBlock(aId)['deleted_at']).toBe(laterCohort)
     // A1 / A1a keep their independent, earlier tombstone — NOT re-stamped.
     expect(getBlock(a1Id)['deleted_at']).toBe(earlierCohort)
@@ -720,7 +781,7 @@ describe('restore_block cohort cascade', () => {
     const restored = invoke('restore_block', { blockId: aId }) as Record<string, unknown>
     expect(restored['restored_count']).toBe(2)
 
-    const getBlock = (id: string) => invoke('get_block', { blockId: id }) as Record<string, unknown>
+    const getBlock = getRow
     expect(getBlock(aId)['deleted_at']).toBeNull()
     expect(getBlock(a1Id)['deleted_at']).toBeNull()
     // A1a STAYS deleted — its independent tombstone wins.
@@ -741,7 +802,7 @@ describe('restore_block cohort cascade', () => {
     const restored = invoke('restore_block', { blockId: aId }) as Record<string, unknown>
     expect(restored['restored_count']).toBe(2)
 
-    const getBlock = (id: string) => invoke('get_block', { blockId: id }) as Record<string, unknown>
+    const getBlock = getRow
     expect(getBlock(aId)['deleted_at']).toBeNull()
     expect(getBlock(a1Id)['deleted_at']).toBeNull()
   })
@@ -1280,7 +1341,7 @@ describe('query_by_tag_expr', () => {
 describe('restore_block', () => {
   it('un-soft-deletes a deleted block', () => {
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
-    const deleted = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    const deleted = getRow(SEED_IDS.BLOCK_GS_1)
     expect(deleted['deleted_at']).not.toBeNull()
 
     const result = invoke('restore_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
@@ -1696,16 +1757,13 @@ describe('revert_ops', () => {
     }) as Array<Record<string, unknown>>
     expect(results).toHaveLength(1)
 
-    const block = invoke('get_block', { blockId: created['id'] as string }) as Record<
-      string,
-      unknown
-    >
+    const block = getRow(created['id'] as string)
     expect(block['deleted_at']).not.toBeNull()
   })
 
   it('reverts a delete_block op → block becomes restored', () => {
     invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_3 })
-    const deleted = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_3 }) as Record<string, unknown>
+    const deleted = getRow(SEED_IDS.BLOCK_GS_3)
     expect(deleted['deleted_at']).not.toBeNull()
 
     const history = invoke('list_page_history', {}) as { items: Array<Record<string, unknown>> }
@@ -1871,7 +1929,7 @@ describe('redo_page_op edge cases', () => {
       undoDepth: 0,
     }) as { new_op_ref: { device_id: string; seq: number } }
 
-    const afterUndo = invoke('get_block', { blockId: createdId }) as Record<string, unknown>
+    const afterUndo = getRow(createdId)
     expect(afterUndo['deleted_at']).not.toBeNull()
 
     // Redo → block is restored. The ref is the undo's `new_op_ref` (#659).

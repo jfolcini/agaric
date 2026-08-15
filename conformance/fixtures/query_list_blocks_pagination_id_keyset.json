@@ -1,5 +1,5 @@
 {
-  "description": "#3870 follow-up — the `blockType` and `tagId` DISPATCH BRANCHES of `list_blocks`, paginated. `query_list_blocks_pagination` drives only the `parentId` branch, whose helper (`pagination::list_children`) keysets on `(COALESCE(position, ?N), id)`. That is NOT the order the other branches use: `list_by_type` and `list_by_tag` are `ORDER BY id ASC` / `ORDER BY bt.block_id ASC`, and `list_agenda` / `list_agenda_range` key on `b.id` too. A mock that applies the `(position, id)` keyset to all of them resumes every page from a column the backend never ordered on, and — per #3821 — that changes WHICH rows a page holds, not merely their order. This fixture makes the difference maximal rather than incidental: the six content blocks are seeded with positions ANTI-CORRELATED to their ids (`p1` holds the greatest id, `p6` the least), so id order and position order are exact reverses and the recorded pages are DISJOINT from the pages a position keyset would return. There is no overlap to accidentally agree on, and a single-page step would not show it at all. `total_count` is pinned by the `blockType` steps: that arm is the one place `list_blocks_inner` overwrites `build_page_response`'s `None` with `count_blocks_by_type`, so a helper that hard-codes `null` fails here. The tag steps leave `p6` untagged so the tag result is a strict subset of the type result — a `tagId` the mock ignored would answer six rows where five are recorded.",
+  "description": "#3870 follow-up — the `blockType` and `tagId` DISPATCH BRANCHES of `list_blocks`, paginated. `query_list_blocks_pagination` drives only the `parentId` branch, whose helper (`pagination::list_children`) keysets on `(COALESCE(position, ?N), id)`. That is NOT the order the other branches use: `list_by_type` and `list_by_tag` are `ORDER BY id ASC` / `ORDER BY bt.block_id ASC`, and `list_agenda` / `list_agenda_range` key on `b.id` too. A mock that applies the `(position, id)` keyset to all of them resumes every page from a column the backend never ordered on, and — per #3821 — that changes WHICH rows a page holds, not merely their order. This fixture makes the difference maximal rather than incidental: the six content blocks are seeded with positions ANTI-CORRELATED to their ids (`p1` holds the greatest id, `p6` the least), so id order and position order are exact reverses and the recorded pages are DISJOINT from the pages a position keyset would return. There is no overlap to accidentally agree on, and a single-page step would not show it at all. `total_count` is pinned by the `blockType` steps: that arm is the one place `list_blocks_inner` overwrites `build_page_response`'s `None` with `count_blocks_by_type`, so a helper that hard-codes `null` fails here. The tag steps leave `p6` untagged so the tag result is a strict subset of the type result — a `tagId` the mock ignored would answer six rows where five are recorded. #3942 review note 7 added the `dateRange` (`list_agenda_range`) branch's own two-page pair: it is the ONE branch whose `Cursor` reuses the `deleted_at` slot for something that is not a tombstone (`ac.date`, via `Cursor::for_id_and_deleted_at`), and before this addition no fixture paginated it, so the `cursor` assertion never covered that slot mapping.",
   "expected": {
     "block_tags": [
       {
@@ -41,7 +41,7 @@
         "block_type": "content",
         "content": "p1",
         "deleted_at": null,
-        "due_date": null,
+        "due_date": "2026-01-01",
         "id": "B2",
         "page_id": "B1",
         "parent_id": "B1",
@@ -54,7 +54,7 @@
         "block_type": "content",
         "content": "p2",
         "deleted_at": null,
-        "due_date": null,
+        "due_date": "2026-01-02",
         "id": "B3",
         "page_id": "B1",
         "parent_id": "B1",
@@ -67,7 +67,7 @@
         "block_type": "content",
         "content": "p3",
         "deleted_at": null,
-        "due_date": null,
+        "due_date": "2026-01-03",
         "id": "B4",
         "page_id": "B1",
         "parent_id": "B1",
@@ -130,7 +130,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 5,
+      "count": 8,
       "ops": [
         {
           "op_type": "add_tag"
@@ -146,6 +146,15 @@
         },
         {
           "op_type": "add_tag"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
         }
       ]
     },
@@ -154,6 +163,8 @@
   },
   "expected_queries": [
     {
+      "cursor": "v1:{id}",
+      "error": null,
       "has_more": true,
       "name": "by_type_page_1",
       "rows": [
@@ -163,6 +174,8 @@
       "total_count": 6
     },
     {
+      "cursor": "v1:{id}",
+      "error": null,
       "has_more": true,
       "name": "by_type_page_2",
       "rows": [
@@ -172,6 +185,8 @@
       "total_count": 6
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "by_type_page_3",
       "rows": [
@@ -181,6 +196,8 @@
       "total_count": 6
     },
     {
+      "cursor": "v1:{id}",
+      "error": null,
       "has_more": true,
       "name": "by_tag_page_1",
       "rows": [
@@ -190,6 +207,8 @@
       "total_count": null
     },
     {
+      "cursor": "v1:{id}",
+      "error": null,
       "has_more": true,
       "name": "by_tag_page_2",
       "rows": [
@@ -199,9 +218,30 @@
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "by_tag_page_3",
       "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{deleted_at,id}",
+      "error": null,
+      "has_more": true,
+      "name": "agenda_range_page_1",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "agenda_range_page_2",
+      "rows": ["B4#parent_id=B1#page_id=B1#position=3#deleted_at=null"],
       "total_count": null
     }
   ],
@@ -241,6 +281,27 @@
         "tagId": "S8"
       },
       "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "date": "2026-01-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "date": "2026-01-02"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "date": "2026-01-03"
+      },
+      "command": "set_due_date"
     }
   ],
   "queries": [
@@ -342,6 +403,45 @@
       "comment": "The short final tag page: one row, `has_more` false. `total_count` stays null — `list_by_tag` never sets it, only the `blockType` arm does.",
       "cursor_from": "by_tag_page_2",
       "name": "by_tag_page_3",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "dateRange": {
+            "end": "2026-01-03",
+            "start": "2026-01-01"
+          },
+          "limit": 2
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "#3942 review note 7 — the `dateRange` branch, `list_agenda_range`, `ORDER BY ac.date ASC, b.id ASC`. Its `Cursor` stashes `ac.date` in the `deleted_at` slot (`Cursor::for_id_and_deleted_at`, `pagination/agenda.rs`) rather than growing the struct — the least obvious slot reuse of the five branches, and until this step the one no fixture paginated a second page of.",
+      "name": "agenda_range_page_1",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "dateRange": {
+            "end": "2026-01-03",
+            "start": "2026-01-01"
+          },
+          "limit": 2
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "The boundary page: proves the `deleted_at`-slotted cursor actually resumes on `ac.date` (and its `id` tiebreak), not silently on id alone or not at all — the SAME differential #3821 exists to catch on the other branches, now exercised on this one.",
+      "cursor_from": "agenda_range_page_1",
+      "name": "agenda_range_page_2",
       "ordered": true
     }
   ],

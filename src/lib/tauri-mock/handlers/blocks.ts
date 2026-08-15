@@ -9,6 +9,7 @@
  * store.
  */
 
+import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
 import {
   type TypedHandlers,
   assertValidReservedPropertyValue,
@@ -123,6 +124,12 @@ function purgeCohortAndSatellites(cohort: Iterable<string>): void {
  * the sentinel is never compared against the backend's (each stack pages with
  * its OWN opaque cursor), only against other mock positions, and no mock
  * position comes near it.
+ *
+ * Still true after #3893 made the cursor SHAPE cross-stack-comparable: the
+ * shape records which slots a cursor populates, never the values in them. A
+ * sentinel-valued `position` slot is present on both stacks; that the two
+ * sentinels are different integers is exactly the kind of incomparable value a
+ * byte-level cursor assertion would have false-reddened on.
  */
 const NULL_POSITION_SENTINEL = Number.MAX_SAFE_INTEGER
 
@@ -199,41 +206,113 @@ function listBlocksLimit(raw: unknown): number {
 }
 
 /**
- * The mock's page cursor: the {@link SortKey} of the last row on the page it
- * was minted for. OPAQUE and mock-local by design — the backend's `Cursor` is a
- * base64 JSON blob of its own, and neither stack ever decodes the other's: the
- * conformance runner threads each implementation its OWN `next_cursor` (see
- * `conformance-query.ts`'s `cursor_from`). What must match is the PAGE the
- * cursor lands on, not the bytes that name it.
+ * The slot the backend's `Cursor` stashes a branch's LEADING sort key in.
+ * `null` for the three `ORDER BY id ASC` branches, whose keyset is the id
+ * alone (`Cursor::for_id`).
  *
- * Carrying the whole key (rather than named `id` / `position` fields) is what
- * keeps the cursor honest across branches: an `id ASC` branch mints a 1-tuple
- * and a `(position, id)` branch a 2-tuple, so a cursor cannot be silently
- * reinterpreted under the wrong order.
+ * Not a free string: the backend's `Cursor`
+ * (`agaric-store/src/pagination/mod.rs`) is a fixed struct with five optional
+ * slots that different queries REUSE — `list_agenda_range` stashes its
+ * `ac.date` in `deleted_at` — so the set of populated slots is precisely which
+ * keyset a cursor was minted on, and inventing a slot name here would mint a
+ * cursor no backend query can produce.
  */
-function encodeBlocksCursor(key: SortKey): string {
-  return btoa(JSON.stringify({ key, version: 1 }))
+type CursorLeadSlot = 'position' | 'deleted_at' | null
+
+/** Cursor schema version — mirrors `CURRENT_CURSOR_VERSION`. */
+const BLOCKS_CURSOR_VERSION = 1
+
+/**
+ * The mock's page cursor: the {@link SortKey} of the last row on the page it
+ * was minted for, written in the backend's own `Cursor` shape.
+ *
+ * ## Why not a mock-local blob (#3893)
+ *
+ * This used to be `btoa(JSON.stringify({ key, version }))` — a positional
+ * `key` tuple, in the STANDARD base64 alphabet — justified on the grounds that
+ * neither stack ever decodes the other's cursor, so only the PAGE the cursor
+ * lands on has to match. That reasoning is what made the divergence invisible
+ * rather than what made it acceptable: the conformance harness could not
+ * compare any cursor property cross-stack at all, so "the pages match" was the
+ * only claim anything checked, and the shape was free to drift.
+ *
+ * It is now the backend's shape: `URL_SAFE_NO_PAD` base64 of
+ * `{ id, <lead slot>?, version }`, matching `Cursor::encode`. Same reasoning
+ * that made `run_advanced_query`'s cursor byte-faithful to `QueryCursor` in
+ * #3888 — and the standard alphabet was a live defect on its own terms, since
+ * a `+` or `/` in a cursor is not URL-safe where the backend guarantees it is.
+ *
+ * The branch's keyset is still what keeps the cursor honest: an `ORDER BY id`
+ * branch mints `{ id }` and the `(position, id)` branch `{ id, position }`, so
+ * a cursor cannot be silently reinterpreted under the wrong order — and now
+ * the presence of the slot is the SAME discriminator the backend uses.
+ */
+function encodeBlocksCursor(key: SortKey, lead: CursorLeadSlot): string {
+  const payload: Record<string, unknown> = { id: String(key.at(-1) ?? '') }
+  if (lead !== null) payload[lead] = key[0]
+  payload['version'] = BLOCKS_CURSOR_VERSION
+  return utf8ToBase64Url(JSON.stringify(payload))
 }
 
-/** Decode a cursor minted by {@link encodeBlocksCursor}; a malformed one is a
- *  `Validation` error, as `Cursor::decode` is on the backend. */
-function decodeBlocksCursor(raw: unknown): SortKey | null {
+/**
+ * Decode a cursor minted by {@link encodeBlocksCursor} back into the branch's
+ * {@link SortKey}; a malformed one is a `Validation` error, as `Cursor::decode`
+ * is on the backend. The base64 itself is held to the backend's alphabet: see
+ * {@link isBase64UrlNoPad} (#3942 review note 5) for why a standard-alphabet
+ * or padded token — which `atob` would tolerate — is rejected here too,
+ * rather than accepted where `URL_SAFE_NO_PAD.decode` refuses it.
+ *
+ * A cursor minted on one keyset and replayed on another is NOT rejected — it
+ * is reinterpreted, exactly as `Cursor::decode` reinterprets it. `Cursor` has
+ * no `deny_unknown_fields` (#3942 review note 4), so a payload naming a slot
+ * this branch never reads is accepted and the extra slot is ignored (`lead
+ * === null` below). And a payload MISSING the slot this branch reads is also
+ * accepted, not refused: `position_keyset_binds`
+ * (`agaric-store/src/pagination/mod.rs:271-276`) and `list_agenda_range`'s own
+ * bind (`pagination/agenda.rs:100`) both `unwrap_or` a missing lead to a
+ * SENTINEL rather than reject the cursor, so the query pages from that
+ * sentinel key instead of refusing the request. Rejecting a missing lead
+ * slot here made the mock STRICTER than production in the opposite direction
+ * from the one this harness exists to close (#3942 review note 3).
+ *
+ * A MISSING `version` is accepted as 1, exactly as `Cursor::decode` accepts a
+ * pre-versioning cursor; any other version is rejected.
+ */
+function decodeBlocksCursor(raw: unknown, lead: CursorLeadSlot): SortKey | null {
   if (raw == null) return null
-  if (typeof raw !== 'string') throw validationRejection('invalid pagination cursor')
+  const invalid = (): never => {
+    throw validationRejection('invalid pagination cursor')
+  }
+  if (typeof raw !== 'string') return invalid()
+  if (!isBase64UrlNoPad(raw)) return invalid()
   let decoded: unknown
   try {
-    decoded = JSON.parse(atob(raw)) as unknown
+    decoded = JSON.parse(base64UrlToUtf8(raw, { fatal: true })) as unknown
   } catch {
-    throw validationRejection('invalid pagination cursor')
+    return invalid()
   }
-  const key = (decoded as Record<string, unknown> | null)?.['key']
-  if (
-    !Array.isArray(key) ||
-    key.some((part) => typeof part !== 'string' && typeof part !== 'number')
-  ) {
-    throw validationRejection('invalid pagination cursor')
+  if (decoded === null || typeof decoded !== 'object') return invalid()
+  const obj = decoded as Record<string, unknown>
+  // ABSENT → 1 (the pre-versioning cursor `Cursor::decode` accepts). Present
+  // but `null` is NOT absent: the backend reads the slot with `value.get(...)`,
+  // takes the `Some(Value::Null)` arm and fails `as_u64` with "invalid version
+  // field". A `??` here would have coalesced that into the legacy-cursor path
+  // and accepted a cursor the backend rejects.
+  const rawVersion = obj['version']
+  const version = rawVersion === undefined ? BLOCKS_CURSOR_VERSION : rawVersion
+  if (version !== BLOCKS_CURSOR_VERSION) return invalid()
+  const id = obj['id']
+  if (typeof id !== 'string') return invalid()
+  if (lead === null) return [id]
+  const leadValue = obj[lead]
+  // Absent or explicit `null` — the backend's `#[serde(default)]` Option
+  // slots read both the same way — defaults to the sentinel the matching bind
+  // function falls back to, rather than refusing the cursor.
+  if (leadValue === undefined || leadValue === null) {
+    return [lead === 'position' ? NULL_POSITION_SENTINEL : '', id]
   }
-  return key as SortKey
+  if (typeof leadValue !== 'string' && typeof leadValue !== 'number') return invalid()
+  return [leadValue, id]
 }
 
 /**
@@ -257,6 +336,7 @@ function paginateKeyset(
   limit: number,
   rawCursor: unknown,
   totalCount: number | null,
+  lead: CursorLeadSlot,
 ): {
   items: Record<string, unknown>[]
   next_cursor: string | null
@@ -264,7 +344,7 @@ function paginateKeyset(
   total_count: number | null
 } {
   const ordered = rows.toSorted((x, y) => compareSortKeys(keyOf(x), keyOf(y)))
-  const cursorKey = decodeBlocksCursor(rawCursor)
+  const cursorKey = decodeBlocksCursor(rawCursor, lead)
   const after =
     cursorKey === null ? ordered : ordered.filter((b) => compareSortKeys(keyOf(b), cursorKey) > 0)
   const fetched = after.slice(0, limit + 1)
@@ -273,7 +353,7 @@ function paginateKeyset(
   const last = items.at(-1)
   return {
     items,
-    next_cursor: hasMore && last ? encodeBlocksCursor(keyOf(last)) : null,
+    next_cursor: hasMore && last ? encodeBlocksCursor(keyOf(last), lead) : null,
     has_more: hasMore,
     total_count: totalCount,
   }
@@ -351,6 +431,11 @@ export const blocksHandlers = {
         limit,
         cursor,
         null,
+        // `list_agenda_range` stashes its `ac.date` in the backend `Cursor`'s
+        // `deleted_at` slot (`pagination/agenda.rs`'s
+        // `Cursor::for_id_and_deleted_at`) — a documented slot REUSE, not a
+        // tombstone.
+        'deleted_at',
       )
     }
 
@@ -362,7 +447,8 @@ export const blocksHandlers = {
         if (source === 'column:scheduled_date') return b['scheduled_date'] === date
         return b['due_date'] === date || b['scheduled_date'] === date
       })
-      return paginateKeyset(items, idKey, limit, cursor, null)
+      // `list_agenda` mints `Cursor::for_id` — the id alone.
+      return paginateKeyset(items, idKey, limit, cursor, null, null)
     }
 
     const tagId = (req['tagId'] as string | null | undefined) ?? null
@@ -370,7 +456,8 @@ export const blocksHandlers = {
       // `list_by_tag` — `ORDER BY bt.block_id ASC`, and `bt.block_id` is the
       // join key, so it is `b.id` under another name.
       const items = active.filter((b) => blockTags.get(b['id'] as string)?.has(tagId) ?? false)
-      return paginateKeyset(items, idKey, limit, cursor, null)
+      // `list_by_tag` mints `Cursor::for_id`.
+      return paginateKeyset(items, idKey, limit, cursor, null, null)
     }
 
     const blockType = (req['blockType'] as string | null | undefined) ?? null
@@ -388,7 +475,8 @@ export const blocksHandlers = {
       // covered by a fixture step either — filed as #3878 rather than fixed
       // silently.
       const items = active.filter((b) => b['block_type'] === blockType)
-      return paginateKeyset(items, idKey, limit, cursor, items.length)
+      // `list_by_type` mints `Cursor::for_id`.
+      return paginateKeyset(items, idKey, limit, cursor, items.length, null)
     }
 
     // `list_children` — `WHERE parent_id IS ?1`, i.e. an ABSENT or NULL
@@ -400,7 +488,9 @@ export const blocksHandlers = {
     // the branch always filters, on `null` when no parent was named.
     const parentId = (req['parentId'] as string | null | undefined) ?? null
     const items = active.filter((b) => ((b['parent_id'] as string | null) ?? null) === parentId)
-    return paginateKeyset(items, positionThenIdKey, limit, cursor, null)
+    // `list_children` mints `Cursor::for_id_and_position` — the ONE branch
+    // whose keyset leads on a column other than the id.
+    return paginateKeyset(items, positionThenIdKey, limit, cursor, null, 'position')
   },
 
   // Paginate soft-deleted blocks, space-scoped. Mirrors backend
@@ -862,10 +952,29 @@ export const blocksHandlers = {
     return { affected_count: cohort.length }
   },
 
+  /**
+   * #3928 — ACTIVE-only, mirroring the shipped command.
+   *
+   * `#[tauri::command] get_block` delegates to `get_active_block_inner`
+   * (`commands/blocks/queries.rs`), whose SQL is
+   * `WHERE id = ? AND deleted_at IS NULL`, so a soft-deleted block is a
+   * `NotFound` on the IPC surface — the tombstone-serving twin
+   * `get_block_inner` is reserved for internal callers (trash UI, restore /
+   * purge / undo, snapshot recovery) and is explicitly documented as forbidden
+   * to public read surfaces.
+   *
+   * This handler served the tombstone until #3928, matching the conformance
+   * harness — which was calling the permissive reader — rather than matching
+   * production. `get_blocks` (plural) is genuinely permissive and keeps its
+   * tombstones: `get_blocks_inner` has no `deleted_at` filter, so the two
+   * handlers disagreeing here is the backend's own split, not an oversight.
+   */
   get_block: (args) => {
     const a = args as Record<string, unknown>
     const b = blocks.get(a['blockId'] as string)
-    if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
+    if (!b || b['deleted_at'] != null) {
+      throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
+    }
     return b
   },
 

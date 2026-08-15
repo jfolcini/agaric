@@ -91,6 +91,8 @@
   },
   "expected_queries": [
     {
+      "cursor": "v1:{id,position}",
+      "error": null,
       "has_more": true,
       "name": "children_page_1",
       "rows": [
@@ -100,6 +102,8 @@
       "total_count": null
     },
     {
+      "cursor": "v1:{id,position}",
+      "error": null,
       "has_more": true,
       "name": "children_page_2",
       "rows": [
@@ -109,12 +113,16 @@
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "children_page_3",
       "rows": ["B6#parent_id=B1#page_id=B1#position=5#deleted_at=null"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "roots_only_for_null_parent",
       "rows": ["B1#parent_id=null#page_id=B1#position=1#deleted_at=null"],
