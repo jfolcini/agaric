@@ -44,6 +44,13 @@ jobs:
     # Generous ceiling on a job whose real cost is seconds; if this ever fires,
     # something is retrying an API call, not computing an overlap.
     timeout-minutes: 10
+    # Consumed by `merge-result` below, to decide whether it has anything to
+    # do — see that job for why "any overlap" is the wrong gate and
+    # ratchets/diverged is the right one.
+    outputs:
+      overlaps: ${{ steps.overlap.outputs.overlaps }}
+      ratchets: ${{ steps.overlap.outputs.ratchets }}
+      diverged: ${{ steps.overlap.outputs.diverged }}
     permissions:
       contents: read
       # Posting the informational comment. Read-only on fork PRs, which is why
@@ -143,4 +150,146 @@ jobs:
           else
             gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@overlap.md >/dev/null
             echo "posted a new comment"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # merge-result (#3672 steps 2/3) — the part `overlap` above deliberately
+  # does not do: actually verify the MERGE RESULT, not just report which
+  # files two PRs touch.
+  #
+  # Gated on `ratchets`/`diverged`, NOT on `overlaps` (any shared file). An
+  # ordinary shared file is "a fact a human has to weigh" (see the `overlap`
+  # job's own header) — this lane must not manufacture unactionable red over
+  # it, same reasoning #3350 argues for `overlap` itself. A whole-tree
+  # RATCHET file overlapping or diverging is different in kind: both
+  # branches can hold a self-consistent version and the MERGE still be
+  # wrong (the #3724 near-miss), which is a claim this job can actually
+  # TEST — build the merge fresh and run the guards that police ratchet
+  # files against it — rather than merely flag for a human to re-derive.
+  #
+  # This is therefore the first thing in this repo's CI that verifies a
+  # merge RESULT rather than a branch. It is deliberately narrow: no Rust
+  # toolchain, no node_modules — `scripts/pr-merge-result-check.sh` runs
+  # three stdlib-only Python guards (the four-crate-root ratchet trio,
+  # #3107) against a disposable worktree. Running the FULL `prek
+  # --all-files` here (#3672 comment 3's step 3, in full) needs the whole
+  # toolchain this lane deliberately does not carry; see that script's own
+  # header for the scoping rationale and how to extend it.
+  #
+  # What this does NOT do: gate a merge on its own — it is not in the
+  # required-check list, so a red here is visible on the PR but not enforced.
+  #
+  # It is worth being precise about WHY that matters, because the obvious
+  # reading is wrong. `gh api repos/<owner>/<repo>/branches/main/protection`
+  # returns 404, and that 404 does NOT mean `main` is unprotected: it is the
+  # LEGACY endpoint and it cannot see rulesets. `main` is protected by a
+  # ruleset — the one `branch-protection-assert.yml` in this same directory
+  # already asserts against drift — with required contexts `validate-all` +
+  # `dco` AND `strict_required_status_checks_policy: true`, i.e. GitHub's
+  # "require branches to be up to date before merging" is already ON, and
+  # `validate-all` runs `prek run --all-files` (ratchet guards included) on
+  # the up-to-date tree.
+  #
+  # So this job is not the missing enforcement. The residual gap is the
+  # ruleset's `bypass_actors` entry for the built-in `admin` role with
+  # `bypass_mode: always`, combined with this repo's habit of merging via
+  # `gh pr merge --admin` (named in #3672's own body): an admin merge skips
+  # both the required checks and the freshness rule, and no non-required job
+  # can change that. What this job buys is a cheap ratchet verdict ON the PR,
+  # in seconds rather than a rebase plus a ~15-minute re-run, before anyone
+  # reaches for `--admin`. Closing the gap itself is a merge-policy decision
+  # (don't `--admin`, or narrow `bypass_actors`), not a script — see #3672.
+  merge-result:
+    needs: overlap
+    # `diverged` is a count, or the literal `unknown` when
+    # pr-overlap-diverged.sh could not compute it. `unknown` must TRIGGER this
+    # job, not exempt it: the #3724 shape has no open-PR overlap at all
+    # (#3717 had already merged when #3724 opened), so `ratchets` is 0 for it
+    # and the divergence half is the only thing that would fire. Excluding
+    # `unknown` meant a failure in the divergence script silently switched the
+    # merge-result lane off for exactly the case it exists for. Running it
+    # costs a checkout and three Python invocations; not running it costs the
+    # incident.
+    if: |
+      needs.overlap.outputs.ratchets != '0' ||
+      needs.overlap.outputs.diverged != '0'
+    runs-on: ubuntu-24.04
+    # Real cost is a checkout + one git merge + three short python
+    # invocations — generous ceiling for the same reason as `overlap`'s.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: scripts/pr-merge-result-check.sh needs the base
+          # branch's commit graph to build a real merge, and the PR head's
+          # too. Same rationale as `overlap`'s checkout above.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the base branch, fresh, right now
+        # The entire point (#3672): not whatever `main` was when THIS
+        # workflow run started, but `main` as of this instant — the base a
+        # merge click would actually use.
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: git fetch --quiet --no-tags origin "$BASE_REF"
+
+      - name: Verify the merge result's ratchet guards
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # The PR's own head, not the `refs/pull/N/merge` ref this checkout
+          # step actually landed on — same reason as `overlap`'s HEAD_SHA.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          # `run:` executes under GitHub's default shell — `bash --noprofile
+          # --norc -e -o pipefail {0}` — so a BARE invocation of a script that
+          # exits non-zero aborts the step before the next line runs. Written
+          # as `cmd` then `rc=$?`, every branch below except the exit-0 one was
+          # dead code: an exit 1 lost its `::error::` and its summary, and an
+          # exit 2 ("not computed") became an unexplained red. `|| rc=$?` is
+          # the -e-safe capture, and the script's --self-test asserts this
+          # exact line still reads that way.
+          rc=0
+          bash scripts/pr-merge-result-check.sh "$BASE_REF" "$HEAD_SHA" || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "Merge result verified: the ratchet guards pass on the ACTUAL merge of" \
+              "$BASE_REF (fetched fresh) and this PR's head." | tee -a "$GITHUB_STEP_SUMMARY"
+          elif [ "$rc" -eq 2 ]; then
+            {
+              echo "### Merge-result check: not computed"
+              echo
+              echo "Base/head could not be resolved, or the merge hit a real textual"
+              echo "conflict (GitHub's own merge check already owns that case). See the"
+              echo "job log above for which."
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "::warning::pr-merge-result-check: not computed — see the job log"
+          elif [ "$rc" -eq 3 ]; then
+            # Distinct from 2 on purpose: 2 is "this merge is not mine to
+            # judge", 3 is "I judged nothing" — a guard missing from the
+            # merged tree, no .rs file under any known crate root, or no
+            # python3. All three used to exit 0 and print the line above.
+            {
+              echo "### Merge-result check: VERIFIED NOTHING"
+              echo
+              echo "The check could not run: a guard named in \`RATCHET_GUARDS\` is absent"
+              echo "from the merged tree, no \`.rs\` file exists under any crate root the"
+              echo "script knows about, or python3 is unavailable. This is not a pass —"
+              echo "see the job log for which, and fix the script rather than the PR."
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "::error::pr-merge-result-check: verified nothing — the check itself is broken"
+            exit 1
+          else
+            {
+              echo "### Merge-result check: FAILED"
+              echo
+              echo "A ratchet guard that BOTH branches pass alone fails on their actual"
+              echo "merge — the #3724 near-miss. Merge \`$BASE_REF\` into this branch and"
+              echo "re-run \`prek --all-files\` before merging; see the job log above for"
+              echo "which guard and which file."
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "::error::pr-merge-result-check: a ratchet guard fails on the merge result — see #3672"
+            exit 1
           fi

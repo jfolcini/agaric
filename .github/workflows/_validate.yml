@@ -781,8 +781,22 @@ jobs:
         # documenting why the call-site is unaffected. The .nsprc-style
         # explicit-waiver discipline applies; same pattern used by the
         # npm-side audit step.
+        #
+        # #3688 — a malformed upstream advisory (RustSec commit e11d6b33,
+        # gettext-rs/gettext-sys directory mismatch) makes bare `cargo
+        # audit` refuse to load the advisory DATABASE and exit non-zero
+        # BEFORE it reads our dependency tree — indistinguishable, from the
+        # exit code alone, from a real vulnerable dependency, and the
+        # waiver above structurally cannot help (no advisory ID is ever
+        # reported to ignore). `scripts/cargo-audit-guard.sh` runs the same
+        # `cargo audit`, unchanged, but classifies a database-load failure
+        # separately (exit 2, with a banner explaining why this is NOT a
+        # statement about our dependencies) from a real advisory report
+        # (exit 1, unchanged). Still blocking either way (fail closed) —
+        # only the diagnosis changes. See the script's own header and
+        # `--self-test` for the full rationale.
         working-directory: src-tauri
-        run: cargo audit
+        run: bash ../scripts/cargo-audit-guard.sh .
 
       - name: sqlx offline cache check
         # ci/path-conditional-jobs: sqlx `prepare --check` compiles the crate

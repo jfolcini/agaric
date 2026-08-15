@@ -1767,6 +1767,32 @@ pass_filenames = false
 files = "^src-tauri/(deny\\.toml|\\.cargo/audit\\.toml)$"
 stages = ["pre-commit"]
 
+# cargo-audit-guard-selftest (#3688): a malformed upstream advisory (RustSec
+# commit e11d6b33, gettext-rs/gettext-sys directory mismatch) made `cargo
+# audit` refuse to load the advisory DATABASE and exit non-zero before it
+# read a single dependency — indistinguishable from a real vulnerability from
+# the exit code alone, and the documented waiver
+# (`src-tauri/.cargo/audit.toml [advisories].ignore`) could not help, because
+# no advisory ID was ever reported to ignore. `scripts/cargo-audit-guard.sh`
+# wraps `cargo audit` and classifies a database-load failure (exit 2, banner)
+# separately from a real advisory report (exit 1, unchanged) or a clean run
+# (exit 0). The self-test drives the classification against canned text
+# captured from REAL `cargo audit` runs — a locally-reproduced
+# directory/package mismatch, and a genuine un-ignored RUSTSEC-2026-0194
+# report against this repo's own Cargo.lock — through a stub `cargo` on PATH,
+# so it stays offline and fast while pinning the exact fingerprint the
+# classifier keys on.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "cargo-audit-guard-selftest"
+name = "cargo-audit database-load vs vulnerability self-test (#3688)"
+entry = "bash scripts/cargo-audit-guard.sh --self-test"
+language = "system"
+pass_filenames = false
+files = "^(scripts/cargo-audit-guard\\.sh|\\.github/workflows/_validate\\.yml)$"
+stages = ["pre-commit"]
+
 # Rust: unsafe-code allowlist. Workspace lint is
 # `unsafe_code = "deny"`; the only escape hatch is a per-file
 # `#![allow(unsafe_code)]`. This hook fails when a file carries that
@@ -2392,6 +2418,43 @@ entry = "bash scripts/pr-overlap-diverged.sh --self-test"
 language = "system"
 pass_filenames = false
 files = '^(scripts/pr-overlap-diverged\.sh|scripts/lib/git-scratch-guard\.sh|\.github/workflows/pr-overlap\.yml)$'
+stages = ["pre-commit"]
+
+# pr-merge-result-check-selftest (#3672 steps 2/3): the overlap lane reports
+# which files two PRs share or which ratchet files diverged from `main` under
+# a branch — it deliberately never runs a guard on the MERGE RESULT itself,
+# because that needs a git worktree and the guard's own toolchain. This
+# script does: given a base ref and a head sha, it builds a FRESH merge in a
+# disposable worktree (never the caller's own checkout) and runs the
+# toolchain-free Rust ratchet-guard trio (check-raw-tx, check-dynamic-sql,
+# check-table-ownership — the four-crate-root scan, #3107) against it. The
+# self-test's fixtures are the #3724 near-miss, minimised to the smallest
+# reproducible shape: two branches each add ONE dynamic-SQL site to
+# DIFFERENT, non-overlapping lines of the SAME file, and each (correctly,
+# from ITS OWN base) baselines that file at 1 — `git merge` auto-resolves
+# both hunks with no textual conflict, and the merged tree then has 2 sites
+# in a file baselined at 1. Both branches pass check-dynamic-sql ALONE
+# (pinned first, so the failure below is provably a MERGE property and not
+# just "the guard can fail"); the merge does not. A sibling clean fixture
+# (two branches editing DIFFERENT files) proves the same machinery reports a
+# pass when the merge really is fine, and a real textual conflict is pinned
+# as NOT COMPUTED (exit 2) rather than silently "clean" — GitHub's own merge
+# check already owns that case, this script must not pretend to re-decide it.
+# Separately pinned, because all three used to exit 0 having examined
+# nothing: a guard absent from the merged tree, zero `.rs` files under any
+# known crate root, and a missing python3 are exit 3 ("verified nothing"),
+# which the workflow treats as a failure. The base is also pinned to resolve
+# through `origin/<ref>` rather than a stale local branch — the freshness
+# claim, which no fixture without a remote could tell apart.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "pr-merge-result-check-selftest"
+name = "PR merge-result ratchet check self-test (#3672)"
+entry = "bash scripts/pr-merge-result-check.sh --self-test"
+language = "system"
+pass_filenames = false
+files = '^(scripts/pr-merge-result-check\.sh|scripts/lib/git-scratch-guard\.sh|scripts/check-raw-tx\.py|scripts/check-dynamic-sql\.py|scripts/check-table-ownership\.py|\.github/workflows/pr-overlap\.yml)$'
 stages = ["pre-commit"]
 
 # git-scratch-guard-selftest (#3722): the SHARED scrubber that every script
