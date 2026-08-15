@@ -294,7 +294,7 @@ run_self_test() {
 #!/usr/bin/env bash
 if [ "${1:-}" = "audit" ]; then
   echo "SLOW-STUB-LINE-1"
-  sleep 0.4
+  sleep 2
   echo "SLOW-STUB-LINE-2"
   exit 1
 fi
@@ -308,12 +308,16 @@ STUB
   ( PATH="$slow_bin:$PATH" run_guard "$tmp" >"$streamfile" 2>&1 ) &
   local guard_pid=$!
   local waited=0 line1_seen_while_running=0
-  # Poll for up to 2s (the stub's own sleep is 0.4s) for LINE-1 to land on
-  # disk; if it has landed AND the guard process is still alive (has not
-  # returned yet — it is still blocked in the stub's `sleep`), that is the
-  # streamed-not-buffered proof. `kill -0` only tests liveness, sends no
-  # signal.
-  while [ "$waited" -lt 20 ]; do
+  # Poll for up to 10s (the stub's own sleep is 2s — 5x headroom, not the
+  # 5x-on-paper-but-sub-second-in-practice margin a 0.4s sleep gave against
+  # a contended runner: the failure mode is scheduling jitter between the
+  # child writing LINE-1 and this loop next getting CPU time to notice it,
+  # which eats into the ABSOLUTE remaining sleep budget, not a ratio — a
+  # short sleep can be jittered away entirely). LINE-1 landing on disk AND
+  # the guard process still alive (still blocked in the stub's `sleep`,
+  # confirmed via `kill -0`, which only tests liveness and sends no signal)
+  # is the streamed-not-buffered proof.
+  while [ "$waited" -lt 100 ]; do
     if grep -q 'SLOW-STUB-LINE-1' "$streamfile" 2>/dev/null; then
       if kill -0 "$guard_pid" 2>/dev/null; then
         line1_seen_while_running=1

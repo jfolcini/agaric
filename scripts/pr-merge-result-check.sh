@@ -69,20 +69,24 @@
 #   exit 0 — computed, and every ratchet guard passed on the merged tree.
 #   exit 1 — computed, and at least one guard FAILED on the merged tree
 #            specifically. stdout/stderr names which guard and why.
-#   exit 2 — NOT computed, and not this script's to judge: the merge
-#            conflicted at the git level — a real textual conflict, which
-#            GitHub's own merge check already refuses to let through. This
-#            is the ONLY exit-2 case. Never conflate this with exit 0.
+#   exit 2 — NOT computed, and not this script's to judge: `git merge`
+#            failed AND left actual unmerged paths behind (`git ls-files -u`
+#            non-empty) — a real content conflict, which GitHub's own merge
+#            check already refuses to let through. This is the ONLY exit-2
+#            case. Never conflate this with exit 0.
 #   exit 3 — VERIFIED NOTHING: the check itself could not run, for a reason
 #            that is this script's or the runner's fault, not a verdict on
 #            the merge. Covers: base/head could not be resolved, `mktemp`
-#            failed, `git worktree add` failed, a guard named in
-#            RATCHET_GUARDS is absent from the merged tree, no `.rs` file
-#            exists under any known crate root, or python3 is unavailable.
-#            Split from exit 2 deliberately — 2 says "not mine to judge", 3
-#            says "I judged nothing", and CI must treat 3 as a failure.
-#            base/head resolution, mktemp, and `git worktree add` used to
-#            share exit 2 with the genuine textual-conflict case — which
+#            failed, `git worktree add` failed, `git merge` failing for a
+#            reason OTHER than a content conflict (unrelated histories, a
+#            leftover index.lock, ENOSPC — non-zero exit but NO unmerged
+#            paths), a guard named in RATCHET_GUARDS is absent from the
+#            merged tree, no `.rs` file exists under any known crate root,
+#            or python3 is unavailable. Split from exit 2 deliberately — 2
+#            says "not mine to judge", 3 says "I judged nothing", and CI
+#            must treat 3 as a failure. base/head resolution, mktemp, `git
+#            worktree add`, and (initially) EVERY non-zero `git merge` used
+#            to share exit 2 with the genuine textual-conflict case — which
 #            pr-overlap.yml renders as a `::warning::` on an otherwise GREEN
 #            job, so a runner-side failure that verified nothing reported
 #            the lane as passing. All of these cases returned **0** ("guards
@@ -205,18 +209,43 @@ run_merge_check() {
     return 3
   fi
 
-  if ! git -C "$workdir" -c user.email=pr-merge-result-check@invalid \
+  local merge_out merge_rc
+  merge_out=$(git -C "$workdir" -c user.email=pr-merge-result-check@invalid \
       -c user.name='pr-merge-result-check' \
-      merge --quiet --no-edit "$head_sha" >/dev/null 2>&1; then
-    echo "pr-merge-result-check: base and head do NOT merge cleanly — a real" >&2
-    echo "  textual conflict, which GitHub's own merge check already refuses" >&2
-    echo "  to let through. Not computed by this script; not this script's job." >&2
-    # The ONLY exit-2 case left in this script: everything above and below
-    # this branch is exit 3 ("I judged nothing"); this is the one genuine
-    # "not mine to judge".
+      merge --quiet --no-edit "$head_sha" 2>&1)
+  merge_rc=$?
+  if [ "$merge_rc" -ne 0 ]; then
+    # NOT every non-zero `git merge` is a content conflict: unrelated
+    # histories (verified live: `fatal: refusing to merge unrelated
+    # histories`, exit 128, ZERO unmerged paths), a leftover index.lock,
+    # ENOSPC, and others all exit non-zero here too. Returning 2 for ALL of
+    # them was the same conflation this script exists to close, left open
+    # on this one line — pr-overlap.yml renders 2 as a `::warning::` with no
+    # `exit 1`, so any of those would report the lane GREEN having verified
+    # nothing. `ls-files -u` is the actual signal: non-empty means git
+    # genuinely attempted the merge and left conflict markers/stages behind,
+    # which is the ONLY case that is truly "not mine to judge".
+    if [ -n "$(git -C "$workdir" ls-files -u)" ]; then
+      echo "pr-merge-result-check: base and head do NOT merge cleanly — a real" >&2
+      echo "  textual conflict, which GitHub's own merge check already refuses" >&2
+      echo "  to let through. Not computed by this script; not this script's job." >&2
+      printf '%s\n' "$merge_out" >&2
+      # The ONLY exit-2 case left in this script: everything above and below
+      # this branch is exit 3 ("I judged nothing"); this is the one genuine
+      # "not mine to judge".
+      git -C "$workdir" merge --abort >/dev/null 2>&1 || true
+      mr_cleanup "$workdir" "$parent"
+      return 2
+    fi
+    echo "pr-merge-result-check: git merge failed for a reason OTHER than a" >&2
+    echo "  content conflict (no unmerged paths left behind) — unrelated" >&2
+    echo "  histories, a leftover index.lock, disk space, or similar." >&2
+    echo "  NOTHING was verified; this is a runner-side failure, not a" >&2
+    echo "  verdict on the PR." >&2
+    printf '%s\n' "$merge_out" >&2
     git -C "$workdir" merge --abort >/dev/null 2>&1 || true
     mr_cleanup "$workdir" "$parent"
-    return 2
+    return 3
   fi
 
   local -a targets
@@ -497,8 +526,46 @@ run_self_test() {
   git -C "$conflict" commit --quiet -m 'pr edits the same line differently'
   git -C "$conflict" checkout --quiet main
 
-  ( cd "$conflict" && bash "$SELF" main pr ) >/dev/null 2>&1; rc2=$?
+  ( cd "$conflict" && bash "$SELF" main pr ) >"$tmp/conflict.out" 2>"$tmp/conflict.err"; rc2=$?
   st_expect 'a real textual conflict is STILL exit 2, never exit 3 and never a pass' '2' "$rc2"
+  # Note 2: git's own conflict text must reach the log — the step summary
+  # says "See the job log above for the conflict", and before this fix the
+  # job log carried only this script's own three lines.
+  st_expect "git's own conflict output (CONFLICT/Automatic merge failed) reaches stderr, not just this script's own lines" \
+    '1' "$(grep -q -E 'CONFLICT|Automatic merge failed' "$tmp/conflict.err" && echo 1 || echo 0)"
+
+  # ── 3e. A `git merge` FAILURE that is NOT a content conflict is exit 3,
+  #        never exit 2 — the fourth case the exit-2/3 split originally
+  #        missed. Unrelated histories is the deterministic repro: `git
+  #        merge` refuses outright (`fatal: refusing to merge unrelated
+  #        histories`, exit 128) WITHOUT ever starting a merge, so `git
+  #        ls-files -u` stays empty — verified by hand. A leftover
+  #        index.lock or ENOSPC take the same "non-zero, no unmerged paths"
+  #        shape; unrelated histories is the one this fixture can build
+  #        without touching the filesystem's actual free space or racing a
+  #        lock file.
+  local unrelated="$tmp/unrelated"
+  mkdir -p "$unrelated"
+  git_scratch_init "$unrelated"
+  mkdir -p "$unrelated/src-tauri/src"
+  mr_seed_guards "$unrelated"
+  printf 'pub fn noop() {}\n' > "$unrelated/src-tauri/src/lib.rs"
+  git -C "$unrelated" add -A
+  git -C "$unrelated" commit --quiet -m base
+  git -C "$unrelated" checkout --quiet --orphan pr
+  git -C "$unrelated" rm -rf --quiet . >/dev/null 2>&1 || true
+  mkdir -p "$unrelated/src-tauri/src"
+  printf 'pub fn other() {}\n' > "$unrelated/src-tauri/src/lib.rs"
+  git -C "$unrelated" add -A
+  git -C "$unrelated" commit --quiet -m 'unrelated pr history, shares no ancestor with main'
+  git -C "$unrelated" checkout --quiet main
+
+  ( cd "$unrelated" && bash "$SELF" main pr ) >"$tmp/unrelated.out" 2>"$tmp/unrelated.err"; rc2=$?
+  st_expect 'a non-conflict git-merge failure (unrelated histories) is exit 3, NOT exit 2' '3' "$rc2"
+  st_expect 'and it is NOT reported using the content-conflict wording ("do NOT merge cleanly")' \
+    '0' "$(grep -c 'do NOT merge cleanly' "$tmp/unrelated.err" || true)"
+  st_expect "git's own refusal text (refusing to merge unrelated histories) reaches stderr" \
+    '1' "$(grep -c 'refusing to merge unrelated histories' "$tmp/unrelated.err" || true)"
 
   # ── 2b. A `git worktree add` FAILURE is exit 3, and prunes any stale
   #        registration it finds in the CALLER's .git/worktrees/ ───────────
@@ -622,6 +689,8 @@ STUB
     "$(grep -c 'pr-merge-result-check\.sh "\$BASE_REF" "\$HEAD_SHA" || rc=\$?' "$wf" || true)"
   st_expect 'and the workflow branches on exit 3 (verified nothing) as a failure' '1' \
     "$(grep -c '"\$rc" -eq 3' "$wf" || true)"
+  st_expect 'and the merge-result job runs with always(), so a failure in the (non-required) overlap job cannot silently skip it' \
+    '1' "$(grep -c 'always() && (' "$wf" || true)"
 
   # ── 4. THE REAL REPOSITORY is untouched ──────────────────────────────────
   local repo_root

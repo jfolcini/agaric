@@ -153,3 +153,35 @@ the process mid-write, which would make the self-test timing-dependent — so it
 reasoning and a by-hand repro recorded above, not by an assertion; the unlocked/self-test-covered arm
 is pinned by planting an orphaned entry directly and asserting it is gone after the failure path
 runs, shown red against the pre-fix code first.
+
+### The exit-2 split was reported done at three of four
+
+The previous entry above says, in its own words, that the exit-2/3 conflation was closed: "Splitting
+it moves those three cases to exit 3 ... and leaves exit 2 with a single occupant." That was true of
+the three call sites checked — an unresolvable ref, `mktemp`, `git worktree add` — and false as a
+claim about the *line*, because `git merge`'s own non-zero exit was never audited the same way. Line
+210 returned 2 for **any** merge failure, not only a content conflict: unrelated histories, a
+leftover `index.lock`, ENOSPC all exit non-zero and all rendered as the same soft `::warning::` on an
+otherwise green job, having run zero guards. That is the identical shape being described as fixed one
+paragraph up. "Split from exit 2 deliberately" was accurate about the mechanism and incomplete about
+its coverage — three of four non-computed call sites were re-audited, the fourth (the one carrying
+the most text explaining why it's the sole legitimate exit-2 case) was not, because it already *had*
+a comment justifying its return value and the comment reads as a decision rather than a scan target.
+Fixed the same way as the other three: `git -C "$workdir" ls-files -u` distinguishes an actual
+content conflict (non-empty, unmerged stages left behind) from every other `git merge` failure (empty
+— confirmed live, unrelated-histories refuses before ever starting a merge) — the former stays exit
+2, the latter joins exit 3. `git`'s own stderr, previously discarded with `>/dev/null 2>&1` while the
+step summary told a reader to go find it "in the job log above", is now captured and re-emitted for
+both branches.
+
+The same round closed a gap in the surrounding workflow that had nothing to do with exit codes:
+`merge-result` depended on `overlap` with `needs:` alone, so any failure in `overlap` — a job that is
+deliberately non-required and whose red is tolerated by design — skipped `merge-result` silently
+rather than evaluating whether it should run. `always()` decouples them; the existing `!= '0'` gate
+already treats an empty/failed-to-write output as "run", so nothing else about the condition needed
+to change. Separately, the job's own comment claimed the gate triggers on a whole-tree ratchet file
+diverging, when the `diverged` output it actually reads is every file `main` changed that this PR
+also touches, ratchet or not — `pr-file-overlap.mjs` computes the ratchet-only subset
+(`divergedRatchets`) for its comment body but never exports it. Over-triggering is the safe
+direction, so the code was left as is and the comment corrected to say what the gate actually does,
+cross-referencing #3979 for the broader gap rather than re-describing it here.

@@ -778,9 +778,16 @@ jobs:
         # surfaces here exactly once; the maintainer must either fix the
         # underlying dep or add an explicit entry to
         # `src-tauri/deny.toml [advisories].ignore` with a `reason` field
-        # documenting why the call-site is unaffected. The .nsprc-style
-        # explicit-waiver discipline applies; same pattern used by the
-        # npm-side audit step.
+        # documenting why the call-site is unaffected — `deny.toml` is the
+        # single source of truth (#11) — then run
+        # `node scripts/sync-audit-from-deny.mjs` to regenerate
+        # `src-tauri/.cargo/audit.toml [advisories].ignore`, the file
+        # `cargo audit` itself actually reads (see `cargo-audit-guard.sh`'s
+        # own banner, which names the generated file because that is the
+        # one this step's tool consults, not the one a human edits). The
+        # `audit-toml-in-sync` prek hook fails, naming the same command, if
+        # the two ever drift. The .nsprc-style explicit-waiver discipline
+        # applies; same pattern used by the npm-side audit step.
         #
         # #3688 — a malformed upstream advisory (RustSec commit e11d6b33,
         # gettext-rs/gettext-sys directory mismatch) makes bare `cargo
