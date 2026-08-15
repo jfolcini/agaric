@@ -515,8 +515,51 @@ test.describe('sort', () => {
     titles = await visibleTitles(page)
     expect(titles[0]).toBe('Getting Started')
 
+    // Most linked, Most content, Recently modified are the three
+    // server-derived sorts (`usePageBrowserSort.ts`): `selectSort` only
+    // waits for the Radix listbox to close, not for the `list_pages_with_metadata`
+    // round-trip that actually reorders these three, and `sortPages` does NOT
+    // re-sort them client-side (it renders server rows in received order) —
+    // so a read right after selecting one of these three can legitimately
+    // still show the PREVIOUS mode's order (#3918, same missing-barrier class
+    // as #3902/#3915's filter reads). `Alphabetical` / `Default` / `Created` /
+    // `Recent` are frontend-only: `sortPages` re-sorts whatever rows are
+    // already loaded immediately on click, so their reads below need no
+    // barrier regardless of the same background refetch race.
+    const daily = localDateStr(new Date())
+    // The deterministic full order for `default` / `most-linked` /
+    // `recently-modified` in this fixture: `most-linked`'s two 1-inbound
+    // pages (Getting Started, Quick Notes) are already id-ASC-first, and
+    // `recently-modified`'s ties (all seed pages share the ~90d stamp) fall
+    // back to the SAME id-ASC tiebreak — so all three sorts render this
+    // exact array. Confirmed by invoking `list_pages_with_metadata` directly
+    // against the mock for all four wire sorts (`dispatch()`, not through the
+    // UI/react-query pipeline).
+    const idAscOrder = [
+      'Getting Started',
+      'Quick Notes',
+      daily,
+      'Projects',
+      'Meetings',
+      'Meeting Notes Template',
+    ]
+    // Same order as `sort preference persists across reload` below —
+    // `child_block_count` DESC, id-ASC tiebreak (`compareMetaRows`).
+    const mostContentOrder = [
+      'Getting Started',
+      daily,
+      'Projects',
+      'Meeting Notes Template',
+      'Quick Notes',
+      'Meetings',
+    ]
+
     // Most linked — Getting Started + Quick Notes (each 1 inbound) lead the
-    // zero-inbound pages.
+    // zero-inbound pages. NOT given a barrier: its settled order is
+    // `idAscOrder`, byte-identical to the `Default` order already on screen
+    // from the previous step (both pages happen to already be id-ASC-first),
+    // so a stale read and a settled read are indistinguishable here — a
+    // barrier could not be shown to block anything in this fixture.
     await selectSort(page, 'Most linked')
     titles = await visibleTitles(page)
     expect(titles.slice(0, 2).toSorted()).toEqual(['Getting Started', 'Quick Notes'])
@@ -524,17 +567,24 @@ test.describe('sort', () => {
     // Most content — Getting Started and the daily page each carry 5 child
     // blocks (the most), so they lead; the alphabetical tiebreaker puts the
     // daily page (digits) ahead of "Getting Started". Both head the list.
+    // This IS observable against the preceding Most-linked/idAscOrder state
+    // (second position differs: `daily` here vs. `Quick Notes` there), so
+    // barrier on the full deterministic order before reading.
     await selectSort(page, 'Most content')
+    await expect(pageTitleLocator(page)).toHaveText(mostContentOrder)
     titles = await visibleTitles(page)
     expect(titles.slice(0, 2)).toContain('Getting Started')
 
     // Recently modified — all seed pages share the ~90d stamp, so the
-    // alphabetical tiebreaker applies; assert it's a valid permutation.
+    // alphabetical tiebreaker applies, giving the same full order as
+    // `idAscOrder` — observable against the preceding Most-content state.
     await selectSort(page, 'Recently modified')
-    expect((await visibleTitles(page)).length).toBe(6)
+    await expect(pageTitleLocator(page)).toHaveText(idAscOrder)
 
     // Created (ULID DESC) and Recent (visit history) both reorder without
-    // dropping rows.
+    // dropping rows. Both are frontend-only (see the note above `daily`) —
+    // synchronous client re-sorts of whatever is already loaded, so no
+    // barrier is needed for either read.
     await selectSort(page, 'Created')
     expect((await visibleTitles(page)).length).toBe(6)
     await selectSort(page, 'Recent')
