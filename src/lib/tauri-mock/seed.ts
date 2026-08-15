@@ -702,6 +702,15 @@ export function seedBlocks(): void {
   // (#3898 / #3884 — see {@link stampPageLastEdited}). They must be written
   // AFTER the page blocks exist, since the stamp copies each page's title
   // into the op's `from_text`/`to_text`.
+  //
+  // Hoisted OUTSIDE the loop and reused for all six pages: `offsetIso` calls
+  // `new Date()` with millisecond precision, so evaluating it once per page
+  // inside the loop only ties the six stamps if all six iterations land in
+  // the same clock tick. Hoisting makes the tie a guarantee instead of a
+  // timing coincidence that `recently-modified`'s id-ASC tiebreak (and the
+  // `pages-view.spec.ts` sort assertions that pin the full six-page order)
+  // depends on.
+  const canonicalLastModified = offsetIso(-90)
   for (const pageId of [
     SEED_IDS.PAGE_GETTING_STARTED,
     SEED_IDS.PAGE_QUICK_NOTES,
@@ -710,7 +719,7 @@ export function seedBlocks(): void {
     SEED_IDS.PAGE_MEETINGS,
     SEED_IDS.PAGE_TMPL_MEETING,
   ]) {
-    stampPageLastEdited(pageId, offsetIso(-90))
+    stampPageLastEdited(pageId, canonicalLastModified)
   }
 
   seedBulkPages()

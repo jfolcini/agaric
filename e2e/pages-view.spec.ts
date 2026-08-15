@@ -107,6 +107,20 @@ function localDateStr(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+/**
+ * The deterministic `most-content` full order for the canonical fixture:
+ * `child_block_count` DESC, id-ASC tiebreak (`compareMetaRows`,
+ * `shared.ts`). Getting Started and the daily page each carry 5 child
+ * blocks (the most) and lead; the tiebreak is id ASC (PAGE01 before
+ * PAGE03), so Getting Started — not the daily page — heads the list.
+ * Used by both the `sort` and `sort preference persists across reload`
+ * tests below; hoisted here so the two copies cannot drift independently.
+ */
+function mostContentOrder(): string[] {
+  const daily = localDateStr(new Date())
+  return ['Getting Started', daily, 'Projects', 'Meeting Notes Template', 'Quick Notes', 'Meetings']
+}
+
 /** The muted count chip text (e.g. "6 pages", "4 matching pages"). */
 function countChip(page: Page): Locator {
   return page.getByTestId('page-browser-count')
@@ -530,11 +544,12 @@ test.describe('sort', () => {
     // The deterministic full order for `default` / `most-linked` /
     // `recently-modified` in this fixture: `most-linked`'s two 1-inbound
     // pages (Getting Started, Quick Notes) are already id-ASC-first, and
-    // `recently-modified`'s ties (all seed pages share the ~90d stamp) fall
-    // back to the SAME id-ASC tiebreak — so all three sorts render this
-    // exact array. Confirmed by invoking `list_pages_with_metadata` directly
-    // against the mock for all four wire sorts (`dispatch()`, not through the
-    // UI/react-query pipeline).
+    // `recently-modified`'s ties (all seed pages share the hoisted ~90d
+    // stamp — `seed.ts`, one `offsetIso(-90)` call shared by all six
+    // pages, not one per page) fall back to the SAME id-ASC tiebreak — so
+    // all three sorts render this exact array. Confirmed by invoking
+    // `list_pages_with_metadata` directly against the mock for all four
+    // wire sorts (`dispatch()`, not through the UI/react-query pipeline).
     const idAscOrder = [
       'Getting Started',
       'Quick Notes',
@@ -542,16 +557,6 @@ test.describe('sort', () => {
       'Projects',
       'Meetings',
       'Meeting Notes Template',
-    ]
-    // Same order as `sort preference persists across reload` below —
-    // `child_block_count` DESC, id-ASC tiebreak (`compareMetaRows`).
-    const mostContentOrder = [
-      'Getting Started',
-      daily,
-      'Projects',
-      'Meeting Notes Template',
-      'Quick Notes',
-      'Meetings',
     ]
 
     // Most linked — Getting Started + Quick Notes (each 1 inbound) lead the
@@ -565,19 +570,19 @@ test.describe('sort', () => {
     expect(titles.slice(0, 2).toSorted()).toEqual(['Getting Started', 'Quick Notes'])
 
     // Most content — Getting Started and the daily page each carry 5 child
-    // blocks (the most), so they lead; the alphabetical tiebreaker puts the
-    // daily page (digits) ahead of "Getting Started". Both head the list.
-    // This IS observable against the preceding Most-linked/idAscOrder state
-    // (second position differs: `daily` here vs. `Quick Notes` there), so
-    // barrier on the full deterministic order before reading.
+    // blocks (the most), so they lead; the tiebreak is id ASC (PAGE01
+    // before PAGE03), so Getting Started — not the daily page — heads the
+    // list (see `mostContentOrder`). This IS observable against the
+    // preceding Most-linked/idAscOrder state (second position differs:
+    // `daily` here vs. `Quick Notes` there), so barrier on the full
+    // deterministic order before reading.
     await selectSort(page, 'Most content')
-    await expect(pageTitleLocator(page)).toHaveText(mostContentOrder)
-    titles = await visibleTitles(page)
-    expect(titles.slice(0, 2)).toContain('Getting Started')
+    await expect(pageTitleLocator(page)).toHaveText(mostContentOrder())
 
-    // Recently modified — all seed pages share the ~90d stamp, so the
-    // alphabetical tiebreaker applies, giving the same full order as
-    // `idAscOrder` — observable against the preceding Most-content state.
+    // Recently modified — all seed pages share the hoisted ~90d stamp
+    // (`seed.ts`), so the id-ASC tiebreak applies (`compareMetaRows`,
+    // `shared.ts`), giving the same full order as `idAscOrder` —
+    // observable against the preceding Most-content state.
     await selectSort(page, 'Recently modified')
     await expect(pageTitleLocator(page)).toHaveText(idAscOrder)
 
@@ -623,16 +628,7 @@ test.describe('sort', () => {
     // (A "stable across two reads" poll alone is NOT a safe substitute here
     // -- verified this can lock onto an intermediate `keepPreviousData`
     // render that is itself stable-but-wrong for the whole round-trip.)
-    const daily = localDateStr(new Date())
-    const mostContentOrder = [
-      'Getting Started',
-      daily,
-      'Projects',
-      'Meeting Notes Template',
-      'Quick Notes',
-      'Meetings',
-    ]
-    await expect(pageTitleLocator(page)).toHaveText(mostContentOrder)
+    await expect(pageTitleLocator(page)).toHaveText(mostContentOrder())
     const before = await visibleTitles(page)
     await expect(page.getByRole('combobox', { name: 'Sort order' })).toContainText('Most content')
 
