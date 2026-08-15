@@ -5428,3 +5428,110 @@ async fn page_link_cache_backfill_drops_edges_with_a_purged_target_3894() {
          not inserted as a dangling `target_page_id`"
     );
 }
+
+/// #3894 — the INCREMENTAL upsert must carry the same FK guard as the three
+/// rebuild sites, or guarding the rebuilds only moves the abort somewhere
+/// worse.
+///
+/// `recompute_rows_for_rollup_key` writes the same `NOT NULL REFERENCES
+/// blocks(id)` `source_page_id` from the same derived roll-up key, so it has
+/// always been exposed for a block's CURRENT key. #3842 widened the exposure:
+/// the sweep now runs the recompute for the block's STALE keys (`parent_id`,
+/// its own id) on EVERY reindex, so a dangling `blocks.parent_id` anywhere in
+/// the neighbourhood becomes a roll-up key here even when the reindexed block
+/// itself is perfectly clean.
+///
+/// Unguarded, that is strictly worse than the migration case this issue
+/// started from: 0110 skips the bad group silently, and then every single
+/// `ReindexBlockLinks` raises `FOREIGN KEY constraint failed` for the same
+/// key — logged and retried forever, a permanent background error loop rather
+/// than one boot failure.
+///
+/// The dangling `parent_id` is planted with `foreign_keys = OFF` (exactly the
+/// historical FK-off-window state migrations 0073 / 0085 exist to clean up);
+/// the reindex itself then runs with foreign keys ENFORCED, which is what
+/// makes the assertion say anything.
+#[tokio::test]
+async fn page_link_cache_incremental_skips_dangling_rollup_keys_3894() {
+    let page_a = "PA000000000000000000000000";
+    let page_b = "PB000000000000000000000000";
+    let child = "C0000000000000000000000001";
+    // A block that still rolls up to the dangling key, so the stale-key sweep
+    // finds real work to do under it.
+    let orphan = "ORPHAN00000000000000000001";
+    // Deliberately NOT inserted into `blocks`.
+    let ghost_parent = "GHOSTPARENT00000000000000A";
+
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 110).await;
+    seed_pre_0110_vault(&pool, page_a, page_b, child).await;
+
+    // `max_connections(1)`, so the pragma lands on the connection the writes
+    // below use.
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // The reindexed block is CLEAN under its current key (`page_id = page_a`)
+    // and dangles only under the STALE key #3842 added to the sweep.
+    sqlx::query("UPDATE blocks SET parent_id = ? WHERE id = ?")
+        .bind(ghost_parent)
+        .bind(child)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // `page_id` NULL, so this block's OWN roll-up key is the dangling
+    // `parent_id` — that is what makes the sweep's recompute for `ghost_parent`
+    // produce a group to insert instead of finding nothing.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', 'see B', ?, 2)",
+    )
+    .bind(orphan)
+    .bind(ghost_parent)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Both endpoints are live blocks, so this needs no FK-off window.
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(orphan)
+        .bind(page_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let fk_on: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        fk_on, 1,
+        "the reindex must run with foreign keys ENFORCED or this test proves \
+         nothing about the violation it is guarding"
+    );
+
+    // The assertion: unguarded, this returns `FOREIGN KEY constraint failed`
+    // from the stale-key recompute for `ghost_parent`.
+    agaric_store::cache::reindex_page_link_cache_for_block(&pool, child)
+        .await
+        .expect("a dangling stale roll-up key must SKIP its group, not raise");
+
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache \
+         ORDER BY source_page_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(page_a.to_string(), page_b.to_string(), 1)],
+        "the incremental path must skip only the group whose roll-up key names \
+         no `blocks` row and still write the clean page-keyed row"
+    );
+}

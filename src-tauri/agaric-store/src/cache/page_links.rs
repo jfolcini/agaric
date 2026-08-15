@@ -245,6 +245,40 @@ async fn recompute_rows_for_rollup_key(
     // target block joined per row. The `DO UPDATE SET` refreshes all
     // three alongside `edge_count`. `MAX`/`MIN` just satisfy the GROUP BY
     // (the flags are constant per target group).
+    //
+    // #3894 FOREIGN KEY guard — the `EXISTS` term in the `desired` WHERE, the
+    // same guard `rebuild_page_link_cache_impl`,
+    // `rebuild_page_link_cache_split_impl` and migration 0110 carry (the third
+    // COALESCE term is spelled `sb.id` here only because this statement's own
+    // roll-up predicate is; `sb.id = bl.source_id` by the join). It belongs
+    // here for the same reason: `source_page_id` is `NOT NULL REFERENCES
+    // blocks(id)` (0065) with foreign keys ON for every connection, and the
+    // value written is the derived roll-up key, not a joined column — a live
+    // source block carrying a dangling `page_id` / `parent_id` (migrations
+    // 0073 and 0085 NULL exactly that historical state out, so vaults in the
+    // wild carry it) rolls up to an id that is not in `blocks` and the INSERT
+    // raises. `ON CONFLICT` does not absorb it: per the SQLite docs the ON
+    // CONFLICT algorithm does not apply to FOREIGN KEY constraints.
+    //
+    // #3842 is what makes this reachable for keys other than the block's own:
+    // the stale-key sweep above runs this recompute for `parent_id` and for the
+    // block's own id, so a dangling `parent_id` anywhere in the neighbourhood
+    // now becomes a roll-up key here. Unguarded, the failure mode is worse than
+    // the migration's, not better: 0110 skips the group silently, then this
+    // path raises for the same key on every `ReindexBlockLinks`, and the error
+    // is logged and RETRIED forever — a permanent background error loop rather
+    // than one boot failure.
+    //
+    // The TARGET side needs nothing, exactly as in the rebuilds: `target` is
+    // `bl.target_id` and `JOIN blocks tb ON tb.id = bl.target_id` is an INNER
+    // join, so an edge whose target is purged produces no `desired` row at all.
+    // Dropping a group cannot distort a surviving row either — the key is
+    // constant across the whole statement (`?1`), so the predicate is all-or-
+    // nothing and can never remove part of one target group's `COUNT(*)`.
+    //
+    // The zero-edge DELETE below is deliberately NOT guarded: it removes rows,
+    // so it cannot violate an FK, and a row that somehow exists under a
+    // dangling key should be swept, not preserved.
     sqlx::query!(
         "WITH desired AS ( \
              SELECT bl.target_id AS target, \
@@ -256,6 +290,10 @@ async fn recompute_rows_for_rollup_key(
              JOIN blocks tb ON tb.id = bl.target_id \
              WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1 \
                AND sb.deleted_at IS NULL \
+               AND EXISTS ( \
+                   SELECT 1 FROM blocks fk \
+                   WHERE fk.id = COALESCE(sb.page_id, sb.parent_id, sb.id) \
+               ) \
                AND bl.target_id IN (SELECT value FROM json_each(?2)) \
              GROUP BY 1 \
          ) \

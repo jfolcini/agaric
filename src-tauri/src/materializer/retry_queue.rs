@@ -859,6 +859,14 @@ pub(crate) async fn clear_refresh_tag_usage_count_obligation(
 /// DELETE-by-PK is always warranted (and cheap against the tiny single-writer
 /// retry-queue table). `metrics` is optional so the direct-call handler path
 /// (unit tests with no live sweeper) can pass `None`.
+///
+/// The DELETE is unconditional, so it also discards a PRE-EXISTING row: if a
+/// genuine earlier failure had already queued this `(key, kind)`,
+/// [`seed_obligation_tx`]'s `ON CONFLICT DO NOTHING` preserved that row's
+/// `attempts` / backoff, and this call then deletes it outright rather than
+/// only the seed it paired with. The outcome is right — the work just
+/// succeeded durably, so there is nothing left to retry — but the accumulated
+/// attempt count and backoff position are lost, not merged.
 pub(crate) async fn clear_obligation(
     pool: &SqlitePool,
     kind: &RetryKind,
