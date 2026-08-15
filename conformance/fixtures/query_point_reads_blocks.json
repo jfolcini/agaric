@@ -54,6 +54,32 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "beta-one",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
@@ -192,7 +218,7 @@
         }
       },
       "command": "load_page_subtree",
-      "comment": "`load_page_subtree_inner` selects on `page_id = root`, so the GRANDCHILD S4 is in the result even though its parent is S3 — a mock that listed direct children would drop it. The root itself and the tombstone are excluded. `ordered` because the sort key is `(position, id)` over seed blocks whose ids are byte-identical on both stacks.",
+      "comment": "`load_page_subtree_inner` selects on `page_id = root`, so the GRANDCHILD S4 is in the result even though its parent is S3 — a mock that listed direct children would drop it. The root itself and the tombstone are excluded. `ordered` because the sort key is `(position, id)` over seed blocks whose ids are byte-identical on both stacks. #3977 — S5 (page Beta) and its child S6 are the NEGATIVE CONTROL and the reason this step can fail at all: both are ACTIVE, both are in the same space, and both have `page_id != S1`, so the `page_id` predicate is the only thing that excludes them. Before they were seeded every active non-root block already had `page_id == S1`, and deleting the walk predicate from the mock changed nothing (measured: green across the whole frontend suite). S6 also sits at position 1, so a dropped predicate reorders the head of this `ordered` list, not just its tail.",
       "name": "load_page_subtree_walks_page_id",
       "ordered": true
     }
@@ -225,6 +251,20 @@
         "content": "two-a",
         "id": "S4",
         "parent_id": "S3",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "id": "S5",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "beta-one",
+        "id": "S6",
+        "parent_id": "S5",
         "position": 1
       }
     ],

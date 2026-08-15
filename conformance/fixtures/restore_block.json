@@ -1,5 +1,5 @@
 {
-  "description": "Soft-delete then restore a content block. delete_block tombstones (deleted_at sentinel), restore_block clears it. The Rust runner sources the restore op's deleted_at_ref from the live tombstone's deleted_at (mirroring restore_block_inner); the mock clears deleted_at unconditionally. Drives both ops through the foreground engine pipeline; asserts the SETTLED block is live again (deleted_at null), exercising the soft-delete/restore cascade.",
+  "description": "Soft-delete then restore a content block. delete_block tombstones (deleted_at sentinel), restore_block clears it. The Rust runner sources the restore op's deleted_at_ref from the live tombstone's deleted_at (mirroring restore_block_inner); the mock clears deleted_at unconditionally. Drives both ops through the foreground engine pipeline; asserts the SETTLED block is live again (deleted_at null), exercising the soft-delete/restore cascade. #3966 — S3 is deleted and NOT restored, and it is what makes this fixture assert anything. Until it was seeded the op list was a pure ROUND TRIP: delete S2, restore S2, ending byte-identical to the seed, so the recorded `expected` was the snapshot the seed alone produces and a mock whose delete_block AND restore_block were both no-ops reproduced it exactly. The snapshot-leg vacuity guard in conformance.test.ts caught it. With S3 the terminal state (S2 active, S3 tombstoned) is reachable only if BOTH ops ran and the restore was scoped to the block it named: a no-op restore leaves S2 tombstoned, an over-broad one clears S3 too, and either reddens.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -28,11 +28,27 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "casualty (deleted, never restored)",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 2,
+      "count": 3,
       "ops": [
+        {
+          "op_type": "delete_block"
+        },
         {
           "op_type": "delete_block"
         },
@@ -49,6 +65,12 @@
     {
       "args": {
         "blockId": "S2"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S3"
       },
       "command": "delete_block"
     },
@@ -74,6 +96,13 @@
         "id": "S2",
         "parent_id": "S1",
         "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "casualty (deleted, never restored)",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
       }
     ],
     "properties": [],

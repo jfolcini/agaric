@@ -26,7 +26,7 @@
  * file only asserts that the coverage SURFACE has not regressed.
  */
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -227,14 +227,36 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // undo/revert command, and the mock unit tests below hand-write their own
   // expectations. Reading these as coverage is what let the cohort divergence
   // ship. Keep the wording honest until a fixture can drive a reversal.
+  // #3964 — the four corrections the citation guard below forced. Each of
+  // these reasons used to name a file that does not mention the command it
+  // waives; nothing checked, so the waiver read as coverage it did not have.
   undo_op: 'NOT cross-checked; regression-guarded by revert-cohort.test.ts / undo-op-refs.test.ts',
-  undo_ops: 'NOT cross-checked; regression-guarded by revert.test.ts / undo-op-refs.test.ts',
+  undo_ops:
+    'NOT cross-checked; regression-guarded by undo-op-refs.test.ts and, for the reversal ' +
+    'core it delegates to, revert.test.ts (via applyRevertForOp)',
   undo_page_op:
     'NOT cross-checked; regression-guarded by revert-cohort.test.ts / undo-move.test.ts',
-  undo_page_group: 'NOT cross-checked; regression-guarded by undo-op-refs.test.ts',
+  // Was "regression-guarded by undo-op-refs.test.ts" — that file's own doc
+  // scopes it to `undo_op` / `undo_ops` and it never mentions this command.
+  // The only test that names `undo_page_group` drives the FE store against a
+  // MOCKED `invoke`, so it never reaches this handler: the mock's
+  // `undo_page_group` has no mock-level regression test at all.
+  undo_page_group:
+    'NOT cross-checked, and not mock-level guarded either: the only test naming ' +
+    'undo_page_group is components/pages/__tests__/PageHeader.test.tsx, which asserts ' +
+    'the FE issues the IPC against a MOCKED invoke and never reaches this handler (#3964)',
   redo_page_op: 'NOT cross-checked; regression-guarded by undo-move.test.ts',
-  revert_ops: 'NOT cross-checked; regression-guarded by revert-cohort.test.ts / revert.test.ts',
-  restore_page_to_op: 'NOT cross-checked; regression-guarded by revert.test.ts',
+  revert_ops:
+    'NOT cross-checked; regression-guarded by revert-cohort.test.ts and, for the ' +
+    'per-op reversal it loops, revert.test.ts (via applyRevertForOp)',
+  // Was "regression-guarded by revert.test.ts". revert.test.ts pins
+  // `applyRevertForOp`, which this handler never calls — the mock's
+  // `restore_page_to_op` is a CONSTANT STUB returning `{ops_reverted: 0,
+  // non_reversible_skipped: 0, results: []}` (handlers/history.ts). There is
+  // no behaviour to regression-guard, and the old citation implied there was.
+  restore_page_to_op:
+    'NOT cross-checked; the mock handler is a CONSTANT STUB returning zeroed counters ' +
+    '(handlers/history.ts), so no mock-level test guards a behaviour it does not have (#3964)',
   compact_op_log_cmd: 'op-log maintenance; rewrites history, not blocks/props/tags',
 
   // ── Draft staging (drafts table, outside the conformance snapshot scope) ──
@@ -1524,7 +1546,7 @@ const FIXTURES_DIR = path.resolve(
 
 interface FixtureShape {
   name: string
-  ops: Array<{ command: string }>
+  ops: Array<{ command: string; args?: Record<string, unknown> }>
   /** #3347 — post-op READ steps (see `conformance-query.ts`). */
   queries?: Array<QueryStepShape>
   /** #3347 — the backend-authored projection of each `queries` step. */
@@ -1532,6 +1554,18 @@ interface FixtureShape {
   /** Additive, replay-inert string tags declaring which scenarios this fixture
    *  pins (see `REQUIRED_SCENARIOS`). Absent on fixtures that predate the tag. */
   scenarios?: string[]
+  /** #3965 — the seed and the backend-authored snapshot, read (not replayed)
+   *  so a required scenario can be checked STRUCTURALLY rather than by its
+   *  label. */
+  seed?: { blocks?: Array<Record<string, unknown>> }
+  expected?: ExpectedSnapshot | null
+}
+
+/** The sections of a fixture's `expected` the scenario predicates consult. */
+interface ExpectedSnapshot {
+  blocks: Array<Record<string, unknown>>
+  properties: Array<Record<string, unknown>>
+  block_tags: Array<Record<string, unknown>>
 }
 
 interface QueryStepShape {
@@ -1561,6 +1595,17 @@ interface LoadedFixture {
   querySteps: QueryStepShape[]
   expectedQueries: Array<{ name: string; rows: string[]; error?: string | null }>
   scenarios: Set<string>
+  /** #3965 — ops WITH their args, the seed block table, the recorded snapshot,
+   *  and the seed-label → canonical-label map, which together are what a
+   *  scenario predicate needs to check a behaviour instead of a tag. */
+  ops: Array<{ command: string; args: Record<string, unknown> }>
+  seedBlocks: Array<Record<string, unknown>>
+  expected: ExpectedSnapshot | null
+  /** `'S2'` → `'B2'`. Canonical labels are assigned in SEED ORDER by both
+   *  runners (`canonicalOrder` / `build_snapshot_with_order`), so the map is
+   *  positional — NOT a numeric coincidence between the two naming schemes,
+   *  which a fixture is free to break. */
+  label: (seedId: string) => string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -1657,6 +1702,10 @@ function loadFixtures(): LoadedFixture[] {
     .toSorted()
     .map((f) => {
       const raw = JSON.parse(readFileSync(path.join(FIXTURES_DIR, f), 'utf8')) as FixtureShape
+      const seedBlocks = raw.seed?.blocks ?? []
+      const labels = new Map<string, string>(
+        seedBlocks.map((b, i) => [b['id'] as string, `B${i + 1}`]),
+      )
       return {
         name: raw.name,
         opCommands: new Set(raw.ops.map((o) => o.command)),
@@ -1664,43 +1713,491 @@ function loadFixtures(): LoadedFixture[] {
         querySteps: raw.queries ?? [],
         expectedQueries: raw.expected_queries ?? [],
         scenarios: new Set(raw.scenarios ?? []),
+        ops: raw.ops.map((o) => ({ command: o.command, args: o.args ?? {} })),
+        seedBlocks,
+        expected: raw.expected ?? null,
+        label: (seedId: string) => labels.get(seedId) ?? null,
       }
     })
+}
+
+// ---------------------------------------------------------------------------
+// #3964 — checkable waiver citations
+// ---------------------------------------------------------------------------
+
+/** Every reason-carrying manifest in this file, by the name the failure prints. */
+const WAIVER_LISTS: ReadonlyArray<readonly [string, Readonly<Record<string, string>>]> = [
+  ['NO_FIXTURE_ALLOWLIST', NO_FIXTURE_ALLOWLIST],
+  ['READ_NO_QUERY_ALLOWLIST', READ_NO_QUERY_ALLOWLIST],
+  ['READ_QUERY_BRANCH_ALLOWLIST', READ_QUERY_BRANCH_ALLOWLIST],
+  ['QUERY_STEPS_BACKEND_ONLY', QUERY_STEPS_BACKEND_ONLY],
+]
+
+/**
+ * An artifact a waiver reason points at: a sibling (or `src/`-relative) test
+ * file, or a `conformance/fixtures` JSON.
+ *
+ * `via` is the explicit indirect form — `revert.test.ts (via applyRevertForOp)`
+ * — for the case a cited test reaches the waived command through a shared
+ * primitive and so never spells the command's name. It is an escape hatch from
+ * the RELEVANCE check only: the file must still exist, and it must still
+ * mention the symbol the reason redirects to, so the redirect is itself
+ * checked rather than merely asserted.
+ */
+interface Citation {
+  file: string
+  via: string | null
+}
+
+/**
+ * `<path>.test.ts[x]` or `<name>.json`, each optionally followed by
+ * `(via <symbol>)`. Both shapes are already the conventions in use — this
+ * makes them load-bearing rather than decorative.
+ */
+const CITATION_RE = /([\w./-]*[\w-]+\.(?:test\.tsx?|json))(?:\s*\(via\s+([\w.]+)\))?/g
+
+function citationsIn(reason: string): Citation[] {
+  return [...reason.matchAll(CITATION_RE)].map((m) => ({
+    file: m[1] as string,
+    via: (m[2] as string | undefined) ?? null,
+  }))
+}
+
+const CONFORMANCE_FIXTURES_DIR = FIXTURES_DIR
+const MOCK_TESTS_DIR = import.meta.dirname
+const SRC_DIR = path.resolve(import.meta.dirname, '..', '..', '..')
+
+/** Absolute path of a cited artifact, or `null` when nothing resolves. */
+function resolveCitation(cite: Citation): string | null {
+  const candidates = cite.file.endsWith('.json')
+    ? [path.resolve(CONFORMANCE_FIXTURES_DIR, cite.file)]
+    : [path.resolve(MOCK_TESTS_DIR, cite.file), path.resolve(SRC_DIR, cite.file)]
+  return candidates.find((p) => existsSync(p)) ?? null
+}
+
+/**
+ * What the cited artifact must MENTION for the citation to be relevant.
+ *
+ * For a test file: the waived command's own name — a test that covers
+ * `set_property_batch` calls it.
+ *
+ * For a fixture JSON the rule cannot be the same, and getting this wrong would
+ * make the whole check decorative. A fixture is never cited for the command it
+ * waives — that is precisely why the command needs a waiver. It is cited for
+ * the SINGLE-OP command the waived one is a batch of, or composes:
+ * `add_tags_by_ids: 'batch of add_tag (tag_add_remove.json)'`. So the needles
+ * are the OTHER bindings commands the reason names, and the fixture must drive
+ * at least one of them. A reason that cites a fixture without naming any
+ * command the fixture drives is claiming a relationship it has not stated.
+ *
+ * The reason is scanned with its CITATIONS REMOVED, which is not a detail. A
+ * fixture is conventionally named after the op it drives, so
+ * `restore_block.json` contains the substring `restore_block` — and scanning
+ * the raw reason let EVERY fixture citation satisfy itself off its own
+ * filename, making this half of the guard unfalsifiable. Found only by running
+ * the relevance falsification (repointing `add_tags_by_ids` at an unrelated
+ * fixture) and getting a green, which is the whole argument for demonstrating
+ * a guard red rather than observing that it passes.
+ */
+function relevanceNeedles(cite: Citation, command: string, reason: string): string[] {
+  if (!cite.file.endsWith('.json')) return [command]
+  const prose = reason.replaceAll(CITATION_RE, ' ')
+  const named = extractBindingsCommandNames().filter(
+    (c) => c !== command && new RegExp(`\\b${c}\\b`).test(prose),
+  )
+  // `"command": "<name>"` is how a fixture's ops spell the command, so a bare
+  // `includes` on the quoted form cannot be satisfied by a description that
+  // merely talks about it.
+  return named.map((c) => `"command": "${c}"`)
 }
 
 // ---------------------------------------------------------------------------
 // Required-scenario manifest
 // ---------------------------------------------------------------------------
 
-/**
- * Each `[op, scenario]` tuple MUST be pinned by at least one fixture that (a)
- * declares the `scenario` string in its top-level `scenarios` array AND (b)
- * drives `op` in its `ops`. This is the single place to enforce that the
- * behaviors we care about stay covered — including the recent escape classes.
- *
- * The COMMENTED-OUT tuples are scenarios not yet pinned on this tree. Uncomment
- * one line each when its fixture lands (and tag that fixture's `scenarios`),
- * turning the manifest red until the coverage is real — WITHOUT reddening CI
- * today. Do not delete them; they are the enforcement backlog.
- */
-const REQUIRED_SCENARIOS: ReadonlyArray<readonly [op: string, scenario: string]> = [
-  ['create_block', 'dense-1based-position'],
-  ['delete_block', 'soft-delete-tombstone'],
-  ['delete_block', 'cascade-active-subtree'],
-  ['restore_block', 'same-cohort-restore'],
-  ['purge_block', 'hard-delete-removes-row'],
-  ['add_tag', 'tag-dedupe-lww'],
-  ['remove_tag', 'tag-remove-single-edge'],
-  ['add_tag', 'tag-readd-after-remove'],
-  ['set_property', 'property-typed-value-columns'],
-  ['delete_property', 'delete-one-of-many-properties'],
-  ['move_block', 'move-cross-page-retains-property'],
-  ['set_todo_state', 'agenda-reserved-columns'],
+/** The four block columns a reserved property key routes to. */
+const RESERVED_COLUMNS = ['todo_state', 'priority', 'due_date', 'scheduled_date'] as const
 
-  ['purge_block', 'subtree-with-satellites'],
-  ['purge_block', 'used-as-tag-cleanup'],
-  ['set_property', 'reserved-key-routes-to-column'],
-  ['delete_property', 'reserved-key-clears-column'],
+function opsOf(fx: LoadedFixture, command: string): Array<{ args: Record<string, unknown> }> {
+  return fx.ops.filter((o) => o.command === command)
+}
+
+function argStr(args: Record<string, unknown>, key: string): string | null {
+  return typeof args[key] === 'string' ? (args[key] as string) : null
+}
+
+/** The canonical label of the seed block an op arg names, or `null`. */
+function argLabel(fx: LoadedFixture, args: Record<string, unknown>, key: string): string | null {
+  const seedId = argStr(args, key)
+  return seedId === null ? null : fx.label(seedId)
+}
+
+function blockRow(fx: LoadedFixture, label: string): Record<string, unknown> | undefined {
+  return fx.expected?.blocks.find((b) => b['id'] === label)
+}
+
+/** Every seed block reachable downward from `seedId`, itself excluded. Cycle-guarded. */
+function seedDescendants(fx: LoadedFixture, seedId: string): string[] {
+  const out: string[] = []
+  const frontier = [seedId]
+  const seen = new Set<string>([seedId])
+  while (frontier.length > 0) {
+    const cursor = frontier.pop() as string
+    for (const b of fx.seedBlocks) {
+      const id = b['id'] as string
+      if (b['parent_id'] !== cursor || seen.has(id)) continue
+      seen.add(id)
+      out.push(id)
+      frontier.push(id)
+    }
+  }
+  return out
+}
+
+/** The canonical label of the root PAGE above a seed block, or `null`. */
+function seedPageLabel(fx: LoadedFixture, seedId: string): string | null {
+  let cursor: string | null = seedId
+  const seen = new Set<string>()
+  while (cursor !== null && !seen.has(cursor)) {
+    seen.add(cursor)
+    const row = fx.seedBlocks.find((b) => b['id'] === cursor)
+    if (!row) return null
+    if (row['block_type'] === 'page') return fx.label(cursor)
+    cursor = (row['parent_id'] as string | null) ?? null
+  }
+  return null
+}
+
+/** `blockId→tagId` identity of a tag op, in SEED labels. */
+function tagPair(args: Record<string, unknown>): string | null {
+  const b = argStr(args, 'blockId')
+  const t = argStr(args, 'tagId')
+  return b === null || t === null ? null : `${b}→${t}`
+}
+
+interface ScenarioRequirement {
+  op: string
+  scenario: string
+  /** What `holds` demands, in one clause, printed verbatim in the failure. */
+  demands: string
+  /** Does this fixture's SEED + OPS + recorded snapshot actually exhibit the
+   *  scenario? Non-optional by design — see the note above. */
+  holds: (fx: LoadedFixture) => boolean
+}
+
+/**
+ * Each entry MUST be pinned by at least one fixture that (a) declares the
+ * `scenario` string in its top-level `scenarios` array, (b) drives `op` in its
+ * `ops`, and (c) satisfies `holds`.
+ *
+ * ## Why (c) exists (#3965)
+ *
+ * (a) and (b) were the whole check, and between them they compare a LABEL to a
+ * LABEL: a fixture was credited for `tag-dedupe-lww` because its own
+ * `scenarios` array contained the string `tag-dedupe-lww` and because it
+ * happened to drive `add_tag`. Nothing consulted the behaviour. A fixture
+ * tagged `tag-dedupe-lww` that adds one tag once satisfied it completely, and
+ * so did one whose `expected` was recorded by `CONFORMANCE_UPDATE=1` after the
+ * dedupe logic broke — the snapshot then encodes the break and the scenario
+ * reports as covered. That is an assertion that cannot fail, sitting on the
+ * sixteen behaviours chosen precisely because they must not regress.
+ *
+ * ## What (c) does and does not prove
+ *
+ * `holds` is a STRUCTURAL predicate over the fixture's seed, its op args, and
+ * the recorded snapshot. It proves the fixture is SHAPED like the scenario —
+ * that two identical adds are present for a dedupe claim, that a purge names a
+ * block with descendants for a subtree claim, that the block a reserved-key
+ * delete named ends with a null column while a sibling keeps its own. It does
+ * NOT prove the recorded `expected` is CORRECT; the backend authors that, and
+ * only a mutation on the production line would settle it (option 2 in #3965,
+ * left for #3963's mechanism). Saying which of the two this is matters more
+ * than the check itself: this closes "the label is the evidence", not "the
+ * recording is right".
+ *
+ * ## The rule that keeps it from decaying
+ *
+ * `holds` is not optional, so a new tuple cannot be added label-only. And every
+ * predicate must DISCRIMINATE — its own test below fails any predicate that
+ * returns true for every fixture in the corpus, which is what a `() => true`
+ * written to get past the type looks like from the outside.
+ *
+ * Each predicate must also say something the (a)+(b) pair does not. "Drives
+ * `purge_block`" is already checked by (b); a `holds` that re-states it is an
+ * assertion restating its own precondition, and is worse than no predicate
+ * because it reads as one.
+ */
+const REQUIRED_SCENARIOS: ReadonlyArray<ScenarioRequirement> = [
+  {
+    op: 'create_block',
+    scenario: 'dense-1based-position',
+    demands:
+      'two or more create_block ops under the SAME parent, whose children then occupy a ' +
+      'contiguous 1-based position run in `expected`',
+    holds: (fx) => {
+      const parents = opsOf(fx, 'create_block')
+        .map((o) => argStr(o.args, 'parentId'))
+        .filter((p): p is string => p !== null)
+      const shared = parents.find((p) => parents.filter((q) => q === p).length >= 2)
+      if (shared === undefined) return false
+      const parentLabel = fx.label(shared)
+      if (parentLabel === null) return false
+      const positions = (fx.expected?.blocks ?? [])
+        .filter((b) => b['parent_id'] === parentLabel)
+        .map((b) => b['position'] as number)
+        .toSorted((a, b) => a - b)
+      return positions.length >= 2 && positions.every((p, i) => p === i + 1)
+    },
+  },
+  {
+    op: 'delete_block',
+    scenario: 'soft-delete-tombstone',
+    demands: 'a delete_block whose target is STILL PRESENT in `expected` carrying a tombstone',
+    holds: (fx) =>
+      opsOf(fx, 'delete_block').some((o) => {
+        const label = argLabel(fx, o.args, 'blockId')
+        if (label === null) return false
+        const row = blockRow(fx, label)
+        return row !== undefined && row['deleted_at'] !== null
+      }),
+  },
+  {
+    op: 'delete_block',
+    scenario: 'cascade-active-subtree',
+    demands: 'ONE delete_block op that leaves two or more blocks tombstoned in `expected`',
+    holds: (fx) =>
+      opsOf(fx, 'delete_block').length === 1 &&
+      (fx.expected?.blocks ?? []).filter((b) => b['deleted_at'] !== null).length >= 2,
+  },
+  {
+    op: 'restore_block',
+    scenario: 'same-cohort-restore',
+    demands:
+      'a restore_block whose target is ACTIVE in `expected` while some other block stays ' +
+      'tombstoned — the independently-deleted descendant the cohort must not sweep up',
+    holds: (fx) => {
+      const restored = opsOf(fx, 'restore_block')
+        .map((o) => argLabel(fx, o.args, 'blockId'))
+        .filter((l): l is string => l !== null)
+      if (restored.length === 0) return false
+      const allActive = restored.every((l) => blockRow(fx, l)?.['deleted_at'] === null)
+      const survivorTombstone = (fx.expected?.blocks ?? []).some(
+        (b) => b['deleted_at'] !== null && !restored.includes(b['id'] as string),
+      )
+      return allActive && survivorTombstone
+    },
+  },
+  {
+    op: 'purge_block',
+    scenario: 'hard-delete-removes-row',
+    demands: 'a purge_block whose target seed block is GONE from `expected.blocks`',
+    holds: (fx) =>
+      opsOf(fx, 'purge_block').some((o) => {
+        const label = argLabel(fx, o.args, 'blockId')
+        return label !== null && blockRow(fx, label) === undefined
+      }),
+  },
+  {
+    op: 'add_tag',
+    scenario: 'tag-dedupe-lww',
+    demands:
+      'two add_tag ops for the SAME (block, tag) pair — without them there is nothing to dedupe',
+    holds: (fx) => {
+      const pairs = opsOf(fx, 'add_tag')
+        .map((o) => tagPair(o.args))
+        .filter((p): p is string => p !== null)
+      return pairs.some((p, i) => pairs.indexOf(p) !== i)
+    },
+  },
+  {
+    op: 'remove_tag',
+    scenario: 'tag-remove-single-edge',
+    demands:
+      'a remove_tag whose edge is gone from `expected.block_tags` while ANOTHER edge on the ' +
+      'same block survives — a remove that dropped every edge would satisfy a weaker check',
+    holds: (fx) =>
+      opsOf(fx, 'remove_tag').some((o) => {
+        const b = argLabel(fx, o.args, 'blockId')
+        const t = argLabel(fx, o.args, 'tagId')
+        if (b === null || t === null) return false
+        const edges = fx.expected?.block_tags ?? []
+        const removed = !edges.some((e) => e['block_id'] === b && e['tag_id'] === t)
+        const survivor = edges.some((e) => e['block_id'] === b && e['tag_id'] !== t)
+        return removed && survivor
+      }),
+  },
+  {
+    op: 'add_tag',
+    scenario: 'tag-readd-after-remove',
+    demands:
+      'add → remove → add on one (block, tag) pair IN THAT ORDER, with the edge present in ' +
+      '`expected.block_tags` at the end',
+    holds: (fx) =>
+      fx.ops.some((first, i) => {
+        if (first.command !== 'add_tag') return false
+        const pair = tagPair(first.args)
+        if (pair === null) return false
+        const rest = fx.ops.slice(i + 1)
+        const removedAt = rest.findIndex(
+          (o) => o.command === 'remove_tag' && tagPair(o.args) === pair,
+        )
+        if (removedAt < 0) return false
+        const readded = rest
+          .slice(removedAt + 1)
+          .some((o) => o.command === 'add_tag' && tagPair(o.args) === pair)
+        if (!readded) return false
+        const b = argLabel(fx, first.args, 'blockId')
+        const t = argLabel(fx, first.args, 'tagId')
+        return (fx.expected?.block_tags ?? []).some((e) => e['block_id'] === b && e['tag_id'] === t)
+      }),
+  },
+  {
+    op: 'set_property',
+    scenario: 'property-typed-value-columns',
+    demands:
+      'set_property ops writing three or more DISTINCT `value_*` columns, and three or more ' +
+      'distinct `value_type`s recorded in `expected.properties`',
+    holds: (fx) => {
+      const fields = new Set<string>()
+      for (const o of opsOf(fx, 'set_property')) {
+        const value = (o.args['value'] as Record<string, unknown> | undefined) ?? {}
+        for (const [k, v] of Object.entries(value)) {
+          if (k.startsWith('value_') && v !== null) fields.add(k)
+        }
+      }
+      const types = new Set((fx.expected?.properties ?? []).map((p) => p['value_type'] as string))
+      return fields.size >= 3 && types.size >= 3
+    },
+  },
+  {
+    op: 'delete_property',
+    scenario: 'delete-one-of-many-properties',
+    demands:
+      'a delete_property on a block that carried two or more keys, whose key is gone from ' +
+      '`expected.properties` while at least one sibling key on the same block survives',
+    holds: (fx) =>
+      opsOf(fx, 'delete_property').some((o) => {
+        const seedId = argStr(o.args, 'blockId')
+        const key = argStr(o.args, 'key')
+        const label = argLabel(fx, o.args, 'blockId')
+        if (seedId === null || key === null || label === null) return false
+        const keysOnBlock = new Set(
+          opsOf(fx, 'set_property')
+            .filter((s) => argStr(s.args, 'blockId') === seedId)
+            .map((s) => argStr(s.args, 'key')),
+        )
+        if (keysOnBlock.size < 2) return false
+        const rows = (fx.expected?.properties ?? []).filter((p) => p['block_id'] === label)
+        return rows.length > 0 && !rows.some((p) => p['key'] === key)
+      }),
+  },
+  {
+    op: 'move_block',
+    scenario: 'move-cross-page-retains-property',
+    demands:
+      'a move_block that lands the target on a DIFFERENT page than its seed page (its ' +
+      '`page_id` in `expected` changed) while it still owns a property row',
+    holds: (fx) =>
+      opsOf(fx, 'move_block').some((o) => {
+        const seedId = argStr(o.args, 'blockId')
+        const label = argLabel(fx, o.args, 'blockId')
+        if (seedId === null || label === null) return false
+        const row = blockRow(fx, label)
+        const seedPage = seedPageLabel(fx, seedId)
+        if (row === undefined || seedPage === null || row['page_id'] === seedPage) return false
+        return (fx.expected?.properties ?? []).some((p) => p['block_id'] === label)
+      }),
+  },
+  {
+    op: 'set_todo_state',
+    scenario: 'agenda-reserved-columns',
+    demands: 'a block ending with two or more of the four reserved agenda columns non-null',
+    holds: (fx) =>
+      (fx.expected?.blocks ?? []).some(
+        (b) => RESERVED_COLUMNS.filter((c) => b[c] !== null).length >= 2,
+      ),
+  },
+
+  {
+    op: 'purge_block',
+    scenario: 'subtree-with-satellites',
+    demands:
+      'a purge_block on a block with seed DESCENDANTS that also carried a property and a tag ' +
+      'edge, with the whole family and both satellites absent from `expected`',
+    holds: (fx) =>
+      opsOf(fx, 'purge_block').some((o) => {
+        const seedId = argStr(o.args, 'blockId')
+        if (seedId === null) return false
+        const family = [seedId, ...seedDescendants(fx, seedId)]
+        if (family.length < 2) return false
+        const labels = family.map((s) => fx.label(s)).filter((l): l is string => l !== null)
+        const allGone = labels.every((l) => blockRow(fx, l) === undefined)
+        const hadProperty = opsOf(fx, 'set_property').some((s) =>
+          family.includes(argStr(s.args, 'blockId') ?? ''),
+        )
+        const hadTag = opsOf(fx, 'add_tag').some((s) =>
+          family.includes(argStr(s.args, 'blockId') ?? ''),
+        )
+        const propertyResidue = (fx.expected?.properties ?? []).some((p) =>
+          labels.includes(p['block_id'] as string),
+        )
+        const tagResidue = (fx.expected?.block_tags ?? []).some(
+          (e) => labels.includes(e['block_id'] as string) || labels.includes(e['tag_id'] as string),
+        )
+        return allGone && hadProperty && hadTag && !propertyResidue && !tagResidue
+      }),
+  },
+  {
+    op: 'purge_block',
+    scenario: 'used-as-tag-cleanup',
+    demands:
+      'a purge_block on a block some add_tag op used AS A TAG, with no edge left pointing at ' +
+      'it in `expected.block_tags`',
+    holds: (fx) =>
+      opsOf(fx, 'purge_block').some((o) => {
+        const seedId = argStr(o.args, 'blockId')
+        if (seedId === null) return false
+        if (!opsOf(fx, 'add_tag').some((a) => argStr(a.args, 'tagId') === seedId)) return false
+        const label = fx.label(seedId)
+        return label !== null && !(fx.expected?.block_tags ?? []).some((e) => e['tag_id'] === label)
+      }),
+  },
+  {
+    op: 'set_property',
+    scenario: 'reserved-key-routes-to-column',
+    demands:
+      'a set_property on a RESERVED key whose value lands in the block COLUMN and produces no ' +
+      '`block_properties` row for that key — the routing itself, not just the write',
+    holds: (fx) =>
+      opsOf(fx, 'set_property').some((o) => {
+        const key = argStr(o.args, 'key')
+        const label = argLabel(fx, o.args, 'blockId')
+        if (key === null || label === null) return false
+        if (!(RESERVED_COLUMNS as readonly string[]).includes(key)) return false
+        const row = blockRow(fx, label)
+        if (row === undefined || row[key] === null) return false
+        return !(fx.expected?.properties ?? []).some(
+          (p) => p['block_id'] === label && p['key'] === key,
+        )
+      }),
+  },
+  {
+    op: 'delete_property',
+    scenario: 'reserved-key-clears-column',
+    demands:
+      "a delete_property on a RESERVED key that nulls the target's column while ANOTHER block " +
+      'keeps its own — which is also what proves the preceding set actually wrote one',
+    holds: (fx) =>
+      opsOf(fx, 'delete_property').some((o) => {
+        const key = argStr(o.args, 'key')
+        const label = argLabel(fx, o.args, 'blockId')
+        if (key === null || label === null) return false
+        if (!(RESERVED_COLUMNS as readonly string[]).includes(key)) return false
+        const row = blockRow(fx, label)
+        if (row === undefined || row[key] !== null) return false
+        return (fx.expected?.blocks ?? []).some((b) => b['id'] !== label && b[key] !== null)
+      }),
+  },
 
   // purge_block/soft-delete-guard (#3091) is deliberately NOT a tuple: the
   // conformance op-runner cannot express it. The soft-delete guard + depth cap
@@ -2389,6 +2886,68 @@ describe('#3083 conformance-coverage ratchet', () => {
     ).toBe(true)
   })
 
+  // #3964 — the reason strings themselves. Both allowlists already enforce
+  // that every entry HAS a reason and that the entry still names a live
+  // command. Nothing looked at what the reason SAYS, and many of them
+  // discharge the waiver by naming somewhere else the coverage lives:
+  // "covered by set-property-batch.test.ts", "batch of add_tag
+  // (tag_add_remove.json)". Those citations were unverified in both
+  // directions — the named artifact could be deleted, and it could be one that
+  // has nothing to do with the waived command. Both were live: three waivers
+  // named a test file that never mentions the command they waive (fixed
+  // above, in the map), which is the fail-open the issue was filed for.
+  //
+  // The guard is deliberately two-tier, because existence alone is the weaker
+  // half: a `git rm` is not the way a citation usually goes wrong. It goes
+  // wrong by being written from memory.
+  it('every waiver reason that cites an artifact names one that exists and is relevant (#3964)', () => {
+    const missing: string[] = []
+    const irrelevant: string[] = []
+
+    for (const [listName, list] of WAIVER_LISTS) {
+      for (const [key, reason] of Object.entries(list)) {
+        // Branch keys are `command::branch`; the command is what a citation
+        // must be relevant to.
+        const command = key.split('::')[0] as string
+        for (const cite of citationsIn(reason)) {
+          const resolved = resolveCitation(cite)
+          if (resolved === null) {
+            missing.push(`${listName}.${key} → ${cite.file}`)
+            continue
+          }
+          const needles = cite.via !== null ? [cite.via] : relevanceNeedles(cite, command, reason)
+          const body = readFileSync(resolved, 'utf8')
+          if (!needles.some((n) => body.includes(n))) {
+            irrelevant.push(
+              `${listName}.${key} → ${cite.file} (mentions none of ${JSON.stringify(needles)})`,
+            )
+          }
+        }
+      }
+    }
+
+    expect(
+      missing,
+      `These waiver reasons cite a file that does not exist ${JSON.stringify(missing)}. ` +
+        `A waiver granted on the strength of coverage elsewhere is worth exactly what ` +
+        `"elsewhere" is worth, and the staleness cross-checks above cannot help: they ` +
+        `verify the command's relationship to bindings.ts and to the fixture set, never ` +
+        `to the file its reason names. Fix the path, or rewrite the reason to state what ` +
+        `is actually true now.`,
+    ).toEqual([])
+
+    expect(
+      irrelevant,
+      `These waiver reasons cite a file that never mentions what the waiver claims it ` +
+        `covers ${JSON.stringify(irrelevant)}. The file exists; it is the wrong file, or ` +
+        `the right file for a different command. If the cited test reaches the command ` +
+        `INDIRECTLY — through a shared primitive rather than by name — say so with the ` +
+        `explicit \`file.test.ts (via someSymbol)\` form, which moves this check onto ` +
+        `\`someSymbol\` instead of onto the command name. The escape hatch is a redirect, ` +
+        `not an exemption.`,
+    ).toEqual([])
+  })
+
   // #3347 vacuity guard. `expected_queries` is authored by the backend and
   // asserted by both runners — but an EMPTY projection is authored and asserted
   // exactly like a populated one. A step whose args select nothing (a scope
@@ -2670,9 +3229,9 @@ describe('#3083 conformance-coverage ratchet', () => {
 
   it('every required (op, scenario) is pinned by a fixture that declares it and drives the op', () => {
     const unmet = REQUIRED_SCENARIOS.filter(
-      ([op, scenario]) =>
+      ({ op, scenario }) =>
         !fixtures.some((fx) => fx.scenarios.has(scenario) && fx.opCommands.has(op)),
-    )
+    ).map(({ op, scenario }) => `${op}/${scenario}`)
     expect(
       unmet,
       `These required (op, scenario) tuples are not pinned by any fixture: ` +
@@ -2681,6 +3240,66 @@ describe('#3083 conformance-coverage ratchet', () => {
         `<scenario> in its top-level "scenarios" array (the tag is additive and ` +
         `inert to the replay). If a tuple is not yet ready, keep it commented out ` +
         `in REQUIRED_SCENARIOS.`,
+    ).toEqual([])
+  })
+
+  // #3965 — the half the tuple above cannot see. Kept as a separate `it` on
+  // purpose: "no fixture claims this scenario" and "a fixture claims it but is
+  // not shaped like it" are different repairs, and collapsing them into one
+  // accumulator would report the second as the first.
+  it('every required scenario is DEMONSTRATED by a declaring fixture, not merely tagged (#3965)', () => {
+    const labelOnly: string[] = []
+    for (const req of REQUIRED_SCENARIOS) {
+      const declaring = fixtures.filter(
+        (fx) => fx.scenarios.has(req.scenario) && fx.opCommands.has(req.op),
+      )
+      // Undeclared tuples are the previous `it`'s finding, not this one's.
+      if (declaring.length === 0) continue
+      if (declaring.some((fx) => req.holds(fx))) continue
+      labelOnly.push(
+        `${req.op}/${req.scenario} — declared by ${JSON.stringify(
+          declaring.map((fx) => fx.name),
+        )}, none of which shows ${req.demands}`,
+      )
+    }
+    expect(
+      labelOnly,
+      `These required scenarios are pinned by a fixture that NAMES them and does not ` +
+        `EXHIBIT them ${JSON.stringify(labelOnly)}. The \`scenarios\` array is a claim ` +
+        `the fixture makes about itself; this check is the only thing that reads the ` +
+        `fixture instead. FIX by giving the fixture the seed/ops the scenario describes ` +
+        `— not by loosening the predicate, which is the one repair that puts the manifest ` +
+        `back to comparing a label to a label.`,
+    ).toEqual([])
+  })
+
+  // The predicates' own guard. `holds` is non-optional, so a tuple cannot be
+  // added label-only — but `holds: () => true` satisfies the type while
+  // restoring exactly the behaviour #3965 was filed about, and it is the
+  // cheapest thing to write under deadline. A predicate that is true of EVERY
+  // fixture in the corpus distinguishes nothing, which is what that looks like
+  // from the outside; so does one that is true of NONE, which would make the
+  // check above unsatisfiable rather than strict.
+  it('every required-scenario predicate discriminates between fixtures (#3965)', () => {
+    const alwaysTrue: string[] = []
+    const neverTrue: string[] = []
+    for (const req of REQUIRED_SCENARIOS) {
+      const hits = fixtures.filter((fx) => req.holds(fx)).length
+      if (hits === fixtures.length) alwaysTrue.push(`${req.op}/${req.scenario}`)
+      if (hits === 0) neverTrue.push(`${req.op}/${req.scenario}`)
+    }
+    expect(
+      alwaysTrue,
+      `These scenario predicates are true of EVERY fixture in the corpus ` +
+        `${JSON.stringify(alwaysTrue)} — they separate nothing, so crediting a fixture ` +
+        `for satisfying one is the label-vs-label check under a new name. A predicate ` +
+        `must say something the (declares-scenario + drives-op) pair does not.`,
+    ).toEqual([])
+    expect(
+      neverTrue,
+      `These scenario predicates are true of NO fixture ${JSON.stringify(neverTrue)}. ` +
+        `The demonstration check above cannot pass, and the predicate is describing a ` +
+        `fixture shape that does not exist rather than the one that does.`,
     ).toEqual([])
   })
 })

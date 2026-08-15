@@ -80,11 +80,28 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "status outside the IN list",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 8,
+      "count": 9,
       "ops": [
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
         {
           "key": "status",
           "op_type": "set_property"
@@ -161,6 +178,12 @@
         "key": "due",
         "value": "2026-08-16",
         "value_type": "Date"
+      },
+      {
+        "block_id": "B7",
+        "key": "status",
+        "value": "archived",
+        "value_type": "Text"
       }
     ]
   },
@@ -240,6 +263,16 @@
     },
     {
       "args": {
+        "blockId": "S7",
+        "key": "status",
+        "value": {
+          "value_text": "archived"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
         "blockId": "S2",
         "key": "due",
         "value": {
@@ -306,7 +339,7 @@
         }
       },
       "command": "filtered_blocks_query",
-      "comment": "#3892 `valueTextIn` arm — `value_text IN (SELECT value FROM json_each(?N))`. Discriminating because BOTH members must match: an implementation that compared against the first element only (or that bound the JSON array as a scalar) returns a strict subset. S5/S6 own a `due` but no `status`, so they must be excluded — the EXISTS is key-scoped, not block-scoped.",
+      "comment": "#3892 `valueTextIn` arm — `value_text IN (SELECT value FROM json_each(?N))`. Discriminating because BOTH members must match: an implementation that compared against the first element only (or that bound the JSON array as a scalar) returns a strict subset. S5/S6 own a `due` but no `status`, so they must be excluded — the EXISTS is key-scoped, not block-scoped. #3976 — S7 is the NEGATIVE CONTROL and the reason this step can fail at all: it carries `status = \"archived\"`, a value OUTSIDE the IN list, so the membership predicate is the only thing that excludes it. Without S7 every block holding the key also held a listed value, and deleting the IN test returned the identical set (measured: the mutated predicate was green across the whole frontend suite).",
       "name": "filtered_value_text_in_matches_either_member"
     },
     {
@@ -427,6 +460,13 @@
         "id": "S6",
         "parent_id": "S1",
         "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "status outside the IN list",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 6
       }
     ],
     "properties": [],
