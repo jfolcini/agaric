@@ -94,27 +94,28 @@
 # order on every re-derivation.
 #
 # Four drifts and zero real findings is the whole case for #3737: a line
-# number is a poor key for "this specific step". The procedure below is a
-# workaround for the key, not a fix, and its cost is paid by every PR that
-# edits a comment anywhere above line ~500 of ci.yml.
+# number is a poor key for "this specific step". The above (PROCEDURE
+# included) is the now-CLOSED history of the line-anchor era — kept for the
+# postmortem, not as live instructions.
+#
+# ─── #3737: moved off line anchors entirely ──────────────────────────────
+#
+# `rules:` below no longer carries a `cache-poisoning.ignore` list. The same
+# four findings (two Swatinem/rust-cache steps, two actions/setup-node
+# steps, all in ci.yml's build-only jobs — `build` and `android-build`,
+# neither of which signs or publishes) are now suppressed with an inline
+# `# zizmor: ignore[cache-poisoning]` comment on each step itself. That is
+# zizmor's own suppression mechanism (`IGNORE_EXPR` in its
+# `finding/location.rs`, honored anywhere in the step's body) rather than a
+# rule in this file, so it is anchored to the step's CONTENT in the workflow
+# — a comment added or removed anywhere else in ci.yml cannot move it,
+# unlike a line number here. `scripts/check-cache-poisoning-suppressions.mjs`
+# guards the wiring: every caching step in .github/workflows/** must carry
+# the inline comment, and this file must not regain a `cache-poisoning`
+# line-anchor list. Run its `--self-test` after touching any of those four
+# steps, ci.yml's job list, or this file.
 
-rules:
-  cache-poisoning:
-    # PROCEDURE (history and rationale: file header above). These are LINE
-    # ANCHORS, so any edit that adds or removes lines in ci.yml above a cache
-    # step silently invalidates them. Never edit the numbers blind: re-run
-    # `zizmor` with this ignore list EMPTIED, take the lines it reports, and
-    # check line-for-line that each new anchor names the same cache step as
-    # the old one and that the count is unchanged. A dead anchor is not
-    # inert — it re-attaches to whatever drifts onto that line and becomes a
-    # blanket suppression.
-    #
-    # Keep this block under 32 comment lines; see the file header.
-    ignore:
-      - ci.yml:318
-      - ci.yml:341
-      - ci.yml:471
-      - ci.yml:503
+rules: {}
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot

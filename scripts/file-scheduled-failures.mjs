@@ -431,6 +431,44 @@ export function findUncoveredLanes(workflowText, reporterJob = 'report-scheduled
   return jobs.filter((j) => j !== reporterJob && !needs.includes(j))
 }
 
+/**
+ * #3716 — the reporting job used to append `--dry-run` to its own CLI
+ * invocation whenever the triggering event was not `schedule`, so a
+ * `workflow_dispatch` computed the correct failing set and then discarded
+ * it: the tracking issue kept advertising whatever a PRIOR (by then
+ * possibly stale, sometimes disjoint from the truth) run had written, for
+ * up to a week. `--dry-run` is a legitimate flag on THIS script — it is
+ * exercised directly in `selfTestGhCallSequence` below — but the reporting
+ * JOB must never pass it to itself, on any event. Returns `true` if the
+ * job's own `run:` step text contains `--dry-run` anywhere at all — the
+ * whole point is that this flag has no business appearing there under ANY
+ * condition, so a substring check across the entire job block is exact, not
+ * an approximation of the real question.
+ *
+ * Text-based on purpose, same reasoning as `findUncoveredLanes` above.
+ */
+export function findDispatchDryRunUsage(workflowText, reporterJob = 'report-scheduled-failures') {
+  const jobHeader = `\n  ${reporterJob}:\n`
+  const jobStart = workflowText.indexOf(jobHeader)
+  if (jobStart === -1) throw new Error(`job \`${reporterJob}\` not found in workflow`)
+  const afterHeader = workflowText.slice(jobStart + jobHeader.length)
+  // The next top-level job key (exactly two leading spaces) or a document
+  // end ends this job's block. `afterHeader` starts INSIDE the job, so any
+  // match is by construction after its own header.
+  const nextJobMatch = afterHeader.match(/\n {2}[A-Za-z0-9_-]+:\s*\n/)
+  const jobText = nextJobMatch ? afterHeader.slice(0, nextJobMatch.index) : afterHeader
+  // Strip full-line comments before searching — both YAML doc comments and
+  // bash comments inside a `run: |` block scalar are `#`-prefixed lines, and
+  // this job's own docs are expected to keep discussing `--dry-run` in prose
+  // (why the flag must never reach here) without that prose itself tripping
+  // the guard it is explaining.
+  const executableText = jobText
+    .split('\n')
+    .filter((l) => !/^\s*#/.test(l))
+    .join('\n')
+  return executableText.includes('--dry-run')
+}
+
 // ---------------------------------------------------------------------------
 // `gh` plumbing
 // ---------------------------------------------------------------------------
@@ -814,6 +852,51 @@ function selfTestGhCallSequence({ check }) {
     `gh sequence was: ${noopSeq.join(',')}`,
   )
 
+  // #3716: a dispatched run must report the CURRENT failing set, not
+  // discard it and leave a stale (here, disjoint — the sharpest form of
+  // "inverted") one standing. Same fixture driven twice: once the OLD way
+  // (this script's own `--dry-run` flag, still legitimate on its own — see
+  // the checks above — but never meant to reach here from a dispatch) to
+  // reproduce the bug as RED, then the FIXED way (no `--dry-run`) as GREEN.
+  // The workflow-level regression guard (§12 in `runSelfTest`,
+  // `findDispatchDryRunUsage`) is what stops `--dry-run` from reaching this
+  // path again; this pins what happens on either side of that guard.
+  {
+    const staleBody = buildIssueBody({
+      all: ['full-suite'],
+      lanes: [
+        { job: 'full-suite', result: 'failure' },
+        { job: 'prek-all-files', result: 'success' },
+      ],
+      runUrl: undefined,
+    })
+    // The dispatch's TRUE current state: `full-suite` recovered,
+    // `prek-all-files` is the one actually failing now — disjoint from what
+    // the stale issue body above still advertises.
+    const nowFailing = {
+      'full-suite': { result: 'success' },
+      'prek-all-files': { result: 'failure' },
+    }
+
+    const redCalls = drive(nowFailing, staleBody, 'OPEN', ['--dry-run', '--skipped-ok'])
+    const redSeq = redCalls.map((c) => c.sub).join(',')
+    check(
+      redSeq === '',
+      '#3716 RED (pre-fix dispatch shape): `--dry-run` computes the true set and writes NOTHING — the stale/inverted issue body stands unchanged',
+      `gh sequence was: ${redSeq || '(no gh calls — reproduces the bug: nothing was written)'}`,
+    )
+
+    const greenCalls = drive(nowFailing, staleBody, 'OPEN', ['--skipped-ok'])
+    const greenSeq = greenCalls.map((c) => c.sub).join(',')
+    const written = greenCalls.find((c) => c.sub === 'edit')?.body ?? ''
+    const trackedAfter = parseKnownLanes(written)
+    check(
+      greenSeq !== '' && trackedAfter.has('prek-all-files') && !trackedAfter.has('full-suite'),
+      '#3716 GREEN (fixed dispatch shape): the identical fixture, without `--dry-run`, writes the CURRENT set (prek-all-files) and drops the stale one (full-suite) — not its inverse',
+      `gh sequence was: ${greenSeq || '(no gh calls)'}; tracked after=[${[...trackedAfter].join(',')}]`,
+    )
+  }
+
   // …and `--profile workflow-watchdog` really files under the WATCHDOG title.
   // Asserting `PROFILES` holds two distinct titles proves nothing about which
   // one `gh issue create` is handed: a `main()` that still passed
@@ -1184,6 +1267,58 @@ function runSelfTest() {
       'the watchdog failure comment names WHAT kind of thing failed',
       buildFailureComment({ newOnes: ['x'], lanes: [], profile: watchdog }),
     )
+  }
+
+  // 12. #3716 — the reporting job must never discard a dispatch's findings by
+  //     appending `--dry-run` to its own invocation off the schedule. The
+  //     behavioural half of this (a `--dry-run` invocation really writes
+  //     nothing, a non-`--dry-run` one really writes the current set) is
+  //     covered by `selfTestGhCallSequence`'s dedicated RED/GREEN case above;
+  //     this is the wiring half — the workflow file itself must not be able
+  //     to hand this script that flag on a dispatch, ever again.
+  {
+    // Synthetic fixtures first, so this assertion is demonstrably able to
+    // fail rather than just agreeing with whatever the real file says.
+    const fixture = (extraLine) =>
+      [
+        'jobs:',
+        '  alpha:',
+        '    runs-on: ubuntu-24.04',
+        '  report-scheduled-failures:',
+        '    steps:',
+        '      - run: |',
+        '          extra=()',
+        '          if [ "$EVENT_NAME" != "schedule" ]; then',
+        `            ${extraLine}`,
+        '          fi',
+        '          node scripts/file-scheduled-failures.mjs --needs-json-file needs.json "${extra[@]}"',
+        '  another-job:',
+        '    runs-on: ubuntu-24.04',
+      ].join('\n')
+    check(
+      findDispatchDryRunUsage(fixture('extra=(--dry-run --skipped-ok)')) === true,
+      'wiring guard catches `--dry-run` reintroduced on the dispatch branch',
+      '',
+    )
+    check(
+      findDispatchDryRunUsage(fixture('extra=(--skipped-ok)')) === false,
+      'wiring guard passes a dispatch branch with no `--dry-run`',
+      '',
+    )
+
+    // …then the real workflow.
+    const workflowPath = new URL('../.github/workflows/scheduled-deep-checks.yml', import.meta.url)
+      .pathname
+    if (existsSync(workflowPath)) {
+      const hasDryRun = findDispatchDryRunUsage(readFileSync(workflowPath, 'utf8'))
+      check(
+        hasDryRun === false,
+        'the real report-scheduled-failures job never passes --dry-run to itself (#3716)',
+        hasDryRun ? 'found `--dry-run` inside the job block' : '',
+      )
+    } else {
+      fail('the real workflow file is readable', `not found at ${workflowPath}`)
+    }
   }
 
   if (failures.length > 0) {

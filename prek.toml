@@ -2018,6 +2018,45 @@ pass_filenames = false
 files = "^scripts/check-prek-version-pin\\.mjs$"
 stages = ["pre-commit"]
 
+# cache-poisoning-suppressions: `.github/zizmor.yml` used to suppress
+# zizmor's cache-poisoning finding on four ci.yml steps by LINE NUMBER — a
+# key for "whatever is on this line today", not for the step. An unrelated
+# comment added anywhere above those anchors shifted every line below it,
+# turning four suppressed findings into four `high` failures four times in
+# one day (#3737). Fixed by moving the suppression onto each step itself
+# (`# zizmor: ignore[cache-poisoning]`, zizmor's own inline mechanism), so
+# it travels with the step instead of a position. This guard fails if
+# `.github/zizmor.yml` regains a line-anchored `cache-poisoning` ignore
+# list, or if the inline mechanism vanishes from every workflow file (the
+# wiring guard — see the script header for why zero is a failure, not a
+# vacuous pass).
+#
+# `always_run = true`: the failure mode this guard's wiring check cares
+# about most is every inline suppression disappearing at once (e.g. ci.yml
+# itself deleted outright) — a `git rm`, which prek's changed-file set
+# EXCLUDES from a `files` filter match. Same reasoning as
+# `migrations-immutable` above (#806). The script is a ~10ms static scan, so
+# running it unconditionally costs nothing.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "cache-poisoning-suppressions"
+name = "zizmor: cache-poisoning suppressions stay anchored to steps, not lines (#3737)"
+entry = "node scripts/check-cache-poisoning-suppressions.mjs"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "cache-poisoning-suppressions-self-test"
+name = "zizmor: cache-poisoning suppressions guard self-test"
+entry = "node scripts/check-cache-poisoning-suppressions.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^(scripts/check-cache-poisoning-suppressions\\.mjs|\\.github/zizmor\\.yml|\\.github/workflows/ci\\.yml)$"
+stages = ["pre-commit"]
+
 # pairing-rejection-contract: the responder's rejection messages are declared
 # independently in Rust (`PAIRING_PROOF_REQUIRED_MESSAGE` and — since #3504 —
 # `PEER_NOT_PAIRED_MESSAGE` in src-tauri/agaric-sync/src/sync_daemon/server.rs,
@@ -2502,7 +2541,10 @@ stages = ["pre-commit"]
 # state machine must not spam on an unchanged failure, and — keyed to the
 # workflow file too — every lane in `scheduled-deep-checks.yml` must appear in
 # the reporting job's `needs:`, so a newly added lane cannot go red into the
-# void again.
+# void again. Also keyed to the workflow file (#3716): the reporting job must
+# never pass `--dry-run` to itself, on any event — that flag is what let a
+# `workflow_dispatch` compute the true failing set and then discard it,
+# leaving the tracking issue advertising a stale (once, inverted) one.
 [[repos]]
 repo = "local"
 [[repos.hooks]]

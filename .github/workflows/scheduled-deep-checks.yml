@@ -1228,9 +1228,12 @@ jobs:
   # left THIS lane `skipped`, so #3394 kept listing it as failing for a week
   # with nobody able to confirm otherwise. A dispatch now exercises the whole
   # path (artifact download, both `--require-*` gates, the `gh issue list`
-  # lookup, the body render) and writes nothing. `report-scheduled-failures`
-  # already dry-runs itself on non-schedule events, so a dispatch still cannot
-  # touch #3394's marker block either.
+  # lookup, the body render) and writes nothing. This job's own `--dry-run`
+  # below is what keeps a dispatch from touching #3394's marker block —
+  # `report-scheduled-failures` no longer dry-runs on a dispatch itself
+  # (#3716: it used to, and discarded a genuinely newly-failing lane for up
+  # to a week as a result), so this lane cannot lean on that job's gating
+  # for its own content-tracking issue.
   # ---------------------------------------------------------------------------
   file-mutation-survivors:
     needs: [mutants, mutants-frontend]
@@ -1282,8 +1285,12 @@ jobs:
         # `report-scheduled-failures` below `needs:` this job, so the failure
         # is reported through the ordinary path instead of vanishing as a skip.
         #
-        # #3394: `--dry-run` off the schedule, mirroring the identical shape in
-        # `report-scheduled-failures`. The dry run still performs every read —
+        # #3394: `--dry-run` off the schedule — kept even though
+        # `report-scheduled-failures` itself no longer dry-runs (#3716): that
+        # job reads only GitHub's own job-result data, safe to write anytime,
+        # while this lane's own tracking issue holds mutation-survivor
+        # CONTENT a smoke dispatch should not commit as authoritative. The
+        # dry run still performs every read —
         # including the real `gh issue list` lookup (only `--known-body-file`
         # stubs that out, and this never passes it) — and only skips the
         # `gh issue edit` / `gh issue comment` writes. That is what makes a
@@ -2025,12 +2032,20 @@ jobs:
   # runner-pool outage, whole-run cancellation) nothing reports. That needs an
   # out-of-band watchdog; `actionlint` in prek covers the invalid-workflow half.
   #
-  # Unlike the two content filers this job is NOT scheduled-event-only: on
-  # `workflow_dispatch` it runs in `--dry-run` (writes nothing, prints the
-  # issue body it would have written) so a manual dispatch smoke-tests the
-  # whole reporting path instead of leaving it exercised only by a real
-  # weekly failure. `--skipped-ok` rides along on that path because the two
-  # scheduled-only filers legitimately report `skipped` off the schedule.
+  # Unlike the two content filers this job is NOT scheduled-event-only: it
+  # runs — and WRITES for real — on `workflow_dispatch` too (#3716). It used
+  # to run `--dry-run` off the schedule and discard whatever it computed;
+  # since the weekly cron is the only OTHER trigger, that meant a dispatch
+  # that found a newly-failing lane threw the finding away and the rolling
+  # issue kept advertising last week's (by then wrong, sometimes inverted)
+  # set for up to seven more days — worse than reporting nothing, because a
+  # reader trusts the issue's own "machine-readable" claim and acts on it.
+  # Writing on a dispatch is safe: the tracking issue is a SET, not an
+  # append-log (`decideAction`/`diffLanes` are idempotent), so a dispatch
+  # that finds nothing new no-ops exactly like an unchanged scheduled run —
+  # there is no churn to guard against. `--skipped-ok` still rides along off
+  # the schedule, because the two scheduled-only filers legitimately report
+  # `skipped` there and that must not read as a lane failure.
   # ---------------------------------------------------------------------------
   report-scheduled-failures:
     needs:
@@ -2074,8 +2089,17 @@ jobs:
           printf '%s' "$NEEDS_JSON" > needs.json
           extra=()
           if [ "$EVENT_NAME" != "schedule" ]; then
-            # Dispatch/manual run: exercise the whole path, write nothing.
-            extra=(--dry-run --skipped-ok)
+            # Dispatch/manual run: NOT --dry-run (#3716) — a dispatch is the
+            # only way to get an off-cycle answer, and discarding what it
+            # computes left the rolling issue advertising the INVERSE of the
+            # true failing set for up to a week. Writing is safe here: the
+            # issue is a set, not an append (`decideAction`/`diffLanes` are
+            # idempotent), so a dispatch that finds nothing new is a silent
+            # no-op exactly like an unchanged scheduled run. `--skipped-ok`
+            # stays: the two schedule-only filers legitimately report
+            # `skipped` off the schedule, and that must not read as a lane
+            # failure.
+            extra=(--skipped-ok)
           fi
           node scripts/file-scheduled-failures.mjs \
             --needs-json-file needs.json \

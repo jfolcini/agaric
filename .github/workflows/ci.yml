@@ -315,6 +315,12 @@ jobs:
           toolchain: 1.95.0
 
       - name: Rust cache
+        # zizmor: ignore[cache-poisoning] — this `build` job only compiles and
+        # tests; it never signs or publishes the cached target/ tree (release.yml
+        # does the signing/publishing and is cache-free — see .github/zizmor.yml).
+        # Anchored here, on the step itself, rather than by line number in
+        # .github/zizmor.yml, so an unrelated comment edit elsewhere in this file
+        # cannot invalidate it (#3737).
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
@@ -338,6 +344,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Node.js
+        # zizmor: ignore[cache-poisoning] — same rationale as the `build` job's
+        # Rust cache step above: this job only compiles and tests, never signs
+        # or publishes. Anchored on the step itself (#3737); see
+        # .github/zizmor.yml.
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -468,6 +478,10 @@ jobs:
           targets: aarch64-linux-android,x86_64-linux-android
 
       - name: Rust cache
+        # zizmor: ignore[cache-poisoning] — this `android-build` job only
+        # compiles and tests; it never signs or publishes the cached target/
+        # tree. Anchored on the step itself, not by line number in
+        # .github/zizmor.yml (#3737); see that file for the full rationale.
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
@@ -500,6 +514,10 @@ jobs:
             ndk;27.2.12479018
 
       - name: Install Node.js
+        # zizmor: ignore[cache-poisoning] — same rationale as the
+        # `android-build` job's Rust cache step above: build/test only, never
+        # signs or publishes. Anchored on the step itself (#3737); see
+        # .github/zizmor.yml.
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
