@@ -374,6 +374,16 @@ mod tests {
     /// also filter soft-deleted descendants, and — since #3926 — so does
     /// `ancestors_walk` in the UPWARD direction: no walk in this family may
     /// pass THROUGH a soft-deleted block. `subtree_unfiltered` must not.
+    ///
+    /// The predicate must live in the RECURSIVE member (the arm after
+    /// `UNION ALL`), not merely appear somewhere in the CTE body. For
+    /// `ancestors_walk` specifically, that is the entire content of the
+    /// #3926 fix: the seed deliberately emits the first deleted ancestor
+    /// unfiltered (so it's still visible as a row), and only the recursive
+    /// member's join stops the climb from continuing THROUGH it. A
+    /// body-wide `contains` check can't distinguish "filters the climb"
+    /// from "filters the seed instead", which is a different, wrong
+    /// behaviour that would still make a naive substring check pass.
     #[test]
     fn active_walks_filter_deleted_at() {
         for (name, body) in [
@@ -387,9 +397,13 @@ mod tests {
             ("ancestors_walk(0)", tag_inh_ancestors_walk!(0)),
             ("ancestors_walk(1)", tag_inh_ancestors_walk!(1)),
         ] {
+            let recursive_member = body.split("UNION ALL").nth(1).unwrap_or_else(|| {
+                panic!("{name} must have a `UNION ALL` recursive member to check")
+            });
             assert!(
-                body.contains("b.deleted_at IS NULL"),
-                "{name} must skip soft-deleted descendants",
+                recursive_member.contains("b.deleted_at IS NULL"),
+                "{name}'s RECURSIVE member must skip soft-deleted blocks \
+                 (a filter only in the seed does not stop the climb)",
             );
         }
         assert!(

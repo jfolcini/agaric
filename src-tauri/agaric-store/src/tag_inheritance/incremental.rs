@@ -162,6 +162,21 @@ pub async fn remove_inherited_tag(
         // tagger ancestor. The walk stops climbing once it reaches block_id
         // (block_id's own ancestors are step 3's responsibility) — but we keep
         // walking the id up to and including the chain inside the subtree.
+        //
+        // invariant #9 exception (2 of 2 — see tag_inheritance/mod.rs module
+        // doc): unlike every other walk in this module, `anc` climbs
+        // parent_id with NO `deleted_at` filter of its own. It is still
+        // safe: `d` ranges over `descendants` (the CTE above), which admits
+        // a block only via an all-live parent_id chain down from block_id
+        // (?1) — every block on that chain already satisfied
+        // `b.deleted_at IS NULL` when `descendants` emitted it. `anc`
+        // starts at such a `d` and climbs the SAME chain back up towards a
+        // `taggers` row, so any segment it walks between a descendant and
+        // an in-subtree tagger is a suffix of that already-proven-live
+        // chain — it does not need to re-check what `descendants` already
+        // guaranteed. (`a.id <> ?1` only stops the climb AT block_id;
+        // anything above block_id is step 3's responsibility, not this
+        // CTE's.)
         "anc(start_id, id, depth) AS ( \
              SELECT d.id, b.parent_id, 1 FROM descendants d \
              JOIN blocks b ON b.id = d.id \
