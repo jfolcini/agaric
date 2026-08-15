@@ -77,9 +77,26 @@ async function bootPages(page: Page, opts: BootOpts = {}): Promise<void> {
 
 const grid = (page: Page): Locator => page.getByRole('grid')
 
-/** Visible page titles, in DOM order. Stable behavioural read of the list. */
+/**
+ * Locator for every visible page title, in DOM order. Prefer this over
+ * `visibleTitles()` for assertions: `toHaveText()` (array form) auto-retries
+ * until the filter's re-render lands, instead of reading whatever is in the
+ * DOM at the instant it's called.
+ */
+const pageTitleLocator = (page: Page): Locator =>
+  grid(page).locator('[data-page-item] .page-browser-item-title')
+
+/**
+ * Visible page titles, in DOM order. One-shot read — `allTextContents()`
+ * does NOT auto-wait, so this resolves against whatever is in the DOM the
+ * instant it's called (#3902). Only safe to call once the state it reads has
+ * already been pinned by a retrying assertion (`toHaveText` on
+ * `pageTitleLocator`, `expect.poll(() => visibleTitles(page))`, or an
+ * equivalent web-first assertion) — never as the first read after a
+ * mutating action.
+ */
 function visibleTitles(page: Page): Promise<string[]> {
-  return grid(page).locator('[data-page-item] .page-browser-item-title').allTextContents()
+  return pageTitleLocator(page).allTextContents()
 }
 
 /** The muted count chip text (e.g. "6 pages", "4 matching pages"). */
@@ -197,7 +214,7 @@ test.describe('facet narrowing (each facet does the thing)', () => {
     await pop.getByRole('button', { name: 'work', exact: true }).click()
 
     await expect(grid(page).getByText('Facet Fixture', { exact: true })).toBeVisible()
-    await expect(visibleTitles(page)).resolves.toEqual(['Facet Fixture'])
+    await expect(pageTitleLocator(page)).toHaveText(['Facet Fixture'])
     await expect(countChip(page)).toHaveText('1 matching page')
   })
 
@@ -206,7 +223,7 @@ test.describe('facet narrowing (each facet does the thing)', () => {
     await openAddFilter(page)
     await activePopover(page).getByRole('button', { name: '1', exact: true }).click()
 
-    await expect(visibleTitles(page)).resolves.toEqual(['Facet Fixture'])
+    await expect(pageTitleLocator(page)).toHaveText(['Facet Fixture'])
     await expect(countChip(page)).toHaveText('1 matching page')
   })
 
@@ -214,19 +231,19 @@ test.describe('facet narrowing (each facet does the thing)', () => {
     await bootPages(page)
     // Substring (bare word) — matches anywhere in the title.
     await addPathFilter(page, 'Meet')
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template', 'Meetings'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template', 'Meetings'])
     await page.getByRole('button', { name: /^Remove filter path:/ }).click()
 
     // Anchored wildcard — `Project*` anchors the start; only "Projects" wins.
     await addPathFilter(page, 'Project*')
-    await expect(visibleTitles(page)).resolves.toEqual(['Projects'])
+    await expect(pageTitleLocator(page)).toHaveText(['Projects'])
     await page.getByRole('button', { name: /^Remove filter path:/ }).click()
 
     // Exclude — invert the "Meet" substring match: everything BUT the two
     // meeting pages.
     await addPathFilter(page, 'Meet', true)
+    await expect.poll(() => visibleTitles(page)).not.toContain('Meetings')
     const remaining = await visibleTitles(page)
-    expect(remaining).not.toContain('Meetings')
     expect(remaining).not.toContain('Meeting Notes Template')
     expect(remaining).toContain('Projects')
     await expect(countChip(page)).toHaveText('4 matching pages')
@@ -239,26 +256,25 @@ test.describe('facet narrowing (each facet does the thing)', () => {
 
     // exists → only the template page.
     await addPropertyFilter(page, 'template', 'exists')
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template'])
     await page.getByRole('button', { name: /^Remove filter has:/ }).click()
 
     // is value (template = true) → still only the template page.
     await addPropertyFilter(page, 'template', 'is', 'true')
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template'])
     await page.getByRole('button', { name: /^Remove filter/ }).click()
 
     // is-not (template ≠ true) → the other five pages (absent counts as ≠).
     await addPropertyFilter(page, 'template', 'is not', 'true')
-    let titles = await visibleTitles(page)
-    expect(titles).not.toContain('Meeting Notes Template')
+    await expect.poll(() => visibleTitles(page)).not.toContain('Meeting Notes Template')
+    const titles = await visibleTitles(page)
     expect(titles).toContain('Projects')
     await expect(countChip(page)).toHaveText('5 matching pages')
     await page.getByRole('button', { name: /^Remove filter/ }).click()
 
     // doesn't-exist → the five pages without the key.
     await addPropertyFilter(page, 'template', "doesn't exist")
-    titles = await visibleTitles(page)
-    expect(titles).not.toContain('Meeting Notes Template')
+    await expect.poll(() => visibleTitles(page)).not.toContain('Meeting Notes Template')
     await expect(countChip(page)).toHaveText('5 matching pages')
   })
 
@@ -299,7 +315,7 @@ test.describe('compound filters (AND-compose / widen / soft-cap)', () => {
     await addBooleanFacet(page, 'Orphan')
     await expect(countChip(page)).toHaveText('4 matching pages')
     await addPathFilter(page, 'Meet')
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template', 'Meetings'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template', 'Meetings'])
     await expect(countChip(page)).toHaveText('2 matching pages')
 
     // Remove the path chip → widen back to the four orphan pages.
@@ -314,8 +330,8 @@ test.describe('compound filters (AND-compose / widen / soft-cap)', () => {
     await addPathFilter(page, 'Meet', true) // drop the two meeting pages → 2
     await addPropertyFilter(page, 'template', "doesn't exist") // template page already gone
     // Orphan ∧ not-Meet → Projects + the daily page; both lack `template`.
+    await expect.poll(() => visibleTitles(page)).toContain('Projects')
     const titles = await visibleTitles(page)
-    expect(titles).toContain('Projects')
     expect(titles).not.toContain('Meetings')
     expect(titles).not.toContain('Meeting Notes Template')
     expect(titles).not.toContain('Getting Started')
@@ -417,14 +433,14 @@ test.describe('search box', () => {
 
     // Plain title narrowing.
     await search.fill('Quick')
-    await expect(visibleTitles(page)).resolves.toEqual(['Quick Notes'])
+    await expect(pageTitleLocator(page)).toHaveText(['Quick Notes'])
     await search.fill('')
 
     // Orthogonal axes: chip filters server-side (orphans), text narrows the
     // loaded set client-side.
     await addBooleanFacet(page, 'Orphan')
     await search.fill('Project')
-    await expect(visibleTitles(page)).resolves.toEqual(['Projects'])
+    await expect(pageTitleLocator(page)).toHaveText(['Projects'])
     // A title outside the orphan set never reappears via text.
     await search.fill('Getting')
     await expect(page.getByText('No matching pages')).toBeVisible()
@@ -511,7 +527,7 @@ test.describe('sort', () => {
     await openPagesView(page)
     // The combobox restored the persisted choice and the same order applies.
     await expect(page.getByRole('combobox', { name: 'Sort order' })).toContainText('Most content')
-    await expect(visibleTitles(page)).resolves.toEqual(before)
+    await expect(pageTitleLocator(page)).toHaveText(before)
   })
 })
 
@@ -633,7 +649,7 @@ test.describe('CRUD + grooming', () => {
     // filter: filter to "has template", which the new page won't have.
     await page.getByRole('button', { name: 'Remove filter Orphan' }).click()
     await addPropertyFilter(page, 'template', 'exists')
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template'])
 
     await page.getByPlaceholder('New page name...').fill('No Template Page')
     await page
@@ -645,7 +661,7 @@ test.describe('CRUD + grooming', () => {
     // lacks `template` so it must not be in the filtered result.
     await expect(page.getByRole('group', { name: /^Filter: has:/ })).toBeVisible()
     await expect(grid(page).getByText('No Template Page', { exact: true })).toHaveCount(0)
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template'])
   })
 
   test('delete shows a confirm dialog; confirming removes the row and drops the count', async ({
