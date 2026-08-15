@@ -21,7 +21,7 @@
 # that is the cost side of the issue's own option 1 (branch-protection
 # "require up to date"), paid per-overlap instead of per-merge. This script
 # runs the toolchain-free subset that actually polices whole-tree ratchet
-# files: the Rust guard trio that shares the four-crate-root scan (#3107) —
+# files: the Rust guard trio that shares the five-crate-root scan (#3107) —
 # check-raw-tx, check-dynamic-sql, check-table-ownership — all stdlib-only
 # Python, no cargo, no node_modules. `tauri-import-baseline` (node, needs
 # node_modules), `unsafe-allowlist` and `migrations-immutable` (bash) are
@@ -69,19 +69,25 @@
 #   exit 0 — computed, and every ratchet guard passed on the merged tree.
 #   exit 1 — computed, and at least one guard FAILED on the merged tree
 #            specifically. stdout/stderr names which guard and why.
-#   exit 2 — NOT computed, and not this script's to judge: base/head could
-#            not be resolved, the merge conflicted at the git level (a
-#            textual conflict — GitHub's own merge check already covers that
-#            case), or the worktree could not be built. Never conflate this
-#            with exit 0.
-#   exit 3 — VERIFIED NOTHING: the check itself could not run. A guard named
-#            in RATCHET_GUARDS is absent from the merged tree, no `.rs` file
+#   exit 2 — NOT computed, and not this script's to judge: the merge
+#            conflicted at the git level — a real textual conflict, which
+#            GitHub's own merge check already refuses to let through. This
+#            is the ONLY exit-2 case. Never conflate this with exit 0.
+#   exit 3 — VERIFIED NOTHING: the check itself could not run, for a reason
+#            that is this script's or the runner's fault, not a verdict on
+#            the merge. Covers: base/head could not be resolved, `mktemp`
+#            failed, `git worktree add` failed, a guard named in
+#            RATCHET_GUARDS is absent from the merged tree, no `.rs` file
 #            exists under any known crate root, or python3 is unavailable.
 #            Split from exit 2 deliberately — 2 says "not mine to judge", 3
-#            says "I judged nothing", and CI must treat 3 as a failure. All
-#            three of these cases returned **0** ("guards pass on the actual
-#            merge") before this script's review, which is exactly how a
-#            guard goes quietly decorative.
+#            says "I judged nothing", and CI must treat 3 as a failure.
+#            base/head resolution, mktemp, and `git worktree add` used to
+#            share exit 2 with the genuine textual-conflict case — which
+#            pr-overlap.yml renders as a `::warning::` on an otherwise GREEN
+#            job, so a runner-side failure that verified nothing reported
+#            the lane as passing. All of these cases returned **0** ("guards
+#            pass on the actual merge") before this script's original
+#            review, which is exactly how a guard goes quietly decorative.
 #
 # Usage:
 #   scripts/pr-merge-result-check.sh <base-ref> <head-sha>
@@ -153,16 +159,20 @@ run_merge_check() {
 
   base_tip=$(resolve_base_tip "$base_ref") || {
     echo "pr-merge-result-check: cannot resolve base ref '$base_ref'" >&2
-    return 2
+    echo "  NOTHING was verified — this is a runner/call-site failure, not a" >&2
+    echo "  verdict on the merge, and CI must treat it as a failure, not a pass." >&2
+    return 3
   }
   if ! git rev-parse --verify --quiet "${head_sha}^{commit}" >/dev/null 2>&1; then
     echo "pr-merge-result-check: cannot resolve head '$head_sha'" >&2
-    return 2
+    echo "  NOTHING was verified — same reasoning as an unresolvable base ref." >&2
+    return 3
   fi
 
   parent=$(mktemp -d -t pr-merge-result-check.XXXXXX) || {
     echo "pr-merge-result-check: mktemp failed" >&2
-    return 2
+    echo "  NOTHING was verified — a runner-side failure, not a verdict on the PR." >&2
+    return 3
   }
   # `git worktree add` must create the leaf directory itself, or it refuses
   # a non-empty target — mktemp -d already created $parent, so the worktree
@@ -171,8 +181,28 @@ run_merge_check() {
 
   if ! git worktree add --quiet --detach "$workdir" "$base_tip" >/dev/null 2>&1; then
     echo "pr-merge-result-check: could not create a worktree at $base_tip" >&2
+    echo "  NOTHING was verified — a runner-side failure, not a verdict on the PR." >&2
+    # A `git worktree add` that fails partway can still register an entry
+    # under this (the CALLER's) repo's .git/worktrees/ even though $workdir
+    # itself never got fully populated — `rm -rf "$parent"` only removes the
+    # working-tree files, not that administrative registration.
+    #
+    # A killed/interrupted `git worktree add` (an OOM-killed or timed-out
+    # runner, not a clean refusal) leaves that registration marked `locked,
+    # reason: initializing` — verified by hand with `timeout -s KILL` against
+    # a large fixture. `git worktree prune` deliberately refuses to touch a
+    # locked entry (that is what locking is for), so it alone would not
+    # close this specific case. `git worktree remove --force --force`
+    # (double force overrides a lock) is tried first for exactly that
+    # reason; it is a no-op if nothing is registered at that path.
+    git worktree remove --force --force "$workdir" >/dev/null 2>&1 || true
+    # Remove the physical files, THEN prune, so `git worktree prune` (which
+    # decides staleness by whether the linked path still exists on disk) can
+    # see any OTHER orphaned-but-unlocked registration and clean it, instead
+    # of leaking a stale entry into the repo this script was invoked from.
     rm -rf "$parent"
-    return 2
+    git worktree prune >/dev/null 2>&1 || true
+    return 3
   fi
 
   if ! git -C "$workdir" -c user.email=pr-merge-result-check@invalid \
@@ -181,6 +211,9 @@ run_merge_check() {
     echo "pr-merge-result-check: base and head do NOT merge cleanly — a real" >&2
     echo "  textual conflict, which GitHub's own merge check already refuses" >&2
     echo "  to let through. Not computed by this script; not this script's job." >&2
+    # The ONLY exit-2 case left in this script: everything above and below
+    # this branch is exit 3 ("I judged nothing"); this is the one genuine
+    # "not mine to judge".
     git -C "$workdir" merge --abort >/dev/null 2>&1 || true
     mr_cleanup "$workdir" "$parent"
     return 2
@@ -426,18 +459,26 @@ run_self_test() {
   # broken together — is the near-miss #3672 is about, not a guard that is
   # simply capable of failing.
 
-  # ── 2. NOT COMPUTED vs a real verdict ────────────────────────────────────
+  # ── 2. VERIFIED NOTHING (exit 3) vs the one genuine "not mine to judge"
+  #      (exit 2) — the two must NOT share a code, or a runner-side failure
+  #      renders as a `::warning::` on a job pr-overlap.yml still shows GREEN.
   local rc2
   ( cd "$clean" && bash "$SELF" no-such-branch pr ) >/dev/null 2>&1; rc2=$?
-  st_expect 'an unresolvable base ref is NOT COMPUTED (exit 2), never conflated with a pass' '2' "$rc2"
+  st_expect 'an unresolvable base ref is exit 3 (verified nothing), NOT exit 2' '3' "$rc2"
 
   ( cd "$clean" && bash "$SELF" main deadbeefdeadbeefdeadbeefdeadbeefdeadbeef ) >/dev/null 2>&1; rc2=$?
-  st_expect 'an unresolvable head sha is also NOT COMPUTED (exit 2)' '2' "$rc2"
+  st_expect 'an unresolvable head sha is also exit 3 (verified nothing), NOT exit 2' '3' "$rc2"
 
-  # ── 3. A REAL TEXTUAL CONFLICT is NOT COMPUTED, not silently "clean" ────
+  # ── 3. A REAL TEXTUAL CONFLICT is still exit 2, never exit 3 or a pass ──
   # Both branches edit the SAME LINE of the SAME file to different values —
   # GitHub's own merge check already refuses this; this script must say so
-  # rather than report a false pass.
+  # (exit 2, "not mine to judge") rather than report a false pass, AND
+  # rather than exit 3 ("I judged nothing") — a real conflict is a genuine
+  # verdict about the merge, distinct from a runner-side failure that
+  # verified nothing. This is the ONE case that must still land on 2 after
+  # the split above, so the pair (this assertion + the two above) pins BOTH
+  # arms rather than just narrowing exit 2 without checking anything is left
+  # in it.
   local conflict="$tmp/conflict"
   mkdir -p "$conflict"
   git_scratch_init "$conflict"
@@ -457,7 +498,57 @@ run_self_test() {
   git -C "$conflict" checkout --quiet main
 
   ( cd "$conflict" && bash "$SELF" main pr ) >/dev/null 2>&1; rc2=$?
-  st_expect 'a real textual conflict is NOT COMPUTED (exit 2), never reported as a pass' '2' "$rc2"
+  st_expect 'a real textual conflict is STILL exit 2, never exit 3 and never a pass' '2' "$rc2"
+
+  # ── 2b. A `git worktree add` FAILURE is exit 3, and prunes any stale
+  #        registration it finds in the CALLER's .git/worktrees/ ───────────
+  # Build a repo, take a real worktree, and orphan it by removing only the
+  # WORKING-TREE files (bypassing `git worktree remove`) — the same shape a
+  # killed/interrupted `git worktree add` leaves behind (verified by hand:
+  # `timeout -s KILL ... git worktree add` on a large fixture leaves a
+  # LOCKED, registered-but-directory-less entry under .git/worktrees/).
+  # Planting it here, deterministically, tests the mechanism this script
+  # controls — does its OWN worktree-add-failure branch clean up staleness
+  # in the repo it runs from — without depending on timing to reproduce the
+  # rare git-side failure that first creates one.
+  local prunecheck="$tmp/prunecheck"
+  mkdir -p "$prunecheck"
+  mr_make_clean_repo "$prunecheck"
+  local stale_wt="$tmp/prunecheck-stale-wt"
+  git -C "$prunecheck" worktree add --quiet --detach "$stale_wt" main >/dev/null 2>&1
+  rm -rf "$stale_wt"
+  st_expect 'fixture sanity: the orphaned worktree is a registered, stale entry before any run' \
+    '1' "$(git -C "$prunecheck" worktree list | grep -c "$stale_wt" || true)"
+
+  # Force THIS script's own `git worktree add` call to fail: make a stub
+  # `mktemp` return a FIXED directory whose "wt" leaf is pre-created and
+  # non-empty — `git worktree add` refuses a non-empty target outright
+  # (verified by hand: this leaves .git/worktrees completely untouched by
+  # itself, so any change to the pre-planted stale entry below is this
+  # script's OWN cleanup, not a side effect of the collision).
+  local fixed_parent="$tmp/fixed-parent"
+  mkdir -p "$fixed_parent/wt"
+  : > "$fixed_parent/wt/blocker"
+  local stubdir="$tmp/mktemp-stub-bin"
+  mkdir -p "$stubdir"
+  cat > "$stubdir/mktemp" <<'STUB'
+#!/usr/bin/env bash
+# Stand-in for the real mktemp used ONLY by the worktree-add-failure/prune
+# self-test above: always returns the SAME pre-arranged directory instead of
+# a fresh unique one, so the test can pre-collide "$parent/wt" before the
+# real script ever calls this.
+mkdir -p "$MRTEST_FIXED_PARENT"
+printf '%s\n' "$MRTEST_FIXED_PARENT"
+STUB
+  chmod +x "$stubdir/mktemp"
+
+  local rc3
+  ( cd "$prunecheck" && MRTEST_FIXED_PARENT="$fixed_parent" PATH="$stubdir:$PATH" \
+      bash "$SELF" main pr ) >/dev/null 2>&1
+  rc3=$?
+  st_expect 'a git-worktree-add failure is exit 3 (verified nothing), NOT exit 2' '3' "$rc3"
+  st_expect "the worktree-add-failure path prunes the CALLER repo's stale entry, not just its own" \
+    '0' "$(git -C "$prunecheck" worktree list | grep -c "$stale_wt" || true)"
 
   # ── 3b. THE BASE IS THE FRESH ONE, not whatever ref is lying around ──────
   local fresh="$tmp/fresh"

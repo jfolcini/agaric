@@ -121,3 +121,35 @@ Everything the builder claimed to have run does reproduce: 12/12 and 14/14 self-
 `--severity=warning`, actionlint, zizmor, taplo. The claims that did not survive were the ones with
 no test behind them at all — the branch-protection reading, and the sentences about what the code
 does when something is missing.
+
+### What the exit-2/3 conflation actually cost, closing the loop
+
+The reviewer's non-blocking finding 2 was the same shape as the section above, one layer down: `exit
+2` was documented as "not computed, not mine to judge", but three call sites that verified *nothing*
+— an unresolvable base or head ref, `mktemp` failing, `git worktree add` failing — shared that code
+with the one case that is genuinely not this script's to judge, a real textual conflict. Because
+`pr-overlap.yml` renders exit 2 as a `::warning::` on an otherwise green job, a runner-side failure
+in any of those three inherited the textual conflict's soft treatment: the lane finished green with
+a warning, having run zero guards against zero merged trees. That is the *exact* defect the rest of
+this diff exists to close, reintroduced by the one exit code the diff didn't split. Splitting it
+moves those three cases to exit 3 (`::error::`, job fails) and leaves exit 2 with a single occupant.
+The self-test now pins both arms — the split cases at 3, the conflict still at 2 — rather than only
+narrowing one side and trusting the other stayed put.
+
+Finding 6, adding `git worktree prune` to the `git worktree add` failure path, undersold the actual
+mechanism. In this environment (git 2.43), an ordinary `git worktree add` failure — target already
+exists, permission denied, even a corrupted blob mid-checkout — leaves the caller's
+`.git/worktrees/` completely untouched; git rolls back its own partial registration before
+returning. The one way to reproduce a genuinely stale entry was killing the process mid-checkout
+(`timeout -s KILL` against a large fixture), which leaves an entry marked `locked`, `reason:
+initializing` — and plain `git worktree prune` explicitly refuses to touch locked entries, by
+design, not a bug. So "add the prune" alone would have closed only the (here, untriggered) unlocked
+case and missed the one failure mode that actually produces a stale entry: a runner OOM-killed or
+timed out mid-registration, which is precisely the scenario finding 2 is about. The fix landed as
+`git worktree remove --force --force` (double force overrides a lock) first, then `rm -rf` the
+physical directory, then `git worktree prune` for anything else orphaned-but-unlocked. The
+locked-entry arm has no dedicated regression test — reproducing it deterministically means killing
+the process mid-write, which would make the self-test timing-dependent — so it is covered by
+reasoning and a by-hand repro recorded above, not by an assertion; the unlocked/self-test-covered arm
+is pinned by planting an orphaned entry directly and asserting it is gone after the failure path
+runs, shown red against the pre-fix code first.

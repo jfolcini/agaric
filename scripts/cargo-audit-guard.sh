@@ -153,14 +153,35 @@ run_guard() {
     echo "  This is a call-site error, NOT a finding about our dependencies." >&2
     return 1
   fi
-  local out rc
-  out=$(cd "$dir" && cargo audit "$@" 2>&1)
-  rc=$?
+  local out rc capfile
+  capfile=$(mktemp -t cargo-audit-guard.XXXXXX) || {
+    echo "cargo-audit-guard: mktemp failed — cannot run cargo audit" >&2
+    return 1
+  }
+  # Stream AND capture. `out=$(cargo audit ... 2>&1)` buffers the entire run
+  # and only prints once the whole thing exits — a slow audit (network fetch
+  # of the advisory database) shows NOTHING in the log until it finishes,
+  # and the classifier still needs the full text afterward to grep for
+  # DB_LOAD_ERROR_RE. `tee` gets both: it writes each line to the real
+  # stdout as it arrives AND to $capfile, which is read back once the
+  # pipeline finishes for the classification below.
+  #
+  # `${PIPESTATUS[0]}` — not `$?` — is `cargo audit`'s own exit code: `$?`
+  # after a pipeline is `tee`'s exit status (always 0 here), not the left
+  # side's, UNLESS `pipefail` is set, in which case `$?` already picks the
+  # rightmost non-zero — this script sets `-o pipefail` at the top, so `$?`
+  # would in fact also be correct here. PIPESTATUS is used anyway so this
+  # line stays correct independent of that option ever changing, and so it
+  # is unambiguous under whatever shell mode a future caller runs this
+  # under (e.g. GitHub Actions' default `bash -e -o pipefail`, which this
+  # script itself does not need but a caller sourcing it might).
+  (cd "$dir" && cargo audit "$@") 2>&1 | tee "$capfile"
+  rc=${PIPESTATUS[0]}
+  out=$(cat "$capfile")
+  rm -f "$capfile"
   if [ "$rc" -eq 0 ]; then
-    printf '%s\n' "$out"
     return 0
   fi
-  printf '%s\n' "$out"
   if printf '%s' "$out" | grep -q "$DB_LOAD_ERROR_RE"; then
     print_db_load_banner "$dir"
     return 2
@@ -258,6 +279,58 @@ run_self_test() {
   st_contains "the banner names the local-cache remedy (git clean -fdx)" 'clean -fdx' "$out"
   st_contains "cargo-audit's own original output is still present verbatim (nothing hidden)" \
     'RUSTSEC-2026-9999' "$out"
+
+  # ── 1b. THE OUTPUT IS STREAMED, not buffered until the run finishes ──────
+  # A stub `cargo audit` that prints a line, sleeps, then prints a second
+  # line and exits non-zero. `out=$(cmd 2>&1)` would show NOTHING until the
+  # whole thing exits — indistinguishable, from the log, between "about to
+  # print" and "hung". Proving streaming means observing the FIRST line on
+  # disk WHILE the stub is still sleeping (still running), not merely that
+  # both lines are present once everything is done — a test that only
+  # checked the final output would pass against the old buffered code too.
+  local slow_bin="$tmp/bin-slow"
+  mkdir -p "$slow_bin"
+  cat > "$slow_bin/cargo" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "audit" ]; then
+  echo "SLOW-STUB-LINE-1"
+  sleep 0.4
+  echo "SLOW-STUB-LINE-2"
+  exit 1
+fi
+echo "stub cargo: unsupported subcommand $1" >&2
+exit 99
+STUB
+  chmod +x "$slow_bin/cargo"
+
+  local streamfile="$tmp/stream.out"
+  : > "$streamfile"
+  ( PATH="$slow_bin:$PATH" run_guard "$tmp" >"$streamfile" 2>&1 ) &
+  local guard_pid=$!
+  local waited=0 line1_seen_while_running=0
+  # Poll for up to 2s (the stub's own sleep is 0.4s) for LINE-1 to land on
+  # disk; if it has landed AND the guard process is still alive (has not
+  # returned yet — it is still blocked in the stub's `sleep`), that is the
+  # streamed-not-buffered proof. `kill -0` only tests liveness, sends no
+  # signal.
+  while [ "$waited" -lt 20 ]; do
+    if grep -q 'SLOW-STUB-LINE-1' "$streamfile" 2>/dev/null; then
+      if kill -0 "$guard_pid" 2>/dev/null; then
+        line1_seen_while_running=1
+      fi
+      break
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  wait "$guard_pid"
+  local slow_rc=$?
+  st_expect 'the FIRST line lands on stdout WHILE cargo audit is still running (streamed, not buffered)' \
+    '1' "$line1_seen_while_running"
+  st_expect 'and the second (post-sleep) line also lands once the run finishes' \
+    '1' "$(grep -c 'SLOW-STUB-LINE-2' "$streamfile" || true)"
+  st_expect 'a non-zero cargo-audit exit is still propagated as a guard failure (exit 1), not lost in the pipe' \
+    '1' "$slow_rc"
 
   # ── 2. A REAL VULNERABILITY is classified as exit 1 — UNCHANGED, no banner ─
   local vuln_bin="$tmp/bin-vuln"

@@ -261,23 +261,31 @@ jobs:
             {
               echo "### Merge-result check: not computed"
               echo
-              echo "Base/head could not be resolved, or the merge hit a real textual"
-              echo "conflict (GitHub's own merge check already owns that case). See the"
-              echo "job log above for which."
+              echo "The merge hit a real textual conflict (GitHub's own merge check"
+              echo "already owns that case). This is the ONLY not-computed case left —"
+              echo "everything else that used to share this code is now exit 3, below,"
+              echo "and treated as a failure. See the job log above for the conflict."
             } | tee -a "$GITHUB_STEP_SUMMARY"
-            echo "::warning::pr-merge-result-check: not computed — see the job log"
+            echo "::warning::pr-merge-result-check: not computed — a real textual conflict, see the job log"
           elif [ "$rc" -eq 3 ]; then
             # Distinct from 2 on purpose: 2 is "this merge is not mine to
-            # judge", 3 is "I judged nothing" — a guard missing from the
-            # merged tree, no .rs file under any known crate root, or no
-            # python3. All three used to exit 0 and print the line above.
+            # judge" (a real textual conflict — the ONLY exit-2 case), 3 is
+            # "I judged nothing": base/head could not be resolved, `mktemp`
+            # or `git worktree add` failed on this runner, a guard is
+            # missing from the merged tree, no .rs file exists under any
+            # known crate root, or no python3. All of these used to exit 0,
+            # or shared exit 2 with the genuine conflict case and rendered
+            # as a `::warning::` on an otherwise GREEN job — a runner-side
+            # failure that verified nothing reporting the lane as passing.
             {
               echo "### Merge-result check: VERIFIED NOTHING"
               echo
-              echo "The check could not run: a guard named in \`RATCHET_GUARDS\` is absent"
-              echo "from the merged tree, no \`.rs\` file exists under any crate root the"
-              echo "script knows about, or python3 is unavailable. This is not a pass —"
-              echo "see the job log for which, and fix the script rather than the PR."
+              echo "The check could not run: base/head could not be resolved, \`mktemp\`"
+              echo "or \`git worktree add\` failed on this runner, a guard named in"
+              echo "\`RATCHET_GUARDS\` is absent from the merged tree, no \`.rs\` file exists"
+              echo "under any crate root the script knows about, or python3 is"
+              echo "unavailable. This is not a pass — see the job log for which, and fix"
+              echo "the script or the runner rather than the PR."
             } | tee -a "$GITHUB_STEP_SUMMARY"
             echo "::error::pr-merge-result-check: verified nothing — the check itself is broken"
             exit 1
