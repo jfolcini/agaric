@@ -177,6 +177,24 @@ describe('BlockBatchActionMenu', () => {
     expect(within(dialog).getByText(t('blockContext.deleteConfirmDescription'))).toBeInTheDocument()
   })
 
+  // #3882 — `blockContext.deleteConfirmTitle` interpolated {{count}} with no
+  // _one/_other plural forms, so a 1-block selection showed "Delete 1
+  // block(s)?". Hardcoded literal (not re-derived via t()) so a regression
+  // in the catalog's plural forms reddens this.
+  it('uses singular wording in the confirm dialog title for a 1-block selection', () => {
+    renderToolbar({ selectedBlockIds: ['A'], batchDeleteConfirm: true })
+
+    const dialog = screen.getByRole('alertdialog')
+    expect(within(dialog).getByText('Delete 1 block?')).toBeInTheDocument()
+  })
+
+  it('uses plural wording in the confirm dialog title for a multi-block selection', () => {
+    renderToolbar({ selectedBlockIds: ['A', 'B', 'C'], batchDeleteConfirm: true })
+
+    const dialog = screen.getByRole('alertdialog')
+    expect(within(dialog).getByText('Delete 3 blocks?')).toBeInTheDocument()
+  })
+
   it('confirm action in the dialog calls onBatchDelete', async () => {
     const user = userEvent.setup()
     const { props } = renderToolbar({ batchDeleteConfirm: true })

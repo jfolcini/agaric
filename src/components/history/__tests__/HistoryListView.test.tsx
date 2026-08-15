@@ -76,6 +76,18 @@ describe('HistoryListView live region (#2245)', () => {
     })
   })
 
+  // #3882 — `history.loadedMoreEntries` interpolated {{count}} with no
+  // _one/_other plural forms, so a 1-entry delta announced "Loaded 1 more
+  // entries". Hardcoded literal (not re-derived via t()) so a regression in
+  // the catalog's plural forms reddens this.
+  it('uses singular wording when exactly 1 entry loads', async () => {
+    const { rerender } = render(<Harness entries={makeEntries(3)} />)
+    rerender(<Harness entries={makeEntries(4)} />)
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('Loaded 1 more entry')
+    })
+  })
+
   it('clears the announcement when entries shrink', async () => {
     const { rerender } = render(<Harness entries={makeEntries(3)} />)
     rerender(<Harness entries={makeEntries(6)} />)

@@ -2180,10 +2180,12 @@ describe('SearchPanel', () => {
       typeAndSubmit(input, 'previous')
 
       // Wait for the search to complete and the count to be announced.
+      // #3882 — `search.resultsCount` interpolated {{count}} with no
+      // _one/_other plural forms, so count === 1 rendered "1 results found".
+      // Hardcoded literal (not re-derived via t()) so a regression in the
+      // catalog's plural forms reddens this.
       await waitFor(() => {
-        expect(screen.getByTestId('search-results-count')).toHaveTextContent(
-          t('search.resultsCount', { count: 1 }),
-        )
+        expect(screen.getByTestId('search-results-count')).toHaveTextContent('1 result found')
       })
 
       // Clear the input — the live region should flip to "Search cleared".

@@ -441,6 +441,25 @@ describe('DaySection', () => {
     expect(scheduledBadge).toHaveTextContent(/Scheduled/)
   })
 
+  // #3882 — `journal.agendaCountBadge` interpolated {{count}} with no
+  // _one/_other plural forms, so a count of 1 showed "1 Due items, click to
+  // view".
+  it('uses singular wording in the agenda count badge accessible name for 1 item', () => {
+    const entry = makeDayEntry({ dateStr: '2025-06-15', displayDate: 'Sun, Jun 15, 2025' })
+    const agendaCountsBySource = { '2025-06-15': { 'column:due_date': 1 } }
+
+    render(
+      <DaySection
+        entry={entry}
+        mode="weekly"
+        agendaCountsBySource={agendaCountsBySource}
+        onAddBlock={noop}
+      />,
+    )
+
+    expect(screen.getByLabelText('1 Due item, click to view')).toBeInTheDocument()
+  })
+
   // 18. Backlink count badge shown in weekly/monthly mode
   it('renders backlink count badge in weekly mode', () => {
     const entry = makeDayEntry({
@@ -458,6 +477,24 @@ describe('DaySection', () => {
     expect(refBadge).toBeInTheDocument()
     expect(refBadge).toHaveTextContent(/5/)
     expect(refBadge).toHaveTextContent(/refs/)
+  })
+
+  // #3882 — `journal.backlinkCountBadge` interpolated {{count}} with no
+  // _one/_other plural forms, so a count of 1 showed "1 references, click to
+  // view".
+  it('uses singular wording in the backlink count badge accessible name for 1 reference', () => {
+    const entry = makeDayEntry({
+      pageId: 'PAGE_1',
+      dateStr: '2025-06-15',
+      displayDate: 'Sun, Jun 15, 2025',
+    })
+    const backlinkCounts = { PAGE_1: 1 }
+
+    render(
+      <DaySection entry={entry} mode="weekly" backlinkCounts={backlinkCounts} onAddBlock={noop} />,
+    )
+
+    expect(screen.getByLabelText('1 reference, click to view')).toBeInTheDocument()
   })
 
   // 19. Count badge click calls goToDateAndPanel

@@ -948,6 +948,60 @@ describe('BlockMetadataRow', () => {
     expect(priorityBadge.className).not.toContain('[@media(pointer:coarse)]')
     expect(priorityBadge.className).toContain('max-sm:')
   })
+
+  // #3882 — `block.attachments`/`block.attachmentsTip`/`block.showAllProperties`
+  // interpolated {{count}} with no _one/_other plural forms, so N=1 rendered
+  // the literal "1 attachment(s)"/"Show all 1 properties" text. Hardcoded
+  // literal strings here (not re-derived via t()) so a regression in the
+  // catalog's plural forms actually reddens this test.
+  describe('plural forms (#3882)', () => {
+    it('uses singular wording in the attachment badge accessible name for 1 attachment', () => {
+      renderMetadata(makeMetaProps({ attachmentCount: 1 }))
+      expect(screen.getByRole('button', { name: '1 attachment' })).toBeInTheDocument()
+    })
+
+    it('uses plural wording in the attachment badge accessible name for 3 attachments', () => {
+      renderMetadata(makeMetaProps({ attachmentCount: 3 }))
+      expect(screen.getByRole('button', { name: '3 attachments' })).toBeInTheDocument()
+    })
+
+    // Tooltip content is Radix-portalled and only mounts on hover/focus, which
+    // no test in this file drives — assert the translation directly instead
+    // of round-tripping through the DOM (still a hardcoded literal, so a
+    // regression in the catalog's plural forms reddens this).
+    it('produces singular wording for block.attachmentsTip at count 1', () => {
+      expect(t('block.attachmentsTip', { count: 1 })).toBe('1 attachment — click to toggle')
+    })
+
+    it('produces plural wording for block.attachmentsTip at count 3', () => {
+      expect(t('block.attachmentsTip', { count: 3 })).toBe('3 attachments — click to toggle')
+    })
+
+    it('uses singular wording in the property-overflow accessible name for 1 hidden property', () => {
+      renderMetadata(
+        makeMetaProps({ filteredProperties: [{ key: 'a', value: 'v1' }], maxInlineProperties: 0 }),
+      )
+      expect(
+        screen.getByRole('button', { name: 'Show all 1 property (Ctrl+Shift+P)' }),
+      ).toBeInTheDocument()
+    })
+
+    it('uses plural wording in the property-overflow accessible name for 4 hidden properties', () => {
+      renderMetadata(
+        makeMetaProps({
+          filteredProperties: [
+            { key: 'a', value: 'v1' },
+            { key: 'b', value: 'v2' },
+            { key: 'c', value: 'v3' },
+            { key: 'd', value: 'v4' },
+          ],
+        }),
+      )
+      expect(
+        screen.getByRole('button', { name: 'Show all 4 properties (Ctrl+Shift+P)' }),
+      ).toBeInTheDocument()
+    })
+  })
 })
 
 /* ── #1498: gutter controls retain editor focus (preventDefault on mousedown) ── */

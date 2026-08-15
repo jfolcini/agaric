@@ -107,4 +107,43 @@ describe('HistoryRevertDialog', () => {
     expect(mockAnnounce).toHaveBeenCalled()
     expect(onSuccess).not.toHaveBeenCalled()
   })
+
+  // #3882 — `history.revertTitle`/`history.revertDescription` interpolated
+  // {{count}} with no _one/_other plural forms, so a 1-entry revert showed
+  // "Revert 1 operations?" / "...create 1 new operations that reverse...".
+  describe('plural forms (#3882)', () => {
+    it('uses singular wording when reverting exactly 1 entry', () => {
+      render(
+        <HistoryRevertDialog
+          open
+          onOpenChange={vi.fn()}
+          selectedEntries={[ENTRIES[0] as HistoryEntry]}
+          onSuccess={vi.fn()}
+        />,
+      )
+      expect(screen.getByText('Revert 1 operation?')).toBeInTheDocument()
+      expect(
+        screen.getByText(
+          'This will create 1 new operation that reverses the selected changes. The original operations remain in history.',
+        ),
+      ).toBeInTheDocument()
+    })
+
+    it('uses plural wording when reverting 2 entries', () => {
+      render(
+        <HistoryRevertDialog
+          open
+          onOpenChange={vi.fn()}
+          selectedEntries={ENTRIES}
+          onSuccess={vi.fn()}
+        />,
+      )
+      expect(screen.getByText('Revert 2 operations?')).toBeInTheDocument()
+      expect(
+        screen.getByText(
+          'This will create 2 new operations that reverse the selected changes. The original operations remain in history.',
+        ),
+      ).toBeInTheDocument()
+    })
+  })
 })

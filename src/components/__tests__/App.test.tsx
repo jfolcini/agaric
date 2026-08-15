@@ -926,8 +926,10 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
+      // #3882 — `sidebar.trashCount` now carries plural forms; count === 1
+      // reads "1 item in trash", not "1 items in trash".
       await waitFor(() => {
-        expect(screen.getByLabelText('1 items in trash')).toBeInTheDocument()
+        expect(screen.getByLabelText('1 item in trash')).toBeInTheDocument()
       })
     })
 
@@ -938,7 +940,7 @@ describe('App', () => {
       })
 
       await waitFor(() => {
-        expect(screen.queryByLabelText(/items in trash/)).not.toBeInTheDocument()
+        expect(screen.queryByLabelText(/items? in trash/)).not.toBeInTheDocument()
       })
     })
   })
