@@ -371,12 +371,14 @@ pub struct PageIdWrite {
 ///   * delete / restore / purge fan out `CONTENT_LIFECYCLE_REBUILD_TASKS` /
 ///     `FULL_CACHE_REBUILD_TASKS`, both of which contain `RebuildPageIds`;
 ///   * a move re-derives the moved subtree in-tx via
-///     `rederive_page_and_space_ids`, which writes NULL unconditionally —
-///     but only over the ACTIVE subtree: that walk filters `deleted_at IS
-///     NULL`, so a soft-deleted descendant is not re-derived by the move
-///     itself (#3919). It still self-heals, because `RebuildPageIds`'
-///     `DESIRED_PAGE_ID_SQL` has no `deleted_at` filter and the next
-///     delete / restore / purge fans it out — the bullet above.
+///     `rederive_page_and_space_ids`, which writes NULL unconditionally and
+///     covers the WHOLE subtree. Its descendant walk used to filter
+///     `deleted_at IS NULL`, which left a soft-deleted descendant of a moved
+///     root stamped with the pre-move page until an unrelated lifecycle
+///     event fanned out a rebuild; #3919 dropped the filter, because
+///     ownership is structural and the authority that walk mirrors
+///     (`DESIRED_PAGE_ID_SQL`, below) has never had a `deleted_at` filter
+///     either.
 ///
 /// So the refusal costs at most a transient staleness that an authoritative
 /// pass then corrects — whereas the demotion it replaces destroyed a correct
@@ -385,9 +387,14 @@ pub struct PageIdWrite {
 /// (plus its own retry-queue rehydration), i.e. a block whose `page_id` was
 /// just derived authoritatively by `resolve_owning_page`. A future enqueue
 /// site on the move or delete path — where NULL IS the intended outcome —
-/// would invalidate it, and nothing in the type system pins that; the
-/// `debug_assert!` in the `SetBlockPageId` arm covers the `P1 → P2` shape but
-/// not this one.
+/// would invalidate it. Nothing in the TYPE system pins that, so a test does
+/// (#3920): `set_block_page_id_is_enqueued_only_by_the_create_arm_3920` sweeps
+/// every `OpType` × `block_type_hint` × `move_same_page` combination through
+/// `invalidations_for_op` and fails the moment a second site appears. The
+/// `SetBlockPageId` handler's own guard watches the different `P1 → P2` shape,
+/// and logs rather than asserts it, because the retry sweeper is a second
+/// ENQUEUE site (re-running the task after the parent may have moved on) even
+/// though it is not a second dispatch site (#3909).
 ///
 /// The refusal is reported as `changed: false` with `previous == current ==
 /// the preserved page`, because that is what the row now holds — no key was
@@ -1260,6 +1267,165 @@ mod tests {
             sp.as_deref(),
             Some("SP0001"),
             "KID002 must re-derive SP0001"
+        );
+    }
+
+    /// #3919 — a moved root's SOFT-DELETED descendants are re-derived too, so
+    /// the in-tx rederive really does reach the full rebuild's fixpoint.
+    ///
+    /// `rederive_page_and_space_ids` is the whole of `MoveBlock`'s `page_id`
+    /// maintenance: #2200 dropped the vault-wide `RebuildPageIds` from that
+    /// arm on the grounds that the in-tx walk is equivalent. It was not — both
+    /// members of its descendant CTE filtered `deleted_at IS NULL`, while the
+    /// authorities it mirrors (`DESIRED_PAGE_ID_SQL` here and
+    /// `rebuild_space_ids_impl`) have no such filter and derive a tombstoned
+    /// row's owning page from its ancestry exactly like a live row's. A
+    /// soft-deleted descendant of a moved root therefore kept its PRE-move
+    /// `page_id` until an unrelated delete / restore / purge happened to fan
+    /// out the rebuild — wrong meanwhile for the space-scoped trash list
+    /// (`list_trash` filters `b.space_id` over tombstoned rows), and wrong for
+    /// every `page_id` / `space_id` consumer the moment the block is restored.
+    /// (The `pages_cache` count and `page_link_cache` roll-ups do NOT see it:
+    /// both filter `deleted_at IS NULL` on the source row.)
+    ///
+    /// The test asserts the property that the #2200 skip actually rests on,
+    /// not merely the symptom: after the rederive, [`compute_page_id_diff`]
+    /// must be EMPTY and `rebuild_space_ids_impl` must write ZERO rows — i.e.
+    /// the vault-wide rebuilds have nothing left to correct. Both arms of the
+    /// pair are pinned: the live descendants (which always worked) and the
+    /// soft-deleted ones (which did not), including a descendant reached only
+    /// by recursing THROUGH a tombstone. The nested-page boundary (#2906) is
+    /// pinned on a soft-deleted nested page, because widening the walk must
+    /// not start flattening a nested page's subtree onto the moved root.
+    #[tokio::test]
+    async fn rederive_covers_soft_deleted_descendants_3919() {
+        let (pool, _dir) = test_pool().await;
+
+        // Two pages, each its own space. `spaces.id` REFERENCES `blocks(id)`
+        // and `blocks.space_id` REFERENCES `spaces(id)`, so: blocks first,
+        // then the registry rows, then the space_id stamps.
+        //
+        //   PG1 ── ROOT1 ── LIVE1                 (live)
+        //                ── GONE1 ── GONE2        (soft-deleted)
+        //                ── NEST1 ── NKID1        (nested page, soft-deleted)
+        //   PG2                                   (the move destination)
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) VALUES \
+             ('PG1',   'page',    'p1',   NULL,    1, 'PG1'), \
+             ('PG2',   'page',    'p2',   NULL,    2, 'PG2'), \
+             ('ROOT1', 'content', 'root', 'PG1',   1, 'PG1'), \
+             ('LIVE1', 'content', 'live', 'ROOT1', 1, 'PG1'), \
+             ('GONE1', 'content', 'gone', 'ROOT1', 2, 'PG1'), \
+             ('GONE2', 'content', 'deep', 'GONE1', 1, 'PG1'), \
+             ('NEST1', 'page',    'nest', 'ROOT1', 3, 'NEST1'), \
+             ('NKID1', 'content', 'nkid', 'NEST1', 1, 'NEST1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO spaces (id) VALUES ('PG1'), ('PG2')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET space_id = 'PG1' WHERE id != 'PG2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET space_id = 'PG2' WHERE id = 'PG2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // GONE1's subtree and the nested page are tombstoned. GONE2 is
+        // reachable ONLY by recursing through a tombstone, so it pins the
+        // recursive member as well as the anchor.
+        sqlx::query(
+            "UPDATE blocks SET deleted_at = 1779703200000 \
+             WHERE id IN ('GONE1', 'GONE2', 'NEST1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The move: reparent the root, then re-derive in the caller's tx —
+        // exactly what `move_ops.rs` / `history.rs` / the restore path do.
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("UPDATE blocks SET parent_id = 'PG2' WHERE id = 'ROOT1'")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        crate::block_descendants::rederive_page_and_space_ids(&mut conn, "ROOT1")
+            .await
+            .expect("rederive must succeed");
+
+        let rows: Vec<(String, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT id, page_id, space_id FROM blocks ORDER BY id")
+                .fetch_all(&mut *conn)
+                .await
+                .unwrap();
+        let owner = |id: &str| -> (Option<String>, Option<String>) {
+            rows.iter()
+                .find(|(row_id, _, _)| row_id == id)
+                .map(|(_, page, space)| (page.clone(), space.clone()))
+                .expect("row present")
+        };
+
+        assert_eq!(
+            owner("LIVE1"),
+            (Some("PG2".to_owned()), Some("PG2".to_owned())),
+            "control arm: a LIVE descendant follows the moved root, as it \
+             always has — if this arm breaks, the widened walk broke the case \
+             that already worked"
+        );
+        assert_eq!(
+            owner("GONE1"),
+            (Some("PG2".to_owned()), Some("PG2".to_owned())),
+            "#3919: a SOFT-DELETED descendant has an owning page just like a \
+             live one, and the vault-wide rebuild says it is the moved root's \
+             new page — the in-tx rederive must not leave it stamped with the \
+             pre-move page for some later lifecycle event to repair"
+        );
+        assert_eq!(
+            owner("GONE2"),
+            (Some("PG2".to_owned()), Some("PG2".to_owned())),
+            "#3919: and the walk must RECURSE THROUGH the tombstone, not just \
+             include it — GONE2 is reachable only via GONE1"
+        );
+        assert_eq!(
+            owner("NEST1"),
+            (Some("NEST1".to_owned()), Some("PG1".to_owned())),
+            "a nested page keeps its own id as page_id and its own \
+             authoritative space_id, deleted or not (#2906)"
+        );
+        assert_eq!(
+            owner("NKID1"),
+            (Some("NEST1".to_owned()), Some("PG1".to_owned())),
+            "#2906: the walk still STOPS at the nested-page boundary — \
+             widening it past `deleted_at` must not start flattening a nested \
+             page's subtree onto the moved root's page"
+        );
+
+        // The property #2200's skip actually rests on: after the in-tx
+        // rederive there is NOTHING left for the vault-wide rebuilds to fix.
+        let diff = super::compute_page_id_diff(&mut conn)
+            .await
+            .expect("diff must compute");
+        assert!(
+            diff.to_set.is_empty() && diff.to_null.is_empty(),
+            "the in-tx rederive must reach the same state a full \
+             RebuildPageIds would — MoveBlock enqueues no RebuildPageIds \
+             (#2200), so any residue here is DURABLE staleness; got \
+             to_set={:?} to_null={:?}",
+            diff.to_set,
+            diff.to_null
+        );
+        drop(conn);
+        let space_writes = super::rebuild_space_ids_impl(&pool)
+            .await
+            .expect("space rebuild must succeed");
+        assert_eq!(
+            space_writes, 0,
+            "likewise for space_id: the full rebuild must find zero rows to \
+             correct after the in-tx rederive"
         );
     }
 }

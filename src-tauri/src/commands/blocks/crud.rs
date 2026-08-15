@@ -1354,15 +1354,25 @@ pub async fn restore_block_inner(
     // `move_ops.rs:177-234`). The async `RebuildPageIds` task dispatched
     // via `commit_and_dispatch` below stays in place (idempotent — running
     // it again is safe), but without this sync update there's a window
-    // where callers reading right after commit see a stale `page_id`
-    // (e.g. pointing at a page the parent has since been moved out of:
-    // `move_block_inner`'s recursive UPDATE skips deleted descendants,
-    // so a soft-deleted block keeps its pre-move `page_id` until restore).
+    // where callers reading right after commit see a stale `page_id` — the
+    // restore's own re-derivation is what closes it, and it has to hold
+    // against drift from ANY source (a replayed remote move, a crash between
+    // two writes, a repaired-but-not-yet-swept row). This comment used to
+    // name ONE such source — "`move_block_inner`'s recursive UPDATE skips
+    // deleted descendants, so a soft-deleted block keeps its pre-move
+    // `page_id` until restore" — which #3919 removed: the move's in-tx walk
+    // no longer filters `deleted_at`, so it re-derives tombstoned
+    // descendants too. That narrowed the sources of drift; it did not remove
+    // the requirement, so this call stays.
     //
-    // Invariant #9: the recursive CTE filters  in both
-    // members AND bounds `depth < 100`. Conflict copies inherit
-    // `parent_id` from the original and would otherwise be reparented
-    // under the restored subtree.
+    // Invariant #9: the recursive CTE bounds `depth < 100`. It does NOT
+    // filter `deleted_at` (#3919) — ownership is structural, and the
+    // vault-wide `RebuildPageIds` it mirrors has never filtered tombstones
+    // either. (The `deleted_at IS NULL` filter this paragraph used to
+    // describe was justified by "conflict copies inherit `parent_id` from
+    // the original"; the `blocks.is_conflict` column and the whole
+    // conflict-copy concept were deleted long before, so that justification
+    // had outlived its subject.)
     //
     // #664: recompute `page_id` AND `space_id` for the restored subtree,
     // synchronously (callers read space-scoped lists right after commit, so
@@ -1857,9 +1867,14 @@ pub async fn restore_all_deleted_inner(
     // synchronously. The async `RebuildPageIds` materializer task dispatched
     // via `commit_and_dispatch` below stays in place (idempotent), but
     // without this sync update callers reading right after commit can see a
-    // stale `page_id` (e.g. a soft-deleted block keeps its pre-move
-    // `page_id` because `move_block_inner`'s recursive UPDATE skips deleted
-    // descendants).
+    // stale `page_id`. (This used to cite the move as the source — "a
+    // soft-deleted block keeps its pre-move `page_id` because
+    // `move_block_inner`'s recursive UPDATE skips deleted descendants".
+    // #3919 dropped that filter, so the move is no longer a source of the
+    // drift; the backfill below is NOT thereby dead, because it is a
+    // whole-table fixpoint that also covers drift the in-tx walk cannot
+    // reach — subtrees deeper than its `depth < 100` cap, rows repaired by
+    // a replayed remote op, and anything a crash left half-written.)
     //
     // P7: the prior implementation looped ~4 single-row queries per root
     // (SELECT parent_id, SELECT parent page_id, SELECT block_type, UPDATE

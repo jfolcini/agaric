@@ -109,18 +109,30 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
 /// 3. Shut the materialiser down so subsequent commands cannot rely
 ///    on async catch-up — `RebuildPageIds` won't run, and any sync
 ///    column update has to come from the command tx itself.
-/// 4. Move `parent` under `page_b`. `move_block_inner`'s recursive
-///    UPDATE filters `b.deleted_at IS NULL`, so it skips the
-///    soft-deleted leaf — `leaf.page_id` stays at `page_a` (verified
-///    inline as the test setup precondition).
-/// 5. Restore the leaf. With the M6 fix this synchronously rewrites
-///    `leaf.page_id = page_b` inside the restore tx. Without M6 the
-///    leaf would stay at `page_a` (no sync update; async path is
-///    blocked by the shutdown).
+/// 4. Move `parent` under `page_b`. Since #3919 the move's in-tx
+///    `rederive_page_and_space_ids` re-derives the soft-deleted leaf
+///    too, so `leaf.page_id` is already `page_b` — asserted inline.
+///    This step used to be the test's setup precondition in the
+///    OPPOSITE direction ("the deleted leaf must still point at
+///    page_a, because the recursive UPDATE skips soft-deleted
+///    descendants"), which is precisely the staleness #3919 fixed:
+///    `MoveBlock` enqueues no `RebuildPageIds` (#2200), so nothing
+///    repaired the row until an unrelated lifecycle event happened to
+///    fan one out.
+/// 5. Plant that stale value back by hand and restore the leaf. With
+///    the M6 fix this synchronously rewrites `leaf.page_id = page_b`
+///    inside the restore tx; without M6 the leaf would stay at
+///    `page_a` (no sync update; async path is blocked by the
+///    shutdown). The hand-planted value is what keeps M6 falsifiable
+///    now that the move no longer leaves drift of its own — M6 is the
+///    restore path's own re-derivation, and it has to hold against
+///    drift from ANY source (a replayed remote move, a crash between
+///    the two writes, a repaired-but-not-yet-swept row), not just the
+///    one bug that used to produce it locally.
 ///
 /// The shutdown is what makes the test deterministic: it removes the
-/// only async catch-up path so the assertion at step 5 isolates the
-/// synchronous-tx behaviour the M6 fix introduces.
+/// only async catch-up path so the assertions at steps 4 and 5 isolate
+/// synchronous-tx behaviour.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restore_block_synchronously_refreshes_page_id() {
     let (pool, _dir) = test_pool().await;
@@ -184,10 +196,10 @@ async fn restore_block_synchronously_refreshes_page_id() {
     // commits, only the async catch-up is blocked.
     mat.shutdown();
 
-    // Move parent under page_b. `move_block_inner`'s recursive UPDATE
-    // filters `b.deleted_at IS NULL`, so the soft-deleted leaf's
-    // page_id is NOT touched by the move's sync path — the only path
-    // that would catch it is the async RebuildPageIds, now blocked.
+    // Move parent under page_b. Since #3919 the move's in-tx rederive
+    // covers soft-deleted descendants, so the leaf follows the parent
+    // synchronously — with the materialiser down, the in-tx walk is
+    // the ONLY thing that can have done it.
     move_block_inner(
         &pool,
         DEV,
@@ -199,10 +211,14 @@ async fn restore_block_synchronously_refreshes_page_id() {
     .await
     .unwrap();
 
-    // Test setup precondition: leaf.page_id is still page_a (stale).
-    // If this ever fails, either move_block_inner started rewriting
-    // deleted descendants too, or the materialiser shutdown stopped
-    // working — both invalidate the test's setup.
+    // #3919: the deleted leaf follows the move. Ownership is
+    // structural — a tombstoned block still has an owning page, and
+    // the vault-wide RebuildPageIds (which has never filtered
+    // `deleted_at`) says it is page_b — so the in-tx rederive must
+    // reach the same answer rather than leaving the row pointing at
+    // page_a for some later, unrelated lifecycle event to repair.
+    // With the materialiser shut down there is no async catch-up, so
+    // this isolates the move's own transaction.
     let leaf_page_after_move: Option<String> =
         sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
             .bind(&leaf.id)
@@ -211,12 +227,25 @@ async fn restore_block_synchronously_refreshes_page_id() {
             .unwrap();
     assert_eq!(
         leaf_page_after_move.as_deref(),
-        Some(page_a.id.as_str()),
-        "setup precondition: deleted leaf must still point at page_a \
-         after parent moves to page_b — move_block_inner skips \
-         soft-deleted descendants and async RebuildPageIds is blocked \
-         by the materialiser shutdown"
+        Some(page_b.id.as_str()),
+        "#3919: a soft-deleted descendant of a moved root must be \
+         re-derived by the move's own tx (page_b), not left stale at \
+         page_a — MoveBlock enqueues no RebuildPageIds (#2200), so \
+         anything the in-tx walk skips stays wrong until an unrelated \
+         delete/restore/purge fans a rebuild out, and is user-visible \
+         the moment the block is restored"
     );
+
+    // Plant the stale value by hand so the M6 assertion below still
+    // has teeth. The restore path's own re-derivation must repair
+    // drift regardless of where the drift came from; #3919 removed the
+    // local move as one source of it, not the requirement.
+    sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+        .bind(page_a.id.as_str())
+        .bind(&leaf.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // Restore the leaf. With the M6 sync refresh in place, this
     // rewrites leaf.page_id = page_b inside the restore tx itself.

@@ -3191,6 +3191,127 @@ mod tests {
         }
     }
 
+    /// #3920 — the CREATE-ONLY precondition that #3908's demotion guard rests
+    /// on, made executable.
+    ///
+    /// `set_block_page_id_from_parent_in_tx` refuses to overwrite a non-NULL
+    /// `blocks.page_id` with NULL. The safety argument is NOT "NULL is always
+    /// wrong" — a purged parent makes NULL the correct final answer. It is that
+    /// the incremental arm lacks the AUTHORITY to decide it: it copies only
+    /// `parent.page_id`, which cannot tell "unstamped" from "no page". That
+    /// holds only while every `SetBlockPageId` enqueue names a block whose
+    /// `page_id` was just derived authoritatively by `resolve_owning_page` —
+    /// i.e. while the CREATE arm below is the only site here that enqueues it.
+    ///
+    /// Add one on a MOVE or DELETE arm — paths where NULL genuinely is the
+    /// intended outcome — and the guard silently inverts: it refuses a correct
+    /// write, and the block keeps a stale non-NULL `page_id` with no error and
+    /// no log line. The `debug_assert!`-turned-`tracing::error!` in the
+    /// `SetBlockPageId` handler does not cover that; it watches the
+    /// `Some(P1) → Some(P2)` shape, which is a different transition.
+    ///
+    /// So the invariant was documented at the guard and nowhere else. This is
+    /// the executable form: `SetBlockPageId` appears for `CreateBlock` and for
+    /// NO other op variant, across every `block_type_hint` / `move_same_page`
+    /// combination the dispatch consults. `payload_for`'s `match` is
+    /// exhaustive with no catch-all, so a new `OpType` fails the build here
+    /// (and must then be added to `all` below) rather than escaping the sweep.
+    ///
+    /// To falsify: push a `MaterializeTask::SetBlockPageId` in the `MoveBlock`
+    /// or `DeleteBlock` arm of [`invalidations_for_op`] and re-run.
+    #[test]
+    fn set_block_page_id_is_enqueued_only_by_the_create_arm_3920() {
+        /// A payload the target arm can consume. Exhaustive by design — the
+        /// compile-time tripwire for a newly added `OpType`. A new variant
+        /// must be added HERE and to `all` below.
+        fn payload_for(op: &OpType) -> &'static str {
+            match op {
+                OpType::CreateBlock => r#"{"block_id":"B1","block_type":"content"}"#,
+                OpType::EditBlock
+                | OpType::DeleteBlock
+                | OpType::RestoreBlock
+                | OpType::PurgeBlock
+                | OpType::MoveBlock => r#"{"block_id":"B1"}"#,
+                OpType::AddTag | OpType::RemoveTag => r#"{"block_id":"B1","tag_id":"T1"}"#,
+                OpType::SetProperty | OpType::DeleteProperty => {
+                    r#"{"block_id":"B1","key":"due","value_date":"2026-01-01"}"#
+                }
+                OpType::AddAttachment | OpType::DeleteAttachment | OpType::RenameAttachment => {
+                    r#"{"attachment_id":"A1","new_name":"x.png"}"#
+                }
+            }
+        }
+
+        let all = [
+            OpType::CreateBlock,
+            OpType::EditBlock,
+            OpType::DeleteBlock,
+            OpType::RestoreBlock,
+            OpType::PurgeBlock,
+            OpType::MoveBlock,
+            OpType::AddTag,
+            OpType::RemoveTag,
+            OpType::SetProperty,
+            OpType::DeleteProperty,
+            OpType::AddAttachment,
+            OpType::DeleteAttachment,
+            OpType::RenameAttachment,
+        ];
+        let probe = MaterializeTask::SetBlockPageId {
+            block_id: Arc::from("probe"),
+        };
+
+        for op in &all {
+            for hint in [None, Some("content"), Some("page"), Some("tag")] {
+                // `None` = remote replay / inbound sync / boot; `Some(true)` =
+                // a proven same-page move; `Some(false)` = a proven cross-page
+                // reparent. Only `MoveBlock` consults it, but sweeping it for
+                // every op costs nothing and closes the gate on a future arm
+                // that starts to.
+                for move_same_page in [None, Some(true), Some(false)] {
+                    let r = make_record(op.as_str(), payload_for(op), Some("B1"));
+                    let tasks = invalidations_for_op(&r, hint, move_same_page).unwrap();
+                    let enqueued = contains_kind(&tasks, &probe);
+                    let expected = matches!(op, OpType::CreateBlock);
+                    assert_eq!(
+                        enqueued,
+                        expected,
+                        "SetBlockPageId must be enqueued by the create arm and \
+                         NOTHING else (op={op:?}, block_type_hint={hint:?}, \
+                         move_same_page={move_same_page:?}). \
+                         set_block_page_id_from_parent_in_tx refuses a \
+                         Some(P) → NULL demotion (#3908) precisely because \
+                         every enqueue names a freshly created block whose \
+                         page_id resolve_owning_page just derived; a move- or \
+                         delete-path enqueue is a path where NULL IS the \
+                         intended answer, and the guard would silently refuse \
+                         a correct write. Widening the enqueue set means \
+                         revisiting that guard, not this assertion. \
+                         Got tasks: {:?}",
+                        labels(&tasks),
+                    );
+                }
+            }
+        }
+
+        // Guard the guard: a `create_block` of a PAGE block is the one create
+        // that legitimately enqueues nothing (a page's `page_id = id` is
+        // enforced by the `page_id_self_for_pages` CHECK at INSERT time), so
+        // the sweep above must not be read as "every create enqueues it".
+        let page_create = make_record(
+            "create_block",
+            r#"{"block_id":"PG1","block_type":"page"}"#,
+            Some("PG1"),
+        );
+        assert!(
+            !contains_kind(
+                &invalidations_for_op(&page_create, None, None).unwrap(),
+                &probe
+            ),
+            "a page create must not enqueue SetBlockPageId",
+        );
+    }
+
     // ── Arc reuse pin: create_block reuses one Arc<str> for the
     //    UpdateFtsBlock + ReindexBlockTagRefs pair (preserves the
     //    refcount-bump optimisation from the imperative original). ───
