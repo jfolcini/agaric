@@ -198,12 +198,32 @@ function findMatchingBracket(src, openIdx) {
  * ambiguous — both are refused rather than guessing), or if the
  * parameter list / body braces don't balance.
  *
- * Limitation (documented, not silently wrong): this takes the FIRST `{`
- * after the matched parameter list's closing `)` as the body's opening
- * brace. A return-type annotation containing an object-type literal
- * (`): { a: string } {`) would misidentify the body start. Neither
- * function this guard currently pins has that shape; a future pin that
- * does would need a smarter scanner.
+ * The body's opening brace is the first `{` found after the parameter
+ * list's closing `)` at ANGLE-BRACKET depth 0. This matters because a
+ * return-type annotation can itself contain a brace before the real body
+ * starts — `scanLiteralFolded` is pinned with exactly this shape,
+ * `): Array<{ start: number; end: number }> {`. Without tracking angle
+ * depth, the first `{` seen is the one inside `Array<{ ... }>`, and its
+ * matching `}` closes on the same line — the extracted (and hashed) text
+ * would be signature-only, with the entire real body outside the hash and
+ * every mutation to it invisible to this guard. A `{` seen while
+ * angle-depth is 0 opens the body; a `{` seen while angle-depth > 0 opens
+ * a type-literal nested inside a generic argument, so it is skipped over
+ * via its own matching brace instead of ending the scan.
+ *
+ * Remaining limitation (documented, not silently wrong, NOT fixed by the
+ * angle-depth tracking above): a return-type object-type literal with NO
+ * enclosing angle brackets (`): { a: string } {`) still isn't
+ * distinguished from the real body — angle-depth never leaves 0 for
+ * either brace, so the first one (the type literal, not the body) is
+ * still taken as the body open. This is the SAME fail-open shape as the
+ * bug above: the truncated text hashes stably, a pin generated from it is
+ * self-consistently green today, and stays green through arbitrary body
+ * drift. No function this guard currently pins has that shape (verified
+ * by hand against every pinned signature); a future pin that does would
+ * need a smarter scanner — this extractor only disambiguates a brace
+ * that is nested inside `< >`, not one written directly after `):` with
+ * no generic wrapper.
  */
 function extractFunction(src, name) {
   // All matching/bracket-depth work happens on the comment-stripped view —
@@ -234,12 +254,41 @@ function extractFunction(src, name) {
   if (closeParenIdx === -1) return { text: null, matchCount: matches.length }
 
   // Scan forward from the closing paren for the body's opening brace,
-  // skipping over any return-type annotation text (no braces expected
-  // there for the functions this guard targets — see doc comment above).
+  // skipping over a return-type annotation. Track angle-bracket depth: a
+  // `{` seen while depth is 0 opens the body; a `{` seen while depth > 0
+  // opens an object-type literal nested inside a generic return type
+  // (`Array<{ start: number; end: number }>`) and is skipped over via its
+  // own matching brace instead of being mistaken for the body — see the
+  // doc comment above for the case this guards against and the shape it
+  // still doesn't handle.
   let i = closeParenIdx + 1
-  while (i < stripped.length && stripped[i] !== '{') i++
-  if (i >= stripped.length) return { text: null, matchCount: matches.length }
-  const bodyOpen = i
+  let angleDepth = 0
+  let bodyOpen = -1
+  while (i < stripped.length) {
+    const c = stripped[i]
+    if (c === '<') {
+      angleDepth++
+      i++
+      continue
+    }
+    if (c === '>') {
+      if (angleDepth > 0) angleDepth--
+      i++
+      continue
+    }
+    if (c === '{') {
+      if (angleDepth === 0) {
+        bodyOpen = i
+        break
+      }
+      const nestedClose = findMatchingBracket(stripped, i)
+      if (nestedClose === -1) return { text: null, matchCount: matches.length }
+      i = nestedClose + 1
+      continue
+    }
+    i++
+  }
+  if (bodyOpen === -1) return { text: null, matchCount: matches.length }
   const bodyClose = findMatchingBracket(stripped, bodyOpen)
   if (bodyClose === -1) return { text: null, matchCount: matches.length }
 
@@ -280,8 +329,66 @@ function sha256hex(text) {
 
 // ─── pin discovery ──────────────────────────────────────────────────
 
+/**
+ * Replace string/template literal CONTENTS (quotes included) with
+ * equal-length whitespace, preserving newlines and length — the mirror
+ * image of `stripComments` (which blanks comments and preserves strings;
+ * this preserves comments and blanks strings). Used before pin-line
+ * matching so a pin-shaped line living inside a template literal or
+ * string (data, not a real marker) is not mistaken for a real pin, while
+ * a genuine pin inside a `//` or JSDoc-block comment is left untouched.
+ *
+ * Comment lines/blocks are copied through as whole slices (jumping `i`
+ * straight to the end of the line, or to the closing star-slash), never
+ * scanned character-by-character for quotes. That matters because this
+ * codebase's
+ * comment style routinely uses a single backtick for an inline
+ * `` `identifier` `` reference — an odd count of naked backticks per
+ * comment. Scanning a comment char-by-char for quotes (as an earlier,
+ * broken version of this function did) misreads such a backtick as
+ * opening a template literal, then hunts forward — through subsequent
+ * comment lines, potentially past real pin markers — for a closing
+ * backtick that has nothing to do with it, blanking everything in
+ * between. Slicing whole comments out first, before any quote scanning
+ * begins, avoids that entirely.
+ */
+function blankStringsAndTemplates(src) {
+  const n = src.length
+  let out = ''
+  let i = 0
+  while (i < n) {
+    const c = src[i]
+    const c2 = src[i + 1]
+    if (c === '/' && c2 === '/') {
+      let j = i
+      while (j < n && src[j] !== '\n') j++
+      out += src.slice(i, j)
+      i = j
+      continue
+    }
+    if (c === '/' && c2 === '*') {
+      let j = i + 2
+      while (j < n && !(src[j] === '*' && src[j + 1] === '/')) j++
+      j = Math.min(j + 2, n)
+      out += src.slice(i, j)
+      i = j
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      const j = skipString(src, i)
+      out += src.slice(i, j).replace(/[^\n]/g, ' ')
+      i = j
+      continue
+    }
+    out += c
+    i++
+  }
+  return out
+}
+
 function findPins(harnessSrc) {
-  return harnessSrc
+  const blanked = blankStringsAndTemplates(harnessSrc)
+  return blanked
     .split('\n')
     .map((line, idx) => ({ line, lineNo: idx + 1 }))
     .map(({ line, lineNo }) => {
@@ -292,24 +399,49 @@ function findPins(harnessSrc) {
 }
 
 /**
+ * Thrown by `checkTree` when the repo layout itself is wrong (the harness
+ * directory is missing) rather than a pin being missing or stale. Kept
+ * distinct from a `violations` entry so `runGuard` can exit 2, matching
+ * this file's own documented exit code for "repo layout ... failure" —
+ * an empty `{ violations: [] }` would otherwise print `OK: 0 ... 0 ...`
+ * and exit 0, silently disarming the whole gate if `scripts/
+ * mutation-harnesses/` is ever moved or renamed.
+ */
+class LayoutError extends Error {}
+
+/**
  * Check every harness file under `harnessDir` against `root`. Returns
  * `{ violations, harnessCount, pinCount }`. `violations` is
  * `[{ harness, message }]`, one per problem found (a harness may
  * contribute more than one, or contribute a single "no pins" violation).
  * Pure over the filesystem so the self-test can point it at a synthetic
- * tree.
+ * tree. Throws `LayoutError` if `harnessDir` itself doesn't exist.
  */
 function checkTree({ root, harnessDir }) {
   const violations = []
   let harnessCount = 0
   let pinCount = 0
 
-  if (!fs.existsSync(harnessDir)) return { violations, harnessCount, pinCount }
+  if (!fs.existsSync(harnessDir)) {
+    throw new LayoutError(
+      `harness directory not found: ${path.relative(root, harnessDir) || harnessDir} — has ` +
+        'scripts/mutation-harnesses/ been moved or renamed? (an empty tree here would otherwise ' +
+        'report "OK: 0 pins across 0 harness files" and exit 0, silently disarming this whole gate)',
+    )
+  }
 
+  // realpath the root once, for the symlink-escape check below (a pinned
+  // source path can be lexically inside the repo yet resolve, through a
+  // symlink, to somewhere outside it).
+  const realRoot = fs.realpathSync(root)
+
+  // { recursive: true } (Node >=20) so a harness placed in a subdirectory
+  // of scripts/mutation-harnesses/ is still discovered and required to
+  // carry a pin, instead of silently never being checked.
   const files = fs
-    .readdirSync(harnessDir, { withFileTypes: true })
+    .readdirSync(harnessDir, { withFileTypes: true, recursive: true })
     .filter((e) => e.isFile() && e.name.endsWith('.harness.ts'))
-    .map((e) => path.join(harnessDir, e.name))
+    .map((e) => path.join(e.parentPath ?? e.path, e.name))
     .toSorted()
 
   for (const harnessFile of files) {
@@ -342,6 +474,30 @@ function checkTree({ root, harnessDir }) {
         violations.push({
           harness: relHarness,
           message: `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, but ${pin.sourcePath} does not exist`,
+        })
+        continue
+      }
+      // `existsSync` is true for a directory too; reading one with
+      // `readFileSync` throws an uncaught EISDIR instead of the intended
+      // violation message, so check file-ness explicitly first.
+      if (!fs.statSync(sourceFile).isFile()) {
+        violations.push({
+          harness: relHarness,
+          message: `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, but ${pin.sourcePath} is a directory, not a file`,
+        })
+        continue
+      }
+      // The lexical containment check above (`path.relative` on the
+      // unresolved path) catches a `../`-escaping pin path, but not a
+      // symlink that sits inside the repo and points outside it. Resolve
+      // symlinks and re-check containment against the real path before
+      // reading.
+      const realSourceFile = fs.realpathSync(sourceFile)
+      const relRealToRoot = path.relative(realRoot, realSourceFile)
+      if (relRealToRoot.startsWith('..') || path.isAbsolute(relRealToRoot)) {
+        violations.push({
+          harness: relHarness,
+          message: `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, which is a symlink resolving outside the repo root — refusing to read it`,
         })
         continue
       }
@@ -391,7 +547,17 @@ if (process.argv.includes('--self-test')) {
 }
 
 function runGuard() {
-  const { violations, harnessCount, pinCount } = checkTree({ root: ROOT, harnessDir: HARNESS_DIR })
+  let result
+  try {
+    result = checkTree({ root: ROOT, harnessDir: HARNESS_DIR })
+  } catch (err) {
+    if (err instanceof LayoutError) {
+      console.error(`ERROR: ${err.message}`)
+      process.exit(2)
+    }
+    throw err
+  }
+  const { violations, harnessCount, pinCount } = result
 
   if (violations.length > 0) {
     console.error(
@@ -497,6 +663,42 @@ export function withTrickyComment(a: number): number {
     fail(
       'a backslash-before-backtick inside a comment does not desync extraction',
       JSON.stringify(extTricky),
+    )
+  }
+
+  // Regression (the #3951 review blocker): an object-type literal nested
+  // inside a generic return-type annotation — `): Array<{ a: number }> {`,
+  // exactly `scanLiteralFolded`'s real shape — must not be mistaken for
+  // the body. Before the angle-bracket-depth fix, the first `{` seen (the
+  // one inside `Array<{ ... }>`) was taken as the body open and its
+  // same-line matching `}` as the body close, so the extracted text was
+  // signature-only and every real statement in the body (the `push` call
+  // below) fell outside it, silently.
+  const srcGenericReturn = `
+export function scanExample(
+  text: string,
+  flag: boolean,
+): Array<{ a: number }> {
+  const out: Array<{ a: number }> = []
+  if (flag) {
+    out.push({ a: text.length })
+  }
+  return out
+}
+`
+  const extGeneric = extractFunction(srcGenericReturn, 'scanExample')
+  if (
+    extGeneric.text &&
+    extGeneric.text.includes('out.push({ a: text.length })') &&
+    extGeneric.text.trim().endsWith('\n}')
+  ) {
+    ok(
+      'an object-type literal inside a generic return type (`Array<{ a: number }>`) does not truncate extraction to the signature',
+    )
+  } else {
+    fail(
+      'an object-type literal inside a generic return type (`Array<{ a: number }>`) does not truncate extraction to the signature',
+      JSON.stringify(extGeneric),
     )
   }
 
@@ -739,8 +941,127 @@ export function target(a: number, b: string): number {
       )
     }
     writeSource(originalBody) // restore for subsequent cases
+
+    // Case 11: a pin naming a DIRECTORY (not a file) must be reported as
+    // the intended violation, not crash with an uncaught EISDIR.
+    const dirAsSource = path.join(tmp, 'src', 'lib', 'a-directory')
+    fs.mkdirSync(dirAsSource, { recursive: true })
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: src/lib/a-directory#example sha256=${originalHash}\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    if (r.violations.length === 1 && r.violations[0].message.includes('directory, not a file')) {
+      ok('a pin naming a directory FAILS with a message, not an uncaught EISDIR')
+    } else {
+      fail(
+        'a pin naming a directory FAILS with a message, not an uncaught EISDIR',
+        JSON.stringify(r.violations),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
+
+    // Case 12: a pin whose `sourcePath` is lexically inside the repo but
+    // is a SYMLINK resolving outside it must FAIL closed (mirrors case 9,
+    // but for a symlink escape instead of a `../` escape — a lexical-only
+    // containment check passes a symlink straight through).
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-harness-clones-outside-'))
+    try {
+      const outsideFile = path.join(outsideDir, 'secret.ts')
+      fs.writeFileSync(outsideFile, `export function example(n: number): number {\n  return n\n}\n`)
+      const symlinkRel = 'src/lib/escape-link.ts'
+      fs.symlinkSync(outsideFile, path.join(tmp, symlinkRel))
+      fs.writeFileSync(
+        harnessPath,
+        `// mutation-harness-source-pin: ${symlinkRel}#example sha256=${originalHash}\nexport {}\n`,
+      )
+      r = checkTree({ root: tmp, harnessDir })
+      if (
+        r.violations.length === 1 &&
+        r.violations[0].message.includes('symlink resolving outside the repo root')
+      ) {
+        ok('a pin path that is a symlink resolving outside the repo root is rejected, not read')
+      } else {
+        fail(
+          'a pin path that is a symlink resolving outside the repo root is rejected, not read',
+          JSON.stringify(r.violations),
+        )
+      }
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true })
+    }
+    writeHarness(originalHash) // restore for subsequent cases
+
+    // Case 13: a harness placed in a SUBDIRECTORY of `scripts/
+    // mutation-harnesses/` must still be discovered and required to carry
+    // a pin — `readdirSync` without `{ recursive: true }` would silently
+    // skip it, leaving it un-gated forever.
+    const nestedHarnessDir = path.join(harnessDir, 'nested')
+    fs.mkdirSync(nestedHarnessDir, { recursive: true })
+    fs.writeFileSync(path.join(nestedHarnessDir, 'nested.harness.ts'), `export {}\n`)
+    r = checkTree({ root: tmp, harnessDir })
+    if (
+      r.harnessCount === 2 &&
+      r.violations.some(
+        (v) =>
+          v.harness.endsWith('nested/nested.harness.ts') &&
+          v.message.includes('no mutation-harness-source-pin'),
+      )
+    ) {
+      ok('a harness in a subdirectory of scripts/mutation-harnesses/ is discovered and gated')
+    } else {
+      fail(
+        'a harness in a subdirectory of scripts/mutation-harnesses/ is discovered and gated',
+        JSON.stringify({ harnessCount: r.harnessCount, violations: r.violations }),
+      )
+    }
+    fs.rmSync(nestedHarnessDir, { recursive: true, force: true })
+
+    // Case 14: a pin-SHAPED line living inside a template literal (data,
+    // not a real marker — e.g. a code sample embedded in a console.log)
+    // must not be parsed as a real pin.
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: ${sourceRel}#example sha256=${originalHash}\n` +
+        `export const sample = \`\n// mutation-harness-source-pin: src/lib/does-not-exist.ts#nope sha256=${'0'.repeat(64)}\n\`\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    if (r.violations.length === 0 && r.pinCount === 1) {
+      ok('a pin-shaped line inside a template literal is not parsed as a real pin')
+    } else {
+      fail(
+        'a pin-shaped line inside a template literal is not parsed as a real pin',
+        JSON.stringify(r),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
+  }
+
+  // Case 15: a MISSING harness directory (moved/renamed) must fail the
+  // repo-layout check rather than being read as "zero harnesses, zero
+  // pins, all clean" — silently disarming the whole gate. `checkTree`
+  // must throw `LayoutError`, not return an empty, all-clear result.
+  const tmpNoHarnessDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-harness-clones-nodir-'))
+  try {
+    const missingHarnessDir = path.join(tmpNoHarnessDir, 'scripts', 'mutation-harnesses')
+    let threw = null
+    try {
+      checkTree({ root: tmpNoHarnessDir, harnessDir: missingHarnessDir })
+    } catch (err) {
+      threw = err
+    }
+    if (threw instanceof LayoutError) {
+      ok('a missing harness directory throws LayoutError instead of reporting a silent all-clear')
+    } else {
+      fail(
+        'a missing harness directory throws LayoutError instead of reporting a silent all-clear',
+        threw ? String(threw) : 'checkTree returned normally instead of throwing',
+      )
+    }
+  } finally {
+    fs.rmSync(tmpNoHarnessDir, { recursive: true, force: true })
   }
 
   if (failures.length > 0) {

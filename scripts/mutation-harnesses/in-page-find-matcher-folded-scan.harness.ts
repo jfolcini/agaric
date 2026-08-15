@@ -46,7 +46,7 @@
  * is itself unpinned.
  *
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldCodePoint sha256=191d915338117d9bae421defafb4f44a5c6d74c12ad5515d66ef875f18cf87ab
- * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#scanLiteralFolded sha256=19936901acd33de798e09ebf9c575186576784b3c57cc21b81b3f8fb16bd52a0
+ * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#scanLiteralFolded sha256=e368c19ed972375248269fbaac7ac3446f23cdffe793eb02cf4349b9c9bc3baa
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#isWordCodePoint sha256=1187f44517fcbf5a2ffd1e10a8518fc0e20e2b458faa3e784a488fb074ebaf7c
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#codePointBefore sha256=4818b6d6cee92197cc0aee47214a24927fc99b0bb6662bb640bb08d178ff31d5
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#isWholeWord sha256=dbfed2675929f078adb8227a307839684ad55995426ac61d604d4a5141bca1c7
