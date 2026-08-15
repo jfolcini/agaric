@@ -2638,6 +2638,32 @@ pass_filenames = false
 files = '^scripts/print-coverage-thresholds\.mjs$'
 stages = ["pre-commit"]
 
+# scratch-file-selftest (#3731): #3719 and #3725 both shipped #3718's PR body
+# — Closes lines included — because a scratch file consumed later than it was
+# written (`gh pr create --body-file …`, read after `push.sh`'s ~15-minute
+# wait) lived under a GENERIC name in the scratchpad directory, which is
+# shared by every concurrent agent in the session. This is the allocator that
+# makes that path-in-advance agreement impossible to act on: `new` hands out
+# a path through `mktemp -d`, which only exists once the one caller that
+# created it holds it, so two concurrent callers — even with the identical
+# label — cannot collide. The self-test's central assertion drives real
+# concurrency (25 backgrounded callers racing on one label, not two
+# sequential calls a clock-based mktemp fallback could paper over) and
+# replays the exact #3719/#3725 timing through the fix to confirm the writer
+# reads back its own body, unclobbered — after first reproducing the ORIGINAL
+# clobber through the old shared-generic-name shape, so this can't silently
+# stop testing the failure it exists to prevent.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "scratch-file-selftest"
+name = "Collision-proof scratch file self-test (#3731)"
+entry = "bash scripts/scratch-file.sh --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/scratch-file\.sh$'
+stages = ["pre-commit"]
+
 [[repos]]
 repo = "local"
 [[repos.hooks]]

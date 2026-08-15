@@ -34,7 +34,47 @@ onto `main` directly (`git rebase origin/main` drops the already-on-main commits
 the unique ones), force-push, then repoint its base via REST:
 `gh api /repos/<owner>/<repo>/pulls/<N> -X PATCH -f base=main`. The `gh pr edit --base`
 path is unreliable (GraphQL deprecation warning silently swallows the change) — use the
-REST PATCH. Session 843 hit this and recovered.
+REST PATCH. Session 843 hit this and recovered. The same unreliability was independently
+hit on `gh pr edit --body` (#3731): it silently no-ops on this repo, printing only a
+Projects-classic deprecation warning, exit status gives nothing away, and the body is
+unchanged. Use `gh api -X PATCH repos/:owner/:repo/pulls/:n -f body=…` for body edits too.
+
+### A shared, session-scoped scratchpad lets one agent's PR body ship as another's
+
+PRs #3719 and #3725 both opened carrying **#3718's** PR body — a docs PR — `Closes` lines
+included:
+
+```text
+Closes #3272
+Closes #3273
+```
+
+Merging either as-is would have auto-closed two issues neither PR touched while leaving
+the issue each actually fixed open. Every gate was green — code correct, tests passing,
+DCO passing — because nothing in this repo checks a PR body against its diff. The mechanism
+(confirmed, #3731): an agent wrote its PR body to a **generic name** (`msg.txt`, `pr.md`,
+`body.md` were all live in the scratchpad at once) in the scratchpad directory, which is
+keyed on **session**, not on agent — every concurrent subagent in that session shares it.
+The sequence was `git commit -F msg.txt` (immediate — correct), `./scripts/push.sh`
+(~15 minutes of CI-equivalent verification), then `gh pr create --body-file msg.txt` (read
+**after** the wait). A different concurrent agent overwrote the path during the wait. The
+diff, commit message and sign-off all matched — only the PR body came from elsewhere, which
+is exactly why a "does the body match the diff" reviewer would have nothing to flag on the
+commit side to cross-check against.
+
+This happened twice with unique-naming as an unenforced convention (five colliding generic
+names were sitting in the directory at the time), so treat "give it a unique name" as
+something invoked, not remembered — **`scripts/scratch-file.sh`** allocates a path through
+`mktemp`, which cannot hand the same path to two concurrent callers even with the identical
+label, and its `fingerprint`/`verify` pair re-checks a file's content at the point of use
+for anything read back after a long wait (see the script's self-test for the collision
+reproduced under real concurrency, and reproduced-then-fixed on a replay of the exact
+PR #3719/#3725 timing). Two DIFFERENT mitigations, both required: the unique name prevents the
+cross-agent collision; **scoped `git add -A -- <paths>`** (not a bare `git add -A`) prevents
+a leftover scratch file — unique name or not — from being staged into the commit in the
+first place. Keeping scratch files in the shared scratchpad (with a unique/branch-prefixed
+name) rather than inside the worktree is deliberate: a bare file under the worktree shows up
+in `git status` and is exposed to `git add -A` in a way a scratchpad file never is.
 
 ### Verify HEAD actually advanced after commit
 

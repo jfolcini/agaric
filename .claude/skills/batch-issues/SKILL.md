@@ -357,6 +357,12 @@ changed files — Rust `cargo fmt`; frontend `npx oxfmt --write <changed files>`
 If a hook still modifies files (e.g. biome auto-fix you didn't anticipate), re-stage and
 retry.
 
+**Stage by path, not `git add -A` bare.** `git add -A -- <paths>` (the files you actually
+touched) rather than a bare `git add -A` — a scratch file (PR body, commit message draft)
+sitting anywhere under the worktree gets swept into the commit by the bare form even when
+its name is unique (#3731). Scoped staging and unique scratch names fix two different
+halves of the same incident; both are required, neither substitutes for the other.
+
 **Verify the commit actually landed:** under rtk, "ok N files changed" can mask a
 pre-commit abort. Confirm `git log --oneline -1` shows your commit (HEAD advanced) before
 pushing. When a commit aborts, read the hook output for the **named failing hook** —
@@ -378,6 +384,22 @@ specta bindings) and verify with `cargo check --all-targets` (benches aren't cov
 
 After pushing, open a PR against `main` (`gh pr create --base main --head <branch>`) with
 `Closes #NN` in the body so the merge auto-closes the issue.
+
+**Never write a PR body (or a commit message you'll read back later) to a generic-named
+scratch file.** #3719 and #3725 both shipped #3718's PR body, `Closes` lines included,
+because the body was written to `msg.txt` in the scratchpad — a directory shared by every
+concurrent agent in the SESSION, not scoped per agent — and a concurrent agent overwrote it
+during `push.sh`'s ~15-minute wait, before `gh pr create --body-file msg.txt` read it back.
+The diff, commit and sign-off were all correct; only the body was another PR's. This
+happened TWICE with a convention already in place, so treat "use a unique name" as
+something you invoke, not remember: `file=$(scripts/scratch-file.sh new pr-body)` (allocates
+a path through `mktemp` that cannot collide with a concurrent caller's, even with the
+identical label — see the script header). If anything is written long before it's
+consumed — across a `push.sh` wait in particular — re-verify it at the point of use:
+`fp=$(scripts/scratch-file.sh fingerprint "$file")` right after writing,
+`scripts/scratch-file.sh verify "$file" "$fp"` right before `--body-file`/`-F`; a mismatch
+means another writer touched the path and the run must stop rather than ship it. Details
+and the collision demonstration: `references/pitfalls.md`.
 
 **Do NOT wait for CI on this PR.** The pre-push hook is your local gate; remote CI runs
 async over many minutes. Instead:
