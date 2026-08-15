@@ -24,9 +24,10 @@
 //!   soft-deleted (filtering would miss the very rows we need to clean
 //!   up). The depth bound is kept.
 //! * `tag_inh_ancestors_walk!(seed_depth)` — walks the parent chain
-//!   starting from `?1`'s `parent_id`. The seed depth is parameterised
-//!   because two call-sites use depth=1 (so `nearest_ancestor` can rank by
-//!   distance) and one uses depth=0.
+//!   starting from `?1`'s `parent_id`, stopping at the first soft-deleted
+//!   ancestor (#3926). The seed depth is parameterised because two
+//!   call-sites use depth=1 (so `nearest_ancestor` can rank by distance)
+//!   and one uses depth=0.
 //! * `tag_inh_descendant_tags_full!()` — full-database descendant-tags
 //!   walk used by `rebuild_all` / `rebuild_all_split`. Carries
 //!   `(block_id, tag_id, inherited_from, depth)` along the recursion.
@@ -50,9 +51,10 @@
 //!
 //! # Invariants baked in
 //!
-//! * Every active descendant walk filters `b.deleted_at IS NULL` in the
-//!   recursive member. The unfiltered subtree variant is the documented
-//!   purge-style exception.
+//! * Every active descendant walk — and, since #3926, the ancestor walk —
+//!   filters `b.deleted_at IS NULL` in the recursive member, so a walk
+//!   never passes THROUGH a soft-deleted block. The unfiltered subtree
+//!   variant is the documented purge-style exception.
 //! * Every walk bounds depth at `MAX_TAG_INHERITANCE_DEPTH` (= 100). The
 //!   bound is inlined into the SQL string at macro expansion; see
 //!   `MAX_TAG_INHERITANCE_DEPTH` for the canonical Rust value. The
@@ -145,12 +147,31 @@ macro_rules! tag_inh_subtree_unfiltered {
 }
 
 /// Recursive CTE body: walk the parent chain starting from `?1`'s
-/// `parent_id`.
+/// `parent_id`, **stopping at the first soft-deleted ancestor**.
 ///
 /// The seed depth is parameterised: pass `1` when the consumer needs to
 /// rank ancestors by distance (so the closest ancestor has the smallest
 /// depth, e.g. `nearest_ancestor`); pass `0` when only enumeration is
 /// needed.
+///
+/// # #3926 — the recursive member filters `deleted_at IS NULL`
+///
+/// The recursive member joins `blocks b ON b.id = a.id`, so `b` is the
+/// ancestor already emitted; requiring `b.deleted_at IS NULL` there means
+/// the climb only continues THROUGH a live ancestor. The emitted row
+/// itself is still unfiltered (the first deleted ancestor is emitted, its
+/// parent is not) — consumers keep their own `JOIN blocks … WHERE
+/// deleted_at IS NULL` to reject a deleted ancestor as a tag source.
+///
+/// This is the same rule [`tag_inh_descendant_tags_full`] applies walking
+/// the other way: `rebuild_all` propagates a tag only through a chain of
+/// live blocks, so for `A[#T] > X(deleted) > R` it attributes nothing to
+/// `R`. Without the filter here the ancestor walk reached `A` through the
+/// soft-deleted `X` and the incremental maintainers attributed the tag to
+/// `R`, contradicting both `rebuild_all` — the documented arbiter, see
+/// [`crate::tag_inheritance::rebuild_all`] — and the sibling descendant
+/// walk inside `recompute_subtree_inheritance` itself, which has always
+/// stopped at a deleted intermediate (`recompute_subtree_skips_deleted`).
 ///
 /// Bounds recursion at [`MAX_TAG_INHERITANCE_DEPTH`].
 ///
@@ -164,7 +185,7 @@ macro_rules! tag_inh_ancestors_walk {
              UNION ALL \
              SELECT b.parent_id, a.depth + 1 FROM blocks b \
              JOIN ancestors a ON b.id = a.id \
-             WHERE b.parent_id IS NOT NULL AND a.depth < 100 \
+             WHERE b.parent_id IS NOT NULL AND b.deleted_at IS NULL AND a.depth < 100 \
          )"
     };
     (1) => {
@@ -173,7 +194,7 @@ macro_rules! tag_inh_ancestors_walk {
              UNION ALL \
              SELECT b.parent_id, a.depth + 1 FROM blocks b \
              JOIN ancestors a ON b.id = a.id \
-             WHERE b.parent_id IS NOT NULL AND a.depth < 100 \
+             WHERE b.parent_id IS NOT NULL AND b.deleted_at IS NULL AND a.depth < 100 \
          )"
     };
 }
@@ -282,6 +303,44 @@ macro_rules! tag_inh_rebuild_nearest {
     };
 }
 
+/// Non-recursive CTE body: the [`tag_inh_rebuild_nearest`] collapse applied
+/// to the **subtree-scoped** walk [`tag_inh_tagged_descendants_in_subtree`].
+///
+/// Same problem, same rule, different source CTE: `tagged_descendants` can
+/// emit several rows for one `(block_id, tag_id)` when two blocks inside the
+/// recompute subtree hold the same tag (`A[#T] > B[#T] > C` recomputed from
+/// `A` emits `C` from both `B` at depth 0 and `A` at depth 1). Under the
+/// `(block_id, tag_id)` PK only one survives an `INSERT OR IGNORE`, and
+/// which one is whichever the recursive-CTE queue happened to emit first —
+/// a query-planner property, not something the SQL states (#3925).
+///
+/// Keeping the MIN-`depth` row makes the nearest in-subtree tagger win by
+/// construction, which is what [`crate::tag_inheritance::rebuild_all`] —
+/// the arbiter — produces. The `MIN(inherited_from)` tiebreak mirrors
+/// `tag_inh_rebuild_nearest` byte for byte so the two cannot drift; as
+/// there, two distinct ancestors at equal depth is tree-impossible, so the
+/// tiebreak exists to make the collapse total rather than to decide a case
+/// that occurs.
+///
+/// Caller responsibility: emit a [`tag_inh_tagged_descendants_in_subtree`]
+/// CTE earlier in the same `WITH RECURSIVE` block.
+///
+/// CTE name `tagged_descendants_nearest(block_id, tag_id, inherited_from)`.
+#[macro_export]
+macro_rules! tag_inh_subtree_nearest {
+    () => {
+        "tagged_descendants_nearest(block_id, tag_id, inherited_from) AS ( \
+             SELECT td.block_id, td.tag_id, MIN(td.inherited_from) AS inherited_from \
+             FROM tagged_descendants td \
+             WHERE td.depth = ( \
+                 SELECT MIN(td2.depth) FROM tagged_descendants td2 \
+                 WHERE td2.block_id = td.block_id AND td2.tag_id = td.tag_id \
+             ) \
+             GROUP BY td.block_id, td.tag_id \
+         )"
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::MAX_TAG_INHERITANCE_DEPTH;
@@ -312,8 +371,19 @@ mod tests {
     }
 
     /// `descendants_active`, `subtree_active`, and `descendant_tags_full`
-    /// also filter soft-deleted descendants. `subtree_unfiltered` must
-    /// not.
+    /// also filter soft-deleted descendants, and — since #3926 — so does
+    /// `ancestors_walk` in the UPWARD direction: no walk in this family may
+    /// pass THROUGH a soft-deleted block. `subtree_unfiltered` must not.
+    ///
+    /// The predicate must live in the RECURSIVE member (the arm after
+    /// `UNION ALL`), not merely appear somewhere in the CTE body. For
+    /// `ancestors_walk` specifically, that is the entire content of the
+    /// #3926 fix: the seed deliberately emits the first deleted ancestor
+    /// unfiltered (so it's still visible as a row), and only the recursive
+    /// member's join stops the climb from continuing THROUGH it. A
+    /// body-wide `contains` check can't distinguish "filters the climb"
+    /// from "filters the seed instead", which is a different, wrong
+    /// behaviour that would still make a naive substring check pass.
     #[test]
     fn active_walks_filter_deleted_at() {
         for (name, body) in [
@@ -324,10 +394,16 @@ mod tests {
                 "tagged_descendants_in_subtree",
                 tag_inh_tagged_descendants_in_subtree!(),
             ),
+            ("ancestors_walk(0)", tag_inh_ancestors_walk!(0)),
+            ("ancestors_walk(1)", tag_inh_ancestors_walk!(1)),
         ] {
+            let recursive_member = body.split("UNION ALL").nth(1).unwrap_or_else(|| {
+                panic!("{name} must have a `UNION ALL` recursive member to check")
+            });
             assert!(
-                body.contains("b.deleted_at IS NULL"),
-                "{name} must skip soft-deleted descendants",
+                recursive_member.contains("b.deleted_at IS NULL"),
+                "{name}'s RECURSIVE member must skip soft-deleted blocks \
+                 (a filter only in the seed does not stop the climb)",
             );
         }
         assert!(
@@ -349,6 +425,7 @@ mod tests {
             ("ancestors_walk(1)", tag_inh_ancestors_walk!(1)),
             ("descendant_tags_full", tag_inh_descendant_tags_full!()),
             ("rebuild_nearest", tag_inh_rebuild_nearest!()),
+            ("subtree_nearest", tag_inh_subtree_nearest!()),
             (
                 "tagged_descendants_in_subtree",
                 tag_inh_tagged_descendants_in_subtree!(),
@@ -367,6 +444,32 @@ mod tests {
                 "{name} must declare its CTE with `... AS ( ... )`",
             );
         }
+    }
+
+    /// #3925 — `rebuild_nearest` and `subtree_nearest` are the SAME
+    /// nearest-ancestor collapse over two differently-named source CTEs.
+    /// `tag_inh_subtree_nearest`'s docstring claims they "mirror byte for
+    /// byte so the two cannot drift"; this is what makes that true. If one
+    /// gains a tiebreak or loses the MIN-depth filter, the other must too —
+    /// otherwise `recompute_subtree_inheritance` and `rebuild_all` start
+    /// disagreeing again, which is the whole failure mode #3925 names.
+    #[test]
+    fn the_two_nearest_collapses_differ_only_in_cte_names() {
+        let rebuild = tag_inh_rebuild_nearest!()
+            .replace("descendant_tags_nearest", "N")
+            .replace("descendant_tags", "SRC")
+            .replace("dt2", "A2")
+            .replace("dt", "A");
+        let subtree = tag_inh_subtree_nearest!()
+            .replace("tagged_descendants_nearest", "N")
+            .replace("tagged_descendants", "SRC")
+            .replace("td2", "A2")
+            .replace("td", "A");
+        assert_eq!(
+            rebuild, subtree,
+            "the rebuild and subtree nearest-collapses must be identical apart \
+             from their source/output CTE names",
+        );
     }
 
     /// Smoke check: `ancestors_walk(0)` and `ancestors_walk(1)` differ

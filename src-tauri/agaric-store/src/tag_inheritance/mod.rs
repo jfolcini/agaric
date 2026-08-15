@@ -7,19 +7,34 @@
 //!
 //! ## Recursive CTE policy (invariant #9)
 //!
-//! Every CTE that walks descendants via `parent_id` in this module filters
-//! `deleted_at IS NULL` in the recursive member. Exception:
-//! `remove_subtree_inherited` deliberately does NOT filter `deleted_at` —
-//! it is called AFTER the blocks have been soft-deleted, so filtering
-//! would miss the very rows we need to clean up. See the per-function
-//! doc comments for the specific rationale.
+//! Every CTE that walks the `parent_id` edge in this module — downwards to
+//! descendants, and (since #3926) upwards to ancestors — filters
+//! `deleted_at IS NULL` in the recursive member, so no walk passes THROUGH
+//! a soft-deleted block. Two justified exceptions:
 //!
-//! Every recursive CTE in this module is built from the macro family in
+//! * `remove_subtree_inherited` deliberately does NOT filter `deleted_at`
+//!   — it is called AFTER the blocks have been soft-deleted, so filtering
+//!   would miss the very rows we need to clean up.
+//! * `remove_inherited_tag` step 2's hand-rolled `anc` CTE
+//!   (`incremental.rs:165`) also climbs `parent_id` with no `deleted_at`
+//!   filter. It stays safe for a different reason, not the recursive-member
+//!   filter: `anc` only ever climbs from a `descendants` row towards a
+//!   `taggers` row, and `descendants` (the CTE immediately above `anc`)
+//!   admits a block only via an all-live `parent_id` chain down from the
+//!   seed — so the segment `anc` climbs between any descendant and any
+//!   tagger is provably all-live already. See the comment at that CTE for
+//!   the full argument.
+//!
+//! See the per-function doc comments for the specific rationale.
+//!
+//! Every recursive CTE in this module *other than* `remove_inherited_tag`
+//! step 2 (the `anc` exception above) is built from the macro family in
 //! [`crate::tag_inheritance_macros`]. The macros bake in
 //! invariant #9 ( filter, `subtree_unfiltered` excepted)
 //! and the [`crate::tag_inheritance_macros::MAX_TAG_INHERITANCE_DEPTH`]
 //! depth bound. Do **not** hand-roll a new `WITH RECURSIVE` block here —
-//! extend the macro family instead.
+//! extend the macro family instead. Step 2's hand-rolled CTEs predate this
+//! policy and are grandfathered in; they are not a precedent for new code.
 //!
 //! Use [`apply_op_tag_inheritance`] as the single entry point for materializer
 //! handlers —. Adding a new op type that affects inheritance only

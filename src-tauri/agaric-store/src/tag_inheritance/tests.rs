@@ -1617,3 +1617,287 @@ async fn restore_recompute_converges_with_rebuild_3876() {
          alongside its direct tag, got: {incremental:?}"
     );
 }
+
+// ======================================================================
+// #3926 — a walk must not pass THROUGH a soft-deleted block
+// ======================================================================
+//
+// `rebuild_all` propagates a tag down a chain of LIVE blocks only
+// (`tag_inh_descendant_tags_full!` filters `deleted_at IS NULL` on the
+// tagger and on every descendant step). The incremental maintainers walk
+// the same edge in the opposite direction via `tag_inh_ancestors_walk!`,
+// which used to climb through tombstones — so for `A[#T] > X(deleted) > R`
+// the incremental path attributed `#T` to `R` and a full rebuild did not.
+//
+// The disagreement was not only with the rebuild. `recompute_subtree_
+// inheritance` contains BOTH directions: its subtree walk has always
+// stopped at a deleted intermediate (`recompute_subtree_skips_deleted`
+// asserts exactly that), while its step-3 ancestor walk did not. The same
+// fixture therefore gave opposite answers depending on which end you
+// recomputed from. The two tests below pin the ancestor direction for both
+// affected helpers, and assert the rebuild's own answer explicitly rather
+// than only asserting the two agree — otherwise a change that broke
+// `rebuild_all` in the same direction would keep them green.
+
+/// #3926 — `recompute_subtree_inheritance` rooted BELOW a soft-deleted
+/// ancestor must not pull a tag across it.
+///
+/// The fixture is `recompute_subtree_skips_deleted`'s, recomputed from the
+/// other end: that test recomputes at `PARENT` and asserts `GCHILD` gets
+/// nothing because `CHILD` is deleted. Recomputing at `GCHILD` must reach
+/// the same state.
+#[tokio::test]
+async fn recompute_subtree_stops_at_soft_deleted_ancestor_3926() {
+    let (pool, _dir) = test_pool().await;
+
+    // GP3926[#T] > PA3926 > CH3926 (soft-deleted) > GC3926
+    insert_block(&pool, "TG3926", "tag", "tag", None).await;
+    insert_block(&pool, "GP3926", "page", "grandparent", None).await;
+    insert_block(&pool, "PA3926", "content", "parent", Some("GP3926")).await;
+    insert_block(&pool, "CH3926", "content", "child", Some("PA3926")).await;
+    insert_block(&pool, "GC3926", "content", "grandchild", Some("CH3926")).await;
+    insert_tag_assoc(&pool, "GP3926", "TG3926").await;
+    soft_delete(&pool, "CH3926").await;
+
+    // Canonical starting state. The arbiter's own answer is pinned here,
+    // independently of the convergence assertion below: PA3926 inherits and
+    // nothing below the tombstone does.
+    rebuild_all(&pool).await.unwrap();
+    let canonical = get_inherited(&pool).await;
+    assert_eq!(
+        canonical,
+        vec![(
+            "PA3926".to_string(),
+            "TG3926".to_string(),
+            "GP3926".to_string()
+        )],
+        "#3926: rebuild_all propagates through LIVE blocks only, so only \
+         PA3926 inherits; got: {canonical:?}"
+    );
+
+    // Recomputing the subtree rooted BELOW the tombstone must be a no-op.
+    let mut conn = pool.acquire().await.unwrap();
+    recompute_subtree_inheritance(&mut conn, "GC3926")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    assert!(
+        !incremental.iter().any(|(bid, _, _)| bid == "GC3926"),
+        "#3926: GC3926 must not inherit TG3926 across the soft-deleted \
+         CH3926; got: {incremental:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#3926: the ancestor walk must stop at the soft-deleted CH3926 the \
+         same way the descendant walk does — `recompute_subtree_skips_deleted` \
+         asserts this fixture from ABOVE, and it must hold from BELOW too"
+    );
+}
+
+/// #3926 — `remove_inherited_tag`'s re-attribution walk (its
+/// `nearest_ancestor` CTE, used at two call-sites) must likewise refuse to
+/// climb past a tombstone.
+///
+/// This path matters more than the recompute one: RemoveTag's materializer
+/// fan-out carries no `RebuildTagInheritanceCache` (#2669), so a row
+/// invented here is durable.
+#[tokio::test]
+async fn remove_tag_stops_at_soft_deleted_ancestor_3926() {
+    let (pool, _dir) = test_pool().await;
+
+    // GR3926[#T] > MD3926 (soft-deleted) > PR3926[#T] > KD3926
+    insert_block(&pool, "TR3926", "tag", "tag", None).await;
+    insert_block(&pool, "GR3926", "page", "grand", None).await;
+    insert_block(&pool, "MD3926", "content", "mid", Some("GR3926")).await;
+    insert_block(&pool, "PR3926", "content", "parent", Some("MD3926")).await;
+    insert_block(&pool, "KD3926", "content", "kid", Some("PR3926")).await;
+    insert_tag_assoc(&pool, "GR3926", "TR3926").await;
+    insert_tag_assoc(&pool, "PR3926", "TR3926").await;
+    soft_delete(&pool, "MD3926").await;
+
+    rebuild_all(&pool).await.unwrap();
+    let canonical = get_inherited(&pool).await;
+    assert_eq!(
+        canonical,
+        vec![(
+            "KD3926".to_string(),
+            "TR3926".to_string(),
+            "PR3926".to_string()
+        )],
+        "precondition: only KD3926 inherits — GR3926's tag cannot cross the \
+         soft-deleted MD3926; got: {canonical:?}"
+    );
+
+    // Project the remove, then run only the incremental maintenance.
+    sqlx::query("DELETE FROM block_tags WHERE block_id = 'PR3926' AND tag_id = 'TR3926'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    remove_inherited_tag(&mut conn, "PR3926", "TR3926")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    assert!(
+        rebuilt.is_empty(),
+        "#3926: with PR3926's direct tag gone nothing inherits — GR3926 is \
+         unreachable through the tombstone; got: {rebuilt:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#3926: re-attribution must not resurrect KD3926/PR3926 from GR3926 \
+         by climbing past the soft-deleted MD3926 — RemoveTag has no rebuild \
+         backstop, so such a row is DURABLE wrong state"
+    );
+}
+
+// ======================================================================
+// #3925 — nearest-ancestor provenance must be ranked, not emitted
+// ======================================================================
+//
+// Both recompute steps insert from a walk that emits one row per tagging
+// ancestor and let `INSERT OR IGNORE` plus the `(block_id, tag_id)` PK keep
+// the first. Which row is "first" is a query-planner property, not
+// something the SQL states — so `inherited_from` was decided by emission
+// order. Neither `*_converges_with_rebuild_3876` fixture has two tagging
+// ancestors, so nothing exercised the ranking.
+//
+// The two fixtures below each place two taggers on one chain, which is the
+// minimum shape that can tell "attributed to the nearest" from "attributed
+// to the furthest". Step 3 was demonstrably picking the FURTHEST.
+
+/// #3925 — two taggers ABOVE the recompute subtree (step 3). The subtree
+/// must be attributed to the nearer one, as `rebuild_all` is.
+#[tokio::test]
+async fn recompute_subtree_ranks_nearest_ancestor_above_subtree_3925() {
+    let (pool, _dir) = test_pool().await;
+
+    // TP3925[#T] > MD3925[#T]; the mover starts under an untagged page.
+    insert_block(&pool, "TG3925", "tag", "tag", None).await;
+    insert_block(&pool, "TP3925", "page", "top", None).await;
+    insert_block(&pool, "MD3925", "content", "mid", Some("TP3925")).await;
+    insert_block(&pool, "SR3925", "page", "src", None).await;
+    insert_block(&pool, "RT3925", "content", "root", Some("SR3925")).await;
+    insert_block(&pool, "LF3925", "content", "leaf", Some("RT3925")).await;
+    insert_tag_assoc(&pool, "TP3925", "TG3925").await;
+    insert_tag_assoc(&pool, "MD3925", "TG3925").await;
+
+    rebuild_all(&pool).await.unwrap();
+
+    // Move RT3925 under MD3925, so its subtree now has TWO tagging
+    // ancestors: MD3925 (nearer) and TP3925 (further).
+    sqlx::query("UPDATE blocks SET parent_id = 'MD3925' WHERE id = 'RT3925'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    recompute_subtree_inheritance(&mut conn, "RT3925")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    let expected = vec![
+        (
+            "LF3925".to_string(),
+            "TG3925".to_string(),
+            "MD3925".to_string(),
+        ),
+        (
+            "MD3925".to_string(),
+            "TG3925".to_string(),
+            "TP3925".to_string(),
+        ),
+        (
+            "RT3925".to_string(),
+            "TG3925".to_string(),
+            "MD3925".to_string(),
+        ),
+    ];
+    assert_eq!(
+        rebuilt, expected,
+        "#3925: the arbiter attributes the moved subtree to the NEAREST \
+         tagging ancestor MD3925; got: {rebuilt:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#3925: step 3 must rank ancestors by depth — attributing RT3925 / \
+         LF3925 to the further TP3925 is what the unranked CROSS JOIN did"
+    );
+}
+
+/// #3925 — two taggers INSIDE the recompute subtree (step 2). Same rule,
+/// same failure mode, on the other insert.
+///
+/// **What this test does and does not pin.** Unlike the step-3 fixture
+/// above, step 2 was NOT wrong before the fix: this fixture passes on the
+/// pre-fix code too. Mutation-checked, the test reddens when the collapse
+/// keeps the WRONG row (`MIN(td2.depth)` → `MAX`), so it does pin the
+/// ranking RULE; it does NOT redden if `tag_inh_subtree_nearest!` is
+/// deleted outright and the insert reads `tagged_descendants` directly.
+/// No fixture can make it: SQLite's recursive-CTE queue is FIFO, so
+/// `tagged_descendants` is emitted in non-decreasing `depth` and a bare
+/// scan of the materialised CTE hands `INSERT OR IGNORE` the MIN-depth row
+/// first anyway. That FIFO reliance is precisely what #3925 asks to be
+/// removed — the collapse makes step 2 correct by construction rather than
+/// by planner behaviour — so the guard against dropping it is
+/// `the_two_nearest_collapses_differ_only_in_cte_names`, not this test.
+#[tokio::test]
+async fn recompute_subtree_ranks_nearest_tagger_inside_subtree_3925() {
+    let (pool, _dir) = test_pool().await;
+
+    // Recompute from TW3925, so BOTH taggers sit inside the subtree.
+    insert_block(&pool, "TX3925", "tag", "tag", None).await;
+    insert_block(&pool, "TW3925", "page", "top", None).await;
+    insert_block(&pool, "MW3925", "content", "mid", Some("TW3925")).await;
+    insert_block(&pool, "LW3925", "content", "leaf", Some("MW3925")).await;
+    insert_tag_assoc(&pool, "TW3925", "TX3925").await;
+    insert_tag_assoc(&pool, "MW3925", "TX3925").await;
+
+    let mut conn = pool.acquire().await.unwrap();
+    recompute_subtree_inheritance(&mut conn, "TW3925")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    let expected = vec![
+        (
+            "LW3925".to_string(),
+            "TX3925".to_string(),
+            "MW3925".to_string(),
+        ),
+        (
+            "MW3925".to_string(),
+            "TX3925".to_string(),
+            "TW3925".to_string(),
+        ),
+    ];
+    assert_eq!(
+        rebuilt, expected,
+        "#3925: the arbiter attributes LW3925 to the NEAREST tagger MW3925; \
+         got: {rebuilt:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#3925: step 2 must collapse `tagged_descendants` to the MIN-depth \
+         row — inserting straight from the walk let the recursive-CTE \
+         emission order decide LW3925's provenance"
+    );
+}
