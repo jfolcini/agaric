@@ -17,9 +17,9 @@
 //! therefore:
 //!
 //! * constructs its own fresh `LoroState` per case (#2249: an ordinary
-//!   per-instance value, not a process-global — no install step, and no
-//!   nextest-only process isolation needed, unlike the retired
-//!   `OnceLock`-backed registry, #1079); a case that needs multiple
+//!   per-instance value, not a process-global — no install step, and the
+//!   retired `OnceLock`-backed registry race that made engine-path tests
+//!   nextest-only, #1079, is gone); a case that needs multiple
 //!   sequential "boots" clears that same instance's registry between them
 //!   via `state.registry.clear()`;
 //! * seeds a real page (with `space_id`) into BOTH SQL and the engine tree, and
@@ -31,6 +31,18 @@
 //!   waiting on the deferred `SetBlockPageId` background task; and
 //! * asserts `sql_only_fallback::count()` did NOT advance across the whole chain
 //!   — a hard, per-case guard that the production engine path actually ran.
+//!
+//! HOWEVER, that last guard reads the process-global
+//! `sql_only_fallback::count()` counter, a monotonic `AtomicU64` shared across
+//! every test in the binary: two count-measuring tests running CONCURRENTLY in
+//! one process pollute each other's delta. The isolation requirement did not
+//! disappear with the `OnceLock` registry — it MOVED to an explicit nextest
+//! test-group. Run these under `cargo nextest run` (as CI and the pre-push hook
+//! do), NOT concurrent plain `cargo test`: `src-tauri/.config/nextest.toml`
+//! pins this file (and its delta-asserting peers) into
+//! `[test-groups.spy-counter-serial]` `max-threads = 1`, and `test-groups` is a
+//! nextest-only feature — plain `cargo test` runs the whole binary on all cores
+//! with no such grouping.
 //!
 //! ## Properties
 //!

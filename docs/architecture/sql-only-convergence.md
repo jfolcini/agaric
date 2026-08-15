@@ -112,17 +112,25 @@ fallback and is worth explaining.
 
 ## Test strategy
 
-- **The fallback is the default for engine-less tests.** Any apply test that
-  does not install engine state runs the fallback. That is fine — those tests
-  pin the fallback's behaviour — but it means a test that *intends* to exercise
-  the engine must say so.
+- **The fallback is the default for engine-less tests.** Any apply test whose
+  fixtures never seed the engine tree runs the fallback. That is fine — those
+  tests pin the fallback's behaviour — but it means a test that *intends* to
+  exercise the engine must say so.
 - **Conformance drives the real foreground pipeline.** To prove the arms agree,
   the same op is driven through both and the resulting `blocks` /
-  `block_properties` / `block_tags` rows compared. The engine side must go
-  through `install_for_test()` + `append_local_op` + `dispatch_op` + `settle`
-  and assert the **settled** reprojected state, never the transient provisional
-  command-path position (the #891 lesson). `engine_path_tests.rs` establishes
-  the convention; the `*_convergence_tests.rs` files apply it per op family.
+  `block_properties` / `block_tags` rows compared. The engine side constructs a
+  real `LoroState` and threads it in as the required `state: &LoroState`
+  parameter (#2249 replaced the old process-global `OnceLock` registry, and the
+  test-only installer that primed it, with this explicit parameter — see
+  `sql_only_fallback.rs`'s module docs for that deletion's record), seeds its
+  fixture blocks into that engine tree, drives the ops through the foreground
+  `append_local_op` → `dispatch_op` → settle pipeline, and asserts the
+  **settled** reprojected state, never the transient provisional command-path
+  position (the #891 lesson). It also asserts a **zero delta** on
+  `sql_only_fallback::count()` across its ops, which is what proves the engine
+  path actually ran rather than the fallback. `engine_path_tests.rs`
+  establishes the convention; the `*_convergence_tests.rs` files apply it per
+  op family.
 - **Counter assertions.** `sql_only_fallback::count()` asserts that
   engine-path cases took **zero** fallbacks and engine-less cases took the
   expected number — which is what catches an accidental fallback in a test

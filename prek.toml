@@ -429,11 +429,15 @@ stages = ["pre-commit"]
 # engine path; that fn was deleted in #2249/#2250 (engine state moved from a
 # process-global `OnceLock` to an explicit `&LoroState` parameter), and the
 # stale comments actively misled a later session before being fixed. This
-# hook fails any tracked `*.rs` file (other than the one file that
-# legitimately documents the deletion) that still mentions
-# `install_for_test`. Narrow and incident-specific by design — see
-# scripts/check-dead-symbol-citations.mjs for the rationale and how to add
-# another dead symbol if this recurs elsewhere.
+# hook fails any tracked `*.rs` or `*.md` file (other than the one file that
+# legitimately documents the deletion, and `docs/session-log/**`, whose
+# historical records legitimately name the symbol in the past tense) that
+# still mentions `install_for_test` as a whole word. `.md` is in scope
+# because the same dead citation had also rotted into the canonical design
+# doc docs/architecture/sql-only-convergence.md. Narrow and
+# incident-specific by design — see scripts/check-dead-symbol-citations.mjs
+# for the rationale and how to add another dead symbol if this recurs
+# elsewhere.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -442,7 +446,7 @@ name = "no stale citations of deleted Rust symbols"
 entry = "node scripts/check-dead-symbol-citations.mjs"
 language = "system"
 pass_filenames = false
-files = "\\.rs$"
+files = "\\.(rs|md)$"
 stages = ["pre-commit"]
 
 # Frontend import-cycle guard (#761). The `src/` module graph was driven to

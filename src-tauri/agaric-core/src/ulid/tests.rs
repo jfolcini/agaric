@@ -494,12 +494,6 @@ fn from_trusted_and_deserialize_still_accept_synthetic_ids_1558() {
 #[test]
 fn sentinel_id_does_not_survive_untrusted_ingest_verbatim_3794() {
     const FRONTEND_SENTINEL_ID: &str = "__drop-after-last__";
-    assert_eq!(
-        FRONTEND_SENTINEL_ID,
-        FRONTEND_SENTINEL_ID.to_lowercase(),
-        "fixture drifted from the frontend's SENTINEL_ID — it must stay lowercase \
-         (src/lib/tree-utils.ts) for this test to exercise the real hazard"
-    );
 
     // Trusted path: `restore.rs` / `projection.rs` (per #3794's issue body)
     // insert peer-supplied ids via `BlockId::from_trusted`, with no ULID

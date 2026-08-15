@@ -13,9 +13,9 @@
 // to check without a prohibitive false-positive rate, which is out of
 // scope here (see #3817's own "optional hardening" note). This guard
 // instead pins the ONE class of dead citation that has already recurred:
-// literal mentions of `install_for_test` in tracked `.rs` files. If more
-// deleted symbols accrue stale citations, add them to `DEAD_SYMBOLS` below
-// rather than generalising prematurely.
+// word-boundary mentions of `install_for_test` in tracked `.rs` and `.md`
+// files. If more deleted symbols accrue stale citations, add them to
+// `DEAD_SYMBOLS` below rather than generalising prematurely.
 //
 // One file is intentionally exempted: the sql_only_fallback module doc
 // (`src-tauri/agaric-engine/src/apply/sql_only_fallback.rs`) mentions
@@ -24,9 +24,20 @@
 // back." That is the citation this guard exists to keep singular.
 //
 // Heuristic:
-//   - Scan every tracked `*.rs` file, via `git ls-files` (untracked/build
-//     files can't hide a violation).
-//   - Flag any line containing a dead symbol's literal text.
+//   - Scan every tracked `*.rs` and `*.md` file, via `git ls-files`
+//     (untracked/build files can't hide a violation). `.md` is in scope
+//     because the same dead citation had also rotted into the canonical
+//     design doc `docs/architecture/sql-only-convergence.md` — prose
+//     prescribing a deleted function misleads exactly as much as a code
+//     comment does.
+//   - Flag any line mentioning a dead symbol as a whole word. The match is
+//     word-boundary anchored (not a bare substring) so a future dead symbol
+//     that is a substring of a LIVE identifier — e.g. `install_for_test`
+//     inside a hypothetical `reinstall_for_testing` — cannot false-positive.
+//   - `docs/session-log/**` is excluded: session logs are historical
+//     records that legitimately name the symbol in the past tense as an
+//     account of what a past session did. Same exclusion the sibling guard
+//     `scripts/check-architecture-citations.mjs` uses for its archive.
 //   - The one file that legitimately documents the deletion is excluded.
 //
 // Exit codes: 0 clean / 1 matches found / 2 invocation error.
@@ -57,6 +68,23 @@ const ALLOWED_FILE_BY_SYMBOL = {
 // Symbols deleted from the tree that must not be cited as live elsewhere.
 const DEAD_SYMBOLS = Object.keys(ALLOWED_FILE_BY_SYMBOL)
 
+// `docs/session-log/*.md` are archives of past state; a historical session
+// legitimately records that it called a since-deleted symbol. Excluded so
+// the archive is not rewritten. Mirrors `check-architecture-citations.mjs`.
+const EXCLUDE_PATH_RE = /^docs\/session-log\//
+
+// Word-boundary matcher per symbol, so a dead symbol that happens to be a
+// substring of a LIVE identifier cannot false-positive. `\b` is correct for
+// Rust/JS identifier characters ([A-Za-z0-9_]); the symbol is regex-escaped
+// before interpolation so a symbol containing regex metacharacters cannot
+// change the pattern's meaning.
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+const SYMBOL_RE = new Map(
+  DEAD_SYMBOLS.map((symbol) => [symbol, new RegExp(`\\b${escapeRegExp(symbol)}\\b`)]),
+)
+
 function trackedFiles() {
   try {
     return execFileSync('git', ['ls-files'], { cwd: REPO_ROOT, encoding: 'utf8' })
@@ -69,7 +97,11 @@ function trackedFiles() {
 }
 
 function scanTargets(tracked) {
-  return tracked.filter((f) => f !== SELF_PATH && f.endsWith('.rs'))
+  return tracked.filter((f) => {
+    if (f === SELF_PATH) return false
+    if (EXCLUDE_PATH_RE.test(f)) return false
+    return /\.(rs|md)$/.test(f)
+  })
 }
 
 function findHits(files) {
@@ -86,7 +118,7 @@ function findHits(files) {
     for (const symbol of DEAD_SYMBOLS) {
       if (file === ALLOWED_FILE_BY_SYMBOL[symbol]) continue
       lines.forEach((line, idx) => {
-        if (line.includes(symbol)) {
+        if (SYMBOL_RE.get(symbol).test(line)) {
           hits.push({ file, lineNo: idx + 1, symbol, text: line.trim() })
         }
       })

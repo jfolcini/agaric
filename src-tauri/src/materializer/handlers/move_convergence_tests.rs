@@ -58,8 +58,19 @@
 //! #2249: `LoroState` is an ordinary per-instance value, not a process
 //! global, so the two arms' engine states (where the engine arm has one at
 //! all) cannot interfere with each other. The fallback arm drives
-//! `apply_move_block_sql_only` directly (the established pattern). These
-//! tests run fine under plain `cargo test`, same as `cargo nextest run`.
+//! `apply_move_block_sql_only` directly (the established pattern).
+//!
+//! HOWEVER, the `count() == delta` guard above reads the process-global
+//! `sql_only_fallback::count()` counter, which is a monotonic `AtomicU64`
+//! shared across every test in the binary: two count-measuring tests
+//! running CONCURRENTLY in one process pollute each other's delta. That
+//! isolation requirement did not disappear with the registry — it MOVED
+//! to an explicit nextest test-group. Run these under `cargo nextest run`
+//! (as CI and the pre-push hook do), NOT concurrent plain `cargo test`:
+//! `src-tauri/.config/nextest.toml` pins this file (and its
+//! delta-asserting peers) into `[test-groups.spy-counter-serial]`
+//! `max-threads = 1`, and `test-groups` is a nextest-only feature — plain
+//! `cargo test` runs the whole binary on all cores with no such grouping.
 
 use super::*;
 use crate::db::init_pool;

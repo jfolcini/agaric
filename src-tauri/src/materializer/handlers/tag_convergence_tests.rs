@@ -27,9 +27,19 @@
 //! `apply_*_sql_only` fns directly (the established pattern — see
 //! `move_sql_only_cycle_tests`), which is the identical code the
 //! via-loro routing falls back to when space resolution fails or the
-//! engine tree is missing the block. These tests run fine under plain
-//! `cargo test`, same as `cargo nextest run` — isolation is per-instance,
-//! not per-process.
+//! engine tree is missing the block.
+//!
+//! HOWEVER, the `count() == delta` guard above reads the process-global
+//! `sql_only_fallback::count()` counter, which is a monotonic `AtomicU64`
+//! shared across every test in the binary: two count-measuring tests
+//! running CONCURRENTLY in one process pollute each other's delta. That
+//! isolation requirement did not disappear with the registry — it MOVED
+//! to an explicit nextest test-group. Run these under `cargo nextest run`
+//! (as CI and the pre-push hook do), NOT concurrent plain `cargo test`:
+//! `src-tauri/.config/nextest.toml` pins this file (and its
+//! delta-asserting peers) into `[test-groups.spy-counter-serial]`
+//! `max-threads = 1`, and `test-groups` is a nextest-only feature — plain
+//! `cargo test` runs the whole binary on all cores with no such grouping.
 
 use super::*;
 use crate::db::init_pool;

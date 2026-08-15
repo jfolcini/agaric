@@ -49,8 +49,17 @@ use super::*;
 /// — not an optional process-global that test scaffolding could forget
 /// to install. See [`super::sql_only_fallback`] for the full accounting.
 ///
-/// In production both arms are unreachable — space resolution succeeds
-/// on every well-formed op. The SQL-only fallback exists so that
+/// In production both arms are unreachable on a well-formed, FULLY
+/// RECONCILED op log: space resolution succeeds on every well-formed op,
+/// and once boot-replay has reconciled the engine with SQL every target
+/// block is present in its space's tree. `EngineMissingTarget` is not
+/// dead code, though — its real triggers are the #1257 reconciliation
+/// window (SQL has the row, the engine tree has not caught up yet) and
+/// cross-space moves, which a single-space engine mutation cannot
+/// represent; see [`super::sql_only_fallback`]'s module docs. Both stay
+/// soft: SQL is authoritative and boot-replay reconciles the engine.
+///
+/// The SQL-only fallback also exists so that
 /// materializer / recovery / sync_daemon tests can thread synthetic
 /// bare-block ops through `apply_op` without a registered space.
 /// `chunk`: #2200 Item 1. When `Some`, the caller is importing an N-block
