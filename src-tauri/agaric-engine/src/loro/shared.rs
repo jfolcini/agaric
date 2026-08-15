@@ -43,7 +43,10 @@
 //!   entry in `src-tauri/.config/nextest.toml` is NOT what supplies that:
 //!   a test group is a concurrency semaphore over its members, so one
 //!   permit serialises the group — nextest gives every test its own
-//!   process regardless of group membership. See the module docs of
+//!   process regardless of group membership. (That file's own rationale
+//!   for the group predates this correction and still reads in
+//!   same-process terms; it carries an OPEN QUESTION block saying so.)
+//!   See the module docs of
 //!   `materializer::handlers::create_edit_convergence_tests` and its
 //!   delta-asserting peers for the per-file statement of this.
 //!

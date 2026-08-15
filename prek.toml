@@ -425,23 +425,27 @@ files = "\\.(md|rs|ts|tsx)$"
 stages = ["pre-commit"]
 
 # Dead-symbol citation guard (#3817). ~10 Rust test-tree comments instructed
-# readers to call `shared::install_for_test()` to drive the production
-# engine path; that fn was deleted in #2249/#2250 (engine state moved from a
-# process-global `OnceLock` to an explicit `&LoroState` parameter), and the
-# stale comments actively misled a later session before being fixed. This
-# hook fails any tracked `*.rs` or `*.md` file (other than the one file that
-# legitimately documents the deletion, and `docs/session-log/**`, whose
-# historical records legitimately name the symbol in the past tense) that
-# still mentions `install_for_test` as a whole word. `.md` is in scope
+# readers to call a test-harness installer on the Loro engine state to drive
+# the production engine path; that fn was deleted in #2249/#2250 (engine
+# state moved from a process-global `OnceLock` to an explicit `&LoroState`
+# parameter), and the stale comments actively misled a later session before
+# being fixed. This hook fails any tracked `*.rs` or `*.md` file that still
+# cites it as a whole word, except the one file that legitimately documents
+# the deletion (the allowlist in the script) and `docs/session-log/**`,
+# whose historical records name it in the past tense. `.md` is in scope
 # because the same dead citation had also rotted into the canonical design
 # doc docs/architecture/sql-only-convergence.md. Narrow and
 # incident-specific by design — see scripts/check-dead-symbol-citations.mjs
-# for the rationale and how to add another dead symbol if this recurs
-# elsewhere. Coverage is `install_for_test` ONLY: the sibling symbols
-# deleted by the same change (`shared::get()` / `shared::init()`) cannot be
-# added, because `get` / `init` are too generic to word-match without firing
-# on every file, so stale citations of THOSE are review-caught, not
-# CI-caught (see the script's "KNOWN COVERAGE GAP" note).
+# for the symbol itself, the rationale, the KNOWN COVERAGE GAP (the sibling
+# `shared::get()` / `shared::init()` deletions cannot be guarded — `get` and
+# `init` are too generic to word-match), and how to add another dead symbol.
+#
+# This comment deliberately does NOT spell the guarded symbol out. `.toml` is
+# not in the scan set, so a citation here would be exempt by accident of file
+# extension rather than by the allowlist the design is built on — and that
+# exemption would evaporate silently if the scan set were ever widened. One
+# hop to the script header costs a reader nothing and keeps this file clean
+# under any scan set.
 [[repos]]
 repo = "local"
 [[repos.hooks]]

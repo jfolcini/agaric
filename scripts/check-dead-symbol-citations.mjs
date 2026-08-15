@@ -80,6 +80,13 @@ const SELF_PATH = 'scripts/check-dead-symbol-citations.mjs'
 // The one file allowed to cite each dead symbol: the historical record of
 // its deletion. Keyed by symbol so a future addition can pin its own
 // canonical-explanation file independently.
+//
+// This map (plus `EXCLUDE_PATH_RE` below) is the ONLY sanctioned exemption.
+// Files outside the scan set are not exempt, they are merely unreachable —
+// a distinction that matters because it evaporates the moment `scanTargets`
+// widens. `prek.toml`, which documents this hook, therefore does not name the
+// symbol at all rather than leaning on `.toml` being unscanned; keep it that
+// way, or allowlist it here if it ever needs the name back.
 const ALLOWED_FILE_BY_SYMBOL = {
   install_for_test: 'src-tauri/agaric-engine/src/apply/sql_only_fallback.rs',
 }

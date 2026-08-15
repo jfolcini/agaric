@@ -110,6 +110,9 @@ what the original note confused with the TypeScript assertion.
 
 ## A sixth stale comment, in a file the fix didn't touch
 
+> **CORRECTED — the struck sentences below this section's second paragraph are wrong; the correction
+> immediately follows them.** Lead-in added so a skimming reader meets the correction before the claim.
+
 Review of the PR whose entire subject was stale/false harness-isolation comments found it had
 introduced a sixth: `restore_cascade_tests.rs`'s `fresh_loro_state()` doc claimed tests "don't conflict
 even running concurrently under plain `cargo test`," while a sibling test in the same file asserts an
@@ -208,3 +211,54 @@ one narrow class of stale citation — a deleted symbol named verbatim — and n
   former turns overflow into an exit-2 that fails every commit, the latter swallows it in a bare
   `catch` and silently disables the guard. Fixed rather than filed: a two-line change is smaller than
   the issue that would track it.
+
+## Second review pass: a comment with no code under it, and a question left open
+
+**A dangling comment in the file this PR used as its own cross-check.**
+`engine_path_tests.rs:123-125` read "Reset the flag for any other tests in this binary. The
+OnceLock-installed flag is process-global; tests that rely on default-off must explicitly install
+`false` themselves" — with nothing beneath it but the closing brace. There is no flag: the test
+constructs `let state = agaric_engine::loro::shared::LoroState::new()` and `apply_op_tx(&mut tx,
+&record, None, &state)` takes it by reference, so the only thing to "reset" goes out of scope on its
+own. `grep -n "flag"` over the file finds no other live use; the two remaining mentions
+(`:1191`, `:1194`) are past-tense history of the retired #2896 suppression global and are accurate.
+Two neighbours had rotted the same way and were fixed with it: `:67` ("The engine path reads the Loro
+state global; install it for the test") and `:129` ("with the flag on"). Three stale comments in the
+file the PR cites twice as its correctness cross-check, and none of them nameable by the new guard —
+they cite a *mechanism*, not a symbol.
+
+**The `spy-counter-serial` contradiction, left open on purpose.** The corrected comments say the group
+cannot be what protects the counter deltas; `.config/nextest.toml`'s own rationale still says it is.
+Resolving that by rewriting the rationale would mean inventing a cause for a symptom that was
+*measured*: the group arrived in b51d1ddb0 (#2857 / #2621) reporting "~1-2 spurious 'flaky' per
+full-suite run, passing on retry and in isolation", and with `retries = 1` / `retries = 2` configured,
+"flaky" means a real TRY 1 failure. So the file now carries an explicitly marked OPEN QUESTION block
+instead: the original mechanism is superseded, the flakiness is unexplained under the corrected one,
+the entry stays because it is cheap and removing a measured mitigation on the strength of a corrected
+explanation would be the same mistake in the other direction, and resolving it needs a run that
+reproduces the flakiness with the group removed. One adjacent fact is recorded without being turned
+into an answer: the slow-timeout override note in the same file documents a different, verified cause
+of spurious FLAKY for one member of the set (`apply_reproject_proptest`, TRY 1 terminated under load,
+TRY 2 passing at 36.5s). Whether it generalises is not known.
+
+Worth noting for whoever picks this up: the flakiness traces to #2857/#2621, not to #3639 — #3639 was
+merely the last commit to touch the file. The provenance was checked with `git log -S spy-counter-serial`
+rather than taken from the summary that reached this session.
+
+**Exemption by allowlist, not by file extension.** `prek.toml`'s hook comment named the guarded symbol
+about five times and was clean only because `.toml` is not in the scan set — protection by accident of
+extension, which would vanish silently if `scanTargets` ever widened. Rather than allowlisting
+`prek.toml` (an entry the scanner can never reach, i.e. inert configuration that reads as protection —
+the exact genre of thing this PR is about), the comment now describes the symbol instead of spelling it,
+points one hop to the script header, and says why. The script's allowlist comment records the general
+rule: the allowlist and `EXCLUDE_PATH_RE` are the only sanctioned exemptions; everything else is merely
+unreachable.
+
+**Three review notes taken as no-action, with the reasoning checked rather than accepted.** The
+`--self-test`'s `PATH`-clearing ENOENT probe may exercise a different branch on Windows, where a shell
+is resolved via `ComSpec` — but `release.yml:37` runs the validation job on `ubuntu-24.04` and Windows
+appears only in its artifact build matrix (`:118`), so no CI path runs this hook on Windows.
+`pass_filenames = false` re-reads ~4.5k tracked files per invocation, matching the sibling guard and
+measured in well under a second. And the struck-through claims in this log stay struck rather than
+deleted — but the "sixth stale comment" section, where the strike preceded its correction, now opens
+with a CORRECTED lead-in so a skimming reader meets the correction first.
