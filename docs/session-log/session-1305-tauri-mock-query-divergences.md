@@ -7,7 +7,7 @@
 | **Items closed** | `#3863` |
 | **Items modified** | filed `#3884` |
 | **Tests added** | +8 (frontend) / +0 (backend) |
-| **Files touched** | 6 |
+| **Files touched** | 7 |
 
 **Summary:** Closed the two `run_advanced_query` divergences #3863 named — the
 `lastEdited` seed fallback and the cursor payload shape — by deriving what the engine
@@ -20,7 +20,9 @@ On the cursor, those two disagreed, and the source won.
 - `src/lib/tauri-mock/__tests__/advanced-query-sort.test.ts`
 - `src/lib/base64url.ts` (new — extracted, see the review round below)
 - `src/lib/inline-query-spec.ts`
-- `docs/session-log/session-1303-tauri-mock-query-divergences.md` (new)
+- `e2e/weekly-reschedule-drag.spec.ts` (CI triage — see the last process note; the failure
+  was a scroll race in the spec, not this diff)
+- `docs/session-log/session-1305-tauri-mock-query-divergences.md` (new)
 
 **Verification:**
 - `npx vitest run src/lib/tauri-mock src/lib/__tests__/tauri-mock.test.ts src/hooks
@@ -134,3 +136,48 @@ On the cursor, those two disagreed, and the source won.
   differentiation — removing it needs a reseed, not a one-line swap. Filed as `#3884`.
   The reviewer's one code change was to replace a dangling "see the #3863 PR notes"
   comment with that issue number: a citation nobody can follow is not a citation.
+
+- **The one CI failure on this PR was NOT this diff, and the triage says how that was
+  established rather than asserted.** `validate / playwright (3)` failed
+  `e2e/weekly-reschedule-drag.spec.ts:66` ("source row … not found") on both the first
+  attempt and the retry. The obvious suspect was divergence 1: op-log-free rows now tie at
+  the sentinel instead of sorting apart by a seeded stamp, so any view ordered by
+  `lastEdited` reorders. That hypothesis was falsified, not argued away — an instrumented
+  run wrapping `__TAURI_INTERNALS__.invoke` before first paint recorded every command the
+  boot + weekly-view flow issues (21 distinct: `get_journal_page_by_date`, `list_blocks`,
+  `load_page_subtree`, `count_agenda_batch_by_source`, `count_backlinks_batch`,
+  `list_projected_agenda`, `list_unfinished_tasks`, `query_by_property`, …).
+  `run_advanced_query` is not among them, count 0. Weekly view reaches its rows through
+  `BlockTree`, and the only `run_advanced_query` entry points are inline `{{query …}}`
+  blocks (`useQueryExecution`) and `AdvancedQueryView` — the seed contains neither
+  (`grep -c query src/lib/tauri-mock/seed.ts` = 0). The changed sort getter is unreachable
+  from that spec.
+
+- **The real mechanism was a scroll race the spec created itself.** The test picks its drop
+  target as the first rendered day that is not today — normally the START of the week,
+  several day-sections ABOVE today's — and called `scrollIntoViewIfNeeded()` on it. That
+  scrolls today's section back out of the viewport, and `useViewportObserver`'s
+  IntersectionObserver (200px rootMargin) then swaps the source row for the ARIA-hidden
+  placeholder `SortableBlockWrapper` renders for off-screen rows — the very culling the
+  spec's own comment describes, re-triggered after `expect(sourceRow).toBeVisible()` had
+  already passed. Whether the `page.evaluate` landed before or after the flip decided the
+  outcome. The same-day sibling test in the same file passed in the same CI run, on both
+  attempts, precisely because ITS drop zone is today's, so it never scrolls away from the
+  row it is about to drag.
+
+- **Fix: order the scrolls so nothing moves the row off screen after it is found.** The
+  drop zone is resolved and asserted first, without scrolling — `RescheduleDropZone` is
+  rendered unconditionally per day and is not virtualized, and Playwright's `toBeVisible`
+  means attached-and-laid-out, not in-viewport, so the assertion still checks everything
+  the synthetic `DragEvent` dispatch needs. Scrolling today's section in is now the LAST
+  step before the gesture. Reproduced and measured under load
+  (`--repeat-each=12 --workers=4 --retries=0`): **3/12 failures before, 0/12 after**, then
+  **0/20** on a wider repeat; the same-day test was 12/12 in both. Sweep: `grep` over all
+  of `e2e/` shows `scrollIntoViewIfNeeded` appears in this file ONLY, so no sibling spec
+  carries the same construct; the other scroll idioms (`scrollTop`/`mouse.wheel` in
+  `pages-view`, `pages-filter`, `search-results`, `agenda-virtualization`,
+  `infinite-journal-1415`) scroll a container to trigger load-more and never scroll away
+  from an element they subsequently need. The three specs that DO exercise
+  `run_advanced_query` (`query-blocks`, `query-hint`, `mobile-overflow`) plus the three
+  other weekly-view specs (`journal-panels`, `agenda-advanced`, `features-coverage`) were
+  run together: 94/94 pass.

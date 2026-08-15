@@ -74,18 +74,6 @@ test.describe('WeeklyView — reschedule by drag (real gesture)', () => {
 
     const sourceSelector = `[data-testid="sortable-block"][data-block-id="${BLOCK_DAILY_3}"]`
 
-    // #2467/#1268 — SortableBlockWrapper renders an ARIA-hidden placeholder
-    // `<li>` (no `data-testid="sortable-block"`) for any row `useBlockMountLimit`
-    // /`useViewportObserver` currently consider off-screen, independent of
-    // DaySection's own lazy-mount observer above. Today's section may sit
-    // below the fold on load (wherever in the week it falls), so scroll it
-    // into view FIRST to flip its rows from placeholders to the real,
-    // draggable row before looking for it.
-    await page.locator(`#journal-${todayStr}`).scrollIntoViewIfNeeded()
-    const sourceRow = page.locator(sourceSelector)
-    await expect(sourceRow).toBeVisible({ timeout: 5000 })
-    await sourceRow.scrollIntoViewIfNeeded()
-
     // The drop target has to be a day this week actually renders. Deriving it
     // from the DOM instead of computing `today + 1` is what keeps that true on
     // the last day of the week, when tomorrow belongs to the NEXT week and no
@@ -106,9 +94,45 @@ test.describe('WeeklyView — reschedule by drag (real gesture)', () => {
     }
     const dropZoneTestId = `reschedule-drop-zone-${targetStr}`
 
+    // `RescheduleDropZone` is rendered unconditionally for EVERY day of the
+    // week (`WeeklyView.tsx` maps one per entry) and is not virtualized — only
+    // the block ROWS inside a `BlockTree` are — so the target zone is attached
+    // and laid out wherever the page happens to be scrolled. Deliberately NOT
+    // `scrollIntoViewIfNeeded()`:
+    //
+    // `targetStr` is the FIRST rendered day that isn't today, i.e. normally the
+    // start of the week, several day-sections ABOVE today's. Scrolling it into
+    // view therefore scrolls TODAY's section back out of the viewport, and
+    // `useViewportObserver`'s IntersectionObserver (200px rootMargin) then
+    // asynchronously swaps the source row for the ARIA-hidden placeholder
+    // described below — after `expect(sourceRow).toBeVisible()` had already
+    // passed. That race is what made this test flake (`source row … not found`
+    // inside the `page.evaluate`, or a 15s timeout reading the row's due-date
+    // chip, depending on which side of the flip the step landed on); the
+    // same-day sibling test never flaked precisely because its drop zone IS
+    // today's, so it never scrolls away from the row it is about to drag.
+    //
+    // Playwright's `toBeVisible` means "attached, laid out, not
+    // `visibility:hidden`" — NOT "inside the viewport" — so it still asserts
+    // everything this step needs, and the synthetic `DragEvent` dispatch below
+    // goes straight at the DOM node, which likewise needs the element attached,
+    // not on screen.
     const dropZone = page.getByTestId(dropZoneTestId)
-    await dropZone.scrollIntoViewIfNeeded()
     await expect(dropZone).toBeVisible()
+
+    // #2467/#1268 — SortableBlockWrapper renders an ARIA-hidden placeholder
+    // `<li>` (no `data-testid="sortable-block"`) for any row `useBlockMountLimit`
+    // /`useViewportObserver` currently consider off-screen, independent of
+    // DaySection's own lazy-mount observer above. Today's section may sit
+    // below the fold on load (wherever in the week it falls), so scroll it
+    // into view to flip its rows from placeholders to the real, draggable row
+    // before looking for it. This is the LAST scroll before the gesture on
+    // purpose (see the drop-zone note above): once the row is on screen,
+    // nothing may scroll it back off, or the observer un-mounts it under us.
+    await page.locator(`#journal-${todayStr}`).scrollIntoViewIfNeeded()
+    const sourceRow = page.locator(sourceSelector)
+    await expect(sourceRow).toBeVisible({ timeout: 5000 })
+    await sourceRow.scrollIntoViewIfNeeded()
 
     // Snapshot the row's own due-date chip (`BlockInlineControls.tsx`'s
     // `DateChip`, `chipClass="due-date-chip"`) BEFORE the drag, so the
