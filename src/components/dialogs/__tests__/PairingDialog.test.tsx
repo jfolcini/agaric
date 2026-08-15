@@ -615,11 +615,11 @@ describe('PairingDialog', () => {
   it('shows loading state while the host is initializing', async () => {
     // Make every invoke call hang until we release it below (rather than
     // `new Promise(() => {})`, which never resolves at all — see #3810).
-    const pendingInvokes: Array<(value: unknown) => void> = []
+    const pendingInvokes: Array<{ cmd: string; resolve: (value: unknown) => void }> = []
     mockedInvoke.mockImplementation(
-      () =>
+      (cmd: string) =>
         new Promise((resolve) => {
-          pendingInvokes.push(resolve)
+          pendingInvokes.push({ cmd, resolve })
         }),
     )
 
@@ -656,9 +656,34 @@ describe('PairingDialog', () => {
     // #3810's "1 in isolation, 2 (or 3 under heavier load) under full-suite
     // load" — settle, unmount, and drain here, like every other "hangs
     // forever" test in this file already does.
-    pendingInvokes.forEach((resolve) => resolve(undefined))
+    //
+    // A single `forEach` pass over `pendingInvokes` only releases what was
+    // ALREADY pending at that instant. `unmount()` enqueues `cancel_pairing`
+    // behind the still-in-flight `start_pairing` mutation, and that invoke's
+    // resolver isn't pushed onto `pendingInvokes` until the mutation queue
+    // advances — a microtask AFTER a one-shot forEach has already run and
+    // returned. Left one-shot, that stray promise is the same leak shape
+    // this test exists to close, one hop further along: nothing ever
+    // resolves it, so it arms its own `PAIRING_MUTATION_TIMEOUT_MS` timer
+    // that never clears (review note on #3895). Draining in a loop — until
+    // a full microtask flush adds nothing new — releases whatever
+    // `unmount()` (or anything it triggers) enqueues, not just the
+    // snapshot taken before it ran. Resolving per command, rather than a
+    // blanket `undefined`, also keeps `executeLoadPeers`'s `onSuccess`
+    // (`peerList.map(...)`) from throwing into a swallowed `logger.warn`.
     unmount()
-    await flushMicrotasks()
+    while (pendingInvokes.length > 0) {
+      pendingInvokes.splice(0).forEach(({ cmd, resolve }) => {
+        if (cmd === 'start_pairing') return resolve(mockPairingInfo)
+        if (cmd === 'list_peer_refs') return resolve([])
+        return resolve(undefined)
+      })
+      await flushMicrotasks()
+    }
+    // The loop above is only proven to terminate empty, not merely to have
+    // run — assert it: this is the falsifiable claim that no unbounded
+    // `PAIRING_MUTATION_TIMEOUT_MS` timer is left armed behind this test.
+    expect(pendingInvokes).toHaveLength(0)
   })
 
   it('has no a11y violations on the host path with pairing info', async () => {

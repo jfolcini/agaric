@@ -1,8 +1,8 @@
-# Session 1306 — test reliability: a cross-test timer leak and a structural fixture cost (2026-08-15)
+# Session 1306 — test reliability: a cross-test timer leak and a structural fixture cost (2026-08-14/15)
 
 | Metadata | Value |
 |----------|-------|
-| **Date** | 2026-08-15 |
+| **Date** | 2026-08-14/15 |
 | **Subagents** | 2 build + 2 review |
 | **Items closed** | `#3810` |
 | **Items modified** | `#3885` (partially — see below) |
@@ -54,11 +54,21 @@ reduce the fixture's cost, contrary to the issue's premise.
   forward into a later test in the same file. No wider issue filed, because there is no
   wider class.
 
-- **The sweep for other offenders was done as a fraction, not an impression.** Of 11
-  `new Promise(...)` occurrences in `PairingDialog.test.tsx`, exactly 3 are truly
-  never-resolving; the other 8 call a captured resolver before the test ends. Two of the 3
-  were already bounded with `vi.useFakeTimers()` + advance + drain. So 3/3 are now bounded,
-  and there is no second offender waiting to reintroduce the flake.
+- **The sweep for other offenders was done as a fraction, not an impression — and the
+  fraction was wrong the first time.** Of 11 `new Promise(...)` occurrences in
+  `PairingDialog.test.tsx`, exactly 3 are truly never-resolving; the other 8 call a captured
+  resolver before the test ends. Two of the 3 were already bounded with
+  `vi.useFakeTimers()` + advance + drain. The third — `shows loading state while the host is
+  initializing` — was "fixed" in this session's first pass with a single `pendingInvokes.forEach(...)`
+  drain before `unmount()`. That drain was itself one-shot: `unmount()`'s queued
+  `cancel_pairing` doesn't land on `pendingInvokes` until the mutation queue advances a
+  microtask *after* the forEach had already run and returned, so it armed a **fourth**
+  never-resolving promise — the identical leak shape, created by the fix meant to remove it
+  (caught in review of #3895, before merge). The real population was 3 pre-existing plus 1
+  self-inflicted, not 3. Fixed by draining in a loop until a full microtask flush adds
+  nothing new, and closed per the falsification standard rather than by argument: the test
+  now asserts `pendingInvokes` is empty at the end, so a fifth hop would fail the test that
+  introduced it instead of surviving invisibly. All 4 are now bounded.
 
 - **The ruling was test-bug, and it was argued rather than assumed.** A user really can
   close a dialog mid-`start_pairing`, so the production path deserved scrutiny. It is
