@@ -371,7 +371,12 @@ pub struct PageIdWrite {
 ///   * delete / restore / purge fan out `CONTENT_LIFECYCLE_REBUILD_TASKS` /
 ///     `FULL_CACHE_REBUILD_TASKS`, both of which contain `RebuildPageIds`;
 ///   * a move re-derives the moved subtree in-tx via
-///     `rederive_page_and_space_ids`, which writes NULL unconditionally.
+///     `rederive_page_and_space_ids`, which writes NULL unconditionally —
+///     but only over the ACTIVE subtree: that walk filters `deleted_at IS
+///     NULL`, so a soft-deleted descendant is not re-derived by the move
+///     itself (#3919). It still self-heals, because `RebuildPageIds`'
+///     `DESIRED_PAGE_ID_SQL` has no `deleted_at` filter and the next
+///     delete / restore / purge fans it out — the bullet above.
 ///
 /// So the refusal costs at most a transient staleness that an authoritative
 /// pass then corrects — whereas the demotion it replaces destroyed a correct
