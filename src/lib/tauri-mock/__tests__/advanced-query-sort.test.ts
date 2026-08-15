@@ -33,7 +33,6 @@ import {
   blocks,
   makeBlock,
   opLog,
-  pageLastModified,
   properties,
   propertyDefs,
   seedBlocks,
@@ -394,36 +393,35 @@ describe('run_advanced_query — request.sort by lastEdited', () => {
   })
 
   /**
-   * #3863 — `pageLastModifiedAt`'s mock-only seeded-stamp fallback (kept for
-   * `list_pages_with_metadata`'s dev-preview differentiation) has no engine
-   * analogue: `run_advanced_query`'s `LastEdited` sort key is
+   * #3863 — `run_advanced_query`'s `LastEdited` sort key is
    * `COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)`
    * (`agaric-store/src/query/engine.rs:229`) with NO other data source, so
-   * an op-log-free row on the backend ALWAYS ties with every other
-   * op-log-free row at the same sentinel. Before the fix, the sort getter
-   * read `pageLastModifiedAt` (which layers the seeded fallback on top), so
-   * an op-log-free row with a seeded `pageLastModified` stamp sorted by that
-   * stamp instead of tying at the sentinel — ordering by something the
-   * engine cannot see.
+   * ANY two op-log-free rows on the backend tie at the same sentinel
+   * regardless of what else the mock knows about them.
+   *
+   * This case pins the TIE specifically (the `NEVER` row above only pins
+   * "sorts at the sentinel", which a single row cannot distinguish from
+   * "sorts by some other key that happens to be extremal"). It was originally
+   * written against `pageLastModifiedAt`'s mock-only seeded-stamp fallback: a
+   * `pageLastModified` entry dated between OLD's (Jan 1) and MIDDLE's (Feb 1)
+   * edits made this row slot BETWEEN them, ordering by something the engine
+   * cannot see. That map and that fallback no longer exist — the seed writes
+   * real `op_log` rows instead (#3884 / #3898) — so an op-log-free row has
+   * nothing left to sort by but the sentinel.
    */
-  it('ignores the mock-only pageLastModified seed fallback the engine has no analogue for — a never-edited row ties at the sentinel, not the seeded stamp', () => {
-    const SEEDED = id('B5')
-    const seededBlock = makeBlock(SEEDED, 'text', null, PAGE, 0)
-    seededBlock['page_id'] = PAGE
-    blocks.set(SEEDED, seededBlock)
-    // No op-log entry for SEEDED — but a seeded `pageLastModified` stamp
-    // between OLD's (Jan 1) and MIDDLE's (Feb 1) edits. If the sort getter
-    // used that fallback, SEEDED would slot in between them.
-    pageLastModified.set(SEEDED, '2024-01-15T00:00:00.000Z')
+  it('two op-log-free rows tie at the never-edited sentinel and are separated only by the id tiebreak', () => {
+    const UNEDITED = id('B5')
+    const uneditedBlock = makeBlock(UNEDITED, 'text', null, PAGE, 0)
+    uneditedBlock['page_id'] = PAGE
+    blocks.set(UNEDITED, uneditedBlock)
 
-    // Engine-faithful ASC order: NEVER and SEEDED both coalesce to the same
+    // Engine-faithful ASC order: NEVER and UNEDITED both coalesce to the same
     // "no op-log activity" sentinel and TIE, decided only by the id DESC
-    // tiebreak (SEEDED's id `…B5` > NEVER's `…B4`, so SEEDED sorts first
-    // among the tied pair) — SEEDED must NOT land between OLD and MIDDLE by
-    // its seeded stamp.
+    // tiebreak (UNEDITED's id `…B5` > NEVER's `…B4`, so UNEDITED sorts first
+    // among the tied pair) — neither may land between OLD and MIDDLE.
     expect(
       orderedIds({ filter: TEXT_ONLY, sort: [{ source: { type: 'Column', name: 'lastEdited' } }] }),
-    ).toEqual([SEEDED, NEVER, OLD, MIDDLE, NEW])
+    ).toEqual([UNEDITED, NEVER, OLD, MIDDLE, NEW])
   })
 })
 
@@ -634,6 +632,102 @@ describe('run_advanced_query — malformed cursor is rejected, not silently rest
 })
 
 /**
+ * #3917 — the `groupBy` branch never reached any cursor decode at all: it
+ * returned the synthetic empty-tail page for ANY non-null cursor, valid or
+ * not. That is the same divergence class #3899 (immediately above) exists to
+ * close, just on the other arm of this one command — after #3899/#3914 the
+ * FLAT path throws a `validation` rejection on a malformed, foreign, or
+ * version-stale cursor (mirroring `QueryCursor::decode`), while the grouped
+ * path silently accepted garbage and returned `{ rows: [], groups: [],
+ * hasMore: false }` regardless.
+ *
+ * The grouped arm decodes through {@link decodeGroupCursor} (NOT the flat
+ * path's `decodeCursor`) — the backend's `run_grouped` decodes its own
+ * `GroupCursor` (`engine.rs:1255-1270,1321-1324`), a DIFFERENT shape
+ * (`{version,count,key}`) from the flat `QueryCursor`'s
+ * (`{version,values}`). The three base64/UTF-8/JSON cases below don't depend
+ * on which shape is expected, but the version and well-formed cases do, so
+ * they exercise `{count,key}` payloads — and the shape-confusion cases at the
+ * bottom pin that the two are genuinely not interchangeable.
+ */
+describe('run_advanced_query — groupBy cursor is rejected the same way the flat path is (#3917)', () => {
+  const PAGE = id('J0')
+  const ONLY = id('J1')
+  const GROUP_BY = { key: { type: 'BlockType' } }
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    const b = makeBlock(ONLY, 'text', null, PAGE, 0)
+    b['page_id'] = PAGE
+    blocks.set(ONLY, b)
+  })
+
+  it('throws a validation rejection on a cursor that is not valid base64url', () => {
+    expect(() => run({ limit: 10, groupBy: GROUP_BY, cursor: '!!!not-base64!!!' })).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+  })
+
+  it('throws a validation rejection on a cursor that decodes to non-JSON', () => {
+    const notJson = utf8ToBase64Url('not json at all')
+    expect(() => run({ limit: 10, groupBy: GROUP_BY, cursor: notJson })).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+  })
+
+  it('throws a validation rejection on a cursor carrying an unsupported version', () => {
+    const staleVersion = utf8ToBase64Url(JSON.stringify({ version: 99, count: 0, key: 'text' }))
+    expect(() => run({ limit: 10, groupBy: GROUP_BY, cursor: staleVersion })).toThrow(
+      expect.objectContaining({ kind: 'validation', message: expect.stringContaining('version') }),
+    )
+  })
+
+  it('still returns the synthetic empty-tail page for a WELL-FORMED GroupCursor (grouped pagination is a stub, not a rejection target)', () => {
+    const wellFormed = utf8ToBase64Url(JSON.stringify({ version: 1, count: 3, key: 'text' }))
+    const page = run({ limit: 10, groupBy: GROUP_BY, cursor: wellFormed }) as unknown as {
+      rows: unknown[]
+      groups: unknown[]
+      hasMore: boolean
+    }
+    expect(page.rows).toEqual([])
+    expect(page.groups).toEqual([])
+    expect(page.hasMore).toBe(false)
+  })
+
+  it('a cursorless grouped request is unaffected: still synthesises one bucket', () => {
+    const page = run({ limit: 10, groupBy: GROUP_BY }) as unknown as {
+      groups: Array<{ count: number }>
+    }
+    expect(page.groups).toHaveLength(1)
+    expect(page.groups[0]?.count).toBe(1)
+  })
+
+  // ── Shape confusion: `GroupCursor` (`{count,key}`) and `QueryCursor`
+  // (`{values}`) are NOT interchangeable, on the backend or here. ──────────
+
+  it('rejects a well-formed FLAT QueryCursor payload here — a group cursor has no `values` field', () => {
+    // What the #3917 fix originally treated as "well-formed" for this arm
+    // (it reused `decodeCursor`). The real backend's `GroupCursor::decode`
+    // requires `count`/`key`; a payload carrying `values` instead has
+    // neither, so it fails there too — this mock must reject it as well,
+    // not accept it just because it happens to be valid JSON.
+    const flatShaped = utf8ToBase64Url(JSON.stringify({ version: 1, values: [] }))
+    expect(() => run({ limit: 10, groupBy: GROUP_BY, cursor: flatShaped })).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+  })
+
+  it('rejects a GroupCursor payload with the wrong field types', () => {
+    const badTypes = utf8ToBase64Url(JSON.stringify({ version: 1, count: 'three', key: 5 }))
+    expect(() => run({ limit: 10, groupBy: GROUP_BY, cursor: badTypes })).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+  })
+})
+
+/**
  * #3863 — cursor byte fidelity for values that are not plain ASCII.
  *
  * The cursor payload carries USER TEXT: the `Title` term is the raw page
@@ -818,15 +912,15 @@ describe('run_advanced_query — cursor byte fidelity for non-ASCII values (#386
  * never-edited sentinel in the same response — where the engine would have
  * excluded it outright.
  *
- * `list_pages_with_metadata` KEEPS the seeded fallback (its own divergence is
- * #3884, and its fixtures depend on the differentiated stamps) — the
- * `list_pages_with_metadata` `LastEdited` tests in
- * `src/lib/__tests__/tauri-mock.test.ts` are the guard that this change did
- * not leak across the two commands.
+ * `list_pages_with_metadata` was the last consumer of that fallback (#3884 /
+ * #3898); it is now off it too, and the map itself is deleted, so the
+ * "op-log-free" rows below are op-log-free full stop. The
+ * `list_pages_with_metadata` counterpart of this block lives in
+ * `pages-last-modified-op-log.test.ts`.
  */
 describe('run_advanced_query — LastEdited filter reads the op-log, not the seed (#3888 note 3)', () => {
   const PAGE = id('G0')
-  const SEEDED = id('G1')
+  const UNEDITED = id('G1')
   const EDITED = id('G2')
 
   const rolling30 = {
@@ -838,14 +932,14 @@ describe('run_advanced_query — LastEdited filter reads the op-log, not the see
     clearMock()
     blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
     setSpace(PAGE, SPACE_A)
-    for (const blockId of [SEEDED, EDITED]) {
+    for (const blockId of [UNEDITED, EDITED]) {
       const b = makeBlock(blockId, 'text', null, PAGE, 0)
       b['page_id'] = PAGE
       blocks.set(blockId, b)
     }
-    // SEEDED: a fresh seeded stamp but NO op-log activity — the engine sees
-    // only the epoch sentinel for it.
-    pageLastModified.set(SEEDED, new Date().toISOString())
+    // UNEDITED: NO op-log activity — the engine sees only the epoch sentinel
+    // for it, and (since #3884/#3898 deleted the `pageLastModified` map) so
+    // does the mock, with nothing else left to consult.
     // EDITED: real op-log activity inside the window.
     opLog.push({
       device_id: 'mock-device',
@@ -856,15 +950,15 @@ describe('run_advanced_query — LastEdited filter reads the op-log, not the see
     })
   })
 
-  it('excludes a seeded, op-log-free block from Rolling{30} (the engine coalesces it to the epoch)', () => {
-    expect(orderedIds({ filter: rolling30 })).not.toContain(SEEDED)
+  it('excludes an op-log-free block from Rolling{30} (the engine coalesces it to the epoch)', () => {
+    expect(orderedIds({ filter: rolling30 })).not.toContain(UNEDITED)
   })
 
   it('still includes a block with real op-log activity inside the window', () => {
     expect(orderedIds({ filter: rolling30 })).toContain(EDITED)
   })
 
-  it('includes the seeded, op-log-free block in OlderThan{30} — the epoch counts as old', () => {
+  it('includes the op-log-free block in OlderThan{30} — the epoch counts as old', () => {
     // The mirror of the Rolling case: the engine's COALESCE-to-epoch rule
     // makes "no op-log" OLD, not "unknown". Asserting only the Rolling side
     // would also pass if the filter had simply started dropping the row.
@@ -874,12 +968,12 @@ describe('run_advanced_query — LastEdited filter reads the op-log, not the see
         primitive: { type: 'LastEdited', spec: { type: 'OlderThan', days: 30 } },
       },
     })
-    expect(older).toContain(SEEDED)
+    expect(older).toContain(UNEDITED)
     expect(older).not.toContain(EDITED)
   })
 
   it('filters and sorts on one source: the row Rolling{30} keeps is not the one that ties at the sentinel', () => {
-    // The whole point of note 3 — before the fix SEEDED could appear in a
+    // The whole point of note 3 — before the fix UNEDITED could appear in a
     // Rolling{30} response AND sort at the never-edited sentinel within it.
     const rows = run({
       filter: rolling30,

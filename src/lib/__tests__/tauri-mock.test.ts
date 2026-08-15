@@ -28,7 +28,7 @@ vi.mock('@/lib/logger', () => ({
 
 import { logger } from '@/lib/logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
-import { blocks } from '@/lib/tauri-mock/seed'
+import { blocks, opLog } from '@/lib/tauri-mock/seed'
 
 /** Helper — call the captured IPC handler as if invoke() were called. */
 function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
@@ -1802,14 +1802,23 @@ describe('list_trash', () => {
 
 describe('undo_page_op edge cases', () => {
   it('throws when no undoable ops exist', () => {
-    // Fresh state — no ops have been performed. #2463: message now mirrors
-    // `undo_page_op_inner`'s `NotFound` text (`src-tauri/src/commands/history.rs`).
+    // An EMPTY op log is the precondition under test, and it has to be
+    // established rather than assumed: the seed now gives every canonical
+    // page one real `op_log` edit (`stampPageLastEdited`, `seed.ts`) so that
+    // `MAX(op_log.created_at)` — the only `last_modified_at` source the
+    // engine has — is a real column value rather than a mock-only stamp
+    // (#3884 / #3898). #2463: message mirrors `undo_page_op_inner`'s
+    // `NotFound` text (`src-tauri/src/commands/history.rs`).
+    opLog.length = 0
     expect(() =>
       invoke('undo_page_op', { pageId: SEED_IDS.PAGE_GETTING_STARTED, undoDepth: 0 }),
     ).toThrow('no op found at undo_depth')
   })
 
   it('throws when undoDepth exceeds available ops', () => {
+    // Drop the seeded page-edit ops (see above) so the `create_block` below
+    // genuinely IS the only op and `undoDepth: 1` genuinely overruns.
+    opLog.length = 0
     invoke('create_block', {
       blockType: 'content',
       content: 'only-op',
@@ -2616,13 +2625,30 @@ describe('get_block_history', () => {
 // ---------------------------------------------------------------------------
 
 describe('list_page_history', () => {
-  it('returns empty when no ops performed', () => {
+  it('returns the empty page shape when the op log is empty', () => {
+    // The freshly seeded op log is NOT empty any more: each canonical page
+    // carries one real `edit_block` row so its `MAX(op_log.created_at)` is a
+    // genuine `last_modified_at` (#3884 / #3898). Clear it to test what this
+    // case is actually about — the zero-row response shape.
+    opLog.length = 0
     const result = invoke('list_page_history', {}) as {
       items: Array<Record<string, unknown>>
     }
     expect(result.items).toHaveLength(0)
     expect(result).toHaveProperty('next_cursor', null)
     expect(result).toHaveProperty('has_more', false)
+  })
+
+  it('a freshly seeded database already has one page-edit op per canonical page', () => {
+    // The complement of the case above, and the reason it needed changing:
+    // the seed writes real op-log activity rather than a mock-only
+    // last-modified stamp, so History view in browser/dev mode shows the
+    // same kind of rows a real database would have.
+    const result = invoke('list_page_history', {}) as {
+      items: Array<Record<string, unknown>>
+    }
+    expect(result.items).toHaveLength(6)
+    expect(new Set(result.items.map((o) => o['op_type']))).toEqual(new Set(['edit_block']))
   })
 
   it('records ops in reverse chronological order', () => {

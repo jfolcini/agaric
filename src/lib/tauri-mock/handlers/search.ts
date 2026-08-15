@@ -234,20 +234,20 @@ const SORT_COLUMN_GETTERS = new Map<string, (m: MatchedEntry) => SortValue>(
   Object.entries({
     // ULID id == creation order (`resolve_sort`'s `SortColumn::Created`).
     created: (m) => m.row.id,
-    // #3863 — reads `rawOpLogLastEditedAt` DIRECTLY (the raw `MAX(op_log.created_at)`
-    // scan, memoized per row by `rawLastEditedOf` because this getter runs inside
-    // the sort comparator), NOT `m.row.lastModifiedAt` (`pageLastModifiedAt`). The engine's
-    // `LastEdited` sort key is `COALESCE((SELECT MAX(created_at) FROM op_log
-    // WHERE block_id = b.id), 0)` (`agaric-store/src/query/engine.rs:229`) — NO
-    // other data source. `pageLastModifiedAt` layers a mock-only seeded-stamp
-    // fallback on top (for `list_pages_with_metadata`'s dev-preview
-    // differentiation) that the engine has no analogue for; using it here made
-    // an op-log-free block sort by a seeded dev-preview timestamp the backend
-    // cannot see, instead of tying at the sentinel like every other
-    // op-log-free row does on the engine. The engine coalesces to epoch-ms
-    // `0` (never actually NULL); `''` is this mock's matching "no op-log
-    // activity" sentinel over its ISO-8601 string representation — it sorts
-    // before every real ISO-8601 timestamp string, preserving relative order.
+    // #3863 — reads `rawOpLogLastEditedAt`, memoized per row by
+    // `rawLastEditedOf` because this getter runs inside the sort comparator.
+    // The engine's `LastEdited` sort key is `COALESCE((SELECT MAX(created_at)
+    // FROM op_log WHERE block_id = b.id), 0)`
+    // (`agaric-store/src/query/engine.rs:229`) — NO other data source. This
+    // used to be spelled `m.row.lastModifiedAt`, which then routed through
+    // `pageLastModifiedAt`'s mock-only seeded-stamp fallback and made an
+    // op-log-free block sort by a dev-preview timestamp the backend cannot
+    // see; that fallback is gone (#3884/#3898), so the two spellings now
+    // resolve to the same value and only the memo distinguishes them. The
+    // engine coalesces to epoch-ms `0` (never actually NULL); `''` is this
+    // mock's matching "no op-log activity" sentinel over its ISO-8601 string
+    // representation — it sorts before every real ISO-8601 timestamp string,
+    // preserving relative order.
     lastEdited: (m) => rawLastEditedOf(m) ?? '',
     position: (m) => m.row.position,
     priority: (m) => m.row.priority,
@@ -601,6 +601,79 @@ function decodeCursor(s: string): QueryCursorPayload {
 }
 
 /**
+ * The decoded GROUP-level keyset cursor. Mirrors the engine's `GroupCursor`
+ * (`agaric-store/src/query/engine.rs:1241-1247`) — a DIFFERENT shape from
+ * {@link QueryCursorPayload}: `count` + `key`, not `values`.
+ */
+interface GroupCursorPayload {
+  version: number
+  count: number
+  key: string
+}
+
+/**
+ * Decode a GROUP-level keyset cursor, THROWING a {@link validationRejection}
+ * on any malformed input — mirroring `GroupCursor::decode`
+ * (`agaric-store/src/query/engine.rs:1255-1270`), which the backend's
+ * `run_grouped` calls on its OWN cursor type (`engine.rs:1321-1324`); it does
+ * NOT reuse `QueryCursor::decode`, and the two structs are not
+ * interchangeable — a well-formed `QueryCursor` payload (`{version,values}`)
+ * is not a well-formed `GroupCursor` (`{version,count,key}`) and vice versa.
+ *
+ * #3917 originally routed this arm through {@link decodeCursor} for its
+ * throwing side effect. That rejects bad base64 / invalid UTF-8 / invalid
+ * JSON correctly (those three checks don't depend on which struct's fields
+ * are present), but its FOURTH check — `values` must be an array of
+ * {@link CursorValue}s — validates the WRONG shape for a group cursor: it
+ * would reject a real, well-formed `GroupCursor` payload as "missing
+ * `values` array" (the engine would happily decode it), and it would accept
+ * a `{version,values:[]}` payload as well-formed (the engine's
+ * `GroupCursor::decode` would reject it — no `count`/`key` fields, exactly
+ * as `serde_json::from_str` fails a struct with required fields missing).
+ * This mock's grouped path never MINTS a cursor (`nextCursor` is always
+ * `null` — grouped pagination is a stub, #3917's own scope note), so no
+ * round-trip through the mock alone can hit this; a hand-built or
+ * real-backend-sourced group cursor replayed against the mock is what would.
+ */
+function decodeGroupCursor(s: string): GroupCursorPayload {
+  if (!isBase64UrlNoPad(s)) {
+    throw validationRejection('invalid group cursor: invalid base64')
+  }
+  let json: string
+  try {
+    json = base64UrlToUtf8(s, { fatal: true })
+  } catch {
+    throw validationRejection('invalid group cursor UTF-8: invalid utf-8 sequence')
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    throw validationRejection('invalid group cursor JSON: not valid JSON')
+  }
+  // Field PRESENCE + TYPE, before the version check — serde deserializes the
+  // whole struct (every field, typed) and only then compares versions, so a
+  // cursor that is both stale and malformed reports the malformation, exactly
+  // as the engine does (mirrors `decodeCursor`'s own ordering above).
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    typeof (parsed as Record<string, unknown>)['count'] !== 'number' ||
+    !Number.isInteger((parsed as Record<string, unknown>)['count']) ||
+    typeof (parsed as Record<string, unknown>)['key'] !== 'string'
+  ) {
+    throw validationRejection('invalid group cursor JSON: missing `count`/`key`')
+  }
+  const payload = parsed as GroupCursorPayload
+  if (payload.version !== CURSOR_VERSION) {
+    throw validationRejection(
+      `group cursor: unsupported version ${payload.version} (expected ${CURSOR_VERSION})`,
+    )
+  }
+  return payload
+}
+
+/**
  * One term's comparison, honouring `NULLS LAST` in BOTH directions — matches
  * the engine's `"{expr} {dir} NULLS LAST"` ORDER BY term, where a NULL value
  * sorts last regardless of ASC/DESC.
@@ -809,7 +882,20 @@ export const searchHandlers = {
     if (groupBy != null) {
       // First page only: synthesise one bucket. Cursor pages return an empty
       // tail so load-more terminates deterministically.
+      //
+      // #3917 — `decodeGroupCursor` still runs on a non-null cursor here even
+      // though its DECODED value is discarded (grouped pagination has no
+      // real keyset to resume from yet — the FLAT path below is the only one
+      // with a live cursor contract). Skipping straight to the empty-tail
+      // return let a malformed/foreign/version-stale cursor through
+      // silently, diverging from the backend's `run_grouped`, which decodes
+      // its OWN `GroupCursor` (`engine.rs:1321-1324`) before doing anything
+      // else with it. Uses {@link decodeGroupCursor}, NOT the flat path's
+      // {@link decodeCursor} — the two cursor shapes are not interchangeable
+      // (`{count,key}` vs `{values}`); see that function's doc for the
+      // divergence a same-shape reuse would have left.
       if (cursor != null) {
+        decodeGroupCursor(cursor)
         return { rows: [], groups: [], nextCursor: null, hasMore: false, totalCount: null }
       }
       const key = (groupBy['key'] as Record<string, unknown> | undefined) ?? {}
@@ -860,8 +946,7 @@ export const searchHandlers = {
       const row = buildPageMetaRow(b, descendants, edges)
       // #3888 note 3 — the `LastEdited` FILTER reads the same raw
       // `MAX(op_log.created_at)` the `lastEdited` SORT does (`compile_last_edited`,
-      // `agaric-store/src/filters/primitive.rs:1035-1052`), NOT
-      // `row.lastModifiedAt`'s mock-only seeded fallback. #3863 fixed the sort
+      // `agaric-store/src/filters/primitive.rs:1035-1052`). #3863 fixed the sort
       // getter alone, which left this one command's filter and sort reading
       // DIFFERENT data: a seeded, op-log-free block could pass `Rolling{30}` on a
       // stamp the backend cannot see and then sort at the never-edited sentinel in
@@ -870,11 +955,12 @@ export const searchHandlers = {
       // The entry is built BEFORE the predicate so the filter and the sort share
       // one `lastEditedRaw` memo (see `rawLastEditedOf`) — the resolver is still
       // lazy, so a query with no `LastEdited` leaf and no `lastEdited` sort pays
-      // for no op-log scan at all.
-      //
-      // `list_pages_with_metadata` deliberately keeps the seeded-fallback default
-      // (`DEFAULT_LAST_EDITED_SOURCE`): its own divergence is #3884, and its
-      // dev-preview/e2e fixtures depend on the differentiated stamps.
+      // for no op-log scan at all. That memo is the ONLY reason this override
+      // still exists: `row.lastModifiedAt` (what `DEFAULT_LAST_EDITED_SOURCE`
+      // and therefore `list_pages_with_metadata` read) is the same raw op-log
+      // MAX since the seeded fallback was deleted in favour of real seeded
+      // `op_log` rows (#3898 / #3884), so both arms of both commands are on
+      // one engine-faithful source.
       const entry: MatchedEntry = { b, row }
       if (!metaRowMatchesExpr(row, filterExpr, () => rawLastEditedOf(entry))) continue
       // Full-text narrowing: the engine INTERSECTS `fts_blocks MATCH ?` with
