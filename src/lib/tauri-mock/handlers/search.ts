@@ -87,7 +87,7 @@ type SortValue = string | number | null
  * match — see {@link cursorValueFor}, which encodes it as the engine's
  * `Int(0)`.
  */
-type CursorKind = 'Id' | 'LastEditedMs' | 'Position' | 'Priority' | 'Title' | 'Rank'
+export type CursorKind = 'Id' | 'LastEditedMs' | 'Position' | 'Priority' | 'Title' | 'Rank'
 
 interface ResolvedSortTerm {
   desc: boolean
@@ -411,7 +411,16 @@ function decodeCursor(s: string): QueryCursorPayload {
     // UTF-8 encoding. A bare `atob` reads the UTF-8 bytes of a non-ASCII
     // title back as Latin-1 code units (mojibake), which would silently
     // corrupt the anchor value on resume.
-    json = base64UrlToUtf8(s)
+    //
+    // `fatal: true` (#3914 review note 1) is what makes the SECOND of the
+    // engine's four failure modes real here rather than claimed. A default
+    // `TextDecoder` is non-fatal: it substitutes U+FFFD for ill-formed bytes,
+    // so a cursor whose bytes are not valid UTF-8 but whose REPLACED form is
+    // still parseable JSON was accepted, where `QueryCursor::decode`'s
+    // `String::from_utf8` returns `AppError::Validation`. This one call site
+    // needs the strict decoder; the module's other consumers are deliberately
+    // lenient, which is why it is a per-call option and not the default.
+    json = base64UrlToUtf8(s, { fatal: true })
   } catch (e) {
     throw validationRejection(`invalid cursor: ${describeError(e)}`)
   }
@@ -467,10 +476,67 @@ function compareByTerms(terms: ReadonlyArray<ResolvedSortTerm>) {
   }
 }
 
-/** A decoded {@link CursorValue} back into the {@link SortValue} domain `compareSortValue` compares over. */
-function cursorValueToSortValue(v: CursorValue | undefined): SortValue {
-  if (v === undefined || v.t === 'Null') return null
-  return v.v
+/**
+ * Is this cursor slot the NULL case — an explicit `Null` tag, or nothing at
+ * all (a cursor shorter than the current request's term list)?
+ */
+function isNullCursorValue(v: CursorValue | undefined): v is undefined | { t: 'Null' } {
+  return v === undefined || v.t === 'Null'
+}
+
+/**
+ * One term's comparison in the {@link CursorValue} domain — the same rule
+ * {@link compareSortValue} applies (NULLS LAST in BOTH directions, numeric
+ * compare when both sides are numeric, string compare otherwise), but over
+ * TAGGED values rather than raw ones.
+ *
+ * #3914 review — this is the domain the keyset comparison must run in, and
+ * the reason is that {@link cursorValueFor} is not injective on the SortValue
+ * domain: two of the six kinds encode a value to a tag that does not decode
+ * back to what the getter returned.
+ *
+ *   - `LastEditedMs` maps the getter's `''` sentinel to `Int(0)` (the value
+ *     the engine's `COALESCE(…, 0)` actually carries). Decoding that back
+ *     gives the NUMBER `0`, and `compareSortValue('', 0, …)` takes the string
+ *     branch — `''` against `'0'` — so it returns ±1 and NEVER 0.
+ *   - `Rank` maps a non-finite rank to `Null` (the engine's own answer for a
+ *     row with no rank, and the only tag that survives `JSON.stringify`).
+ *     Decoding gives `null`, and NULLS-LAST puts `Infinity` before it.
+ *
+ * In both cases a row failed to compare EQUAL to the cursor minted from it,
+ * which is exactly the invariant a lexicographic keyset resume needs: ±1 at
+ * the boundary means the anchor row is either skipped along with everything
+ * tied to it, or re-selected forever. Encoding BOTH sides through
+ * `cursorValueFor` removes the inverse requirement altogether — the encode is
+ * applied once to each operand instead of being undone on one of them — so
+ * the whole class is closed rather than the two known instances.
+ *
+ * This does NOT change the ORDER `compareByTerms` sorts `matched` into (that
+ * still runs on raw sort values), and it does not have to: the two agree on
+ * every reachable value. `Id`/`Priority`/`Title` tag to `Text` and compare as
+ * the same strings; `Position`/`Rank` tag to `Int`/`Real` and compare
+ * numerically; nulls stay NULLS-LAST on both sides. `LastEditedMs` is the one
+ * mixed case — `Int(0)` against `Text('2024-…')` compares as `'0'` vs the
+ * timestamp — and it agrees too, because `'0'` sorts below every ISO-8601
+ * year, just as the raw `''` sentinel does.
+ */
+function compareCursorValue(
+  a: CursorValue | undefined,
+  b: CursorValue | undefined,
+  desc: boolean,
+): number {
+  if (isNullCursorValue(a) && isNullCursorValue(b)) return 0
+  if (isNullCursorValue(a)) return 1
+  if (isNullCursorValue(b)) return -1
+  let cmp: number
+  if (a.t !== 'Text' && b.t !== 'Text') {
+    cmp = a.v - b.v
+  } else {
+    const as = String(a.v)
+    const bs = String(b.v)
+    cmp = as < bs ? -1 : as > bs ? 1 : 0
+  }
+  return desc ? -cmp : cmp
 }
 
 /**
@@ -501,18 +567,32 @@ function cursorValueToSortValue(v: CursorValue | undefined): SortValue {
  * against a differently-typed CURRENT column), never a crash, never a silent
  * restart — because both sides now run the identical positional algorithm.
  * `cursorValues[i]` past the end of a shorter cursor (a genuinely
- * shorter-tuple sort change) reads as `undefined` → {@link
- * cursorValueToSortValue}'s `null`, which is a safe degrade the engine has
+ * shorter-tuple sort change) reads as `undefined`, which {@link
+ * compareCursorValue} treats as the NULL case — a safe degrade the engine has
  * no equivalent of (`cursor.values[i]` there is an out-of-bounds panic, not
- * a value a mock should ever try to reproduce).
+ * a value a mock should ever try to reproduce). "Safe" means bounded and
+ * direction-independent, not lossless: NULLS LAST is applied BEFORE the
+ * `desc` flip, so the missing slot is the greatest value in either direction
+ * and every row that ties on the terms the cursor DOES carry is dropped from
+ * the resumed page, ASC and DESC alike. Rows resolved by an earlier term are
+ * unaffected. Pinned by test — see the short-cursor block in
+ * `advanced-query-sort.test.ts`.
+ *
+ * #3914 review — the comparison runs in the {@link CursorValue} domain
+ * (`cursorValueFor` applied to the ENTRY, compared against the cursor's own
+ * tagged value) rather than decoding the cursor back into a raw
+ * {@link SortValue}. `cursorValueFor` is not invertible for two of the six
+ * kinds, and decoding through it made a boundary row compare ±1 against the
+ * cursor minted from it — see {@link compareCursorValue} for the two cases
+ * and why encoding both operands closes the class.
  */
-function compareEntryToCursor(
+export function compareEntryToCursor(
   terms: ReadonlyArray<ResolvedSortTerm>,
   m: MatchedEntry,
   cursorValues: ReadonlyArray<CursorValue>,
 ): number {
   for (const [i, term] of terms.entries()) {
-    const cmp = compareSortValue(term.get(m), cursorValueToSortValue(cursorValues[i]), term.desc)
+    const cmp = compareCursorValue(cursorValueFor(term, m), cursorValues[i], term.desc)
     if (cmp !== 0) return cmp
   }
   return 0

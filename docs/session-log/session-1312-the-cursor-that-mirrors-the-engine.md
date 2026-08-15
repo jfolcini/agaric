@@ -1,4 +1,4 @@
-# Session 1311
+# Session 1312
 
 ## The cursor that mirrors the engine
 
@@ -59,10 +59,48 @@ SQLite float drift. The mock has no band. It is harmless here because `approxima
 is a pure deterministic function of `(content, foldedQuery)`, so re-encoding is
 bit-identical — there is no drift to absorb.
 
+### What the differential run could not see
+
+The 500,000-case differential compared lexicographic compare against an OR-of-AND
+expansion — two ways of consuming the *same* pair of values. Review found the defect that
+sits underneath both: the two sides were not being handed the same value.
+
+`cursorValueFor` is not injective. `LastEditedMs` encodes the getter's `''`
+("no op-log activity") to the engine's `Int(0)`, and `Rank` encodes a non-finite rank to
+`Null` — both deliberate, both with an engine citation. The resume then decoded those tags
+back into raw sort values (`0`, `null`) and compared them against what the getter returns
+(`''`, `Infinity`). Neither comes back equal, so a boundary row did not compare equal to
+the cursor minted from it — and that equality is the one property a lexicographic keyset
+resume actually needs.
+
+The two halves of the failure look nothing alike, which is why the suite missed it. ASC:
+every tied sentinel row compares "before the cursor", so the resume runs past all of them
+and rows are silently dropped. DESC: the same comparison flips to "after", so the anchor
+row re-selects itself and a `while (hasMore)` client never terminates. A fixture with ONE
+never-edited row is immune to both.
+
+The fix is to stop requiring an inverse. `compareEntryToCursor` now encodes the ENTRY
+through `cursorValueFor` too and compares tagged `CursorValue`s (`compareCursorValue`),
+applying the same NULLS-LAST-then-`desc` rule one domain up. Applying the encode to both
+operands rather than undoing it on one closes the whole class — `Rank`'s latent case went
+green with the same change, without a line about `Rank` in it.
+
+The invariant is now pinned directly, per `CursorKind` and in both directions, through
+`JSON.stringify` (the wire is part of the round trip — `Infinity` dies there, not in the
+tagging). The case table is a `Record<CursorKind, …>`, so a seventh kind fails to compile
+until it has a case.
+
+Also from that review: `decodeCursor` claimed parity with all four of `QueryCursor::decode`'s
+failure modes, but a default `TextDecoder` is non-fatal — it substitutes U+FFFD instead of
+throwing, so a cursor with ill-formed UTF-8 bytes that still parsed as JSON was accepted
+where `String::from_utf8` rejects. `base64UrlToUtf8` grew an opt-in `fatal` flag rather than
+a changed default: its two other callers are deliberately lenient, and the doc was the
+thing that was wrong about this call site, not about theirs.
+
 ### Left open deliberately
 
 The `groupBy` branch returns early for a non-null cursor without ever calling
 `decodeCursor`, so a malformed cursor on a grouped query is still silently accepted. That
 path is a stub — it does not implement grouped pagination at all yet — so this is not a
-regression this change introduced, and #3899 is scoped to the flat keyset path. Filed
-separately rather than left implied by the `Closes` line.
+regression this change introduced, and #3899 is scoped to the flat keyset path. Filed as
+#3917 rather than left implied by the `Closes` line.

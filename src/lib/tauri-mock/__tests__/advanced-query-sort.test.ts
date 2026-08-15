@@ -19,9 +19,13 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { utf8ToBase64Url } from '@/lib/base64url'
+import { base64UrlToUtf8, utf8ToBase64Url } from '@/lib/base64url'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { cursorValueFor } from '@/lib/tauri-mock/handlers/search'
+import {
+  type CursorKind,
+  compareEntryToCursor,
+  cursorValueFor,
+} from '@/lib/tauri-mock/handlers/search'
 import {
   blockTags,
   blocks,
@@ -1063,4 +1067,332 @@ describe('run_advanced_query — request.sort rejects non-column keys', () => {
       orderedIds({ filter: TEXT_ONLY, sort: [{ source: { type: 'Column', name: 'position' } }] }),
     ).toEqual([FIRST, SECOND])
   })
+})
+
+/**
+ * Drive a full keyset walk at `limit: 1`, returning every id delivered in
+ * order — the shape a real `while (hasMore)` client has.
+ *
+ * `limit: 1` rather than a larger page on purpose: it puts a cursor boundary
+ * between EVERY adjacent pair of rows, so a boundary-comparison defect cannot
+ * hide inside a page. The `maxPages` cap THROWS rather than returning what it
+ * collected, because "the walk never terminates" is one of the two failure
+ * modes being pinned (a cursor that re-selects its own row re-delivers it
+ * forever) and a silent truncation would read as a mere ordering mismatch.
+ */
+function pageAllIds(request: Record<string, unknown>, maxPages = 12): string[] {
+  const ids: string[] = []
+  let cursor: string | null = null
+  for (let page = 0; page < maxPages; page++) {
+    const response: QueryResponse = run({
+      ...request,
+      limit: 1,
+      ...(cursor === null ? {} : { cursor }),
+    })
+    ids.push(...response.rows.map((r) => r['id'] as string))
+    if (!response.hasMore || response.nextCursor === null) return ids
+    cursor = response.nextCursor
+  }
+  throw new Error(`keyset walk did not terminate after ${maxPages} pages: [${ids.join(', ')}]`)
+}
+
+/**
+ * #3914 review (blocking) — a boundary row must compare EQUAL to the cursor
+ * minted FROM it, in every column. The keyset resume is a lexicographic
+ * "strictly after the cursor tuple" test, so the row that minted the cursor
+ * has to land at exactly 0; anything else either skips rows (negative) or
+ * re-delivers the anchor forever (positive).
+ *
+ * `lastEdited` broke that invariant because encode and decode were not
+ * inverses: `SORT_COLUMN_GETTERS.lastEdited` yields the STRING sentinel `''`
+ * for an op-log-free row, `cursorValueFor` deliberately encodes it as the
+ * engine's `Int(0)` (see that function's doc — `Null` is unreachable on the
+ * engine for this column), and the decode side turned that back into the
+ * NUMBER `0`. `compareSortValue('', 0, …)` then took the string branch and
+ * compared `''` against `'0'` — never 0.
+ *
+ * TWO sentinel rows is the minimum fixture that can fail. With a single
+ * never-edited row the walk still terminates correctly in both directions:
+ * ASC lands past it on the edited row (nothing was skipped because there was
+ * nothing between), and DESC has no second sentinel to be stuck ahead of. The
+ * pre-existing sentinel test therefore covered the encoded BYTES and never
+ * asked for page 2.
+ *
+ * Both directions are asserted because the defect splits by sign, and the two
+ * halves look nothing alike:
+ *   - ASC  — the sentinel rows compare -1 ("before the cursor"), so
+ *     `findIndex` runs past ALL of them onto the edited row: SENT_LO is
+ *     silently dropped from the result set.
+ *   - DESC — the same -1 is flipped to +1, so `findIndex` returns the
+ *     cursor's OWN row: page 3 repeats page 2 with an identical cursor and a
+ *     `while (hasMore)` client never terminates.
+ */
+describe('run_advanced_query — keyset walk over repeated never-edited rows (#3914 review)', () => {
+  const PAGE = id('J0')
+  // Ids ASCEND: EDITED < SENT_LO < SENT_HI. The resolved sort always ends in
+  // an `id DESC` tiebreak, so the two sentinel rows (tied at `''`) come back
+  // HIGH-then-LOW, and neither expected order below coincides with insertion
+  // order or with plain id DESC.
+  const EDITED = id('J1')
+  const SENT_LO = id('J2')
+  const SENT_HI = id('J3')
+
+  const BY_LAST_EDITED = { source: { type: 'Column', name: 'lastEdited' } }
+  // Excludes the fixture's own page block, which is itself op-log-free and
+  // would otherwise join the sentinel group as a third tied row.
+  const TEXT_ONLY = { type: 'Leaf', primitive: { type: 'BlockType', values: ['text'] } }
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    for (const blockId of [EDITED, SENT_LO, SENT_HI]) {
+      const b = makeBlock(blockId, 'text', null, PAGE, 0)
+      b['page_id'] = PAGE
+      blocks.set(blockId, b)
+    }
+    // ONLY `EDITED` has op-log activity; the other two sit at the mock's
+    // "no op-log" sentinel, which is what `rawOpLogLastEditedAt` reads.
+    opLog.push({
+      device_id: 'mock-device',
+      seq: 1,
+      op_type: 'UpdateBlock',
+      payload: JSON.stringify({ block_id: EDITED }),
+      created_at: '2024-01-01T00:00:00.000Z',
+    })
+  })
+
+  it('delivers every row exactly once walking lastEdited ASC one page at a time', () => {
+    // The un-paginated order, so the walk below is compared against this
+    // command's OWN answer rather than against a hand-guessed permutation.
+    expect(orderedIds({ filter: TEXT_ONLY, sort: [BY_LAST_EDITED] })).toEqual([
+      SENT_HI,
+      SENT_LO,
+      EDITED,
+    ])
+    expect(pageAllIds({ filter: TEXT_ONLY, sort: [BY_LAST_EDITED] })).toEqual([
+      SENT_HI,
+      SENT_LO,
+      EDITED,
+    ])
+  })
+
+  it('delivers every row exactly once walking lastEdited DESC one page at a time', () => {
+    const desc = { filter: TEXT_ONLY, sort: [{ ...BY_LAST_EDITED, desc: true }] }
+    expect(orderedIds(desc)).toEqual([EDITED, SENT_HI, SENT_LO])
+    expect(pageAllIds(desc)).toEqual([EDITED, SENT_HI, SENT_LO])
+  })
+})
+
+/**
+ * #3914 review note 3 — what the "safe degrade" for a SHORT cursor actually
+ * degrades to, asserted in both directions instead of asserted in a comment.
+ *
+ * `compareEntryToCursor` is positional, mirroring the engine's own indexing
+ * of `cursor.values[i]` against the CURRENT request's `terms[i]`. When the
+ * current sort resolves to MORE terms than the cursor carries — a caller
+ * adding a sort key between pages — the trailing slots read as `undefined`.
+ * The engine has no behaviour to mirror here at all (`cursor.values[i]` is an
+ * out-of-bounds panic in Rust), so the mock picks the NULL case.
+ *
+ * The consequence is NOT direction-split, which is worth pinning because it
+ * looks like it should be: NULLS LAST is applied ahead of the `desc` flip
+ * (`compareCursorValue`), so a missing slot is the GREATEST value either way.
+ * Every row that ties the cursor on the terms it does carry therefore
+ * compares "before the cursor" and is dropped from the resumed page, in ASC
+ * and DESC alike. Rows that a carried term already resolves are untouched —
+ * which is what keeps this a truncation rather than an empty page, and is why
+ * both assertions below still return exactly one row.
+ *
+ * The cursor is hand-built rather than minted by a first page: a real page-1
+ * cursor always carries a value per term of the sort it was minted under, so
+ * the short case is only reachable by changing the sort, and building it
+ * directly pins the degrade without also depending on which sort change
+ * produced it.
+ */
+describe('run_advanced_query — a cursor SHORTER than the resolved sort truncates, both ways (#3914 review note 3)', () => {
+  const PAGE = id('K0')
+  const TIED_LO = id('K1')
+  const TIED_HI = id('K2')
+  const AFTER = id('K3')
+  const BEFORE = id('K4')
+
+  const TEXT_ONLY = { type: 'Leaf', primitive: { type: 'BlockType', values: ['text'] } }
+  const BY_POSITION = { source: { type: 'Column', name: 'position' } }
+
+  /** A one-value cursor, where `[position, id]` resolves to TWO terms. */
+  const SHORT_CURSOR = utf8ToBase64Url(JSON.stringify({ version: 1, values: [{ t: 'Int', v: 5 }] }))
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    for (const [blockId, position] of [
+      [TIED_LO, 5],
+      [TIED_HI, 5],
+      [AFTER, 9],
+      [BEFORE, 1],
+    ] as Array<[string, number]>) {
+      const b = makeBlock(blockId, 'text', null, PAGE, position)
+      b['page_id'] = PAGE
+      b['position'] = position
+      blocks.set(blockId, b)
+    }
+  })
+
+  it('ASC: drops the rows tied at the cursor position, keeps the strictly-greater one', () => {
+    expect(orderedIds({ filter: TEXT_ONLY, sort: [BY_POSITION] })).toEqual([
+      BEFORE,
+      TIED_HI,
+      TIED_LO,
+      AFTER,
+    ])
+    // TIED_HI/TIED_LO tie on term 0 and fall through to the missing slot.
+    expect(
+      run({ filter: TEXT_ONLY, sort: [BY_POSITION], limit: 10, cursor: SHORT_CURSOR }).rows.map(
+        (r) => r['id'],
+      ),
+    ).toEqual([AFTER])
+  })
+
+  it('DESC: drops the same tied rows — NULLS LAST is not flipped by desc', () => {
+    const desc = { filter: TEXT_ONLY, sort: [{ ...BY_POSITION, desc: true }] }
+    expect(orderedIds(desc)).toEqual([AFTER, TIED_HI, TIED_LO, BEFORE])
+    // The mirror image of the ASC case: the tied pair is dropped again (not
+    // re-delivered), and the row the DESC order puts strictly after the
+    // cursor's position survives.
+    expect(run({ ...desc, limit: 10, cursor: SHORT_CURSOR }).rows.map((r) => r['id'])).toEqual([
+      BEFORE,
+    ])
+  })
+})
+
+/**
+ * #3914 review note 1 — `decodeCursor` claims parity with `QueryCursor::decode`
+ * (`agaric-store/src/query/engine.rs:180-195`) across all FOUR of its failure
+ * modes, and invalid UTF-8 is the one that was not actually mirrored.
+ *
+ * `base64UrlToUtf8`'s default `TextDecoder` is NON-fatal: it substitutes
+ * U+FFFD for an ill-formed byte sequence instead of throwing. A cursor whose
+ * bytes are not valid UTF-8 but whose REPLACED form is still parseable JSON
+ * therefore sailed through every check and resumed the query, where the engine
+ * (`String::from_utf8` on the decoded bytes) returns `AppError::Validation`.
+ *
+ * The fixture puts a lone 0xFF — never valid UTF-8 in any position — inside a
+ * JSON string value, so the non-fatal path yields the perfectly well-formed
+ * `{"version":1,"values":[{"t":"Text","v":"�"}]}` and nothing downstream
+ * has any reason to object.
+ */
+describe('run_advanced_query — a cursor whose bytes are not valid UTF-8 is rejected (#3914 review note 1)', () => {
+  const PAGE = id('L0')
+  const ONLY = id('L1')
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    const b = makeBlock(ONLY, 'text', null, PAGE, 0)
+    b['page_id'] = PAGE
+    blocks.set(ONLY, b)
+  })
+
+  it('throws a validation rejection instead of decoding the bad byte to U+FFFD', () => {
+    const enc = new TextEncoder()
+    const bytes = Uint8Array.from([
+      ...enc.encode('{"version":1,"values":[{"t":"Text","v":"'),
+      0xff,
+      ...enc.encode('"}]}'),
+    ])
+    let binary = ''
+    for (const b of bytes) binary += String.fromCharCode(b)
+    const cursor = btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
+
+    // Guard against the fixture rotting into a different failure mode: these
+    // bytes ARE valid base64url and DO parse as JSON once replaced, so the
+    // rejection below can only be coming from the UTF-8 check.
+    expect(() => JSON.parse(base64UrlToUtf8(cursor))).not.toThrow()
+
+    expect(() => run({ limit: 10, cursor })).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+  })
+})
+
+/**
+ * #3914 review note 2 — the round-trip invariant the two handler tests above
+ * are only ONE instance of.
+ *
+ * The keyset resume rests on a single property: the value a row encodes into
+ * a cursor must, coming back, compare EQUAL to that same row. Every failure
+ * of it is a silent skip or an infinite re-delivery, and it fails per-COLUMN,
+ * so a handler test can only ever falsify the columns its fixture happens to
+ * exercise. This asserts it directly, for every `CursorKind`, in both
+ * directions.
+ *
+ * `Record<CursorKind, …>` rather than a loose array: adding a seventh kind to
+ * the union then fails to COMPILE until it has a case here, which is the only
+ * mechanism that keeps "across every kind" true as the set grows.
+ *
+ * The trip goes through `JSON.parse(JSON.stringify(…))` on purpose — the wire
+ * is part of the round trip. An in-memory-only assertion would miss a value
+ * that survives the tagging and dies in serialization (`Infinity` has no JSON
+ * literal and stringifies to `null`), which is precisely the `Rank` case.
+ *
+ * Two cases here were RED when this was written, and they are the two the
+ * review named: `LastEditedMs`'s never-edited sentinel (`''` → `Int(0)` →
+ * decoded back to the NUMBER `0` → compared as `''` vs `'0'`) and `Rank`'s
+ * non-finite guard (`Infinity` → `Null` → decoded to `null` → compared as
+ * NULLS-LAST against a real number). Both are the same defect: a decode side
+ * that was not the inverse of the encode side.
+ */
+describe('cursorValueFor — every CursorKind round-trips to a value the resume compares EQUAL (#3914 review)', () => {
+  type Term = Parameters<typeof cursorValueFor>[0]
+  type Entry = Parameters<typeof cursorValueFor>[1]
+  type CursorValues = Parameters<typeof compareEntryToCursor>[2]
+
+  /** The getters never read the entry in these cases — the term stands in for one. */
+  const ENTRY = {} as Entry
+
+  const CASES: Record<CursorKind, Array<[string, string | number | null]>> = {
+    Id: [['a ULID', id('R1')]],
+    LastEditedMs: [
+      // The `''` sentinel is the case that was broken: it is the one column
+      // where the getter's null-ish value is an empty STRING, not `null`.
+      ['the never-edited sentinel', ''],
+      ['an ISO-8601 op-log stamp', '2024-01-01T00:00:00.000Z'],
+    ],
+    Position: [
+      ['an integral position', 7],
+      ['no position (NULL)', null],
+    ],
+    Priority: [
+      ['a user label', 'high'],
+      ['no priority (NULL)', null],
+    ],
+    Rank: [
+      ['a fractional bm25 stand-in', 2.5],
+      // Integral ranks serialize as `2`, not serde's `2.0` — the documented
+      // byte difference, which must still round-trip.
+      ['an integral bm25 stand-in', 2],
+      ['a non-finite rank', Number.POSITIVE_INFINITY],
+    ],
+    Title: [
+      ['a page title', 'Zulu'],
+      ['a non-page row (NULL)', null],
+    ],
+  }
+
+  for (const [column, cases] of Object.entries(CASES)) {
+    for (const [label, raw] of cases) {
+      for (const desc of [false, true]) {
+        it(`${column}: ${label} (${desc ? 'DESC' : 'ASC'})`, () => {
+          const term = { desc, get: () => raw, column } as unknown as Term
+          const onWire = JSON.parse(
+            JSON.stringify([cursorValueFor(term, ENTRY)]),
+          ) as unknown as CursorValues
+          expect(compareEntryToCursor([term], ENTRY, onWire)).toBe(0)
+        })
+      }
+    }
+  }
 })
