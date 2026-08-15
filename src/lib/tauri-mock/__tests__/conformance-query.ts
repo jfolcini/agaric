@@ -54,13 +54,17 @@ export interface QueryStep {
    * Compare `rows` in the order the command returned them. Default: canonical
    * sort, i.e. a SET comparison that cannot see an ordering divergence — see
    * the "Ordering" section of the Rust twin's module docs for what that
-   * currently costs. ONE live mock ordering bug is still invisible to an
-   * unordered step: #3821 (`run_advanced_query` orders `b.id ASC`, the engine
-   * `b.id DESC`), whose fixture step is already shaped to pin the order — set
-   * `ordered` and re-author once it is fixed. #3873 (`list_tags_for_block`
-   * returning insertion order) WAS the second; the mock now sorts by tag id,
-   * and `query_point_reads_tags`'s `tags_two_surviving_in_id_order` is an
-   * `ordered` step that pins it.
+   * currently costs. A step whose whole point is a SORT arm must therefore set
+   * this: crediting an ordering branch from a set comparison is no evidence at
+   * all (#3927, which is why the five `query_pages_metadata_sorts` steps and
+   * the three `query_advanced_filters` ones are all `ordered`).
+   *
+   * Two live mock ordering bugs used to be invisible to an unordered step and
+   * both are fixed: #3821 (`run_advanced_query` ordered `b.id ASC`, the engine
+   * `b.id DESC`) and #3873 (`list_tags_for_block` returning insertion order).
+   * The steps that pin them — `query_advanced_filters`' three, and
+   * `query_point_reads_tags`'s `tags_two_surviving_in_id_order` — are
+   * `ordered` now.
    */
   ordered?: boolean
   /**

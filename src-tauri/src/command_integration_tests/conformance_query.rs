@@ -55,20 +55,22 @@
 //!
 //! `rows` is canonically SORTED unless the step sets `"ordered": true`, so by
 //! default a step compares SETS, not sequences: every ordering divergence is
-//! invisible to it. Two distinct reasons, and only the first is benign:
+//! invisible to it. ONE reason remains benign: when the sort key is the raw
+//! block id and the fixture creates blocks through ops, the ids genuinely
+//! differ between the stacks, so their order is not comparable at all.
 //!
-//! 1. When the sort key is the raw block id and the fixture creates blocks
-//!    through ops, the ids genuinely differ between the stacks, so their order
-//!    is not comparable at all.
-//! 2. #3821 — the mock's `run_advanced_query` sorts `b.id ASC` (and paginates
-//!    its keyset that way) while the engine's terminal tiebreaker is `b.id
-//!    DESC` (`resolve_sort` in `agaric-store/src/query/engine.rs`). This is a
-//!    LIVE mock bug, not an incomparability: `query_advanced_filters` queries
-//!    only SEED blocks, whose ids are byte-identical on both stacks, so its
-//!    order IS comparable — the unordered compare is what stops the fixture
-//!    reddening on a real divergence. When #3821 lands, set `"ordered": true`
-//!    on the three `run_advanced_query` steps and re-author; the fixture is
-//!    already shaped to pin the order.
+//! #3821 used to be a second reason — the mock's `run_advanced_query` sorted
+//! `b.id ASC` (and paginated its keyset that way) while the engine's terminal
+//! tiebreaker is `b.id DESC` (`resolve_sort` in
+//! `agaric-store/src/query/engine.rs`). That was never an incomparability:
+//! `query_advanced_filters` queries only SEED blocks, whose ids are
+//! byte-identical on both stacks. #3821 is closed and the mock's
+//! `resolveSortTerms` now mirrors `resolve_sort`, so #3927 set `"ordered":
+//! true` on the three `run_advanced_query` steps and re-authored, exactly as
+//! this note predicted. It matters beyond tidiness: those steps are the only
+//! evidence for `run_advanced_query`'s DEFAULT sort arm in the branch manifest
+//! (`conformance-coverage.test.ts`), and a set comparison is no evidence at
+//! all about an ORDERING branch.
 //!
 //! #3873 used to be a third reason here — `list_tags_for_block` returned
 //! `blockTags` INSERTION order on the mock against the backend's `ORDER BY
@@ -915,8 +917,9 @@ pub async fn run_query_steps(
         let mut rows: Vec<String> = raw.rows.iter().map(|t| relabel_token(t, labels)).collect();
         if !ordered {
             // Set comparison, not sequence comparison — see "Ordering" in the
-            // module docs. Known cost today: #3821 (mock `run_advanced_query`
-            // orders `b.id ASC`, engine `b.id DESC`) is invisible here.
+            // module docs. The cost is real: every ordering divergence of an
+            // unordered step is invisible here, which is why a step that
+            // exists to pin a SORT arm must set `"ordered": true`.
             rows.sort_by_key(|t| token_key(t));
         }
         out.push(json!({

@@ -102,19 +102,19 @@
     {
       "has_more": false,
       "name": "advanced_no_filter_returns_the_space",
-      "rows": ["B1", "B2", "B3", "B4", "B5"],
+      "rows": ["B5", "B4", "B3", "B2", "B1"],
       "total_count": 5
     },
     {
       "has_more": false,
       "name": "advanced_state_exclude_done_and_unset",
-      "rows": ["B2", "B4", "B5"],
+      "rows": ["B5", "B4", "B2"],
       "total_count": 3
     },
     {
       "has_more": false,
       "name": "advanced_due_date_between_is_inclusive",
-      "rows": ["B2", "B3", "B4"],
+      "rows": ["B4", "B3", "B2"],
       "total_count": 3
     },
     {
@@ -191,8 +191,9 @@
         }
       },
       "command": "run_advanced_query",
-      "comment": "Vacuity guard: a filterless advanced query must return the WHOLE seeded space on both stacks. If this step ever goes empty, the steps below agree only because neither reached any data. NOT `ordered` only because of #3821 (mock sorts `b.id ASC`, engine `b.id DESC`) — every id here is a SEED id, identical on both stacks, so this step can and should pin the order once #3821 lands.",
-      "name": "advanced_no_filter_returns_the_space"
+      "comment": "Vacuity guard: a filterless advanced query must return the WHOLE seeded space on both stacks. If this step ever goes empty, the steps below agree only because neither reached any data. NOT `ordered` only because of #3821 (mock sorts `b.id ASC`, engine `b.id DESC`) — every id here is a SEED id, identical on both stacks, so this step can and should pin the order once #3821 lands. `ordered` since #3821 closed (#3927): the engine's terminal tiebreaker is `b.id DESC` and the mock's `resolveSortTerms` now mirrors it, so this sequence pins `run_advanced_query`'s DEFAULT sort arm. An unordered step credits that arm while comparing sets, which is no evidence about an ORDERING branch at all.",
+      "name": "advanced_no_filter_returns_the_space",
+      "ordered": true
     },
     {
       "args": {
@@ -211,8 +212,9 @@
         }
       },
       "command": "run_advanced_query",
-      "comment": "#3314 finding 1 (State half): exclude + is_null is an AND-join — non-NULL todo_state that is not DONE. An OR-join is a tautology and returns every row.",
-      "name": "advanced_state_exclude_done_and_unset"
+      "comment": "#3314 finding 1 (State half): exclude + is_null is an AND-join — non-NULL todo_state that is not DONE. An OR-join is a tautology and returns every row. `ordered` since #3821 closed (#3927): the engine's terminal tiebreaker is `b.id DESC` and the mock's `resolveSortTerms` now mirrors it, so this sequence pins `run_advanced_query`'s DEFAULT sort arm. An unordered step credits that arm while comparing sets, which is no evidence about an ORDERING branch at all.",
+      "name": "advanced_state_exclude_done_and_unset",
+      "ordered": true
     },
     {
       "args": {
@@ -233,8 +235,9 @@
         }
       },
       "command": "run_advanced_query",
-      "comment": "#3314 finding 1 (Between half): SQL BETWEEN is inclusive on BOTH endpoints. S2 sits on `from`, S4 on `to`.",
-      "name": "advanced_due_date_between_is_inclusive"
+      "comment": "#3314 finding 1 (Between half): SQL BETWEEN is inclusive on BOTH endpoints. S2 sits on `from`, S4 on `to`. `ordered` since #3821 closed (#3927): the engine's terminal tiebreaker is `b.id DESC` and the mock's `resolveSortTerms` now mirrors it, so this sequence pins `run_advanced_query`'s DEFAULT sort arm. An unordered step credits that arm while comparing sets, which is no evidence about an ORDERING branch at all.",
+      "name": "advanced_due_date_between_is_inclusive",
+      "ordered": true
     },
     {
       "args": {

@@ -1,0 +1,310 @@
+{
+  "description": "#3927 — BRANCH differential over `list_pages_with_metadata`'s five-arm `PageSort` keyset (`keyset_for`, `src-tauri/src/commands/pages/metadata.rs`). The command had ONE query step (`pages_metadata_alphabetical`), so the ratchet read it as covered while four of its five ORDER BY / keyset arms had never run. Every step here queries the SAME three seed pages and each arm returns them in a DIFFERENT order, so each step falsifies the other four: a keyset arm wired to the wrong sort mode reddens instead of reordering invisibly. All five steps are `ordered` — a set comparison over a SORT arm proves nothing. The data is shaped so the five orders are pairwise distinct: titles Charlie/Alpha/Bravo (alphabetical), descendant counts 2/0/1 (most-content), inbound links 0/1/2 (most-linked), one op-log-bearing page (recently-modified, the other two tie at the NULL sentinel and fall to the `b.id ASC` tiebreaker), and seed id order (default). The links arrive via `edit_block` rather than the seed insert: the seed bypasses the materializer, so only an op-driven content write populates `block_links` / `pages_cache`.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Charlie Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Alpha Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Bravo Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "see [[000000000000000000000000S3]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "also see [[000000000000000000000000S3]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "points at [[000000000000000000000000S2]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "key": "reviewed",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "source_id": "B4",
+        "source_page_id": "B1",
+        "target_id": "B3"
+      },
+      {
+        "source_id": "B5",
+        "source_page_id": "B1",
+        "target_id": "B3"
+      },
+      {
+        "source_id": "B6",
+        "source_page_id": "B3",
+        "target_id": "B2"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "B3",
+        "key": "reviewed",
+        "value": "yes",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "has_more": false,
+      "name": "pages_sorted_alphabetical",
+      "rows": ["B2", "B3", "B1"],
+      "total_count": 3
+    },
+    {
+      "has_more": false,
+      "name": "pages_sorted_default",
+      "rows": ["B1", "B2", "B3"],
+      "total_count": 3
+    },
+    {
+      "has_more": false,
+      "name": "pages_sorted_most_content",
+      "rows": ["B1", "B3", "B2"],
+      "total_count": 3
+    },
+    {
+      "has_more": false,
+      "name": "pages_sorted_most_linked",
+      "rows": ["B3", "B2", "B1"],
+      "total_count": 3
+    },
+    {
+      "has_more": false,
+      "name": "pages_sorted_recently_modified",
+      "rows": ["B3", "B1", "B2"],
+      "total_count": 3
+    }
+  ],
+  "name": "query_pages_metadata_sorts",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "see [[000000000000000000000000S3]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "also see [[000000000000000000000000S3]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "toText": "points at [[000000000000000000000000S2]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "reviewed",
+        "value": {
+          "value_text": "yes"
+        }
+      },
+      "command": "set_property"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "filter": {
+          "sort": "alphabetical",
+          "spaceId": "$SPACE"
+        },
+        "limit": 50
+      },
+      "command": "list_pages_with_metadata",
+      "comment": "PageSort::Alphabetical -> StringAsc on COALESCE(b.content,'') COLLATE NOCASE. Title order (Alpha, Bravo, Charlie) is neither seed-id order nor any count order, so this row sequence is reachable by no other arm.",
+      "name": "pages_sorted_alphabetical",
+      "ordered": true
+    },
+    {
+      "args": {
+        "filter": {
+          "sort": "default",
+          "spaceId": "$SPACE"
+        },
+        "limit": 50
+      },
+      "command": "list_pages_with_metadata",
+      "comment": "PageSort::Default -> SortKeyset::IdOnly (`b.id ASC`, no sort-key slot). Seed-label order, which every other arm permutes.",
+      "name": "pages_sorted_default",
+      "ordered": true
+    },
+    {
+      "args": {
+        "filter": {
+          "sort": "most-content",
+          "spaceId": "$SPACE"
+        },
+        "limit": 50
+      },
+      "command": "list_pages_with_metadata",
+      "comment": "PageSort::MostContent -> I64Desc on COALESCE(pc.child_block_count, 0). Descendant counts are 2 (S1) / 0 (S2) / 1 (S3), so DESC is S1, S3, S2 — distinct from every other arm, and an ASC keyset would exactly reverse it.",
+      "name": "pages_sorted_most_content",
+      "ordered": true
+    },
+    {
+      "args": {
+        "filter": {
+          "sort": "most-linked",
+          "spaceId": "$SPACE"
+        },
+        "limit": 50
+      },
+      "command": "list_pages_with_metadata",
+      "comment": "PageSort::MostLinked -> I64Desc on COALESCE(pc.inbound_link_count, 0). S3 is linked twice (from S4 and S5), S2 once (from S6, a block on page S3 — so the count must roll a link up from the linking block to its owning page, and count the TARGET page's own subtree), S1 never.",
+      "name": "pages_sorted_most_linked",
+      "ordered": true
+    },
+    {
+      "args": {
+        "filter": {
+          "sort": "recently-modified",
+          "spaceId": "$SPACE"
+        },
+        "limit": 50
+      },
+      "command": "list_pages_with_metadata",
+      "comment": "PageSort::RecentlyModified -> StringDescNullCoalesced on COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), sentinel). Only S3 carries an op targeting the PAGE block itself (the three edit_block ops target CONTENT blocks, whose op-log rows must NOT count for their owning page), so S3 leads and the two sentinel-valued pages fall to the `b.id ASC` tiebreaker. An ASC keyset, or a sentinel that sorts above a real timestamp, puts S3 last.",
+      "name": "pages_sorted_recently_modified",
+      "ordered": true
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Charlie Notes",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Alpha Notes",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "Bravo Notes",
+        "id": "S3",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S6",
+        "parent_id": "S3",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
