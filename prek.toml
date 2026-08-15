@@ -2569,6 +2569,11 @@ stages = ["pre-commit"]
 # correctly fail on the now-dead pin. The script is a fast, static walk over
 # a handful of harness files (single-digit ms), so running it unconditionally
 # costs nothing.
+# Note: because `always_run = true` (above) and `pass_filenames = false`
+# (below), `files` on this hook is inert — the hook always runs regardless
+# of what changed, and the matched set is never handed to the entry command.
+# It is kept anyway as documentation of intent (which paths this guard is
+# "about"), not because it governs anything at runtime.
 [[repos]]
 repo = "local"
 [[repos.hooks]]

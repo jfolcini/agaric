@@ -213,11 +213,17 @@ function extractFunction(src, name) {
   // comments; only the STRUCTURE search ignores them.
   const stripped = stripComments(src)
   const sigRe = new RegExp(
-    `(?:^|\\n)\\s*(?:export\\s+)?(?:async\\s+)?function\\s+${name}\\s*\\(`,
+    `(?:^|\\n)\\s*(?:export\\s+)?(?:async\\s+)?function\\s+${escapeRegExp(name)}\\s*\\(`,
     'g',
   )
   const matches = [...stripped.matchAll(sigRe)]
-  if (matches.length !== 1) return { text: null, matchCount: matches.length }
+  if (matches.length !== 1) {
+    return {
+      text: null,
+      matchCount: matches.length,
+      otherForm: matches.length === 0 && nameAppearsInOtherForm(stripped, name),
+    }
+  }
 
   const m = matches[0]
   // Start of the actual declaration (skip the leading \n / whitespace the
@@ -238,6 +244,29 @@ function extractFunction(src, name) {
   if (bodyClose === -1) return { text: null, matchCount: matches.length }
 
   return { text: src.slice(declStart, bodyClose + 1), matchCount: matches.length }
+}
+
+/** Escape a string for safe interpolation into a `RegExp` source. */
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * When `extractFunction` finds zero plain `function <name>(` declarations,
+ * check whether `name` nonetheless appears in some OTHER form this guard
+ * doesn't extract — a generic signature (`function name<T>(`), a default
+ * export (`export default function name(`), or a const/let/var assignment
+ * (arrow-function refactor). Used only to pick a more accurate message;
+ * doesn't change pass/fail (still fails closed either way).
+ */
+function nameAppearsInOtherForm(stripped, name) {
+  const escaped = escapeRegExp(name)
+  const otherFormRe = new RegExp(
+    `function\\s+${escaped}\\s*<` +
+      `|export\\s+default\\s+function\\s+${escaped}\\s*\\(` +
+      `|\\b(?:const|let|var)\\s+${escaped}\\s*=`,
+  )
+  return otherFormRe.test(stripped)
 }
 
 /** Collapse whitespace runs to a single space and trim — reformatting-tolerant, token-sensitive. */
@@ -301,6 +330,14 @@ function checkTree({ root, harnessDir }) {
     for (const pin of pins) {
       pinCount += 1
       const sourceFile = path.join(root, pin.sourcePath)
+      const relToRoot = path.relative(root, sourceFile)
+      if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) {
+        violations.push({
+          harness: relHarness,
+          message: `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, which resolves outside the repo root — refusing to read it`,
+        })
+        continue
+      }
       if (!fs.existsSync(sourceFile)) {
         violations.push({
           harness: relHarness,
@@ -309,15 +346,23 @@ function checkTree({ root, harnessDir }) {
         continue
       }
       const sourceSrc = fs.readFileSync(sourceFile, 'utf8')
-      const { text, matchCount } = extractFunction(sourceSrc, pin.functionName)
+      const { text, matchCount, otherForm } = extractFunction(sourceSrc, pin.functionName)
       if (text === null) {
-        violations.push({
-          harness: relHarness,
-          message:
-            matchCount === 0
-              ? `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, but no such function exists there anymore (renamed or removed — the clone is orphaned)`
-              : `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, which is ambiguous (${matchCount} matches) or has unbalanced brackets`,
-        })
+        let message
+        if (matchCount === 0 && otherForm) {
+          message =
+            `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName} — the name is ` +
+            `present in that file, but not as a plain \`function ${pin.functionName}(...)\` declaration ` +
+            '(a generic signature, `export default function`, or a const/let/var arrow-function form ' +
+            "would all look like this). This guard only extracts plain function declarations; if that's " +
+            "what happened, either revert the refactor or extend the guard — don't read this as " +
+            '"renamed or removed."'
+        } else if (matchCount === 0) {
+          message = `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, but no such function exists there anymore (renamed or removed — the clone is orphaned)`
+        } else {
+          message = `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, which is ambiguous (${matchCount} matches) or has unbalanced brackets`
+        }
+        violations.push({ harness: relHarness, message })
         continue
       }
       const actualHash = sha256hex(canonicalize(text))
@@ -617,6 +662,83 @@ export function target(a: number, b: string): number {
     } else {
       fail('a pin naming a function absent from the source FAILS', JSON.stringify(r.violations))
     }
+
+    // Case 8: a pinned function name ending in `$` must still match — `$`
+    // is a valid identifier character but a regex metacharacter, so an
+    // unescaped interpolation would compile `function\s+foo$\s*\(`, which
+    // can never match (anchors end-of-string before the literal `(` it
+    // still expects) and would misreport "renamed or removed" even though
+    // the function is right there, unchanged.
+    fs.writeFileSync(
+      path.join(tmp, sourceRel),
+      `export function example$(n: number): number {\n  return n + 1\n}\n`,
+    )
+    const dollarHash = sha256hex(
+      canonicalize(
+        extractFunction(fs.readFileSync(path.join(tmp, sourceRel), 'utf8'), 'example$').text,
+      ),
+    )
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: ${sourceRel}#example$ sha256=${dollarHash}\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    if (r.violations.length === 0) {
+      ok(
+        'a pinned function name ending in `$` is matched (regex-escaped), not misreported as orphaned',
+      )
+    } else {
+      fail(
+        'a pinned function name ending in `$` is matched (regex-escaped), not misreported as orphaned',
+        JSON.stringify(r.violations),
+      )
+    }
+    writeSource(originalBody) // restore for subsequent cases
+
+    // Case 9: a pin whose `sourcePath` escapes the repo root via `../` must
+    // FAIL closed (refusing to read outside the repo), not silently resolve
+    // and read whatever file happens to sit there.
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: ../../../../../../etc/passwd#example sha256=${originalHash}\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    if (r.violations.length === 1 && r.violations[0].message.includes('outside the repo root')) {
+      ok('a pin path escaping the repo root via `../` is rejected, not read')
+    } else {
+      fail(
+        'a pin path escaping the repo root via `../` is rejected, not read',
+        JSON.stringify(r.violations),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
+
+    // Case 10: a name present only as a const-arrow / generic-signature /
+    // default-export form (not a plain `function name(`) gets a distinct
+    // "found it, but not as a plain function declaration" message instead
+    // of being misdiagnosed as "renamed or removed".
+    fs.writeFileSync(
+      path.join(tmp, sourceRel),
+      `export const example = (n: number): number => {\n  return n + 1\n}\n`,
+    )
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: ${sourceRel}#example sha256=${originalHash}\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    if (
+      r.violations.length === 1 &&
+      r.violations[0].message.includes('not as a plain') &&
+      !r.violations[0].message.includes('the clone is orphaned')
+    ) {
+      ok('a const-arrow form of the pinned name gets its own message, not "renamed or removed"')
+    } else {
+      fail(
+        'a const-arrow form of the pinned name gets its own message, not "renamed or removed"',
+        JSON.stringify(r.violations),
+      )
+    }
+    writeSource(originalBody) // restore for subsequent cases
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
   }

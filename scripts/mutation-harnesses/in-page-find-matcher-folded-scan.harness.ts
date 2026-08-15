@@ -66,8 +66,9 @@
  *       replacement actually produces (not the naive textual splice)
  *
  *   VALIDATION CONTROLS (expected to differ — proves the harness has power):
- *     - the OUTER reassociated reading: `start !== undefined && (end !==
- *       undefined || (!wholeWord || isWholeWord(...)))` — the ledger itself
+ *     - the OUTER reassociated reading, i.e. the actual Stryker node
+ *       replacement on the outer `&&`: `(start !== undefined && end !==
+ *       undefined) || (!wholeWord || isWholeWord(...))` — the ledger itself
  *       says this one IS killed, by the folded-path wholeWord test
  *     - `from = idx + 1` -> `from = idx + foldedNeedle.length` (the loop
  *       advance after a match) — the ledger cites this control detecting
@@ -294,9 +295,11 @@ function mutantInnerOrReassociated(text: string, foldedNeedle: string, wholeWord
 }
 
 /**
- * OUTER reassociation of `&&` -> `||`: `start !== undefined && (end !==
- * undefined || (!wholeWord || isWholeWord(...)))` — CONTROL. The ledger
- * says this reading IS killed by the folded-path wholeWord test.
+ * OUTER reassociation of `&&` -> `||`: Stryker's node replacement on the
+ * outer `&&` node turns `(A && B) && C` into `(A && B) || C`, i.e. `(start
+ * !== undefined && end !== undefined) || (!wholeWord || isWholeWord(...))`
+ * — CONTROL. The ledger says this reading IS killed by the folded-path
+ * wholeWord test.
  */
 function controlOuterOrReassociated(
   text: string,
@@ -323,16 +326,18 @@ function controlOuterOrReassociated(
     if (idx === -1) break
     const start = foldedStart[idx]
     const end = foldedEnd[idx + foldedNeedle.length - 1]
-    // MUTATED (outer &&->||): `start !== undefined && (end !== undefined || C)`.
+    // MUTATED (outer &&->||): `(start !== undefined && end !== undefined) || C`.
     // The `end as unknown as number` casts below deliberately reproduce the
-    // mutant's real (buggy) runtime behavior: when `end` IS `undefined`, this
-    // branch still evaluates `isWholeWord`/pushes a span with an `undefined`
-    // end — that's the whole reason this reading differs from the original.
+    // mutant's real (buggy) runtime behavior: when `end` IS `undefined`, the
+    // left disjunct is false but `C` is still evaluated/can still be true,
+    // still pushing a span with an `undefined` end — that's the whole reason
+    // this reading differs from the original.
     if (
-      start !== undefined &&
-      (end !== undefined || !wholeWord || isWholeWord(text, start, end as unknown as number))
+      (start !== undefined && end !== undefined) ||
+      !wholeWord ||
+      isWholeWord(text, start as number, end as unknown as number)
     ) {
-      out.push({ start, end: end as unknown as number })
+      out.push({ start: start as number, end: end as unknown as number })
     }
     from = idx + 1
   }
@@ -407,7 +412,7 @@ const ALPHABET = [
 function randomString(rand: () => number, maxLen: number): string {
   const len = Math.floor(rand() * (maxLen + 1))
   let s = ''
-  for (let i = 0; i < len; i++) s += ALPHABET[Math.floor(rand() * ALPHABET.length)]
+  for (let i = 0; i < len; i++) s += ALPHABET[Math.floor(rand() * ALPHABET.length)] as string
   return s
 }
 
