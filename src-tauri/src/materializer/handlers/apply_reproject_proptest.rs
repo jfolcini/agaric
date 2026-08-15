@@ -905,6 +905,20 @@ async fn page_count_column(pool: &SqlitePool, page_id: &str, column: &str) -> i6
         .unwrap_or(0)
 }
 
+/// One block's materialised `blocks.page_id`, or `None` when the block has no
+/// owning page (or no row). #3886: B6's move driver reads this before and after
+/// each move, exactly as the LOCAL move command does, so it can feed
+/// production's own `move_same_page_hint` instead of hard-coding the hint.
+async fn block_page_id(pool: &SqlitePool, block_id: &str) -> Option<String> {
+    // dynamic-sql: test-only harness read-back (not a production query path)
+    sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_optional(pool)
+        .await
+        .expect("page_id read-back")
+        .flatten()
+}
+
 /// Rows currently in `page_link_cache`. Used only by B6's non-vacuity
 /// tracking (the PEAK across the chain — a chain may add a link and then edit
 /// or delete it away, so the end-of-chain count is not evidence of what the
@@ -987,16 +1001,61 @@ proptest! {
                 _ => false,
             }).count();
 
+            let chain_moves = payloads
+                .iter()
+                .filter(|p| matches!(p, OpPayload::MoveBlock(_)))
+                .count();
+
             let mut peak_child_count: i64 = 0;
             let mut peak_inbound_count: i64 = 0;
             let mut peak_page_link_rows: i64 = 0;
             let mut page_link_maintainers_run: usize = 0;
+            let mut same_page_move_hints: usize = 0;
 
             let mut driver = ChainDriver::new(HARNESS_DEVICE);
             for (index, payload) in payloads.into_iter().enumerate() {
                 let op_type = payload.op_type().as_str();
                 let deferred = defers_pages_cache_counts(&payload);
+                // #3886: model the LOCAL move command's `move_same_page` hint
+                // instead of always passing `None`. Until now B6 drove every op
+                // with `None`/`None`, so the `Some(true)` branch — the one that
+                // actually SKIPS work — was never audited by the oracle at all,
+                // and the bug that hid there (a page-less reparent moves the
+                // `COALESCE(page_id, parent_id, id)` roll-up key while `page_id`
+                // stays NULL) could not surface. The hint is computed by calling
+                // production's OWN `move_same_page_hint` on the moved root's
+                // `page_id` before and after the apply — the same two reads
+                // `move_ops.rs` performs — rather than by re-deriving the rule
+                // here, so the rule cannot drift out of sync with a mirror kept
+                // in test code. It does NOT follow that every weakening of that
+                // function reddens B6: `prepare_chain` puts every chain block
+                // under `PAGE_ID`, so B6 generates no PAGE-LESS move and
+                // reverting the hint to its pre-#3886 `old == new` form leaves
+                // this property green — that shape is pinned by the dedicated
+                // `*_3886` tests. What B6 adds is coverage of the skip WHEN
+                // TAKEN.
+                let moved_block = match &payload {
+                    OpPayload::MoveBlock(m) => Some(m.block_id.to_string()),
+                    _ => None,
+                };
+                let page_id_before = match &moved_block {
+                    Some(id) => block_page_id(&pool, id).await,
+                    None => None,
+                };
                 let record = driver.drive(&pool, state, payload).await;
+                let move_same_page = match &moved_block {
+                    Some(id) => {
+                        let after = block_page_id(&pool, id).await;
+                        Some(crate::materializer::move_same_page_hint(
+                            page_id_before.as_deref(),
+                            after.as_deref(),
+                        ))
+                    }
+                    None => None,
+                };
+                if move_same_page == Some(true) {
+                    same_page_move_hints += 1;
+                }
 
                 if deferred {
                     // Production's deferred cohort pass — the DECREMENT arm.
@@ -1008,14 +1067,16 @@ proptest! {
                 // #3296/#3345: `page_link_cache` has NO synchronous arm — its
                 // only maintainers are background tasks the DISPATCH TABLE
                 // decides to enqueue. Ask production's table which ones this op
-                // needs and run exactly those, with the `None`/`None` hints this
-                // driver's remote/`apply_op_tx` path carries. An arm that
-                // forgets to enqueue `ReindexBlockLinks` therefore runs nothing
-                // and the oracle sees the missing roll-up row, instead of a
-                // hand-written settle list quietly repairing it.
+                // needs and run exactly those, with the hints this driver's
+                // path carries: `None` for `block_type_hint` (remote replay /
+                // inbound sync / boot never carry it) and, since #3886, the
+                // LOCAL move command's `move_same_page` hint for moves. An arm
+                // that forgets to enqueue `ReindexBlockLinks` therefore runs
+                // nothing and the oracle sees the missing roll-up row, instead
+                // of a hand-written settle list quietly repairing it.
                 page_link_maintainers_run +=
                     crate::reconciliation_oracle::settle_page_link_cache_for_op(
-                        &pool, &record, None, None,
+                        &pool, &record, None, move_same_page,
                     )
                     .await
                     .expect("page_link_cache fan-out");
@@ -1131,6 +1192,20 @@ proptest! {
                  page_link_cache maintainers across the whole chain — the roll-up was never \
                  maintained, so the oracle audited an artefact nothing writes (#3296)",
                 chain_links
+            );
+            // #3886 non-vacuity for the HINT itself. Every chain block lives
+            // under `PAGE_ID`, so every generated move keeps a real, unchanged
+            // `page_id` and `move_same_page_hint` returns true by construction —
+            // which means a chain that moved anything must have driven the
+            // `Some(true)` branch, the one that SKIPS `RebuildPageLinkCache`. A
+            // zero here would mean the oracle is back to auditing only the
+            // conservative fan-out: exactly the blind spot that let #3886 sit
+            // undetected behind a green B6.
+            prop_assert!(
+                chain_moves == 0 || same_page_move_hints > 0,
+                "chain drove {} moves but production's move_same_page_hint never \
+                 returned true, so the #2700 skip branch went unaudited (#3886)",
+                chain_moves
             );
             prop_assert!(
                 chain_links == 0 || coverage.page_link_edges > 0 || peak_page_link_rows > 0,

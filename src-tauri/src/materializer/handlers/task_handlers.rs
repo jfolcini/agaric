@@ -646,20 +646,37 @@ async fn handle_background_task_inner(
             //   * `Some(P1) → Some(P2)` — the page-to-page MOVE above. No
             //     enqueue site can produce it today, so it is an invariant
             //     VIOLATION and the assert is the right place to be loud.
-            //   * `Some(P) → NULL` — a DEMOTION, and it is reachable RIGHT
-            //     NOW, not only via some future second enqueue site.
-            //     `resolve_owning_page` stamps `page_id` by walking the
-            //     `parent_id` chain, whereas this write copies only
+            //   * `Some(P) → NULL` — a DEMOTION, which #3894 found reachable
+            //     RIGHT NOW: `resolve_owning_page` stamps `page_id` by walking
+            //     the `parent_id` chain, whereas the write copies only
             //     `parent.page_id`, so a retried `SetBlockPageId` whose
             //     parent's own stamp is still pending — or whose parent was
-            //     purged — inherits NULL off a block that already has a real
+            //     purged — inherited NULL off a block that already had a real
             //     page. Asserting on `previous.is_some()` alone therefore
-            //     panicked the background worker in debug/test builds on a
-            //     shape production reaches by design.
+            //     panicked the background worker on a shape production reaches
+            //     by design.
             //
-            // Only the seeding below is common to the two: both vacate a key
-            // the sweep cannot reach, so both still owe the durable full
-            // rebuild. The assert is narrowed; the DEGRADATION is not.
+            // #3908 CLOSED the demotion at the source instead of repairing it
+            // downstream. `set_block_page_id_from_parent_in_tx` now REFUSES to
+            // overwrite a non-NULL `page_id` with NULL: a NULL inherited value
+            // means "the parent cannot tell me the owning page yet", not "this
+            // block has no owning page", and only `rebuild_page_ids`'s
+            // vault-wide re-derivation has the authority to decide the latter.
+            // Seeding a `RebuildPageIds` obligation here would have repaired
+            // the roll-up key eventually while leaving the block DETACHED from
+            // its page in the meantime — wrong for
+            // `pages_cache.inbound_link_count`, for the
+            // `COALESCE(b.space_id, p.space_id)` space resolution, and for
+            // every other `page_id` consumer, none of which the seeded
+            // `RebuildPageLinkCache` touches.
+            //
+            // Consequence for the two locals below: a refused demotion reports
+            // `changed: false`, so `vacated_page` and `moved_between_pages` now
+            // coincide — the ONLY surviving way to vacate a real page key on
+            // this path is the `P1 → P2` move. They are kept distinct anyway,
+            // because the DEGRADATION is keyed on "a real key was vacated"
+            // (true of any future transition off a page) while the assert is
+            // keyed on the narrower shape that is provably unreachable today.
             let vacated_page = write.changed && write.previous.is_some();
             let moved_between_pages = vacated_page && write.current.is_some();
             debug_assert!(
@@ -692,10 +709,11 @@ async fn handle_background_task_inner(
                         block_id = %block_id,
                         previous_page_id = ?write.previous,
                         current_page_id = ?write.current,
-                        "#3842: SetBlockPageId moved page_id OFF a real page (to another page, \
-                         or to NULL when the parent's own stamp had not landed); the per-block \
-                         stale-key sweep cannot reach the vacated key — a full \
-                         RebuildPageLinkCache obligation was seeded instead"
+                        "#3842: SetBlockPageId moved page_id OFF a real page onto another \
+                         page; the per-block stale-key sweep cannot reach the vacated key — a \
+                         full RebuildPageLinkCache obligation was seeded instead. (The \
+                         Some(P) → NULL demotion that used to reach this branch is refused at \
+                         the write itself since #3908.)"
                     );
                 }
             }

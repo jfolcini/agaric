@@ -976,10 +976,33 @@ pub async fn settle_page_link_cache_rebuild(pool: &SqlitePool) -> Result<(), App
 /// shallower than the function that actually runs.
 ///
 /// `block_type_hint` / `move_same_page` are the same hints the caller's op
-/// path would carry: `None`/`None` models remote replay, inbound sync and boot
-/// (which never carry hints), which is also what the apply-path proptest
-/// drivers model. Note `move_same_page: None` means the #2700 same-page-move
-/// optimisation is not exercised here.
+/// path would carry. `block_type_hint: None` models remote replay, inbound sync
+/// and boot (which never carry it), which is also what the apply-path proptest
+/// drivers model.
+///
+/// #3886: `move_same_page` is no longer always `None` at B6's call site. Doing
+/// so meant the #2700 same-page skip — the branch that actually DROPS
+/// `RebuildPageLinkCache` — was never exercised by the oracle, so a wrong skip
+/// could not become a divergence. B6 now computes it by calling production's
+/// own `materializer::move_same_page_hint` on the moved root's `page_id` before
+/// and after the apply, i.e. the same two reads `commands/blocks/move_ops.rs`
+/// performs, so the rule cannot drift out of sync with a mirror kept in test
+/// code.
+///
+/// Be precise about what that buys, because it is LESS than "any weakening of
+/// the hint reddens B6". `prepare_chain` reparents every root create/move onto
+/// `PAGE_ID`, so EVERY chain block carries a real, unchanged `page_id` and the
+/// hint is `Some(true)` for every generated move. That is exactly what makes
+/// the skip branch reachable here (see the non-vacuity `prop_assert` at the
+/// end of B6), but it also means B6 generates NO page-less move — reverting
+/// `move_same_page_hint` to its pre-#3886 `old == new` form leaves this
+/// property GREEN. The page-less shape #3886 fixes is pinned by the dedicated
+/// tests instead (`move_same_page_hint_rejects_a_pageless_move_3886`,
+/// `invalidations_for_op_move_block_pageless_subtree_keeps_page_link_rebuild_3886`,
+/// and the end-to-end
+/// `pageless_subtree_reparent_moves_the_page_link_rollup_key_3886`). What B6
+/// does audit is that the skip, WHEN TAKEN on a real-page move, does not
+/// diverge from a from-base rebuild.
 pub async fn settle_page_link_cache_for_op(
     pool: &SqlitePool,
     record: &agaric_store::op_log::OpRecord,
