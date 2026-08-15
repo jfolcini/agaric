@@ -68,6 +68,59 @@ const REPO_ROOT = join(SCRIPTS_DIR, '..')
 const WORKFLOWS_DIR = join(REPO_ROOT, '.github', 'workflows')
 const ZIZMOR_CONFIG_PATH = join(REPO_ROOT, '.github', 'zizmor.yml')
 const CI_YML_PATH = join(WORKFLOWS_DIR, 'ci.yml')
+const PREK_CONFIG_PATH = join(REPO_ROOT, 'prek.toml')
+
+/**
+ * How many inline `# zizmor: ignore[cache-poisoning]` suppressions the repo
+ * is expected to carry — the four #3737 introduced (two `Swatinem/rust-cache`,
+ * two `actions/setup-node`, all in ci.yml's build-only jobs).
+ *
+ * EXACT on purpose, and the strictness is the point: `checkHygiene` only
+ * notices zero, so without an exact count a suppression appearing in some
+ * other workflow — a decision nobody reviewed as a cache-poisoning decision —
+ * lands silently. Adding a fifth is a legitimate thing to do; it just has to
+ * be a deliberate edit here, which is why the failure detail says so instead
+ * of reading like a defect report.
+ */
+export const EXPECTED_INLINE_SUPPRESSIONS = 4
+
+/**
+ * This guard's `--self-test` is the only thing that re-runs zizmor when
+ * `.github/zizmor.yml` itself changes. The `zizmor` prek hook cannot cover
+ * that file: it forwards its matched filenames to the binary as AUDIT
+ * TARGETS, so widening its `files` pattern to the config would ask zizmor to
+ * audit its own config as if it were a workflow. The dependency is therefore
+ * recorded here rather than widened there — and recorded as an assertion,
+ * because a `files` pattern that quietly stopped naming one of these paths
+ * would take that coverage with it and nothing would say so. `prek.toml` is
+ * in the list too: this guard now reads it, so an edit to it must re-run.
+ */
+export const SELF_TEST_HOOK_ID = 'cache-poisoning-suppressions-self-test'
+export const SELF_TEST_HOOK_DEPENDENCIES = Object.freeze([
+  'scripts/check-cache-poisoning-suppressions.mjs',
+  '.github/zizmor.yml',
+  '.github/workflows/ci.yml',
+  'prek.toml',
+])
+
+/**
+ * A prek hook's `files` pattern, as a live RegExp, read out of `prek.toml`.
+ * Throws when the hook or its pattern is absent — a rename must fail loud
+ * rather than let the coverage assertion pass vacuously.
+ */
+export function findHookFilesPattern(prekTomlText, hookId) {
+  const idIdx = prekTomlText.indexOf(`id = "${hookId}"`)
+  if (idIdx === -1) throw new Error(`no prek hook \`${hookId}\` found in prek.toml`)
+  const rest = prekTomlText.slice(idIdx)
+  const endIdx = rest.indexOf('\n[[')
+  const block = endIdx === -1 ? rest : rest.slice(0, endIdx)
+  const m = block.match(/^files = (['"])(.*)\1\s*$/m)
+  if (!m) throw new Error(`prek hook \`${hookId}\` has no \`files\` pattern`)
+  // TOML basic strings ("…") escape each backslash; literal strings ('…') do
+  // not. Getting this wrong turns `\\.` into a wildcard and the assertion
+  // into a weaker one that still passes.
+  return new RegExp(m[1] === "'" ? m[2] : m[2].replace(/\\\\/g, '\\'))
+}
 
 // ---------------------------------------------------------------------------
 // (1) The regression this guard exists to catch: a line-anchored
@@ -92,25 +145,32 @@ const CI_YML_PATH = join(WORKFLOWS_DIR, 'ci.yml')
  * `ruleLineIdx === -1` returns `[]` and `[]` means "no problem". Over-
  * matching (a `cache-poisoning:` key nested somewhere unexpected) can only
  * make this guard louder, and loud is the direction it must err in.
+ *
+ * EVERY occurrence of the key is scanned, not just the first. `findIndex`
+ * stopped at occurrence one, so a second `cache-poisoning:` block — a
+ * duplicate key, a per-`rules:` section, a merged config — carried its
+ * anchors past the guard, and `[]` is again how this module spells
+ * "healthy". That is the same fail-open SHAPE as the four-space-indent bug
+ * above, one axis over; a loop is the whole cost of closing it.
  */
 const CACHE_POISONING_KEY_RE = /^\s*['"]?cache-poisoning['"]?:\s*$/
 
 export function findLineAnchoredCachePoisoningIgnores(zizmorYmlText) {
   const lines = zizmorYmlText.split('\n')
-  const ruleLineIdx = lines.findIndex((l) => CACHE_POISONING_KEY_RE.test(l))
-  if (ruleLineIdx === -1) return []
-
-  const ruleIndent = lines[ruleLineIdx].match(/^(\s*)/)[1].length
   const anchors = []
-  for (let i = ruleLineIdx + 1; i < lines.length; i++) {
-    const line = lines[i]
-    if (line.trim() === '') continue
-    const indent = line.match(/^(\s*)/)[1].length
-    // Dedented back to (or past) the `cache-poisoning:` key's own indent —
-    // its block has ended.
-    if (indent <= ruleIndent && line.trim() !== '') break
-    const m = line.match(/^\s*-\s*([^\s#]+\.ya?ml:\d+(?::\d+)?)\s*(?:#.*)?$/)
-    if (m) anchors.push(m[1])
+  for (const [ruleLineIdx, ruleLine] of lines.entries()) {
+    if (!CACHE_POISONING_KEY_RE.test(ruleLine)) continue
+    const ruleIndent = ruleLine.match(/^(\s*)/)[1].length
+    for (let i = ruleLineIdx + 1; i < lines.length; i++) {
+      const line = lines[i]
+      if (line.trim() === '') continue
+      const indent = line.match(/^(\s*)/)[1].length
+      // Dedented back to (or past) the `cache-poisoning:` key's own indent —
+      // its block has ended.
+      if (indent <= ruleIndent) break
+      const m = line.match(/^\s*-\s*([^\s#]+\.ya?ml:\d+(?::\d+)?)\s*(?:#.*)?$/)
+      if (m) anchors.push(m[1])
+    }
   }
   return anchors
 }
@@ -327,6 +387,55 @@ function selfTestLineAnchorDetection({ check }) {
     )
   }
   {
+    // #3960 (review note 3) — the guard's OTHER fail-open, same shape as the
+    // four-space one above: `lines.findIndex` stopped at the first
+    // `cache-poisoning:` key, so anchors under a second occurrence were never
+    // looked at and `[]` came back meaning "healthy".
+    const twoBlocks = [
+      'rules:',
+      '  cache-poisoning:',
+      '    # the first block is clean, which is exactly why the second hid',
+      '  unpinned-uses: {}',
+      'rules:',
+      '  cache-poisoning:',
+      '    ignore:',
+      '      - ci.yml:401',
+      '      - release.yml:22',
+      '',
+    ].join('\n')
+    const found = findLineAnchoredCachePoisoningIgnores(twoBlocks)
+    check(
+      found.length === 2 && found[0] === 'ci.yml:401' && found[1] === 'release.yml:22',
+      'anchors under a SECOND `cache-poisoning:` key are found too (the scan does not stop at the first)',
+      JSON.stringify(found),
+    )
+    check(
+      checkHygiene({ lineAnchors: found, inlineHits: [{ location: 'ci.yml:1' }] }).length === 1,
+      'and they reach checkHygiene as a problem rather than reading healthy',
+      '',
+    )
+    // The first block's own anchors are still found when BOTH carry some —
+    // scanning every occurrence must not mean scanning only the last.
+    const bothBlocks = findLineAnchoredCachePoisoningIgnores(
+      [
+        'rules:',
+        '  cache-poisoning:',
+        '    ignore:',
+        '      - ci.yml:1',
+        'rules:',
+        '  cache-poisoning:',
+        '    ignore:',
+        '      - ci.yml:2',
+        '',
+      ].join('\n'),
+    )
+    check(
+      bothBlocks.join(',') === 'ci.yml:1,ci.yml:2',
+      'every `cache-poisoning:` block contributes its anchors, in file order',
+      JSON.stringify(bothBlocks),
+    )
+  }
+  {
     // The real repo's current file, right now, must be clean.
     const found = findLineAnchoredCachePoisoningIgnores(readFileSync(ZIZMOR_CONFIG_PATH, 'utf8'))
     check(
@@ -419,9 +528,65 @@ function selfTestInlineScan({ check }) {
   // ...and the real repo, right now, must have the four this fix introduced.
   const realHits = findInlineCachePoisoningSuppressions()
   check(
-    realHits.length === 4,
-    'the real .github/workflows/** has exactly the four inline cache-poisoning suppressions #3737 introduced',
-    JSON.stringify(realHits),
+    realHits.length === EXPECTED_INLINE_SUPPRESSIONS,
+    `the real .github/workflows/** has exactly the ${EXPECTED_INLINE_SUPPRESSIONS} inline cache-poisoning suppressions #3737 introduced`,
+    `found ${realHits.length}, expected ${EXPECTED_INLINE_SUPPRESSIONS}: ${JSON.stringify(realHits)} — ` +
+      `if you ADDED a suppression on purpose, that is fine: bump EXPECTED_INLINE_SUPPRESSIONS in ` +
+      `scripts/check-cache-poisoning-suppressions.mjs (and say in the commit which step it covers). ` +
+      `If you did not add one, a suppression appeared or vanished without review, which is what this ` +
+      `exact count exists to notice — checkHygiene only ever notices zero.`,
+  )
+}
+
+/**
+ * #3960 (review note 5) — the `zizmor` prek hook's `files` pattern covers
+ * `.github/workflows/**` and `.github/actions/**`, NOT `.github/zizmor.yml`,
+ * so editing the config alone never re-runs zizmor. In practice this guard's
+ * own self-test hook covers it, because that hook IS keyed to the config. So
+ * the coverage is real but indirect, and an indirect dependency that nothing
+ * asserts is one `files` edit away from disappearing in silence.
+ */
+function selfTestSelfTestHookCoverage({ check }) {
+  // The reader first, on a fixture, so the assertion below is known to be
+  // able to fail rather than agreeing with a regex it mis-parsed.
+  const fixture = [
+    '[[repos.hooks]]',
+    'id = "some-hook"',
+    'files = "^(scripts/a\\\\.mjs|\\\\.github/b\\\\.yml)$"',
+    'stages = ["pre-commit"]',
+    '',
+    '[[repos.hooks]]',
+    'id = "other-hook"',
+    'files = "^never\\\\.txt$"',
+  ].join('\n')
+  const parsed = findHookFilesPattern(fixture, 'some-hook')
+  check(
+    parsed.test('scripts/a.mjs') &&
+      parsed.test('.github/b.yml') &&
+      !parsed.test('scriptsXa.mjs') &&
+      !parsed.test('never.txt'),
+    'a prek `files` pattern is read back as the regex prek itself would use (TOML backslash escaping survives, and the right hook block is picked)',
+    String(parsed),
+  )
+  for (const [label, hookId] of [
+    ['an unknown hook id', 'no-such-hook'],
+    ['a hook with no `files` pattern', 'always-run-hook'],
+  ]) {
+    let threw = null
+    try {
+      findHookFilesPattern(`${fixture}\n\n[[repos.hooks]]\nid = "always-run-hook"\n`, hookId)
+    } catch (err) {
+      threw = err
+    }
+    check(threw !== null, `the prek reader throws on ${label} instead of passing vacuously`, '')
+  }
+
+  const pattern = findHookFilesPattern(readFileSync(PREK_CONFIG_PATH, 'utf8'), SELF_TEST_HOOK_ID)
+  const missing = SELF_TEST_HOOK_DEPENDENCIES.filter((p) => !pattern.test(p))
+  check(
+    missing.length === 0,
+    `the \`${SELF_TEST_HOOK_ID}\` prek hook still fires for every file this guard depends on (it is what re-runs zizmor when .github/zizmor.yml changes)`,
+    `${String(pattern)} does not match: ${missing.join(', ')}`,
   )
 }
 
@@ -698,6 +863,7 @@ function runSelfTest() {
   selfTestLineAnchorDetection({ check })
   selfTestInlineScan({ check })
   selfTestHygiene({ check })
+  selfTestSelfTestHookCoverage({ check })
   selfTestFindingLineHarvest({ check })
   selfTestZizmorSurvivesLineDrift({ check, fail })
 

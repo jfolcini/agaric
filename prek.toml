@@ -2048,13 +2048,23 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit"]
 
+# This self-test is also the ONLY hook that re-runs zizmor when
+# `.github/zizmor.yml` itself changes (#3960): the `zizmor` hook below is
+# keyed to `.github/workflows/**` + `.github/actions/**` and cannot be widened
+# to the config, because it forwards its matched filenames to the binary as
+# AUDIT TARGETS — zizmor would be asked to audit its own config as a workflow.
+# So the dependency is recorded here instead, and asserted rather than merely
+# written down: the guard reads this `files` pattern back out of prek.toml and
+# fails if it stops naming any of the four paths it depends on
+# (`SELF_TEST_HOOK_DEPENDENCIES`). `prek.toml` is one of them for that reason —
+# the guard now reads this file, so an edit to it must re-run the guard.
 [[repos.hooks]]
 id = "cache-poisoning-suppressions-self-test"
 name = "zizmor: cache-poisoning suppressions guard self-test"
 entry = "node scripts/check-cache-poisoning-suppressions.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^(scripts/check-cache-poisoning-suppressions\\.mjs|\\.github/zizmor\\.yml|\\.github/workflows/ci\\.yml)$"
+files = "^(scripts/check-cache-poisoning-suppressions\\.mjs|\\.github/zizmor\\.yml|\\.github/workflows/ci\\.yml|prek\\.toml)$"
 stages = ["pre-commit"]
 
 # pairing-rejection-contract: the responder's rejection messages are declared

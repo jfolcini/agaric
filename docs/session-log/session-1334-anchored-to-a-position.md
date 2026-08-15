@@ -138,3 +138,76 @@ fails the new colourised-fixture assertion; removing both reproduces CI's failur
 Worth stating plainly, since this is the third time in this batch: the PR whose subject is *a suppression
 must not depend on something incidental to its position* shipped a guard that depended on something
 incidental to its environment.
+
+### The same defect, three times, each fix silent about the dimension it introduced
+
+Review round three of this PR found the third iteration of one defect. Laid out in order:
+
+- **v1** (before #3716) threw away a correct result: every off-schedule run passed `--dry-run`, so a
+  `workflow_dispatch` computed the true failing set and discarded it, and the rolling issue kept
+  advertising a stale — sometimes disjoint — set for up to a week.
+- **v2** (#3716, this PR) published an incorrect one: with `--dry-run` gone and `--skipped-ok` left
+  standing, a lane that merely `skipped` diffed as *recovered*, and a dispatch closed the tracking
+  issue on the strength of a lane never having run.
+- **v3** (the carry-over fix, also this PR) would have published a *branch's* result as the
+  repository's: a dispatch runs on a user-selected ref, the tracking issue is repo-wide, and nothing
+  compared the two. Dispatch on `fix/mutants`, find every lane green there, close an issue whose
+  subject — `main` — is still red, for up to seven days.
+
+Each fix was correct about the failure it was aimed at and silent about the dimension it had just
+introduced. v1→v2 fixed *whether* the answer is kept and said nothing about *which lanes it covers*;
+v2→v3 fixed *which lanes* and said nothing about *whose lanes*. The PR body's idempotency argument is
+sound and answers none of this: idempotence is about churn, provenance is about whose truth is being
+written. Both reviews landed on the same sentence — the justification for writing was still accurate,
+and had stopped being sufficient.
+
+The fix keeps the off-cycle answer authoritative only for the ref the cron itself uses
+(`refs/heads/main`, on the full `GITHUB_REF` — `GITHUB_REF_NAME` is `main` for a *tag* named `main`
+too, and a tag is a legal dispatch target), and dry-runs everywhere else.
+
+### A guard that accepts both the fix and the bug pins nothing
+
+The old regression guard searched the reporter job's text for the `--dry-run` token and failed if it
+appeared on any non-comment line. That guard would have **rejected this fix**, because it cannot tell
+a conditional `--dry-run` from an unconditional one — it was pinning "the token never appears" when
+the invariant is "a dispatch on the default branch is not silently discarded". It also read prose: a
+trailing comment merely *mentioning* the flag tripped it.
+
+Replaced by a behavioural one. `resolveReporterInvocation` extracts the step's own `run:` block from
+the workflow, executes it under `bash` with a stub `node` first on `$PATH`, and returns the argv the
+runner would really produce for a given event and ref. `checkReporterAuthority` then asserts **both**
+arms, plus the near-miss:
+
+| event / ref | expected |
+| --- | --- |
+| `schedule` @ `refs/heads/main` | writes; no `--skipped-ok` (on the cron a skipped lane is a real failure) |
+| `workflow_dispatch` @ `refs/heads/main` | writes, `--skipped-ok` — #3716 stays fixed |
+| `workflow_dispatch` @ `refs/heads/fix/mutants` | `--dry-run` — #3960 |
+| `workflow_dispatch` @ `refs/tags/main` | `--dry-run` — a tag is not the branch |
+
+Every one falsified before being trusted: deleting the ref guard reddens the non-default arm and the
+tag arm; restoring the unconditional `--dry-run` reddens the default-ref arm; a `GITHUB_REF_NAME`
+comparison passes both branch arms and reddens the tag arm. Comments about `--dry-run` are inert now
+by construction, because bash already knows what a `#` means.
+
+### Three fail-open guards, one shape
+
+The remaining findings were all the same shape as the bug the PR was fixing — an empty result meaning
+"healthy":
+
+- `findLineAnchoredCachePoisoningIgnores` stopped at the **first** `cache-poisoning:` key, so anchors
+  under a second one were never scanned and `[]` came back. Identical to the four-space-indent
+  fail-open fixed earlier in the same PR, one axis over.
+- The issue body listed a carried-over lane under `### Currently-failing lanes` while the status table
+  three lines below reported it `skipped` — the body contradicting itself on one screen, asserting a
+  failure nobody observed. The carry-over behaviour was right; only the rendering was wrong.
+- `.github/zizmor.yml` claimed the guard requires "every caching step to carry the inline comment".
+  It does not: the `always_run` hook only notices **zero**, and the exactly-four assertion lives in a
+  different hook. Given that this PR's own blocking bug was caused by a justification that had gone
+  stale, an overclaiming comment about a guard is not a cosmetic issue.
+
+And note 5's dependency is now asserted rather than noted: the `zizmor` prek hook cannot cover
+`.github/zizmor.yml` (it forwards matched filenames to the binary as audit *targets*, so zizmor would
+be asked to audit its own config), so the only thing re-running zizmor on a config edit is this
+guard's self-test hook. The guard reads that hook's `files` pattern back out of `prek.toml` and fails
+if it stops naming any path it depends on.

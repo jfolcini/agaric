@@ -366,7 +366,26 @@ export function buildStatusTable(lanes, profile = PROFILES[DEFAULT_PROFILE]) {
   return lines
 }
 
-export function buildIssueBody({ all, lanes, runUrl, profile = PROFILES[DEFAULT_PROFILE] }) {
+/**
+ * `carriedOver` (#3960) — the tracked ${units} this run could NOT observe.
+ *
+ * They belong in the marker block (they are still tracked; "it never ran" is
+ * not evidence of recovery) but NOT in a sentence that calls them failing:
+ * the status table two lines below reports them `skipped`, so a body that
+ * listed them under "currently failing" contradicted itself on one screen and
+ * asserted a failure nobody observed. The tracked set is unchanged by this —
+ * only the prose around it.
+ */
+export function buildIssueBody({
+  all,
+  carriedOver = [],
+  lanes,
+  runUrl,
+  profile = PROFILES[DEFAULT_PROFILE],
+}) {
+  const carried = all.filter((j) => carriedOver.includes(j))
+  const observedFailing = all.filter((j) => !carriedOver.includes(j))
+  const list = (jobs) => jobs.map((j) => `\`${j}\``).join(', ')
   const out = []
   out.push(
     `${profile.what} It is filed, updated and closed automatically by \`scripts/file-scheduled-failures.mjs\` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.`,
@@ -380,7 +399,18 @@ export function buildIssueBody({ all, lanes, runUrl, profile = PROFILES[DEFAULT_
     `A ${profile.unit} that stays red across runs is NOT re-commented — only a newly-failing ${profile.unit} produces a comment, so a persistent failure never spams this thread.`,
   )
   out.push('')
-  out.push(`### Currently-failing ${profile.units} (${all.length})`)
+  out.push(`### Tracked failing ${profile.units} (${all.length})`)
+  if (carried.length > 0) {
+    out.push('')
+    out.push(
+      `Failing as of this run: ${observedFailing.length > 0 ? list(observedFailing) : `_none_`}.`,
+    )
+    out.push('')
+    out.push(
+      `Carried over — did NOT run this run (${list(carried)}), so neither failing nor recovered. A ${profile.unit} that never executed stays tracked until a run can actually observe it; the status table below shows what it really did.`,
+    )
+  }
+  out.push('')
   out.push(
     `_Machine-readable — do not hand-edit the marker lines below. Removing a ${profile.unit} here just means the next run will report it as new again._`,
   )
@@ -479,49 +509,191 @@ export function findUncoveredLanes(workflowText, reporterJob = 'report-scheduled
   return jobs.filter((j) => j !== reporterJob && !needs.includes(j))
 }
 
+// The step whose `run:` block decides — per event AND per ref — whether this
+// script's answer is authoritative. Matched by name, so a rename fails loud.
+export const REPORTER_STEP_NAME =
+  'File, update or close the single scheduled-failure tracking issue'
+
+// The ref the cron itself runs on: GitHub schedules a workflow against the
+// default branch's HEAD. A `workflow_dispatch` on this exact ref is
+// cron-equivalent — that is the case #3716 exists to keep authoritative —
+// and a dispatch on anything else is a BRANCH's answer to a repo-wide
+// question, which is the case #3960 exists to keep out of the issue.
+export const CRON_REF = 'refs/heads/main'
+
 /**
- * #3716 — the reporting job used to append `--dry-run` to its own CLI
- * invocation whenever the triggering event was not `schedule`, so a
- * `workflow_dispatch` computed the correct failing set and then discarded
- * it: the tracking issue kept advertising whatever a PRIOR (by then
- * possibly stale, sometimes disjoint from the truth) run had written, for
- * up to a week. `--dry-run` is a legitimate flag on THIS script — it is
- * exercised directly in `selfTestGhCallSequence` below — but the reporting
- * JOB must never pass it to itself, on any event. Returns `true` if the
- * job's block contains `--dry-run` on any line that is not a full-line
- * comment.
- *
- * That is a deliberate OVER-approximation, not an exact reading of the
- * job's semantics: only whole comment lines are stripped, so a TRAILING
- * comment that merely mentions the flag (`extra=(--skipped-ok)  # not
- * --dry-run`) trips the guard too. Erring that way is the safe direction —
- * it fails loudly at commit time on prose, where the fix is to move the
- * remark onto its own line, and cannot miss a real reintroduction hidden
- * after a `#` on a live line. Pinned as such by a fixture in § 12 of
- * `runSelfTest`, so this claim and the code cannot drift apart.
- *
- * Text-based on purpose, same reasoning as `findUncoveredLanes` above.
+ * The reporting step's `run:` script, dedented, exactly as the runner would
+ * execute it. Throws when the step or its block scalar cannot be found: a
+ * rename must fail loud, not pass vacuously (same rule as
+ * `findLastResortNoticeCondition`).
  */
-export function findDispatchDryRunUsage(workflowText, reporterJob = 'report-scheduled-failures') {
-  const jobHeader = `\n  ${reporterJob}:\n`
-  const jobStart = workflowText.indexOf(jobHeader)
-  if (jobStart === -1) throw new Error(`job \`${reporterJob}\` not found in workflow`)
-  const afterHeader = workflowText.slice(jobStart + jobHeader.length)
-  // The next top-level job key (exactly two leading spaces) or a document
-  // end ends this job's block. `afterHeader` starts INSIDE the job, so any
-  // match is by construction after its own header.
-  const nextJobMatch = afterHeader.match(/\n {2}[A-Za-z0-9_-]+:\s*\n/)
-  const jobText = nextJobMatch ? afterHeader.slice(0, nextJobMatch.index) : afterHeader
-  // Strip full-line comments before searching — both YAML doc comments and
-  // bash comments inside a `run: |` block scalar are `#`-prefixed lines, and
-  // this job's own docs are expected to keep discussing `--dry-run` in prose
-  // (why the flag must never reach here) without that prose itself tripping
-  // the guard it is explaining.
-  const executableText = jobText
+export function findReporterRunScript(workflowText, stepName = REPORTER_STEP_NAME) {
+  const lines = workflowText.split('\n')
+  const nameRe = new RegExp(
+    `^\\s*-\\s*name:\\s*${stepName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
+  )
+  const stepIdx = lines.findIndex((l) => nameRe.test(l))
+  if (stepIdx === -1) {
+    throw new Error(`no \`${stepName}\` step found — did it get renamed or deleted?`)
+  }
+  let runIdx = -1
+  for (let i = stepIdx + 1; i < lines.length; i++) {
+    if (/^\s*-\s*name:\s/.test(lines[i])) break
+    if (/^\s*run:\s*\|\s*$/.test(lines[i])) {
+      runIdx = i
+      break
+    }
+  }
+  if (runIdx === -1) throw new Error(`the \`${stepName}\` step has no block-scalar \`run: |\``)
+  const runIndent = lines[runIdx].match(/^(\s*)/)[1].length
+  const body = []
+  for (let i = runIdx + 1; i < lines.length; i++) {
+    if (lines[i].trim() === '') {
+      body.push('')
+      continue
+    }
+    if (lines[i].match(/^(\s*)/)[1].length <= runIndent) break
+    body.push(lines[i])
+  }
+  const populated = body.filter((l) => l.trim() !== '')
+  if (populated.length === 0) throw new Error(`the \`${stepName}\` step's \`run:\` block is empty`)
+  const dedent = Math.min(...populated.map((l) => l.match(/^(\s*)/)[1].length))
+  return body.map((l) => l.slice(dedent)).join('\n')
+}
+
+/**
+ * #3716/#3960 — what the reporting step ACTUALLY hands this script for a
+ * given event and ref, obtained by running the step's own bash against a
+ * stub `node` first on `$PATH`.
+ *
+ * This replaces a text guard that searched the job block for the `--dry-run`
+ * token. That guard pinned the wrong invariant twice over. It could not tell
+ * a conditional `--dry-run` (the fix) from an unconditional one (the bug),
+ * so it rejected the fix; and it read prose, so a trailing comment merely
+ * MENTIONING the flag tripped it while the actual semantics — under which
+ * event, on which ref, does this job write to a repo-wide issue — were never
+ * examined at all. Executing the block answers the real question and is
+ * immune to comments by construction: bash already knows what a `#` means.
+ *
+ * The step is this repo's own file and runs with a stubbed `node`, so nothing
+ * it can do reaches GitHub.
+ */
+export function resolveReporterInvocation(
+  workflowText,
+  { eventName = 'schedule', ref = CRON_REF, stepName = REPORTER_STEP_NAME } = {},
+) {
+  const script = findReporterRunScript(workflowText, stepName)
+  const dir = mkdtempSync(join(tmpdir(), 'scheduled-failures-step-'))
+  const log = join(dir, 'argv.log')
+  const stub = join(dir, 'node')
+  // Shebang is the ABSOLUTE path of the real node, never `/usr/bin/env node`:
+  // this stub IS named `node` and sits first on `$PATH`, so `env node` would
+  // re-exec the stub forever.
+  writeFileSync(
+    stub,
+    [
+      `#!${process.execPath}`,
+      "const fs = require('node:fs')",
+      `fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n')`,
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+  chmodSync(stub, 0o755)
+  writeFileSync(log, '', 'utf8')
+  const stepFile = join(dir, 'step.sh')
+  writeFileSync(stepFile, script, 'utf8')
+  execFileSync('bash', [stepFile], {
+    cwd: dir,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      PATH: `${dir}:${process.env.PATH ?? ''}`,
+      EVENT_NAME: eventName,
+      GITHUB_REF: ref,
+      GITHUB_REF_NAME: ref.replace(/^refs\/(?:heads|tags)\//, ''),
+      NEEDS_JSON: '{"some-lane":{"result":"success"}}',
+      GH_TOKEN: 'stub-token',
+    },
+  })
+  const calls = readFileSync(log, 'utf8')
     .split('\n')
-    .filter((l) => !/^\s*#/.test(l))
-    .join('\n')
-  return executableText.includes('--dry-run')
+    .filter((l) => l.length > 0)
+    .map((l) => JSON.parse(l))
+  if (calls.length !== 1) {
+    throw new Error(
+      `the reporting step invoked \`node\` ${calls.length} time(s); expected exactly one call to the reporter`,
+    )
+  }
+  const [entry, ...args] = calls[0]
+  if (!String(entry).endsWith('file-scheduled-failures.mjs')) {
+    throw new Error(`the reporting step ran \`node ${entry}\`, not the reporter script`)
+  }
+  return { entry, args }
+}
+
+/**
+ * The invariant the guard above exists for, in both directions:
+ *
+ *   * the cron run, and a dispatch on the ref the cron uses, are
+ *     AUTHORITATIVE — no `--dry-run`, or an off-cycle answer is computed and
+ *     thrown away and the issue keeps advertising a stale, sometimes
+ *     inverted, set for up to a week (#3716);
+ *   * a dispatch on ANY other ref is not — the tracking issue is repo-wide,
+ *     so writing there publishes one branch's lane results as the
+ *     repository's health, which is the same false green one dimension over
+ *     (#3960).
+ *
+ * Pinning only one of those is how this defect has already been shipped
+ * twice, so both are asserted here, plus the `--skipped-ok` pairing that
+ * only makes sense off the schedule.
+ *
+ * Returns `{ problems, cases }`; an empty `problems` means healthy.
+ */
+export function checkReporterAuthority(
+  workflowText,
+  { cronRef = CRON_REF, otherRef = 'refs/heads/fix/mutants', stepName = REPORTER_STEP_NAME } = {},
+) {
+  const tagRef = `refs/tags/${cronRef.replace(/^refs\/heads\//, '')}`
+  const at = (eventName, ref) =>
+    resolveReporterInvocation(workflowText, { eventName, ref, stepName }).args
+  const cases = {
+    schedule: at('schedule', cronRef),
+    dispatchOnCronRef: at('workflow_dispatch', cronRef),
+    dispatchOnOtherRef: at('workflow_dispatch', otherRef),
+    dispatchOnTagOfCronRef: at('workflow_dispatch', tagRef),
+  }
+  const problems = []
+  if (cases.schedule.includes('--dry-run')) {
+    problems.push('the scheduled run passes `--dry-run` — the weekly report writes nothing at all')
+  }
+  if (cases.schedule.includes('--skipped-ok')) {
+    problems.push(
+      'the scheduled run passes `--skipped-ok` — on the cron every lane runs, so a `skipped` lane is a real failure and must read as one',
+    )
+  }
+  if (cases.dispatchOnCronRef.includes('--dry-run')) {
+    problems.push(
+      `a workflow_dispatch on ${cronRef} passes \`--dry-run\` — the one way to get an off-cycle answer computes it and discards it, leaving the issue advertising a stale set for up to a week (#3716)`,
+    )
+  }
+  if (!cases.dispatchOnCronRef.includes('--skipped-ok')) {
+    problems.push(
+      'a workflow_dispatch does not pass `--skipped-ok` — the schedule-only filer lane reports `skipped` off the cron, which would read as a lane failure',
+    )
+  }
+  if (!cases.dispatchOnOtherRef.includes('--dry-run')) {
+    problems.push(
+      `a workflow_dispatch on ${otherRef} WRITES for real — that branch's lane results would be published as the repo-wide tracking issue's answer, closing an issue whose subject (${cronRef}) is still red (#3960)`,
+    )
+  }
+  if (!cases.dispatchOnTagOfCronRef.includes('--dry-run')) {
+    problems.push(
+      `a workflow_dispatch on ${tagRef} writes for real — a TAG is not the branch the cron runs, so the ref test must compare the full ref, not the short name`,
+    )
+  }
+  return { problems, cases }
 }
 
 /**
@@ -710,7 +882,7 @@ export function main(argv = process.argv.slice(2)) {
     return
   }
 
-  const body = buildIssueBody({ all, lanes, runUrl, profile })
+  const body = buildIssueBody({ all, carriedOver, lanes, runUrl, profile })
   const comment =
     action === 'close'
       ? buildRecoveryComment({ resolvedOnes, runUrl, profile })
@@ -950,9 +1122,9 @@ function selfTestGhCallSequence({ check }) {
   // (this script's own `--dry-run` flag, still legitimate on its own — see
   // the checks above — but never meant to reach here from a dispatch) to
   // reproduce the bug as RED, then the FIXED way (no `--dry-run`) as GREEN.
-  // The workflow-level regression guard (§12 in `runSelfTest`,
-  // `findDispatchDryRunUsage`) is what stops `--dry-run` from reaching this
-  // path again; this pins what happens on either side of that guard.
+  // The workflow-level guard (§12 in `runSelfTest`, `checkReporterAuthority`)
+  // is what decides WHICH runs reach this path with the flag and which reach
+  // it without; this pins what happens on either side of that decision.
   {
     const staleBody = buildIssueBody({
       all: ['full-suite'],
@@ -1033,13 +1205,26 @@ function selfTestGhCallSequence({ check }) {
       ['--skipped-ok'],
     )
     const mixedSeq = mixedCalls.map((c) => c.sub).join(',')
-    const mixedTracked = parseKnownLanes(mixedCalls.find((c) => c.sub === 'edit')?.body ?? '')
+    const mixedBody = mixedCalls.find((c) => c.sub === 'edit')?.body ?? ''
+    const mixedTracked = parseKnownLanes(mixedBody)
     check(
       mixedSeq === 'edit,comment' &&
         mixedTracked.has('file-fuzz-findings') &&
         mixedTracked.has('mutants'),
       'the body rewritten alongside a NEW failure still tracks the skipped lane (it is not silently dropped)',
       `gh sequence was: ${mixedSeq || '(none)'}; tracked after=[${[...mixedTracked].join(',')}]`,
+    )
+    // …and `main()` really hands the renderer the carry-over set, so the
+    // body GitHub receives distinguishes "failing" from "did not run".
+    // Asserting the pure renderer proves nothing about the write path: the
+    // pre-fix `main()` rendered the identical `all` with no carry-over
+    // argument at all, and the body then called a `skipped` lane failing
+    // three lines above a table reporting it `skipped`.
+    check(
+      /Failing as of this run: `mutants`\./.test(mixedBody) &&
+        /Carried over — did NOT run this run \(`file-fuzz-findings`\)/.test(mixedBody),
+      'the body main() writes names the carried lane as carried, not as failing this run',
+      mixedBody,
     )
 
     // The close path must still work when the lane REALLY recovered — i.e.
@@ -1127,6 +1312,39 @@ function selfTestSkippedCarryOver({ check, lanesOf }) {
     JSON.stringify(carriedOverJobs(lanes, { skippedOk: false })),
   )
 
+  // …and the RENDERING half (#3960, second review pass). A carried lane
+  // belongs in the marker block — it is still tracked — but must not be
+  // prose-asserted as failing: the status table directly below reports it
+  // `skipped`, so the body used to contradict itself on one screen.
+  {
+    const rendered = buildIssueBody({
+      all: ['file-fuzz-findings', 'mutants'],
+      carriedOver: ['file-fuzz-findings'],
+      lanes: lanesOf({ 'file-fuzz-findings': 'skipped', mutants: 'failure' }),
+      runUrl: undefined,
+    })
+    check(
+      /Failing as of this run: `mutants`\./.test(rendered) &&
+        /Carried over — did NOT run this run \(`file-fuzz-findings`\)/.test(rendered) &&
+        !/Currently-failing/.test(rendered) &&
+        parseKnownLanes(rendered).has('file-fuzz-findings'),
+      'a carried-over lane renders as carried, never as "currently failing", and stays in the tracked set',
+      rendered,
+    )
+    // The converse: a body with nothing carried must not grow carry-over
+    // prose either — that would be the same unobserved claim, inverted.
+    const plain = buildIssueBody({
+      all: ['mutants'],
+      lanes: lanesOf({ mutants: 'failure' }),
+      runUrl: undefined,
+    })
+    check(
+      !/[Cc]arried over/.test(plain) && parseKnownLanes(plain).has('mutants'),
+      'a body with nothing carried over says nothing about carry-over',
+      plain,
+    )
+  }
+
   // A lane that is genuinely failing NOW is not "carried" past the diff —
   // carry-over must never mask a real red into a silent no-op.
   const stillRed = lanesOf({ 'file-fuzz-findings': 'failure' })
@@ -1187,6 +1405,188 @@ function selfTestLastResortNoticeCondition({ check, fail }) {
   } else {
     fail('the real workflow file is readable', `not found at ${workflowPath}`)
   }
+}
+
+/**
+ * #3716 + #3960 — which runs of the reporting job are AUTHORITATIVE.
+ *
+ * The two halves are one property and must be pinned as a pair:
+ *   * a dispatch on the ref the cron uses must WRITE (else the only
+ *     off-cycle answer is computed and thrown away — #3716), and
+ *   * a dispatch on any other ref must NOT (else a branch's lane results are
+ *     published as the repo-wide issue's answer — #3960).
+ *
+ * Pinning one and leaving the other open is exactly how this defect shipped
+ * twice. Every fixture drives the real bash through
+ * `resolveReporterInvocation`, so a shape that only LOOKS right (a ref test
+ * on `GITHUB_REF_NAME`, say, which cannot tell the branch `main` from a tag
+ * named `main`) fails here rather than in production.
+ */
+function selfTestReporterAuthority({ check, fail }) {
+  const fixture = (branchBody) =>
+    [
+      'jobs:',
+      '  alpha:',
+      '    runs-on: ubuntu-24.04',
+      '  report-scheduled-failures:',
+      '    steps:',
+      `      - name: ${REPORTER_STEP_NAME}`,
+      '        env:',
+      '          EVENT_NAME: ${{ github.event_name }}',
+      '        run: |',
+      '          set -euo pipefail',
+      `          printf '%s' "$NEEDS_JSON" > needs.json`,
+      '          extra=()',
+      '          if [ "$EVENT_NAME" != "schedule" ]; then',
+      ...branchBody.map((l) => `            ${l}`),
+      '          fi',
+      '          node scripts/file-scheduled-failures.mjs --needs-json-file needs.json "${extra[@]}"',
+      '  another-job:',
+      '    runs-on: ubuntu-24.04',
+    ].join('\n')
+
+  const REF_GUARDED = [
+    'extra=(--skipped-ok)',
+    'if [ "$GITHUB_REF" != "refs/heads/main" ]; then',
+    '  extra+=(--dry-run)',
+    'fi',
+  ]
+
+  check(
+    checkReporterAuthority(fixture(REF_GUARDED)).problems.length === 0,
+    'authority guard passes the shipped shape: cron and a cron-ref dispatch write, every other ref dry-runs',
+    JSON.stringify(checkReporterAuthority(fixture(REF_GUARDED)).problems),
+  )
+
+  // v1 of this defect (#3716): every off-schedule run discarded. The
+  // cron-ref dispatch arm is the one that must catch it.
+  {
+    const { problems } = checkReporterAuthority(fixture(['extra=(--dry-run --skipped-ok)']))
+    check(
+      problems.some((p) => p.includes('#3716')),
+      'authority guard catches an UNCONDITIONAL `--dry-run` restored on the dispatch branch (a cron-equivalent dispatch silently discarded)',
+      JSON.stringify(problems),
+    )
+  }
+
+  // v2 of this defect (#3960, this review): every off-schedule run
+  // authoritative, on whatever ref it was dispatched from. The other-ref arm
+  // is the one that must catch it — and it is the arm the old token guard
+  // did not have.
+  {
+    const { problems } = checkReporterAuthority(fixture(['extra=(--skipped-ok)']))
+    check(
+      problems.some((p) => p.includes('#3960')),
+      'authority guard catches an UNGUARDED write (a dispatch on a feature branch publishing that branch as the repo’s health)',
+      JSON.stringify(problems),
+    )
+  }
+
+  // The ref test must compare the FULL ref. `GITHUB_REF_NAME` is `main` both
+  // for the branch and for a tag named `main`, and a tag is a legal dispatch
+  // target — so this near-miss shape has to be red, not green.
+  {
+    const { problems } = checkReporterAuthority(
+      fixture([
+        'extra=(--skipped-ok)',
+        'if [ "$GITHUB_REF_NAME" != "main" ]; then',
+        '  extra+=(--dry-run)',
+        'fi',
+      ]),
+    )
+    check(
+      problems.some((p) => p.includes('refs/tags/main')),
+      'authority guard catches a short-name ref test, which cannot tell the branch `main` from a TAG named `main`',
+      JSON.stringify(problems),
+    )
+  }
+
+  // Prose is inert: the guard executes the block, so bash decides what a `#`
+  // means. The old token guard tripped over a trailing comment that merely
+  // MENTIONED the flag, and this job documents `--dry-run` at length.
+  {
+    const { problems } = checkReporterAuthority(
+      fixture([
+        '# deliberately NOT --dry-run on the cron ref (#3716)',
+        'extra=(--skipped-ok)  # not --dry-run',
+        'if [ "$GITHUB_REF" != "refs/heads/main" ]; then',
+        '  extra+=(--dry-run)',
+        'fi',
+      ]),
+    )
+    check(
+      problems.length === 0,
+      'authority guard is not fooled by comments discussing `--dry-run`, on their own line or trailing (bash already knows what `#` means)',
+      JSON.stringify(problems),
+    )
+  }
+
+  // Extraction failures must be loud, not vacuous passes.
+  for (const [label, text] of [
+    [
+      'a renamed step',
+      ['    steps:', '      - name: Something else', '        run: |', '          echo hi'].join(
+        '\n',
+      ),
+    ],
+    [
+      'a step with no block-scalar `run:`',
+      ['    steps:', `      - name: ${REPORTER_STEP_NAME}`, '        uses: some/action@abc'].join(
+        '\n',
+      ),
+    ],
+  ]) {
+    let threw = null
+    try {
+      findReporterRunScript(text)
+    } catch (err) {
+      threw = err
+    }
+    check(threw !== null, `the run-script extractor throws on ${label}`, '')
+  }
+
+  // …then the real workflow, both arms named individually so a failure says
+  // which direction broke.
+  const workflowPath = new URL('../.github/workflows/scheduled-deep-checks.yml', import.meta.url)
+    .pathname
+  if (!existsSync(workflowPath)) {
+    fail('the real workflow file is readable', `not found at ${workflowPath}`)
+    return
+  }
+  const workflowText = readFileSync(workflowPath, 'utf8')
+  const scheduled = resolveReporterInvocation(workflowText, {
+    eventName: 'schedule',
+    ref: CRON_REF,
+  }).args
+  check(
+    !scheduled.includes('--dry-run') && !scheduled.includes('--skipped-ok'),
+    'the real workflow: the weekly cron run is authoritative and treats a skipped lane as a failure',
+    JSON.stringify(scheduled),
+  )
+  const onCronRef = resolveReporterInvocation(workflowText, {
+    eventName: 'workflow_dispatch',
+    ref: CRON_REF,
+  }).args
+  check(
+    !onCronRef.includes('--dry-run') && onCronRef.includes('--skipped-ok'),
+    `the real workflow: a dispatch on ${CRON_REF} WRITES — the off-cycle answer is not silently discarded (#3716)`,
+    JSON.stringify(onCronRef),
+  )
+  const onOtherRef = resolveReporterInvocation(workflowText, {
+    eventName: 'workflow_dispatch',
+    ref: 'refs/heads/fix/mutants',
+  }).args
+  check(
+    onOtherRef.includes('--dry-run'),
+    'the real workflow: a dispatch on a NON-default ref dry-runs — one branch’s lanes never become the repo-wide issue’s answer (#3960)',
+    JSON.stringify(onOtherRef),
+  )
+  const { problems } = checkReporterAuthority(workflowText)
+  check(
+    problems.length === 0,
+    'the real workflow satisfies every authority rule at once',
+    problems.join(' | '),
+  )
 }
 
 function runSelfTest() {
@@ -1544,73 +1944,13 @@ function runSelfTest() {
     )
   }
 
-  // 12. #3716 — the reporting job must never discard a dispatch's findings by
-  //     appending `--dry-run` to its own invocation off the schedule. The
-  //     behavioural half of this (a `--dry-run` invocation really writes
-  //     nothing, a non-`--dry-run` one really writes the current set) is
-  //     covered by `selfTestGhCallSequence`'s dedicated RED/GREEN case above;
-  //     this is the wiring half — the workflow file itself must not be able
-  //     to hand this script that flag on a dispatch, ever again.
-  {
-    // Synthetic fixtures first, so this assertion is demonstrably able to
-    // fail rather than just agreeing with whatever the real file says.
-    const fixture = (extraLine) =>
-      [
-        'jobs:',
-        '  alpha:',
-        '    runs-on: ubuntu-24.04',
-        '  report-scheduled-failures:',
-        '    steps:',
-        '      - run: |',
-        '          extra=()',
-        '          if [ "$EVENT_NAME" != "schedule" ]; then',
-        `            ${extraLine}`,
-        '          fi',
-        '          node scripts/file-scheduled-failures.mjs --needs-json-file needs.json "${extra[@]}"',
-        '  another-job:',
-        '    runs-on: ubuntu-24.04',
-      ].join('\n')
-    check(
-      findDispatchDryRunUsage(fixture('extra=(--dry-run --skipped-ok)')) === true,
-      'wiring guard catches `--dry-run` reintroduced on the dispatch branch',
-      '',
-    )
-    check(
-      findDispatchDryRunUsage(fixture('extra=(--skipped-ok)')) === false,
-      'wiring guard passes a dispatch branch with no `--dry-run`',
-      '',
-    )
-    // Prose about the flag on its OWN line must not trip the guard — this
-    // job's comments discuss `--dry-run` at length by design.
-    check(
-      findDispatchDryRunUsage(fixture('# deliberately NOT --dry-run (#3716)')) === false,
-      'wiring guard ignores `--dry-run` in a full-line comment (the job documents the flag on purpose)',
-      '',
-    )
-    // …but a TRAILING comment does trip it, and the doc comment on
-    // `findDispatchDryRunUsage` says so. The guard strips whole comment
-    // lines only; this pins the over-approximation as documented behaviour
-    // rather than letting the prose claim an exactness the code lacks.
-    check(
-      findDispatchDryRunUsage(fixture('extra=(--skipped-ok)  # not --dry-run')) === true,
-      'wiring guard over-approximates on a TRAILING comment (fails loud, as its doc comment states)',
-      '',
-    )
-
-    // …then the real workflow.
-    const workflowPath = new URL('../.github/workflows/scheduled-deep-checks.yml', import.meta.url)
-      .pathname
-    if (existsSync(workflowPath)) {
-      const hasDryRun = findDispatchDryRunUsage(readFileSync(workflowPath, 'utf8'))
-      check(
-        hasDryRun === false,
-        'the real report-scheduled-failures job never passes --dry-run to itself (#3716)',
-        hasDryRun ? 'found `--dry-run` inside the job block' : '',
-      )
-    } else {
-      fail('the real workflow file is readable', `not found at ${workflowPath}`)
-    }
-  }
+  // 12. #3716 + #3960 — WHICH runs of the reporting job are authoritative.
+  //     Both arms, because this defect has now shipped twice with one arm
+  //     pinned and the other open: v2 kept a dispatch from being discarded
+  //     and said nothing about the ref it ran on. Driven by executing the
+  //     step's own bash (`resolveReporterInvocation`), so what is asserted is
+  //     the argv the runner would really produce, not a token search.
+  selfTestReporterAuthority({ check, fail })
 
   // 13. #3960 — the wiring half of the watchdog decision. The last-resort
   //     bash notice is the ONLY thing that reports a crash of this script,

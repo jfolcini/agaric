@@ -2052,6 +2052,15 @@ jobs:
   # became a live false-green in which a dispatch closed the tracking issue
   # over a lane it had never executed. `--skipped-ok` now CARRIES such a lane
   # over untouched; see `carriedOverJobs` in the script.
+  #
+  # And the write is scoped to the ref the cron uses (#3960, third pass): a
+  # dispatch on any ref other than `refs/heads/main` runs `--dry-run` again.
+  # The tracking issue is repo-wide, so an authoritative dispatch on a
+  # feature branch publishes that BRANCH's lane health as the repository's —
+  # the same false-green the `--dry-run` removal was meant to end, one
+  # dimension over. `resolveReporterInvocation` in the script pins BOTH arms
+  # (default-ref dispatch writes; other-ref dispatch does not) against this
+  # very `run:` block.
   # ---------------------------------------------------------------------------
   report-scheduled-failures:
     needs:
@@ -2108,6 +2117,26 @@ jobs:
             # RECOVERY either — a skipped lane is carried over, because
             # "it never ran" is not evidence that it is fixed.
             extra=(--skipped-ok)
+            # …but only for the ref the cron itself uses. The tracking issue
+            # is REPO-WIDE, while a `workflow_dispatch` runs on a
+            # user-selected ref, so writing unconditionally publishes ONE
+            # BRANCH's lane results as the repository's health: dispatch on
+            # `fix/mutants`, every lane green there, and this job closes an
+            # issue whose subject — `main` — is still red, silently, until
+            # next Monday. Idempotence answers churn, not provenance.
+            #
+            # `GITHUB_REF` (not `GITHUB_REF_NAME`) because only the full ref
+            # distinguishes the branch `main` from a TAG named `main`, and a
+            # tag is a legal dispatch target. On the `schedule` event GitHub
+            # runs the default branch's HEAD, so `refs/heads/main` is exactly
+            # "the ref the cron uses" — the equality is what keeps a
+            # cron-equivalent dispatch (the whole point of #3716)
+            # authoritative instead of silently discarded. `GITHUB_REF` is a
+            # runner-set default env var, so it needs no `env:` mapping and
+            # raises no template-injection question.
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              extra+=(--dry-run)
+            fi
           fi
           node scripts/file-scheduled-failures.mjs \
             --needs-json-file needs.json \

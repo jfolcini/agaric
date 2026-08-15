@@ -109,11 +109,26 @@
 # `finding/location.rs`, honored anywhere in the step's body) rather than a
 # rule in this file, so it is anchored to the step's CONTENT in the workflow
 # — a comment added or removed anywhere else in ci.yml cannot move it,
-# unlike a line number here. `scripts/check-cache-poisoning-suppressions.mjs`
-# guards the wiring: every caching step in .github/workflows/** must carry
-# the inline comment, and this file must not regain a `cache-poisoning`
-# line-anchor list. Run its `--self-test` after touching any of those four
-# steps, ci.yml's job list, or this file.
+# unlike a line number here.
+#
+# `scripts/check-cache-poisoning-suppressions.mjs` guards the wiring, and
+# what it guards is worth stating exactly — an overclaimed justification is
+# the mechanism by which that PR shipped its own blocking bug:
+#
+#   * the `always_run` hook (`cache-poisoning-suppressions`) fails if this
+#     file regains a `cache-poisoning` line-anchor list, and if the inline
+#     mechanism has vanished from EVERY file under .github/workflows/**.
+#     Zero inline suppressions is a wiring failure, not a vacuous pass — but
+#     it is a ZERO check, not a per-step one. It cannot tell you that some
+#     particular caching step still carries its comment.
+#   * the exactly-four assertion, and the live "does the suppression survive
+#     a 12-line drift?" run against the real zizmor binary, live in that
+#     script's `--self-test`, which is a SEPARATE prek hook
+#     (`cache-poisoning-suppressions-self-test`) keyed to this file, ci.yml,
+#     prek.toml and the script itself.
+#
+# Run that `--self-test` after touching any of those four steps, ci.yml's
+# job list, or this file.
 
 rules: {}
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
