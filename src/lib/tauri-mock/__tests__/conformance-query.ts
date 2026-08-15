@@ -17,7 +17,12 @@
  * token may carry ATTRIBUTES so a projection bug that keeps the right ids is
  * still visible ({@link TokenSpec}), and a step may take its page cursor from
  * an earlier step's `next_cursor` ({@link QueryStep.cursor_from}) so a fixture
- * can pin a SECOND page — the cursor is threaded, never recorded.
+ * can pin a SECOND page.
+ *
+ * Two more since: a step records the `AppErrorKind` of a command that REFUSED
+ * ({@link QueryResult.error}, #3928), and the keyset SHAPE of the cursor it
+ * minted ({@link cursorShape}, #3893). The cursor BYTES are still never
+ * recorded.
  *
  * ## The space model is fabricated on both sides
  *
@@ -64,7 +69,11 @@ export interface QueryStep {
    * `b.id DESC`) and #3873 (`list_tags_for_block` returning insertion order).
    * The steps that pin them — `query_advanced_filters`' three, and
    * `query_point_reads_tags`'s `tags_two_surviving_in_id_order` — are
-   * `ordered` now.
+   * `ordered` now. #3821 only ever covered the DEFAULT keyset: the
+   * `advanced_position_page_*` steps (#3893) name an EXPLICIT `position` sort,
+   * are `ordered`, and pass, tiebreak included, so they were never exposed to
+   * it in the first place.
+
    */
   ordered?: boolean
   /**
@@ -82,6 +91,18 @@ export interface QueryResult {
   rows: string[]
   has_more: boolean | null
   total_count: number | null
+  /**
+   * The keyset SHAPE of this step's `next_cursor`, or `null` when it minted
+   * none (#3893). See {@link cursorShape} for what the shape holds and why the
+   * raw bytes are deliberately not it.
+   */
+  cursor: string | null
+  /**
+   * The `AppErrorKind` wire string when the command REFUSED, else `null`
+   * (#3928). A refusal is an answer — `get_block` 404s a tombstone — and
+   * recording it is what lets a fixture step pin one.
+   */
+  error: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -327,11 +348,19 @@ const WIRE: Readonly<Record<string, WireShape>> = {
 
 /**
  * Where a command's opaque page cursor lives in its args (mirror of
- * `cursor_path` in the Rust twin) — `list_blocks` nests every query param under
- * its `request` DTO, everything else takes a top-level `cursor`.
+ * `cursor_path` in the Rust twin) — `list_blocks` and `run_advanced_query` nest
+ * every query param under their request DTO, everything else takes a top-level
+ * `cursor`.
+ *
+ * `run_advanced_query` was missing here until #3893 added the first fixture
+ * that chains it: `AdvancedQueryRequest.cursor` is a field of the DTO, so a
+ * top-level `args.cursor` would have been ignored and the "second page" would
+ * silently have been the FIRST page again.
  */
 function cursorPath(command: string): readonly string[] {
-  return command === 'list_blocks' ? ['request', 'cursor'] : ['cursor']
+  return command === 'list_blocks' || command === 'run_advanced_query'
+    ? ['request', 'cursor']
+    : ['cursor']
 }
 
 /** Write `cursor` into `args` at the command's {@link cursorPath}, creating the
@@ -344,6 +373,102 @@ function injectCursor(command: string, args: Record<string, unknown>, cursor: st
     node = node[key] as Record<string, unknown>
   }
   node[path.at(-1) as string] = cursor
+}
+
+// ---------------------------------------------------------------------------
+// Cursor shape (#3893) — mirror of `cursor_shape` / `shape_of_cursor` in Rust
+// ---------------------------------------------------------------------------
+
+/**
+ * Decode a `next_cursor` and render its keyset SHAPE, or `null` when the step
+ * minted none.
+ *
+ * Before #3893 the harness captured `next_cursor` only to thread it into a
+ * `cursor_from` step, and never put any part of it in the recorded
+ * {@link QueryResult} — so no fixture assertion could see a cursor at all, and
+ * a cursor-format change on the RUST side could land with the mock silently
+ * diverging and every fixture green.
+ *
+ * The recorded value is deliberately NOT the raw cursor string. A cursor's
+ * payload is the boundary row's sort tuple — block ids (stack-local for
+ * op-created rows), page titles, and for a `LastEdited` sort an op-log clock
+ * stamp — i.e. exactly the values the row-token grammar refuses to carry
+ * verbatim. It would also false-redden on a `COALESCE(position, sentinel)`
+ * whose sentinel is `i64::MAX` on one stack and `Number.MAX_SAFE_INTEGER` on
+ * the other while both paginate identically.
+ *
+ * What IS comparable is the structure the two encoders agreed on: the schema
+ * `version`, plus either the ORDERED `t` tags of the engine's `QueryCursor`
+ * tuple (the #3863 class — a mock carrying `{id}` alone differs in arity) or
+ * the sorted set of POPULATED slots of the `pagination::Cursor` struct (whose
+ * optional fields are `skip_serializing_if = "Option::is_none"`, so presence
+ * IS the keyset).
+ *
+ * The base64 decode is part of the assertion: strict URL-safe and unpadded, so
+ * a `btoa` (standard alphabet, padded) on either side renders
+ * `<not-base64url>` and reddens instead of being tolerated into agreement.
+ * Written out here rather than routed through `@/lib/base64url` or the mock's
+ * own `decodeCursor` on purpose — a projection that used the production codec
+ * could not see a change the codec made to itself.
+ *
+ * The concrete boundary VALUES are pinned elsewhere and better: a `cursor_from`
+ * step compares the ROWS the resumed page holds, which is what a wrong boundary
+ * value actually changes.
+ */
+export function cursorShape(raw: string | null): string | null {
+  if (raw == null) return null
+  // `URL_SAFE_NO_PAD`: the url-safe alphabet, no `=`, and never a 1-symbol
+  // remainder (which carries no whole byte — Rust rejects it as InvalidLength).
+  if (!/^[A-Za-z0-9_-]*$/.test(raw) || raw.length % 4 === 1) return '<not-base64url>'
+  let bytes: Uint8Array
+  try {
+    const binary = atob(raw.replaceAll('-', '+').replaceAll('_', '/'))
+    bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0))
+  } catch {
+    return '<not-base64url>'
+  }
+  let json: string
+  try {
+    json = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return '<not-utf8>'
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json) as unknown
+  } catch {
+    return '<not-json>'
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return '<not-an-object>'
+  }
+  const obj = parsed as Record<string, unknown>
+  const rawVersion = obj['version']
+  const version =
+    typeof rawVersion === 'number' && Number.isInteger(rawVersion) && rawVersion >= 0
+      ? String(rawVersion)
+      : '?'
+  const values = obj['values']
+  if (Array.isArray(values)) {
+    const tags = values.map((e) => {
+      const tag = (e as Record<string, unknown> | null)?.['t']
+      return typeof tag === 'string' ? tag : '<untagged>'
+    })
+    // Any SIBLING key of `values` is rendered too — without it the tuple branch
+    // reads `version` and `values` and discards the rest, so `QueryCursor`
+    // growing a field would be a cursor-format change with no effect on the
+    // recorded shape (invisible on the axis #3893 exists to watch, and
+    // asymmetric with the slot branch below). Empty today.
+    const extra = Object.keys(obj)
+      .filter((k) => k !== 'version' && k !== 'values')
+      .toSorted()
+    const suffix = extra.length === 0 ? '' : `+{${extra.join(',')}}`
+    return `v${version}:[${tags.join(',')}]${suffix}`
+  }
+  const slots = Object.keys(obj)
+    .filter((k) => k !== 'version')
+    .toSorted()
+  return `v${version}:{${slots.join(',')}}`
 }
 
 // ---------------------------------------------------------------------------
@@ -582,14 +707,31 @@ export async function runQuerySteps(
       }
       injectCursor(step.command, args, cursors.get(step.cursor_from) ?? null)
     }
-    const response = (await dispatch(step.command, args)) as unknown
-    cursors.set(
-      step.name,
-      (((response ?? {}) as Record<string, unknown>)[shape.cursorKey ?? 'next_cursor'] as
-        | string
-        | null) ?? null,
-    )
-    const rows = rawRows(response, shape).map((t) => relabelToken(t, labels))
+    // A handler that REJECTS has behaved, and the refusal is recorded like any
+    // other answer (#3928). Only an `AppError`-shaped rejection is treated as
+    // one: a bare `Error` (or a thrown non-object) is a MOCK BUG, not a
+    // backend-comparable refusal, and it re-throws so it cannot be authored
+    // into a fixture as if the backend had answered that way. The kind the
+    // handlers mint (`notFoundRejection` → `'not_found'`) is the same snake_case
+    // `AppErrorKind` string the Rust twin records.
+    let response: unknown
+    let error: string | null = null
+    try {
+      response = (await dispatch(step.command, args)) as unknown
+    } catch (err) {
+      const kind = (err as Record<string, unknown> | null)?.['kind']
+      if (typeof kind !== 'string') throw err
+      response = null
+      error = kind
+    }
+    const nextCursor =
+      error === null
+        ? ((((response ?? {}) as Record<string, unknown>)[shape.cursorKey ?? 'next_cursor'] as
+            | string
+            | null) ?? null)
+        : null
+    cursors.set(step.name, nextCursor)
+    const rows = error === null ? rawRows(response, shape).map((t) => relabelToken(t, labels)) : []
     // Scalars are read off the ENVELOPE; a bare response has none, and the
     // Rust twin reports `None` for those commands.
     const envelope = (response ?? {}) as Record<string, unknown>
@@ -597,9 +739,15 @@ export async function runQuerySteps(
       name: step.name,
       rows: step.ordered === true ? rows : rows.toSorted(cmpTokens),
       has_more:
-        shape.hasMoreKey === null ? null : ((envelope[shape.hasMoreKey] as boolean) ?? null),
+        error !== null || shape.hasMoreKey === null
+          ? null
+          : ((envelope[shape.hasMoreKey] as boolean) ?? null),
       total_count:
-        shape.totalKey === null ? null : ((envelope[shape.totalKey] as number | null) ?? null),
+        error !== null || shape.totalKey === null
+          ? null
+          : ((envelope[shape.totalKey] as number | null) ?? null),
+      cursor: cursorShape(nextCursor),
+      error,
     })
   }
   return out

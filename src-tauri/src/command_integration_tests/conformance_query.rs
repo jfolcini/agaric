@@ -12,8 +12,14 @@
 //! backend and is projected into a small, representation-stable shape:
 //!
 //! ```json
-//! { "name": "…", "rows": ["B2", "B4"], "has_more": false, "total_count": 2 }
+//! { "name": "…", "rows": ["B2", "B4"], "has_more": false, "total_count": 2,
+//!   "cursor": null, "error": null }
 //! ```
+//!
+//! `error` is the [`AppErrorKind`] wire string when the command REFUSED, and
+//! the rest of the projection then reads as an empty result. A refusal is an
+//! answer: `get_block` 404s a tombstone, and #3928 is what happens when a step
+//! is written so that it cannot see one.
 //!
 //! The projected results are written back into the fixture's `expected_queries`
 //! by the same `CONFORMANCE_UPDATE=1` authoring flow that writes `expected`, and
@@ -29,10 +35,18 @@
 //!
 //! A step may declare `"cursor_from": "<earlier step name>"`, which feeds that
 //! step's own `next_cursor` into this one (at the command's [`cursor_path`]).
-//! The cursor itself is never recorded — it is an opaque per-stack keyset blob,
-//! so comparing encodings would prove nothing — but the ROWS of the second page
-//! are, and per #3821 that is exactly what a keyset-ordering divergence
-//! changes. A single-page step pins nothing about pagination.
+//! Each stack paginates through its OWN cursor, and the ROWS of the second page
+//! are recorded — per #3821 that is exactly what a keyset-ordering divergence
+//! changes. A single-page step pins nothing about the RESUME.
+//!
+//! It does still pin the cursor's SHAPE. Every step that mints a `next_cursor`
+//! records [`cursor_shape`] of it — the schema version plus the keyset
+//! structure, with the boundary values erased. That closes #3893: before it,
+//! the cursor never entered the recorded projection in any form, so a change to
+//! the Rust cursor format could land with the mock silently diverging and every
+//! fixture green. The bytes themselves are still NOT recorded, and
+//! [`cursor_shape`] documents why that is the stronger choice rather than the
+//! weaker one.
 //!
 //! ## Why `rows` is a list of canonical tokens
 //!
@@ -66,11 +80,18 @@
 //! `query_advanced_filters` queries only SEED blocks, whose ids are
 //! byte-identical on both stacks. #3821 is closed and the mock's
 //! `resolveSortTerms` now mirrors `resolve_sort`, so #3927 set `"ordered":
-//! true` on the three `run_advanced_query` steps and re-authored, exactly as
-//! this note predicted. It matters beyond tidiness: those steps are the only
-//! evidence for `run_advanced_query`'s DEFAULT sort arm in the branch manifest
-//! (`conformance-coverage.test.ts`), and a set comparison is no evidence at
-//! all about an ORDERING branch.
+//! true` on the DEFAULT-sorted `run_advanced_query` steps and re-authored,
+//! exactly as this note predicted. It matters beyond tidiness: those steps are
+//! the only evidence for `run_advanced_query`'s DEFAULT sort arm in the branch
+//! manifest (`conformance-coverage.test.ts`), and a set comparison is no
+//! evidence at all about an ORDERING branch.
+//!
+//! Scope note (#3893): the closed #3821 only ever covered the DEFAULT keyset.
+//! The `advanced_position_page_*` steps added for #3893 carry an EXPLICIT
+//! `position` sort, are `"ordered": true`, and pass — including the `B2`
+//! before `B1` tie at position 1, which is the appended `b.id DESC`
+//! tiebreaker deciding. So a request that names its own sort was never
+//! exposed to #3821 in the first place.
 //!
 //! #3873 used to be a third reason here — `list_tags_for_block` returned
 //! `blockTags` INSERTION order on the mock against the backend's `ORDER BY
@@ -131,11 +152,11 @@ struct RawResult {
     rows: Vec<String>,
     has_more: Option<bool>,
     total_count: Option<i64>,
-    /// The envelope's `next_cursor`, kept OUT of the recorded projection: it is
-    /// an opaque per-stack blob (the backend base64s a versioned JSON keyset,
-    /// the mock encodes its own), so recording it would compare two encodings
-    /// rather than two result sets. It is threaded to the next step instead —
-    /// see `cursor_from` in [`run_query_steps`].
+    /// The envelope's `next_cursor`. Threaded to the next step (`cursor_from`
+    /// in [`run_query_steps`]) and, since #3893, projected through
+    /// [`cursor_shape`] into the recorded `cursor` field. The raw bytes are
+    /// still never recorded — they carry the boundary row's ids and clock
+    /// stamps, which are not comparable across the stacks.
     next_cursor: Option<String>,
 }
 
@@ -406,13 +427,24 @@ fn arg_req<T: serde::de::DeserializeOwned>(args: &Value, key: &str) -> T {
 /// wire it, then give it a fixture step. A command with no arm panics loudly, so
 /// a fixture cannot silently skip the backend leg (a differential that never
 /// reaches one stack looks exactly like agreement).
-async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
-    match command {
+///
+/// ## Why this returns `Result` rather than `expect`ing (#3928)
+///
+/// A read command REFUSING is behaviour, not a harness failure — `get_block`
+/// answers `NotFound` for a tombstone, and that refusal is the whole thing its
+/// fixture step exists to pin. Every call into production code below therefore
+/// propagates with `?` and [`run_query_steps`] records the [`AppErrorKind`] in
+/// the projection, so the mock has to refuse the same call with the same kind.
+///
+/// Only the harness's OWN marshalling still `expect`s: `arg_req` /
+/// `serde_json::to_value` failures are fixture or harness bugs with no
+/// counterpart on the mock side, and turning those into recorded data would
+/// let a mis-typed fixture arg author itself into the expectation.
+async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> Result<RawResult, AppError> {
+    Ok(match command {
         "run_advanced_query" => {
             let request: AdvancedQueryRequest = arg_req(args, "request");
-            let resp = compile_and_run(pool, request)
-                .await
-                .expect("run_advanced_query");
+            let resp = compile_and_run(pool, request).await?;
             let v = serde_json::to_value(&resp).expect("serialize AdvancedQueryResponse");
             RawResult {
                 rows: ids_at(&v, "rows", "id"),
@@ -434,8 +466,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
                 opt_arg(args, "limit").and_then(|v| v.as_i64()),
             )
-            .await
-            .expect("filtered_blocks_query");
+            .await?;
             page_result(&serde_json::to_value(&resp).expect("serialize PageResponse"))
         }
         "list_pages_with_metadata" => {
@@ -445,8 +476,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
                 opt_arg(args, "limit").and_then(|v| v.as_i64()),
             )
-            .await
-            .expect("list_pages_with_metadata");
+            .await?;
             page_result(&serde_json::to_value(&resp).expect("serialize PageResponse"))
         }
         "search_blocks" => {
@@ -458,8 +488,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 arg_or(args, "filter"),
                 None,
             )
-            .await
-            .expect("search_blocks");
+            .await?;
             page_result(&serde_json::to_value(&resp).expect("serialize PageResponse"))
         }
         "list_unfinished_tasks" => {
@@ -471,8 +500,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 opt_arg(args, "limit").and_then(|v| v.as_i64()),
                 &arg_or::<SpaceScope>(args, "scope"),
             )
-            .await
-            .expect("list_unfinished_tasks");
+            .await?;
             page_result(&serde_json::to_value(&resp).expect("serialize PageResponse"))
         }
         "list_undated_tasks" => {
@@ -482,8 +510,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 opt_arg(args, "limit").and_then(|v| v.as_i64()),
                 &arg_or::<SpaceScope>(args, "scope"),
             )
-            .await
-            .expect("list_undated_tasks");
+            .await?;
             page_result(&serde_json::to_value(&resp).expect("serialize PageResponse"))
         }
         "list_page_links" => {
@@ -494,8 +521,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 &arg_or::<SpaceScope>(args, "scope"),
                 tag_ids.as_deref(),
             )
-            .await
-            .expect("list_page_links");
+            .await?;
             let v = serde_json::to_value(&resp).expect("serialize PageLinksResponse");
             // An edge is a PAIR, so its stable token is `source->target`; the
             // envelope's `truncated` / `total` map onto the same two scalars
@@ -534,16 +560,13 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
         // `total_count` are structurally absent and project as `None`.
         "get_journal_page_by_date" => {
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope
-                .require_active()
-                .expect("get_journal_page_by_date requires an active scope");
+            let space_id = scope.require_active()?;
             let row = get_journal_page_by_date_inner(
                 pool,
                 &arg_req::<String>(args, "date"),
                 space_id.as_str(),
             )
-            .await
-            .expect("get_journal_page_by_date");
+            .await?;
             // `Option<BlockRow>`: a hit projects to one token, a miss to none.
             let v = serde_json::to_value(&row).expect("serialize Option<BlockRow>");
             RawResult {
@@ -560,17 +583,14 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
         }
         "list_journal_pages_in_range" => {
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope
-                .require_active()
-                .expect("list_journal_pages_in_range requires an active scope");
+            let space_id = scope.require_active()?;
             let rows = list_journal_pages_in_range_inner(
                 pool,
                 &arg_req::<String>(args, "startDate"),
                 &arg_req::<String>(args, "endDate"),
                 space_id.as_str(),
             )
-            .await
-            .expect("list_journal_pages_in_range");
+            .await?;
             // Bare `Vec<BlockRow>` — the response IS the row array.
             let v = serde_json::to_value(&rows).expect("serialize Vec<BlockRow>");
             RawResult {
@@ -593,9 +613,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
             let field = |k: &str| request.get(k).filter(|v| !v.is_null()).cloned();
             let text = |k: &str| field(k).and_then(|v| v.as_str().map(str::to_owned));
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope
-                .require_active()
-                .expect("list_blocks requires an active scope");
+            let space_id = scope.require_active()?;
             let range = field("dateRange");
             let range_end = |k: &str| {
                 range
@@ -617,21 +635,28 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 field("limit").and_then(|v| v.as_i64()),
                 space_id.as_str().to_owned(),
             )
-            .await
-            .expect("list_blocks");
+            .await?;
             page_result_with(
                 &serde_json::to_value(&resp).expect("serialize PageResponse"),
                 &|row| row_token(row, "id", BLOCK_ATTRS),
             )
         }
         "get_block" => {
-            // `get_block_inner` is the PERMISSIVE reader: it serves a
-            // soft-deleted row rather than 404ing on it (the `deleted_at IS
-            // NULL` twin is `get_active_block_inner`). A step reading a
-            // tombstone is what pins which of the two the command uses.
-            let row = get_block_inner(pool, arg_req::<BlockId>(args, "blockId"))
-                .await
-                .expect("get_block");
+            // #3928 — this arm used to call `get_block_inner`, the PERMISSIVE
+            // reader, which SERVES a soft-deleted row. The shipped
+            // `#[tauri::command] get_block` calls `get_active_block_inner`
+            // (`commands/blocks/queries.rs`), whose SQL carries
+            // `AND deleted_at IS NULL` and answers `NotFound` instead — the
+            // two readers have OPPOSITE behaviour on the one input the step
+            // exists to test, so the differential was certifying a function
+            // the IPC surface does not call, and the mock had been aligned to
+            // the harness rather than to production.
+            //
+            // `get_block_inner` is deliberately NOT reachable from here now:
+            // every public read surface is required to use the active-only
+            // twin, so a conformance arm reaching the permissive one can only
+            // ever be wrong.
+            let row = get_active_block_inner(pool, arg_req::<BlockId>(args, "blockId")).await?;
             let v = serde_json::to_value(&row).expect("serialize BlockRow");
             RawResult {
                 rows: vec![row_token(&v, "id", BLOCK_ATTRS)],
@@ -641,9 +666,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
             }
         }
         "get_blocks" => {
-            let rows = get_blocks_inner(pool, arg_req::<Vec<BlockId>>(args, "ids"))
-                .await
-                .expect("get_blocks");
+            let rows = get_blocks_inner(pool, arg_req::<Vec<BlockId>>(args, "ids")).await?;
             let v = serde_json::to_value(&rows).expect("serialize Vec<BlockRow>");
             RawResult {
                 rows: v.as_array().map_or_else(Vec::new, |a| {
@@ -660,8 +683,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 arg_req::<Vec<BlockId>>(args, "ids"),
                 &arg_or::<SpaceScope>(args, "scope"),
             )
-            .await
-            .expect("batch_resolve");
+            .await?;
             let v = serde_json::to_value(&rows).expect("serialize Vec<ResolvedBlock>");
             RawResult {
                 rows: v.as_array().map_or_else(Vec::new, |a| {
@@ -676,8 +698,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
         }
         "first_child_for_blocks" => {
             let map = first_child_for_blocks_inner(pool, arg_req::<Vec<BlockId>>(args, "blockIds"))
-                .await
-                .expect("first_child_for_blocks");
+                .await?;
             let v = serde_json::to_value(&map).expect("serialize HashMap<String, BlockRow>");
             RawResult {
                 rows: map_row_tokens(&v, "id", BLOCK_ATTRS),
@@ -687,9 +708,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
             }
         }
         "get_properties" => {
-            let rows = get_properties_inner(pool, arg_req::<BlockId>(args, "blockId"))
-                .await
-                .expect("get_properties");
+            let rows = get_properties_inner(pool, arg_req::<BlockId>(args, "blockId")).await?;
             let v = serde_json::to_value(&rows).expect("serialize Vec<PropertyRow>");
             RawResult {
                 rows: v
@@ -706,8 +725,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
                 &arg_req::<BlockId>(args, "blockId"),
                 &arg_req::<String>(args, "key"),
             )
-            .await
-            .expect("get_property");
+            .await?;
             // `Option<PropertyRow>`: a hit projects to one token, a miss to
             // none — the present-vs-absent distinction the step pins.
             let v = serde_json::to_value(&row).expect("serialize Option<PropertyRow>");
@@ -723,9 +741,8 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
             }
         }
         "get_batch_properties" => {
-            let map = get_batch_properties_inner(pool, arg_req::<Vec<BlockId>>(args, "blockIds"))
-                .await
-                .expect("get_batch_properties");
+            let map =
+                get_batch_properties_inner(pool, arg_req::<Vec<BlockId>>(args, "blockIds")).await?;
             let v =
                 serde_json::to_value(&map).expect("serialize HashMap<String, Vec<PropertyRow>>");
             RawResult {
@@ -736,9 +753,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
             }
         }
         "list_tags_for_block" => {
-            let rows = list_tags_for_block_inner(pool, arg_req::<BlockId>(args, "blockId"))
-                .await
-                .expect("list_tags_for_block");
+            let rows = list_tags_for_block_inner(pool, arg_req::<BlockId>(args, "blockId")).await?;
             RawResult {
                 rows: scalar_tokens(&serde_json::to_value(&rows).expect("serialize Vec<String>")),
                 has_more: None,
@@ -749,8 +764,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
         "list_inherited_tags_for_block" => {
             let rows =
                 list_inherited_tags_for_block_inner(pool, arg_req::<BlockId>(args, "blockId"))
-                    .await
-                    .expect("list_inherited_tags_for_block");
+                    .await?;
             RawResult {
                 rows: scalar_tokens(&serde_json::to_value(&rows).expect("serialize Vec<String>")),
                 has_more: None,
@@ -760,16 +774,13 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
         }
         "load_page_subtree" => {
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope
-                .require_active()
-                .expect("load_page_subtree requires an active scope");
+            let space_id = scope.require_active()?;
             let subtree = load_page_subtree_inner(
                 pool,
                 &arg_req::<String>(args, "rootBlockId"),
                 space_id.as_str(),
             )
-            .await
-            .expect("load_page_subtree");
+            .await?;
             let v = serde_json::to_value(&subtree).expect("serialize PageSubtree");
             RawResult {
                 rows: v
@@ -789,7 +800,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> RawResult {
             "conformance query command '{other}' is not wired in the Rust runner \
              (add an arm in conformance_query.rs and the matching entry in the TS twin)"
         ),
-    }
+    })
 }
 
 /// Project a serialized `PageResponse<T>` (the snake_case envelope shared by
@@ -827,10 +838,130 @@ fn page_result_with(v: &Value, token: &dyn Fn(&Value) -> String) -> RawResult {
 /// is what a keyset-ordering divergence changes (#3821).
 fn cursor_path(command: &str) -> &'static [&'static str] {
     match command {
-        // `list_blocks` nests every query param under the `request` DTO.
-        "list_blocks" => &["request", "cursor"],
+        // `list_blocks` and `run_advanced_query` nest every query param under
+        // their request DTO. `run_advanced_query` was missing here until #3893
+        // added the first fixture that chains it: `AdvancedQueryRequest::cursor`
+        // is a field of the DTO (`agaric-store/src/query/mod.rs`), so a
+        // top-level `args.cursor` would have been dropped on the floor and the
+        // "second page" would silently have been the FIRST page again — a
+        // pagination step that proves nothing while looking like it does.
+        "list_blocks" | "run_advanced_query" => &["request", "cursor"],
         _ => &["cursor"],
     }
+}
+
+// ---------------------------------------------------------------------------
+// Cursor shape (#3893)
+// ---------------------------------------------------------------------------
+
+/// Decode a `next_cursor` and render its keyset SHAPE, or `None` when the step
+/// minted no cursor.
+///
+/// ## What this pins, and why it is a shape rather than the bytes
+///
+/// Before #3893 the harness captured `next_cursor` only to thread it into a
+/// `cursor_from` step, and never placed any part of it in the recorded
+/// projection — so no fixture assertion could see a cursor at all, and a
+/// cursor-format change on the Rust side could land with every fixture green.
+///
+/// The recorded value is deliberately NOT the raw cursor string. A cursor's
+/// PAYLOAD is the boundary row's sort tuple: block ids (stack-local for
+/// op-created rows), page titles, and — for a `LastEdited` sort — an op-log
+/// clock stamp. Recording the bytes would import exactly the values the row
+/// token grammar refuses to carry verbatim (see "Row tokens"), and would
+/// false-redden on a `COALESCE(position, sentinel)` whose sentinel is
+/// `i64::MAX` on one stack and `Number.MAX_SAFE_INTEGER` on the other while
+/// both paginate identically.
+///
+/// What IS comparable is the structure the two encoders agreed on:
+///
+///   * `v<version>` — the schema version both codecs stamp and check.
+///   * for the engine's tuple cursor (`QueryCursor`, `values: [CursorValue]`):
+///     the ORDERED list of `#[serde(tag = "t")]` type tags, one per resolved
+///     sort term. This is the #3863 class exactly — a mock that encoded only
+///     `{id}` where the engine carries the whole tagged tuple differs in
+///     arity, and one that mistags a term differs in a tag.
+///   * for the pagination cursor (`Cursor`, `agaric-store/src/pagination`):
+///     the sorted set of POPULATED slots. Its optional fields are
+///     `skip_serializing_if = "Option::is_none"`, so which slots are present
+///     IS which keyset the page was minted on.
+///
+/// The base64 decode is part of the assertion, not a preliminary to it: it is
+/// a strict URL-safe unpadded decode, so a switch to the standard alphabet or
+/// to padded output on either stack renders `<not-base64url>` and reddens.
+/// Deliberately hand-rolled over the JSON rather than routed through
+/// `Cursor::decode` / `QueryCursor::decode`: `QueryCursor` is private to
+/// `agaric_store::query::engine` and — more to the point — a projection that
+/// used each stack's own production codec could not see a change the codec
+/// made to itself.
+///
+/// The concrete boundary VALUES are not abandoned, they are pinned elsewhere
+/// and better: a `cursor_from` step compares the ROWS the resumed page holds,
+/// which is what a wrong boundary value actually changes.
+fn cursor_shape(next_cursor: Option<&str>) -> Value {
+    let Some(raw) = next_cursor else {
+        return Value::Null;
+    };
+    Value::String(shape_of_cursor(raw))
+}
+
+/// Render one encoded cursor string as its canonical shape. Split out from
+/// [`cursor_shape`] so the unit tests below can drive it directly. MUST stay
+/// byte-identical to `cursorShape` in the TS twin.
+fn shape_of_cursor(raw: &str) -> String {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+    let Ok(bytes) = URL_SAFE_NO_PAD.decode(raw) else {
+        return "<not-base64url>".to_owned();
+    };
+    let Ok(json) = String::from_utf8(bytes) else {
+        return "<not-utf8>".to_owned();
+    };
+    let Ok(v) = serde_json::from_str::<Value>(&json) else {
+        return "<not-json>".to_owned();
+    };
+    let Some(obj) = v.as_object() else {
+        return "<not-an-object>".to_owned();
+    };
+    let version = obj
+        .get("version")
+        .and_then(Value::as_u64)
+        .map_or_else(|| "?".to_owned(), |n| n.to_string());
+    // The engine's tuple cursor: an ORDERED list of tagged values.
+    if let Some(values) = obj.get("values").and_then(Value::as_array) {
+        let tags: Vec<&str> = values
+            .iter()
+            .map(|e| e.get("t").and_then(Value::as_str).unwrap_or("<untagged>"))
+            .collect();
+        // Any SIBLING key of `values` is rendered too. Without this the tuple
+        // branch reads `version` and `values` and discards the rest of the
+        // object, so `QueryCursor` growing a field (a sort fingerprint, a
+        // direction flag) would be a cursor-format change with no effect on the
+        // recorded shape — invisible on exactly the axis #3893 exists to watch,
+        // and asymmetric with the pagination branch below, where a new slot
+        // shows up immediately. Empty today, so no fixture value moves.
+        let mut extra: Vec<&str> = obj
+            .keys()
+            .filter(|k| k.as_str() != "version" && k.as_str() != "values")
+            .map(String::as_str)
+            .collect();
+        extra.sort_unstable();
+        let suffix = if extra.is_empty() {
+            String::new()
+        } else {
+            format!("+{{{}}}", extra.join(","))
+        };
+        return format!("v{version}:[{}]{suffix}", tags.join(","));
+    }
+    // The pagination cursor: a fixed struct whose ABSENT slots are skipped.
+    let mut slots: Vec<&str> = obj
+        .keys()
+        .filter(|k| k.as_str() != "version")
+        .map(String::as_str)
+        .collect();
+    slots.sort_unstable();
+    format!("v{version}:{{{}}}", slots.join(","))
 }
 
 /// Write `cursor` into `args` at the command's [`cursor_path`], creating the
@@ -912,8 +1043,25 @@ pub async fn run_query_steps(
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
-        let raw = run_step(pool, command, &args).await;
+        // A command that REFUSES has behaved, and the refusal is recorded like
+        // any other answer (#3928): `error` carries the `AppErrorKind` wire
+        // string and the rest of the projection reads as an empty result, so a
+        // mock that serves the row a command 404s — or 404s where the command
+        // serves — reddens on the `error` field alone.
+        let (raw, error) = match run_step(pool, command, &args).await {
+            Ok(raw) => (raw, Value::Null),
+            Err(e) => (
+                RawResult {
+                    rows: Vec::new(),
+                    has_more: None,
+                    total_count: None,
+                    next_cursor: None,
+                },
+                serde_json::to_value(e.kind()).expect("serialize AppErrorKind"),
+            ),
+        };
         cursors.insert(name.clone(), raw.next_cursor.clone());
+        let cursor = cursor_shape(raw.next_cursor.as_deref());
         let mut rows: Vec<String> = raw.rows.iter().map(|t| relabel_token(t, labels)).collect();
         if !ordered {
             // Set comparison, not sequence comparison — see "Ordering" in the
@@ -927,9 +1075,282 @@ pub async fn run_query_steps(
             "rows": rows,
             "has_more": raw.has_more,
             "total_count": raw.total_count,
+            "cursor": cursor,
+            "error": error,
         }));
     }
     Value::Array(out)
+}
+
+#[cfg(test)]
+mod reader_delegation_tests {
+    /// #3928 — pin that the harness arm and the SHIPPED command reach the same
+    /// reader.
+    ///
+    /// The issue's acceptance criterion is "changing `get_block` to call the
+    /// other reader must turn the step RED". A fixture step cannot deliver that
+    /// on its own, and it is worth being exact about why rather than claiming
+    /// otherwise: every arm of [`run_step`] calls an `*_inner` DIRECTLY, because
+    /// a `#[tauri::command]` takes `State<'_, ReadPool>` and there is no way to
+    /// construct one in a test. So the differential's real premise is a
+    /// SOURCE-LEVEL coupling — "the arm calls what the command calls" — and
+    /// until now nothing checked it. That is exactly how #3928 happened: the arm
+    /// and the command drifted apart silently, and the mock was then aligned to
+    /// the arm.
+    ///
+    /// This test is that coupling, made falsifiable. It reddens if EITHER side
+    /// moves: the command switching back to the permissive reader, or the arm
+    /// doing so. `include_str!` source scanning is the established shape for
+    /// this class of guard in this crate (see
+    /// `pagination_app_tests::block_row_canonical_conformance`).
+    ///
+    /// Scoped to `get_block` deliberately. A general "every arm calls what its
+    /// command calls" checker would need to resolve 20 command→inner
+    /// delegations from source; that sweep was done by hand instead, and
+    /// `get_block` was the only mismatch — so this pins the one pair that
+    /// actually broke, and the one whose two readers have OPPOSITE behaviour on
+    /// the same input.
+    ///
+    /// ## What the hand sweep found, so the denominator is in the repo
+    ///
+    /// All 20 arms were checked against their `#[tauri::command]`. Nineteen
+    /// reach the same function the command does (`list_page_links` reaches
+    /// `list_page_links_inner`, whose whole body is
+    /// `list_page_links_inner_split(pool, pool, …)` — the documented
+    /// single-pool entry point, not a second implementation). `get_block` was
+    /// the only FUNCTION mismatch and is fixed above.
+    ///
+    /// Three ARGUMENT-marshalling divergences remain, and are recorded here
+    /// rather than left in a review thread — they are the same failure shape as
+    /// #3928 (the harness exercising a path production does not), one layer
+    /// down, and none is fixed by this test:
+    ///
+    ///   1. `list_blocks` hand-picks fields out of `args["request"]` instead of
+    ///      deserialising `ListBlocksRequest`, and builds its parent id with
+    ///      `BlockId::from(&str)` (ASCII-uppercase only) where the DTO's
+    ///      `Deserialize` runs the #1558 Crockford canonicalisation.
+    ///   2. `load_page_subtree` types `rootBlockId` as `String`; the command
+    ///      takes a `BlockId` and calls `.as_str()`, so the same
+    ///      canonicalisation is skipped here too.
+    ///   3. `arg_or` DEFAULTS `scope` / `filter` / `todoStates` when a fixture
+    ///      omits them. The real IPC surface makes those required args, so a
+    ///      fixture can reach a combination Tauri would have rejected.
+    ///
+    /// Each is a fixture-authoring hazard rather than a live divergence (no
+    /// current fixture supplies a non-canonical id or omits a required arg), so
+    /// they are scoped out of #3928 rather than silently dropped.
+    const QUERIES_RS: &str = include_str!("../commands/blocks/queries.rs");
+    const HARNESS_RS: &str = include_str!("conformance_query.rs");
+
+    /// The body of `<needle>` up to the first `closer` line after it, where
+    /// `closer` is the CLOSING BRACE AT THE CONSTRUCT'S OWN INDENTATION.
+    ///
+    /// The indentation has to be a parameter rather than always `"\n}\n"`. A
+    /// top-level `fn` closes at column 0, but a `match` ARM closes at the arm's
+    /// indentation — and taking the first column-0 `}` for an arm walks past
+    /// every LATER arm to the end of the enclosing function. That is not a
+    /// theoretical objection: `"get_block" => {` to the next column-0 `}` spans
+    /// ten arms of [`run_step`], so `arm.contains("get_active_block_inner(")`
+    /// would have been satisfiable by any of them. The guard passed only
+    /// because `get_active_block_inner(` happens to appear nowhere else in that
+    /// span — a coincidence the assertion did not state and would not survive a
+    /// future arm reading active blocks.
+    fn body_after(src: &str, needle: &str, closer: &str) -> String {
+        let start = src
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} not found — did it move or get renamed?"));
+        let rest = &src[start..];
+        let end = rest.find(closer).map_or(rest.len(), |i| i + closer.len());
+        rest[..end].to_owned()
+    }
+
+    #[test]
+    fn get_block_command_delegates_to_the_active_only_reader() {
+        let body = body_after(QUERIES_RS, "pub async fn get_block(", "\n}\n");
+        assert!(
+            body.contains("get_active_block_inner("),
+            "the shipped `get_block` no longer calls `get_active_block_inner`. Public \
+             read surfaces must never serve a soft-deleted row; if this delegation is \
+             changed on purpose, the conformance arm in conformance_query.rs and the \
+             `query_point_reads_blocks` fixture step must change with it, or the \
+             differential goes back to certifying a reader the command does not use \
+             (#3928). Body was:\n{body}"
+        );
+        assert!(
+            !body.contains("get_block_inner("),
+            "the shipped `get_block` calls `get_block_inner`, the PERMISSIVE reader \
+             that SERVES tombstones. That is the exact regression #3928 filed: the \
+             conformance step reads a tombstone and would then be pinning the wrong \
+             one of the two readers. Body was:\n{body}"
+        );
+    }
+
+    #[test]
+    fn the_conformance_arm_calls_the_same_reader_the_command_does() {
+        // `run_step`'s arms are indented 8 spaces, so the arm ends at the first
+        // 8-space `}` — NOT the first column-0 one, which is the end of
+        // `run_step` itself, ten arms later.
+        let arm = body_after(HARNESS_RS, "\"get_block\" => {", "\n        }\n");
+        // A tripwire on this scan's OWN scoping, not on the delegation. NOT
+        // load-bearing today (the arm is 24 lines) and said so rather than left
+        // to read as verified: it exists because the pre-#3928-review version of
+        // this scan silently captured 165 lines, and a text scan that quietly
+        // widens is a guard that keeps passing for the wrong reason.
+        assert!(
+            arm.lines().count() < 40,
+            "the `get_block` arm scan captured {} lines, which means the arm-closing \
+             brace moved and the scan is now reading LATER arms — an assertion that \
+             passes on a neighbouring arm's call is not pinning this one. Captured:\n{arm}",
+            arm.lines().count()
+        );
+        assert!(
+            arm.contains("get_active_block_inner("),
+            "the `get_block` conformance arm no longer calls the reader the shipped \
+             command calls. An arm that reaches a different `*_inner` certifies a \
+             function production never runs — and the mock gets aligned to the arm \
+             (#3928). Arm was:\n{arm}"
+        );
+        assert!(
+            !arm.contains("get_block_inner("),
+            "the `get_block` conformance arm calls `get_block_inner`, the permissive \
+             reader. This is #3928 exactly. Arm was:\n{arm}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod cursor_shape_tests {
+    use super::shape_of_cursor;
+    use base64::Engine as _;
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+
+    fn encode(json: &str) -> String {
+        URL_SAFE_NO_PAD.encode(json.as_bytes())
+    }
+
+    /// The engine's `QueryCursor` (`agaric-store/src/query/engine.rs`) — the
+    /// version plus the ORDERED `#[serde(tag = "t")]` tags of the sort tuple.
+    /// #3863 was a mock that carried a 1-element `{id}` payload where the
+    /// engine carries this whole tuple; the arity alone separates them.
+    #[test]
+    fn an_engine_tuple_cursor_renders_version_and_ordered_tags() {
+        assert_eq!(
+            shape_of_cursor(&encode(
+                r#"{"version":1,"values":[{"t":"Int","v":3},{"t":"Text","v":"01ABC"}]}"#
+            )),
+            "v1:[Int,Text]"
+        );
+    }
+
+    /// The tuple is ORDERED, so a reordered sort key is a different shape.
+    /// A sorted/set rendering here would make the reorder invisible, which is
+    /// half of the #3893 failure class.
+    #[test]
+    fn a_reordered_sort_tuple_is_a_different_shape() {
+        assert_ne!(
+            shape_of_cursor(&encode(
+                r#"{"version":1,"values":[{"t":"Int","v":3},{"t":"Text","v":"a"}]}"#
+            )),
+            shape_of_cursor(&encode(
+                r#"{"version":1,"values":[{"t":"Text","v":"a"},{"t":"Int","v":3}]}"#
+            ))
+        );
+    }
+
+    /// A field added ALONGSIDE `values` is a cursor-format change, and the
+    /// tuple branch used to discard every key it did not name — so
+    /// `QueryCursor` growing a sort fingerprint or a direction flag would have
+    /// left the recorded shape identical. Same-named sibling in the TS twin.
+    #[test]
+    fn a_sibling_field_added_to_the_tuple_cursor_changes_the_shape() {
+        assert_eq!(
+            shape_of_cursor(&encode(
+                r#"{"version":1,"values":[{"t":"Text","v":"a"}],"desc":true}"#
+            )),
+            "v1:[Text]+{desc}"
+        );
+        // The suffix is EMPTY for today's two-key cursor, so no fixture moved
+        // when this was added — the guard is free until the format changes.
+        assert_eq!(
+            shape_of_cursor(&encode(r#"{"version":1,"values":[{"t":"Text","v":"a"}]}"#)),
+            "v1:[Text]"
+        );
+    }
+
+    /// A version bump is the cheapest cursor-format change to make and the
+    /// easiest to miss: same tuple, same codec, incompatible cursor.
+    #[test]
+    fn a_version_bump_changes_the_shape() {
+        assert_eq!(
+            shape_of_cursor(&encode(r#"{"version":2,"values":[{"t":"Text","v":"a"}]}"#)),
+            "v2:[Text]"
+        );
+    }
+
+    /// The pagination cursor (`agaric-store/src/pagination`) has no `values`
+    /// array: its optional slots are `skip_serializing_if = "Option::is_none"`,
+    /// so the set of PRESENT keys is the keyset it was minted on. Slots are
+    /// sorted because serde field order is a byte-level detail, not a keyset.
+    #[test]
+    fn a_pagination_cursor_renders_its_populated_slots() {
+        assert_eq!(
+            shape_of_cursor(&encode(r#"{"id":"01ABC","position":3,"version":1}"#)),
+            "v1:{id,position}"
+        );
+        assert_eq!(
+            shape_of_cursor(&encode(r#"{"id":"01ABC","version":1}"#)),
+            "v1:{id}"
+        );
+    }
+
+    /// The two families must never render alike — a tuple cursor and a
+    /// pagination cursor are different codecs, and a projection that collapsed
+    /// them would let one be swapped for the other.
+    #[test]
+    fn the_two_cursor_families_do_not_collide() {
+        assert_ne!(
+            shape_of_cursor(&encode(r#"{"version":1,"values":[{"t":"Text","v":"a"}]}"#)),
+            shape_of_cursor(&encode(r#"{"id":"a","version":1}"#))
+        );
+    }
+
+    /// The base64 decode IS part of the assertion. `URL_SAFE_NO_PAD` is what
+    /// both codecs promise; a standard-alphabet or padded encoder (a bare
+    /// `btoa`, say) must render as a distinct marker rather than being
+    /// tolerated into agreement.
+    #[test]
+    fn a_standard_alphabet_cursor_is_not_silently_accepted() {
+        // Chosen so the standard encoding actually contains a `+` or `/`.
+        let payload = r#"{"id":"a?~ÿ>","version":1}"#;
+        let standard = STANDARD.encode(payload.as_bytes());
+        assert!(
+            standard.contains('+') || standard.contains('/') || standard.contains('='),
+            "test payload must exercise the alphabet difference; got {standard}"
+        );
+        assert_eq!(shape_of_cursor(&standard), "<not-base64url>");
+    }
+
+    /// Everything after the decode is guarded the same way: a payload that is
+    /// not UTF-8 JSON renders a marker instead of panicking the whole suite,
+    /// so a codec change reddens ONE step with a readable diff.
+    #[test]
+    fn a_non_json_payload_renders_a_marker() {
+        assert_eq!(shape_of_cursor(&encode("not json at all")), "<not-json>");
+        assert_eq!(shape_of_cursor(&encode("[1,2]")), "<not-an-object>");
+        assert_eq!(
+            shape_of_cursor(&URL_SAFE_NO_PAD.encode([0xff_u8])),
+            "<not-utf8>"
+        );
+    }
+
+    /// A missing version slot is not the same as version 1. `Cursor::decode`
+    /// accepts a pre-versioning cursor as v1 for BACKWARD compatibility, but a
+    /// freshly-minted cursor that stopped stamping its version is a format
+    /// change, and the projection has to be able to say so.
+    #[test]
+    fn an_unversioned_cursor_is_distinguishable() {
+        assert_eq!(shape_of_cursor(&encode(r#"{"id":"a"}"#)), "v?:{id}");
+    }
 }
 
 #[cfg(test)]

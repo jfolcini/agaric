@@ -61,12 +61,16 @@
   },
   "expected_queries": [
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "inherited_tag_reaches_the_descendant",
       "rows": ["B3"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "inherited_tag_is_not_a_direct_tag",
       "rows": [],

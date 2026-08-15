@@ -109,24 +109,32 @@
   },
   "expected_queries": [
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "page_links_global",
       "rows": ["B2->B1"],
       "total_count": 1
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "filtered_blocks_status_open",
       "rows": ["B3", "B4"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "search_zebrafish",
       "rows": ["B4"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "pages_metadata_alphabetical",
       "rows": ["B1", "B2"],

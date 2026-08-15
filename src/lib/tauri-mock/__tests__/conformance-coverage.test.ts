@@ -1524,7 +1524,7 @@ interface FixtureShape {
   /** #3347 — post-op READ steps (see `conformance-query.ts`). */
   queries?: Array<QueryStepShape>
   /** #3347 — the backend-authored projection of each `queries` step. */
-  expected_queries?: Array<{ name: string; rows: string[] }>
+  expected_queries?: Array<{ name: string; rows: string[]; error?: string | null }>
   /** Additive, replay-inert string tags declaring which scenarios this fixture
    *  pins (see `REQUIRED_SCENARIOS`). Absent on fixtures that predate the tag. */
   scenarios?: string[]
@@ -1547,7 +1547,7 @@ interface LoadedFixture {
   opCommands: Set<string>
   queryCommands: Set<string>
   querySteps: QueryStepShape[]
-  expectedQueries: Array<{ name: string; rows: string[] }>
+  expectedQueries: Array<{ name: string; rows: string[]; error?: string | null }>
   scenarios: Set<string>
 }
 
@@ -2304,6 +2304,7 @@ describe('#3083 conformance-coverage ratchet', () => {
   it('every conformance query step records a non-empty result (or declares itself empty)', () => {
     const vacuous: string[] = []
     const staleEmptyClaim: string[] = []
+    const misdeclaredRefusal: string[] = []
     const misaligned: string[] = []
     for (const fx of fixtures) {
       if (fx.querySteps.length === 0) continue
@@ -2313,9 +2314,20 @@ describe('#3083 conformance-coverage ratchet', () => {
           misaligned.push(`${fx.name}/${step.name}`)
           continue
         }
+        // #3928 — a step that recorded an `error` is NOT vacuous, and must not
+        // be made to declare `expect_empty`. Its comparison is the
+        // `AppErrorKind`, which a constant-`[]` handler does NOT satisfy: the
+        // mock has to REFUSE the same call with the same kind. Its rows are
+        // empty as a CONSEQUENCE of the refusal, not as the pinned negative,
+        // so `expect_empty` on such a step would misdescribe what it proves.
+        const isRefusal = (recorded.error ?? null) !== null
         const isEmpty = recorded.rows.length === 0
-        if (isEmpty && step.expect_empty !== true) vacuous.push(`${fx.name}/${step.name}`)
+        if (isEmpty && !isRefusal && step.expect_empty !== true) {
+          vacuous.push(`${fx.name}/${step.name}`)
+        }
         if (!isEmpty && step.expect_empty === true) staleEmptyClaim.push(`${fx.name}/${step.name}`)
+        if (isRefusal && step.expect_empty === true)
+          misdeclaredRefusal.push(`${fx.name}/${step.name}`)
       }
     }
 
@@ -2341,6 +2353,22 @@ describe('#3083 conformance-coverage ratchet', () => {
       staleEmptyClaim,
       `These query steps declare "expect_empty": true but recorded rows ` +
         `${JSON.stringify(staleEmptyClaim)}. Drop the stale declaration.`,
+    ).toEqual([])
+
+    // NOT load-bearing today, said plainly rather than left to read as
+    // verified: no step in the suite declares `expect_empty` on a refusal, so
+    // deleting this accumulator and its assertion leaves every ratchet green
+    // (checked, not assumed). Unlike the `!isRefusal` clause above — which IS
+    // load-bearing, since without it `get_block_404s_on_tombstone` is reported
+    // vacuous — this one only forbids a combination nobody has written yet. It
+    // stays because the two declarations mean different things and a fixture
+    // author who conflates them would otherwise be told nothing.
+    expect(
+      misdeclaredRefusal,
+      `These query steps declare "expect_empty": true but recorded an \`error\` ` +
+        `${JSON.stringify(misdeclaredRefusal)}. A REFUSAL is not an empty result: ` +
+        `what the step pins is the AppErrorKind, and the empty rows follow from it. ` +
+        `Drop the declaration — the recorded error is already the non-vacuous claim.`,
     ).toEqual([])
   })
 
@@ -2381,7 +2409,22 @@ describe('#3083 conformance-coverage ratchet', () => {
         // Index-aligned with `querySteps`; the vacuity guard above fails first
         // if that alignment ever breaks, so a missing entry here is treated as
         // no evidence rather than silently counted.
-        if ((fx.expectedQueries[i]?.rows.length ?? 0) === 0) continue
+        // #3928 — a REFUSAL counts as live. A command that 404s is differentially
+        // exercised: the mock must reject the same call with the same kind, and
+        // a constant-`[]` handler fails it. Only a step that is empty AND did
+        // not refuse is no evidence.
+        //
+        // NOT load-bearing today, and worth saying so rather than letting it
+        // read as verified: the only refusal step in the suite is
+        // `get_block_404s_on_tombstone`, and `get_block` is kept live by its
+        // populated sibling `get_block_serves_a_live_block` regardless. Deleting
+        // the `error` clause here leaves every ratchet green. It is here because
+        // the rule this guard states is "differentially exercised", and a
+        // refusal is — so a command whose ONLY step is a refusal would otherwise
+        // be accused of being backend-only, which is a wrong verdict rather than
+        // a missing one.
+        const rec = fx.expectedQueries[i]
+        if ((rec?.rows.length ?? 0) === 0 && (rec?.error ?? null) === null) continue
         for (const unit of stepBranchKeys(step.command, step)) liveCommands.add(unit)
       }
     }

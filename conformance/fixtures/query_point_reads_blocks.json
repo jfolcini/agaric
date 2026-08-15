@@ -69,12 +69,24 @@
   },
   "expected_queries": [
     {
+      "cursor": null,
+      "error": "not_found",
       "has_more": null,
-      "name": "get_block_serves_tombstone",
-      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=DELETED"],
+      "name": "get_block_404s_on_tombstone",
+      "rows": [],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "get_block_serves_a_live_block",
+      "rows": ["B4#parent_id=B3#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "get_blocks_keeps_tombstone_drops_missing",
       "rows": [
@@ -84,6 +96,8 @@
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "first_child_skips_tombstoned_first_sibling",
       "rows": [
@@ -93,6 +107,8 @@
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": null,
       "name": "batch_resolve_flags_tombstone",
       "rows": [
@@ -102,6 +118,8 @@
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "load_page_subtree_walks_page_id",
       "rows": [
@@ -126,8 +144,16 @@
         "blockId": "S2"
       },
       "command": "get_block",
-      "comment": "`get_block_inner` is the PERMISSIVE reader — it returns a soft-deleted row rather than 404ing on it; the `deleted_at IS NULL` twin is `get_active_block_inner`. Reading the block the ops just tombstoned is what pins which of the two the command uses. The `page_id` attribute does NOT pin the #1775 class here: this row is a direct child of the page, so `page_id == parent_id` and returning the parent would be indistinguishable. It still catches a nulled `page_id`. The #1775 class is covered by `get_blocks_keeps_tombstone_drops_missing`, whose B4 sits deeper.",
-      "name": "get_block_serves_tombstone"
+      "comment": "#3928 — the shipped `get_block` delegates to `get_active_block_inner`, whose SQL carries `AND deleted_at IS NULL`, so reading the block the ops just tombstoned is a `not_found` and NOT a served row. This step used to be named `get_block_serves_tombstone` and recorded the row: the harness arm was calling `get_block_inner`, the PERMISSIVE reader reserved for internal callers, and the mock had been aligned to the harness rather than to production — so the differential agreed with itself about a function the IPC surface never calls. Paired with `get_block_serves_a_live_block`, which is what stops an implementation that 404s EVERYTHING from passing this one.",
+      "name": "get_block_404s_on_tombstone"
+    },
+    {
+      "args": {
+        "blockId": "S4"
+      },
+      "command": "get_block",
+      "comment": "The other half of the pair: an ACTIVE block still comes back, so the `deleted_at IS NULL` predicate is pinned as a filter rather than as a blanket refusal. S4 is a grandchild (parent B3, page B1), so unlike the tombstone step its `page_id` attribute DOES pin the #1775 class — `page_id != parent_id` here, and a command that returned the immediate parent as the page would redden.",
+      "name": "get_block_serves_a_live_block"
     },
     {
       "args": {

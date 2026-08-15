@@ -100,32 +100,66 @@
   },
   "expected_queries": [
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "advanced_no_filter_returns_the_space",
       "rows": ["B5", "B4", "B3", "B2", "B1"],
       "total_count": 5
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "advanced_state_exclude_done_and_unset",
       "rows": ["B5", "B4", "B2"],
       "total_count": 3
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "advanced_due_date_between_is_inclusive",
       "rows": ["B4", "B3", "B2"],
       "total_count": 3
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "agenda_unfinished_before_march",
       "rows": ["B2"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "agenda_undated_tasks",
+      "rows": ["B5"],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:[Int,Text]",
+      "error": null,
+      "has_more": true,
+      "name": "advanced_position_page_1",
+      "rows": ["B2", "B1"],
+      "total_count": 5
+    },
+    {
+      "cursor": "v1:[Int,Text]",
+      "error": null,
+      "has_more": true,
+      "name": "advanced_position_page_2",
+      "rows": ["B3", "B4"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_position_page_3",
       "rows": ["B5"],
       "total_count": null
     }
@@ -263,6 +297,71 @@
       "command": "list_undated_tasks",
       "comment": "S5 is the only task with a todo_state and neither date.",
       "name": "agenda_undated_tasks"
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 2,
+          "sort": [
+            {
+              "desc": false,
+              "source": {
+                "name": "position",
+                "type": "Column"
+              }
+            }
+          ],
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "#3893 — the first fixture step that PAGINATES `run_advanced_query`, and the reason the gap was invisible: the engine's `QueryCursor` had no conformance coverage of any kind, byte or row, so #3863's cursor divergence could not have reddened here no matter what the projection recorded. An EXPLICIT `position` sort, not the default: the default keyset is the bare `b.id` tiebreak, which #3821 (mock `b.id ASC`, engine `b.id DESC`) still orders the other way round, so a default-sorted page pair would redden on a known open bug instead of on this one. `position` is distinct across the seed except for the B1/B2 tie at 1, which is what exercises the appended `b.id DESC` tiebreak. The recorded `cursor` is the TWO-element tagged tuple `[Int,Text]` — the arity is the #3863 class exactly, since the pre-fix mock encoded the id alone.",
+      "name": "advanced_position_page_1",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 2,
+          "sort": [
+            {
+              "desc": false,
+              "source": {
+                "name": "position",
+                "type": "Column"
+              }
+            }
+          ],
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "The resumed page. Its rows are what a wrong boundary VALUE changes, which is why the `cursor` field erases values and pins structure only — the two assertions are complementary, not redundant. This step also needed `cursor_path` fixing: `AdvancedQueryRequest.cursor` is a field of the request DTO, and the harness was injecting a top-level `args.cursor` that the command would have ignored, so a 'second page' step would silently have re-read the FIRST page.",
+      "cursor_from": "advanced_position_page_1",
+      "name": "advanced_position_page_2",
+      "ordered": true
+    },
+    {
+      "args": {
+        "request": {
+          "limit": 2,
+          "sort": [
+            {
+              "desc": false,
+              "source": {
+                "name": "position",
+                "type": "Column"
+              }
+            }
+          ],
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "The short final page: one row, `has_more` false, and therefore `cursor` NULL. Pins that the end-of-results signal is not conflated with a full page, and that a last page hands back no cursor to chase.",
+      "cursor_from": "advanced_position_page_2",
+      "name": "advanced_position_page_3",
+      "ordered": true
     }
   ],
   "seed": {

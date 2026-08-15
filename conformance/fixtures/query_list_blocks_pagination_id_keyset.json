@@ -154,6 +154,8 @@
   },
   "expected_queries": [
     {
+      "cursor": "v1:{id}",
+      "error": null,
       "has_more": true,
       "name": "by_type_page_1",
       "rows": [
@@ -163,6 +165,8 @@
       "total_count": 6
     },
     {
+      "cursor": "v1:{id}",
+      "error": null,
       "has_more": true,
       "name": "by_type_page_2",
       "rows": [
@@ -172,6 +176,8 @@
       "total_count": 6
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "by_type_page_3",
       "rows": [
@@ -181,6 +187,8 @@
       "total_count": 6
     },
     {
+      "cursor": "v1:{id}",
+      "error": null,
       "has_more": true,
       "name": "by_tag_page_1",
       "rows": [
@@ -190,6 +198,8 @@
       "total_count": null
     },
     {
+      "cursor": "v1:{id}",
+      "error": null,
       "has_more": true,
       "name": "by_tag_page_2",
       "rows": [
@@ -199,6 +209,8 @@
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "by_tag_page_3",
       "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
