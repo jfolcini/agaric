@@ -572,7 +572,19 @@ const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
  *
  * #3892 — `list_blocks` was NOT the only command with an analogous shape, and
  * the sweep that concluded it was (a `grep -rl 'else if let Some'`) was wrong
- * on both halves. `filtered_blocks_query_inner`
+ * on both halves. The first half is `filtered_blocks_query`, manifested
+ * below. The second half is a correction to a claim this note used to make
+ * (#3878): the same grep's third hit was `pages/markdown.rs`'s property-value
+ * markdown serialization and its tag-lookup helper, dismissed at the time as
+ * "write-path formatting code, not a read command's query dispatch". True of
+ * the tag-lookup helper — but not of `export_page_markdown`, which lives in
+ * the same file and matched the same grep, yet is in fact a READ-ONLY IPC
+ * command. It is waived instead via `READ_NO_QUERY_ALLOWLIST` (see that
+ * entry) because it returns a rendered markdown `String`, not canonical
+ * block-id rows the query projection can bind — not because it is a write
+ * path. Recorded here so a later sweep does not repeat the misclassification.
+ *
+ * `filtered_blocks_query_inner`
  * (`src-tauri/src/commands/queries.rs`) carries its own "at most one of
  * value_text, value_text_in, value_date, value_date_range may be supplied per
  * filter" exclusivity guard, and before #3892 only the `value_text` arm had a
@@ -632,9 +644,20 @@ interface BranchDiscriminator {
  *    branch (`list_blocks`).
  *  - `perElement` — `args.<arrayField>[].<field>`; EVERY element is classified
  *    and the step covers the UNION of their branches, because the composed SQL
- *    contains one predicate per element and all of them must be right for the
- *    recorded rows to be right. Zero elements ⇒ zero branches, NOT the default
- *    branch: the dispatch never ran (`filtered_blocks_query`).
+ *    contains one predicate per element. That is WEAKER evidence than "all of
+ *    them must be right for the recorded rows to be right": with several
+ *    filters combined with AND, an over-broad predicate in one element can be fully
+ *    MASKED by a stricter sibling element (the sibling alone would already
+ *    narrow the result to the same rows), so per-element credit does not
+ *    prove that specific element's predicate is correct in isolation — only
+ *    that the union of branches it belongs to was exercised by SOME step. No
+ *    live impact today: every recorded step carries exactly one filter, so
+ *    there is no sibling to do the masking. A step that adds a SECOND filter
+ *    to the same query needs to pin at least one row whose presence (or
+ *    absence) depends on BOTH predicates being individually correct, not
+ *    just their conjunction, or the credit is theater for that element. Zero
+ *    elements ⇒ zero branches, NOT the default branch: the dispatch never ran
+ *    (`filtered_blocks_query`).
  */
 type BranchSource =
   | { readonly kind: 'request' }
@@ -865,10 +888,22 @@ function valueFieldsInOrder(slice: string): string[] {
   return seen
 }
 
+// #3930 review note 4 — `queries.rs` is ~1600 lines and every dispatch site
+// re-reads it from disk; cache the one read across all sites/calls instead.
+let rustCommandsQueriesSource: string | undefined
+
+/** `commands/queries.rs`'s full source, read from disk once and cached for
+ *  every caller in this file (currently just `extractFbqValueDispatch`, once
+ *  per entry in `FBQ_VALUE_DISPATCH_SITES`). */
+function readRustCommandsQueriesSource(): string {
+  rustCommandsQueriesSource ??= readFileSync(RUST_COMMANDS_QUERIES_PATH, 'utf8')
+  return rustCommandsQueriesSource
+}
+
 /** Parse one dispatch site's exclusivity guard and its `else if` chain out of
  *  `commands/queries.rs`. See `FBQ_VALUE_DISPATCH_SITES`. */
 function extractFbqValueDispatch(site: FbqDispatchSite): { guard: string[]; chain: string[] } {
-  const source = readFileSync(RUST_COMMANDS_QUERIES_PATH, 'utf8')
+  const source = readRustCommandsQueriesSource()
   const fnAt = source.indexOf(site.fnNeedle)
   if (fnAt < 0) {
     throw new Error(
@@ -1309,11 +1344,26 @@ describe('#3083 conformance-coverage ratchet', () => {
   //     and non-reserved routings are separate code dispatching on the same
   //     four fields; one manifest entry is only honest while they agree.
   //
-  // The Rust→IPC name mapping is DERIVED here rather than hand-declared (as it
-  // must be for `list_blocks`, whose params are renamed at the boundary):
-  // `PropertyFilter` is `#[serde(rename_all = "camelCase")]`, so the wire name
-  // is mechanically the camelCase of the Rust field, and deriving it means a
-  // renamed field fails here instead of being re-mapped by hand into silence.
+  // #3930 review note 3 — corrected: the Rust→IPC name mapping below is NOT
+  // actually derived from `#[serde(rename_all = "camelCase")]` off
+  // `PropertyFilter`; nothing here parses that attribute. `expected` is a
+  // hardcoded literal, cross-checked against BOTH Rust dispatch sites (so a
+  // reordering/renaming of the Rust IDENTIFIERS fails loud, right below) and
+  // against the manifest's `discriminators` via a hand-written `toCamel` that
+  // mimics what `rename_all = "camelCase"` does. A per-field
+  // `#[serde(rename = "…")]` override on `PropertyFilter` — which changes
+  // the WIRE name without touching the Rust identifier — would slip past
+  // both of those checks unnoticed, because `extractFbqValueDispatch` reads
+  // `pf.value_*` identifiers out of the Rust source, not the attribute. It
+  // would not be silent overall, though: a fixture step still spells the
+  // OLD (manifest-declared) camelCase field name, so on the real backend
+  // that field would deserialize to `None` and the filter would silently
+  // degrade to the key-presence arm — surfacing as a query-result mismatch
+  // in `conformance_fixtures_match_backend` (the Rust runner) for any
+  // fixture exercising that field, or as an uncovered-branch failure in
+  // `every read-only command BRANCH has a conformance query step or a
+  // justified allowlist waiver` below if no other step covers that arm. So
+  // the drift is still loud — it just surfaces elsewhere, not in this test.
   it('filtered_blocks_query branch discriminators match the Rust value-shape dispatch', () => {
     const expected = ['value_text', 'value_text_in', 'value_date', 'value_date_range']
 

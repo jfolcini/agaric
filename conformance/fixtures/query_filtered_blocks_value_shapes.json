@@ -1,5 +1,5 @@
 {
-  "description": "#3892 — the three value-shape arms of `filtered_blocks_query_inner`'s per-filter dispatch that had never been exercised, plus the key-presence arm that has no value predicate at all. Before #3892 the ratchet keyed on the COMMAND, and `filtered_blocks_status_open` (the `valueText` arm, in `query_reads_links_search_pages`) made the whole command read as covered while `valueTextIn` / `valueDate` / `valueDateRange` / no-value emitted SQL nothing had ever compared across the two stacks. Every step below is authored to fail for a SPECIFIC reason a plausible implementation gets wrong (set membership vs first-element, date column vs text column, half-open vs closed range, key-scoped EXISTS vs any-property EXISTS) rather than to pin one obvious row. Non-reserved keys throughout: a reserved key (`todo_state` / `priority` / `due_date` / `scheduled_date`) routes to a direct `b.<col>` predicate instead, which is a second dispatch dimension this fixture deliberately does not mix in.",
+  "description": "#3892 — the three value-shape arms of `filtered_blocks_query_inner`'s per-filter dispatch that had never been exercised, plus the key-presence arm that has no value predicate at all. Before #3892 the ratchet keyed on the COMMAND, and `filtered_blocks_status_open` (the `valueText` arm, in `query_reads_links_search_pages`) made the whole command read as covered while `valueTextIn` / `valueDate` / `valueDateRange` / no-value emitted SQL nothing had ever compared across the two stacks. Every step below is authored to fail for a SPECIFIC reason a plausible implementation gets wrong (set membership vs first-element, date column vs text column, half-open vs closed range, key-scoped EXISTS vs any-property EXISTS) rather than to pin one obvious row. The first four steps use non-reserved keys; a reserved key (`todo_state` / `priority` / `due_date` / `scheduled_date`) routes to a direct `b.<col>` predicate instead of an EXISTS over `block_properties` — a second dispatch dimension the first four steps deliberately do not mix in. #3930 review note 2 — that second dimension was credited with zero differential evidence (every step above uses a non-reserved key, so the reserved-column routing at `queries.rs`'s `reserved_col` match ran only under `filtered_blocks_status_open`'s non-reserved arm, never its own). `filtered_reserved_key_presence_only` below drives it directly: a bare key-presence filter on `todo_state`, which for a reserved key emits ONLY `AND b.todo_state IS NOT NULL` — the sole predicate gating that arm.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -27,7 +27,7 @@
         "position": 1,
         "priority": null,
         "scheduled_date": null,
-        "todo_state": null
+        "todo_state": "DONE"
       },
       {
         "block_type": "content",
@@ -83,7 +83,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 7,
+      "count": 8,
       "ops": [
         {
           "key": "status",
@@ -112,6 +112,9 @@
         {
           "key": "due",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
         }
       ]
     },
@@ -185,6 +188,12 @@
       "name": "filtered_key_presence_only",
       "rows": ["B2", "B3", "B5", "B6"],
       "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "filtered_reserved_key_presence_only",
+      "rows": ["B2"],
+      "total_count": null
     }
   ],
   "name": "query_filtered_blocks_value_shapes",
@@ -255,6 +264,16 @@
         "key": "due",
         "value": {
           "value_date": "2026-08-16"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "todo_state",
+        "value": {
+          "value_text": "DONE"
         }
       },
       "command": "set_property"
@@ -335,6 +354,24 @@
       "command": "filtered_blocks_query",
       "comment": "#3892 the fifth arm: NO value predicate, so the EXISTS degrades to mere key presence (`property_value_predicate_sql` returns an empty fragment). Discriminating because S4 owns a property — just not this one — so an EXISTS that dropped the `bp.key = ?` predicate, or one that required a value, gets a different set.",
       "name": "filtered_key_presence_only"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "todo_state",
+            "operator": "eq"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "#3930 review note 2 — the reserved-column counterpart of `filtered_key_presence_only`. `todo_state` is a RESERVED key, so this filter routes to the direct `b.todo_state` predicate (`queries.rs`'s `reserved_col` match) instead of an EXISTS over `block_properties`, and with no value field supplied the only predicate that arm emits is `AND b.todo_state IS NOT NULL`. Discriminating because B2 (via S2) is the only block with a `todo_state` set — an implementation that dropped that gate, or that fell through to the non-reserved EXISTS branch instead of the reserved one (which would look for a `block_properties` row keyed `todo_state` and find none), returns a different set than just B2.",
+      "name": "filtered_reserved_key_presence_only"
     }
   ],
   "seed": {

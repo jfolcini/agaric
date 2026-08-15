@@ -1164,6 +1164,16 @@ export function fbqPropertyFilterMatches(
   const { pText, pDate, source } = resolved
   const operator = ((pf['operator'] as string | null) ?? 'eq').toLowerCase()
 
+  // #3930 review note 2 — a reserved key's `AND b.{col} IS NOT NULL` gate
+  // (queries.rs's `reserved_col` match) is UNCONDITIONAL: it is emitted
+  // before any value predicate, not only when one is present. Every value
+  // check below is already null-safe for `source === 'reserved'`
+  // (`fbqTypedValueMatches`, the `valueTextIn`/`valueDateRange` null guards),
+  // so the only gap is the bare key-presence filter — no value field at all —
+  // which without this check fell through every guard below and matched
+  // regardless of whether the column was actually set.
+  if (source === 'reserved' && pText === null && pDate === null) return false
+
   const valueTextIn = (pf['valueTextIn'] as string[] | null) ?? null
   if (valueTextIn && valueTextIn.length > 0 && (pText == null || !valueTextIn.includes(pText))) {
     return false
