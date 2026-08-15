@@ -467,6 +467,54 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
 }
 
 // ---------------------------------------------------------------------------
+// Allowlist — BRANCHES of a read-only command NOT (yet) driven by a query step
+// ---------------------------------------------------------------------------
+
+/**
+ * #3878 — the branch-grained sibling of `READ_NO_QUERY_ALLOWLIST`. A command
+ * can be READ_NO_QUERY_ALLOWLIST-waived wholesale (no query step of any kind),
+ * or — for a command in `QUERY_STEP_BRANCH_DISCRIMINATORS` — have SOME
+ * branches covered and others not. This is the narrower waiver `#3878`'s
+ * options list called out as reusing the existing mechanism at finer
+ * granularity: an uncovered arm must be NAMED with a reason, the way an
+ * uncovered command already is.
+ *
+ * Keys are `${command}::${branch}` units from `branchUnitsOf`. A command-level
+ * `READ_NO_QUERY_ALLOWLIST` waiver still exempts ALL of that command's
+ * branches (checked below) — this list is only for a command that is
+ * PARTIALLY covered.
+ */
+const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
+  // `list_blocks`'s two agenda arms (#3878, found while fixing #3877's review
+  // notes). Not a structural blocker on the query SIDE — `list_blocks_inner`
+  // takes explicit `agenda_date` / `agenda_date_start`+`agenda_date_end`
+  // arguments, so those are trivially seedable as ARGS. The blocker is the
+  // DATA those arms read: both go through `pagination::list_agenda[_range]`,
+  // which reads the `agenda_cache` table, not `blocks` directly. A fixture
+  // `seed` only inserts into `blocks`/`properties`/`tags` — populating
+  // `agenda_cache` needs `set_due_date` / `set_scheduled_date` OPS run first,
+  // i.e. an ops-then-query fixture shape no existing `query_*` fixture uses
+  // yet. Tracked as a follow-up; see the PR/issue this waiver shipped with.
+  'list_blocks::agenda-range':
+    'agenda_cache rows require set_due_date/set_scheduled_date OPS before the ' +
+    'query step, not just a seed — no query_*.json fixture does that yet (#3878)',
+  'list_blocks::agenda-date':
+    'agenda_cache rows require set_due_date/set_scheduled_date OPS before the ' +
+    'query step, not just a seed — no query_*.json fixture does that yet (#3878)',
+}
+// NOTE for whoever lifts the two agenda waivers above: `list_blocks_inner`'s
+// `agenda-range` and `agenda-date` arms both sub-dispatch a SECOND time on
+// `agenda_source` (`pagination::list_agenda[_range](…, agenda_source.as_deref(), …)`
+// in `queries.rs`, keyed on `due_date` / `scheduled_date` / no source) once
+// inside `pagination::list_agenda[_range]`. This manifest only models the
+// top-level `filter_count` chain, so a single query step with ANY
+// `agenda_source` value will credit the WHOLE arm the moment it gets a query
+// step — exactly the branch-invisible-coverage shape #3878 exists to catch,
+// one level down. Lifting these waivers needs `agenda_source` modelled as its
+// own sub-branch (e.g. `list_blocks::agenda-date::due_date`), not just a step
+// with a non-null `date`/`dateRange`.
+
+// ---------------------------------------------------------------------------
 // Commands whose query steps run on the BACKEND leg only (#3826)
 // ---------------------------------------------------------------------------
 
@@ -490,6 +538,164 @@ const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
   // fixtures were `QUERY_DRIFT_SKIP`ped for a real mock divergence, and both
   // divergences are now FIXED IN THE MOCK rather than waived, so every read
   // command with a query step is diffed across both stacks again.
+}
+
+// ---------------------------------------------------------------------------
+// Branch-level coverage keys (#3878)
+// ---------------------------------------------------------------------------
+
+/**
+ * #3878 — a command-level coverage key answers "has this command been
+ * exercised at all?", not "is each of its BEHAVIOURS exercised?". Those
+ * diverge exactly when a command's `_inner` dispatches on which of several
+ * MUTUALLY EXCLUSIVE optional request fields is set: `list_blocks_inner`
+ * rejects more than one of `parent_id` / `block_type` / `tag_id` /
+ * `agenda_date` / `agenda_date_start`+`agenda_date_end` being set (its
+ * `filter_count` guard), then runs exactly one of five arms. Before this
+ * manifest existed, `list_blocks` read as fully covered off the `tagId` /
+ * `blockType` / `parentId` arms alone — the two `agenda_date*` arms had (and
+ * still have, see `READ_QUERY_BRANCH_ALLOWLIST`) ZERO query steps anywhere in
+ * `conformance/fixtures/*.json`, and nothing said so.
+ *
+ * Each entry names the discriminator FIELD as it appears in a query step's
+ * `args.request` (the frontend's request DTO mirrors the backend's optional
+ * dispatch params 1:1 — this is not a proxy for the Rust identifiers, it is
+ * the same information under IPC's naming convention), in the same order as
+ * the Rust `else if` chain. `stepBranchKey` below classifies a step by the
+ * FIRST discriminator present and non-null in its args — exactly mirroring
+ * the chain — falling through to `defaultBranch` when none match.
+ *
+ * A command absent from this manifest gets exactly one implicit branch (its
+ * own name) from `stepBranchKey`, so THIS MANIFEST IS ADDITIVE: every
+ * existing command-level coverage entry for the other read-only commands
+ * stays valid unchanged. Only `list_blocks` decomposes into branches here.
+ *
+ * It is NOT the only command with an analogous shape, though — a broader
+ * sweep than the `else if let Some` chain above found a second one:
+ * `filtered_blocks_query_inner` (`src-tauri/src/commands/queries.rs`) has its
+ * own "at most one of value_text, value_text_in, value_date, value_date_range
+ * may be supplied per filter" exclusivity guard, and only the `value_text`
+ * arm has a conformance query step today
+ * (`filtered_blocks_status_open` in `query_reads_links_search_pages.json`).
+ * `grep -rl 'else if let Some' src-tauri/src/commands` itself turns up THREE
+ * files, not one (the other two — `pages/markdown.rs`'s property-value
+ * markdown serialization and its tag-lookup helper — are write-path
+ * formatting code, not a read command's query dispatch, so they are not
+ * this shape). `filtered_blocks_query` is left out of this manifest
+ * deliberately: closing it needs its own investigation (its branches don't
+ * diverge in `ORDER BY` the way `list_blocks_inner`'s do, so the coverage
+ * risk is lower-severity but still real) rather than a copy-paste of this
+ * one. Tracked as a follow-up, not fixed here.
+ *
+ * This list is NOT free-standing the way a hand-maintained arm list would
+ * be: `it('list_blocks branch discriminators match the Rust dispatch's
+ * exclusive filter set', …)` below parses the `filter_count` array literal
+ * out of `queries.rs` itself and fails if the two sets of identifiers
+ * diverge, so a new or removed exclusive filter parameter cannot rot this
+ * manifest silently — it makes the *coverage check* fail loud instead of the
+ * manifest quietly going stale.
+ */
+interface BranchDiscriminator {
+  /** Field name in the query step's `args.request` that selects this branch
+   *  when present and non-null. */
+  field: string
+  /** Human-readable branch name, used in coverage keys (`${command}::${branch}`)
+   *  and failure messages. */
+  branch: string
+}
+
+interface BranchSpec {
+  discriminators: readonly BranchDiscriminator[]
+  /** Branch name when none of `discriminators` matches (the terminal `else`). */
+  defaultBranch: string
+}
+
+const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
+  list_blocks: {
+    discriminators: [
+      { field: 'dateRange', branch: 'agenda-range' },
+      { field: 'date', branch: 'agenda-date' },
+      { field: 'tagId', branch: 'by-tag' },
+      { field: 'blockType', branch: 'by-type' },
+    ],
+    defaultBranch: 'children',
+  },
+}
+
+/** All coverage UNITS a command decomposes into: `${command}::${branch}` for
+ *  every declared branch (discriminators + the default), or just `command`
+ *  itself when it carries no branch manifest entry. */
+function branchUnitsOf(command: string): string[] {
+  const spec = QUERY_STEP_BRANCH_DISCRIMINATORS[command]
+  if (!spec) return [command]
+  return [
+    ...spec.discriminators.map((d) => `${command}::${d.branch}`),
+    `${command}::${spec.defaultBranch}`,
+  ]
+}
+
+/** Classify a query step into its coverage unit, mirroring the Rust `else if`
+ *  chain: the FIRST declared discriminator present and non-null in
+ *  `step.args.request` wins; none matching falls to `defaultBranch`. Commands
+ *  with no manifest entry classify to their own bare name (unchanged from
+ *  pre-#3878 behavior). */
+function stepBranchKey(command: string, step: QueryStepShape): string {
+  const spec = QUERY_STEP_BRANCH_DISCRIMINATORS[command]
+  if (!spec) return command
+  const request = (step.args?.['request'] ?? {}) as Record<string, unknown>
+  for (const d of spec.discriminators) {
+    const v = request[d.field]
+    if (v !== undefined && v !== null) return `${command}::${d.branch}`
+  }
+  return `${command}::${spec.defaultBranch}`
+}
+
+const RUST_QUERIES_PATH = path.resolve(RUST_COMMANDS_DIR, 'commands', 'blocks', 'queries.rs')
+
+/** Parse the identifier list out of `list_blocks_inner`'s `filter_count`
+ *  array literal (`[parent_id.is_some(), block_type.is_some(), …]`) — the
+ *  Rust source's own statement of which params are mutually exclusive. Used
+ *  only to cross-check `QUERY_STEP_BRANCH_DISCRIMINATORS` against it, not to
+ *  derive the manifest (the field NAMES differ between the two — Rust
+ *  `snake_case` params vs the IPC `camelCase` request DTO — so a name
+ *  mapping is still declared by hand; what this guards is the *count and
+ *  set*, so an added/removed exclusive filter cannot rot the manifest
+ *  unnoticed). */
+function extractFilterCountIdentifiers(): string[] {
+  const source = readFileSync(RUST_QUERIES_PATH, 'utf8')
+  const needle = 'let filter_count = ['
+  const start = source.indexOf(needle)
+  if (start < 0) {
+    throw new Error(
+      `could not find "let filter_count = [" in ${RUST_QUERIES_PATH} — this guard ` +
+        `parses list_blocks_inner's exclusive-filter array; update the parser if the ` +
+        `source moved, don't shrink the expectation.`,
+    )
+  }
+  // Balance-scan the brackets from the opening `[`, mirroring
+  // `extractRustCommandSignatures`'s paren-balancing above — a plain
+  // `indexOf(']', start)` would stop at the FIRST `]`, which truncates (and
+  // silently under-reports) the moment any element is itself an index
+  // expression or a nested array literal.
+  let depth = 0
+  let end = -1
+  for (let i = start + needle.length - 1; i < source.length; i++) {
+    const ch = source[i]
+    if (ch === '[') depth++
+    else if (ch === ']') {
+      depth--
+      if (depth === 0) {
+        end = i
+        break
+      }
+    }
+  }
+  if (end < 0) {
+    throw new Error(`unterminated filter_count array in ${RUST_QUERIES_PATH}`)
+  }
+  return [...source.slice(start, end).matchAll(/(\w+)(?:\.is_some\(\))?/g)]
+    .map((m) => m[1] as string)
+    .filter((id) => id !== 'let' && id !== 'filter_count')
 }
 
 const CONFORMANCE_TEST_PATH = path.resolve(import.meta.dirname, 'conformance.test.ts')
@@ -561,6 +767,10 @@ interface QueryStepShape {
   /** Opt-in declaration that this step's recorded `rows` is legitimately empty
    *  (see the vacuity guard below). Ignored by both query runners. */
   expect_empty?: boolean
+  /** #3878 — the step's IPC args, read (not replayed) to classify which
+   *  dispatch BRANCH of `command` this step exercises. See
+   *  `QUERY_STEP_BRANCH_DISCRIMINATORS`. */
+  args?: Record<string, unknown>
 }
 
 interface LoadedFixture {
@@ -657,6 +867,18 @@ describe('#3083 conformance-coverage ratchet', () => {
   // command name (the Rust runner's `run_step` matches on it).
   const fixtureQueryCommands = new Set<string>()
   for (const fx of fixtures) for (const c of fx.queryCommands) fixtureQueryCommands.add(c)
+
+  // #3878 — the BRANCH-grained twin of `fixtureQueryCommands`. Any query step
+  // ANYWHERE (regardless of skip/liveness — that finer distinction is the
+  // backend-only check further down) contributes its `stepBranchKey` unit.
+  // For a command with no `QUERY_STEP_BRANCH_DISCRIMINATORS` entry this is
+  // exactly `fixtureQueryCommands`'s membership under a different name (the
+  // key equals the bare command); for `list_blocks` it decomposes into up to
+  // five distinct units.
+  const fixtureQueryBranches = new Set<string>()
+  for (const fx of fixtures) {
+    for (const step of fx.querySteps) fixtureQueryBranches.add(stepBranchKey(step.command, step))
+  }
 
   it('extracts a non-trivial command + fixture surface (guards vacuous pass)', () => {
     expect(bindingsCommands.length).toBeGreaterThan(50)
@@ -771,23 +993,147 @@ describe('#3083 conformance-coverage ratchet', () => {
   // exemption: a `get_` / `list_` / `search_` command needed neither a fixture
   // nor a waiver, so the query surface the UI renders from had no differential
   // coverage at all. It now needs a query step or a reasoned waiver.
-  it('every read-only command has a conformance query step or a justified allowlist waiver', () => {
-    const uncovered = readOnlyCommands.filter(
-      (c) => !fixtureQueryCommands.has(c) && !(c in READ_NO_QUERY_ALLOWLIST),
-    )
+  //
+  // #3878 — command-level was one granularity too coarse: it answers "has
+  // THIS COMMAND been exercised at all?" when the question that matters is
+  // "is each of its BEHAVIOURS exercised?". Those diverge exactly when a
+  // command dispatches on which of several mutually exclusive request fields
+  // is set (`list_blocks_inner`'s `filter_count` chain) — a command with
+  // three of five arms covered read as fully green here. The requirement is
+  // now expressed per coverage UNIT (`branchUnitsOf`: `${command}::${branch}`
+  // for a manifested command, or just `command` — unchanged — for the other
+  // 73 that carry no branch manifest), waived either at the branch level
+  // (`READ_QUERY_BRANCH_ALLOWLIST`) or, still, at the whole-command level
+  // (`READ_NO_QUERY_ALLOWLIST` continues to exempt every branch of a command
+  // that has no query coverage whatsoever).
+  it('every read-only command BRANCH has a conformance query step or a justified allowlist waiver', () => {
+    const requiredUnits = readOnlyCommands.flatMap((c) => branchUnitsOf(c))
+    const uncovered = requiredUnits.filter((unit) => {
+      const command = unit.split('::')[0] as string
+      return (
+        !fixtureQueryBranches.has(unit) &&
+        !(unit in READ_QUERY_BRANCH_ALLOWLIST) &&
+        !(command in READ_NO_QUERY_ALLOWLIST)
+      )
+    })
     expect(
       uncovered,
-      `These READ-ONLY Tauri commands have NO conformance query step and NO ` +
-        `allowlist waiver: ${JSON.stringify(uncovered)}. The mock's answer to a ` +
+      `These READ-ONLY Tauri command BRANCHES have NO conformance query step and ` +
+        `NO allowlist waiver: ${JSON.stringify(uncovered)}. The mock's answer to a ` +
         `read command is what almost every vitest/Playwright spec asserts against, ` +
-        `so an unchecked one is an unchecked second implementation of the query. ` +
-        `FIX by EITHER (a) adding a "queries" step to a conformance/fixtures/*.json ` +
-        `fixture that drives the command — wire it in ` +
-        `src-tauri/src/command_integration_tests/conformance_query.rs and in the ` +
-        `WIRE table of ./conformance-query.ts, then author the expectation with ` +
-        `CONFORMANCE_UPDATE=1 cargo nextest run -E ` +
+        `so an unchecked branch is an unchecked arm of a second implementation of ` +
+        `the query. FIX by EITHER (a) adding a "queries" step to a ` +
+        `conformance/fixtures/*.json fixture that drives this branch's discriminator ` +
+        `arg — wire it in src-tauri/src/command_integration_tests/conformance_query.rs ` +
+        `and in the WIRE table of ./conformance-query.ts, then author the expectation ` +
+        `with CONFORMANCE_UPDATE=1 cargo nextest run -E ` +
         `'test(conformance_fixtures_match_backend)' — OR (b) adding an entry to ` +
-        `READ_NO_QUERY_ALLOWLIST in this file with a reason.`,
+        `READ_QUERY_BRANCH_ALLOWLIST in this file with a reason.`,
+    ).toEqual([])
+  })
+
+  it('read branch allowlist stays honest (no stale, unknown, or now-covered entries)', () => {
+    const allowKeys = Object.keys(READ_QUERY_BRANCH_ALLOWLIST)
+    const allKnownUnits = new Set(readOnlyCommands.flatMap((c) => branchUnitsOf(c)))
+
+    const unknownUnit = allowKeys.filter((k) => !allKnownUnits.has(k))
+    expect(
+      unknownUnit,
+      `READ_QUERY_BRANCH_ALLOWLIST references units that are not a real read-only ` +
+        `command branch ${JSON.stringify(unknownUnit)}. Either the command left ` +
+        `bindings.ts, is not read-only, or the branch name no longer matches ` +
+        `QUERY_STEP_BRANCH_DISCRIMINATORS (a rename on one side without the other). ` +
+        `Fix the typo or remove the stale entry.`,
+    ).toEqual([])
+
+    const wholeCommandAlsoWaived = allowKeys.filter(
+      (k) => (k.split('::')[0] as string) in READ_NO_QUERY_ALLOWLIST,
+    )
+    expect(
+      wholeCommandAlsoWaived,
+      `These branch waivers are redundant — the whole command is ALREADY waived by ` +
+        `READ_NO_QUERY_ALLOWLIST ${JSON.stringify(wholeCommandAlsoWaived)}. Delete the ` +
+        `branch-level entry; the command-level one already covers every branch.`,
+    ).toEqual([])
+
+    const nowCovered = allowKeys.filter((k) => fixtureQueryBranches.has(k))
+    expect(
+      nowCovered,
+      `READ_QUERY_BRANCH_ALLOWLIST waives branches now driven by a conformance query ` +
+        `step ${JSON.stringify(nowCovered)}. Delete the redundant waiver — the query ` +
+        `step is the coverage.`,
+    ).toEqual([])
+
+    expect(
+      allowKeys.every((k) => READ_QUERY_BRANCH_ALLOWLIST[k]?.trim()),
+      'Every READ_QUERY_BRANCH_ALLOWLIST entry needs a non-empty reason string.',
+    ).toBe(true)
+  })
+
+  // #3878 — guards `QUERY_STEP_BRANCH_DISCRIMINATORS` against silently rotting
+  // the way the issue warned a hand-maintained arm list would: if
+  // `list_blocks_inner`'s exclusive-filter set gains or loses a parameter,
+  // this fails LOUD instead of the manifest quietly under- or over-claiming
+  // branches. It does not derive the manifest (the Rust `snake_case` params
+  // and the IPC `camelCase` request fields are named independently, and the
+  // mapping between them is still declared by hand above) — it cross-checks
+  // that the two sides agree on the SET.
+  it("list_blocks branch discriminators match the Rust dispatch's exclusive filter set", () => {
+    const rustParams = extractFilterCountIdentifiers().toSorted()
+    // `parent_id` has no `else if` arm of its own — it is `filter_count`'s
+    // fifth member but dispatches through the terminal `else`, i.e. this
+    // manifest's `defaultBranch`. Every OTHER rust param must have exactly one
+    // declared discriminator.
+    const expected = ['agenda_date', 'block_type', 'has_agenda_range', 'parent_id', 'tag_id']
+    expect(
+      rustParams,
+      `list_blocks_inner's filter_count array changed to ${JSON.stringify(rustParams)} ` +
+        `(expected ${JSON.stringify(expected)}). QUERY_STEP_BRANCH_DISCRIMINATORS.list_blocks ` +
+        `declares exactly 4 discriminators + 1 default branch mapped from these 5 Rust ` +
+        `params by hand — update BOTH the manifest and this expected list together so ` +
+        `the two stay in sync, don't just widen the assertion.`,
+    ).toEqual(expected)
+
+    const spec = QUERY_STEP_BRANCH_DISCRIMINATORS['list_blocks']
+    expect(spec, 'list_blocks must stay declared in QUERY_STEP_BRANCH_DISCRIMINATORS').toBeDefined()
+    // discriminators.length + 1 (the default/parent_id fallthrough) must equal
+    // the Rust exclusive-filter set size, so a new arm can't be added on one
+    // side without the other.
+    expect((spec?.discriminators.length ?? 0) + 1).toBe(rustParams.length)
+  })
+
+  // #3878 review note 4 — `stepBranchKey` falls through to `defaultBranch`
+  // when a step's `args.request` carries none of the declared discriminator
+  // fields. That is CORRECT for a step that legitimately omits every filter
+  // (`list_blocks::children` from `{ parentId: null }` still has a request
+  // object; the discriminators just aren't in it) — but the same fallthrough
+  // fires identically for a fixture step that simply forgot its
+  // `args.request` altogether, which would then silently credit the default
+  // branch instead of failing loud. This guard is scoped to MANIFESTED
+  // commands only: an unmanifested read-only command's steps carry no
+  // discriminator shape requirement, so `args.request`'s presence there is
+  // not this guard's business.
+  it('every query step for a manifested command declares an args.request object', () => {
+    const missing: string[] = []
+    for (const fx of fixtures) {
+      for (const step of fx.querySteps) {
+        if (!(step.command in QUERY_STEP_BRANCH_DISCRIMINATORS)) continue
+        const request = step.args?.['request']
+        if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+          missing.push(`${fx.name}/${step.name}`)
+        }
+      }
+    }
+    expect(
+      missing,
+      `These query steps drive a branch-manifested command ` +
+        `(${JSON.stringify(Object.keys(QUERY_STEP_BRANCH_DISCRIMINATORS))}) but carry no ` +
+        `\`args.request\` object: ${JSON.stringify(missing)}. stepBranchKey falls through ` +
+        `to defaultBranch when no discriminator field is present, which is correct for a ` +
+        `step that legitimately omits every filter — but a step that simply forgot its ` +
+        `args would silently credit that same default branch instead of failing. FIX by ` +
+        `adding \`args: { request: {...} }\` to the step (an empty \`{}\` is a legitimate ` +
+        `default-branch request).`,
     ).toEqual([])
   })
 
@@ -920,6 +1266,10 @@ describe('#3083 conformance-coverage ratchet', () => {
     // but it is not, on its own, evidence that the command was differentially
     // exercised. A command whose only unskipped step is empty is exactly as
     // undiffed as one with no unskipped step at all, and must be declared.
+    // #3878 — keyed on `stepBranchKey`, not `step.command`: a command with a
+    // branch manifest (`list_blocks`) is live per-BRANCH, so a DRIFT_SKIP that
+    // only takes out one arm's steps cannot hide behind a sibling arm's live
+    // step the way command-level keying let it.
     const liveCommands = new Set<string>()
     for (const fx of fixtures) {
       if (skipped.has(fx.name)) continue
@@ -928,40 +1278,45 @@ describe('#3083 conformance-coverage ratchet', () => {
         // if that alignment ever breaks, so a missing entry here is treated as
         // no evidence rather than silently counted.
         if ((fx.expectedQueries[i]?.rows.length ?? 0) === 0) continue
-        liveCommands.add(step.command)
+        liveCommands.add(stepBranchKey(step.command, step))
       }
     }
-    const backendOnly = [...fixtureQueryCommands].filter((c) => !liveCommands.has(c)).toSorted()
+    // `fixtureQueryBranches` (any liveness) is the branch-grained twin of
+    // `fixtureQueryCommands` used everywhere else in this file — see its
+    // declaration above.
+    const backendOnly = [...fixtureQueryBranches].filter((c) => !liveCommands.has(c)).toSorted()
     const undeclared = backendOnly.filter((c) => !(c in QUERY_STEPS_BACKEND_ONLY))
     expect(
       undeclared,
-      `These commands have NO query step that is both unskipped on the mock leg and ` +
-        `non-empty ${JSON.stringify(undeclared)} — either every step lives in a ` +
-        `query-skipped fixture, or the ones that run recorded zero rows. Both mean ` +
-        `the command is pinned on one stack, not diffed across two. FIX by EITHER ` +
-        `adding a live fixture step that SELECTS ROWS, OR declaring the command in ` +
+      `These command branches have NO query step that is both unskipped on the mock ` +
+        `leg and non-empty ${JSON.stringify(undeclared)} — either every step lives in ` +
+        `a query-skipped fixture, or the ones that run recorded zero rows. Both mean ` +
+        `the branch is pinned on one stack, not diffed across two. FIX by EITHER ` +
+        `adding a live fixture step that SELECTS ROWS, OR declaring the branch in ` +
         `QUERY_STEPS_BACKEND_ONLY with the divergence issue that keeps it skipped.`,
     ).toEqual([])
 
     const stale = Object.keys(QUERY_STEPS_BACKEND_ONLY).filter((c) => liveCommands.has(c))
     expect(
       stale,
-      `QUERY_STEPS_BACKEND_ONLY declares commands that now have a LIVE, non-empty ` +
+      `QUERY_STEPS_BACKEND_ONLY declares branches that now have a LIVE, non-empty ` +
         `query step ${JSON.stringify(stale)}. The divergence is fixed — delete the entry.`,
     ).toEqual([])
 
     // The sibling allowlists both audit for entries that no longer name
     // anything real; without the same check here, deleting the last fixture
     // that drives a declared command leaves its waiver behind, still reading
-    // as a live exemption for a command nothing exercises.
+    // as a live exemption for a command nothing exercises. Entries may name
+    // either a bare command (no branch manifest) or a `command::branch` unit.
     const orphaned = Object.keys(QUERY_STEPS_BACKEND_ONLY)
-      .filter((c) => !fixtureQueryCommands.has(c))
+      .filter((c) => !fixtureQueryCommands.has(c) && !fixtureQueryBranches.has(c))
       .toSorted()
     expect(
       orphaned,
-      `QUERY_STEPS_BACKEND_ONLY declares commands that NO fixture drives a query ` +
-        `step for ${JSON.stringify(orphaned)}. The waiver describes a backend-only ` +
-        `step that no longer exists — remove the entry (or restore the fixture).`,
+      `QUERY_STEPS_BACKEND_ONLY declares commands/branches that NO fixture drives a ` +
+        `query step for ${JSON.stringify(orphaned)}. The waiver describes a ` +
+        `backend-only step that no longer exists — remove the entry (or restore the ` +
+        `fixture).`,
     ).toEqual([])
 
     expect(
