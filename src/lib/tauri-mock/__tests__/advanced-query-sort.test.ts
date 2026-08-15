@@ -725,6 +725,38 @@ describe('run_advanced_query — groupBy cursor is rejected the same way the fla
       expect.objectContaining({ kind: 'validation' }),
     )
   })
+
+  // `decodeGroupCursor`'s own doc claims it mirrors serde's "deserialize the
+  // whole struct — every field, typed — and only then compare versions"
+  // ordering. `version` is declared FIRST in the real `GroupCursor`
+  // (`engine.rs:1241-1247`), so a cursor missing it entirely fails
+  // deserialization ("missing field `version`"), never reaching the version
+  // COMPARISON at all — that comparison can only ever see a `version` serde
+  // already parsed as a number. A cursor with no `version` field, or one of
+  // the wrong TYPE, must therefore fail the same "malformed" way a cursor
+  // missing `count`/`key` does, not surface as "unsupported version
+  // undefined" (which claims the field was present and merely stale).
+  it('a GroupCursor payload missing `version` entirely is malformed, not "version undefined"', () => {
+    const noVersion = utf8ToBase64Url(JSON.stringify({ count: 3, key: 'text' }))
+    expect(() => run({ limit: 10, groupBy: GROUP_BY, cursor: noVersion })).toThrow(
+      expect.objectContaining({
+        kind: 'validation',
+        message: expect.not.stringContaining('undefined'),
+      }),
+    )
+  })
+
+  it('a GroupCursor payload with a wrongly-typed `version` is malformed, not a version mismatch', () => {
+    // serde's `u8` field rejects a JSON string outright — this is a TYPE
+    // failure, not a value the version-mismatch check ever gets to compare.
+    const stringVersion = utf8ToBase64Url(JSON.stringify({ version: '1', count: 3, key: 'text' }))
+    expect(() => run({ limit: 10, groupBy: GROUP_BY, cursor: stringVersion })).toThrow(
+      expect.objectContaining({
+        kind: 'validation',
+        message: expect.not.stringContaining('unsupported version'),
+      }),
+    )
+  })
 })
 
 /**

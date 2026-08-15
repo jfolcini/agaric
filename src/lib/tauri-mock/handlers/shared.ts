@@ -763,8 +763,12 @@ export const DEFAULT_LAST_EDITED_SOURCE: LastEditedSource = (r) => r.lastModifie
  *   - `Range{start,end}` — modified within `[start, end]` (inclusive).
  *
  * The NULL handling matches the engine's "no op-log ⇒ epoch" rule exactly
- * (Rolling EXCLUDES, OlderThan INCLUDES, Range EXCLUDES); only the SOURCE of
- * the stamp differs per caller — see {@link LastEditedSource}.
+ * (Rolling EXCLUDES, OlderThan INCLUDES, Range EXCLUDES). `lastEditedAt` is a
+ * {@link LastEditedSource} callback rather than a plain `r.lastModifiedAt`
+ * read, but that seam is now a MEMOIZATION hook, not a semantic choice: both
+ * callers resolve to the SAME raw `MAX(op_log.created_at)` value — see
+ * {@link LastEditedSource}'s own doc for why the fork used to be real and no
+ * longer is.
  */
 export function lastEditedMatches(
   r: PageMetaRow,
@@ -949,6 +953,43 @@ export function rawOpLogLastEditedAt(blockId: string): string | null {
     if (maxOp === null || o.created_at > maxOp) maxOp = o.created_at
   }
   return maxOp
+}
+
+/**
+ * Sort op-log ENTRIES newest-first, mirroring the backend's own ordering —
+ * `ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC` in BOTH
+ * `list_page_history` (`agaric-store/src/pagination/history.rs:180,222`) and
+ * `undo_page_op_inner`'s target-selection query
+ * (`src-tauri/src/commands/history.rs:1574`).
+ *
+ * No handler may treat `opLog`'s in-memory ARRAY order (push/insertion order)
+ * as already chronological. `find_undo_group` never did — it already sorts
+ * this way — but `list_page_history` (`[...opLog].toReversed()`) and
+ * `undo_page_op` (`undoableOps.length - 1 - undoDepth`) both used to, and
+ * `seedBulkPages` (`seed.ts`) proved the
+ * assumption false: it writes its bulk pages' `op_log` rows in DESCENDING
+ * `created_at` order (page 001 at `now` pushed FIRST, 005 at `now-4h` pushed
+ * LAST, so the array itself is newest-to-oldest for that block of pushes),
+ * so `opLog`'s array order stopped matching `created_at` order the moment
+ * that seed shipped. Sorting explicitly — the way `find_undo_group` and the
+ * backend's own `ORDER BY` both already do — closes the whole class rather
+ * than pinning it to today's particular seed shape; a future seed, a
+ * multi-device merge, or a batch of `pushOpAt` calls in non-chronological
+ * order would silently reopen the same bug in `list_page_history`/
+ * `undo_page_op` if either kept trusting array order.
+ *
+ * `seq` is the mock's per-push monotonic counter, standing in for the
+ * backend's `seq` column; `device_id DESC` is a no-op tiebreak in the mock
+ * because every mock-authored op shares the single `'mock-device'` id, so it
+ * is omitted rather than faked.
+ */
+export function sortOpLogNewestFirst<T extends { created_at: string; seq: number }>(
+  entries: readonly T[],
+): T[] {
+  return [...entries].toSorted((a, b) => {
+    if (a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1
+    return b.seq - a.seq
+  })
 }
 
 /**

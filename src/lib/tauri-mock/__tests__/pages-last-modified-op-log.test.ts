@@ -30,14 +30,25 @@
  *
  * ## Why the assertions are shaped the way they are
  *
- * Every test here mutates `opLog` and then demands the observable answer
- * move with it. That is the only shape that can tell "reads the op-log" apart
- * from "reads something that currently agrees with the op-log": as seeded,
- * the deleted fallback and the op-log rows carry the SAME timestamps, so any
+ * MOST tests here mutate `opLog` and then demand the observable answer move
+ * with it. That is the only shape that can tell "reads the op-log" apart from
+ * "reads something that currently agrees with the op-log": as seeded, the
+ * deleted fallback and the op-log rows carry the SAME timestamps, so any
  * assertion over the pristine seed alone passes under both implementations
  * and pins nothing about the source. Removing a page's op-log rows is the one
  * mutation the two hypotheses answer differently (op-log ⇒ null/sentinel;
- * fallback ⇒ the seeded stamp survives), so it is the mutation used below.
+ * fallback ⇒ the seeded stamp survives), so it is the mutation most tests
+ * below use.
+ *
+ * Four tests do NOT mutate `opLog` and are not `stripOpLogFor` detectors:
+ * "writes one op_log row per canonical page", "the IPC row's lastModifiedAt
+ * is exactly MAX(op_log.created_at)", "splits the seed the way the fixtures
+ * claim", and "orders the bulk pages newest-first". These instead pin the
+ * SEED's own data shape directly (one real op_log row per canonical page at
+ * the right age, the fixture split the later filter/sort tests assume, and
+ * the bulk pages' relative order) — necessary preconditions for the
+ * mutation-based tests to mean what they claim, but not themselves
+ * mutate-and-observe.
  *
  * Both arms of the command are covered, because they were both divergent and
  * a fix to one does not imply the other: `stripsOpLog → filter` (#3898) and
@@ -47,7 +58,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { rawOpLogLastEditedAt } from '@/lib/tauri-mock/handlers/shared'
 import {
   blocks,
   opLog,
@@ -115,6 +125,36 @@ function stripOpLogFor(blockId: string): void {
   }
 }
 
+/**
+ * `MAX(op_log.created_at) WHERE block_id = ?`, computed INDEPENDENTLY of the
+ * production `rawOpLogLastEditedAt` helper — a hand-rolled scan over the raw
+ * `opLog` store, not a call into it.
+ *
+ * `expect(row.lastModifiedAt).toBe(rawOpLogLastEditedAt(row.id))` would
+ * compare the production helper to itself: `buildPageMetaRow` (`shared.ts`)
+ * is LITERALLY `lastModifiedAt: rawOpLogLastEditedAt(pageId)`, so that
+ * assertion can never distinguish "reads the op-log correctly" from "reads
+ * the op-log however `rawOpLogLastEditedAt` currently happens to, right or
+ * wrong" — a fallback reintroduced INSIDE `rawOpLogLastEditedAt` would leave
+ * it green forever. Recomputing the same value a SECOND, independent way
+ * makes a wrong implementation on either side of the comparison actually
+ * detectable.
+ */
+function independentMaxOpLogCreatedAt(blockId: string): string | null {
+  let max: string | null = null
+  for (const entry of opLog) {
+    let payload: Record<string, unknown>
+    try {
+      payload = JSON.parse(entry.payload) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    if (payload['block_id'] !== blockId) continue
+    if (max === null || entry.created_at > max) max = entry.created_at
+  }
+  return max
+}
+
 /** Resolve a seeded page's id from its title (bulk pages get random ids). */
 function pageIdByTitle(title: string): string {
   for (const b of blocks.values()) {
@@ -159,7 +199,10 @@ describe('seed — every fixture page carries real op_log activity', () => {
     const page = listPages()
     expect(page.items.length).toBe(6)
     for (const row of page.items) {
-      expect(row.lastModifiedAt).toBe(rawOpLogLastEditedAt(row.id))
+      // Independently recomputed — see `independentMaxOpLogCreatedAt`'s doc
+      // for why comparing against the production `rawOpLogLastEditedAt`
+      // helper itself would be tautological.
+      expect(row.lastModifiedAt).toBe(independentMaxOpLogCreatedAt(row.id))
       expect(row.lastModifiedAt).not.toBeNull()
     }
   })

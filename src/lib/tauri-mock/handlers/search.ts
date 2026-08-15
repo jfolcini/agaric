@@ -651,18 +651,28 @@ function decodeGroupCursor(s: string): GroupCursorPayload {
   } catch {
     throw validationRejection('invalid group cursor JSON: not valid JSON')
   }
-  // Field PRESENCE + TYPE, before the version check — serde deserializes the
-  // whole struct (every field, typed) and only then compares versions, so a
-  // cursor that is both stale and malformed reports the malformation, exactly
-  // as the engine does (mirrors `decodeCursor`'s own ordering above).
+  // Field PRESENCE + TYPE — EVERY field, `version` included — before the
+  // version COMPARISON below. `GroupCursor` (`engine.rs:1241-1247`) declares
+  // `version` first, and serde deserializes the whole struct (every declared
+  // field, typed) before `GroupCursor::decode` ever compares `cursor.version`
+  // — so a cursor missing `version` entirely fails deserialization itself
+  // ("missing field `version`"), not the version-mismatch check downstream.
+  // `version` used to be left out of this block and only read from `payload`
+  // after it, so `{count,key}` with no `version` (or a `version` of the wrong
+  // type) fell through to the mismatch check and reported "unsupported
+  // version undefined" — the WRONG one of the two failure modes, and a
+  // divergence from `decodeGroupCursor`'s own doc above, which claims this
+  // exact ordering.
   if (
     typeof parsed !== 'object' ||
     parsed === null ||
+    typeof (parsed as Record<string, unknown>)['version'] !== 'number' ||
+    !Number.isInteger((parsed as Record<string, unknown>)['version']) ||
     typeof (parsed as Record<string, unknown>)['count'] !== 'number' ||
     !Number.isInteger((parsed as Record<string, unknown>)['count']) ||
     typeof (parsed as Record<string, unknown>)['key'] !== 'string'
   ) {
-    throw validationRejection('invalid group cursor JSON: missing `count`/`key`')
+    throw validationRejection('invalid group cursor JSON: missing `version`/`count`/`key`')
   }
   const payload = parsed as GroupCursorPayload
   if (payload.version !== CURSOR_VERSION) {

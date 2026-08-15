@@ -97,17 +97,17 @@ export interface MockOpLogEntry {
 export const opLog: MockOpLogEntry[] = []
 let opSeqCounter = 0
 
+/**
+ * Push an op-log entry stamped "now". Delegates to {@link pushOpAt} — see its
+ * doc for the full shape of a `MockOpLogEntry` and why the two must stay
+ * IDENTICAL apart from `created_at`: they used to be two verbatim, separately
+ * maintained copies, so a future field added to one could silently be
+ * forgotten on the other and seeded rows would drift from runtime-pushed
+ * ones. Delegating makes that impossible — there is exactly one entry shape,
+ * defined once.
+ */
 export function pushOp(opType: string, payload: Record<string, unknown>): MockOpLogEntry {
-  opSeqCounter += 1
-  const entry: MockOpLogEntry = {
-    device_id: 'mock-device',
-    seq: opSeqCounter,
-    op_type: opType,
-    payload: JSON.stringify(payload),
-    created_at: new Date().toISOString(),
-  }
-  opLog.push(entry)
-  return entry
+  return pushOpAt(opType, payload, new Date().toISOString())
 }
 
 /**
