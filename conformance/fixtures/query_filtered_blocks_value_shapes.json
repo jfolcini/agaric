@@ -1,0 +1,388 @@
+{
+  "description": "#3892 — the three value-shape arms of `filtered_blocks_query_inner`'s per-filter dispatch that had never been exercised, plus the key-presence arm that has no value predicate at all. Before #3892 the ratchet keyed on the COMMAND, and `filtered_blocks_status_open` (the `valueText` arm, in `query_reads_links_search_pages`) made the whole command read as covered while `valueTextIn` / `valueDate` / `valueDateRange` / no-value emitted SQL nothing had ever compared across the two stacks. Every step below is authored to fail for a SPECIFIC reason a plausible implementation gets wrong (set membership vs first-element, date column vs text column, half-open vs closed range, key-scoped EXISTS vs any-property EXISTS) rather than to pin one obvious row. Non-reserved keys throughout: a reserved key (`todo_state` / `priority` / `due_date` / `scheduled_date`) routes to a direct `b.<col>` predicate instead, which is a second dispatch dimension this fixture deliberately does not mix in.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Value Shapes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "open, due early",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "closed, due late",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "open, no due",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "no status, due inside range",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "no status, due on the exclusive upper bound",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 7,
+      "ops": [
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "key": "due",
+          "op_type": "set_property"
+        },
+        {
+          "key": "due",
+          "op_type": "set_property"
+        },
+        {
+          "key": "due",
+          "op_type": "set_property"
+        },
+        {
+          "key": "due",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "due",
+        "value": "2026-08-10",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B2",
+        "key": "status",
+        "value": "open",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "due",
+        "value": "2026-09-20",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B3",
+        "key": "status",
+        "value": "closed",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "status",
+        "value": "open",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "due",
+        "value": "2026-08-15",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B6",
+        "key": "due",
+        "value": "2026-08-16",
+        "value_type": "Date"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "has_more": false,
+      "name": "filtered_value_text_in_matches_either_member",
+      "rows": ["B2", "B3", "B4"],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "filtered_value_date_exact",
+      "rows": ["B2"],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "filtered_value_date_range_is_half_open",
+      "rows": ["B2", "B5"],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "filtered_key_presence_only",
+      "rows": ["B2", "B3", "B5", "B6"],
+      "total_count": null
+    }
+  ],
+  "name": "query_filtered_blocks_value_shapes",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "status",
+        "value": {
+          "value_text": "open"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "status",
+        "value": {
+          "value_text": "closed"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "status",
+        "value": {
+          "value_text": "open"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "due",
+        "value": {
+          "value_date": "2026-08-10"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "due",
+        "value": {
+          "value_date": "2026-09-20"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "due",
+        "value": {
+          "value_date": "2026-08-15"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "key": "due",
+        "value": {
+          "value_date": "2026-08-16"
+        }
+      },
+      "command": "set_property"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "status",
+            "operator": "eq",
+            "valueTextIn": ["open", "closed"]
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "#3892 `valueTextIn` arm — `value_text IN (SELECT value FROM json_each(?N))`. Discriminating because BOTH members must match: an implementation that compared against the first element only (or that bound the JSON array as a scalar) returns a strict subset. S5/S6 own a `due` but no `status`, so they must be excluded — the EXISTS is key-scoped, not block-scoped.",
+      "name": "filtered_value_text_in_matches_either_member"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "due",
+            "operator": "eq",
+            "valueDate": "2026-08-10"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "#3892 `valueDate` arm — `value_date = ?N`. Discriminating because the value lives in the `value_date` column, not `value_text`: an implementation that compared the wrong typed column returns nothing at all. S5's `2026-08-15` and S6's `2026-08-16` are near misses on the same key.",
+      "name": "filtered_value_date_exact"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "due",
+            "operator": "eq",
+            "valueDateRange": ["2026-08-10", "2026-08-16"]
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "#3892 `valueDateRange` arm — `value_date >= ?from AND value_date < ?to`, a HALF-OPEN interval. Both bounds are pinned by a row: S2 sits exactly on `from` (an exclusive lower bound drops it) and S6 sits exactly on `to` (an inclusive upper bound admits it). S3's `2026-09-20` is far outside.",
+      "name": "filtered_value_date_range_is_half_open"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "propertyFilters": [
+          {
+            "key": "due",
+            "operator": "eq"
+          }
+        ],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "filtered_blocks_query",
+      "comment": "#3892 the fifth arm: NO value predicate, so the EXISTS degrades to mere key presence (`property_value_predicate_sql` returns an empty fragment). Discriminating because S4 owns a property — just not this one — so an EXISTS that dropped the `bp.key = ?` predicate, or one that required a value, gets a different set.",
+      "name": "filtered_key_presence_only"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Value Shapes",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "open, due early",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "closed, due late",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "open, no due",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "no status, due inside range",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "no status, due on the exclusive upper bound",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

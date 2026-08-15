@@ -558,60 +558,98 @@ const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
  * `conformance/fixtures/*.json`, and nothing said so.
  *
  * Each entry names the discriminator FIELD as it appears in a query step's
- * `args.request` (the frontend's request DTO mirrors the backend's optional
- * dispatch params 1:1 — this is not a proxy for the Rust identifiers, it is
- * the same information under IPC's naming convention), in the same order as
- * the Rust `else if` chain. `stepBranchKey` below classifies a step by the
- * FIRST discriminator present and non-null in its args — exactly mirroring
- * the chain — falling through to `defaultBranch` when none match.
+ * IPC args (the frontend's DTOs mirror the backend's optional dispatch params
+ * 1:1 — this is not a proxy for the Rust identifiers, it is the same
+ * information under IPC's naming convention), in the same order as the Rust
+ * `else if` chain. `stepBranchKeys` below classifies a step by the FIRST
+ * discriminator present and non-empty in its args — exactly mirroring the
+ * chain — falling through to `defaultBranch` when none match.
  *
  * A command absent from this manifest gets exactly one implicit branch (its
- * own name) from `stepBranchKey`, so THIS MANIFEST IS ADDITIVE: every
+ * own name) from `stepBranchKeys`, so THIS MANIFEST IS ADDITIVE: every
  * existing command-level coverage entry for the other read-only commands
- * stays valid unchanged. Only `list_blocks` decomposes into branches here.
+ * stays valid unchanged.
  *
- * It is NOT the only command with an analogous shape, though — a broader
- * sweep than the `else if let Some` chain above found a second one:
- * `filtered_blocks_query_inner` (`src-tauri/src/commands/queries.rs`) has its
- * own "at most one of value_text, value_text_in, value_date, value_date_range
- * may be supplied per filter" exclusivity guard, and only the `value_text`
- * arm has a conformance query step today
- * (`filtered_blocks_status_open` in `query_reads_links_search_pages.json`).
- * `grep -rl 'else if let Some' src-tauri/src/commands` itself turns up THREE
- * files, not one (the other two — `pages/markdown.rs`'s property-value
- * markdown serialization and its tag-lookup helper — are write-path
- * formatting code, not a read command's query dispatch, so they are not
- * this shape). `filtered_blocks_query` is left out of this manifest
- * deliberately: closing it needs its own investigation (its branches don't
- * diverge in `ORDER BY` the way `list_blocks_inner`'s do, so the coverage
- * risk is lower-severity but still real) rather than a copy-paste of this
- * one. Tracked as a follow-up, not fixed here.
+ * #3892 — `list_blocks` was NOT the only command with an analogous shape, and
+ * the sweep that concluded it was (a `grep -rl 'else if let Some'`) was wrong
+ * on both halves. `filtered_blocks_query_inner`
+ * (`src-tauri/src/commands/queries.rs`) carries its own "at most one of
+ * value_text, value_text_in, value_date, value_date_range may be supplied per
+ * filter" exclusivity guard, and before #3892 only the `value_text` arm had a
+ * conformance query step (`filtered_blocks_status_open` in
+ * `query_reads_links_search_pages.json`) while the command read as fully
+ * covered. It is manifested below — but NOT as a copy of `list_blocks`,
+ * because the two differ in three ways that the shared machinery has to model:
  *
- * This list is NOT free-standing the way a hand-maintained arm list would
- * be: `it('list_blocks branch discriminators match the Rust dispatch's
- * exclusive filter set', …)` below parses the `filter_count` array literal
- * out of `queries.rs` itself and fails if the two sets of identifiers
- * diverge, so a new or removed exclusive filter parameter cannot rot this
- * manifest silently — it makes the *coverage check* fail loud instead of the
- * manifest quietly going stale.
+ *   1. WHERE the discriminators live. `list_blocks` takes ONE request DTO, so
+ *      its discriminators are top-level `args.request` fields and a step maps
+ *      to exactly ONE branch. `filtered_blocks_query` takes a flat arg list
+ *      whose value shapes live PER ELEMENT of `args.propertyFilters` — so a
+ *      step maps to a SET of branches (one per filter element), and a step
+ *      with no property filters at all (tag-only / blockType-only) maps to
+ *      NONE. Modelled by `BranchSpec.source`.
+ *   2. What "present" means. `value_text_in` is a `Vec<String>`, dispatched on
+ *      `!is_empty()`, not `Option::is_some()` — an empty array is ABSENT to
+ *      the backend, so it must be absent to the classifier too
+ *      (`discriminatorPresent`).
+ *   3. The arithmetic of the default branch. Every one of `list_blocks`'s five
+ *      exclusive filters is a dispatch arm, and `parent_id`'s arm IS the
+ *      terminal `else` — so `discriminators.length + 1 === rustParams.length`.
+ *      For `filtered_blocks_query` all FOUR value fields have their own arm
+ *      AND there is a real fifth arm for "none supplied" (the EXISTS degrades
+ *      to a bare key-presence check / a bare `IS NOT NULL` on the reserved
+ *      column) — so here `discriminators.length === rustFields.length` and the
+ *      default branch is genuinely extra.
+ *
+ * Neither list is free-standing the way a hand-maintained arm list would be.
+ * Two cross-check tests below parse the dispatch out of the Rust itself and
+ * fail LOUD when the two sides diverge:
+ *
+ *   - `list_blocks …` parses `list_blocks_inner`'s `filter_count` array
+ *     literal out of `blocks/queries.rs` (guards the SET, order-insensitively).
+ *   - `filtered_blocks_query …` parses BOTH of that command's value-shape
+ *     dispatch SITES out of `commands/queries.rs` — the exclusivity guard and
+ *     the `if/else if` chain, at each of the reserved-column and
+ *     non-reserved-property paths — and guards the ORDER, not just the set,
+ *     because `stepBranchKeys` mirrors first-match order. It also pins that
+ *     the two sites agree with EACH OTHER, which is what makes one manifest
+ *     entry legitimate for a command that dispatches on the same four shapes
+ *     in two different places.
  */
 interface BranchDiscriminator {
-  /** Field name in the query step's `args.request` that selects this branch
-   *  when present and non-null. */
+  /** Field name in the query step's args that selects this branch when present
+   *  and non-empty (see `discriminatorPresent`). */
   field: string
   /** Human-readable branch name, used in coverage keys (`${command}::${branch}`)
    *  and failure messages. */
   branch: string
 }
 
+/**
+ * Where in a query step's `args` the discriminator fields live (#3892).
+ *
+ *  - `request` — `args.request.<field>`; the step classifies to exactly ONE
+ *    branch (`list_blocks`).
+ *  - `perElement` — `args.<arrayField>[].<field>`; EVERY element is classified
+ *    and the step covers the UNION of their branches, because the composed SQL
+ *    contains one predicate per element and all of them must be right for the
+ *    recorded rows to be right. Zero elements ⇒ zero branches, NOT the default
+ *    branch: the dispatch never ran (`filtered_blocks_query`).
+ */
+type BranchSource =
+  | { readonly kind: 'request' }
+  | { readonly kind: 'perElement'; readonly arrayField: string }
+
 interface BranchSpec {
   discriminators: readonly BranchDiscriminator[]
   /** Branch name when none of `discriminators` matches (the terminal `else`). */
   defaultBranch: string
+  source: BranchSource
 }
 
 const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
   list_blocks: {
+    source: { kind: 'request' },
     discriminators: [
       { field: 'dateRange', branch: 'agenda-range' },
       { field: 'date', branch: 'agenda-date' },
@@ -620,7 +658,40 @@ const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
     ],
     defaultBranch: 'children',
   },
+  // #3892 — the four mutually-exclusive VALUE SHAPES of one `PropertyFilter`,
+  // in `filtered_blocks_query_inner`'s dispatch order. Each arm emits a
+  // different WHERE predicate (`= ?` / `IN (SELECT value FROM json_each(?))` /
+  // `= ?` on the date column / `>= ? AND < ?`), so a wrong arm returns the
+  // wrong SET. All four arms funnel into the same `ORDER BY b.id ASC`, which
+  // is why this is a predicate-correctness risk rather than the ordering risk
+  // `list_blocks`'s arms carry — lower severity, same invisibility.
+  filtered_blocks_query: {
+    source: { kind: 'perElement', arrayField: 'propertyFilters' },
+    discriminators: [
+      { field: 'valueText', branch: 'value-text' },
+      { field: 'valueTextIn', branch: 'value-text-in' },
+      { field: 'valueDate', branch: 'value-date' },
+      { field: 'valueDateRange', branch: 'value-date-range' },
+    ],
+    // The real fifth arm, not a synthetic catch-all: a filter carrying only a
+    // `key` emits no value predicate at all, so the EXISTS is satisfied by
+    // mere key presence (`Ok(String::new())`) — a distinct SQL shape with its
+    // own way of being wrong.
+    defaultBranch: 'key-presence',
+  },
 }
+// NOTE for whoever extends `filtered_blocks_query`'s entry: the four value
+// shapes are ONE of two dispatch dimensions. The other is whether `pf.key` is
+// a RESERVED key (`todo_state` / `priority` / `due_date` / `scheduled_date`),
+// which routes to a direct `b.<col>` predicate instead of an `EXISTS` over
+// `block_properties` — `queries.rs`'s `reserved_col` match. This manifest
+// models only the value-shape dimension, so a step using a non-reserved key
+// credits the arm for BOTH routings. That second dimension is not
+// field-presence-shaped (it is a predicate over the `key` VALUE), so it does
+// not fit `BranchDiscriminator` without a wider change; the cross-check below
+// at least pins that the two routings dispatch on the same four shapes in the
+// same order. Same class of one-level-down gap as the `agenda_source` note
+// above.
 
 /** All coverage UNITS a command decomposes into: `${command}::${branch}` for
  *  every declared branch (discriminators + the default), or just `command`
@@ -634,20 +705,46 @@ function branchUnitsOf(command: string): string[] {
   ]
 }
 
-/** Classify a query step into its coverage unit, mirroring the Rust `else if`
- *  chain: the FIRST declared discriminator present and non-null in
- *  `step.args.request` wins; none matching falls to `defaultBranch`. Commands
- *  with no manifest entry classify to their own bare name (unchanged from
- *  pre-#3878 behavior). */
-function stepBranchKey(command: string, step: QueryStepShape): string {
-  const spec = QUERY_STEP_BRANCH_DISCRIMINATORS[command]
-  if (!spec) return command
-  const request = (step.args?.['request'] ?? {}) as Record<string, unknown>
+/** Does an args value SELECT its branch? Mirrors the Rust dispatch conditions:
+ *  `Option::is_some()` for the scalar fields, `!Vec::is_empty()` for the list
+ *  ones (`value_text_in`). An empty array is ABSENT to the backend — treating
+ *  it as present would credit an arm the composed SQL never emitted. */
+function discriminatorPresent(v: unknown): boolean {
+  if (v === undefined || v === null) return false
+  if (Array.isArray(v) && v.length === 0) return false
+  return true
+}
+
+/** Classify one discriminator-bearing object (a request DTO, or one element of
+ *  a per-element array) into its branch name, mirroring the Rust `else if`
+ *  chain: FIRST declared discriminator present wins, none matching falls to
+ *  `defaultBranch`. */
+function classify(spec: BranchSpec, bag: Record<string, unknown>): string {
   for (const d of spec.discriminators) {
-    const v = request[d.field]
-    if (v !== undefined && v !== null) return `${command}::${d.branch}`
+    if (discriminatorPresent(bag[d.field])) return d.branch
   }
-  return `${command}::${spec.defaultBranch}`
+  return spec.defaultBranch
+}
+
+/** Every coverage unit a query step exercises. Commands with no manifest entry
+ *  classify to their own bare name (unchanged from pre-#3878 behavior). A
+ *  `request`-sourced command yields exactly one unit; a `perElement`-sourced
+ *  one yields the union over the array (possibly EMPTY — see `BranchSource`). */
+function stepBranchKeys(command: string, step: QueryStepShape): string[] {
+  const spec = QUERY_STEP_BRANCH_DISCRIMINATORS[command]
+  if (!spec) return [command]
+  if (spec.source.kind === 'request') {
+    const request = (step.args?.['request'] ?? {}) as Record<string, unknown>
+    return [`${command}::${classify(spec, request)}`]
+  }
+  const raw = step.args?.[spec.source.arrayField]
+  if (!Array.isArray(raw)) return []
+  const units = new Set<string>()
+  for (const el of raw) {
+    if (typeof el !== 'object' || el === null || Array.isArray(el)) continue
+    units.add(`${command}::${classify(spec, el as Record<string, unknown>)}`)
+  }
+  return [...units]
 }
 
 const RUST_QUERIES_PATH = path.resolve(RUST_COMMANDS_DIR, 'commands', 'blocks', 'queries.rs')
@@ -696,6 +793,102 @@ function extractFilterCountIdentifiers(): string[] {
   return [...source.slice(start, end).matchAll(/(\w+)(?:\.is_some\(\))?/g)]
     .map((m) => m[1] as string)
     .filter((id) => id !== 'let' && id !== 'filter_count')
+}
+
+const RUST_COMMANDS_QUERIES_PATH = path.resolve(RUST_COMMANDS_DIR, 'commands', 'queries.rs')
+
+/**
+ * #3892 — the two places `filtered_blocks_query_inner` dispatches on which of
+ * a `PropertyFilter`'s four value shapes is supplied. They are separate code,
+ * not one helper called twice: a RESERVED key collapses to a direct
+ * `b.<col>` predicate inline in the command, everything else goes through the
+ * `EXISTS (… block_properties bp …)` helper. Both are parsed, because a
+ * divergence BETWEEN them is itself a bug the single manifest entry would hide.
+ *
+ * Each site is read twice over:
+ *
+ *   - `guard` — the `n_text + n_text_in + n_date + n_range > 1` exclusivity
+ *     check, i.e. the Rust source's own statement of which value fields are
+ *     mutually exclusive (the analogue of `list_blocks_inner`'s `filter_count`);
+ *   - `chain` — the `if let Some(…) = &pf.X { … } else if …` chain that
+ *     actually selects the emitted SQL.
+ *
+ * Reading only the guard would miss a REORDERED chain, which is exactly the
+ * drift that breaks `stepBranchKeys`'s first-match classification while leaving
+ * the exclusive SET intact.
+ */
+const FBQ_VALUE_DISPATCH_SITES = [
+  {
+    label: 'property_value_predicate_sql (non-reserved key: EXISTS over bp.value_*)',
+    fnNeedle: 'fn property_value_predicate_sql(',
+    guardEnd: 'let sql_op = match pf.operator',
+    chainEnd: 'Ok(String::new())',
+  },
+  {
+    label: 'filtered_blocks_query_inner (reserved key: direct b.<col> predicate)',
+    fnNeedle: 'pub async fn filtered_blocks_query_inner(',
+    guardEnd: 'let sql_op = match pf.operator',
+    chainEnd: 'continue;',
+  },
+] as const
+
+interface FbqDispatchSite {
+  label: string
+  fnNeedle: string
+  guardEnd: string
+  chainEnd: string
+}
+
+/** Locate `[from, to)` in `source` by two needles, failing loud (never silently
+ *  returning a short/empty slice — an under-read here would UNDER-report the
+ *  dispatch arms, which is the exact failure mode this guard exists to catch). */
+function rustSlice(source: string, from: number, endNeedle: string, what: string): string {
+  const end = source.indexOf(endNeedle, from)
+  if (end < 0) {
+    throw new Error(
+      `could not find ${JSON.stringify(endNeedle)} after offset ${from} in ` +
+        `${RUST_COMMANDS_QUERIES_PATH} while reading ${what} — this guard parses the ` +
+        `Rust dispatch; update the parser if the source moved, don't shrink the ` +
+        `expectation.`,
+    )
+  }
+  return source.slice(from, end)
+}
+
+/** `pf.value_*` identifiers in source order, first occurrence wins. */
+function valueFieldsInOrder(slice: string): string[] {
+  const seen: string[] = []
+  for (const m of slice.matchAll(/pf\.(value_\w+)/g)) {
+    const id = m[1] as string
+    if (!seen.includes(id)) seen.push(id)
+  }
+  return seen
+}
+
+/** Parse one dispatch site's exclusivity guard and its `else if` chain out of
+ *  `commands/queries.rs`. See `FBQ_VALUE_DISPATCH_SITES`. */
+function extractFbqValueDispatch(site: FbqDispatchSite): { guard: string[]; chain: string[] } {
+  const source = readFileSync(RUST_COMMANDS_QUERIES_PATH, 'utf8')
+  const fnAt = source.indexOf(site.fnNeedle)
+  if (fnAt < 0) {
+    throw new Error(
+      `could not find ${JSON.stringify(site.fnNeedle)} in ${RUST_COMMANDS_QUERIES_PATH} — ` +
+        `this guard parses ${site.label}; update the parser if the source moved.`,
+    )
+  }
+  const guardSlice = rustSlice(source, fnAt, site.guardEnd, `${site.label}'s exclusivity guard`)
+  // The guard is the run of `i32::from(… pf.value_* …)` initialisers feeding
+  // the `> 1` sum, so read only those — a bare `pf.value_*` scan over the same
+  // slice would also pick up doc-comment or signature mentions.
+  const guard: string[] = []
+  for (const m of guardSlice.matchAll(/i32::from\([^)]*pf\.(value_\w+)/g)) {
+    guard.push(m[1] as string)
+  }
+  const chainStart = fnAt + guardSlice.length
+  const chain = valueFieldsInOrder(
+    rustSlice(source, chainStart, site.chainEnd, `${site.label}'s value-shape dispatch chain`),
+  )
+  return { guard, chain }
 }
 
 const CONFORMANCE_TEST_PATH = path.resolve(import.meta.dirname, 'conformance.test.ts')
@@ -870,14 +1063,17 @@ describe('#3083 conformance-coverage ratchet', () => {
 
   // #3878 — the BRANCH-grained twin of `fixtureQueryCommands`. Any query step
   // ANYWHERE (regardless of skip/liveness — that finer distinction is the
-  // backend-only check further down) contributes its `stepBranchKey` unit.
+  // backend-only check further down) contributes its `stepBranchKeys` units.
   // For a command with no `QUERY_STEP_BRANCH_DISCRIMINATORS` entry this is
   // exactly `fixtureQueryCommands`'s membership under a different name (the
   // key equals the bare command); for `list_blocks` it decomposes into up to
-  // five distinct units.
+  // five distinct units, and for `filtered_blocks_query` (#3892) one step can
+  // contribute SEVERAL units (one per property filter) or none.
   const fixtureQueryBranches = new Set<string>()
   for (const fx of fixtures) {
-    for (const step of fx.querySteps) fixtureQueryBranches.add(stepBranchKey(step.command, step))
+    for (const step of fx.querySteps) {
+      for (const unit of stepBranchKeys(step.command, step)) fixtureQueryBranches.add(unit)
+    }
   }
 
   it('extracts a non-trivial command + fixture surface (guards vacuous pass)', () => {
@@ -1102,7 +1298,66 @@ describe('#3083 conformance-coverage ratchet', () => {
     expect((spec?.discriminators.length ?? 0) + 1).toBe(rustParams.length)
   })
 
-  // #3878 review note 4 — `stepBranchKey` falls through to `defaultBranch`
+  // #3892 — the same anti-rot mechanism for `filtered_blocks_query`, made
+  // STRICTER in the two ways that command needs and `list_blocks` does not:
+  //
+  //   - ORDER, not just the set. `stepBranchKeys` classifies by FIRST match,
+  //     so a reordered Rust chain silently re-labels every step even though the
+  //     exclusive SET is untouched. The `filter_count` guard above compares
+  //     sorted arrays and cannot see that; this one compares in dispatch order.
+  //   - BOTH dispatch sites, and their agreement with each other. The reserved
+  //     and non-reserved routings are separate code dispatching on the same
+  //     four fields; one manifest entry is only honest while they agree.
+  //
+  // The Rust→IPC name mapping is DERIVED here rather than hand-declared (as it
+  // must be for `list_blocks`, whose params are renamed at the boundary):
+  // `PropertyFilter` is `#[serde(rename_all = "camelCase")]`, so the wire name
+  // is mechanically the camelCase of the Rust field, and deriving it means a
+  // renamed field fails here instead of being re-mapped by hand into silence.
+  it('filtered_blocks_query branch discriminators match the Rust value-shape dispatch', () => {
+    const expected = ['value_text', 'value_text_in', 'value_date', 'value_date_range']
+
+    for (const site of FBQ_VALUE_DISPATCH_SITES) {
+      const { guard, chain } = extractFbqValueDispatch(site)
+      expect(
+        guard,
+        `${site.label}: the "at most one of …" exclusivity guard now covers ` +
+          `${JSON.stringify(guard)} (expected ${JSON.stringify(expected)}, in that order). ` +
+          `QUERY_STEP_BRANCH_DISCRIMINATORS.filtered_blocks_query declares one branch per ` +
+          `value field plus a key-presence default — update the manifest AND this expected ` +
+          `list together, don't widen the assertion.`,
+      ).toEqual(expected)
+      expect(
+        chain,
+        `${site.label}: the value-shape dispatch chain now selects on ` +
+          `${JSON.stringify(chain)} (expected ${JSON.stringify(expected)}, in that order). ` +
+          `stepBranchKeys classifies a property filter by FIRST match, so this ORDER is ` +
+          `load-bearing: reordering the Rust arms re-labels every recorded query step.`,
+      ).toEqual(expected)
+    }
+
+    const spec = QUERY_STEP_BRANCH_DISCRIMINATORS['filtered_blocks_query']
+    expect(
+      spec,
+      'filtered_blocks_query must stay declared in QUERY_STEP_BRANCH_DISCRIMINATORS',
+    ).toBeDefined()
+    const toCamel = (s: string): string => s.replaceAll(/_(\w)/g, (_, c: string) => c.toUpperCase())
+    expect(
+      spec?.discriminators.map((d) => d.field),
+      `The manifest's discriminator fields must be the camelCase of the Rust value ` +
+        `fields, in dispatch order (PropertyFilter is #[serde(rename_all = "camelCase")]).`,
+    ).toEqual(expected.map(toCamel))
+    // Unlike `list_blocks` (whose `parent_id` arm IS the terminal else, so
+    // discriminators + 1 === rust params), EVERY value field here has its own
+    // arm and the default branch is a genuine fifth one.
+    expect(
+      spec?.discriminators.length,
+      `Every Rust value field must have its own declared discriminator — the ` +
+        `key-presence default branch is EXTRA here, not one of them.`,
+    ).toBe(expected.length)
+  })
+
+  // #3878 review note 4 — `stepBranchKeys` falls through to `defaultBranch`
   // when a step's `args.request` carries none of the declared discriminator
   // fields. That is CORRECT for a step that legitimately omits every filter
   // (`list_blocks::children` from `{ parentId: null }` still has a request
@@ -1113,14 +1368,40 @@ describe('#3083 conformance-coverage ratchet', () => {
   // commands only: an unmanifested read-only command's steps carry no
   // discriminator shape requirement, so `args.request`'s presence there is
   // not this guard's business.
-  it('every query step for a manifested command declares an args.request object', () => {
+  //
+  // #3892 — a `perElement` command (`filtered_blocks_query`) cannot hit that
+  // fallthrough at all: a step with no array credits NO branch, so a forgotten
+  // arg fails the coverage check above instead of quietly crediting a default.
+  // The shape requirement there is different, and is checked separately below:
+  // every ELEMENT must be an object, because `stepBranchKeys` skips anything
+  // else — and a silently-skipped element is the same invisible-coverage bug
+  // one level down.
+  it('every query step for a manifested command declares its discriminator args', () => {
     const missing: string[] = []
+    const malformedElement: string[] = []
     for (const fx of fixtures) {
       for (const step of fx.querySteps) {
-        if (!(step.command in QUERY_STEP_BRANCH_DISCRIMINATORS)) continue
-        const request = step.args?.['request']
-        if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+        const spec = QUERY_STEP_BRANCH_DISCRIMINATORS[step.command]
+        if (!spec) continue
+        if (spec.source.kind === 'request') {
+          const request = step.args?.['request']
+          if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+            missing.push(`${fx.name}/${step.name}`)
+          }
+          continue
+        }
+        const raw = step.args?.[spec.source.arrayField]
+        // Absent is legitimate: `filtered_blocks_query` accepts a tag-only or
+        // blockType-only call, which exercises no value-shape arm.
+        if (raw === undefined || raw === null) continue
+        if (!Array.isArray(raw)) {
           missing.push(`${fx.name}/${step.name}`)
+          continue
+        }
+        for (const [i, el] of raw.entries()) {
+          if (typeof el !== 'object' || el === null || Array.isArray(el)) {
+            malformedElement.push(`${fx.name}/${step.name}[${i}]`)
+          }
         }
       }
     }
@@ -1128,12 +1409,20 @@ describe('#3083 conformance-coverage ratchet', () => {
       missing,
       `These query steps drive a branch-manifested command ` +
         `(${JSON.stringify(Object.keys(QUERY_STEP_BRANCH_DISCRIMINATORS))}) but carry no ` +
-        `\`args.request\` object: ${JSON.stringify(missing)}. stepBranchKey falls through ` +
-        `to defaultBranch when no discriminator field is present, which is correct for a ` +
-        `step that legitimately omits every filter — but a step that simply forgot its ` +
-        `args would silently credit that same default branch instead of failing. FIX by ` +
-        `adding \`args: { request: {...} }\` to the step (an empty \`{}\` is a legitimate ` +
-        `default-branch request).`,
+        `discriminator args of the declared shape: ${JSON.stringify(missing)}. ` +
+        `stepBranchKeys falls through to defaultBranch when no discriminator field is ` +
+        `present, which is correct for a step that legitimately omits every filter — but ` +
+        `a step that simply forgot its args would silently credit that same default ` +
+        `branch instead of failing. FIX by adding \`args: { request: {...} }\` (an empty ` +
+        `\`{}\` is a legitimate default-branch request), or — for a per-element command — ` +
+        `by making the declared array field an actual array.`,
+    ).toEqual([])
+    expect(
+      malformedElement,
+      `These per-element discriminator entries are not objects: ` +
+        `${JSON.stringify(malformedElement)}. stepBranchKeys SKIPS a non-object element, ` +
+        `so it would contribute no branch and the step would silently under-claim its ` +
+        `coverage. FIX the fixture's args.`,
     ).toEqual([])
   })
 
@@ -1266,7 +1555,7 @@ describe('#3083 conformance-coverage ratchet', () => {
     // but it is not, on its own, evidence that the command was differentially
     // exercised. A command whose only unskipped step is empty is exactly as
     // undiffed as one with no unskipped step at all, and must be declared.
-    // #3878 — keyed on `stepBranchKey`, not `step.command`: a command with a
+    // #3878 — keyed on `stepBranchKeys`, not `step.command`: a command with a
     // branch manifest (`list_blocks`) is live per-BRANCH, so a DRIFT_SKIP that
     // only takes out one arm's steps cannot hide behind a sibling arm's live
     // step the way command-level keying let it.
@@ -1278,7 +1567,7 @@ describe('#3083 conformance-coverage ratchet', () => {
         // if that alignment ever breaks, so a missing entry here is treated as
         // no evidence rather than silently counted.
         if ((fx.expectedQueries[i]?.rows.length ?? 0) === 0) continue
-        liveCommands.add(stepBranchKey(step.command, step))
+        for (const unit of stepBranchKeys(step.command, step)) liveCommands.add(unit)
       }
     }
     // `fixtureQueryBranches` (any liveness) is the branch-grained twin of
