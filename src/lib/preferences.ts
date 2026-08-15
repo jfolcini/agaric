@@ -490,8 +490,19 @@ const SORT_PREFERENCE: PreferenceDefinition<SortOption> = {
 
 // ── JSON helpers for entries whose wire format is a plain
 // `JSON.stringify`/`JSON.parse` round-trip. ─────────────────────────────
-const jsonParse = <T>(raw: string): T => JSON.parse(raw) as T
 const jsonSerialize = <T>(value: T): string => JSON.stringify(value)
+
+/**
+ * Parse a persisted `string[]` (#3881), dropping any non-array stored value
+ * and any non-string entry rather than casting `JSON.parse`'s `unknown`
+ * result straight to `string[]`. Mirrors the sibling `PATH_HISTORY_PREFERENCE`
+ * / `RECENT_SEARCHES_PREFERENCE` parsers below.
+ */
+function parseStringArray(raw: string): string[] {
+  const parsed: unknown = JSON.parse(raw)
+  if (!Array.isArray(parsed)) return []
+  return parsed.filter((item): item is string => typeof item === 'string')
+}
 
 /**
  * `agaric-gesture-coachmark-seen` — first-run mobile gesture coach-mark
@@ -1001,7 +1012,7 @@ const BLOCK_COLLAPSE_LEGACY_PREFERENCE: PreferenceDefinition<string[]> = {
   scope: 'device',
   version: 1,
   defaultValue: [] as string[],
-  parse: jsonParse<string[]>,
+  parse: parseStringArray,
   serialize: jsonSerialize<string[]>,
 }
 
@@ -1098,7 +1109,7 @@ const BLOCK_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
   scope: 'page',
   version: 1,
   defaultValue: [] as string[],
-  parse: jsonParse<string[]>,
+  parse: parseStringArray,
   serialize: jsonSerialize<string[]>,
 }
 

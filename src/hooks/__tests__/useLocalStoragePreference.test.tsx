@@ -294,6 +294,48 @@ describe('useLocalStoragePreference', () => {
     expect(captured).toBe('default-value')
   })
 
+  // #3881 — `parse` only throws on genuinely invalid JSON; a well-formed
+  // value of the WRONG shape (e.g. a stale schema, a hand-edited devtools
+  // value) sails through unchecked unless the caller opts into `validate`.
+  it('falls back to default when parse succeeds but validate rejects the shape (#3881)', () => {
+    // Valid JSON, but `count` is a string where every consumer expects a
+    // number — exactly the "well-formed JS, wrong shape" case `validate`
+    // exists to catch.
+    localStorage.setItem('test:validate-reject', JSON.stringify({ count: 'not-a-number' }))
+    let captured: { count: number } | null = null
+    render(
+      <Harness
+        storageKey="test:validate-reject"
+        defaultValue={{ count: 0 }}
+        options={{
+          validate: (v) => typeof v.count === 'number',
+        }}
+        onState={(v) => {
+          captured = v
+        }}
+      />,
+    )
+    expect(captured).toEqual({ count: 0 })
+  })
+
+  it('uses the parsed value when validate confirms the shape', () => {
+    localStorage.setItem('test:validate-accept', JSON.stringify({ count: 7 }))
+    let captured: { count: number } | null = null
+    render(
+      <Harness
+        storageKey="test:validate-accept"
+        defaultValue={{ count: 0 }}
+        options={{
+          validate: (v) => typeof v.count === 'number',
+        }}
+        onState={(v) => {
+          captured = v
+        }}
+      />,
+    )
+    expect(captured).toEqual({ count: 7 })
+  })
+
   describe('cross-instance sync (#2666)', () => {
     it('a write in one instance updates another instance on the same key', () => {
       let capturedA: number | null = null

@@ -76,6 +76,31 @@ const DEFAULT_SEARCH_TOGGLES: SearchToggleState = {
   isRegex: false,
 }
 
+/**
+ * #3881 — the default `useLocalStoragePreference` parse is `JSON.parse(raw)
+ * as SearchToggleState`: a bare type assertion, not a check. A corrupted or
+ * hand-edited stored value (e.g. a non-boolean `isRegex`) would otherwise
+ * flow straight to `SearchToggleRow` and, worse, `isRegex` feeds a `RegExp`
+ * construction elsewhere in the search pipeline — a wrong-typed value there
+ * is worth rejecting outright rather than trusting.
+ *
+ * The parameter is `unknown`, not `SearchToggleState` — this runs on the raw
+ * parsed JSON, which TS has no reason to believe is shaped correctly yet.
+ * Typing the parameter as the very type being validated would make every
+ * `typeof value.x === 'boolean'` check tautological from the type checker's
+ * point of view (it already believes `value.x` is a `boolean`), which is
+ * the "unreachable condition" anti-pattern this guard exists to avoid.
+ */
+function isSearchToggleState(value: unknown): value is SearchToggleState {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v['caseSensitive'] === 'boolean' &&
+    typeof v['wholeWord'] === 'boolean' &&
+    typeof v['isRegex'] === 'boolean'
+  )
+}
+
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
   return /[\u4E00-\u9FFF\u3400-\u4DBF\u3000-\u303F\u30A0-\u30FF\u3040-\u309F\uAC00-\uD7AF]/.test(
@@ -209,6 +234,7 @@ export function SearchPanel(): React.ReactElement {
   const [toggles, setToggles] = useLocalStoragePreference<SearchToggleState>(
     SEARCH_TOGGLE_STORAGE_KEY,
     DEFAULT_SEARCH_TOGGLES,
+    { validate: isSearchToggleState },
   )
   // History dropdown visibility (shown when the input is focused
   // AND empty).

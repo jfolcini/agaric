@@ -89,12 +89,46 @@ function encodeUnfilteredCursor(state: UnfilteredCursorState): string | null {
   return UNFILTERED_CURSOR_PREFIX + JSON.stringify(state)
 }
 
+/** `undefined` (absent → source exhausted), `null`, or a backend keyset cursor string. */
+function isValidCursorField(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || typeof value === 'string'
+}
+
+/**
+ * Decode the composite cursor minted by `encodeUnfilteredCursor`. #3881 — the
+ * previous `parsed as UnfilteredCursorState` only checked that `parsed` was
+ * *an* object, not that `due`/`scheduled`/`undated` were actually
+ * `string | null | undefined`; a wrong-typed field would otherwise flow into
+ * `queryByProperty({ cursor: state.due ?? undefined, ... })` as if it were a
+ * valid backend cursor. Reject the whole cursor (fall back to `null`, same
+ * as the existing foreign-cursor / bad-JSON paths) rather than trust a
+ * wrong-typed field.
+ */
 function decodeUnfilteredCursor(cursor: string): UnfilteredCursorState | null {
   if (!cursor.startsWith(UNFILTERED_CURSOR_PREFIX)) return null
   try {
     const parsed: unknown = JSON.parse(cursor.slice(UNFILTERED_CURSOR_PREFIX.length))
     if (typeof parsed !== 'object' || parsed === null) return null
-    return parsed as UnfilteredCursorState
+    const p = parsed as Record<string, unknown>
+    const due = p['due']
+    const scheduled = p['scheduled']
+    const undated = p['undated']
+    if (
+      !isValidCursorField(due) ||
+      !isValidCursorField(scheduled) ||
+      !isValidCursorField(undated)
+    ) {
+      return null
+    }
+    // Build up conditionally (rather than `{ due, scheduled, undated }`):
+    // `exactOptionalPropertyTypes` forbids assigning an explicit `undefined`
+    // to `UnfilteredCursorState`'s `string | null`-typed optional fields, so
+    // an absent field must be an ABSENT key, not a key set to `undefined`.
+    const result: UnfilteredCursorState = {}
+    if (due !== undefined) result.due = due
+    if (scheduled !== undefined) result.scheduled = scheduled
+    if (undated !== undefined) result.undated = undated
+    return result
   } catch {
     return null
   }

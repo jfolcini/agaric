@@ -57,6 +57,38 @@ export interface GraphFilterBarTag {
 }
 
 /**
+ * Narrow an `unknown` value to the legacy `GraphFilter` shape (#3881 — the
+ * bare `parsed as GraphFilter[]` assertion in `readPersistedFilters` below
+ * used to trust the parsed JSON outright; this validates every field the
+ * `type` discriminant claims, not just the discriminant itself). An
+ * unrecognised `type` is rejected outright, matching `isFilterPredicate`'s
+ * discipline for the canonical branch below it
+ * (`src/lib/filters/validate.ts`).
+ */
+function isLegacyGraphFilter(value: unknown): value is GraphFilter {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  switch (v['type']) {
+    case 'tag': {
+      return Array.isArray(v['tagIds']) && v['tagIds'].every((t) => typeof t === 'string')
+    }
+    case 'status':
+    case 'priority': {
+      return Array.isArray(v['values']) && v['values'].every((t) => typeof t === 'string')
+    }
+    case 'hasDueDate':
+    case 'hasScheduledDate':
+    case 'hasBacklinks':
+    case 'excludeTemplates': {
+      return typeof v['value'] === 'boolean'
+    }
+    default: {
+      return false
+    }
+  }
+}
+
+/**
  * Read the persisted filter list from localStorage. Returns `null` when no
  * value is stored, when storage is unavailable (SSR), or when the stored value
  * fails to parse.
@@ -81,7 +113,26 @@ export interface GraphFilterBarTag {
  * real per-`kind` validator (`src/lib/filters/validate.ts`) over the array
  * and drops any entry that fails — including one with an unrecognised
  * `kind` — before the survivors ever reach `canonicalToGraphFilters`.
+ *
+ * #3889: when every entry is dropped, `predicates` is `[]`. The caller's
+ * mount effect never dispatches an empty hydrated list (see below), so the
+ * normal write-effect self-heal — persisting the cleaned value once
+ * `filters` changes — never fires either: nothing changed from the parent's
+ * point of view. Left alone, the wholly-corrupt value would sit in storage
+ * forever and re-warn on every mount. So this is the one case where the read
+ * path writes back itself, overwriting the corrupt value with the (empty)
+ * cleaned one right here, rather than leaving it to the write effect.
+ *
+ * Narrow cross-version caveat: if every stored entry is actually valid for a
+ * NEWER schema this validator doesn't recognise yet (e.g. after a downgrade
+ * to an older build), the heal above overwrites those entries with `[]`
+ * where they previously just sat there unread. Only reachable on a
+ * downgrade, and the current version already ignored those entries either
+ * way (it can't validate a shape it doesn't know), so nothing this version
+ * does with the data changes — only what a future re-upgrade could still
+ * have recovered from disk.
  */
+
 function readPersistedFilters(): GraphFilter[] | null {
   if (typeof window === 'undefined') return null
   try {
@@ -102,10 +153,63 @@ function readPersistedFilters(): GraphFilter[] | null {
           key: STORAGE_KEY,
           droppedCount,
         })
+        if (predicates.length === 0) {
+          // Total corruption (#3889): nothing survived, so hydration below
+          // dispatches nothing and the write effect that would normally
+          // persist the cleaned value never runs. Self-heal here instead —
+          // overwrite the corrupt stored value with the (empty) cleaned one
+          // so the next mount finds a clean `[]` and stops re-warning.
+          //
+          // This write gets its own try/catch, deliberately separate from
+          // the outer read `try` below: a throw here is a WRITE failure
+          // (quota exceeded, storage revoked mid-read), not a read failure,
+          // and must not be misattributed to "Failed to read persisted
+          // filters" — the outer catch's message. The heal is best-effort;
+          // the cleaned `[]` is still returned either way.
+          try {
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(predicates))
+          } catch (err) {
+            logger.warn(
+              'GraphFilterBar',
+              'Failed to persist healed (self-cleaned) filters',
+              { key: STORAGE_KEY },
+              err,
+            )
+          }
+        }
       }
       return canonicalToGraphFilters(predicates)
     }
-    return parsed as GraphFilter[]
+    const legacyFilters: GraphFilter[] = []
+    let legacyDroppedCount = 0
+    for (const entry of parsed) {
+      if (isLegacyGraphFilter(entry)) legacyFilters.push(entry)
+      else legacyDroppedCount++
+    }
+    if (legacyDroppedCount > 0) {
+      logger.warn('GraphFilterBar', 'Dropped invalid persisted legacy filters', {
+        key: STORAGE_KEY,
+        droppedCount: legacyDroppedCount,
+      })
+      if (legacyFilters.length === 0) {
+        // Same total-corruption case as the canonical branch above (#3889):
+        // an empty hydrated list is never dispatched by the mount effect, so
+        // the normal write-effect self-heal never fires either. Heal here
+        // too, in its own try/catch for the same write-vs-read attribution
+        // reason as above.
+        try {
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(legacyFilters))
+        } catch (err) {
+          logger.warn(
+            'GraphFilterBar',
+            'Failed to persist healed (self-cleaned) filters',
+            { key: STORAGE_KEY },
+            err,
+          )
+        }
+      }
+    }
+    return legacyFilters
   } catch (err) {
     logger.warn('GraphFilterBar', 'Failed to read persisted filters', { key: STORAGE_KEY }, err)
     return null

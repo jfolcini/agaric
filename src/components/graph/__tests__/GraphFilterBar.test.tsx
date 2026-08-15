@@ -812,6 +812,124 @@ describe('GraphFilterBar', () => {
       expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
     })
 
+    // #3889 — when every persisted entry is invalid, the mount effect never
+    // dispatches (empty hydrated list) so the normal write-effect self-heal
+    // (persist the cleaned value once `filters` changes) never fires either.
+    // Without a dedicated fix, the wholly-corrupt value sits in storage
+    // forever and re-warns on every single mount. Assert the actual heal —
+    // the corrupt value is overwritten in place on the very first read — and
+    // that a second mount against the now-clean value does not warn again.
+    it('self-heals a wholly-invalid persisted value in place, so a later mount does not re-warn', async () => {
+      const stored = [{ kind: 'status', values: 'not-an-array' }]
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+      vi.mocked(logger.warn).mockClear()
+
+      const first = render(<StatefulHarness />)
+      await waitFor(() => {
+        expect(logger.warn).toHaveBeenCalledWith(
+          'GraphFilterBar',
+          'Dropped invalid persisted filter predicates',
+          { key: STORAGE_KEY, droppedCount: 1 },
+        )
+      })
+      // The heal itself: the corrupt raw value must have been replaced with
+      // a clean empty array, not left untouched for a write effect that
+      // never runs.
+      await waitFor(() => {
+        expect(localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify([]))
+      })
+      first.unmount()
+
+      // A second mount reads the now-healed value. Since it's a clean `[]`,
+      // nothing is dropped and the drop warning must not fire again.
+      vi.mocked(logger.warn).mockClear()
+      render(<StatefulHarness />)
+      await waitFor(() => {
+        expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+      })
+      expect(logger.warn).not.toHaveBeenCalled()
+    })
+
+    // PR #3913 review note 1 — the self-heal's `setItem` used to sit inside
+    // the outer read `try`, so a WRITE failure there was logged as "Failed
+    // to read persisted filters" and misattributed a write problem to a
+    // read problem. Assert the message is honest about which operation
+    // actually failed.
+    it('logs a throwing self-heal write as a write failure, not a read failure', async () => {
+      const stored = [{ kind: 'status', values: 'not-an-array' }]
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+      vi.mocked(logger.warn).mockClear()
+
+      const setItemSpy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+        throw new Error('QuotaExceeded')
+      })
+
+      render(<StatefulHarness />)
+
+      await waitFor(() => {
+        expect(logger.warn).toHaveBeenCalledWith(
+          'GraphFilterBar',
+          'Failed to persist healed (self-cleaned) filters',
+          { key: STORAGE_KEY },
+          expect.any(Error),
+        )
+      })
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        'GraphFilterBar',
+        'Failed to read persisted filters',
+        expect.anything(),
+        expect.anything(),
+      )
+
+      setItemSpy.mockRestore()
+    })
+
+    // PR #3913 review note 5 — the legacy (non-canonical, `type`-discriminated)
+    // branch used to be a bare `parsed as GraphFilter[]` assertion: the exact
+    // #3881 pattern. It must validate per-field like the canonical branch
+    // above it, dropping invalid entries and logging the count instead of
+    // trusting the parsed JSON outright.
+    it('drops a legacy-shaped filter whose type is unrecognised, keeping the valid siblings, and logs the drop count', async () => {
+      const stored: (GraphFilter | { type: string })[] = [
+        { type: 'hasBacklinks', value: true },
+        { type: 'totallyMadeUp' },
+      ]
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+      vi.mocked(logger.warn).mockClear()
+
+      const onChange = vi.fn<(filters: GraphFilter[]) => void>()
+      render(<StatefulHarness onChange={onChange} />)
+
+      await waitFor(() => {
+        expect(onChange).toHaveBeenCalledWith([{ type: 'hasBacklinks', value: true }])
+      })
+      expect(logger.warn).toHaveBeenCalledWith(
+        'GraphFilterBar',
+        'Dropped invalid persisted legacy filters',
+        { key: STORAGE_KEY, droppedCount: 1 },
+      )
+    })
+
+    it('drops a legacy-shaped filter whose field is wrong-typed, keeping the valid siblings', async () => {
+      const stored = [
+        // `values` should be a string[]; this entry is malformed and must be dropped.
+        { type: 'status', values: 'not-an-array' },
+        { type: 'hasDueDate', value: true },
+      ]
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+
+      const onChange = vi.fn<(filters: GraphFilter[]) => void>()
+      render(<StatefulHarness onChange={onChange} />)
+
+      await waitFor(() => {
+        expect(onChange).toHaveBeenCalledWith([{ type: 'hasDueDate', value: true }])
+      })
+      // The malformed entry must not have reached the model as a status
+      // filter (pill label shape, not the bare word — the add-filter
+      // dropdown always has a "Status" option).
+      expect(screen.queryByText(/Status:/)).not.toBeInTheDocument()
+    })
+
     it('persists filter clears (writes empty array on Clear all)', async () => {
       const user = userEvent.setup()
       const stored: GraphFilter[] = [{ type: 'status', values: ['TODO'] }]
