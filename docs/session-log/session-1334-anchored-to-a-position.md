@@ -74,3 +74,42 @@ verifying rather than accepting:
 Both are the kind of claim that sounds obviously fine and would have been embarrassing to be wrong
 about — a reporter that appends rather than replaces would have turned this fix into an issue-spam
 bug.
+
+### And the fix contained the same defect, inverted
+
+Review found the idempotency argument above was right about the lanes it considered and silent about
+the one that mattered. Removing `--dry-run` from the dispatch branch left `--skipped-ok` in place —
+and those two flags were only safe together *because the dispatch never wrote*. The script's own
+self-test said so verbatim: `--skipped-ok exempts skipped (dispatch dry-run only)`.
+
+With real writes enabled, a lane that merely **skipped** falls out of `current`, appears in
+`resolvedOnes = known − current`, and `decideAction` returns `close`. So a dispatch reports a lane
+recovered on the strength of it never having run, clears it from the tracked set, and the issue reads
+green until the next Monday cron. With other lanes still red the same inputs yield `sync` instead —
+which drops the lane with no comment at all. Quieter, same wrong state.
+
+That is precisely the harm this PR set out to fix — a tracking issue advertising a set that is not
+the truth — reintroduced by the fix, in the opposite direction. The first version threw away a
+correct result; this version would have published an incorrect one.
+
+The invariant that was missing has to be stated as a pair, and only the pair is right: a skipped lane
+must not count as failing **and** must not count as recovered. It is carried over from `known`
+instead. The `known.has(j)` guard matters as much as the carry-over itself — without it, a lane that
+skipped would be *added* to the tracked set, which is the converse error. Both directions are pinned
+by assertions that were shown to redden under the opposite mutation, plus a third pinning that a lane
+which really ran and passed still closes the issue. Without that third one, carrying everything
+forever would satisfy the first two.
+
+### The stale justification was the mechanism, not a detail
+
+Worth recording that the blocking bug's proximate cause was a comment nobody re-read. The flag was
+correct under an assumption stated in prose, the assumption was deleted, and the prose stayed.
+
+The same shape turned up twice more in the same review. The watchdog step was still gated to
+`schedule` on the reasoning that "a dispatch is watched by the human who triggered it, and its
+`--dry-run` failure must not file an issue" — a sentence whose premise had just been removed. And two
+comments still described "the two schedule-only filers" when #3394 had un-gated one of them.
+
+So the new watchdog condition is pinned by **code** rather than by a comment: a check reads the `if:`
+verbatim, can see an event gate, and throws on a rename or a missing condition instead of passing
+vacuously. A justification that can go stale silently is not a justification; it is a note.
