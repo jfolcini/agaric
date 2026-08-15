@@ -287,13 +287,23 @@ function extractPinned(src, name) {
     throw err
   }
 
+  // Anchored at COLUMN 0, not `(?:^|\n)\s*`. `\s` matches indentation (and
+  // further newlines), so the old form matched a declaration nested inside a
+  // function body just as readily as a module-level one — despite this
+  // file's header and this function's docstring both saying "top-level".
+  // A name present at both levels tripped `matchCount === 2` and failed
+  // closed, but a name present ONLY as a function-local `const` was
+  // extracted and hashed as though it were the symbol the pin names.
+  // Top-level declarations in this codebase start at column 0, so requiring
+  // that is exact; an indented declaration now reads as not-found, which is
+  // the fail-closed direction.
   const escaped = escapeRegExp(name)
   const fnRe = new RegExp(
-    `(?:^|\\n)\\s*(?:export\\s+)?(?:async\\s+)?function\\s+${escaped}\\s*\\(`,
+    `(?:^|\\n)(?:export\\s+)?(?:async\\s+)?function\\s+${escaped}\\s*\\(`,
     'g',
   )
   const constRe = new RegExp(
-    `(?:^|\\n)\\s*(?:export\\s+)?(?:const|let|var)\\s+${escaped}(?![A-Za-z0-9_$])`,
+    `(?:^|\\n)(?:export\\s+)?(?:const|let|var)\\s+${escaped}(?![A-Za-z0-9_$])`,
     'g',
   )
   const fnMatches = [...search.matchAll(fnRe)]
@@ -835,6 +845,47 @@ const AFTER = 2
       'a const with a generic type annotation and a multi-line initializer extracts fully',
       JSON.stringify(extConstAnnotated),
     )
+  }
+
+  // Both declaration regexes must be TOP-LEVEL anchored, as this file's
+  // header and `extractPinned`'s docstring both promise. `(?:^|\n)\s*` did
+  // not deliver that: `\s` matches indentation, so a declaration nested
+  // inside a function body matched too, and a name present ONLY as a
+  // function-local `const` was extracted and hashed as though it were the
+  // module-level symbol the pin names.
+  const extNestedConst = extractPinned(
+    'export function outer() {\n  const NESTED = 1\n  return NESTED\n}\n',
+    'NESTED',
+  )
+  if (extNestedConst.text === null && extNestedConst.reason === 'not-found') {
+    ok('a function-local `const` is NOT extracted as though it were top-level')
+  } else {
+    fail(
+      'a function-local `const` is NOT extracted as though it were top-level',
+      JSON.stringify(extNestedConst),
+    )
+  }
+
+  const extNestedFn = extractPinned(
+    'export function outer() {\n  function nested() { return 1 }\n  return nested\n}\n',
+    'nested',
+  )
+  if (extNestedFn.text === null && extNestedFn.reason === 'not-found') {
+    ok('a function-local `function` declaration is NOT extracted as though it were top-level')
+  } else {
+    fail(
+      'a function-local `function` declaration is NOT extracted as though it were top-level',
+      JSON.stringify(extNestedFn),
+    )
+  }
+
+  // Positive control: the anchoring must not stop finding real top-level
+  // declarations, with or without `export`.
+  const extTopLevelStill = extractPinned('const TOP = 1\nexport const TOP2 = 2\n', 'TOP2')
+  if (extTopLevelStill.kind === 'const' && extTopLevelStill.text === 'export const TOP2 = 2') {
+    ok('top-level declarations are still found after anchoring')
+  } else {
+    fail('top-level declarations are still found after anchoring', JSON.stringify(extTopLevelStill))
   }
 
   const extNoInit = extractPinned('let LATER: number\nLATER = 1\n', 'LATER')

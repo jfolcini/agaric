@@ -99,6 +99,20 @@
 //   - an unterminated template literal or `${…}` interpolation,
 //   - a `/` after `++`/`--` with an intervening newline (ASI-dependent).
 //
+// Two constructs deliberately DEGRADE instead of throwing, because for both
+// of them the ambiguous input occurs in valid source and a throw would stop
+// the gate repo-wide rather than name a defect:
+//   - a `/` that opens no well-formed same-line regex becomes an ordinary
+//     punctuator;
+//   - a `/*` with no closer is not treated as a comment at all, and its `/`
+//     and `*` become ordinary punctuators. Consuming it to EOF instead was
+//     the one remaining fail-OPEN: it blanked the whole tail of the file, so
+//     `check-set-property-args` reported a file it had not checked as clean.
+//     Degrading keeps the tail lexed; it does NOT silently hide anything.
+//
+// `findStatementEnd` has its own fail-closed rule: it returns `null` when
+// the expression is still dangling on an operator at end of input.
+//
 // ─── Stated limitations (all chosen to fail closed or to be inert) ──
 //
 //  1. JSX/TSX is not parsed as a grammar. `<` and `>` are therefore
@@ -119,19 +133,38 @@
 //  2. JSX TEXT is lexed as if it were code. An apostrophe in bare JSX
 //     text (`<p>don't</p>`) is read as a string opener and consumes up to
 //     the next quote — inherited unchanged from the scanners this
-//     replaces, and not what #3950 is about. It is bounded rather than
-//     silent: a quote that never closes raises `ScanError`, and a
-//     mis-consumed span almost always leaves the enclosing brackets
-//     unbalanced, which every caller here reports as "ambiguous" rather
-//     than extracting something truncated. The #3950 flavour of this —
+//     replaces, and not what #3950 is about. The #3950 flavour of this —
 //     a QUOTE INSIDE A REGEX LITERAL, `/['"]/` — is fixed: the regex is
 //     lexed as a regex, so its quotes never open a string.
+//
+//     BLAST RADIUS, and it grew when this module landed. The old scanners
+//     mis-scanned the one offending file silently. This one raises
+//     `ScanError` for a quote that never closes, and `check-set-property-args`
+//     turns that into exit 1 for the WHOLE TREE — so a single contraction
+//     written as bare JSX text blocks every commit repo-wide until it is
+//     escaped (`<p>don&apos;t</p>` or `<p>{"don't"}</p>`). That is the
+//     fail-closed direction and is the right default for a drift gate, but
+//     the cost is now "the gate stops", not "one file is mis-scanned", and
+//     the failure message names a lexing construct rather than the JSX text
+//     that caused it. A repo sweep over 1781 files finds zero today.
+//
+//     The same JSX-text hazard is why an unterminated `/*` degrades rather
+//     than raising: `<span>path:Journal/*</span>` is real, valid source in
+//     this repo, so raising there would stop the gate on a non-defect. The
+//     two cases differ because a stray quote in JSX text is rare and easy to
+//     escape, while a trailing `/*` in a glob is neither.
 //  3. Brace classification (block vs object literal) is the standard
 //     previous-token heuristic, not a parse. A misclassification only
 //     matters when a `/` immediately follows the `}` AND a well-formed
 //     same-line regex candidate follows it; otherwise it is inert.
 //  4. Automatic semicolon insertion is not modelled anywhere except the
-//     explicit `++`/`--` fail-closed case above.
+//     explicit `++`/`--` fail-closed case above and `findStatementEnd`'s
+//     boundary test, which looks BOTH ways: a newline is a boundary only if
+//     the next token cannot continue the expression AND the previous token
+//     did not leave it incomplete. Restricted productions (`return`,
+//     `throw`, `yield`, `break`, `continue`), where ASI really does fire
+//     across a newline, are why the incomplete-expression test covers
+//     punctuators only and not keywords.
 //  5. Regex-literal FLAGS are lexed as a run of ASCII letters. A regex
 //     immediately followed (no space) by an identifier is not valid JS,
 //     so this cannot mis-consume real code.
@@ -416,13 +449,32 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
       continue
     }
 
+    // A block comment, but ONLY if it actually closes. Clamping to `to`
+    // when it does not made this the single fail-OPEN left in the scanner:
+    // `/*` with no closer was consumed to EOF as a comment, `stripComments`
+    // blanked the whole tail of the file, and `check-set-property-args`
+    // then found zero call sites after it and reported the file clean
+    // without having checked it.
+    //
+    // An unterminated candidate DEGRADES to ordinary punctuators instead of
+    // raising — the same move the regex lexer below already makes for a `/`
+    // that does not open a well-formed literal, and for the same reason.
+    // Raising would be wrong here: `/*` appears in bare JSX TEXT in valid
+    // source (`<span>path:Journal/*</span>`,
+    // src/components/search/FilterHelperPopover.tsx:262), which JSX-unaware
+    // lexing cannot distinguish from a comment opener, so a throw would
+    // block every commit repo-wide on a file that is not defective.
+    // Degrading keeps the rest of the file lexed, and therefore checked.
     if (c === '/' && c2 === '*') {
       const start = i
       let j = i + 2
       while (j < to && !(src[j] === '*' && src[j + 1] === '/')) j++
-      i = Math.min(j + 2, to)
-      yield { kind: 'comment', start, end: i }
-      continue
+      if (j < to) {
+        i = j + 2
+        yield { kind: 'comment', start, end: i }
+        continue
+      }
+      // Falls through: the `/` is emitted as an ordinary punctuator below.
     }
 
     if (c === "'" || c === '"') {
@@ -505,9 +557,18 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
       i += 1
     }
     const tok = { kind: 'punct', value, start, end: i }
+    // Both stacks must honour `propertyName` for the same reason
+    // `regexAllowedAfter` does: `obj.with(a, b)` is a METHOD CALL, not a
+    // `with` statement, so its `)` must not carry `controlHead` and permit
+    // a regex; `p.catch` before a `{` is a property, not a `catch` clause.
+    // Consulting the keyword sets without that check reinstated the exact
+    // hole the `regexAllowedAfter` correction closed, one branch below it.
     if (value === '(') {
       parenStack.push(
-        prev !== null && prev.kind === 'ident' && CONTROL_HEAD_KEYWORDS.has(prev.value),
+        prev !== null &&
+          prev.kind === 'ident' &&
+          prev.propertyName !== true &&
+          CONTROL_HEAD_KEYWORDS.has(prev.value),
       )
     } else if (value === ')') {
       tok.controlHead = parenStack.length > 0 ? parenStack.pop() : false
@@ -515,7 +576,9 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
       braceStack.push(
         prev === null ||
           (prev.kind === 'punct' && BLOCK_PREV_PUNCT.has(prev.value)) ||
-          (prev.kind === 'ident' && BLOCK_PREV_KEYWORD.has(prev.value)),
+          (prev.kind === 'ident' &&
+            prev.propertyName !== true &&
+            BLOCK_PREV_KEYWORD.has(prev.value)),
       )
     } else if (value === '}') {
       tok.blockClose = braceStack.length > 0 ? braceStack.pop() : false
@@ -660,6 +723,25 @@ const EXPR_CONTINUATION_PUNCT = new Set([
 const EXPR_CONTINUATION_KEYWORD = new Set(['instanceof', 'in', 'as', 'satisfies'])
 
 /**
+ * Punctuators that can legally END an expression. Any OTHER punctuator
+ * standing as the last significant token means the expression is
+ * syntactically INCOMPLETE (`… 'a' +`, `… &&`, `… ,`), so the newline that
+ * follows it is not an automatic-semicolon boundary and `findStatementEnd`
+ * must not break there.
+ *
+ * Only punctuators are listed. Keywords are deliberately excluded: `return`,
+ * `throw`, `yield`, `break` and `continue` are RESTRICTED PRODUCTIONS where
+ * ASI genuinely does fire across a newline, so treating a trailing keyword
+ * as "incomplete" would be wrong in the one place it matters.
+ */
+const EXPR_TERMINAL_PUNCT = new Set([')', ']', '}', '++', '--'])
+
+/** True when `tok` cannot be the last token of a complete expression. */
+function leavesExpressionIncomplete(tok) {
+  return tok !== null && tok.kind === 'punct' && !EXPR_TERMINAL_PUNCT.has(tok.value)
+}
+
+/**
  * Find the end (exclusive) of the statement/expression that starts at
  * `from`, scanning at bracket depth 0 until either an explicit `;`, a
  * top-level `,` (the next declarator of a multi-declarator `const a = 1,
@@ -676,6 +758,7 @@ const EXPR_CONTINUATION_KEYWORD = new Set(['instanceof', 'in', 'as', 'satisfies'
 export function findStatementEnd(src, from) {
   let depth = 0
   let lastSignificantEnd = null
+  let lastSignificantTok = null
   let sawNewlineSinceLastToken = false
 
   for (const tok of tokenize(src, { from })) {
@@ -687,7 +770,17 @@ export function findStatementEnd(src, from) {
       if (src.slice(tok.start, tok.end).includes('\n')) sawNewlineSinceLastToken = true
       continue
     }
-    if (depth === 0 && sawNewlineSinceLastToken && lastSignificantEnd !== null) {
+    // The ASI test has to look BOTH ways. Asking only whether the NEXT
+    // token can continue the expression truncates a multi-line initializer
+    // whose lines end in a binary operator (`'a' +\n  'b'`), because a
+    // string is not a continuation token — even though no ASI can occur
+    // after a `+`. The previous token settles it first.
+    if (
+      depth === 0 &&
+      sawNewlineSinceLastToken &&
+      lastSignificantEnd !== null &&
+      !leavesExpressionIncomplete(lastSignificantTok)
+    ) {
       const continues =
         (tok.kind === 'punct' && EXPR_CONTINUATION_PUNCT.has(tok.value)) ||
         tok.kind === 'template' ||
@@ -705,10 +798,15 @@ export function findStatementEnd(src, from) {
       }
     }
     lastSignificantEnd = tok.end
+    lastSignificantTok = tok
     sawNewlineSinceLastToken = false
   }
 
   if (depth !== 0) return null
+  // Ran out of input with the expression still dangling on an operator:
+  // there is no defensible end offset, so refuse rather than report the
+  // operator's own end (which is how the truncation above used to look).
+  if (leavesExpressionIncomplete(lastSignificantTok)) return null
   return lastSignificantEnd
 }
 
@@ -1177,6 +1275,157 @@ function runSelfTest() {
       JSON.stringify(end === null ? null : src.slice(src.indexOf('1'), end)),
     )
   }
+
+  // A multi-line initializer whose LINES END IN A BINARY OPERATOR. No ASI
+  // happens after `+` — the expression is syntactically incomplete, so the
+  // newline is not a statement boundary. The ASI test used to inspect only
+  // the NEXT token, so it broke here and `extractConstAt` hashed
+  // `const P =\n  'a' +` — a stable hash over a truncated prefix, with
+  // every line after the first operator freely rewritable behind a green
+  // pin. That is #3950's own failure mode inside #3950's fix.
+  //
+  // The pre-existing multi-line assertion (`foo(\n 1,\n 2,\n)`) cannot
+  // catch this: it sits at bracket depth > 0, where this branch never runs.
+  // Live shape: src/lib/__tests__/export-graph.test.ts's REPORT_PREAMBLE.
+  {
+    const src =
+      "const P =\n  'Agaric export report\\n' +\n  '\\n' +\n  'tail\\n'\nconst after = 1\n"
+    const end = findStatementEnd(src, src.indexOf("'Agaric"))
+    const got = end === null ? null : src.slice(src.indexOf("'Agaric"), end)
+    check(
+      'findStatementEnd does not break at a newline after a trailing binary operator',
+      got === "'Agaric export report\\n' +\n  '\\n' +\n  'tail\\n'",
+      JSON.stringify(got),
+    )
+  }
+
+  {
+    // The consequence the guard cares about: two initializers differing only
+    // AFTER the first trailing operator must not hash identically.
+    const mk = (tail) => `const P =\n  'head' +\n  '${tail}'\nconst after = 1\n`
+    const endOf = (s) => {
+      const at = s.indexOf("'head'")
+      const e = findStatementEnd(s, at)
+      return e === null ? null : s.slice(at, e)
+    }
+    check(
+      'two initializers differing after the trailing operator do not extract identically',
+      endOf(mk('one')) !== null && endOf(mk('one')) !== endOf(mk('two-and-longer')),
+      `${JSON.stringify(endOf(mk('one')))} vs ${JSON.stringify(endOf(mk('two-and-longer')))}`,
+    )
+  }
+
+  {
+    // Fail-closed backstop: an initializer that ENDS on a dangling operator
+    // never completes, so there is no defensible end offset to report.
+    const src = "const P =\n  'head' +\n"
+    check(
+      'an initializer ending on a dangling operator returns null (fails closed)',
+      findStatementEnd(src, src.indexOf("'head'")) === null,
+      JSON.stringify(findStatementEnd(src, src.indexOf("'head'"))),
+    )
+  }
+
+  // The property-name correction must reach the paren and brace context
+  // stacks too, not just `REGEX_PRECEDING_KEYWORDS`. `obj.with(…)` is a
+  // method call, so its `)` must NOT carry `controlHead` and permit a
+  // regex; `p.catch {`-shaped input must not open a BLOCK.
+  // `otelContext.with(...)` is live at src/lib/observability/tracer.ts.
+  for (const [expr, label] of [
+    ['const x = obj.with(a, b) / y / z', 'obj.with(…)'],
+    ['const x = obj.if(a) / y / z', 'obj.if(…)'],
+    ['const x = obj.for(a) / y / z', 'obj.for(…)'],
+    ['const x = obj.switch(a) / y / z', 'obj.switch(…)'],
+  ]) {
+    check(
+      `a method call named like a control keyword (\`${label}\`) is followed by DIVISION`,
+      regexes(expr).length === 0,
+      JSON.stringify(regexes(expr)),
+    )
+  }
+
+  check(
+    'the paren-stack correction does not disarm the real control-head rule',
+    regexes('if (x) /re/.test(s)').join() === '/re/',
+    JSON.stringify(regexes('if (x) /re/.test(s)')),
+  )
+
+  // `catch` / `finally` in PROPERTY position must not classify a following
+  // `{` as a BLOCK (`BLOCK_PREV_KEYWORD`), because its `}` would then permit
+  // a regex. Asserted on the brace-context flag directly as well as on the
+  // regex outcome — `p.catch {}` is the minimal input that reaches this
+  // branch, since a property named `catch` before a `{` is the only way in.
+  for (const kw of ['catch', 'finally']) {
+    const src = `p.${kw} {} / y / z`
+    const closeTok = [...tokenize(src)].find((t) => t.kind === 'punct' && t.value === '}')
+    check(
+      `a property named \`${kw}\` does not classify a following \`{\` as a block`,
+      closeTok !== undefined && closeTok.blockClose === false && regexes(src).length === 0,
+      `blockClose=${closeTok?.blockClose} regexes=${JSON.stringify(regexes(src))}`,
+    )
+  }
+
+  check(
+    'the brace-stack correction does not disarm the real `catch` block rule',
+    regexes('try { g() } catch (e) {}\n/re/.test(s)').join() === '/re/',
+    JSON.stringify(regexes('try { g() } catch (e) {}\n/re/.test(s)')),
+  )
+
+  {
+    // A `/*` WITH NO CLOSER is not a comment. Consuming it to EOF as one was
+    // the single fail-OPEN left in the scanner: `stripComments` blanked the
+    // whole tail of the file, so every construct after it vanished and
+    // `check-set-property-args` reported a file it had not actually checked
+    // as clean.
+    //
+    // The fix is degradation, not a throw — the same move the regex lexer
+    // already makes for a `/` that does not open a well-formed literal. A
+    // throw looks more rigorous but is wrong here: `/*` occurs in bare JSX
+    // TEXT in real, valid source (`<span>path:Journal/*</span>` at
+    // src/components/search/FilterHelperPopover.tsx:262), and raising would
+    // block every commit repo-wide on a file that is not defective.
+    // Degrading emits `/` and `*` as ordinary punctuators, which keeps the
+    // rest of the file lexed and checked.
+    const src = 'const a = 1\n/* never closed\nconst b = 2\nconst c = 3\n'
+    const stripped = stripComments(src)
+    check(
+      'an unterminated block comment does not blank the rest of the file',
+      stripped.includes('const b = 2') && stripped.includes('const c = 3'),
+      JSON.stringify(stripped),
+    )
+    check(
+      'an unterminated block comment is lexed as punctuators, not as a comment token',
+      [...tokenize(src)].every((t) => t.kind !== 'comment'),
+      JSON.stringify(
+        [...tokenize(src)]
+          .filter((t) => t.kind === 'comment')
+          .map((t) => src.slice(t.start, t.end)),
+      ),
+    )
+  }
+
+  {
+    // The real-source shape that forced degradation over a throw.
+    const src = '<span className="x">path:Journal/*</span>\nconst after = 1\n'
+    let threw = null
+    let stripped = null
+    try {
+      stripped = stripComments(src)
+    } catch (err) {
+      threw = err
+    }
+    check(
+      'a glob in bare JSX text (`path:Journal/*`) neither raises nor blanks the file',
+      threw === null && stripped !== null && stripped.includes('const after = 1'),
+      threw ? String(threw) : JSON.stringify(stripped),
+    )
+  }
+
+  check(
+    'a properly terminated block comment is still blanked as a comment',
+    !stripComments('const a = 1 /* note */\nconst b = 2\n').includes('note'),
+    JSON.stringify(stripComments('const a = 1 /* note */\nconst b = 2\n')),
+  )
 
   // ── TSX shapes the guards actually walk ────────────────────────────
 

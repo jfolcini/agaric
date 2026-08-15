@@ -61,6 +61,14 @@
 //   1. Comments are stripped first, string/template/regex-literal aware
 //      (a `//` or `/* ` inside a string value, e.g. a URL, must not be
 //      mistaken for a comment start).
+//   1b. Call sites are then DISCOVERED in a second view with string and
+//      template CONTENTS blanked as well, so a `commands.setProperty(`
+//      written inside a string or a template literal — documentation, a
+//      code sample, an error message — is not analysed as a real call.
+//      It used to be, and reported missing keys for a call that does not
+//      exist. Arguments are still read out of the comments-only-stripped
+//      text, whose offsets are identical (both transforms preserve length
+//      and newline positions).
 //   2. `commands.setProperty(` call sites are located, then their
 //      argument list is isolated with a bracket-depth scanner (tracks
 //      `()[]{}` nesting and skips over string/template/regex contents,
@@ -118,6 +126,7 @@ import path from 'node:path'
 
 import {
   ScanError,
+  blankStringsAndTemplates,
   findMatchingBracket,
   splitTopLevelCommas,
   stripComments,
@@ -230,20 +239,36 @@ function analyzeSource(rawSrc) {
 
   try {
     const src = stripComments(rawSrc)
+    // Call sites are DISCOVERED in a view with string/template contents
+    // blanked, so a `commands.setProperty(` written inside a string or a
+    // template literal (documentation, a code sample) is not analysed as a
+    // real call. Arguments are then read out of `src`, whose offsets are
+    // identical because both transforms preserve length and newlines.
+    const search = blankStringsAndTemplates(src)
 
     CALL_RE.lastIndex = 0
     let m
-    while ((m = CALL_RE.exec(src))) {
+    while ((m = CALL_RE.exec(search))) {
       const openParenIdx = m.index + m[0].length - 1
       const closeParenIdx = findMatchingBracket(src, openParenIdx)
       if (closeParenIdx === -1) continue // malformed/truncated — skip defensively
 
       const argsInner = src.slice(openParenIdx + 1, closeParenIdx)
-      const args = splitTopLevelCommas(argsInner)
-      if (args.length < 3) continue // not a 3-arg call — not our shape, skip defensively
-
       const line = src.slice(0, m.index).split('\n').length
-      const literal = parseObjectLiteral(args[2])
+      // A `ScanError` raised while lexing this call's own argument text
+      // carries an index relative to that SUBSTRING, which would resolve to
+      // a line near the top of the file. Re-base it onto the call site so
+      // the reported location is the call, not line 1.
+      let args
+      let literal
+      try {
+        args = splitTopLevelCommas(argsInner)
+        if (args.length < 3) continue // not a 3-arg call — not our shape, skip defensively
+        literal = parseObjectLiteral(args[2])
+      } catch (err) {
+        if (!(err instanceof ScanError)) throw err
+        throw new ScanError(err.message, m.index)
+      }
 
       if (literal === null || literal.hasUnverifiable) {
         skippedCount++
@@ -595,6 +620,75 @@ function runSelfTest() {
     fail(
       'a division expression is not misread as a regex, so the following call is still verified',
       JSON.stringify(divisionBefore),
+    )
+  }
+
+  // A `commands.setProperty(` living inside a STRING or template literal is
+  // data, not a call site. `CALL_RE` used to run over text with comments
+  // blanked but strings intact, so it matched there and reported missing
+  // keys for a call that does not exist. Over-reporting rather than
+  // under-reporting, but a false failure blocks commits just as hard.
+  const callInString = analyzeSource(
+    `const doc = 'commands.setProperty(id, k, { value_text: null })'\nconst x = 1\n`,
+  )
+  if (
+    callInString.violations.length === 0 &&
+    callInString.literalCount === 0 &&
+    callInString.skippedCount === 0
+  ) {
+    ok('a setProperty call inside a string literal is not analysed as a real call site')
+  } else {
+    fail(
+      'a setProperty call inside a string literal is not analysed as a real call site',
+      JSON.stringify(callInString),
+    )
+  }
+
+  const callInTemplate = analyzeSource(
+    'const doc = `\ncommands.setProperty(id, k, { value_text: null })\n`\nconst x = 1\n',
+  )
+  if (callInTemplate.violations.length === 0 && callInTemplate.literalCount === 0) {
+    ok('a setProperty call inside a template literal is not analysed as a real call site')
+  } else {
+    fail(
+      'a setProperty call inside a template literal is not analysed as a real call site',
+      JSON.stringify(callInTemplate),
+    )
+  }
+
+  // Positive control: blanking strings for call-site DISCOVERY must not stop
+  // the real call's arguments from being read out of the unblanked source.
+  const realCallWithStringValue = analyzeSource(
+    `commands.setProperty(id, k, {\n  value_text: 'commands.setProperty(nope)',\n  value_num: null,\n  value_date: null,\n  value_ref: null,\n  value_bool: null,\n})\n`,
+  )
+  if (
+    realCallWithStringValue.violations.length === 0 &&
+    realCallWithStringValue.literalCount === 1
+  ) {
+    ok('a real call whose string VALUE mentions setProperty is still verified exactly once')
+  } else {
+    fail(
+      'a real call whose string VALUE mentions setProperty is still verified exactly once',
+      JSON.stringify(realCallWithStringValue),
+    )
+  }
+
+  // The fail-open an unterminated `/*` used to produce at THIS guard: the
+  // scanner consumed it to EOF as a comment, `stripComments` blanked the
+  // tail, and the deficient call below it was never seen — zero call sites,
+  // exit 0, a file reported clean that nobody checked.
+  const afterUnterminatedComment = analyzeSource(
+    `const a = 1\n/* never closed\ncommands.setProperty(id, k, {\n  value_text: null,\n  value_num: null,\n  value_date: null,\n  value_ref: null,\n})\n`,
+  )
+  if (
+    afterUnterminatedComment.violations.length === 1 &&
+    afterUnterminatedComment.violations[0].missingKeys.join() === 'value_bool'
+  ) {
+    ok('a deficient call AFTER an unterminated block comment is still caught, not blanked away')
+  } else {
+    fail(
+      'a deficient call AFTER an unterminated block comment is still caught, not blanked away',
+      JSON.stringify(afterUnterminatedComment),
     )
   }
 

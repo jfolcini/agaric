@@ -146,3 +146,114 @@ deliberately unfixed corner, not an inert one. Both the header and the paragraph
   `realpathSync`, and only for its own entry-point check — it never opens a scanned file. Traversal
   is blocked twice (lexical `path.relative`, then a realpath symlink-containment check on a held
   fd), and an absolute pin path is neutralised by `path.join` rather than followed.
+
+## Round two: `agaric-reviewer` CHANGES_REQUESTED on PR #3969
+
+One blocking finding and six notes. The blocking one is the headline, and not because
+of its size.
+
+### The PR's own subject defect, reappearing inside its fix
+
+`findStatementEnd`'s ASI test asked only whether the *next* token could continue the
+expression. It never asked whether the *previous* one had left the expression
+incomplete. So after a line ending in a binary operator, a newline, and then a string,
+`continues` was false and the scan returned at the operator. Reproduced against the live
+shape the reviewer named, `src/lib/__tests__/export-graph.test.ts`'s `REPORT_PREAMBLE`,
+before changing anything:
+
+```
+kind    : const
+reason  : null
+>>>const REPORT_PREAMBLE =
+  'Agaric export report\n' +<<<
+hash    : 83e0af8e00e54db4818110d1ef53bdf4b2d1f187972928b115deda44843f4d41
+```
+
+Five lines of declaration, one line hashed. No `ScanError`, no `unbalanced`, no message —
+a stable hash over a truncated prefix. Two initializers differing only after the first
+operator produced byte-identical extractions and the identical digest
+`ad997646a3e3…`, which is the #3950 signature word for word: *two versions differing by
+real code after X hash identically, so genuine drift lands with the pin green.*
+
+That is the thing worth recording. This PR exists to close a fail-open in a
+bracket scanner. Its own new code path — the `const`-pin extractor, the feature the PR
+adds — reintroduced the same fail-open in a different construct, and every suite stayed
+green because the only multi-line assertion in the file (`foo(\n 1,\n 2,\n)`) sits at
+bracket depth > 0, where the ASI branch never runs. The defect class the work is about is
+the defect class the work is most likely to commit. A fix is not evidence that its own
+shape has been ruled out; it is a reason to go looking for it.
+
+The fix makes the boundary test look both ways. A punctuator that is not `)`, `]`, `}`,
+`++` or `--` cannot end an expression, so the newline after it is not a boundary.
+Keywords are deliberately excluded: `return`, `throw`, `yield`, `break` and `continue`
+are restricted productions where ASI genuinely does fire, and treating a trailing keyword
+as "incomplete" would be wrong exactly where it matters. Running out of input still
+dangling on an operator returns `null` — fail-closed, because there is no defensible end
+offset. `REPORT_PREAMBLE` now extracts all five lines and the two drifted variants hash
+differently.
+
+### Notes 1 and 2, both fail-open
+
+**Note 1** — the property-name correction from round one reached `regexAllowedAfter` and
+stopped there. The paren and brace context stacks consulted `CONTROL_HEAD_KEYWORDS` and
+`BLOCK_PREV_KEYWORD` without it, so `obj.with(a, b) / y / z` desynced: the `)` carried
+`controlHead: true` and permitted a regex. `otelContext.with(...)` is live at
+`src/lib/observability/tracer.ts:249`, inert only because no `/` follows. A correction
+applied at one of three call sites is a correction that has not been applied.
+
+**Note 2** — an unterminated `/*` was the one unterminated construct that failed open.
+It was consumed to EOF as a comment, so `stripComments` blanked the whole tail of the
+file. The RED output before the fix, showing both halves:
+
+```
+FAIL - an unterminated block comment does not blank the rest of the file:
+       "const a = 1\n               \n           \n           \n"
+FAIL - a deficient call AFTER an unterminated block comment is still caught:
+       {"violations":[],"literalCount":0,"skippedCount":0,"scanError":null}
+```
+
+A call missing `value_bool`, reported clean.
+
+The obvious fix — raise `ScanError`, matching the other three unterminated constructs —
+is wrong, and the tree said so within one run: it turned the live guard red on
+`src/components/search/FilterHelperPopover.tsx:262`, which is
+`<span>path:Journal/*</span>`. A glob in bare JSX text. Valid source, no defect, and
+raising there would block every commit repo-wide. So the `/*` **degrades** instead: with
+no closer it is not a comment at all, and its `/` and `*` become ordinary punctuators.
+That is the same move the regex lexer already makes for a `/` that opens no well-formed
+literal, and it closes the fail-open without inventing a false one. The first fix that
+removes a symptom is not automatically the right fix; running it against the real tree is
+what separates them.
+
+### Notes 3–6
+
+- **4** (fixed): `fnRe`/`constRe` used `(?:^|\n)\s*`, and `\s` matches indentation, so a
+  function-local `const` was extracted and hashed as though it were the module-level
+  symbol the pin names — despite the header and docstring both saying "top-level". Now
+  anchored at column 0. All 13 pins still resolve.
+- **5** (fixed): `CALL_RE` ran over text with comments blanked but strings intact, so a
+  `commands.setProperty(` inside a string literal was analysed as a real call and
+  reported four missing keys for a call that does not exist. Call sites are now
+  discovered in a strings-blanked view and parsed from the unblanked one; offsets match
+  because both transforms preserve length.
+- **3** (fixed defensively, no reachable trigger found): a `ScanError` from
+  `splitTopLevelCommas(argsInner)` or `parseObjectLiteral(args[2])` carries an index
+  relative to that substring, so the reported line would be near 1. Re-based onto the
+  call site. Recording plainly that no input reaching it was constructed: the top-level
+  `stripComments` lexes the whole file first, so the inner calls only ever receive
+  already-validated, bracket-balanced substrings, and the two views agree on every
+  division-vs-regex decision at a segment boundary. The fix is correct by construction
+  rather than demonstrated, and is written down as such rather than claimed as covered.
+- **6** (documented): limitation 2's blast radius changed when this module landed. The
+  old scanners mis-scanned one file silently; this one raises, and
+  `check-set-property-args` exits 1 for the whole tree — so one contraction in bare JSX
+  text stops every commit until escaped. Right default for a drift gate, but the cost is
+  "the gate stops", not "one file is mis-scanned", and the note now says so.
+
+### Coverage
+
+Every new assertion was demonstrated RED before being trusted — 11 in the scanner, 2 in
+the clone guard, 3 in the setProperty guard — and the six mutations covering the new
+code (ASI both-ways, `EXPR_TERMINAL_PUNCT`, both `propertyName` stack guards, the block
+comment) all die. Assertion counts: 50 → 65 scanner, 37 → 40 clones, 24 → 28 setProperty.
+Repo sweep unchanged at 1781 files, zero `ScanError`s.
