@@ -2044,8 +2044,14 @@ jobs:
   # append-log (`decideAction`/`diffLanes` are idempotent), so a dispatch
   # that finds nothing new no-ops exactly like an unchanged scheduled run —
   # there is no churn to guard against. `--skipped-ok` still rides along off
-  # the schedule, because the two scheduled-only filers legitimately report
-  # `skipped` there and that must not read as a lane failure.
+  # the schedule, because `file-fuzz-findings` (the one dependency still
+  # gated on `github.event_name == 'schedule'`; `file-mutation-survivors`
+  # stopped being gated in #3394) legitimately reports `skipped` there and
+  # that must not read as a lane failure. It must not read as a lane
+  # RECOVERY either — #3960: with the `--dry-run` above removed, that half
+  # became a live false-green in which a dispatch closed the tracking issue
+  # over a lane it had never executed. `--skipped-ok` now CARRIES such a lane
+  # over untouched; see `carriedOverJobs` in the script.
   # ---------------------------------------------------------------------------
   report-scheduled-failures:
     needs:
@@ -2096,9 +2102,11 @@ jobs:
             # issue is a set, not an append (`decideAction`/`diffLanes` are
             # idempotent), so a dispatch that finds nothing new is a silent
             # no-op exactly like an unchanged scheduled run. `--skipped-ok`
-            # stays: the two schedule-only filers legitimately report
-            # `skipped` off the schedule, and that must not read as a lane
-            # failure.
+            # stays: `file-fuzz-findings` is schedule-only, so off the
+            # schedule it legitimately reports `skipped`, and that must not
+            # read as a lane failure. Since #3960 it does not read as a lane
+            # RECOVERY either — a skipped lane is carried over, because
+            # "it never ran" is not evidence that it is fixed.
             extra=(--skipped-ok)
           fi
           node scripts/file-scheduled-failures.mjs \
@@ -2117,9 +2125,19 @@ jobs:
         # boring. `|| true` on `issue reopen` because reopening an
         # already-open issue exits non-zero.
         #
-        # Scheduled-event-only: a dispatch run is being watched by the human
-        # who triggered it, and its `--dry-run` failure must not file an issue.
-        if: failure() && github.event_name == 'schedule'
+        # Every event, not just `schedule` (#3960). This step used to be
+        # gated on `schedule` because a dispatch ran the reporter with
+        # `--dry-run`: it wrote nothing, so a crash there cost nothing but
+        # the human's own console output. #3716 removed that `--dry-run`.
+        # A dispatch now issues real `gh issue edit` / `comment` / `close`
+        # calls in that order, so a reporter crash MID-SEQUENCE leaves the
+        # tracking issue partially rewritten — a body whose marker block no
+        # longer matches its comments — and the gate meant precisely that
+        # state went unannounced. Being watched by a human is not coverage:
+        # the whole point of this fallback is that the run's own summary is
+        # the thing that just broke. Filing here is cheap and idempotent —
+        # a repeat finds the existing notice and comments on it.
+        if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_REPO: ${{ github.repository }}

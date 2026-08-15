@@ -53,6 +53,7 @@ import { execFileSync } from 'node:child_process'
 import {
   copyFileSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -82,10 +83,21 @@ const CI_YML_PATH = join(WORKFLOWS_DIR, 'ci.yml')
  *
  * Line-based on purpose (see file header): this only needs to recognise the
  * one shape it must forbid, not parse arbitrary zizmor config YAML.
+ *
+ * The key is matched at ANY indent, and with optional quotes. It used to
+ * require exactly two spaces, which made the guard fail OPEN on its own
+ * subject matter: reformatting `.github/zizmor.yml` to four-space indent —
+ * something a YAML formatter does without anyone reading the diff — put the
+ * forbidden shape back while `checkHygiene` reported healthy, because
+ * `ruleLineIdx === -1` returns `[]` and `[]` means "no problem". Over-
+ * matching (a `cache-poisoning:` key nested somewhere unexpected) can only
+ * make this guard louder, and loud is the direction it must err in.
  */
+const CACHE_POISONING_KEY_RE = /^\s*['"]?cache-poisoning['"]?:\s*$/
+
 export function findLineAnchoredCachePoisoningIgnores(zizmorYmlText) {
   const lines = zizmorYmlText.split('\n')
-  const ruleLineIdx = lines.findIndex((l) => /^\s{2}cache-poisoning:\s*$/.test(l))
+  const ruleLineIdx = lines.findIndex((l) => CACHE_POISONING_KEY_RE.test(l))
   if (ruleLineIdx === -1) return []
 
   const ruleIndent = lines[ruleLineIdx].match(/^(\s*)/)[1].length
@@ -110,28 +122,60 @@ export function findLineAnchoredCachePoisoningIgnores(zizmorYmlText) {
 const INLINE_IGNORE_RE = /#\s*zizmor:\s*ignore\[([^\]]*)\]/
 
 /**
+ * True when a line carries an inline zizmor suppression that names
+ * `cache-poisoning` — including as one entry of a comma-separated list.
+ *
+ * Shared by the inventory scan and by the negative control's "strip today's
+ * suppressions" step, which must strip THESE and only these: stripping every
+ * inline ignore regardless of rule id was correct only for as long as every
+ * inline ignore in ci.yml happened to be a cache-poisoning one. The first
+ * suppression for some other rule would have been deleted along with them
+ * and its finding attributed to the control's line-anchor list.
+ */
+export function ignoresCachePoisoning(line) {
+  const m = line.match(INLINE_IGNORE_RE)
+  if (!m) return false
+  return m[1]
+    .split(',')
+    .map((r) => r.trim())
+    .includes('cache-poisoning')
+}
+
+/** Every `.yml`/`.yaml` under `dir`, recursively, as paths relative to `dir`. */
+function workflowFilesUnder(dir, prefix = '') {
+  const out = []
+  for (const entry of readdirSync(dir, { withFileTypes: true }).toSorted((a, b) =>
+    a.name < b.name ? -1 : 1,
+  )) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (entry.isDirectory()) {
+      out.push(...workflowFilesUnder(join(dir, entry.name), rel))
+    } else if (entry.name.endsWith('.yml') || entry.name.endsWith('.yaml')) {
+      out.push(rel)
+    }
+  }
+  return out
+}
+
+/**
  * Every `# zizmor: ignore[...]` comment naming `cache-poisoning` found
  * across `.github/workflows/**`, as `{ location }` (`file:line`). Scans ALL
  * workflow files, not a hardcoded filename list, for the same reason
  * `check-zizmor-version-pin.mjs`'s `findZizmorToolPins` does: a suppression
  * moved or added to a different workflow is covered automatically.
+ *
+ * Recursive, so the `**` in that description is the truth and not a rounding
+ * of it: `.github/zizmor.yml` and this script's header both describe the
+ * coverage that way, and a flat `readdirSync` would have quietly stopped
+ * counting a suppression parked one directory down.
  */
 export function findInlineCachePoisoningSuppressions(dir = WORKFLOWS_DIR) {
   if (!existsSync(dir)) throw new Error(`no workflow directory at ${dir}`)
-  const files = readdirSync(dir).filter((n) => n.endsWith('.yml') || n.endsWith('.yaml'))
   const hits = []
-  for (const name of files.toSorted()) {
+  for (const name of workflowFilesUnder(dir)) {
     const text = readFileSync(join(dir, name), 'utf8')
     text.split('\n').forEach((line, idx) => {
-      const m = line.match(INLINE_IGNORE_RE)
-      if (!m) return
-      const rules = m[1]
-        .split(',')
-        .map((r) => r.trim())
-        .filter(Boolean)
-      if (rules.includes('cache-poisoning')) {
-        hits.push({ location: `${name}:${idx + 1}` })
-      }
+      if (ignoresCachePoisoning(line)) hits.push({ location: `${name}:${idx + 1}` })
     })
   }
   return hits
@@ -238,6 +282,51 @@ function selfTestLineAnchorDetection({ check }) {
     )
   }
   {
+    // #3960 — the guard's own fail-open. The forbidden shape reformatted to
+    // FOUR-space indent is the same forbidden shape; the old `^\s{2}` key
+    // regex returned `[]` for it, and `[]` is how this module spells
+    // "healthy". A YAML reformat would have re-armed #3737 silently.
+    const fourSpace = [
+      'rules:',
+      '    cache-poisoning:',
+      '        ignore:',
+      '            - ci.yml:323',
+      '            - ci.yml:349',
+      '',
+    ].join('\n')
+    const found = findLineAnchoredCachePoisoningIgnores(fourSpace)
+    check(
+      found.length === 2 && found[0] === 'ci.yml:323',
+      'a FOUR-space-indented cache-poisoning ignore list is caught too (indent is not part of the shape)',
+      JSON.stringify(found),
+    )
+    check(
+      checkHygiene({ lineAnchors: found, inlineHits: [{ location: 'ci.yml:1' }] }).length === 1,
+      'and it reaches checkHygiene as a problem rather than reading healthy',
+      '',
+    )
+    // Quoted keys are legal YAML for the same mapping.
+    check(
+      findLineAnchoredCachePoisoningIgnores(
+        ['rules:', "  'cache-poisoning':", '    ignore:', '      - ci.yml:1', ''].join('\n'),
+      ).length === 1,
+      'a quoted `cache-poisoning:` key is caught too',
+      '',
+    )
+    // …and the discrimination still holds at other indents: a DIFFERENT
+    // rule's block must not be read as cache-poisoning's just because the
+    // key regex got more tolerant.
+    check(
+      findLineAnchoredCachePoisoningIgnores(
+        ['rules:', '    unpinned-uses:', '        ignore:', '            - ci.yml:12', ''].join(
+          '\n',
+        ),
+      ).length === 0,
+      'a four-space-indented ignore list under a DIFFERENT rule is still not mistaken for cache-poisoning',
+      '',
+    )
+  }
+  {
     // The real repo's current file, right now, must be clean.
     const found = findLineAnchoredCachePoisoningIgnores(readFileSync(ZIZMOR_CONFIG_PATH, 'utf8'))
     check(
@@ -295,6 +384,38 @@ function selfTestInlineScan({ check }) {
     JSON.stringify(hits2),
   )
 
+  // #3960 — the scan is recursive, as `.github/workflows/**` (this script's
+  // header, and `.github/zizmor.yml`'s) has always claimed. A flat
+  // `readdirSync` reported zero for a suppression one directory down, which
+  // in `checkHygiene` is the WIRING failure — the loudest possible wrong
+  // answer, but a wrong one, and it would have been blamed on the mechanism
+  // rather than on the scan.
+  {
+    const dir3 = mkdtempSync(join(tmpdir(), 'cache-poisoning-scan-nested-'))
+    mkdirSync(join(dir3, 'reusable'))
+    writeFileSync(
+      join(dir3, 'reusable', 'z.yml'),
+      ['jobs:', '  build:', '    # zizmor: ignore[cache-poisoning]', ''].join('\n'),
+      'utf8',
+    )
+    const nestedHits = findInlineCachePoisoningSuppressions(dir3)
+    check(
+      nestedHits.length === 1 && nestedHits[0].location === 'reusable/z.yml:3',
+      'the scan recurses into subdirectories of the workflows dir, as `.github/workflows/**` claims',
+      JSON.stringify(nestedHits),
+    )
+  }
+
+  // The rule-id filter the negative control's strip step now shares.
+  check(
+    ignoresCachePoisoning('        # zizmor: ignore[cache-poisoning] — build-only') &&
+      ignoresCachePoisoning('# zizmor: ignore[unpinned-uses,cache-poisoning]') &&
+      !ignoresCachePoisoning('# zizmor: ignore[unpinned-uses]') &&
+      !ignoresCachePoisoning('        uses: Swatinem/rust-cache@abc'),
+    'ignoresCachePoisoning matches only suppressions that name cache-poisoning',
+    '',
+  )
+
   // ...and the real repo, right now, must have the four this fix introduced.
   const realHits = findInlineCachePoisoningSuppressions()
   check(
@@ -321,6 +442,36 @@ function selfTestHygiene({ check }) {
     'zero inline suppressions found at all is a FAILURE (wiring guard), not a vacuous pass',
     '',
   )
+}
+
+/**
+ * The `filename:LINE` numbers zizmor reported for `cache-poisoning` findings
+ * ONLY, read out of its human-readable output.
+ *
+ * zizmor prints one `error[rule-id]: …` header per finding, then an indented
+ * `--> path/file.yml:LINE:COL` beneath it, so the rule id is carried by the
+ * most recent header line. The negative control feeds these numbers into a
+ * `rules: / cache-poisoning: / ignore:` list, which suppresses nothing at all
+ * for any other rule id — so harvesting indiscriminately would silently
+ * degrade the control the moment ci.yml grows a finding from a second audit.
+ * Today it has none, which is exactly why this is easy to get wrong.
+ */
+export function findCachePoisoningFindingLines(zizmorOutput, fileName) {
+  const escaped = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const locationRe = new RegExp(`-->\\s*(?:\\S*[\\\\/])?${escaped}:(\\d+):\\d+`)
+  const headerRe = /^\s*[a-z]+\[([a-z0-9-]+)\]/
+  let currentRule = null
+  const lines = []
+  for (const line of zizmorOutput.split('\n')) {
+    const header = headerRe.exec(line)
+    if (header) {
+      currentRule = header[1]
+      continue
+    }
+    const location = locationRe.exec(line)
+    if (location && currentRule === 'cache-poisoning') lines.push(Number(location[1]))
+  }
+  return lines
 }
 
 /**
@@ -398,24 +549,29 @@ function selfTestZizmorSurvivesLineDrift({ check, fail }) {
     const dir = mkdtempSync(join(tmpdir(), 'cache-poisoning-live-negative-'))
     const ciCopy = join(dir, 'ci.yml')
     copyFileSync(CI_YML_PATH, ciCopy)
-    // Strip today's inline suppressions so the OLD anchor style is the only
-    // thing suppressing anything — otherwise the inline comments (which
-    // stay in the copy) would mask the regression this control exists to
-    // demonstrate.
+    // Strip today's CACHE-POISONING inline suppressions so the OLD anchor
+    // style is the only thing suppressing them — otherwise the inline
+    // comments (which stay in the copy) would mask the regression this
+    // control exists to demonstrate. Suppressions for OTHER rules are left
+    // in place: this control is about cache-poisoning only, and deleting an
+    // unrelated one would surface its finding below, where every finding is
+    // harvested into a `cache-poisoning:` ignore list.
     const withoutInlineSuppressions = readFileSync(ciCopy, 'utf8')
       .split('\n')
-      .filter((l) => !INLINE_IGNORE_RE.test(l))
+      .filter((l) => !ignoresCachePoisoning(l))
       .join('\n')
     writeFileSync(ciCopy, withoutInlineSuppressions, 'utf8')
 
     // Find today's four cache-poisoning line numbers the OLD way zizmor.yml
     // used to: run with an empty ignore list and read the finding lines back.
+    // Only cache-poisoning findings count — zizmor prints `error[rule-id]:`
+    // above each `-->` location, and harvesting every location regardless of
+    // rule would put some other audit's line into a `cache-poisoning:` ignore
+    // list, where it suppresses nothing and quietly weakens the control.
     const emptyConfig = join(dir, 'zizmor-empty.yml')
     writeFileSync(emptyConfig, 'rules: {}\n', 'utf8')
     const clean = runZizmor(emptyConfig, ciCopy)
-    const lineMatches = [...(clean.output ?? '').matchAll(/--> .*ci\.yml:(\d+):\d+/g)].map((m) =>
-      Number(m[1]),
-    )
+    const lineMatches = findCachePoisoningFindingLines(clean.output ?? '', 'ci.yml')
     if (lineMatches.length === 0) {
       fail(
         'negative control: could derive the current cache-poisoning line numbers from a real zizmor run',
@@ -456,6 +612,42 @@ function selfTestZizmorSurvivesLineDrift({ check, fail }) {
   }
 }
 
+/**
+ * #3960 — the negative control derives its line-anchor list from zizmor's
+ * own output, so the harvest must be rule-aware. Driven against captured
+ * output text rather than a live run: the point is the parse, and today's
+ * ci.yml emits no second rule to parse.
+ */
+function selfTestFindingLineHarvest({ check }) {
+  const output = [
+    'error[cache-poisoning]: runtime artifacts potentially vulnerable to a cache poisoning attack',
+    '   --> /tmp/x/ci.yml:323:9',
+    '    |',
+    'error[unpinned-uses]: unpinned action reference',
+    '   --> /tmp/x/ci.yml:77:9',
+    '    |',
+    'error[cache-poisoning]: runtime artifacts potentially vulnerable to a cache poisoning attack',
+    '   --> /tmp/x/ci.yml:349:9',
+    '',
+  ].join('\n')
+  const lines = findCachePoisoningFindingLines(output, 'ci.yml')
+  check(
+    lines.length === 2 && lines[0] === 323 && lines[1] === 349,
+    'only cache-poisoning finding lines are harvested — another rule’s line never enters the cache-poisoning ignore list',
+    JSON.stringify(lines),
+  )
+  check(
+    findCachePoisoningFindingLines(output, 'other.yml').length === 0,
+    'a location in a different file is not harvested',
+    '',
+  )
+  check(
+    findCachePoisoningFindingLines('', 'ci.yml').length === 0,
+    'empty zizmor output harvests nothing (the caller treats zero as a control failure)',
+    '',
+  )
+}
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok  - ${name}`)
@@ -468,6 +660,7 @@ function runSelfTest() {
   selfTestLineAnchorDetection({ check })
   selfTestInlineScan({ check })
   selfTestHygiene({ check })
+  selfTestFindingLineHarvest({ check })
   selfTestZizmorSurvivesLineDrift({ check, fail })
 
   if (failures.length > 0) {

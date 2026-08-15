@@ -77,9 +77,12 @@
 //   node scripts/file-scheduled-failures.mjs \
 //     --needs-json-file <path to a file holding `${{ toJSON(needs) }}`> \
 //     [--profile deep-checks|workflow-watchdog]   (default: deep-checks)
-//     [--skipped-ok]                (treat `skipped` as OK; only correct off
-//                                    the `schedule` event, where the two
-//                                    scheduled-only filers really are skipped)
+//     [--skipped-ok]                (a `skipped` lane is neither failing NOR
+//                                    recovered: it is carried over from the
+//                                    tracked set untouched. Only correct off
+//                                    the `schedule` event, where the
+//                                    schedule-only filer really is skipped.
+//                                    See `carriedOverJobs` — #3960)
 //     [--repo owner/repo]           (default: $GITHUB_REPOSITORY)
 //     [--run-url <url>]             (default: derived from $GITHUB_SERVER_URL
 //                                    /$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
@@ -245,6 +248,36 @@ export function failingJobs(lanes, options) {
   return lanes.filter((l) => isFailing(l.result, options)).map((l) => l.job)
 }
 
+/**
+ * #3960 — the lanes a `--skipped-ok` run must CARRY OVER rather than judge.
+ *
+ * `--skipped-ok` answers "did this lane fail?" with "it never ran, so no".
+ * The identical fact answers "did this lane recover?" with "it never ran, so
+ * no" — and only the first half used to be encoded. `isFailing` dropped an
+ * exempted-`skipped` lane out of `current`, `diffLanes` then read its absence
+ * from `current` as a RECOVERY, and `decideAction` closed the issue. So a
+ * `workflow_dispatch` reported `file-fuzz-findings` (the one reporter
+ * dependency still gated `github.event_name == 'schedule'`, hence `skipped`
+ * off the cron) recovered ON THE STRENGTH OF IT NOT HAVING BEEN EXECUTED,
+ * and cleared it from the tracked set — reading green until the next Monday.
+ *
+ * That was harmless only while the dispatch ALSO passed `--dry-run` and wrote
+ * nothing; #3716 removed the `--dry-run` and left `--skipped-ok` standing,
+ * which is what made the latent half live.
+ *
+ * So: an exempted-`skipped` lane is neither failing nor recovered. It is
+ * carried over from the tracked set unchanged — but only if it was ALREADY
+ * tracked (see `diffLanes`): "it did not run" is no more evidence that a lane
+ * is broken than that it is fixed, so this must never ADD a lane to the set.
+ *
+ * Mirrors `isFailing`'s exemption exactly — one result, `skipped`, and only
+ * under `skippedOk`. If that exemption ever grows, both must grow together.
+ */
+export function carriedOverJobs(lanes, { skippedOk = false } = {}) {
+  if (!skippedOk) return []
+  return lanes.filter((l) => l.result === 'skipped').map((l) => l.job)
+}
+
 // ---------------------------------------------------------------------------
 // Diffing against the tracking issue's known state
 // ---------------------------------------------------------------------------
@@ -264,11 +297,26 @@ export function parseKnownLanes(body) {
   )
 }
 
-export function diffLanes(current, known) {
+/**
+ * Diffs the currently-failing set against the tracked one.
+ *
+ * `carryOver` (from `carriedOverJobs`) names lanes whose result says nothing
+ * either way — they did not run. They are subtracted from `resolvedOnes` and
+ * added back into `all`, so the tracked set survives a run that could not
+ * observe them. Only lanes ALREADY in `known` are carried: a skipped lane
+ * nobody was tracking stays untracked.
+ */
+export function diffLanes(current, known, { carryOver = [] } = {}) {
   const currentSet = new Set(current)
+  const carried = new Set(carryOver.filter((j) => known.has(j) && !currentSet.has(j)))
   const newOnes = [...currentSet].filter((j) => !known.has(j)).toSorted()
-  const resolvedOnes = [...known].filter((j) => !currentSet.has(j)).toSorted()
-  return { newOnes, resolvedOnes, all: [...currentSet].toSorted() }
+  const resolvedOnes = [...known].filter((j) => !currentSet.has(j) && !carried.has(j)).toSorted()
+  return {
+    newOnes,
+    resolvedOnes,
+    all: [...new Set([...currentSet, ...carried])].toSorted(),
+    carriedOver: [...carried].toSorted(),
+  }
 }
 
 /**
@@ -440,10 +488,17 @@ export function findUncoveredLanes(workflowText, reporterJob = 'report-scheduled
  * up to a week. `--dry-run` is a legitimate flag on THIS script — it is
  * exercised directly in `selfTestGhCallSequence` below — but the reporting
  * JOB must never pass it to itself, on any event. Returns `true` if the
- * job's own `run:` step text contains `--dry-run` anywhere at all — the
- * whole point is that this flag has no business appearing there under ANY
- * condition, so a substring check across the entire job block is exact, not
- * an approximation of the real question.
+ * job's block contains `--dry-run` on any line that is not a full-line
+ * comment.
+ *
+ * That is a deliberate OVER-approximation, not an exact reading of the
+ * job's semantics: only whole comment lines are stripped, so a TRAILING
+ * comment that merely mentions the flag (`extra=(--skipped-ok)  # not
+ * --dry-run`) trips the guard too. Erring that way is the safe direction —
+ * it fails loudly at commit time on prose, where the fix is to move the
+ * remark onto its own line, and cannot miss a real reintroduction hidden
+ * after a `#` on a live line. Pinned as such by a fixture in § 12 of
+ * `runSelfTest`, so this claim and the code cannot drift apart.
  *
  * Text-based on purpose, same reasoning as `findUncoveredLanes` above.
  */
@@ -467,6 +522,36 @@ export function findDispatchDryRunUsage(workflowText, reporterJob = 'report-sche
     .filter((l) => !/^\s*#/.test(l))
     .join('\n')
   return executableText.includes('--dry-run')
+}
+
+/**
+ * #3960 — the `if:` expression of the last-resort "the reporter itself broke"
+ * bash step, as written in the workflow.
+ *
+ * That step is the only thing that reports a crash of THIS script, and it was
+ * gated on `github.event_name == 'schedule'` back when a dispatch ran the
+ * reporter with `--dry-run` and therefore could not damage anything by
+ * crashing. #3716 removed the `--dry-run`; a dispatch now issues real
+ * `gh issue edit`/`comment`/`close` calls, so a crash between them leaves the
+ * tracking issue half-rewritten — exactly the state that most needs
+ * announcing. Re-adding an event gate here would restore that silence, so
+ * the condition is pinned by the self-test.
+ *
+ * Throws rather than returning a default when the step (or its `if:`) cannot
+ * be found: a rename must fail loud, not pass vacuously.
+ */
+export function findLastResortNoticeCondition(workflowText) {
+  const lines = workflowText.split('\n')
+  const idx = lines.findIndex((l) => /^\s*-\s*name:\s*Last-resort notice/.test(l))
+  if (idx === -1) {
+    throw new Error('no `Last-resort notice` step found — did it get renamed or deleted?')
+  }
+  for (let i = idx + 1; i < lines.length; i++) {
+    if (/^\s*-\s*name:\s/.test(lines[i])) break
+    const m = /^\s*if:\s*(.+?)\s*$/.exec(lines[i])
+    if (m) return m[1]
+  }
+  throw new Error('the `Last-resort notice` step has no `if:` condition at all')
 }
 
 // ---------------------------------------------------------------------------
@@ -583,6 +668,7 @@ export function main(argv = process.argv.slice(2)) {
   }
   const lanes = parseNeeds(readFileSync(args.needsJsonFile, 'utf8'))
   const current = failingJobs(lanes, { skippedOk: args.skippedOk })
+  const carryOver = carriedOverJobs(lanes, { skippedOk: args.skippedOk })
 
   console.log(
     `${profile.headline}s: ${lanes.length} total, ${current.length} failing${
@@ -606,8 +692,14 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   const known = parseKnownLanes(existingIssue?.body)
-  const { newOnes, resolvedOnes, all } = diffLanes(current, known)
+  const { newOnes, resolvedOnes, all, carriedOver } = diffLanes(current, known, { carryOver })
   const action = decideAction({ newOnes, resolvedOnes, all, existingIssue })
+
+  if (carriedOver.length > 0) {
+    console.log(
+      `carried over (${profile.unit}s that only SKIPPED — neither failing nor recovered, so they stay tracked): ${carriedOver.join(', ')}`,
+    )
+  }
 
   if (action === 'noop') {
     console.log(
@@ -897,6 +989,77 @@ function selfTestGhCallSequence({ check }) {
     )
   }
 
+  // #3960 — the call site for the carry-over rule above. #3716 removed
+  // `--dry-run` from the dispatch branch but left `--skipped-ok`, and those
+  // two were only safe TOGETHER: with real writes turned on, a lane that was
+  // tracked and then merely `skipped` (which is what the schedule-only
+  // `file-fuzz-findings` does on every dispatch) diffed as recovered. The
+  // pure-function half is § 2b in `runSelfTest`; this is what `main()`
+  // actually hands `gh`, which is the half that reaches production.
+  {
+    const fuzzFilerTracked = buildIssueBody({
+      all: ['file-fuzz-findings'],
+      lanes: [
+        { job: 'file-fuzz-findings', result: 'failure' },
+        { job: 'fuzz', result: 'success' },
+      ],
+      runUrl: undefined,
+    })
+    // A dispatch: `file-fuzz-findings` is `if: github.event_name ==
+    // 'schedule'`, so GitHub reports it `skipped`.
+    const dispatchLanes = {
+      fuzz: { result: 'success' },
+      'file-fuzz-findings': { result: 'skipped' },
+    }
+    const skippedCalls = drive(dispatchLanes, fuzzFilerTracked, 'OPEN', ['--skipped-ok'])
+    const skippedSeq = skippedCalls.map((c) => c.sub).join(',')
+    check(
+      skippedSeq === '',
+      'a dispatch does NOT close the issue over a tracked lane that merely skipped — no edit, no "recovered" comment, no close',
+      `gh sequence was: ${skippedSeq || '(none)'}${
+        skippedSeq.includes('close')
+          ? ' — the lane was reported recovered on the strength of never having run'
+          : ''
+      }`,
+    )
+
+    // The quieter variant of the same bug: with another lane genuinely red
+    // the action is `notify`, which DOES rewrite the body — so the skipped
+    // lane has to survive that rewrite rather than being dropped in silence.
+    const mixedCalls = drive(
+      { mutants: { result: 'failure' }, 'file-fuzz-findings': { result: 'skipped' } },
+      fuzzFilerTracked,
+      'OPEN',
+      ['--skipped-ok'],
+    )
+    const mixedSeq = mixedCalls.map((c) => c.sub).join(',')
+    const mixedTracked = parseKnownLanes(mixedCalls.find((c) => c.sub === 'edit')?.body ?? '')
+    check(
+      mixedSeq === 'edit,comment' &&
+        mixedTracked.has('file-fuzz-findings') &&
+        mixedTracked.has('mutants'),
+      'the body rewritten alongside a NEW failure still tracks the skipped lane (it is not silently dropped)',
+      `gh sequence was: ${mixedSeq || '(none)'}; tracked after=[${[...mixedTracked].join(',')}]`,
+    )
+
+    // The close path must still work when the lane REALLY recovered — i.e.
+    // the fix suppresses the recovery reading only for lanes that did not
+    // run, not for green ones. Without this pair, carrying everything over
+    // forever would pass the two checks above.
+    const reallyGreen = drive(
+      { fuzz: { result: 'success' }, 'file-fuzz-findings': { result: 'success' } },
+      fuzzFilerTracked,
+      'OPEN',
+      ['--skipped-ok'],
+    )
+    const greenSeq = reallyGreen.map((c) => c.sub).join(',')
+    check(
+      greenSeq === 'edit,comment,close',
+      'a lane that actually RAN and passed still closes the issue under --skipped-ok',
+      `gh sequence was: ${greenSeq || '(none)'}`,
+    )
+  }
+
   // …and `--profile workflow-watchdog` really files under the WATCHDOG title.
   // Asserting `PROFILES` holds two distinct titles proves nothing about which
   // one `gh issue create` is handed: a `main()` that still passed
@@ -918,6 +1081,111 @@ function selfTestGhCallSequence({ check }) {
       'the watchdog issue main() creates tracks the workflow filename',
       `tracked=[${create ? [...parseKnownLanes(create.body)].join(',') : ''}]`,
     )
+  }
+}
+
+/**
+ * #3960 — `--skipped-ok` is a statement about what the run could OBSERVE, so
+ * it must suppress the RECOVERY reading exactly as it suppresses the failure
+ * reading. The pure-function half; `selfTestGhCallSequence` covers the call
+ * site, which is where the false close actually reached GitHub.
+ */
+function selfTestSkippedCarryOver({ check, lanesOf }) {
+  const lanes = lanesOf({ 'file-fuzz-findings': 'skipped', fuzz: 'success' })
+  const opts = { skippedOk: true }
+  const current = failingJobs(lanes, opts)
+  const carryOver = carriedOverJobs(lanes, opts)
+
+  // Tracked, then skipped: carried, not resolved — and the state machine
+  // must therefore do NOTHING rather than close.
+  const tracked = diffLanes(current, new Set(['file-fuzz-findings']), { carryOver })
+  check(
+    tracked.resolvedOnes.length === 0 &&
+      tracked.all.join(',') === 'file-fuzz-findings' &&
+      tracked.carriedOver.join(',') === 'file-fuzz-findings' &&
+      decideAction({ ...tracked, existingIssue: { number: 1, state: 'OPEN' } }) === 'noop',
+    'a TRACKED lane that only skipped is carried over, not reported recovered (no close)',
+    `resolved=${JSON.stringify(tracked.resolvedOnes)} all=${JSON.stringify(tracked.all)} action=${decideAction({ ...tracked, existingIssue: { number: 1, state: 'OPEN' } })}`,
+  )
+
+  // …and the converse, which is what stops the carry-over from becoming a
+  // second false-positive: a lane nobody was tracking must not become
+  // tracked just because it did not run.
+  const untracked = diffLanes(current, new Set(), { carryOver })
+  check(
+    untracked.all.length === 0 && untracked.carriedOver.length === 0,
+    'an UNTRACKED lane that skipped is not added to the tracked set (skipping is not evidence of breakage either)',
+    `all=${JSON.stringify(untracked.all)} carried=${JSON.stringify(untracked.carriedOver)}`,
+  )
+
+  // Without `--skipped-ok` (the schedule shape) nothing is carried: a
+  // skipped lane there is a genuine failure and must read as one.
+  check(
+    carriedOverJobs(lanes, { skippedOk: false }).length === 0 &&
+      failingJobs(lanes).includes('file-fuzz-findings'),
+    'without --skipped-ok a skipped lane is failing, and nothing is carried over',
+    JSON.stringify(carriedOverJobs(lanes, { skippedOk: false })),
+  )
+
+  // A lane that is genuinely failing NOW is not "carried" past the diff —
+  // carry-over must never mask a real red into a silent no-op.
+  const stillRed = lanesOf({ 'file-fuzz-findings': 'failure' })
+  const redDiff = diffLanes(failingJobs(stillRed, opts), new Set(), {
+    carryOver: carriedOverJobs(stillRed, opts),
+  })
+  check(
+    redDiff.newOnes.join(',') === 'file-fuzz-findings' && redDiff.carriedOver.length === 0,
+    'a lane that actually FAILED is still newly-failing under --skipped-ok (carry-over does not swallow reds)',
+    JSON.stringify(redDiff),
+  )
+}
+
+/**
+ * #3960 — the wiring half of the last-resort notice. That step is the only
+ * thing that reports a crash of THIS script, and re-gating it on an event
+ * would silently un-cover the dispatch path, which now writes for real.
+ */
+function selfTestLastResortNoticeCondition({ check, fail }) {
+  const stepFixture = (ifLine) =>
+    ['    steps:', '      - name: Last-resort notice (the reporter itself broke)', ifLine].join(
+      '\n',
+    )
+  check(
+    findLastResortNoticeCondition(stepFixture('        if: failure()')) === 'failure()',
+    'the last-resort-notice condition is read back verbatim',
+    '',
+  )
+  check(
+    findLastResortNoticeCondition(
+      stepFixture("        if: failure() && github.event_name == 'schedule'"),
+    ).includes('github.event_name'),
+    'the guard can SEE an event gate on the last-resort notice (it is able to fail)',
+    '',
+  )
+  for (const [label, text] of [
+    ['a renamed step', '    steps:\n      - name: Something else\n        if: failure()'],
+    ['a step with no `if:`', stepFixture('        run: echo hi')],
+  ]) {
+    let threw = null
+    try {
+      findLastResortNoticeCondition(text)
+    } catch (err) {
+      threw = err
+    }
+    check(threw !== null, `the guard throws on ${label} instead of passing vacuously`, '')
+  }
+
+  const workflowPath = new URL('../.github/workflows/scheduled-deep-checks.yml', import.meta.url)
+    .pathname
+  if (existsSync(workflowPath)) {
+    const condition = findLastResortNoticeCondition(readFileSync(workflowPath, 'utf8'))
+    check(
+      condition === 'failure()',
+      'the real last-resort notice fires on EVERY event — a dispatch writes for real, so its reporter crash must be reported too (#3960)',
+      `if: ${condition}`,
+    )
+  } else {
+    fail('the real workflow file is readable', `not found at ${workflowPath}`)
   }
 }
 
@@ -980,9 +1248,16 @@ function runSelfTest() {
   check(isFailing('skipped'), 'skipped is a failure on the schedule event', '')
   check(
     !isFailing('skipped', { skippedOk: true }),
-    '--skipped-ok exempts skipped (dispatch dry-run only)',
+    '--skipped-ok stops `skipped` reading as a lane FAILURE (the off-schedule shape, where the schedule-only filer really is skipped)',
     '',
   )
+
+  // 2b. #3960 — the other half of that same fact. `--skipped-ok` is a
+  //     statement about what the run could OBSERVE, so it must suppress the
+  //     recovery reading exactly as it suppresses the failure reading. When
+  //     only the failure half existed, a dispatch closed the tracking issue
+  //     because a lane it never executed was "no longer in `current`".
+  selfTestSkippedCarryOver({ check, lanesOf })
 
   // 3. Dedup keys on the job id, so a lane that stays broken but changes
   //    HOW it breaks (failure -> cancelled) does not re-notify as new.
@@ -1305,6 +1580,22 @@ function runSelfTest() {
       'wiring guard passes a dispatch branch with no `--dry-run`',
       '',
     )
+    // Prose about the flag on its OWN line must not trip the guard — this
+    // job's comments discuss `--dry-run` at length by design.
+    check(
+      findDispatchDryRunUsage(fixture('# deliberately NOT --dry-run (#3716)')) === false,
+      'wiring guard ignores `--dry-run` in a full-line comment (the job documents the flag on purpose)',
+      '',
+    )
+    // …but a TRAILING comment does trip it, and the doc comment on
+    // `findDispatchDryRunUsage` says so. The guard strips whole comment
+    // lines only; this pins the over-approximation as documented behaviour
+    // rather than letting the prose claim an exactness the code lacks.
+    check(
+      findDispatchDryRunUsage(fixture('extra=(--skipped-ok)  # not --dry-run')) === true,
+      'wiring guard over-approximates on a TRAILING comment (fails loud, as its doc comment states)',
+      '',
+    )
 
     // …then the real workflow.
     const workflowPath = new URL('../.github/workflows/scheduled-deep-checks.yml', import.meta.url)
@@ -1320,6 +1611,15 @@ function runSelfTest() {
       fail('the real workflow file is readable', `not found at ${workflowPath}`)
     }
   }
+
+  // 13. #3960 — the wiring half of the watchdog decision. The last-resort
+  //     bash notice is the ONLY thing that reports a crash of this script,
+  //     and it must fire on every event now that a dispatch writes for real:
+  //     a crash between `gh issue edit` and `gh issue close` leaves the
+  //     tracking issue half-rewritten, and an event gate would keep that
+  //     quiet. This is the same class of stale justification that produced
+  //     the `--skipped-ok` bug, so it gets a guard rather than a comment.
+  selfTestLastResortNoticeCondition({ check, fail })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
