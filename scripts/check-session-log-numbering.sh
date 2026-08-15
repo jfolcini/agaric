@@ -212,6 +212,13 @@ run_guard() {
 # builds a throwaway repository and runs THIS script inside it, so what is
 # tested is the guard as invoked, not a model of it.
 if [ "${1:-}" = "--self-test" ]; then
+  # Consumed here (not left in $1): sourcing lib/git-scratch-guard.sh below
+  # inherits the CALLER's positional parameters when sourced at this
+  # top-level scope (unlike a function call, which gets its own), so a
+  # leftover $1 == "--self-test" would trigger the LIBRARY's own
+  # `--self-test` block as an unwanted side effect of sourcing it, instead
+  # of running this script's session-log fixtures at all.
+  shift || true
   st_fail=0
   st_ok() { printf '  ok   - %s\n' "$1"; }
   st_bad() { printf '  FAIL - %s: %s\n' "$1" "$2" >&2; st_fail=1; }
@@ -226,18 +233,19 @@ if [ "${1:-}" = "--self-test" ]; then
   # repository, and those OUTRANK `git -C <fixture>`: an unscrubbed
   # environment makes `git -C "$d" commit -m base` commit the developer's
   # own staged changes to their own repo, under the fixture's message.
-  # (Observed live, once, while writing these fixtures.)
-  unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY \
-    GIT_COMMON_DIR GIT_NAMESPACE GIT_ALTERNATE_OBJECT_DIRECTORIES \
-    GIT_PREFIX GIT_CONFIG_PARAMETERS GIT_AUTHOR_DATE GIT_COMMITTER_DATE
+  # (Observed live, once, while writing these fixtures.) Shared code
+  # (#3722), not a private copy: this script used to carry its own
+  # `unset` list (missing GIT_CEILING_DIRECTORIES entirely, among other
+  # gaps) — three independent reinventions of this scrub is exactly what
+  # let a fourth, unprotected script repeat the incident.
+  # shellcheck source=scripts/lib/git-scratch-guard.sh
+  . "$(dirname "$GUARD")/lib/git-scratch-guard.sh"
+  git_scratch_guard "$ST_ROOT"
 
   st_new_repo() {
     local dir="$ST_ROOT/$1"
     mkdir -p "$dir/docs/session-log"
-    git -C "$dir" init -q -b main
-    git -C "$dir" config user.email "selftest@example.invalid"
-    git -C "$dir" config user.name "self test"
-    git -C "$dir" config commit.gpgsign false
+    git_scratch_init "$dir"
     echo "$dir"
   }
 

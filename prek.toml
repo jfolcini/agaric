@@ -1988,6 +1988,36 @@ pass_filenames = false
 files = "^scripts/check-zizmor-version-pin\\.mjs$"
 stages = ["pre-commit"]
 
+# prek-version-pin (#3742): same shape as zizmor-version-pin above, for
+# prek/taplo-cli/typos-cli. `scripts/setup-hooks.sh`'s `pinned_version_for`
+# (what a freshly-provisioned box installs, via `cargo_get_pinned`) and the
+# `taiki-e/install-action` `tool:` lists across .github/workflows/** (what
+# CI resolves) are independent copies Dependabot cannot track. Hit live:
+# CI floated to a newer prek than any dev box had, and that prek enforced a
+# YAML parser limit the older local prek did not — a green tree went red
+# with no repo change, unreproducible until the two were pinned to match.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "prek-version-pin"
+name = "prek/taplo-cli/typos-cli: version pin consistency (setup-hooks.sh vs. workflow tool: lists)"
+entry = "node scripts/check-prek-version-pin.mjs"
+language = "system"
+pass_filenames = false
+files = "^(scripts/setup-hooks\\.sh|\\.github/workflows/.*\\.ya?ml)$"
+stages = ["pre-commit"]
+
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "prek-version-pin-self-test"
+name = "prek/taplo-cli/typos-cli: version pin consistency guard self-test"
+entry = "node scripts/check-prek-version-pin.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-prek-version-pin\\.mjs$"
+stages = ["pre-commit"]
+
 # pairing-rejection-contract: the responder's rejection messages are declared
 # independently in Rust (`PAIRING_PROOF_REQUIRED_MESSAGE` and — since #3504 —
 # `PEER_NOT_PAIRED_MESSAGE` in src-tauri/agaric-sync/src/sync_daemon/server.rs,
@@ -2427,6 +2457,40 @@ entry = "bash scripts/lib/git-scratch-guard.sh --self-test"
 language = "system"
 pass_filenames = false
 files = '^scripts/lib/git-scratch-guard\.sh$'
+stages = ["pre-commit"]
+
+# git-fixture-isolation (#3722 meta-guard): fixing ONE script that ran git in
+# a throwaway fixture without the shared scrub does not fix the CLASS — four
+# scripts independently reinvented the same `unset GIT_DIR …` block, and a
+# fifth (pr-overlap-diverged.sh, #3736) shipped with NO scrub at all before
+# being migrated. This scans every `.sh` file under scripts/ and fails a
+# commit that either hand-rolls its own git-environment `unset` instead of
+# sourcing scripts/lib/git-scratch-guard.sh, or runs `git init` / `git -C
+# <dir> init` (builds a fixture) without sourcing it at all. `always_run`
+# because this is a whole-tree scan (pass_filenames = false) whose job is
+# partly to catch a DELETION — e.g. a script's sourcing line getting
+# stripped while its fixture code stays — and prek's changed-file set
+# excludes deletions (this has bitten the repo three times already).
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "git-fixture-isolation"
+name = "git fixture isolation meta-guard (#3722 — every fixture-builder must use the shared scrub)"
+entry = "node scripts/check-git-fixture-isolation.mjs"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "git-fixture-isolation-self-test"
+name = "git fixture isolation meta-guard self-test"
+entry = "node scripts/check-git-fixture-isolation.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/check-git-fixture-isolation\.mjs$'
 stages = ["pre-commit"]
 
 # scheduled-failure-reporter-selftest (#3359): `report-scheduled-failures` is

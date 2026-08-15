@@ -80,25 +80,14 @@ if [ "$SELF_TEST" -eq 1 ]; then
   # repository — `git init` there is a re-init that rewrites core.worktree
   # to $tmp and leaves the checkout unusable once $tmp is removed. Hooks are
   # disabled too: the fixture inherits core.hooksPath, and prek aborts on a
-  # repo with no prek.toml.
-  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
-        GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_CONFIG \
-        GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_PREFIX GIT_INTERNAL_GETTEXT_SH_SCHEME
-  export GIT_CEILING_DIRECTORIES="$tmp"
-
+  # repo with no prek.toml. Shared code (#3722), not a private copy: three
+  # other scripts each reinvented this scrub independently and none of them
+  # stopped the next one from repeating the incident.
+  # shellcheck source=scripts/lib/git-scratch-guard.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/git-scratch-guard.sh"
+  git_scratch_guard "$tmp"
+  git_scratch_init "$tmp"
   cd "$tmp"
-  git init -q -b main . >/dev/null
-  # Belt-and-braces: if anything above is ever missed, a re-init would be
-  # visible as a core.worktree pointing somewhere other than $tmp.
-  if [ "$(git rev-parse --show-toplevel)" != "$(cd "$tmp" && pwd -P)" ]; then
-    echo "self-test: refusing to run — fixture repo resolved outside \$tmp" >&2
-    echo "  (git context leaked in; see the unset block above)" >&2
-    exit 1
-  fi
-  git config core.hooksPath /dev/null
-  git config commit.gpgsign false
-  git config user.email t@t.t
-  git config user.name t
   mkdir -p src-tauri/migrations
   echo "CREATE TABLE a(x);" > src-tauri/migrations/0001_a.sql
   git add -A && git commit -qm shipped

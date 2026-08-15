@@ -198,7 +198,8 @@ ensure_cargo_binstall() {
 # pinned_version_for <crate> — echoes the EXACT version this crate must
 # install as, matching a version CI pins explicitly (today: sqruff, via
 # `sqruff@0.38.0` in the `taiki-e/install-action` `tool:` lists of
-# `.github/workflows/_validate.yml` and `scheduled-deep-checks.yml`). This is
+# `.github/workflows/_validate.yml` and `scheduled-deep-checks.yml`; and,
+# since #3742, prek/taplo-cli/typos-cli in the same lists). This is
 # purely a DATA table — it does not itself install anything and is not
 # consulted by `cargo_get`. A pinned crate's `cargo_get_pinned` call site
 # (see sqruff's below) reads it and WINS outright: no "try latest, fall back
@@ -210,15 +211,28 @@ ensure_cargo_binstall() {
 # isn't the pin is not actually a fix for "local ran the wrong version" — it
 # is the same bug with different arithmetic.
 #
+# prek is pinned for a DIFFERENT reason than the MSRV-skew concern behind
+# sqruff's pin (#602): prek IS the hook runner, so there is no wrapper for it
+# the way zizmor-hook.sh wraps zizmor with a runtime `--version` assertion —
+# an unpinned prek just silently runs whatever `cargo_get` last fetched.
+# #3742 hit this live: CI resolved a newer prek than any dev box had
+# installed, and that newer prek enforces a YAML parser limit
+# (`.github/zizmor.yml`'s comment-count cap) the older local prek does not —
+# a green tree went red with no repo change, and the fix that passed locally
+# still failed in CI, unreproducible by construction until the two matched.
+#
 # A plain `case` (not an associative array) so this stays bash-3.2/macOS
 # compatible. Keep in lockstep with the `tool:` pins above — bumping one
 # without the other reintroduces the exact drift this table exists to
 # prevent (there is no automated cross-check of *installability*, only of
-# the version strings agreeing — see the `--self-test` cross-check below and
-# its caveat).
+# the version strings agreeing — see the `--self-test` cross-check below,
+# scripts/check-prek-version-pin.mjs, and its caveat).
 pinned_version_for() {
   case "$1" in
     sqruff) echo "0.38.0" ;;
+    prek) echo "0.3.8" ;;
+    taplo-cli) echo "0.10.0" ;;
+    typos-cli) echo "1.46.0" ;;
     *) echo "" ;;
   esac
 }
@@ -391,6 +405,16 @@ fi
 # call site that uses it and stays visible if that output ever grows a
 # trailing token the way zizmor's did (#3545).
 SQRUFF_VERSION_AWK='NR == 1 { print $2 }'
+
+# `prek --version` / `taplo --version` / `typos --version` all print
+# `<name> <version>` on one line, same shape as sqruff (#3742). prek has no
+# wrapper of its own to source this from — it IS the hook runner, there is
+# nothing standing between it and the developer's shell the way
+# zizmor-hook.sh stands in front of zizmor — so scripts/check-prek-version-pin.mjs
+# reads this constant directly out of this file instead.
+PREK_VERSION_AWK='NR == 1 { print $2 }'
+TAPLO_VERSION_AWK='NR == 1 { print $2 }'
+TYPOS_VERSION_AWK='NR == 1 { print $2 }'
 
 # lychee is a heavy crate that cargo-binstall can't fetch prebuilt (it falls
 # back to a slow from-source compile), so — exactly like CI — pull the official
@@ -717,6 +741,23 @@ FAKESQRUFF
       "expected the literal line cargo_get_pinned sqruff \"\$(pinned_version_for sqruff)\" sqruff \"\$SQRUFF_VERSION_AWK\" above the --self-test guard in $0"
   fi
 
+  # Same wiring assertion, for the three pins #3742 added. A regression back
+  # to `cargo_get prek` (etc.) would leave `pinned_version_for` correct and
+  # `cargo_get_pinned` itself working (both proven generically above) while
+  # the real script silently stopped using either — exactly the #3611 shape
+  # Test 1c exists to catch, now for these three crates too.
+  for pc_pair in 'prek:PREK_VERSION_AWK' 'taplo-cli:TAPLO_VERSION_AWK' 'typos-cli:TYPOS_VERSION_AWK'; do
+    pc_crate="${pc_pair%%:*}"
+    pc_awk_var="${pc_pair##*:}"
+    pc_needle="cargo_get_pinned $pc_crate \"\$(pinned_version_for $pc_crate)\""
+    if [ "$call_site_region" != "${call_site_region#*"$pc_needle"}" ]; then
+      st_ok "setup-hooks.sh's $pc_crate call site is wired through cargo_get_pinned, not cargo_get (#3742)"
+    else
+      st_bad "setup-hooks.sh's $pc_crate call site is wired through cargo_get_pinned, not cargo_get (#3742)" \
+        "expected a line starting \"$pc_needle\" (using \$$pc_awk_var) above the --self-test guard in $0"
+    fi
+  done
+
   # ── Test 3 ── the pin/fallback tables carry sqruff under the right NAME:
   # a hard pin (pinned_version_for), no longer an MSRV-skew fallback
   # (msrv_fallback_version_for) — the name/precedence mismatch is how #3602
@@ -1006,14 +1047,18 @@ if ! have cargo; then
   warn "Skipping the cargo-based tools (prek, cargo-deny, sqlx-cli, …)."
 else
   ensure_cargo_binstall
-  cargo_get prek
+  # prek/taplo-cli/typos-cli pinned (#3742), same shape as sqruff: CI pins
+  # these in its `tool:` lists, so an unpinned local install can silently
+  # run a different version than CI — as it did live, when a newer prek
+  # enforced a YAML limit the locally-installed 0.3.8 did not.
+  cargo_get_pinned prek "$(pinned_version_for prek)" prek "$PREK_VERSION_AWK"
   cargo_get cargo-deny
   cargo_get cargo-machete
   cargo_get cargo-audit
   cargo_get_pinned sqruff "$(pinned_version_for sqruff)" sqruff "$SQRUFF_VERSION_AWK"
-  cargo_get typos-cli typos
+  cargo_get_pinned typos-cli "$(pinned_version_for typos-cli)" typos "$TYPOS_VERSION_AWK"
   cargo_get_pinned zizmor "$ZIZMOR_PINNED_VERSION" zizmor "$ZIZMOR_VERSION_AWK"
-  cargo_get taplo-cli taplo
+  cargo_get_pinned taplo-cli "$(pinned_version_for taplo-cli)" taplo "$TAPLO_VERSION_AWK"
   cargo_get cargo-nextest cargo-nextest
   cargo_get just
   install_lychee

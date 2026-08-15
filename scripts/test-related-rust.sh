@@ -271,24 +271,14 @@ if [ "$SELF_TEST" -eq 1 ]; then
   # core.worktree to $tmp and leaves the checkout unusable once $tmp is
   # removed. Hooks are disabled too: the fixture would otherwise
   # inherit core.hooksPath and prek aborts on a repo with no prek.toml.
-  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
-    GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_CONFIG \
-    GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_PREFIX GIT_INTERNAL_GETTEXT_SH_SCHEME
-  ceiling_dir=$(dirname "$tmp")
-  export GIT_CEILING_DIRECTORIES="$ceiling_dir"
-
+  # Shared code (#3722), not a private copy: three other scripts each
+  # reinvented this scrub independently and none of them stopped the
+  # next one from repeating the incident.
+  # shellcheck source=scripts/lib/git-scratch-guard.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/git-scratch-guard.sh"
+  git_scratch_guard "$tmp"
+  git_scratch_init "$tmp"
   cd "$tmp"
-  git init -q -b main . >/dev/null
-  # Belt-and-braces: if anything above were ever missed, the re-init
-  # would be visible as a core.worktree pointing somewhere other than
-  # $tmp, or a toplevel outside $tmp.
-  if [ "$(git rev-parse --show-toplevel)" != "$(cd "$tmp" && pwd -P)" ]; then
-    echo "FATAL: self-test fixture escaped its temp dir — aborting" >&2
-    exit 1
-  fi
-  git config core.hooksPath /dev/null
-  git config user.email self-test@example.invalid
-  git config user.name "self test"
 
   # Minimal but structurally faithful workspace: a root package whose
   # dir is src-tauri/ itself, plus two members — one whose directory
