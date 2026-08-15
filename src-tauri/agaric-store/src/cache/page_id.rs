@@ -301,15 +301,17 @@ pub struct PageIdWrite {
     /// statement as `previous`, inside the caller's transaction, so the pair
     /// describes one atomic transition.
     ///
-    /// `None` covers three cases that are all "the roll-up key is no longer a
-    /// real page": no parent row, a parent whose own `page_id` is still
-    /// unstamped, and a missing block. Distinguishing `Some(P) → None`
-    /// (#3894: a DEMOTION, reachable when a retried `SetBlockPageId` finds its
-    /// parent's stamp still pending or its parent purged) from `Some(P1) →
-    /// Some(P2)` (a page-to-page MOVE) is the whole reason this field exists:
-    /// both vacate a real page key and so owe the same durable repair, but
-    /// only the move is the invariant violation the handler's `debug_assert!`
-    /// means to catch.
+    /// `None` means the write landed on a block with no owning page at all:
+    /// no parent row, a parent whose own `page_id` is still unstamped, or a
+    /// missing block — AND the row did not already carry a real page. #3908
+    /// removed the fourth case: a `Some(P) → NULL` DEMOTION (a retried
+    /// `SetBlockPageId` whose parent's stamp is still pending, or whose parent
+    /// was purged) is now REFUSED rather than performed, and reports
+    /// `changed: false` with `current == previous == Some(P)`. So a
+    /// `previous.is_some() && changed` pair now implies `current.is_some()`
+    /// too — i.e. the only remaining way to vacate a real page key here is the
+    /// `Some(P1) → Some(P2)` page-to-page MOVE, which no enqueue site can
+    /// produce and which the handler's `debug_assert!` exists to catch.
     pub current: Option<String>,
 }
 
@@ -331,9 +333,69 @@ pub struct PageIdWrite {
 ///
 /// The null-safe `IS NOT` guard makes the UPDATE touch the row only when the
 /// inherited value actually differs, so `rows_affected()` is exactly "the
-/// column changed". The value written is unchanged from the pre-#3842
-/// unconditional UPDATE — including the case where the parent is gone and the
-/// inherited value is `NULL` — only no-op writes are skipped.
+/// column changed".
+///
+/// # #3908 — this path never DEMOTES a real owning page to NULL
+///
+/// The write copies only `parent.page_id`, whereas `resolve_owning_page`
+/// derives ownership by walking the whole `parent_id` chain. So a retried
+/// `SetBlockPageId` whose parent's own stamp is still pending — or whose
+/// parent row was purged — would inherit `NULL` off a block that already
+/// carries a real page. The pre-#3908 unconditional UPDATE performed that
+/// `Some(P) → NULL` write, DETACHING the block from its page: not just the
+/// roll-up key, but `pages_cache.inbound_link_count` (whose recompute filters
+/// `src.page_id IS NOT NULL`), space resolution via
+/// `COALESCE(b.space_id, p.space_id)`, and every other `page_id` consumer.
+///
+/// A `NULL` inherited value from THIS function means "the parent cannot tell
+/// me the owning page yet", not "this block has no owning page". It carries no
+/// authority to null: the authority for nulling lives in
+/// [`rebuild_page_ids`], whose `compute_page_id_diff` re-derives ownership for
+/// the whole vault and emits a `to_null` entry only for a block that genuinely
+/// resolves to no page. So the incremental path REFUSES the demotion and
+/// leaves the existing value for the retry (or the vault-wide rebuild) to
+/// supply — the same reasoning, and the same shape, as
+/// [`set_block_space_id_from_parent`]'s `parent_id IS NOT NULL` guard and
+/// `rebuild_space_ids`'s page guard, both of which exist to stop an
+/// incremental arm from destroying an authoritative value.
+///
+/// Be exact about the "not `no owning page`" claim, because ONE of the three
+/// refused shapes above is a case where NULL is the correct FINAL answer: a
+/// purged parent leaves the block orphaned, and `compute_page_id_diff` would
+/// indeed put it in `to_null`. The refusal is still right, and this is why:
+/// what the incremental arm lacks is not the answer but the AUTHORITY —
+/// `parent.page_id` cannot distinguish "unstamped" from "no page", so acting
+/// on it is a guess. Every path that can make NULL the correct answer already
+/// runs a derivation that CAN tell them apart, and does so unconditionally:
+///
+///   * delete / restore / purge fan out `CONTENT_LIFECYCLE_REBUILD_TASKS` /
+///     `FULL_CACHE_REBUILD_TASKS`, both of which contain `RebuildPageIds`;
+///   * a move re-derives the moved subtree in-tx via
+///     `rederive_page_and_space_ids`, which writes NULL unconditionally —
+///     but only over the ACTIVE subtree: that walk filters `deleted_at IS
+///     NULL`, so a soft-deleted descendant is not re-derived by the move
+///     itself (#3919). It still self-heals, because `RebuildPageIds`'
+///     `DESIRED_PAGE_ID_SQL` has no `deleted_at` filter and the next
+///     delete / restore / purge fans it out — the bullet above.
+///
+/// So the refusal costs at most a transient staleness that an authoritative
+/// pass then corrects — whereas the demotion it replaces destroyed a correct
+/// value outright. The precondition that makes this hold is that
+/// `SetBlockPageId`'s ONLY enqueue site is `invalidations_for_op`'s CREATE arm
+/// (plus its own retry-queue rehydration), i.e. a block whose `page_id` was
+/// just derived authoritatively by `resolve_owning_page`. A future enqueue
+/// site on the move or delete path — where NULL IS the intended outcome —
+/// would invalidate it, and nothing in the type system pins that; the
+/// `debug_assert!` in the `SetBlockPageId` arm covers the `P1 → P2` shape but
+/// not this one.
+///
+/// The refusal is reported as `changed: false` with `previous == current ==
+/// the preserved page`, because that is what the row now holds — no key was
+/// vacated, so no roll-up repair is owed. The guard is evaluated in Rust
+/// rather than as a fourth SQL conjunct purely to keep the checked query text
+/// (and its `.sqlx` entry) unchanged; it is equivalent, because the `SELECT`
+/// and the `UPDATE` share the caller's connection inside a `BEGIN IMMEDIATE`
+/// transaction, so no other writer can move `page_id` between them.
 ///
 /// Caller-transaction-only by design (#3894): the `SetBlockPageId` handler
 /// must commit the `page_id` write and the durable "the roll-up owes a repair"
@@ -367,7 +429,23 @@ pub async fn set_block_page_id_from_parent_in_tx(
     .fetch_optional(&mut *conn)
     .await?;
     let previous = before.as_ref().and_then(|r| r.previous.clone());
-    let current = before.as_ref().and_then(|r| r.inherited.clone());
+    let inherited = before.as_ref().and_then(|r| r.inherited.clone());
+    // #3908: refuse the `Some(P) → NULL` demotion. See the doc comment — a
+    // NULL inherited value is "the parent cannot tell me yet", never "this
+    // block has no page", and only `rebuild_page_ids` may act on the latter.
+    if inherited.is_none() && previous.is_some() {
+        tracing::debug!(
+            block_id = %block_id,
+            preserved_page_id = ?previous,
+            "#3908: SetBlockPageId's parent carries no page_id yet — keeping the block's \
+             existing owning page instead of demoting it to NULL"
+        );
+        return Ok(PageIdWrite {
+            changed: false,
+            current: previous.clone(),
+            previous,
+        });
+    }
     let result = sqlx::query!(
         "UPDATE blocks \
          SET page_id = (SELECT b2.page_id FROM blocks b2 WHERE b2.id = blocks.parent_id) \
@@ -380,7 +458,7 @@ pub async fn set_block_page_id_from_parent_in_tx(
     Ok(PageIdWrite {
         changed: result.rows_affected() > 0,
         previous,
-        current,
+        current: inherited,
     })
 }
 
@@ -638,16 +716,20 @@ mod tests {
         );
     }
 
-    /// #3894 — the DEMOTION transition `Some(P) → NULL`, reported honestly.
+    /// #3908 — the `Some(P) → NULL` DEMOTION is REFUSED, not performed.
     ///
     /// `resolve_owning_page` stamps `page_id` by walking the `parent_id`
     /// chain, while this function copies only the PARENT's `page_id` column.
     /// So a block whose parent's own stamp is still pending (or whose parent
-    /// was purged) inherits `NULL` and moves OFF a real page. That is a
-    /// different shape from the `P1 → P2` move, and the handler has to be able
-    /// to tell them apart — see the `SetBlockPageId` arm's `debug_assert!`.
+    /// was purged) would inherit `NULL` and be detached from a page it really
+    /// belongs to — wrong for the roll-up key, for
+    /// `pages_cache.inbound_link_count`, and for space resolution alike. A
+    /// NULL inherited value here means "the parent cannot tell me yet"; only
+    /// `rebuild_page_ids` has the vault-wide derivation needed to decide a
+    /// block genuinely owns no page. So the column keeps its value and the
+    /// write reports itself as a no-op.
     #[tokio::test]
-    async fn set_block_page_id_from_parent_reports_a_demotion_to_null_3894() {
+    async fn set_block_page_id_from_parent_refuses_to_demote_to_null_3908() {
         let (pool, _dir) = test_pool().await;
 
         sqlx::query(
@@ -683,13 +765,26 @@ mod tests {
         assert_eq!(
             write,
             super::PageIdWrite {
-                changed: true,
+                changed: false,
                 previous: Some("PAGE01".to_owned()),
-                current: None,
+                current: Some("PAGE01".to_owned()),
             },
-            "a demotion must report `previous` non-NULL (a real page key was \
-             vacated, so the repair is still owed) AND `current` NULL (so the \
-             caller can tell it apart from a P1 → P2 move)"
+            "the refused demotion must report itself as a NO-OP that PRESERVED the \
+             page (#3908): `changed` false so no roll-up repair is owed, and \
+             `current == previous` because that is what the row now holds"
+        );
+
+        let page_id: Option<String> =
+            sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'CHILD01'")
+                .fetch_one(&pool)
+                .await
+                .expect("page_id lookup");
+        assert_eq!(
+            page_id.as_deref(),
+            Some("PAGE01"),
+            "the block must still be attached to its real owning page — the \
+             incremental arm has no authority to null it just because the \
+             parent's own stamp has not landed (#3908)"
         );
     }
 

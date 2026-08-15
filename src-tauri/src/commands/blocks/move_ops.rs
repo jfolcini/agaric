@@ -311,8 +311,8 @@ async fn move_block_in_tx(
     // AFTER it returns yields the post-move value. Read via the non-macro
     // `query_scalar` so no compile-time `.sqlx` entry is needed. `page_id` is a
     // nullable column (`NULL` for a tag / top-level block with no page
-    // ancestor), so `Option<String>` and `NULL == NULL` (a tag/top-level →
-    // tag/top-level move) counts as "same page".
+    // ancestor); #3886: a `NULL == NULL` pair does NOT count as "same page" for
+    // the hint — see `move_same_page_hint`.
     let old_page_id: Option<String> =
         // dynamic-sql: static single-column page_id read; runtime query_scalar so no `.sqlx` entry.
         sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
@@ -336,7 +336,9 @@ async fn move_block_in_tx(
     // `RebuildPageLinkCache`, `RebuildProjectedAgendaCache`) — see
     // `dispatch_move_background` / `invalidations_for_op`'s MoveBlock arm. A
     // genuine cross-page reparent (page_id changed, including → NULL) keeps the
-    // full conservative set.
+    // full conservative set — as does a move within a PAGE-LESS subtree, where
+    // `page_id` is NULL at both ends but the `COALESCE(page_id, parent_id, id)`
+    // roll-up key still moves (#3886).
     //
     // Before #2906 the rederive FLATTENED a nested page's content descendants
     // onto the moved root's page, so a root-only check was NOT sufficient when
@@ -351,7 +353,16 @@ async fn move_block_in_tx(
             .await?
             .flatten();
 
-    let same_page = old_page_id == new_page_id;
+    // #3886: the hint is computed by the dispatch-side
+    // `move_same_page_hint`, not inline here — `Some(true)` unlocks the
+    // `RebuildPageLinkCache` skip, whose roll-up key is
+    // `COALESCE(page_id, parent_id, id)`, so an UNCHANGED-but-NULL `page_id`
+    // (a reparent inside a page-less subtree) still moves the key and must NOT
+    // take the fast path. Keeping the rule next to the arm that consumes it
+    // also means the reconciliation oracle's B6 driver audits the SAME
+    // function production calls, rather than a mirror of it.
+    let same_page =
+        crate::materializer::move_same_page_hint(old_page_id.as_deref(), new_page_id.as_deref());
 
     // 6. Enqueue the op for background dispatch. The CALLER's single
     //    `commit_and_dispatch` drains every enqueued op in FIFO order (one op

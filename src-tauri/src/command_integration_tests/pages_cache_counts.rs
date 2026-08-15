@@ -1336,3 +1336,129 @@ async fn same_page_indent_with_nested_page_stays_consistent_2906() {
     // forced rebuild would flip to P→X → the assertion would fail.
     assert_no_stale_page_caches(&pool, "a same-page indent dragging a nested page").await;
 }
+
+/// #3886 — a same-page reparent INSIDE a PAGE-LESS subtree must NOT take the
+/// #2700 fast path.
+///
+/// The `page_link_cache` roll-up key is `COALESCE(page_id, parent_id, id)`, not
+/// `page_id`. When `page_id IS NULL` the key falls back to `parent_id`, so
+/// moving a page-less block from one page-less parent to another keeps
+/// `page_id` NULL at both ends — legitimately "the same page" — while the
+/// roll-up key moves from the OLD parent to the NEW one. The pre-#3886 hint
+/// (`old_page_id == new_page_id`, with `NULL == NULL` counting as same-page)
+/// therefore claimed `Some(true)`, `RebuildPageLinkCache` was skipped, and the
+/// cache kept a stale row under the old parent with none under the new one.
+///
+/// #3842's stale-key recompute does not reach this either: it is driven from
+/// `SetBlockPageId`, which never fires when `page_id` does not change.
+///
+/// Tree: top-level content blocks `OLD` and `NEW` (no page ancestor →
+/// `page_id` NULL), with the linker under `OLD` carrying `[[T]]`. Reparent the
+/// linker `OLD → NEW`; the roll-up key must follow.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pageless_subtree_reparent_moves_the_page_link_rollup_key_3886() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // The link TARGET is a real page, so the rolled-up edge is a genuine one.
+    let t = create_block_inner(&pool, DEV, &mat, "page".into(), "T".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // The page-less subtree: two TOP-LEVEL content blocks. With no page
+    // ancestor their `page_id` stays NULL, which is what pushes the roll-up key
+    // onto the `parent_id` fallback.
+    let old_parent =
+        create_block_inner(&pool, DEV, &mat, "content".into(), "OLD".into(), None, None)
+            .await
+            .unwrap();
+    settle(&mat).await;
+    let new_parent =
+        create_block_inner(&pool, DEV, &mat, "content".into(), "NEW".into(), None, None)
+            .await
+            .unwrap();
+    settle(&mat).await;
+    let linker = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", t.id),
+        Some(old_parent.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    agaric_store::cache::rebuild_pages_cache(&pool)
+        .await
+        .unwrap();
+    agaric_store::cache::rebuild_page_link_cache(&pool)
+        .await
+        .unwrap();
+    agaric_store::cache::rebuild_projected_agenda_cache(&pool)
+        .await
+        .unwrap();
+
+    /// The roll-up rows as `(source_key, target)` pairs.
+    async fn rollup(pool: &sqlx::SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT source_page_id, target_page_id FROM page_link_cache \
+             ORDER BY source_page_id, target_page_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    // PRECONDITIONS, so neither half of the property can pass vacuously: the
+    // subtree really is page-less, and the roll-up really is keyed on the old
+    // PARENT rather than on a page.
+    for id in [
+        old_parent.id.as_str(),
+        new_parent.id.as_str(),
+        linker.id.as_str(),
+    ] {
+        let page_id: Option<String> = sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            page_id, None,
+            "{id} must have NO owning page for this test to exercise the \
+             COALESCE(page_id, parent_id, id) fallback"
+        );
+    }
+    assert_eq!(
+        rollup(&pool).await,
+        vec![(old_parent.id.to_string(), t.id.to_string())],
+        "baseline: with page_id NULL the edge rolls up under the linker's PARENT"
+    );
+
+    // The move under test: same (NULL) page, different parent.
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        linker.id.clone(),
+        Some(new_parent.id.clone()),
+        0,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        rollup(&pool).await,
+        vec![(new_parent.id.to_string(), t.id.to_string())],
+        "the roll-up key must follow the reparent: keyed on the NEW parent, with \
+         no row left stranded under the old one. `page_id` is NULL at both ends, \
+         so the #2700 same-page skip would drop the only task that fixes this \
+         (#3886)"
+    );
+    // And the maintained cache must equal a from-base rebuild, byte for byte.
+    assert_no_stale_page_caches(&pool, "a reparent inside a page-less subtree").await;
+}

@@ -80,6 +80,13 @@ use handlers::{handle_background_task, handle_foreground_task};
 // production build.
 #[cfg(test)]
 pub(crate) use dispatch::invalidations_for_op;
+// #3886: the `move_same_page` hint PRODUCER, re-exported unconditionally — the
+// local move command (`commands/blocks/move_ops.rs`) is its production caller.
+// It lives next to `invalidations_for_op`'s `MoveBlock` arm because the
+// condition it encodes (`page_id` unchanged AND a REAL page, so the
+// `COALESCE(page_id, parent_id, id)` roll-up key provably cannot move) is a
+// property of the SKIP, not of the move.
+pub(crate) use dispatch::move_same_page_hint;
 // #1993: re-exported test-only so command-level tests can drive the GC pass
 // (delete defers byte reclamation to it). Non-test code reaches it within the
 // materializer module via `handlers::cleanup_orphaned_attachments`.

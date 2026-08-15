@@ -516,10 +516,11 @@ async fn page_link_rollup_recount_keeps_supported_old_key_3842() {
 /// site that can move `page_id` between pages, the guard — not a silently
 /// wrong `page_link_cache` — is what surfaces it.
 ///
-/// Paired with `set_block_page_id_demotion_to_null_does_not_trip_the_guard_3894`,
-/// which pins the OTHER side of the narrowed condition: this test requires the
-/// panic on `Some(P1) → Some(P2)`, that one requires its ABSENCE on
-/// `Some(P) → NULL`. Together they say the assert fires on exactly the
+/// Paired with `set_block_page_id_demotion_to_null_is_refused_3908`, which pins
+/// the OTHER side of the narrowed condition: this test requires the panic on
+/// `Some(P1) → Some(P2)`, that one requires its ABSENCE on `Some(P) → NULL`
+/// (which, since #3908, never reaches the assert at all because the write
+/// itself refuses to demote). Together they say the assert fires on exactly the
 /// unreachable transition and not on the reachable one.
 ///
 /// Debug-only: `debug_assert!` compiles out under `--release`.
@@ -580,27 +581,37 @@ async fn set_block_page_id_page_to_page_move_trips_the_stale_key_guard_3842() {
     .unwrap();
 }
 
-/// #3894 — the `Some(P) → NULL` DEMOTION must NOT trip the `P1 → P2` guard,
-/// and must still degrade.
+/// #3908 — the `Some(P) → NULL` DEMOTION is REFUSED, so `blocks.page_id` stays
+/// CORRECT (and, a fortiori, the `P1 → P2` guard is not tripped — #3894).
 ///
-/// The guard's `debug_assert!` originally fired on `changed && previous
-/// .is_some()`, which covers two different transitions. The page-to-page move
-/// is genuinely unreachable today and deserves the panic. The demotion is
-/// reachable RIGHT NOW: `resolve_owning_page` stamps `page_id` by walking the
-/// `parent_id` chain, while `set_block_page_id_from_parent_in_tx` copies only
-/// `parent.page_id`, so a retried `SetBlockPageId` whose parent's own stamp
-/// has not landed inherits NULL off a block that already carries a real page.
-/// Asserting on `previous` alone panicked the background worker in debug/test
-/// builds on a production-reachable shape.
+/// `resolve_owning_page` stamps `page_id` by walking the `parent_id` chain,
+/// while `set_block_page_id_from_parent_in_tx` copies only `parent.page_id`, so
+/// a retried `SetBlockPageId` whose parent's own stamp has not landed inherits
+/// NULL off a block that already carries a real page. #3894 stopped that shape
+/// from panicking the background worker (the assert was narrowed to the
+/// genuinely unreachable `P1 → P2` move) and made the vacated roll-up key owe a
+/// durable full rebuild — but nothing repaired `blocks.page_id` itself, so the
+/// block stayed DETACHED from its page: wrong for the roll-up key, for
+/// `pages_cache.inbound_link_count` (whose recompute filters
+/// `src.page_id IS NOT NULL`), for the `COALESCE(b.space_id, p.space_id)` space
+/// resolution, and for every other `page_id` consumer.
 ///
-/// This test manufactures exactly that shape and requires two things: the
-/// handler RETURNS (no panic — this test is not `#[should_panic]`, and it is
-/// not gated on `debug_assertions`, so the debug build is where it has teeth),
-/// and the degradation is UNCHANGED — a demotion still vacates a real page key
-/// the `{parent_id, own id}` sweep cannot reach, so it still owes the durable
-/// full `RebuildPageLinkCache` obligation.
+/// #3908 closes it at the write instead of repairing it downstream: a NULL
+/// inherited value means "the parent cannot tell me the owning page yet", not
+/// "this block has no owning page", so the incremental arm leaves the column
+/// alone and defers the second reading to `rebuild_page_ids`, which re-derives
+/// ownership vault-wide and is the only thing entitled to null a block.
+///
+/// This test manufactures exactly that shape and requires FOUR things: the
+/// handler RETURNS (no panic — this test is not `#[should_panic]` and is not
+/// gated on `debug_assertions`, so the debug build is where it has teeth);
+/// `blocks.page_id` still names the real page; NO durable full-rebuild
+/// obligation is owed (nothing was vacated, so nothing is owed); and the
+/// roll-up is untouched — no stranded row under `P`, no spurious row under the
+/// content parent. A final re-run after the parent's own stamp lands shows the
+/// retry SUPPLYING the information the demotion used to destroy.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn set_block_page_id_demotion_to_null_does_not_trip_the_guard_3894() {
+async fn set_block_page_id_demotion_to_null_is_refused_3908() {
     let (pool, _dir) = test_pool().await;
 
     let page_p = "PP000000000000000000000000";
@@ -647,9 +658,10 @@ async fn set_block_page_id_demotion_to_null_does_not_trip_the_guard_3894() {
         .execute(&pool)
         .await
         .unwrap();
-    // The rollup as it stood BEFORE the demotion: keyed on the real page P.
-    // This is the row the demotion strands, since the per-block sweep only
-    // visits `{parent_id, own id}` = `{CC…, BB…}`.
+    // The rollup as it stands BEFORE the task: keyed on the real page P, which
+    // is what `COALESCE(page_id, parent_id, id)` yields for B. A demotion would
+    // strand this row, since the per-block sweep only visits
+    // `{parent_id, own id}` = `{CC…, BB…}`.
     sqlx::query(
         "INSERT INTO page_link_cache \
              (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page) \
@@ -678,9 +690,13 @@ async fn set_block_page_id_demotion_to_null_does_not_trip_the_guard_3894() {
         .await
         .unwrap();
     assert_eq!(
-        page_id, None,
-        "seed check: the write under test must really be a demotion off a real \
-         page, not a no-op"
+        page_id.as_deref(),
+        Some(page_p),
+        "the block must still be attached to its real owning page: the write \
+         inherits only `parent.page_id`, so a NULL there is `unknown`, not \
+         `no page` — nulling it detaches the block from every page_id consumer \
+         (roll-up key, inbound_link_count, space resolution) and only \
+         rebuild_page_ids may decide a block genuinely owns no page (#3908)"
     );
 
     let owed_full_rebuild: i64 = sqlx::query_scalar(
@@ -692,11 +708,10 @@ async fn set_block_page_id_demotion_to_null_does_not_trip_the_guard_3894() {
     .await
     .unwrap();
     assert_eq!(
-        owed_full_rebuild, 1,
-        "narrowing the assert must not narrow the DEGRADATION: a demotion \
-         vacates the real page key P, which the {{parent_id, own id}} sweep \
-         never visits, so the durable full RebuildPageLinkCache obligation is \
-         still owed"
+        owed_full_rebuild, 0,
+        "a refused demotion vacates NOTHING, so it must not seed the durable \
+         full RebuildPageLinkCache obligation the vacating write owed (#3908 \
+         replaces #3894's repair-after-the-fact with prevention)"
     );
 
     let rows: Vec<(String, String, i64)> = sqlx::query_as(
@@ -708,13 +723,40 @@ async fn set_block_page_id_demotion_to_null_does_not_trip_the_guard_3894() {
     .unwrap();
     assert_eq!(
         rows,
-        vec![
-            (parent_c.to_string(), page_t.to_string(), 1),
-            (page_p.to_string(), page_t.to_string(), 1),
-        ],
-        "the sweep recomputes the NEW key (the parent) and leaves the vacated \
-         page key P stranded — which is precisely what the seeded full rebuild \
-         above exists to clean up"
+        vec![(page_p.to_string(), page_t.to_string(), 1)],
+        "the roll-up key never moved, so the cache must be untouched: the row \
+         under the real page P survives and no row appears under the \
+         content-block parent C"
+    );
+
+    // The retry SUPPLIES what the demotion would have destroyed: once the
+    // parent's own stamp lands, re-running the child's task is a genuine no-op
+    // rather than a repair of self-inflicted damage.
+    for id in [parent_c, child_b] {
+        crate::materializer::handlers::handle_background_task(
+            &pool,
+            &MaterializeTask::SetBlockPageId {
+                block_id: std::sync::Arc::from(id),
+            },
+            None,
+            None,
+        )
+        .await
+        .expect("the follow-up stamps must succeed");
+    }
+    let converged: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id IN (?, ?) ORDER BY id")
+            .bind(child_b)
+            .bind(parent_c)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        converged,
+        vec![Some(page_p.to_string()), Some(page_p.to_string())],
+        "once the parent's stamp lands, parent and child agree on the owning \
+         page — the state the demotion path could only reach by way of a \
+         vault-wide RebuildPageIds"
     );
 }
 

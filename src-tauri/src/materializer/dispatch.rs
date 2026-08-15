@@ -1207,15 +1207,50 @@ impl Materializer {
     }
 }
 
+/// #3886 — compute the `move_same_page` hint a LOCAL move command may claim,
+/// from the moved root's `page_id` read BEFORE and AFTER the in-tx rederive.
+///
+/// This is the SOLE producer of `Some(true)` for [`invalidations_for_op`]'s
+/// `MoveBlock` arm, and it deliberately demands MORE than "the page did not
+/// change". The skip it unlocks drops `RebuildPageLinkCache`, and the
+/// `page_link_cache` roll-up key is NOT `page_id` — it is
+/// `COALESCE(page_id, parent_id, id)` (`cache/page_links.rs`). When `page_id`
+/// IS NULL the key falls back to `parent_id`, so a reparent INSIDE a page-less
+/// subtree keeps `page_id` NULL throughout — `old == new`, legitimately "the
+/// same page" — while the roll-up key moves from the OLD parent to the new
+/// one, stranding a row under the old key and leaving none under the new one.
+/// #3842's stale-key recompute does not reach it either: that is driven from
+/// `SetBlockPageId`, which never fires when `page_id` does not change
+/// (NULL → NULL). The two are genuinely disjoint — #3842 covers "the page
+/// changed and the key was wrong", this covers "the page did not change and
+/// the key still moved".
+///
+/// So `Some(true)` additionally requires the unchanged page to be a REAL page.
+/// A page-less move falls back to the conservative set, which is also correct
+/// for the other two gated rebuilds (`RebuildPagesCache` /
+/// `RebuildProjectedAgendaCache`) — a broader rebuild is never stale — and
+/// #2700's optimisation is preserved for the overwhelmingly common case of
+/// content that lives on a page.
+///
+/// Kept here, next to the arm that consumes it, rather than inline at the
+/// command site: the condition is a property of the SKIP, not of the move, and
+/// a future reader widening the skip has to walk past this doc to do it.
+pub(crate) fn move_same_page_hint(old_page_id: Option<&str>, new_page_id: Option<&str>) -> bool {
+    old_page_id == new_page_id && old_page_id.is_some()
+}
+
 /// Pure mapping from an [`OpRecord`] (and optional `block_type_hint`
 /// for `edit_block`, `move_same_page` for `move_block`) to the ordered
 /// list of background [`MaterializeTask`]s that should be enqueued for it.
 ///
 /// #2700: `move_same_page` is consulted ONLY by the `MoveBlock` arm. It is
 /// `Some(true)` when the LOCAL move command proved the block's `page_id` is
-/// unchanged by the reparent (a same-parent sibling reorder or a same-page
-/// indent — the command compares the moved block's `page_id` before/after the
-/// in-tx rederive; see `commands/blocks/move_ops.rs`). In that case the three
+/// unchanged by the reparent AND names a REAL page (a same-parent sibling
+/// reorder or a same-page indent — the command compares the moved block's
+/// `page_id` before/after the in-tx rederive and feeds the pair to
+/// [`move_same_page_hint`], which is the only producer of `Some(true)`; see
+/// there for why a page-LESS move must not take the fast path, #3886, and
+/// `commands/blocks/move_ops.rs` for the call site). In that case the three
 /// `page_id`-derived rebuilds (`RebuildPagesCache`, `RebuildPageLinkCache`,
 /// `RebuildProjectedAgendaCache`) are pure waste and are skipped. `None` (every
 /// non-move path, and — crucially — remote replay / inbound-sync / boot, which
@@ -1715,6 +1750,15 @@ pub(crate) fn invalidations_for_op(
             // would survive; the full page-link roll-up is the correct fix.
             // #2700: skipped on a proven same-page move (page_id unchanged →
             // source-page attribution unchanged).
+            // #3886: "page_id unchanged" is NOT on its own enough to prove the
+            // roll-up key is unchanged — the key is
+            // `COALESCE(page_id, parent_id, id)`, so a NULL `page_id` makes it
+            // fall back to `parent_id` and a reparent inside a PAGE-LESS
+            // subtree moves the key while keeping `page_id` NULL throughout.
+            // The hint therefore carries the stronger claim: `Some(true)`
+            // means "unchanged AND a real page". `move_same_page_hint` is the
+            // sole producer and enforces it; do not widen this gate without
+            // reading its doc.
             if !same_page {
                 tasks.push(MaterializeTask::RebuildPageLinkCache);
             }
@@ -2953,6 +2997,70 @@ mod tests {
                 labels(&tasks),
             );
         }
+    }
+
+    /// #3886 — the hint producer refuses to claim "same page" for a move whose
+    /// `page_id` is NULL at BOTH ends.
+    ///
+    /// The `page_link_cache` roll-up key is `COALESCE(page_id, parent_id, id)`,
+    /// so a page-less block is keyed on its PARENT. A reparent inside a
+    /// page-less subtree therefore moves the key while `page_id` stays NULL —
+    /// the raw `old == new` comparison the hint used to be reports "same page"
+    /// and the fast path drops the very rebuild that would fix the key.
+    #[test]
+    fn move_same_page_hint_rejects_a_pageless_move_3886() {
+        assert!(
+            !move_same_page_hint(None, None),
+            "a NULL → NULL move keeps `page_id` but MOVES the \
+             COALESCE(page_id, parent_id, id) roll-up key, so it must not claim \
+             the same-page fast path (#3886)"
+        );
+        assert!(
+            move_same_page_hint(Some("PAGE1"), Some("PAGE1")),
+            "#2700's optimisation must survive for the common case: an unchanged \
+             REAL page cannot move the roll-up key"
+        );
+        for (old, new) in [
+            (Some("PAGE1"), Some("PAGE2")),
+            (Some("PAGE1"), None),
+            (None, Some("PAGE1")),
+        ] {
+            assert!(
+                !move_same_page_hint(old, new),
+                "a changed page_id ({old:?} → {new:?}) is a cross-page reparent",
+            );
+        }
+    }
+
+    /// #3886 — and the arm that CONSUMES the hint must keep
+    /// `RebuildPageLinkCache` for that page-less move.
+    ///
+    /// Paired with the producer test above so the guard is covered at both
+    /// ends: the producer must not claim the fast path, and the consumer must
+    /// enqueue the full roll-up rebuild when it is not claimed. The full
+    /// rebuild — not a targeted `ReindexBlockLinks` — is the correct repair
+    /// because the per-block stale-key sweep only visits `{parent_id, own id}`,
+    /// which after the move is the NEW parent; the OLD parent's key is never
+    /// revisited.
+    #[test]
+    fn invalidations_for_op_move_block_pageless_subtree_keeps_page_link_rebuild_3886() {
+        let r = make_record(
+            "move_block",
+            r#"{"block_id":"BLK1","new_position":0}"#,
+            Some("BLK1"),
+        );
+        // The hint production code computes for a reparent inside a page-less
+        // subtree — NOT a hand-written `Some(false)`, so that reverting the
+        // producer turns this test red.
+        let hint = Some(move_same_page_hint(None, None));
+        let tasks = invalidations_for_op(&r, None, hint).unwrap();
+        assert!(
+            contains_kind(&tasks, &MaterializeTask::RebuildPageLinkCache),
+            "a reparent inside a page-less subtree moves the roll-up key from the \
+             old parent to the new one, so the full page-link rebuild must be \
+             enqueued; got {:?}",
+            labels(&tasks),
+        );
     }
 
     // ── attachments (no fan-out) ─────────────────────────────────────
