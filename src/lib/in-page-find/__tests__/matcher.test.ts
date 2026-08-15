@@ -1316,11 +1316,22 @@ describe('runWalker', () => {
  *    exactly `folded.length` entries and the indices used are bounded by
  *    `idx <= folded.length - needle.length`, so neither lookup is ever
  *    `undefined`.
- *    Confirmed by differential sweep: 4,422,600 (text, needle, wholeWord) cases
- *    over an alphabet saturated with İ / i / U+0307 / astral letters produced
- *    zero undefined lookups. The same harness detects 1,160 differences for a
- *    mutant the suite already kills (`from = idx + 1` → `+ needle.length`), so
- *    it is not blind.
+ *    Originally "confirmed by differential sweep: 4,422,600 (text, needle,
+ *    wholeWord) cases over an alphabet saturated with İ / i / U+0307 / astral
+ *    letters produced zero undefined lookups. The same harness detects 1,160
+ *    differences for a mutant the suite already kills (`from = idx + 1` →
+ *    `+ needle.length`), so it is not blind" — via a sweep that was never
+ *    committed. #3804 — re-verified with a committed, re-runnable harness:
+ *    `scripts/mutation-harnesses/in-page-find-matcher-folded-scan.harness.ts`
+ *    (0 differing / 47,943 cases on every equivalence claim below, on its own
+ *    independently-generated sweep; both controls fire — 3,652 and 29
+ *    differences respectively — proving the harness has power).
+ *
+ *    #3804 — line refreshed (was 301, drifted): the condition below is
+ *    currently at matcher.ts:430 (verify with `grep -n 'start !== undefined
+ *    && end !== undefined' src/lib/in-page-find/matcher.ts`); columns below
+ *    are as originally recorded and have not been independently re-verified
+ *    against the current line.
  *      301:9  [ConditionalExpression] `start !== undefined && end !== undefined`
  *             → true
  *      301:9  [LogicalOperator] `start !== undefined && end !== undefined` →
@@ -1337,7 +1348,9 @@ describe('runWalker', () => {
  *             names two distinct mutants, not one. Only the inner one is
  *             equivalent. The outer one, `(A && B) || C`, disables the
  *             whole-word arm and IS killed by the folded-path wholeWord test.
- *             Verified by splicing each reading separately.
+ *             Verified by splicing each reading separately, and re-verified by
+ *             the committed harness above (both readings, as `diffInnerOr` /
+ *             `diffOuterOr`).
  *      301:9  [ConditionalExpression] `start !== undefined` → true
  *      301:32 [ConditionalExpression] `end !== undefined` → true
  *

@@ -68,11 +68,13 @@ describe('parseInlineProperties', () => {
     ])
   })
 
-  // Line 134 [MethodExpression]: `trimmed.slice(sepIndex + 3).trim()` →
-  // `trimmed.slice(sepIndex + 3)`. Only ONE space is consumed by the ":: "
+  // #3804 — line refreshed (was 134/123, drifted): `trimmed.slice(sepIndex +
+  // 3).trim()` → `trimmed.slice(sepIndex + 3)`, currently
+  // inline-property-parse.ts:160 (verify with `grep -n 'trimmed.slice(sepIndex'
+  // src/lib/inline-property-parse.ts`). Only ONE space is consumed by the ":: "
   // separator match itself; extra spaces right after `::` land inside the
-  // value slice and need their OWN trim (the line-level trim at 123 already
-  // ran and cannot remove them — they are not at the line's edges).
+  // value slice and need their OWN trim (the line-level trim, now at line 142,
+  // already ran and cannot remove them — they are not at the line's edges).
   it('trims extra whitespace between the separator and the value', () => {
     expect(parseInlineProperties('status::   active')).toEqual([
       { key: 'status', value: 'active', lineIndex: 0 },
@@ -143,20 +145,24 @@ describe('parseInlineProperties', () => {
     expect(parseInlineProperties(after)).toEqual([{ key: 'status', value: 'active', lineIndex: 3 }])
   })
 
-  // Line 123 [MethodExpression]: `raw.trim()` → `raw`. A leading space before
-  // the fence delimiter would still be a real fence in any markdown renderer;
-  // only the (pre-trim) `raw` line is checked, so skipping the outer trim
-  // makes `startsWith('```')` see the leading space and miss the fence.
+  // #3804 — line refreshed (was 123, drifted): `raw.trim()` → `raw`,
+  // currently inline-property-parse.ts:142 (verify with `grep -n 'const
+  // trimmed = raw.trim' src/lib/inline-property-parse.ts`). A leading space
+  // before the fence delimiter would still be a real fence in any markdown
+  // renderer; only the (pre-trim) `raw` line is checked, so skipping the
+  // outer trim makes `startsWith('```')` see the leading space and miss the
+  // fence.
   it('recognizes a fence delimiter with leading indentation', () => {
     const content = ' ```\nstatus:: active\n```'
     expect(parseInlineProperties(content)).toEqual([])
   })
 
-  // Line 126 [MethodExpression]: `trimmed.startsWith('```')` →
-  // `trimmed.endsWith('```')`. A language-tagged opening fence (` ```js `)
-  // starts with the delimiter but does not end with it — distinguishes the
-  // two methods where a bare ` ``` ` (which both starts AND ends with the
-  // delimiter) would not.
+  // #3804 — line refreshed (was 126, drifted): `trimmed.startsWith('```')` →
+  // `trimmed.endsWith('```')`, currently inline-property-parse.ts:145 (verify
+  // with `grep -n "startsWith('\`\`\`')" src/lib/inline-property-parse.ts`).
+  // A language-tagged opening fence (` ```js `) starts with the delimiter but
+  // does not end with it — distinguishes the two methods where a bare
+  // ` ``` ` (which both starts AND ends with the delimiter) would not.
   it('recognizes a language-tagged fence delimiter (```js)', () => {
     const content = '```js\nstatus:: active\n```'
     expect(parseInlineProperties(content)).toEqual([])
@@ -186,8 +192,10 @@ describe('parseInlineProperties', () => {
     expect(parseInlineProperties('k:: v\\\\')).toEqual([{ key: 'k', value: 'v\\\\', lineIndex: 0 }])
   })
 
-  // Line 121 [ConditionalExpression `isLast → false`, ArithmeticOperator
-  // `lines.length - 1 → lines.length + 1`]: both mutants make `isLast`
+  // #3804 — line refreshed (was 121, drifted): [ConditionalExpression
+  // `isLast → false`, ArithmeticOperator `lines.length - 1 → lines.length +
+  // 1`], currently inline-property-parse.ts:140 (verify with `grep -n 'const
+  // isLast =' src/lib/inline-property-parse.ts`). Both mutants make `isLast`
   // always false — even a single-line ("real last line") input would then
   // have its ODD trailing backslash wrongly treated as a hard-break marker
   // and stripped, instead of kept as literal text.
@@ -252,17 +260,21 @@ describe('stripPropertyLines', () => {
     const content = 'text\nstatus:: active'
     expect(stripPropertyLines(content, new Set())).toBe(content)
   })
-  // Ledger — Line 150 [ConditionalExpression `lineIndexes.size === 0 →
-  // false`]: equivalent. This early return is a pure optimization, not a
-  // correctness requirement — with an empty set, `lines.filter` removes
-  // nothing (`kept === lines`), the marker-stripping guard's own
-  // `lineIndexes.has(...)` check short-circuits false, and
+  // Ledger — #3804 — line refreshed (was 150, drifted): [ConditionalExpression
+  // `lineIndexes.size === 0 → false`], currently inline-property-parse.ts:175
+  // (verify with `grep -n 'lineIndexes.size === 0'
+  // src/lib/inline-property-parse.ts`): equivalent. This early return is a
+  // pure optimization, not a correctness requirement — with an empty set,
+  // `lines.filter` removes nothing (`kept === lines`), the marker-stripping
+  // guard's own `lineIndexes.has(...)` check short-circuits false, and
   // `content.split('\n').join('\n')` always reconstructs `content` exactly
   // (split/join with the same separator is lossless for any string, by
-  // construction). Verified over a 100k random-string sweep with an empty
-  // set: 0 diffs from the original in every case; the same harness found
-  // 8,569/8,569 identical results on non-empty sets too (as expected — both
-  // branches share that code path), confirming it isn't trivially vacuous.
+  // construction). Originally verified over a 100k random-string sweep (0
+  // diffs from the original with an empty set; 8,569/8,569 identical results
+  // on non-empty sets too, confirming it isn't trivially vacuous) that was
+  // never committed. #3804 — re-verified with a committed, re-runnable
+  // harness:
+  // `scripts/mutation-harnesses/inline-property-parse-strip-lines.harness.ts`.
 
   it('stripping the only line yields an empty string', () => {
     expect(stripPropertyLines('status:: active', new Set([0]))).toBe('')
@@ -291,8 +303,10 @@ describe('stripPropertyLines', () => {
     expect(stripPropertyLines('end\\\\\nk:: v', new Set([1]))).toBe('end\\\\')
   })
 
-  // Line 88 [EqualityOperator `i >= 0 → i > 0`] inside the shared
-  // `trailingBackslashRun` helper. The off-by-one only shows up when the
+  // #3804 — line refreshed (was 88, drifted): [EqualityOperator `i >= 0 → i >
+  // 0`] inside the shared `trailingBackslashRun` helper, currently
+  // inline-property-parse.ts:107 (verify with `grep -n 'i >= 0 &&'
+  // src/lib/inline-property-parse.ts`). The off-by-one only shows up when the
   // scanned line is backslashes ALL the way down to index 0 — here the new
   // last line after stripping is a lone `\`, so the loop's final check
   // happens at i===0. Original: `i>=0` true, counts index 0 too → n=1 (odd)
@@ -300,26 +314,32 @@ describe('stripPropertyLines', () => {
   // never counted → n=0 (even) → marker left in place → `'\'` survives.
   // (`parseInlineProperties` alone can't observe this: a pure-backslash line
   // never contains `':: '` either way, so the divergence is invisible until
-  // it feeds into the marker-stripping branch here. Verified over a 200k
-  // random-string sweep plus every backslash-run-length/strip-mask
-  // combination up to length 6 — this codepath is the only one where a
-  // difference from the original ever appears (12 edge-case diffs, all here);
-  // a same-family `true`-replacement mutant produced zero diffs anywhere,
-  // see the ledger below.)
+  // it feeds into the marker-stripping branch here. Originally verified over
+  // a 200k random-string sweep plus every backslash-run-length/strip-mask
+  // combination up to length 6 that was never committed (12 edge-case diffs,
+  // all here — this codepath was the only one where a difference from the
+  // original ever appeared; a same-family `true`-replacement mutant produced
+  // zero diffs anywhere, see the ledger below). #3804 — re-verified with a
+  // committed, re-runnable harness:
+  // `scripts/mutation-harnesses/inline-property-parse-strip-lines.harness.ts`.)
   it('drops the marker on a lone backslash line only when the run truly reaches index 0', () => {
     expect(stripPropertyLines('\\\ncontext:: home', new Set([1]))).toBe('')
   })
 
-  // Ledger — Line 88 [ConditionalExpression `i >= 0 → true`]: equivalent for
-  // every input. Dropping the `i>=0` guard entirely relies on JS returning
-  // `undefined` for an out-of-range string index rather than throwing;
-  // `undefined === '\\'` is `false`, so the loop still stops at exactly the
-  // same `i` with the same count `n` as the guarded version — the guard is
-  // provably redundant, not merely untested. Verified over the same 200k
-  // random-string sweep plus every backslash-run/strip-mask edge case above:
-  // 0 diffs from the original in all cases (vs. the `i>0` mutant just above,
-  // caught 442/200k times at random and on 12/many edge cases — confirming
-  // the harness does detect a real divergence in this same family).
+  // Ledger — #3804 — line refreshed (was 88, drifted): [ConditionalExpression
+  // `i >= 0 → true`], currently inline-property-parse.ts:107 (same site as
+  // the control above): equivalent for every input. Dropping the `i>=0`
+  // guard entirely relies on JS returning `undefined` for an out-of-range
+  // string index rather than throwing; `undefined === '\\'` is `false`, so
+  // the loop still stops at exactly the same `i` with the same count `n` as
+  // the guarded version — the guard is provably redundant, not merely
+  // untested. Originally verified over the same 200k random-string sweep
+  // plus every backslash-run/strip-mask edge case above that was never
+  // committed (0 diffs from the original in all cases, vs. the `i>0` mutant
+  // just above, caught 442/200k times at random and on 12/many edge cases —
+  // confirming the harness does detect a real divergence in this same
+  // family). #3804 — re-verified with a committed, re-runnable harness:
+  // `scripts/mutation-harnesses/inline-property-parse-strip-lines.harness.ts`.
 })
 
 describe('buildInlinePropertySetParams', () => {
@@ -365,9 +385,11 @@ describe('buildInlinePropertySetParams', () => {
     expect(buildInlinePropertySetParams('B', 'k', '17/07/2026', def('date'))).toBeNull()
   })
 
-  // Line 213 [Regex]: the pattern is `/^\d{4}-\d{2}-\d{2}$/` — two distinct
-  // anchor-dropping mutants survive independently, so each needs its own
-  // input that specifically defeats ONLY that anchor.
+  // #3804 — line refreshed (was 213, drifted): [Regex] the pattern is
+  // `/^\d{4}-\d{2}-\d{2}$/`, currently inline-property-parse.ts:238 (verify
+  // with `grep -n '\\\\d{4}-\\\\d{2}-\\\\d{2}' src/lib/inline-property-parse.ts`) —
+  // two distinct anchor-dropping mutants survive independently, so each
+  // needs its own input that specifically defeats ONLY that anchor.
   it('rejects a date with leading junk before the YYYY-MM-DD shape (the `^` anchor matters)', () => {
     // Without `^`, `/\d{4}-\d{2}-\d{2}$/` still matches because the string
     // ENDS with a valid date — `^` is what rejects a prefixed value.
