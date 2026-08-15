@@ -139,6 +139,76 @@ describe('keyboard-config', () => {
     expect(getCustomOverrides()).toEqual({})
   })
 
+  // PR #3913 review note 3 — a non-object blob is the MOST severe form of
+  // corruption (every entry unrecoverable, not just some); it must not be
+  // the quietest case. Pin the actual warning, not just "no crash".
+  it('getCustomOverrides logs a warning when the stored value is a non-object (worst-case corruption)', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(['prevBlock', 'Ctrl + P']))
+    expect(getCustomOverrides()).toEqual({})
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      'KeyboardConfig',
+      'Discarded non-object persisted shortcut overrides blob',
+      { key: STORAGE_KEY },
+    )
+  })
+
+  // PR #3913 review note 4 — the same re-warn loop #3889 fixed for
+  // GraphFilterBar's persisted filters, now in this module: without a
+  // write-back, a corrupt blob would re-log its drop warning on every cache
+  // invalidation (every `storage` event / settings save) forever, since
+  // nothing else here ever re-persists a cleaned value. Assert the actual
+  // heal — the corrupt raw blob is overwritten with the sanitized one in
+  // place — and that a later cache invalidation against the now-clean value
+  // does not warn again.
+  it('getCustomOverrides writes the sanitized blob back to storage so a partial drop does not re-warn on the next cache invalidation', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ prevBlock: 'Ctrl + P', nextBlock: 42 }))
+    expect(getCustomOverrides()).toEqual({ prevBlock: 'Ctrl + P' })
+    // The heal itself: storage now holds the sanitized blob, not the
+    // original corrupt one.
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null')).toEqual({
+      prevBlock: 'Ctrl + P',
+    })
+
+    mockedLogger.warn.mockClear()
+    // A cross-tab / synthetic storage event invalidates the cache; the
+    // re-read hits the now-healed (clean) blob and must not warn again.
+    window.dispatchEvent(new StorageEvent('storage', { key: STORAGE_KEY }))
+    expect(getCustomOverrides()).toEqual({ prevBlock: 'Ctrl + P' })
+    expect(mockedLogger.warn).not.toHaveBeenCalled()
+  })
+
+  // PR #3913 review note 4 — same heal, total-corruption case: a non-object
+  // blob heals to `{}` so it too stops re-warning on the next invalidation.
+  it('getCustomOverrides writes back {} for a non-object blob so a later cache invalidation does not re-warn', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(['prevBlock', 'Ctrl + P']))
+    expect(getCustomOverrides()).toEqual({})
+    expect(localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify({}))
+
+    mockedLogger.warn.mockClear()
+    window.dispatchEvent(new StorageEvent('storage', { key: STORAGE_KEY }))
+    expect(getCustomOverrides()).toEqual({})
+    expect(mockedLogger.warn).not.toHaveBeenCalled()
+  })
+
+  // PR #3913 review note 1 (mirrored at this module's own heal site) — a
+  // throwing write-back must be caught, logged distinctly from a read
+  // failure, and must not prevent the already-sanitized value from being
+  // returned for this call.
+  it('a failed heal write-back is caught, logged, and still returns the sanitized overrides', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ prevBlock: 'Ctrl + P', nextBlock: 42 }))
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceeded')
+    })
+    expect(getCustomOverrides()).toEqual({ prevBlock: 'Ctrl + P' })
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      'KeyboardConfig',
+      'Failed to persist healed shortcut overrides',
+      { key: STORAGE_KEY },
+      expect.any(Error),
+    )
+    vi.restoreAllMocks()
+  })
+
   it('setCustomShortcut stores override', () => {
     setCustomShortcut('prevBlock', 'Ctrl + P')
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')

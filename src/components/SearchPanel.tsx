@@ -83,12 +83,21 @@ const DEFAULT_SEARCH_TOGGLES: SearchToggleState = {
  * flow straight to `SearchToggleRow` and, worse, `isRegex` feeds a `RegExp`
  * construction elsewhere in the search pipeline — a wrong-typed value there
  * is worth rejecting outright rather than trusting.
+ *
+ * The parameter is `unknown`, not `SearchToggleState` — this runs on the raw
+ * parsed JSON, which TS has no reason to believe is shaped correctly yet.
+ * Typing the parameter as the very type being validated would make every
+ * `typeof value.x === 'boolean'` check tautological from the type checker's
+ * point of view (it already believes `value.x` is a `boolean`), which is
+ * the "unreachable condition" anti-pattern this guard exists to avoid.
  */
-function isSearchToggleState(value: SearchToggleState): boolean {
+function isSearchToggleState(value: unknown): value is SearchToggleState {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
   return (
-    typeof value.caseSensitive === 'boolean' &&
-    typeof value.wholeWord === 'boolean' &&
-    typeof value.isRegex === 'boolean'
+    typeof v['caseSensitive'] === 'boolean' &&
+    typeof v['wholeWord'] === 'boolean' &&
+    typeof v['isRegex'] === 'boolean'
   )
 }
 

@@ -48,10 +48,25 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * `s.keys.split(' / ')` elsewhere in this module. Rejects a non-object
  * payload outright and drops any per-id entry whose value isn't a string,
  * logging the drop count (mirrors `src/lib/filters/validate.ts`'s
- * drop-and-log discipline).
+ * drop-and-log discipline). A non-object payload is the MOST severe form of
+ * corruption (every entry is unrecoverable, not just some), so it logs too
+ * — silently returning `{}` there would make the worst case the quietest
+ * one.
+ *
+ * `changed` tells the caller whether the sanitized result differs from what
+ * was actually parsed — i.e. whether writing it back would change what's on
+ * disk. See `getCustomOverrides` for what it does with that.
  */
-function sanitizeOverrides(parsed: unknown): Record<string, string> {
-  if (!isPlainRecord(parsed)) return {}
+function sanitizeOverrides(parsed: unknown): {
+  overrides: Record<string, string>
+  changed: boolean
+} {
+  if (!isPlainRecord(parsed)) {
+    logger.warn('KeyboardConfig', 'Discarded non-object persisted shortcut overrides blob', {
+      key: STORAGE_KEY,
+    })
+    return { overrides: {}, changed: true }
+  }
   const result: Record<string, string> = {}
   let droppedCount = 0
   for (const [id, keys] of Object.entries(parsed)) {
@@ -64,7 +79,7 @@ function sanitizeOverrides(parsed: unknown): Record<string, string> {
       droppedCount,
     })
   }
-  return result
+  return { overrides: result, changed: droppedCount > 0 }
 }
 
 function invalidateCache(): void {
@@ -96,8 +111,41 @@ export function getCustomOverrides(): Record<string, string> {
     }
     if (raw === cachedRaw) return cachedOverrides
     const parsed: unknown = JSON.parse(raw)
-    const overrides = sanitizeOverrides(parsed)
-    cachedRaw = raw
+    const { overrides, changed } = sanitizeOverrides(parsed)
+    // Same re-warn loop #3889 fixed for GraphFilterBar's persisted filters,
+    // now closed here too: without a write-back, a corrupt blob would
+    // re-log its drop warning on every cache invalidation (every `storage`
+    // event / settings save) forever, since nothing else in this module
+    // ever re-persists a cleaned value — unlike GraphFilterBar, whose
+    // *component* write-effect naturally re-persists a PARTIAL drop's
+    // survivors on the next `filters` change (so its heal only has to cover
+    // the TOTAL-corruption case the write-effect can't reach).
+    // `getCustomOverrides` is a pure read path with no such downstream
+    // write, so a partial drop here would otherwise sit and re-warn exactly
+    // like a total one — heal both.
+    //
+    // Data-safety (mirrors GraphFilterBar's heal): this can only ever
+    // discard entries `sanitizeOverrides` already refuses to use — it
+    // changes nothing about what THIS version does with the blob, only
+    // whether a downgrade to an older/different version could still
+    // recover the raw, unsanitized bytes from disk. Narrow, downgrade-only
+    // tradeoff; same one `readPersistedFilters` in GraphFilterBar.tsx makes.
+    let persistedRaw = raw
+    if (changed) {
+      const healed = JSON.stringify(overrides)
+      try {
+        localStorage.setItem(STORAGE_KEY, healed)
+        persistedRaw = healed
+      } catch (err) {
+        logger.warn(
+          'KeyboardConfig',
+          'Failed to persist healed shortcut overrides',
+          { key: STORAGE_KEY },
+          err,
+        )
+      }
+    }
+    cachedRaw = persistedRaw
     cachedOverrides = overrides
     return overrides
   } catch (e) {
