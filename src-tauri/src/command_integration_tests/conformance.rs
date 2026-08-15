@@ -5050,26 +5050,33 @@ async fn delete_content_subtree_inheritance_matches_full_rebuild_2934() {
     mat.shutdown();
 }
 
-/// #2934 RESTORE — restore's scoped `recompute_subtree_inheritance` does NOT
-/// reproduce the full rebuild, so the whole-vault `RebuildTagInheritanceCache`
-/// is RETAINED for restore (unlike delete/purge) and heals the divergence.
+/// #2934 / #3876 RESTORE — restore's scoped `recompute_subtree_inheritance`
+/// reproduces the full rebuild for the fixture that used to diverge.
 ///
-/// Divergent fixture (the case the equivalence tests above deliberately do not
-/// cover): S1(page) → AA[#T1] → BB → CC[#T1]. CC is BOTH a direct T1 tagger AND
-/// an inheritor of T1 from the live ancestor AA above the deleted cohort. After
-/// deleting then restoring BB (cohort {BB, CC}):
+/// Historically divergent fixture: S1(page) → AA[#T1] → BB → CC[#T1]. CC is
+/// BOTH a direct T1 tagger AND an inheritor of T1 from the live ancestor AA
+/// above the deleted cohort. After deleting then restoring BB (cohort
+/// {BB, CC}):
 ///   * `rebuild_all` ground truth = {(BB,T1,AA), (CC,T1,AA)} — the rebuild has
 ///     no self-tag exclusion, so CC gets its inherited-from-AA row too.
-///   * the scoped `recompute_subtree_inheritance` yields only {(BB,T1,AA)}: its
-///     step 3 (`WHERE st.id NOT IN (SELECT block_id FROM block_tags WHERE
-///     tag_id = …)`, incremental.rs) refuses to write CC's inherited row
-///     because CC directly holds T1 — so `(CC,T1,AA)` is DROPPED.
-/// The retained `RebuildTagInheritanceCache` (fired on `settle`) heals it, so
-/// the SETTLED table equals the full rebuild. This is the same divergence class
-/// as `add_tag_nested_diverges_from_rebuild_provenance_only_2669`; the policy is
-/// to keep the full rebuild whenever the scoped update is not byte-identical.
+///   * the scoped `recompute_subtree_inheritance` USED TO yield only
+///     {(BB,T1,AA)}: its step 3 carried a `WHERE st.id NOT IN (SELECT block_id
+///     FROM block_tags WHERE tag_id = …)` exclusion that refused to write CC's
+///     inherited row because CC directly holds T1, so `(CC,T1,AA)` was DROPPED.
+///
+/// #3876 removed that exclusion and settled the definition on `rebuild_all`'s
+/// (the inheritance relation holds independently of a direct tag; consumers
+/// that want "inherited but not direct" subtract). This test now asserts the
+/// scoped recompute CONVERGES with the full rebuild — the property the
+/// `*_converges_with_rebuild_3876` unit tests pin directly in `agaric-store`.
+///
+/// `RebuildTagInheritanceCache` is still RETAINED for restore
+/// ([`CONTENT_RESTORE_REBUILD_TASKS`]): it is now redundant rather than
+/// load-bearing here, and dropping it is a separate change that must first
+/// audit the remaining restore-path divergence classes (e.g. the `inherited_from`
+/// provenance class of `add_tag_nested_diverges_from_rebuild_provenance_only_2669`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restore_content_subtree_inheritance_diverges_needs_rebuild_2934() {
+async fn restore_content_subtree_inheritance_matches_rebuild_3876() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
     let state = mat.loro_state();
@@ -5144,22 +5151,21 @@ async fn restore_content_subtree_inheritance_diverges_needs_rebuild_2934() {
         "#2934: the full rebuild must include CC's inherited T1-from-AA row",
     );
 
-    // The DIVERGENCE the reviewer proved: the scoped recompute drops (CC,T1,AA).
-    // This is precisely why the rebuild is RETAINED for restore.
+    // #3876: the scoped recompute now KEEPS (CC,T1,AA) — a block that holds
+    // the tag directly still inherits it from the ancestor that also holds it.
     assert!(
-        !scoped.contains(&(cc.clone(), t1.clone(), aa.clone())),
-        "#2934: restore's scoped recompute is expected to DROP (CC,T1,AA) via the \
-         step-3 self-tag exclusion; if this ever holds, the scoped update became \
-         equivalent and the rebuild could be dropped. scoped = {scoped:?}",
+        scoped.contains(&(cc.clone(), t1.clone(), aa.clone())),
+        "#3876: restore's scoped recompute must KEEP (CC,T1,AA) — the removed \
+         step-3 self-tag exclusion used to drop it. scoped = {scoped:?}",
     );
-    assert_ne!(
+    assert_eq!(
         scoped, rebuilt,
-        "#2934: restore's scoped recompute must DIVERGE from the full rebuild here \
-         (the justification for retaining RebuildTagInheritanceCache for restore)",
+        "#3876: restore's scoped recompute must CONVERGE with the full rebuild \
+         (this fixture is the one that used to diverge)",
     );
 
-    // The retained rebuild (fired on settle) heals the divergence: the SETTLED
-    // table equals the full rebuild.
+    // The retained (now redundant) rebuild leaves the SETTLED table equal to
+    // the full rebuild too.
     assert_eq!(
         settled, rebuilt,
         "#2934: the SETTLED block_tag_inherited after a content restore must equal \

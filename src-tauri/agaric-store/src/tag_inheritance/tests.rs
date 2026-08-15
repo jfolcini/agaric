@@ -1246,6 +1246,24 @@ async fn move_block_incremental_matches_full_rebuild_2669() {
 /// re-attribute D's inherited row from B up to A — exactly what the full
 /// rebuild computes. This justifies dropping `RebuildTagInheritanceCache`
 /// from the RemoveTag path.
+///
+/// #3923 — the fixture originally stopped at `DD`, a descendant that holds no
+/// tag of its own. That is a HALF-COVERED PAIR: the property (incremental ==
+/// rebuild) was right, but the generator could not produce the input that
+/// falsifies it, so the convergence this test is cited for was never shown for
+/// the case that actually diverged. `EE` (a descendant that holds `TG`
+/// DIRECTLY) and `FF` (a plain descendant of `EE`, pinning step 2's in-subtree
+/// re-attribution) close that gap:
+///
+/// ```text
+/// AA[#TG]
+///  └── BB[#TG]        ← RemoveTag(BB, TG)
+///       ├── DD        → re-attributes BB → AA (the original coverage)
+///       └── EE[#TG]   → must STILL inherit TG from AA (#3923: step 3's
+///            │          `NOT IN block_tags` exclusion used to drop this row,
+///            │          and RemoveTag has NO rebuild backstop to heal it)
+///            └── FF   → keeps inheriting from the in-subtree tagger EE
+/// ```
 #[tokio::test]
 async fn remove_tag_incremental_matches_full_rebuild_2669() {
     use crate::op::{OpPayload, RemoveTagPayload};
@@ -1256,8 +1274,12 @@ async fn remove_tag_incremental_matches_full_rebuild_2669() {
     insert_block(&pool, "AA", "page", "a", None).await;
     insert_block(&pool, "BB", "content", "b", Some("AA")).await;
     insert_block(&pool, "DD", "content", "d", Some("BB")).await;
+    // #3923: a descendant that holds the tag DIRECTLY as well as inheriting it.
+    insert_block(&pool, "EE", "content", "e", Some("BB")).await;
+    insert_block(&pool, "FF", "content", "f", Some("EE")).await;
     insert_tag_assoc(&pool, "AA", "TG").await;
     insert_tag_assoc(&pool, "BB", "TG").await;
+    insert_tag_assoc(&pool, "EE", "TG").await;
     rebuild_all(&pool).await.unwrap();
 
     // Project the remove (drop the block_tags edge), then run the
@@ -1282,12 +1304,81 @@ async fn remove_tag_incremental_matches_full_rebuild_2669() {
     // D re-attributes to A (nearest remaining tagger); B inherits from A.
     assert!(incremental.contains(&("DD".into(), "TG".into(), "AA".into())));
     assert!(incremental.contains(&("BB".into(), "TG".into(), "AA".into())));
+    // #3923: EE holds TG directly AND inherited it from BB; once BB loses the
+    // tag, EE must re-attribute up to AA exactly like DD does. The direct
+    // `block_tags` row is irrelevant to the inheritance relation.
+    assert!(
+        incremental.contains(&("EE".into(), "TG".into(), "AA".into())),
+        "#3923: a descendant that holds TG DIRECTLY must still re-attribute its \
+         inherited row to AA; got: {incremental:?}"
+    );
+    // FF's provenance is the in-subtree tagger EE and is untouched by the removal.
+    assert!(incremental.contains(&("FF".into(), "TG".into(), "EE".into())));
 
     rebuild_all(&pool).await.unwrap();
     let rebuilt = get_inherited(&pool).await;
     assert_eq!(
         incremental, rebuilt,
         "RemoveTag incremental must equal the full rebuild (#2669)"
+    );
+}
+
+/// #3923 — the issue's own fixture, minimal: `A[#T] > B[#T] > C[#T]`, remove
+/// `#T` from `B`. `C` must inherit `#T` from `A`.
+///
+/// `remove_inherited_tag` used to refuse the `(C, T, A)` row because `C` holds
+/// `T` directly (`WHERE d.id NOT IN (SELECT block_id FROM block_tags WHERE
+/// tag_id = ?2)` in step 3). Unlike the restore path of #3876, RemoveTag's
+/// materializer fan-out carries NO `RebuildTagInheritanceCache` (#2669 dropped
+/// it — see `invalidations_for_op`'s `AddTag | RemoveTag` arm, which pushes the
+/// rebuild only `if matches!(op_type, OpType::AddTag)`), so nothing heals the
+/// missing row: it is durable wrong state, not a transient disagreement.
+#[tokio::test]
+async fn remove_tag_keeps_direct_holder_descendant_inheriting_3923() {
+    use crate::op::{OpPayload, RemoveTagPayload};
+    use agaric_core::ulid::BlockId;
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TP", "tag", "t", None).await;
+    insert_block(&pool, "PA", "page", "a", None).await;
+    insert_block(&pool, "PB", "content", "b", Some("PA")).await;
+    insert_block(&pool, "PC", "content", "c", Some("PB")).await;
+    insert_tag_assoc(&pool, "PA", "TP").await;
+    insert_tag_assoc(&pool, "PB", "TP").await;
+    insert_tag_assoc(&pool, "PC", "TP").await;
+    rebuild_all(&pool).await.unwrap();
+
+    // Project the remove, then run only the incremental maintenance.
+    sqlx::query("DELETE FROM block_tags WHERE block_id = 'PB' AND tag_id = 'TP'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    apply_op_tag_inheritance(
+        &mut conn,
+        &OpPayload::RemoveTag(RemoveTagPayload {
+            block_id: BlockId::from_trusted("PB"),
+            tag_id: BlockId::from_trusted("TP"),
+        }),
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    let incremental = get_inherited(&pool).await;
+    assert!(
+        incremental.contains(&("PC".into(), "TP".into(), "PA".into())),
+        "#3923: C must inherit #T from A after B loses it, even though C also \
+         holds #T directly; got: {incremental:?}"
+    );
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+    assert_eq!(
+        incremental, rebuilt,
+        "#3923: RemoveTag incremental must equal the full rebuild — RemoveTag \
+         has no RebuildTagInheritanceCache backstop, so a divergence here is \
+         DURABLE wrong state"
     );
 }
 
@@ -1401,5 +1492,128 @@ async fn add_tag_nested_diverges_from_rebuild_provenance_only_2669() {
     assert_ne!(
         incremental, rebuilt,
         "the nested AddTag incremental must (still) differ from the full rebuild in provenance"
+    );
+}
+
+// ======================================================================
+// #3876 — `rebuild_all` and `recompute_subtree_inheritance` must converge
+// ======================================================================
+//
+// For a block that holds a tag BOTH directly (`block_tags`) and by
+// inheritance from an ancestor, the two maintenance paths used to disagree:
+// `rebuild_all` kept the inherited row, `recompute_subtree_inheritance`
+// (move / restore) dropped it. So the contents of `block_tag_inherited`
+// depended on which path last touched the block.
+//
+// The settled definition is `rebuild_all`'s — the inheritance relation is
+// true independently of whether a direct tag also exists, and a consumer
+// that wants "inherited but not direct" subtracts (`useBlockTags` already
+// does exactly that, and `list_inherited_tags_for_block` documents the
+// overlap). The tests below drive BOTH paths over the same fixture and
+// assert they land on the same rows.
+
+/// Fixture for the #3876 convergence tests.
+///
+/// ```text
+/// TAG3876 (tag)
+/// SRC3876 (page, untagged)
+/// DST3876 (page)  ── holds TAG3876 directly
+/// MOV3876 (content, child of `mover_parent`) ── holds TAG3876 directly
+///   └── LEAF3876
+/// ```
+///
+/// When `MOV3876` sits under `DST3876` it holds `TAG3876` **directly and by
+/// inheritance** — the exact shape the two paths used to disagree about.
+async fn seed_3876(pool: &SqlitePool, mover_parent: &str) {
+    insert_block(pool, "TAG3876", "tag", "tag", None).await;
+    insert_block(pool, "SRC3876", "page", "src", None).await;
+    insert_block(pool, "DST3876", "page", "dst", None).await;
+    insert_block(pool, "MOV3876", "content", "mover", Some(mover_parent)).await;
+    insert_block(pool, "LEAF3876", "content", "leaf", Some("MOV3876")).await;
+
+    insert_tag_assoc(pool, "DST3876", "TAG3876").await;
+    insert_tag_assoc(pool, "MOV3876", "TAG3876").await;
+}
+
+/// Move path: `recompute_subtree_inheritance` after a move must leave
+/// `block_tag_inherited` byte-identical to a full `rebuild_all`.
+#[tokio::test]
+async fn move_recompute_converges_with_rebuild_3876() {
+    let (pool, _dir) = test_pool().await;
+    seed_3876(&pool, "SRC3876").await;
+
+    // Canonical starting state.
+    rebuild_all(&pool).await.unwrap();
+
+    // Move MOV3876 under DST3876, which holds the same tag directly.
+    sqlx::query("UPDATE blocks SET parent_id = 'DST3876' WHERE id = 'MOV3876'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    recompute_subtree_inheritance(&mut conn, "MOV3876")
+        .await
+        .unwrap();
+    drop(conn);
+
+    let incremental = get_inherited(&pool).await;
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    assert_eq!(
+        incremental, rebuilt,
+        "#3876: the move-path recompute must converge with the full rebuild"
+    );
+    assert!(
+        incremental.contains(&("MOV3876".into(), "TAG3876".into(), "DST3876".into())),
+        "#3876: a block holding the tag directly still INHERITS it from the \
+         ancestor that also holds it, got: {incremental:?}"
+    );
+}
+
+/// Restore path: soft-delete the subtree (sweeping its rows the way
+/// `delete_block` does), restore it, then `recompute_subtree_inheritance`.
+/// The result must equal a full `rebuild_all`.
+#[tokio::test]
+async fn restore_recompute_converges_with_rebuild_3876() {
+    let (pool, _dir) = test_pool().await;
+    seed_3876(&pool, "DST3876").await;
+
+    rebuild_all(&pool).await.unwrap();
+
+    // Soft-delete the subtree, then sweep its inherited rows (the
+    // `DeleteBlock` arm of `apply_op_tag_inheritance`).
+    soft_delete(&pool, "MOV3876").await;
+    soft_delete(&pool, "LEAF3876").await;
+    let mut conn = pool.acquire().await.unwrap();
+    remove_subtree_inherited(&mut conn, "MOV3876")
+        .await
+        .unwrap();
+    drop(conn);
+
+    // Restore the subtree, then recompute (the `RestoreBlock` arm).
+    sqlx::query("UPDATE blocks SET deleted_at = NULL WHERE id IN ('MOV3876', 'LEAF3876')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    recompute_subtree_inheritance(&mut conn, "MOV3876")
+        .await
+        .unwrap();
+    drop(conn);
+
+    let incremental = get_inherited(&pool).await;
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    assert_eq!(
+        incremental, rebuilt,
+        "#3876: the restore-path recompute must converge with the full rebuild"
+    );
+    assert!(
+        incremental.contains(&("MOV3876".into(), "TAG3876".into(), "DST3876".into())),
+        "#3876: the restored block must regain the inherited row it holds \
+         alongside its direct tag, got: {incremental:?}"
     );
 }

@@ -58,6 +58,60 @@ pub async fn propagate_tag_to_descendants(
 /// Step 2 handles the symmetric case where a tagger lives strictly INSIDE the
 /// removed subtree (#675): without it, that tagger's descendants would silently
 /// lose the tag.
+///
+/// #3923 — like [`recompute_subtree_inheritance`] (#3876), none of the three
+/// inserts excludes a block that holds the tag DIRECTLY. The inheritance
+/// relation is independent of `block_tags`, which is
+/// [`crate::tag_inheritance::rebuild_all`]'s definition and therefore the one
+/// every incremental maintainer must converge on. This path matters more than
+/// the #3876 one: the RemoveTag materializer fan-out carries NO
+/// `RebuildTagInheritanceCache` (#2669 dropped it), so a row missed here is
+/// never healed. `remove_tag_incremental_matches_full_rebuild_2669` and
+/// `remove_tag_keeps_direct_holder_descendant_inheriting_3923` pin the
+/// convergence.
+///
+/// ## No backfill for pre-#3923 vaults — and why none is needed
+///
+/// This PR does not migrate existing rows. A vault that hit the bug before
+/// upgrading is still missing whatever `(descendant, tag, ancestor)` rows the
+/// old exclusions refused to (re-)insert, and nothing here retroactively
+/// scans `block_tag_inherited` for that shape.
+///
+/// It doesn't need to: every row this bug could drop belongs to a
+/// descendant that ALSO holds the tag DIRECTLY (all three removed
+/// exclusions were `NOT IN block_tags`-shaped — a descendant with no direct
+/// row of its own was never excluded). For such a descendant the missing
+/// row is provably silent: every "does this block have tag T, including
+/// inherited" read (`resolve_tag_leaves` & friends) is a `UNION` of
+/// `block_tags` with `block_tag_inherited`, and the inherited-chip UI
+/// (`useBlockTags.ts`) subtracts direct tags before rendering the
+/// "inherited" badge — so the missing row changes no query result and no
+/// pixel for as long as the descendant keeps the tag directly.
+///
+/// The state stops being latent only when that direct hold ends — and the
+/// two ways it can end both recompute the row instead of trusting the
+/// table: (a) `remove_tag(descendant, tag)` runs this very function with
+/// `block_id = descendant`, and the trailing `#3923 site 3 of 3` INSERT
+/// below re-derives the descendant's row from the LIVE ancestor chain,
+/// independent of whatever was (or wasn't) there before; (b) the descendant
+/// or its tag is deleted/purged/restored, which goes through the subtree
+/// maintenance or a full rebuild rather than reading the stale row. So the
+/// same event that would ever make a dropped row observable is also the
+/// event that fixes it — there is no window in which a user can see wrong
+/// data from this class of row.
+///
+/// Independently of that, a whole-vault `RebuildTagInheritanceCache` (fired
+/// by any `add_tag`, any `restore_block`, or a `delete_block` /
+/// `purge_block` of a non-`"content"`-hinted block — see
+/// `materializer::dispatch::lifecycle_rebuild_tasks`) heals every dropped
+/// row vault-wide as a side effect, and is common enough in an actively
+/// used vault (tagging anything, trashing/restoring anything, deleting a
+/// page) that convergence is typically incidental long before a
+/// descendant's own tag is ever re-touched. There is no bounded SLA on
+/// this — a vault that only ever removes tags, on a single device, with no
+/// restores and no non-content deletes, could carry a dropped row
+/// indefinitely — but per the above that row is inert, not a migration
+/// candidate.
 pub async fn remove_inherited_tag(
     conn: &mut SqliteConnection,
     block_id: &str,
@@ -128,14 +182,21 @@ pub async fn remove_inherited_tag(
                  WHERE a2.start_id = a.start_id \
              ) \
          ) ",
+        // #3923 site 1 of 3: no `NOT IN block_tags` exclusion. A descendant
+        // that holds the tag DIRECTLY still gets its inherited row — `reseed`
+        // only ever names a tagger STRICTLY above it (the `anc` walk starts at
+        // the parent), so the provenance is the same one `rebuild_all` picks.
+        // The surviving `NOT IN block_tag_inherited` guard doesn't change the
+        // result: the `(block_id, tag_id)` PK already makes `INSERT OR IGNORE`
+        // skip any row step 1 didn't delete (a nearer tagger's), so this WHERE
+        // is redundant with that PK. Kept anyway so the "only rows missing an
+        // inherited entry get reseeded" intent is legible at the call site
+        // instead of relying on silently-ignored PK conflicts.
         "INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT r.block_id, ?2, r.inherited_from \
          FROM reseed r \
          WHERE r.block_id NOT IN ( \
              SELECT block_id FROM block_tag_inherited WHERE tag_id = ?2 \
-         ) \
-         AND r.block_id NOT IN ( \
-             SELECT block_id FROM block_tags WHERE tag_id = ?2 \
          )",
     ))
     .bind(block_id)
@@ -165,14 +226,18 @@ pub async fn remove_inherited_tag(
              ORDER BY a.depth ASC \
              LIMIT 1 \
          ) ",
+        // #3923 site 2 of 3 — the REACHABLE one. This exclusion is what
+        // dropped `(C, T, A)` for the issue's `A[#T] > B[#T] > C[#T]` fixture:
+        // C's row was attributed to B, step 1 deleted it, and C was then
+        // refused a replacement purely because it holds T directly. RemoveTag
+        // carries no `RebuildTagInheritanceCache` (#2669), so that missing row
+        // was durable. Pinned by
+        // `remove_tag_keeps_direct_holder_descendant_inheriting_3923`.
         "INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT d.id, ?2, na.id \
          FROM descendants d, nearest_ancestor na \
          WHERE d.id NOT IN ( \
              SELECT block_id FROM block_tag_inherited WHERE tag_id = ?2 \
-         ) \
-         AND d.id NOT IN ( \
-             SELECT block_id FROM block_tags WHERE tag_id = ?2 \
          )",
     ))
     .bind(block_id)
@@ -194,12 +259,14 @@ pub async fn remove_inherited_tag(
              ORDER BY a.depth ASC \
              LIMIT 1 \
          ) ",
+        // #3923 site 3 of 3. Vacuous in the production flow — every caller
+        // projects the `block_tags` DELETE before calling this helper, so ?1
+        // never holds the tag directly here — but it encoded the same wrong
+        // rule, so it goes with the other two rather than being left as a trap
+        // for whoever next reads this function.
         "INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT ?1, ?2, na.id \
-         FROM nearest_ancestor na \
-         WHERE ?1 NOT IN ( \
-             SELECT block_id FROM block_tags WHERE tag_id = ?2 \
-         )",
+         FROM nearest_ancestor na",
     ))
     .bind(block_id)
     .bind(tag_id)
@@ -215,6 +282,11 @@ pub async fn remove_inherited_tag(
 /// soft-deleted), and `restore_block` (subtree un-deleted). This is the
 /// "nuclear option" — deletes all inherited entries for the subtree, then
 /// recomputes from scratch by walking up ancestors for each block.
+///
+/// #3876 — the result must equal what [`crate::tag_inheritance::rebuild_all`]
+/// would produce for the same tree: in particular a block that holds a tag
+/// BOTH directly and by inheritance keeps its inherited row. The
+/// `*_converges_with_rebuild_3876` tests pin that both paths agree.
 pub async fn recompute_subtree_inheritance(
     conn: &mut SqliteConnection,
     root_id: &str,
@@ -263,6 +335,16 @@ pub async fn recompute_subtree_inheritance(
     // Walk up ancestors of root_id to find all tags that root_id and its
     // descendants should inherit from above.
     //
+    // #3876: a block that ALSO holds the tag directly still gets its
+    // inherited row. The inheritance relation is true independently of
+    // whether a direct `block_tags` row exists, this is what `rebuild_all`
+    // has always produced (as did migration 0021's backfill), and it is
+    // what the two paths must agree on. Consumers that want "inherited but
+    // not direct" subtract `block_tags` themselves — `useBlockTags` does,
+    // and `list_inherited_tags_for_block` documents the overlap. No
+    // consumer counts the two tables additively (every read is a `UNION`
+    // or an `EXISTS`), so keeping the row cannot double-count.
+    //
     // I-Search-4: same ancestor-walk invariant as in `remove_inherited_tag`
     // above — `tag_inh_ancestors_walk!(0)` walks the parent chain
     // unfiltered; downstream projection joins `blocks` for whatever
@@ -282,10 +364,7 @@ pub async fn recompute_subtree_inheritance(
         " INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT st.id, at2.tag_id, at2.inherited_from \
          FROM subtree st \
-         CROSS JOIN ancestor_tags at2 \
-         WHERE st.id NOT IN ( \
-             SELECT block_id FROM block_tags WHERE tag_id = at2.tag_id \
-         )",
+         CROSS JOIN ancestor_tags at2",
     ))
     .bind(root_id)
     .execute(&mut *conn)
