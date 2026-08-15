@@ -1,4 +1,4 @@
-# Session 1314 — tag-inheritance convergence: picking an arbiter, and the RemoveTag path that had none (2026-08-15)
+# Session 1316
 
 | Metadata | Value |
 |----------|-------|
