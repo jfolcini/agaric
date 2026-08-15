@@ -107,7 +107,11 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 6; // 166
 ///      row plus missing row" state #3842 describes. Because the recompute is
 ///      keyed on the roll-up key alone, running it for a stranded key drops
 ///      the rows nothing supports any more, and corrects the `edge_count` of
-///      any row other blocks still support.
+///      any row other blocks still support. #3891 gates each stale key on a
+///      PK-prefix `page_link_cache` existence check first — a key with no
+///      cached row has nothing stranded to sweep, and the probe that would
+///      discover that costs a full `block_links` scan. See the comment at the
+///      loop for the measurement and the soundness argument.
 ///
 /// Single transaction so the cache and `block_links` stay coherent under
 /// concurrent reads — `list_page_links_inner` joining `blocks` and
@@ -179,7 +183,76 @@ pub async fn reindex_page_link_cache_for_block(
     // stranded key both DROPS rows nothing supports any more and CORRECTS the
     // `edge_count` of rows other blocks still support.
     recompute_rows_for_rollup_key(&mut tx, &source_page).await?;
+
+    // #3891: the stale-key sweep is gated on a PK-prefix existence check.
+    //
+    // MEASURED, not reasoned about. `recompute_rows_for_rollup_key` opens with
+    // a touched-targets query whose roll-up predicate
+    // `COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1` is not sargable, so
+    // SQLite plans it as `SCAN bl` over the whole of `block_links` (confirmed
+    // by EXPLAIN QUERY PLAN; the gate's own query plans as
+    // `SEARCH page_link_cache USING COVERING INDEX ... (source_page_id=?)`).
+    // On a 100K-block fixture (102,000 blocks / 196,000 `block_links` rows /
+    // 196,000 cached rows, release build, after `rebuild_page_link_cache` +
+    // `ANALYZE`) the whole call measured 20.8 / 23.6 / 21.2 / 20.7 ms ungated
+    // against 16.4 / 13.7 / 14.9 / 14.9 ms gated — means 21.6 vs 15.0, so the
+    // two stale keys of a nested block cost ~6.6 ms, ~30% of every
+    // `ReindexBlockLinks`. (Per-probe timing put one scan at ~4.4-4.8 ms,
+    // which would imply ~9 ms for two; the whole-call delta is the smaller and
+    // more defensible number, so quote that one.) That is spent inside this
+    // function's
+    // `BEGIN IMMEDIATE` transaction, so it is held write-lock time contending
+    // with foreground writes, not merely background CPU. The early return at
+    // `touched_targets.is_empty()` does not help: the scan has already run by
+    // the time the result is known to be empty.
+    //
+    // The gate is an index seek on `page_link_cache`'s PK prefix
+    // (`sqlite_autoindex_page_link_cache_1 (source_page_id=?)`), so it costs
+    // microseconds against the milliseconds it saves.
+    //
+    // Why skipping is sound. A stale key is a key this block has MOVED AWAY
+    // from, and the sweep exists (#3842) to drop the rows stranded under it.
+    // Stranding presupposes that a previous `ReindexBlockLinks` WROTE rows
+    // under that key — i.e. that a `page_link_cache` row for it exists. When
+    // none does, there is nothing stranded to drop and nothing to recount, so
+    // no repair THIS block owes is skipped.
+    //
+    // Be precise about what that does NOT say, because the skip is not a
+    // literal no-op. With no cached row under the key the zero-edge DELETE
+    // matches nothing, but the UPSERT can still ADD rows — for targets that
+    // roll up to the key from some OTHER live block. Skipping therefore
+    // forgoes an OPPORTUNISTIC cross-block repair, and it is observable:
+    // `reindex_page_link_cache_for_block_skips_an_unstranded_stale_key_3891`
+    // pins exactly that state, and the ungated form converges on it where the
+    // gated form does not.
+    //
+    // That repair is not this block's to make. Those rows belong to the other
+    // block's own reindex (its CURRENT key, which is never gated) or to the
+    // full `rebuild_page_link_cache`; reaching the state at all requires that
+    // block's reindex to have never run or to have failed, in which case the
+    // cache was ALREADY divergent before this call and the retry queue owes
+    // the repair. So the gate costs a chance heal of a pre-existing
+    // divergence, never a repair of a divergence this block caused. It is
+    // also the direction the reconciliation oracle can see — a missing
+    // `page_link_cache` row is a covered artefact (`reconciliation_oracle`
+    // artefact 5), unlike a dropped `block_links` row, which is a BASE table
+    // there and structurally invisible (#3903).
+    //
+    // The pre-#3842 code never touched a stale key at all, so the gate cannot
+    // lose a repair the old code would have made either.
+    //
+    // The CURRENT key is deliberately NOT gated: it must be able to create the
+    // block's first cached row.
     for stale_key in &stale_keys {
+        let stranded: Option<i64> = sqlx::query_scalar!(
+            "SELECT 1 AS \"one!\" FROM page_link_cache WHERE source_page_id = ?1 LIMIT 1",
+            stale_key,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        if stranded.is_none() {
+            continue;
+        }
         recompute_rows_for_rollup_key(&mut tx, stale_key).await?;
     }
 
