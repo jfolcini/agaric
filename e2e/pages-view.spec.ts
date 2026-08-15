@@ -99,6 +99,14 @@ function visibleTitles(page: Page): Promise<string[]> {
   return pageTitleLocator(page).allTextContents()
 }
 
+/** Local YYYY-MM-DD, matching `date-utils.formatDate` / the seed's `todayDate()`. */
+function localDateStr(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 /** The muted count chip text (e.g. "6 pages", "4 matching pages"). */
 function countChip(page: Page): Locator {
   return page.getByTestId('page-browser-count')
@@ -271,6 +279,15 @@ test.describe('facet narrowing (each facet does the thing)', () => {
     expect(titles).toContain('Projects')
     await expect(countChip(page)).toHaveText('5 matching pages')
     await page.getByRole('button', { name: /^Remove filter/ }).click()
+    // Pin the removal before adding the next chip: without this, a stale
+    // is-not-filtered grid (5 pages, already missing "Meeting Notes
+    // Template") would satisfy the doesn't-exist poll below on its very
+    // first read, since that state is indistinguishable from the
+    // doesn't-exist result — the poll would pin nothing (same failure mode
+    // as line 333/#3915). Barriering the removal back to the unfiltered
+    // six (which DOES include the template page) makes the poll below a
+    // real false→true transition.
+    await expect.poll(() => visibleTitles(page)).toContain('Meeting Notes Template')
 
     // doesn't-exist → the five pages without the key.
     await addPropertyFilter(page, 'template', "doesn't exist")
@@ -330,9 +347,14 @@ test.describe('compound filters (AND-compose / widen / soft-cap)', () => {
     await addPathFilter(page, 'Meet', true) // drop the two meeting pages → 2
     await addPropertyFilter(page, 'template', "doesn't exist") // template page already gone
     // Orphan ∧ not-Meet → Projects + the daily page; both lack `template`.
-    await expect.poll(() => visibleTitles(page)).toContain('Projects')
+    // `toContain('Projects')` would hold before any chip is applied (Projects
+    // is a seed page, an orphan, AND in the final set) and pins nothing;
+    // `not.toContain('Meetings')` is false in the unfiltered/Orphan-only
+    // states (Meetings is a seed page and an orphan) and only turns true once
+    // the not-path chip has actually excluded it, so it genuinely barriers.
+    await expect.poll(() => visibleTitles(page)).not.toContain('Meetings')
     const titles = await visibleTitles(page)
-    expect(titles).not.toContain('Meetings')
+    expect(titles).toContain('Projects')
     expect(titles).not.toContain('Meeting Notes Template')
     expect(titles).not.toContain('Getting Started')
     await expect(page.getByRole('group')).toHaveCount(3)
@@ -519,7 +541,30 @@ test.describe('sort', () => {
   test('sort preference persists across reload', async ({ page }) => {
     await bootPages(page)
     await selectSort(page, 'Most content')
-    // Capture the chosen order before reload.
+    // `selectSort` only waits for the Radix listbox to close (lines 148-157),
+    // not for the server-derived `most-content` round-trip to land, so a
+    // one-shot `visibleTitles` read here can capture the PRE-sort order
+    // (#3915's failure mode, reintroduced at this line).
+    //
+    // Barrier the capture with the known, deterministic `most-content`
+    // order instead of a stability heuristic: `compareMetaRows` sorts
+    // `child_block_count` DESC with an id-ASC tiebreak (`shared.ts`), and
+    // the seed's ids are fixed (`SEED_IDS`, `seed.ts`), so this order is
+    // reproducible. Confirmed independently of the UI/react-query pipeline
+    // by invoking `list_pages_with_metadata` directly against the mock.
+    // (A "stable across two reads" poll alone is NOT a safe substitute here
+    // -- verified this can lock onto an intermediate `keepPreviousData`
+    // render that is itself stable-but-wrong for the whole round-trip.)
+    const daily = localDateStr(new Date())
+    const mostContentOrder = [
+      'Getting Started',
+      daily,
+      'Projects',
+      'Meeting Notes Template',
+      'Quick Notes',
+      'Meetings',
+    ]
+    await expect(pageTitleLocator(page)).toHaveText(mostContentOrder)
     const before = await visibleTitles(page)
     await expect(page.getByRole('combobox', { name: 'Sort order' })).toContainText('Most content')
 
