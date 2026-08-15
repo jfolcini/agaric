@@ -595,7 +595,8 @@ if [ "$HAS_RS" = "0" ]; then
         check-dynamic-sql check-dynamic-sql-self-test check-command-arity \
         check-command-arity-self-test check-space-filter-drift unsafe-allowlist \
         audit-toml-in-sync migrations-immutable migrations-strict-tables \
-        migrations-rebuild-cascade migrations-rebuild-cascade-self-test)
+        migrations-rebuild-cascade migrations-rebuild-cascade-self-test \
+        check-sqlx-cache-drift check-sqlx-cache-drift-self-test)
 fi
 # CI/tooling absent → skip the workflow/shell lint hooks.
 if [ "$HAS_CI" = "0" ]; then
@@ -644,6 +645,19 @@ if ! bash scripts/check-migrations-immutable.sh --range "$RANGE"; then
     exit 1
 fi
 echo "  ✓ migrations append-only over '$RANGE'"
+
+# sqlx cache drift backstop (#3901): same staged-index-is-empty-at-push-time
+# gap as the migrations backstop above — check-sqlx-cache-drift's default
+# mode scans `git diff --cached`, so re-check the whole push range for a
+# `.sqlx/` entry that disappeared from one cache while a sibling cache still
+# has it, with no `query!`-family removal in range to justify it.
+if ! bash scripts/check-sqlx-cache-drift.sh --range "$RANGE"; then
+    echo ""
+    echo "✗ Pre-push verification FAILED: sqlx cache drift in range '$RANGE' (#3901)."
+    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+    exit 1
+fi
+echo "  ✓ sqlx cache drift guard over '$RANGE'"
 
 # ── Phase B: externalBin placeholder (only if Rust changed) ────────
 # Tauri's build.rs validates the externalBin path on every cargo

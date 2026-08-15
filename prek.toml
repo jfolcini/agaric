@@ -1223,6 +1223,59 @@ pass_filenames = true
 files = "^src-tauri/migrations/.*\\.sql$"
 stages = ["pre-commit"]
 
+# sqlx offline-cache drift guard (#3901). `cargo sqlx prepare` deletes any
+# cache entry it does not OBSERVE in that run, so a partial/wrong-scope
+# invocation (the bare `cargo sqlx prepare --workspace` run from
+# `src-tauri/`, or any warm-tree prepare) silently prunes entries a sibling
+# `.sqlx/` cache still needs — 83, then 260, then 273 entries across three
+# documented incidents, all green locally (online mode papers over it) and
+# red only in CI's offline lane, far from the commit that caused it. This
+# hook inspects the diff itself rather than running `cargo sqlx prepare`
+# (too slow for a hook, and a partial recompile IS the trap): an entry that
+# disappears from one `.sqlx/` cache while an identically-named entry (== the
+# same query hash) still exists in a sibling cache is exactly that
+# signature, and fails unless the diff also removes a `query!`-family call
+# site (the escape valve for a genuinely-partial-but-intentional cleanup).
+# An entry that disappears from EVERY cache at once — the correct
+# `just gen-sqlx` shape, or a deliberate cross-cache prune like #3910's — is
+# never flagged. `always_run = true` for the same reason as
+# `migrations-immutable`: prek's changed-file set excludes deletions, so a
+# `files`-filtered hook would silently skip a staged `.sqlx/` deletion.
+# Staged-index mode only (like migrations-immutable); the `--range`
+# backstop for LOCAL pre-push (staged index is empty at push time) is
+# invoked directly from `scripts/verify-ci-equivalent.sh`, not through
+# this stage — that script is a local hook only, never executed by any
+# GitHub Actions workflow (see PR #3945 review note 5). The per-PR CI net
+# for this same drift shape is `.github/actions/sqlx-offline-check`'s
+# four `cargo sqlx prepare --check` lanes in `_validate.yml`'s `lint` job
+# (invoked on every `pull_request` via `ci.yml`) — if a partial prepare
+# left the cache disagreeing with a crate's actual `query!` call sites,
+# that lane fails, independent of this bash guard and independent of the
+# scheduled `cargo sqlx prepare --check` in `scheduled-deep-checks.yml`.
+# Detection rules live in scripts/check-sqlx-cache-drift.sh.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "check-sqlx-cache-drift"
+name = "sqlx cache drift guard (#3901)"
+entry = "bash scripts/check-sqlx-cache-drift.sh"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
+# Runs the guard's own fixture suite (`--self-test`) so the cross-cache
+# survival check and the query!-removal escape valve cannot silently
+# regress. No file args; mirrors `migrations-immutable-self-test`.
+[[repos.hooks]]
+id = "check-sqlx-cache-drift-self-test"
+name = "sqlx cache drift guard self-test (#3901 fixtures)"
+entry = "bash scripts/check-sqlx-cache-drift.sh --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
 # Tauri command IPC error-sanitization check. Every
 # `#[tauri::command]` wrapper that returns `Result<_, AppError>` and
 # propagates errors via `?` should funnel them through
