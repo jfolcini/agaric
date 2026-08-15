@@ -1166,58 +1166,76 @@ describe('PageBlockStore', () => {
 
     // #3759 EQUIVALENCE LEDGER — `reconcileBatchMove` mutants that survive by
     // construction, so the next triage pass does not re-derive them. Each was
-    // checked by differential execution: original vs. spliced copy over 3,068
-    // generated (tree, request, response) triples (722 reaching the splice),
-    // with the mutants the tests below DO kill included as controls — all five
-    // were detected, so a zero is meaningful. Controls are named by MUTATOR,
-    // not bare line:col, because several distinct mutants share one position
-    // (three of the four at 175:7 were already dead before this batch):
-    //   94:7   ConditionalExpression `resp.length !== orderedIds.length` -> false
-    //   122:25 MethodExpression `base.slice(0, p)` -> `base`
-    //   134:62 ArithmeticOperator `i + 1` -> `i - 1`
-    //   175:7  ConditionalExpression `par === (b.parent_id ?? null)` -> true
-    //   185:9  ConditionalExpression `!present.has(id)` -> false
+    // ORIGINALLY checked by differential execution: original vs. spliced copy
+    // over 3,068 generated (tree, request, response) triples (722 reaching
+    // the splice), with the mutants the tests below DO kill included as
+    // controls — all five were detected, so a zero was meaningful. That sweep
+    // was "a canary compiled into the source and then reverted" — never
+    // committed, so it could not be re-run (#3804).
     //
-    //   101:32 BlockStatement `{ if (!byId.has(id)) return null }` -> `{}`
-    //   102:9  ConditionalExpression `!byId.has(id)` -> `false`
-    //     The "moved id still exists" pre-check is a fast path, not a guard.
-    //     `updatedBag` is built by walking `blocks`, so the rebuilt tree can
-    //     only ever contain ids that were in `blocks`; an id missing there is
-    //     therefore also missing from `present` and the post-rebuild check
-    //     returns null anyway. Nothing in between can throw on a missing id.
-    //     0 differing inputs.
+    // #3804 — #3799 (same PR as this comment's own line-number correction,
+    // #3887) deleted THREE of the four equivalence entries this ledger used
+    // to carry outright: the `byId.has` pre-check and the vacated-source
+    // dense-renumber loop were removed as subsumed/redundant, and the dead
+    // `: (b.position ?? null)` ternary arm was removed as unreachable. There
+    // is no mutant left at any of those positions to be equivalent about —
+    // retired below, the same way `tree-utils.mutants-drop.test.ts` already
+    // retired two notes after #3793. The one surviving entry (the
+    // `updatedBag` sentinel) and the five controls are re-cited below at
+    // their CURRENT `page-blocks-move.ts` line:col (the whole function moved
+    // when `wouldCreateMoveCycle` was inserted above it), and now have a
+    // committed, re-runnable harness:
+    // `scripts/mutation-harnesses/page-blocks-move-reconcile-batch.harness.ts`.
     //
-    //   129:32 BlockStatement (the `sourceParents` collection loop) -> `{}`
-    //   130:18 LogicalOperator `oldParentOf.get(id) ?? null` -> `... && null`
-    //   131:9  ConditionalExpression `from !== wantParent` -> `false`
-    //   133:35 BlockStatement (the vacated-source renumber loop) -> `{}`
-    //   134:35 ArrowFunction `(bid, i) => posOf.set(bid, i + 1)` -> `() => undefined`
-    //     The vacated-source renumbering is fully SUBSUMED by the #3320
-    //     catch-all loop below it: that loop ranks every block not already in
-    //     `posOf`, grouped by final parent, walking `blocks` in array order —
-    //     which for a non-moved block is the same key and the same order
-    //     `remainingChildren(sp)` would produce, so it assigns identical 1..n
-    //     ranks. Deleting or neutering the source loop therefore changes
-    //     nothing; writing WRONG ranks into it does (see the `i - 1` test
-    //     above, which the catch-all cannot repair because `posOf.has` skips
-    //     an already-poisoned entry). 0 differing inputs each.
+    // Controls (mutants the tests below — or this harness's own generation —
+    // DO kill; several distinct mutants share one position, so named by
+    // MUTATOR, not bare line:col):
+    //   133:7  ConditionalExpression `resp.length !== orderedIds.length` -> false
+    //   172:25 MethodExpression `base.slice(0, p)` -> `base`
+    //   174:48 ArithmeticOperator `i + 1` -> `i - 1`
+    //   222:7  ConditionalExpression `par === (b.parent_id ?? null)` -> true
+    //   232:9  ConditionalExpression `!present.has(id)` -> false
+    //     Re-verified by the harness above: this control alone differs on
+    //     6,488 / 21,120 generated inputs (restricted sweep) — strong
+    //     confirmation the harness has power, not just a report of zero.
     //
-    //   170:35 ArrayDeclaration `const updatedBag: FlatBlock[] = []` ->
+    // RETIRED (#3804, code deleted by #3799/#3887 — nothing left to be
+    // equivalent about):
+    //   - the `byId.has` pre-check (previously 101:32 BlockStatement / 102:9
+    //     ConditionalExpression): replaced outright by the `wouldCreateMoveCycle`
+    //     guard; the "moved id still exists" fast path it described no longer
+    //     exists as a separate check.
+    //   - the vacated-source dense-renumber loop (previously 129:32 BlockStatement /
+    //     130:18 LogicalOperator / 131:9 ConditionalExpression / 133:35
+    //     BlockStatement / 134:35 ArrowFunction): deleted as redundant — see
+    //     `page-blocks-move.ts`'s own doc comment on the #3320 loop, which now
+    //     states directly that it "assigns the BYTE-IDENTICAL ranks" this loop
+    //     used to.
+    //   - the dead ternary arm (previously 173:64 LogicalOperator
+    //     `b.position ?? null` -> `b.position && null`, reported NoCoverage):
+    //     the `posOf.has(b.id) ? … : (b.position ?? null)` ternary itself is
+    //     gone — `page-blocks-move.ts` now just reads `posOf.get(b.id) ?? null`
+    //     unconditionally (Finding 3, #3799), exactly the outcome this
+    //     equivalence note predicted (the arm was dead code) made literal.
+    //
+    // SURVIVING equivalence claim:
+    //   217:35 ArrayDeclaration `const updatedBag: FlatBlock[] = []` ->
     //          `['Stryker was here']`
     //     The injected sentinel has no `parent_id`, so it is a child of `null`.
     //     `createPageBlockStore(pageId: string)` always seeds a non-null
     //     `rootParentId` (immutable for the store's lifetime), so the sentinel
     //     is never reachable from the root and `buildFlatTree` drops it.
-    //     Measured both ways: 526 differing inputs when the sweep is allowed to
-    //     use `rootParentId: null`, 0 when restricted to the shapes the factory
-    //     can actually produce. Killing it would require a test that observes
-    //     Stryker's own placeholder, which is not a contract worth pinning.
-    //
-    //   173:64 LogicalOperator `b.position ?? null` -> `b.position && null`
-    //     (reported NoCoverage) — the `: (b.position ?? null)` arm of the
-    //     `posOf.has(b.id) ? … : …` ternary is DEAD CODE: the #3320 loop gives
-    //     every block in `blocks` a `posOf` entry, so the ternary's test is
-    //     always true. 0 differing inputs.
+    //     Originally measured both ways: 526 differing inputs when the sweep
+    //     is allowed to use `rootParentId: null`, 0 when restricted to the
+    //     shapes the factory can actually produce. Killing it would require a
+    //     test that observes Stryker's own placeholder, which is not a
+    //     contract worth pinning.
+    //     #3804 re-measurement (different generator — a small random-forest
+    //     sweep, not the original hand-built one — so the raw counts differ;
+    //     the verdict does not): 0 / 21,120 differing when restricted to
+    //     `rootParentId: 'PAGE_1'`, 9,581 / 42,240 differing when
+    //     `rootParentId: null` is allowed in. Both directions of the original
+    //     claim hold under re-run.
 
     // #3759 — the OTHER half of the backend-echo guard. The parent-echo loop
     // above only inspects the responses that came back; a SHORT response means

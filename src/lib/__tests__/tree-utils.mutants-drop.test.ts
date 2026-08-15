@@ -16,7 +16,7 @@ function mkFlat(id: string, parentId: string | null, depth: number): FlatBlock {
 }
 
 describe('computeDropIndex mutants (#3142)', () => {
-  // Line 531 [ConditionalExpression]: `if (overIdxInWithout < 0)`. Forcing
+  // Line 533 [ConditionalExpression]: `if (overIdxInWithout < 0)`. Forcing
   // the condition to always-true makes a normal drop target be treated as
   // "unknown target → append" — wrong insertAt/slot for a real id.
   it('does not treat a real overId as an unknown/sentinel target', () => {
@@ -26,7 +26,7 @@ describe('computeDropIndex mutants (#3142)', () => {
     expect(computeDropIndex(items, null, 'B', 'C')).toBe(1)
   })
 
-  // Line 537 [EqualityOperator]: `overIdxInItems > activeIndex ? +1 : same`.
+  // Line 539 [EqualityOperator]: `overIdxInItems > activeIndex ? +1 : same`.
   it('adds one when dragging downward past the target (overIdx > activeIndex)', () => {
     const items: FlatBlock[] = [mkFlat('A', null, 0), mkFlat('B', null, 0), mkFlat('C', null, 0)]
     // Drag A DOWN onto C: overIdxInItems(2) > activeIndex(0) → drop AFTER C → slot 2.
@@ -46,13 +46,13 @@ describe('computeDropIndex mutants (#3142)', () => {
   // before this line: `without` has every `activeId` row filtered out, and
   // an `overId` absent from `items` is absent from `without` too — so either
   // way `overIdxInWithout` is -1 and control takes the "unknown target"
-  // branch above (line 531). Line 537 is never reached with the two indices
+  // branch above (line 533). Line 539 is never reached with the two indices
   // equal. Confirmed empirically, not just by argument (#3765): a canary
   // returning early on `overIdxInItems === activeIndex` fires 4 679 times
   // when spliced just before the `overIdxInWithout < 0` test, and zero times
   // at this line.
 
-  // Line 543 [ConditionalExpression forced-true] and [LogicalOperator, `??`→`&&`]:
+  // Line 545 [ConditionalExpression forced-true] and [LogicalOperator, `??`→`&&`]:
   // `parentId === null ? -1 : (find(...)?.depth ?? -1)`. Using a parent with a
   // truthy depth (1) distinguishes both: forcing -1 always, or `1 && -1` (= -1
   // since `&&` returns the right side on a truthy left), both wrongly zero out
@@ -76,12 +76,12 @@ describe('computeDropIndex mutants (#3142)', () => {
   // `items.find((i) => i.id === null)` matches nothing (`FlatBlock['id']` is
   // a string), so `?? -1` yields the very -1 the then-arm would have
   // returned directly.
-  // NOTE: the comment this replaces claimed the test above also kills line 552
+  // NOTE: the comment this replaces claimed the test above also kills line 554
   // [ConditionalExpression]. It doesn't — `insertAt` there stops the loop
   // before it ever reaches an item whose depth-check outcome would change.
   // See the dedicated test below.
 
-  // Line 543 [UnaryOperator]: `find(...)?.depth ?? -1` → `?? +1`. The literal
+  // Line 545 [UnaryOperator]: `find(...)?.depth ?? -1` → `?? +1`. The literal
   // fallback only fires when the parent id has no matching item at all, so a
   // parent with a real (found) depth can't distinguish it — need a *missing*
   // parentId, plus a decoy item recorded under that same missing id, so the
@@ -101,7 +101,7 @@ describe('computeDropIndex mutants (#3142)', () => {
     expect(computeDropIndex(items, 'GHOST', SENTINEL_ID, 'dragged')).toBe(1)
   })
 
-  // Line 552 [ConditionalExpression]: `item.depth === childDepth` forced to
+  // Line 554 [ConditionalExpression]: `item.depth === childDepth` forced to
   // `true` drops the depth half of the sibling predicate, so an item whose
   // `parent_id` matches but whose recorded `depth` is stale/inconsistent
   // would wrongly count as a sibling. Needs a decoy positioned *before*
@@ -123,14 +123,14 @@ describe('computeDropIndex mutants (#3142)', () => {
     expect(computeDropIndex(items, 'P', SENTINEL_ID, 'dragged')).toBe(1)
   })
 
-  // Line 543 [OptionalChaining]: removing `?.` from `find(...)?.depth` throws
+  // Line 545 [OptionalChaining]: removing `?.` from `find(...)?.depth` throws
   // when the parent id isn't found, instead of falling back via `?? -1`.
   it('does not throw when parentId has no matching item', () => {
     const items: FlatBlock[] = [mkFlat('A', null, 0), mkFlat('B', null, 0)]
     expect(computeDropIndex(items, 'NOPE', 'B', 'A')).toBe(0)
   })
 
-  // Line 550 [EqualityOperator]: `i < insertAt`. Picks a case where
+  // Line 552 [EqualityOperator]: `i < insertAt`. Picks a case where
   // `without[insertAt]` itself matches the parent/depth predicate, so
   // relaxing `i < insertAt` to `i <= insertAt` pulls in one extra match.
   it('excludes the item exactly at insertAt from the sibling count', () => {
@@ -206,6 +206,24 @@ describe('SENTINEL_ID preconditions (#3794)', () => {
  *
  * Confirmed by the `tree-utils` mutation re-run: neither mutant exists in
  * the regenerated mutant population any more (fewer total mutants), and the
- * two equivalent mutants documented above (tree-utils.ts:537, :543) are the
+ * two equivalent mutants documented above (tree-utils.ts:539, :545) are the
  * only survivors left in this function.
+ *
+ * #3804 — every `Line N` citation throughout this file was itself off by +2
+ * as of the #3887 commit that last touched them (verified by grepping the
+ * literal expressions in the current file and in
+ * `git show 525138ec7^:src/lib/tree-utils.ts`; the drift traces to
+ * `computeDropIndex` gaining more lines internally, in its own doc comments,
+ * than its start position lost from `simulateProjection`'s edit above it).
+ * Corrected above. This is exactly the fragility #3804 was filed about — line
+ * numbers drift even in the SAME commit that supposedly re-derived them, with
+ * no gate to catch it. The fix there is a committed, re-runnable harness, not
+ * another one-off hand count:
+ * `scripts/mutation-harnesses/tree-utils-compute-drop-index.harness.ts`
+ * reproduces both "0 differing inputs" claims (539:16, 545:23) over 352,000
+ * generated inputs, with three known-Killed mutants (533:7, 552:19, 554:50)
+ * firing as controls, and the 539 canary confirmed reachable (52,000 hits)
+ * but never at the line itself (0 hits) — see that file's header for the
+ * exact numbers and how they compare to this ledger's original figures (a
+ * different generator, so the raw counts differ; the verdicts agree).
  */

@@ -271,7 +271,7 @@ describe('projectDepth — normal branch (dead zone + clamps)', () => {
  * Equivalent mutants in `projectDepth` (issue #3765). Each is unkillable by
  * construction, so no test is added for them:
  *
- * - tree-utils.ts:386:7 and 413:5 [EqualityOperator]
+ * - tree-utils.ts:383:7 and 410:5 [EqualityOperator]
  *   `Math.abs(dragOffset) > DEAD_ZONE_PX` -> `>=`. The two arms coincide
  *   exactly at the boundary they disagree on: when
  *   `Math.abs(dragOffset) === DEAD_ZONE_PX` the mutant takes the then-arm and
@@ -282,15 +282,15 @@ describe('projectDepth — normal branch (dead zone + clamps)', () => {
  *   including `0` (where `Math.sign(0) === 0` keeps the identity intact).
  *   This is not specific to the constant's current value.
  *
- * - tree-utils.ts:426:7 `depth > maxDepth` -> `>=`
- * - tree-utils.ts:427:7 `depth < minDepth` -> `<=`
- * - tree-utils.ts:434:7 `depth > depthCeiling` -> `>=`
+ * - tree-utils.ts:423:7 `depth > maxDepth` -> `>=`
+ * - tree-utils.ts:424:7 `depth < minDepth` -> `<=`
+ * - tree-utils.ts:431:7 `depth > depthCeiling` -> `>=`
  *   Each guards an idempotent clamp of the form
  *   `if (depth > bound) depth = bound`. The only extra case the mutant admits
  *   is `depth === bound`, where the assignment writes back the value `depth`
  *   already holds.
  *
- * - tree-utils.ts:446:9 `depth > previousItem.depth` -> `>=` (inside
+ * - tree-utils.ts:443:9 `depth > previousItem.depth` -> `>=` (inside
  *   `getParentId`). The equality case cannot reach this line: the earlier
  *   `if (depth === previousItem.depth)` branch has already returned, so
  *   `depth !== previousItem.depth` holds here and `>` and `>=` agree.
@@ -307,9 +307,25 @@ describe('projectDepth — normal branch (dead zone + clamps)', () => {
  * that fire ONLY at the equality point: `depth === maxDepth` fires 44 460
  * times, `depth === minDepth` 150 068, `depth === depthCeiling` 19 657, and
  * `Math.abs(dragOffset) === DEAD_ZONE_PX` 17 680 (both dead-zone sites). So
- * the boundaries are reached and the arms provably coincide there. For 446:9
+ * the boundaries are reached and the arms provably coincide there. For 443:9
  * the same canary fires 28 918 times when spliced ABOVE the
- * `depth === previousItem.depth` branch and zero times at line 446 itself,
+ * `depth === previousItem.depth` branch and zero times at line 443 itself,
  * which confirms the earlier `return` shadows it rather than the sweep simply
  * missing the case.
+ *
+ * #3804 — the six `Line N` citations above were off by -3 (all six, ledger
+ * said 386/413/426/427/434/446; the actual current lines are 383/410/423/
+ * 424/431/443, verified by grepping the literal expressions): `projectDepth`
+ * itself was untouched by #3793, but `simulateProjection` — directly above it
+ * in the same file — lost 3 lines when that issue deleted its provably-
+ * unreachable `if (!activeItem)` guard, shifting everything below. Corrected
+ * above. This sweep's harness (the "canary compiled into the source and then
+ * reverted" kind #3804 was filed about) was NOT reconstructed here: `#3793`
+ * and `#3799` (this repo's two immediately-upcoming changes as of #3804) only
+ * touch `simulateProjection` and `computeDropIndex` in this file, not
+ * `projectDepth`, so per #3804's own scope note this ledger's EMPIRICAL half
+ * remains unverifiable-on-demand — only its line numbers were fixed here.
+ * Its argument and canary counts are otherwise untouched by #3793/#3799 (the
+ * boundary logic itself did not change), so the original figures stand as a
+ * prose claim; backfill it if/when `projectDepth` is next in line to change.
  */
