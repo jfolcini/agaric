@@ -86,8 +86,13 @@ type SortValue = string | number | null
  * op-log activity (`Text` here, `Int` there). Its no-activity sentinel does
  * match — see {@link cursorValueFor}, which encodes it as the engine's
  * `Int(0)`.
+ *
+ * Exported ONLY as a test seam (#3914 review note 4): the round-trip
+ * invariant test keys its case table on `Record<CursorKind, …>` so a seventh
+ * kind fails to COMPILE until it has a case. Nothing outside this module's
+ * tests should name it.
  */
-type CursorKind = 'Id' | 'LastEditedMs' | 'Position' | 'Priority' | 'Title' | 'Rank'
+export type CursorKind = 'Id' | 'LastEditedMs' | 'Position' | 'Priority' | 'Title' | 'Rank'
 
 interface ResolvedSortTerm {
   desc: boolean
@@ -153,6 +158,13 @@ interface QueryCursorPayload {
  * relevance assertion can be trusted to prove, and a test that depends on
  * either direction is testing this approximation, not the backend.
  *
+ * Exported ONLY as a test seam (#3914 review note 3): the zero-occurrence
+ * branch below is unreachable through `run_advanced_query`, and what makes it
+ * unreachable is a COUPLING to `matchesSearchFolded` that is now load-bearing
+ * for keyset monotonicity (see that branch, and the `Rank` case in
+ * {@link cursorValueFor}). Asserting the coupling needs both halves callable
+ * side by side; a handler-level test cannot reach one of them by construction.
+ *
  * A THIRD divergence, on the narrowing rather than the ranking:
  * `sanitize_fts_query` (`agaric-store/src/query/engine.rs`) ERRORS with "no
  * searchable terms (each term must be at least 3 characters)" whenever
@@ -164,12 +176,37 @@ interface QueryCursorPayload {
  * failure mode this module exists to prevent. Treat any `fulltext` shorter
  * than 3 characters as untrustworthy here until the rejection is mirrored.
  */
-function approximateFtsRank(content: string | null, foldedQuery: string): number {
+export function approximateFtsRank(content: string | null, foldedQuery: string): number {
   const foldedText = foldForSearch(content ?? '')
+  // A non-empty `fulltext` CAN fold to `''` (a lone combining mark folds
+  // away entirely), and `matchesSearchFolded` admits every row when it does —
+  // so this branch is on the reachable path and must return a FINITE length,
+  // not fall through to the zero-occurrence guard below.
   if (foldedQuery === '') return foldedText.length
   const occurrences = foldedText.split(foldedQuery).length - 1
-  // No match: unreachable via the MATCH narrowing below (which already
-  // excludes non-matching rows), but total for defensive callers.
+  // No match. Unreachable via the MATCH narrowing in `run_advanced_query`,
+  // and #3914 review note 3 is that the reason is now LOAD-BEARING rather
+  // than merely tidy, because {@link cursorValueFor} tags a non-finite rank
+  // as `Null`:
+  //
+  //   - `Infinity` sorts FIRST under `Relevance DESC` (`compareSortValue`
+  //     treats it as a number and the `desc` flip puts the largest first).
+  //   - its `Null` tag sorts LAST in BOTH directions (`compareCursorValue`
+  //     applies NULLS-LAST ahead of the flip).
+  //
+  // So a row that reached here would compare BEFORE the cursor minted from
+  // it, `findIndex` would return 0, and every page would re-deliver the whole
+  // set — a `while (hasMore)` client that never terminates.
+  //
+  // What rules it out: `run_advanced_query` narrows with
+  // `matchesSearchFolded(row.content ?? '', fulltext)` (`fold-for-search.ts`)
+  // and ranks with `approximateFtsRank(row.content, foldForSearch(fulltext))`
+  // — the SAME haystack through the SAME `foldForSearch`, against the SAME
+  // folded needle. `includes` is true exactly when `split` yields ≥ 2 parts,
+  // so a surviving row always has ≥ 1 occurrence. Change either fold (a
+  // stripper on one side, a stemmer on the other) and the guard becomes
+  // reachable — pinned by the coupling test in `advanced-query-sort.test.ts`,
+  // which is why this function is exported.
   if (occurrences === 0) return Number.POSITIVE_INFINITY
   return foldedText.length / occurrences
 }
@@ -345,6 +382,14 @@ export function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorV
       // with the SAME function, so every surviving row has ≥1 occurrence —
       // hence the guard is falsified against `cursorValueFor` directly.
       //
+      // #3914 review note 3 — that unreachability is not a nicety. This tag
+      // DISAGREES with `compareSortValue`'s ordering of the raw value under
+      // DESC (`Infinity` first, `Null` last), which is the one condition that
+      // would break the keyset's monotonicity and make pagination
+      // non-terminating. See the zero-occurrence branch in
+      // {@link approximateFtsRank} for the full argument and the test that
+      // pins the coupling.
+      //
       // NOT guarded: an INTEGRAL rank serializes as `2` where serde_json
       // writes an `f64` as `2.0`. That is a byte difference only — serde's
       // `f64` deserializer accepts a JSON integer, and the keyset compares
@@ -382,24 +427,177 @@ function encodeCursor(values: CursorValue[]): string {
 }
 
 /**
- * Decode a keyset cursor produced by {@link encodeCursor}. `null` on any
- * malformed input (mirrors the engine's decode being infallible on ITS OWN
- * encoded cursors, but never trusting a foreign string) rather than throwing
- * — a stale or foreign cursor degrades to "start from the top", same as the
- * pre-#3863 `{ id }` decode's `try/catch`.
+ * The unpadded base64url alphabet, plus the length rule
+ * `URL_SAFE_NO_PAD.decode` enforces — a remainder of 1 symbol carries no
+ * whole byte, so Rust rejects it as `InvalidLength`.
+ *
+ * Checked ahead of {@link base64UrlToUtf8} rather than relying on `atob` to
+ * throw, for two reasons: it separates the engine's FIRST failure mode (bad
+ * base64) from its SECOND (invalid UTF-8), which the single combined call
+ * cannot, and it does so without sniffing the host's exception type —
+ * `atob` throws a `DOMException` and a fatal `TextDecoder` a `TypeError`, but
+ * which of those is observable is a runtime detail (jsdom vs Node), the same
+ * host-dependence #3914 review note 2 objects to in the message.
+ *
+ * Deliberately NOT mirrored: Rust's base64 also rejects non-canonical
+ * trailing bits — a final symbol whose leftover bits are not zero, such as
+ * `"AB"` (12 bits for one byte, and the spare 4 are `0001`) — which `atob`
+ * silently discards instead. That is a strictly narrower acceptance on the
+ * engine's side and a cursor with such bytes cannot be minted by
+ * {@link encodeCursor}, so the residual divergence is unreachable except by a
+ * hand-built cursor whose payload would then have to also be valid UTF-8,
+ * valid JSON and a valid `CursorValue` list to reach the keyset at all.
  */
-function decodeCursor(s: string): QueryCursorPayload | null {
+const BASE64URL_NO_PAD = /^[A-Za-z0-9_-]*$/
+
+function isBase64UrlNoPad(s: string): boolean {
+  return BASE64URL_NO_PAD.test(s) && s.length % 4 !== 1
+}
+
+/**
+ * Each `CursorValue` tag → the JSON type its `v` payload must carry, mirroring
+ * what serde accepts for the engine's `#[serde(tag = "t", content = "v")]`
+ * enum (`engine.rs:143`): `Text(String)`, `Int(i64)`, `Real(f64)` and the unit
+ * variant `Null`.
+ *
+ * A `Map`, not an object literal, for the same prototype-pollution reason
+ * documented on {@link SORT_COLUMN_GETTERS}: `{"t":"constructor"}` would
+ * resolve to an inherited `Object.prototype` member on a literal and be
+ * accepted as a known tag.
+ */
+const CURSOR_VALUE_PAYLOAD = new Map<string, 'text' | 'int' | 'real' | 'unit'>(
+  Object.entries({ Text: 'text', Int: 'int', Real: 'real', Null: 'unit' } as const),
+)
+
+/**
+ * Is `v` a runtime {@link CursorValue}? #3914 review note 1.
+ *
+ * Without this, `ReadonlyArray<CursorValue>` on {@link compareEntryToCursor}
+ * was a type-level claim about a value that came off the wire unchecked, and
+ * the two ways it was false were both observable through the IPC boundary: a
+ * JSON `null` element CRASHED (`isNullCursorValue` tested only `undefined`,
+ * so `null.t` threw a raw `TypeError` past a `dispatch` that has no
+ * try/catch), and a mistyped payload (`{"t":"Int","v":"abc"}`) made
+ * `a.v - b.v` `NaN`, so `findIndex` never fired and the caller got a silently
+ * EMPTY page where serde returns `AppError::Validation`.
+ *
+ * The tag/payload pairing is what serde checks, so it is what this checks:
+ * `Int` must be an INTEGER (serde rejects `1.5` for `i64`) while `Real`
+ * accepts a JSON integer too (serde reads `2` into an `f64` — the documented
+ * byte difference from serde's own `2.0` output). The unit variant accepts
+ * both `{"t":"Null"}` and `{"t":"Null","v":null}`, as adjacent tagging does.
+ *
+ * Extra keys are NOT policed: over-strictness would be its own divergence,
+ * and this mock's job is to stop being MORE permissive than the engine.
+ */
+function isCursorValue(v: unknown): v is CursorValue {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  const tag = (v as Record<string, unknown>)['t']
+  if (typeof tag !== 'string') return false
+  const payload = CURSOR_VALUE_PAYLOAD.get(tag)
+  if (payload === undefined) return false
+  const raw = (v as Record<string, unknown>)['v']
+  switch (payload) {
+    case 'text': {
+      return typeof raw === 'string'
+    }
+    case 'int': {
+      return typeof raw === 'number' && Number.isInteger(raw)
+    }
+    case 'real': {
+      return typeof raw === 'number' && Number.isFinite(raw)
+    }
+    default: {
+      return raw === undefined || raw === null
+    }
+  }
+}
+
+/**
+ * Decode a keyset cursor produced by {@link encodeCursor}, THROWING a
+ * {@link validationRejection} on any malformed input — mirroring
+ * `QueryCursor::decode` (`agaric-store/src/query/engine.rs:180-195`), which
+ * returns a distinct `AppError::Validation` for each of four failure modes
+ * (bad base64, invalid UTF-8, invalid JSON, unsupported version) and
+ * propagates it to the caller rather than degrading.
+ *
+ * #3899 — before this, EVERY failure mode here (including a corrupted,
+ * foreign, or version-stale cursor) returned `null` and the handler silently
+ * restarted from row 0: a client shipping a stale cursor got an error from
+ * the real backend and a silent page-1 restart from the mock — the mock
+ * being MORE permissive than the thing it stands in for, the exact
+ * divergence class this module exists to remove. `list_pages_with_metadata`
+ * (`handlers/pages.ts`) keeps its OWN cursor decode lenient on malformed
+ * input by design (its real backend command tolerates it there); this one
+ * does not, because ITS real backend command does not either.
+ *
+ * #3914 review notes 1 + 2 — two changes to what "malformed" means:
+ *
+ *  - the `values` ELEMENTS are checked ({@link isCursorValue}), not just that
+ *    `values` is an array, so a `CursorValue` list serde would reject is
+ *    rejected here too instead of reaching the keyset as a `null` that
+ *    crashes or a mistyped payload that pages emptily;
+ *  - the messages are FIXED strings. Each keeps `QueryCursor::decode`'s own
+ *    prefix, because that is what names WHICH of the four modes fired; the
+ *    suffix is ours rather than the host's, since the host's message (jsdom's
+ *    `atob` vs Node's, and their differing `TextDecoder` wording) matched the
+ *    engine's in neither runtime and drifted between them.
+ */
+function decodeCursor(s: string): QueryCursorPayload {
+  if (!isBase64UrlNoPad(s)) {
+    throw validationRejection('invalid cursor: invalid base64')
+  }
+  let json: string
   try {
     // `base64UrlToUtf8`, not `atob`: the inverse of {@link encodeCursor}'s
     // UTF-8 encoding. A bare `atob` reads the UTF-8 bytes of a non-ASCII
     // title back as Latin-1 code units (mojibake), which would silently
     // corrupt the anchor value on resume.
-    const parsed = JSON.parse(base64UrlToUtf8(s)) as QueryCursorPayload
-    if (parsed.version !== CURSOR_VERSION || !Array.isArray(parsed.values)) return null
-    return parsed
+    //
+    // `fatal: true` (#3914 review note 1) is what makes the SECOND of the
+    // engine's four failure modes real here rather than claimed. A default
+    // `TextDecoder` is non-fatal: it substitutes U+FFFD for ill-formed bytes,
+    // so a cursor whose bytes are not valid UTF-8 but whose REPLACED form is
+    // still parseable JSON was accepted, where `QueryCursor::decode`'s
+    // `String::from_utf8` returns `AppError::Validation`. This one call site
+    // needs the strict decoder; the module's other consumers are deliberately
+    // lenient, which is why it is a per-call option and not the default.
+    json = base64UrlToUtf8(s, { fatal: true })
   } catch {
-    return null
+    // The alphabet/length check above already ruled out `atob` throwing, so
+    // the only way here is the fatal `TextDecoder` — the engine's SECOND
+    // mode, which `String::from_utf8` reports separately from its first.
+    throw validationRejection('invalid cursor UTF-8: invalid utf-8 sequence')
   }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    throw validationRejection('invalid cursor JSON: not valid JSON')
+  }
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    !Array.isArray((parsed as QueryCursorPayload).values)
+  ) {
+    throw validationRejection('invalid cursor JSON: missing `values` array')
+  }
+  // Element shapes, BEFORE the version check — serde deserializes the whole
+  // struct (elements included) and only then does `decode` compare versions,
+  // so a cursor that is both stale and malformed reports the malformation,
+  // exactly as the engine does.
+  for (const [i, value] of (parsed as { values: unknown[] }).values.entries()) {
+    if (!isCursorValue(value)) {
+      throw validationRejection(`invalid cursor JSON: values[${i}] is not a CursorValue`)
+    }
+  }
+  const payload = parsed as QueryCursorPayload
+  if (payload.version !== CURSOR_VERSION) {
+    throw validationRejection(
+      `cursor: unsupported version ${payload.version} (expected ${CURSOR_VERSION})`,
+    )
+  }
+  return payload
 }
 
 /**
@@ -430,6 +628,147 @@ function compareByTerms(terms: ReadonlyArray<ResolvedSortTerm>) {
     }
     return 0
   }
+}
+
+/**
+ * Is this cursor slot the NULL case — an explicit `Null` tag, or nothing at
+ * all (a cursor shorter than the current request's term list, or — only if
+ * {@link decodeCursor}'s element validation is ever bypassed — a JSON `null`)?
+ *
+ * #3914 review — `null` is handled here as well as rejected in
+ * {@link decodeCursor}, on purpose. The rejection is the real fix; this is
+ * defence in depth, and it is warranted because the failure it prevents is
+ * `null.t` throwing a raw `TypeError` across an IPC boundary that `dispatch`
+ * wraps in no try/catch — an uncaught crash where the contract (and this
+ * comparison's own doc, "never a crash") promises an `AppError`-shaped
+ * rejection. The parameter type admits `null` rather than pretending it
+ * cannot arrive, since every value here came off a wire.
+ */
+function isNullCursorValue(
+  v: CursorValue | null | undefined,
+): v is null | undefined | { t: 'Null' } {
+  return v === null || v === undefined || v.t === 'Null'
+}
+
+/**
+ * One term's comparison in the {@link CursorValue} domain — the same rule
+ * {@link compareSortValue} applies (NULLS LAST in BOTH directions, numeric
+ * compare when both sides are numeric, string compare otherwise), but over
+ * TAGGED values rather than raw ones.
+ *
+ * #3914 review — this is the domain the keyset comparison must run in, and
+ * the reason is that {@link cursorValueFor} is not injective on the SortValue
+ * domain: two of the six kinds encode a value to a tag that does not decode
+ * back to what the getter returned.
+ *
+ *   - `LastEditedMs` maps the getter's `''` sentinel to `Int(0)` (the value
+ *     the engine's `COALESCE(…, 0)` actually carries). Decoding that back
+ *     gives the NUMBER `0`, and `compareSortValue('', 0, …)` takes the string
+ *     branch — `''` against `'0'` — so it returns ±1 and NEVER 0.
+ *   - `Rank` maps a non-finite rank to `Null` (the engine's own answer for a
+ *     row with no rank, and the only tag that survives `JSON.stringify`).
+ *     Decoding gives `null`, and NULLS-LAST puts `Infinity` before it.
+ *
+ * In both cases a row failed to compare EQUAL to the cursor minted from it,
+ * which is exactly the invariant a lexicographic keyset resume needs: ±1 at
+ * the boundary means the anchor row is either skipped along with everything
+ * tied to it, or re-selected forever. Encoding BOTH sides through
+ * `cursorValueFor` removes the inverse requirement altogether — the encode is
+ * applied once to each operand instead of being undone on one of them — so
+ * the whole class is closed rather than the two known instances.
+ *
+ * This does NOT change the ORDER `compareByTerms` sorts `matched` into (that
+ * still runs on raw sort values), and it does not have to: the two agree on
+ * every reachable value. `Id`/`Priority`/`Title` tag to `Text` and compare as
+ * the same strings; `Position`/`Rank` tag to `Int`/`Real` and compare
+ * numerically; nulls stay NULLS-LAST on both sides. `LastEditedMs` is the one
+ * mixed case — `Int(0)` against `Text('2024-…')` compares as `'0'` vs the
+ * timestamp — and it agrees too, because `'0'` sorts below every ISO-8601
+ * year, just as the raw `''` sentinel does.
+ */
+function compareCursorValue(
+  a: CursorValue | null | undefined,
+  b: CursorValue | null | undefined,
+  desc: boolean,
+): number {
+  if (isNullCursorValue(a) && isNullCursorValue(b)) return 0
+  if (isNullCursorValue(a)) return 1
+  if (isNullCursorValue(b)) return -1
+  let cmp: number
+  if (a.t !== 'Text' && b.t !== 'Text') {
+    cmp = a.v - b.v
+  } else {
+    const as = String(a.v)
+    const bs = String(b.v)
+    cmp = as < bs ? -1 : as > bs ? 1 : 0
+  }
+  return desc ? -cmp : cmp
+}
+
+/**
+ * #3900 — is matched entry `m` strictly AFTER the cursor's tuple, in the same
+ * total order {@link compareByTerms} sorted `matched` with?
+ *
+ * This IS the engine's OR-of-AND keyset predicate (`keyset_predicate`,
+ * `agaric-store/src/query/engine.rs:417-442`: `(t0 ▷ v0) OR (t0 = v0 AND t1 ▷
+ * v1) OR …`), just expressed as a single lexicographic comparison instead of
+ * an OR-of-AND expansion — the two are equivalent by construction because
+ * both compare term-by-term with the SAME per-term rule (`compareSortValue`,
+ * NULLS LAST in both directions) that defines `matched`'s own order: the
+ * first term that disagrees between `m` and the cursor decides, exactly like
+ * the first `AND`-clause in the predicate whose strict comparison holds.
+ *
+ * Deliberately positional over `terms`/`cursorValues` — it reads
+ * `cursorValues[i]` against `terms[i]` with NO lookup of which term the
+ * cursor was minted under, mirroring the engine's OWN indexing
+ * (`cursor.values[i]` against the CURRENT request's `terms[i]`,
+ * `engine.rs:429,434`). The prior mock code instead read the cursor's `id`
+ * out of whichever slot the CURRENT sort's `column: 'Id'` term happened to
+ * occupy — correct only when the cursor was minted under an IDENTICAL sort,
+ * and silently wrong (restarting the query from row 0 rather than resuming)
+ * when a caller changed `sort` between pages, since #3900 found this
+ * unasserted. Replaying the positional comparison instead means a
+ * sort-change between pages now degrades EXACTLY like the engine does — a
+ * deterministic, possibly-nonsensical page (comparing a stale term's value
+ * against a differently-typed CURRENT column), never a crash, never a silent
+ * restart — because both sides now run the identical positional algorithm.
+ * `cursorValues[i]` past the end of a shorter cursor (a genuinely
+ * shorter-tuple sort change) reads as `undefined`, which {@link
+ * compareCursorValue} treats as the NULL case — a safe degrade the engine has
+ * no equivalent of (`cursor.values[i]` there is an out-of-bounds panic, not
+ * a value a mock should ever try to reproduce). "Safe" means bounded and
+ * direction-independent, not lossless: NULLS LAST is applied BEFORE the
+ * `desc` flip, so the missing slot is the greatest value in either direction
+ * and every row that ties on the terms the cursor DOES carry is dropped from
+ * the resumed page, ASC and DESC alike. Rows resolved by an earlier term are
+ * unaffected. Pinned by test — see the short-cursor block in
+ * `advanced-query-sort.test.ts`.
+ *
+ * #3914 review — the comparison runs in the {@link CursorValue} domain
+ * (`cursorValueFor` applied to the ENTRY, compared against the cursor's own
+ * tagged value) rather than decoding the cursor back into a raw
+ * {@link SortValue}. `cursorValueFor` is not invertible for two of the six
+ * kinds, and decoding through it made a boundary row compare ±1 against the
+ * cursor minted from it — see {@link compareCursorValue} for the two cases
+ * and why encoding both operands closes the class.
+ *
+ * Exported ONLY as a test seam (#3914 review note 4), like
+ * {@link cursorValueFor}: the round-trip invariant it anchors is per-COLUMN,
+ * so a handler test can only falsify the columns its fixture happens to
+ * exercise. NOT module API — `cursorValues` is trusted to have come through
+ * {@link decodeCursor}'s element validation, and no other caller establishes
+ * that.
+ */
+export function compareEntryToCursor(
+  terms: ReadonlyArray<ResolvedSortTerm>,
+  m: MatchedEntry,
+  cursorValues: ReadonlyArray<CursorValue>,
+): number {
+  for (const [i, term] of terms.entries()) {
+    const cmp = compareCursorValue(cursorValueFor(term, m), cursorValues[i], term.desc)
+    if (cmp !== 0) return cmp
+  }
+  return 0
 }
 
 export const searchHandlers = {
@@ -553,30 +892,22 @@ export const searchHandlers = {
     const sortTerms = resolveSortTerms(sortKeys, hasFulltext, foldedQuery)
     matched.sort(compareByTerms(sortTerms))
 
-    // #3863 — the cursor now carries the FULL resolved sort-term tuple
+    // #3863 — the cursor carries the FULL resolved sort-term tuple
     // (`{ version, values }`, one tagged `CursorValue` per term, in ORDER BY
     // order), mirroring the engine's `QueryCursor` (`engine.rs:166-196`) —
-    // not just `{ id }`. `resolveSortTerms` guarantees exactly one term is
-    // tagged `column: 'Id'` (either an explicit `created` key, or the
-    // appended tiebreak), so the anchor id always has a well-defined slot to
-    // read back regardless of which sort produced the cursor.
-    const idTermIndex = sortTerms.findIndex((t) => t.column === 'Id')
-    // Keyset cursor over the resolved sort order: skip up to AND INCLUDING
-    // the anchor id. The mock still resumes by re-locating the anchor ROW in
-    // the freshly-resolved order (rather than replaying the engine's
-    // OR-of-AND keyset predicate over the full tuple) — every resolved order
-    // here terminates in a unique `id`, so `id` alone is a total,
-    // unambiguous resume point; only the WIRE ENCODING needed to change to
-    // stop pinning the mock-only `{ id }` shape as if it were the engine's.
+    // not just `{ id }`.
+    //
+    // #3900 — resume by REPLAYING the engine's positional keyset predicate
+    // (`compareEntryToCursor`, above) rather than by re-locating an anchor
+    // ROW by id. `decodeCursor` (#3899) now THROWS on a malformed, foreign,
+    // or version-stale cursor instead of returning `null`, mirroring
+    // `QueryCursor::decode` propagating `AppError::Validation` to the
+    // caller.
     let startIdx = 0
     if (cursor != null) {
       const decoded = decodeCursor(cursor)
-      const anchorValue = decoded?.values[idTermIndex]
-      const anchorId = anchorValue?.t === 'Text' ? anchorValue.v : null
-      if (anchorId != null) {
-        const idx = matched.findIndex((m) => m.b['id'] === anchorId)
-        if (idx >= 0) startIdx = idx + 1
-      }
+      const idx = matched.findIndex((m) => compareEntryToCursor(sortTerms, m, decoded.values) > 0)
+      startIdx = idx === -1 ? matched.length : idx
     }
     const slice = matched.slice(startIdx, startIdx + limit + 1)
     const hasMore = slice.length > limit

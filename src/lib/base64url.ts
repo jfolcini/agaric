@@ -33,12 +33,27 @@ export function utf8ToBase64Url(s: string): string {
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
 }
 
-/** Unpadded base64url → UTF-8 string (inverse of {@link utf8ToBase64Url}). */
-export function base64UrlToUtf8(b64url: string): string {
+/**
+ * Unpadded base64url → UTF-8 string (inverse of {@link utf8ToBase64Url}).
+ *
+ * `fatal` (default `false`) selects what happens to bytes that are NOT valid
+ * UTF-8. The default is `TextDecoder`'s own lenient behaviour: substitute
+ * U+FFFD and carry on. `fatal: true` makes the decoder THROW a `TypeError`
+ * instead, which is what a caller standing in for Rust needs —
+ * `String::from_utf8` REJECTS ill-formed bytes, so a decoder that silently
+ * replaces them accepts payloads the backend refuses.
+ *
+ * Opt-in rather than the default because the two other callers
+ * (`decodeInlineQueryPayload`, `list_pages_with_metadata`'s cursor decode)
+ * are deliberately lenient — each wraps this in a `try`/`catch` that falls
+ * back to "no spec" / "start from the top" — and flipping the default would
+ * change their behaviour to serve a third caller's needs. #3914 review note 1.
+ */
+export function base64UrlToUtf8(b64url: string, options?: { fatal?: boolean }): string {
   const padded = b64url.replaceAll('-', '+').replaceAll('_', '/')
   // Re-add the `=` padding base64 needs (length up to the next multiple of 4).
   const fullLength = Math.ceil(padded.length / 4) * 4
   const binary = atob(padded.padEnd(fullLength, '='))
   const bytes = Uint8Array.from(binary, (c) => c.codePointAt(0) ?? 0)
-  return new TextDecoder().decode(bytes)
+  return new TextDecoder('utf-8', { fatal: options?.fatal ?? false }).decode(bytes)
 }
