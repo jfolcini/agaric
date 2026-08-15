@@ -113,3 +113,28 @@ comments still described "the two schedule-only filers" when #3394 had un-gated 
 So the new watchdog condition is pinned by **code** rather than by a comment: a check reads the `if:`
 verbatim, can see an event gate, and throws on a rename or a missing condition instead of passing
 vacuously. A justification that can go stale silently is not a justification; it is a note.
+
+### The guard passed everywhere except the place it runs
+
+CI reddened on the one hook this PR adds, and only on CI. Locally, `prek run --all-files` was green
+on the identical commit.
+
+zizmor's `--color auto` resolves to **colour under `GITHUB_ACTIONS=true`**, TTY or not. The negative
+control parses zizmor's human-readable output, and its rule-id header regex is anchored: `^\s*[a-z]+\[`
+does not match `\x1b[1m\x1b[91merror[cache-poisoning]`. So every `-->` location below it belonged to no
+rule, the harvest came back empty, and the control failed reporting that it *could not derive any line
+numbers from a real zizmor run* — while printing, in its own failure message, the four findings zizmor
+had just reported. The diagnostic and the evidence contradicted each other on the same line.
+
+Reproduced by setting `GITHUB_ACTIONS=true` locally, which is the whole lesson: a self-test that shells
+out to a tool inherits that tool's environment sensitivity, and "it passes locally" says nothing until
+local resembles CI.
+
+Fixed at both levels, and each half falsified separately. `runZizmor` passes `--color=never` — the root
+cause, since the parse should not depend on an ambient variable at all. `findCachePoisoningFindingLines`
+strips ANSI regardless, so the parser is correct for any caller that forgets. Removing the strip alone
+fails the new colourised-fixture assertion; removing both reproduces CI's failure byte for byte.
+
+Worth stating plainly, since this is the third time in this batch: the PR whose subject is *a suppression
+must not depend on something incidental to its position* shipped a guard that depended on something
+incidental to its environment.

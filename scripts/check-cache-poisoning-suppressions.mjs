@@ -455,14 +455,27 @@ function selfTestHygiene({ check }) {
  * for any other rule id — so harvesting indiscriminately would silently
  * degrade the control the moment ci.yml grows a finding from a second audit.
  * Today it has none, which is exactly why this is easy to get wrong.
+ *
+ * ANSI escapes are stripped first. zizmor colourises when it believes the
+ * consumer renders colour, and it believes that under `GITHUB_ACTIONS=true`
+ * even with no TTY — so on CI the header arrived as `\x1B[1m\x1B[91merror[…`
+ * and `^\s*[a-z]+\[` did not match it. Every location then read as belonging
+ * to no rule, the harvest came back empty, and the control failed claiming
+ * zizmor had reported nothing while its output sat in the failure message
+ * listing four findings. `runZizmor` also passes `--color=never`, which is
+ * the root fix; this strip is what keeps the parser correct for any caller
+ * that does not.
  */
 export function findCachePoisoningFindingLines(zizmorOutput, fileName) {
   const escaped = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const locationRe = new RegExp(`-->\\s*(?:\\S*[\\\\/])?${escaped}:(\\d+):\\d+`)
   const headerRe = /^\s*[a-z]+\[([a-z0-9-]+)\]/
+  // eslint-disable-next-line no-control-regex -- matching CSI sequences requires them
+  const ansiRe = /\x1B\[[0-9;]*m/g
   let currentRule = null
   const lines = []
-  for (const line of zizmorOutput.split('\n')) {
+  for (const raw of zizmorOutput.split('\n')) {
+    const line = raw.replace(ansiRe, '')
     const header = headerRe.exec(line)
     if (header) {
       currentRule = header[1]
@@ -496,10 +509,18 @@ function selfTestZizmorSurvivesLineDrift({ check, fail }) {
 
   const runZizmor = (configPath, targetPath) => {
     try {
-      execFileSync('zizmor', ['--no-online-audits', '-c', configPath, targetPath], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
+      // `--color=never` because zizmor's `auto` resolves to COLOUR under
+      // `GITHUB_ACTIONS=true` regardless of TTY, and this self-test parses the
+      // human-readable output. Without it the control passes locally and fails
+      // only on CI — which is exactly how it shipped.
+      execFileSync(
+        'zizmor',
+        ['--no-online-audits', '--color=never', '-c', configPath, targetPath],
+        {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      )
       return { ok: true }
     } catch (err) {
       return { ok: false, output: (err.stdout ?? '') + (err.stderr ?? '') }
@@ -640,6 +661,23 @@ function selfTestFindingLineHarvest({ check }) {
     findCachePoisoningFindingLines(output, 'other.yml').length === 0,
     'a location in a different file is not harvested',
     '',
+  )
+  // The exact bytes zizmor emitted on CI, where `--color auto` resolves to
+  // colour under GITHUB_ACTIONS with no TTY. Pre-fix this harvested nothing:
+  // the escape prefix put the rule-id header out of reach of `^\s*[a-z]+\[`,
+  // so every location below it belonged to no rule.
+  const colorized = [
+    '\x1B[1m\x1B[91merror[cache-poisoning]\x1B[0m\x1B[1m: runtime artifacts potentially vulnerable to a cache poisoning attack\x1B[0m',
+    ' \x1B[1m\x1B[94m--> \x1B[0m/tmp/x/ci.yml:323:9',
+    '\x1B[1m\x1B[91merror[unpinned-uses]\x1B[0m\x1B[1m: unpinned action reference\x1B[0m',
+    ' \x1B[1m\x1B[94m--> \x1B[0m/tmp/x/ci.yml:77:9',
+    '',
+  ].join('\n')
+  const colorizedLines = findCachePoisoningFindingLines(colorized, 'ci.yml')
+  check(
+    colorizedLines.length === 1 && colorizedLines[0] === 323,
+    'colourised zizmor output is harvested identically — and the other rule is still excluded',
+    JSON.stringify(colorizedLines),
   )
   check(
     findCachePoisoningFindingLines('', 'ci.yml').length === 0,
