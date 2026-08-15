@@ -203,13 +203,18 @@ export const history: Record<string, string> = {
   'history.restoreToTitle': 'Restore to {{timestamp}}?',
   'history.restoreToDescription':
     'All operations after this point will be reverted. Non-reversible operations (purge) will be skipped. This action itself can be undone, and the original operations remain in history.',
-  'history.restoreSuccess': '{{count}} operations reverted successfully',
-  'history.restoreSkipped': '{{count}} non-reversible operations were skipped',
+  'history.restoreSuccess_one': '{{count}} operation reverted successfully',
+  'history.restoreSuccess_other': '{{count}} operations reverted successfully',
+  'history.restoreSkipped_one': '{{count}} non-reversible operation was skipped',
+  'history.restoreSkipped_other': '{{count}} non-reversible operations were skipped',
   'history.restoreFailed': 'Failed to restore — please try again',
   'history.cancelButton': 'Cancel',
   'history.restoreButton': 'Restore',
-  'history.revertTitle': 'Revert {{count}} operations?',
-  'history.revertDescription':
+  'history.revertTitle_one': 'Revert {{count}} operation?',
+  'history.revertTitle_other': 'Revert {{count}} operations?',
+  'history.revertDescription_one':
+    'This will create {{count}} new operation that reverses the selected changes. The original operations remain in history.',
+  'history.revertDescription_other':
     'This will create {{count}} new operations that reverse the selected changes. The original operations remain in history.',
   'history.revertButton': 'Revert',
   'history.revertedSuccessfully': 'Reverted successfully',
@@ -242,19 +247,31 @@ export const history: Record<string, string> = {
   'trash.blockPurged': 'Block permanently deleted',
   'trash.purgeFailed': 'Failed to purge block',
   'trash.loadFailed': 'Failed to load trash',
-  'history.loadedMoreEntries': 'Loaded {{count}} more entries',
+  'history.loadedMoreEntries_one': 'Loaded {{count}} more entry',
+  'history.loadedMoreEntries_other': 'Loaded {{count}} more entries',
   'compaction.title': 'Op Log Compaction',
+  // #3882 — `compaction.totalOps`/`compaction.eligibleOps` interpolate
+  // {{count}} but CompactionCard.tsx only ever consumes the label text
+  // before the ":" (`.split(':')[0]`) — the actual number is rendered
+  // separately in a <dd>. The interpolated value never reaches the screen,
+  // and "operations"/"cleanup" here are fixed category labels (like "Total
+  // operations:", not "N operations agree/disagrees"), not count-agreeing
+  // nouns, so no plural forms are needed. See PRE_EXISTING_COUNT_EXEMPT in
+  // catalog-parity.test.ts.
   'compaction.totalOps': 'Total operations: {{count}}',
   'compaction.oldestOp': 'Oldest operation: {{date}}',
   'compaction.oldestOpNone': 'Oldest operation: N/A',
   'compaction.eligibleOps': 'Eligible for cleanup: {{count}}',
   'compaction.compactNow': 'Compact Now',
   'compaction.confirmTitle': 'Compact Op Log?',
-  'compaction.confirmDescription':
+  'compaction.confirmDescription_one':
+    'This will permanently delete {{count}} operation older than {{days}} days. The original data in this operation will be lost. This cannot be undone.',
+  'compaction.confirmDescription_other':
     'This will permanently delete {{count}} operations older than {{days}} days. The original data in these operations will be lost. This cannot be undone.',
   'compaction.compactButton': 'Compact',
   'compaction.cancel': 'Cancel',
-  'compaction.success': 'Compacted {{count}} operations',
+  'compaction.success_one': 'Compacted {{count}} operation',
+  'compaction.success_other': 'Compacted {{count}} operations',
   'compaction.failed': 'Failed to compact op log',
   'compaction.loadFailed': 'Failed to load compaction status',
   'trash.deletedPrefix': 'Deleted:',

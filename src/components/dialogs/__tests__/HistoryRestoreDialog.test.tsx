@@ -75,6 +75,28 @@ describe('HistoryRestoreDialog', () => {
     })
   })
 
+  // #3882 — `history.restoreSuccess`/`history.restoreSkipped` interpolated
+  // {{count}} with no _one/_other plural forms, so a 1-op restore showed
+  // "1 operations reverted successfully" / "1 non-reversible operations
+  // were skipped".
+  it('uses singular wording when exactly 1 operation is reverted and 1 is skipped', async () => {
+    const user = userEvent.setup()
+    mockRestore.mockResolvedValue(ok({ ops_reverted: 1, non_reversible_skipped: 1 }))
+    render(
+      <HistoryRestoreDialog
+        open
+        onOpenChange={vi.fn()}
+        restoreTarget={TARGET}
+        onSuccess={vi.fn()}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /Restore/i }))
+    await waitFor(() => {
+      expect(mockNotify.success).toHaveBeenCalledWith('1 operation reverted successfully')
+    })
+    expect(mockNotify.warning).toHaveBeenCalledWith('1 non-reversible operation was skipped')
+  })
+
   // #1270 error-path: a rejected restore IPC must surface a toast +
   // announce, not be swallowed.
   it('surfaces an error toast + announce when restorePageToOp rejects', async () => {

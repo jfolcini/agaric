@@ -158,6 +158,49 @@ describe('CompactionCard', () => {
     expect(screen.getByText(/This cannot be undone/)).toBeInTheDocument()
   })
 
+  // #3882 — `compaction.confirmDescription`/`compaction.success` interpolated
+  // {{count}} with no _one/_other plural forms, so eligible_ops === 1 showed
+  // "delete 1 operations older than..." / "Compacted 1 operations".
+  it('uses singular wording in the confirm dialog when eligible_ops is 1', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce({ ...defaultStatus, eligible_ops: 1 })
+
+    render(<CompactionCard />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('1')
+    })
+
+    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+
+    expect(
+      screen.getByText(
+        'This will permanently delete 1 operation older than 90 days. The original data in this operation will be lost. This cannot be undone.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('uses singular wording in the success toast when exactly 1 operation is compacted', async () => {
+    const user = userEvent.setup()
+    mockedInvoke
+      .mockResolvedValueOnce({ ...defaultStatus, eligible_ops: 1 }) // getCompactionStatus
+      .mockResolvedValueOnce({ snapshot_id: 'snap_1', ops_deleted: 1 }) // compactOpLog
+      .mockResolvedValueOnce(emptyStatus) // refresh getCompactionStatus
+
+    render(<CompactionCard />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('compaction-eligible-ops')).toHaveTextContent('1')
+    })
+
+    await user.click(screen.getByRole('button', { name: /Compact Now/i }))
+    await user.click(screen.getByRole('button', { name: /^Compact$/i }))
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Compacted 1 operation')
+    })
+  })
+
   it('confirming calls compactOpLog and shows success toast', async () => {
     const user = userEvent.setup()
     mockedInvoke

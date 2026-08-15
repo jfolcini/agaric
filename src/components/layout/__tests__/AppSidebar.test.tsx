@@ -322,4 +322,34 @@ describe('AppSidebar', () => {
       expect(tooltip.textContent).toContain(t('sidebar.shortcuts'))
     })
   })
+
+  // #3882 — `sidebar.trashCount` interpolated {{count}} with no _one/_other
+  // plural forms, so a 1-item trash badge showed "1 items in trash".
+  // Hardcoded literal (not re-derived via t()) so a regression in the
+  // catalog's plural forms reddens this.
+  it('uses singular wording in the trash badge accessible name when trashCount is 1', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_spaces')
+        return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }]
+      if (cmd === 'count_trash') return 1 as unknown as never
+      return emptyPage
+    })
+    renderSidebar()
+    await waitFor(() => {
+      expect(screen.getByLabelText('1 item in trash')).toBeInTheDocument()
+    })
+  })
+
+  it('uses plural wording in the trash badge accessible name when trashCount is more than 1', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_spaces')
+        return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }]
+      if (cmd === 'count_trash') return 5 as unknown as never
+      return emptyPage
+    })
+    renderSidebar()
+    await waitFor(() => {
+      expect(screen.getByLabelText('5 items in trash')).toBeInTheDocument()
+    })
+  })
 })

@@ -287,65 +287,127 @@ function findCountPluralViolations(catalog: Record<string, string>): string[] {
 }
 
 /**
- * PRE_EXISTING_COUNT_WITHOUT_PLURAL — allowlist for catalog keys that
- * interpolate `{{count}}` without complete plural forms, audited as part of
- * #3860 but left unfixed because #3860 scoped its fix to the `trash.*`
- * namespace (the issue explicitly asks to "report but do not necessarily
- * fix" other namespaces with the same defect — a broader sweep is tracked
- * separately, not shipped here).
+ * #3882 drained #3860's original `PRE_EXISTING_COUNT_WITHOUT_PLURAL`
+ * allowlist to empty and split it into two lists that couldn't be told
+ * apart before: keys that genuinely still need plural forms (shrinks over
+ * time, and is capped so it can't silently regrow — see
+ * `NOT_YET_FIXED_CEILING` below) and keys that are deliberately exempt,
+ * each with a stated reason (grows only when a new key is audited and
+ * found not to need plural forms; a reason is mandatory).
  *
- * Every entry renders the same (singular- or count-agnostic-shaped) string
- * regardless of count today — some are genuine "N items" grammar bugs
- * (mirroring the `trash.*` ones this PR fixes), others interpolate a bare
- * number or an abbreviated unit ("{{count}}m ago") that doesn't visibly
- * inflect in English, so the naive text scan below flags them too even
- * though they may not need a wording change. Left in either way so the
- * allowlist is a complete, auditable list of every non-conforming key
- * rather than a hand-curated subset.
- *
- * New entries must NOT be added here — fix the plural forms instead. The
- * "no stale entries" test below keeps this list honest as entries get
- * fixed over time.
+ * PRE_EXISTING_COUNT_NOT_YET_FIXED — count-interpolating keys that ARE
+ * real "N items" grammar bugs and have not been fixed yet. #3882 fixed
+ * every key #3860 left behind (18 of them), so this starts empty. Fixing an
+ * entry must delete it from this set in the SAME change — the "no stale
+ * entries" test below fails if you forget, same mechanism as #3860.
  */
-const PRE_EXISTING_COUNT_WITHOUT_PLURAL: ReadonlySet<string> = new Set([
-  'donePanel.header',
-  'agenda.resultCount',
-  'agendaFilter.filtersApplied',
-  'duePanel.header',
-  'block.attachments',
-  'block.attachmentsTip',
-  'block.showAllProperties',
-  'blockTree.deletedMessageUndo',
-  'blockTree.repeatLimitedMessage',
-  'blockContext.deleteConfirmTitle',
-  'contextMenu.deleteSelected',
-  'sidebar.trashCount',
-  'sidebar.minutesAgo',
-  'sidebar.hoursAgo',
-  'sidebar.daysAgo',
-  'history.restoreSuccess',
-  'history.restoreSkipped',
-  'history.revertTitle',
-  'history.revertDescription',
-  'history.loadedMoreEntries',
-  'compaction.totalOps',
-  'compaction.eligibleOps',
-  'compaction.confirmDescription',
-  'compaction.success',
-  'journal.agendaCountBadge',
-  'journal.backlinkCountBadge',
-  'pageBrowser.loadedMorePages',
-  'tagFilter.blockMatchOne',
-  'tagFilter.blockMatchMany',
-  'references.header',
-  'references.filtersAppliedBadge',
-  'unlinkedRefs.header',
-  'search.resultsCount',
-  'batch.selectedCount',
-  'search.matchCountInGroupPlural',
-])
+const PRE_EXISTING_COUNT_NOT_YET_FIXED: ReadonlySet<string> = new Set([])
 
-describe('i18n catalog — plural forms for {{count}}-interpolating keys (#3860)', () => {
+/**
+ * NOT_YET_FIXED_CEILING — the maximum size `PRE_EXISTING_COUNT_NOT_YET_FIXED`
+ * may EVER be. This is the ratchet #3882 asked for: nothing stopped a
+ * developer from silencing a new violation by quietly appending to the old
+ * single allowlist, and a 35-entry array made one more line easy to miss in
+ * review. A ceiling constant does not make that impossible — a change to a
+ * test file is still just a diff — but it makes the growth a loud, single,
+ * self-explanatory line instead of an invisible one, which is what "closing
+ * caveat 2" means in a repo where review is the actual enforcement
+ * mechanism.
+ *
+ * Do NOT raise this to make room for a new entry. Fix the plural forms in
+ * the same change instead (namespace file + this test file), per #3882's
+ * own instructions to #3860. It exists as an escape hatch only for a
+ * genuinely blocking reason a reviewer signs off on — that is a decision
+ * for code review, not something this file can gate alone.
+ */
+const NOT_YET_FIXED_CEILING = 0
+
+/**
+ * PRE_EXISTING_COUNT_EXEMPT — count-interpolating keys that are NOT grammar
+ * bugs, each with the reason it's exempt. Every entry falls into one of
+ * four shapes, audited key-by-key against its real call site(s) as part of
+ * #3882 (not pre-judged from the key name):
+ *
+ *  - Manual singular/plural split via a SEPARATE catalog key, chosen by a
+ *    ternary at the call site (mirrors i18next's own `_one`/`_other`
+ *    selection, just not through i18next's suffix mechanism, so the static
+ *    scan below can't see it). The base key here is provably never invoked
+ *    with count === 1.
+ *  - No inflecting noun: the text is an adjective/participle ("selected")
+ *    with no plural form, so it reads correctly at every count already.
+ *  - An abbreviated unit ("{{count}}m ago") rather than a spelled-out noun;
+ *    abbreviations don't visibly inflect in English.
+ *  - The interpolated value is provably never rendered (discarded by the
+ *    call site before the text reaches the screen), or is a bare number
+ *    with no surrounding word to inflect.
+ *
+ * New entries need a real reason from this list (or a new, equally
+ * concrete one) — "audited and skipped" is not a reason. The "no stale
+ * entries" test below also covers this map: if a key's wording changes
+ * such that it's no longer count-invariant, remove it here and give it
+ * `_one`/`_other` forms instead.
+ */
+const PRE_EXISTING_COUNT_EXEMPT: Readonly<Record<string, string>> = {
+  // Manual split via a separate catalog key, chosen by a call-site ternary.
+  'donePanel.header':
+    'Singular case handled by the separate "donePanel.headerOne" key; ' +
+    'DonePanel.tsx only calls this key when totalCount !== 1.',
+  'duePanel.header':
+    'Singular case handled by the separate "duePanel.headerOne" key; ' +
+    'DuePanel.tsx only calls this key when visibleCount !== 1.',
+  'agenda.resultCount':
+    'Singular case handled by the separate "agenda.resultOne" key; ' +
+    'AgendaResults.tsx only calls this key when blocks.length !== 1.',
+  'agendaFilter.filtersApplied':
+    'Singular case handled by the separate "agendaFilter.filterAppliedOne" key; ' +
+    'AgendaFilterBuilder.tsx only calls this key when filters.length !== 1.',
+  'references.header':
+    'Singular case handled by the separate "references.headerOne" key; ' +
+    'LinkedReferences.tsx only calls this key when totalCount !== 1.',
+  'unlinkedRefs.header':
+    'Singular/empty cases handled by the separate "unlinkedRefs.headerOne"/' +
+    '"unlinkedRefs.headerNone" keys; UnlinkedReferences.tsx only calls this ' +
+    'key when totalCount is neither 0 nor 1.',
+  'tagFilter.blockMatchOne':
+    'Paired with a wholly separate "tagFilter.blockMatchMany" key. ' +
+    'TagFilterPanel.tsx ternary-selects between them on resultCount === 1, ' +
+    'so despite its {{count}} interpolation this key is only ever invoked ' +
+    'with count === 1, where "block matches" is already correct.',
+  'tagFilter.blockMatchMany':
+    'The count !== 1 counterpart of "tagFilter.blockMatchOne" (see that ' +
+    'entry) — only ever invoked with count !== 1.',
+  'search.matchCountInGroupPlural':
+    'SearchResultGroups.tsx only invokes this key when g.blocks.length !== 1; ' +
+    'count === 1 uses the separate, non-interpolating ' +
+    '"search.matchCountInGroupSingular" ("1 match") key instead.',
+  // No inflecting noun — adjective/participle text, identical at every count.
+  'contextMenu.deleteSelected':
+    '"{{count}} selected" — "selected" is an adjective with no plural form; ' +
+    'the text is grammatically identical for every count.',
+  'batch.selectedCount':
+    'Same shape as contextMenu.deleteSelected — "{{count}} selected" has no ' + 'noun to inflect.',
+  // Abbreviated unit, not a spelled-out noun — doesn't visibly inflect.
+  'sidebar.minutesAgo': '"{{count}}m ago" — an abbreviated unit ("m"), not a spelled-out noun.',
+  'sidebar.hoursAgo': '"{{count}}h ago" — an abbreviated unit ("h"), not a spelled-out noun.',
+  'sidebar.daysAgo': '"{{count}}d ago" — an abbreviated unit ("d"), not a spelled-out noun.',
+  // Bare number / interpolated value never actually rendered.
+  'references.filtersAppliedBadge':
+    'Value is literally "{{count}}" with no surrounding word — this is the ' +
+    'visible badge digit only. The accessible name for the same control ' +
+    '("references.filtersAppliedAriaLabel") already carries full ' +
+    '_one/_other plural forms.',
+  'compaction.totalOps':
+    "CompactionCard.tsx only consumes `.split(':')[0]` of this string — the " +
+    'interpolated count is discarded before render; the actual number ' +
+    'renders separately in a <dd>. "operations" here is a fixed category ' +
+    'label ("Total operations:"), not a count-agreeing noun.',
+  'compaction.eligibleOps':
+    'Same pattern as compaction.totalOps — CompactionCard.tsx discards the ' +
+    "interpolated value via `.split(':')[0]` and renders the number " +
+    'separately.',
+}
+
+describe('i18n catalog — plural forms for {{count}}-interpolating keys (#3860, #3882)', () => {
   const catalog = i18n.getResourceBundle('en', 'translation') as Record<string, string>
 
   it('scan sanity: recognizes both plural patterns used in this catalog', () => {
@@ -357,9 +419,11 @@ describe('i18n catalog — plural forms for {{count}}-interpolating keys (#3860)
     expect(catalog['graph.local.depthOption_other']).toBeDefined()
   })
 
-  it('every {{count}}-interpolating key has plural forms, outside the pre-existing allowlist', () => {
+  it('every {{count}}-interpolating key has plural forms, outside the not-yet-fixed/exempt lists', () => {
     const violations = findCountPluralViolations(catalog).filter(
-      (base) => !PRE_EXISTING_COUNT_WITHOUT_PLURAL.has(base),
+      (base) =>
+        !PRE_EXISTING_COUNT_NOT_YET_FIXED.has(base) &&
+        !Object.hasOwn(PRE_EXISTING_COUNT_EXEMPT, base),
     )
 
     if (violations.length > 0) {
@@ -368,21 +432,91 @@ describe('i18n catalog — plural forms for {{count}}-interpolating keys (#3860)
         `${violations.length} i18n key(s) interpolate {{count}} without complete plural forms ` +
           `(count === 1 will render the same "_other"-shaped wording, e.g. "1 items"):\n${report}\n` +
           `Add "<key>_one" and "<key>_other" (or a bare "<key>" singular plus "<key>_other") to ` +
-          `the namespace file that owns each key.`,
+          `the namespace file that owns each key, or — if it's genuinely not a grammar bug — add ` +
+          `it to PRE_EXISTING_COUNT_EXEMPT with a stated reason.`,
       )
     }
   })
 
-  it('PRE_EXISTING_COUNT_WITHOUT_PLURAL allowlist has no stale (already-fixed) entries', () => {
+  it('rejects a NEW unexempt {{count}} violation (the guard, exercised directly)', () => {
+    // #3882 caveat: demonstrates the detection + filtering pipeline itself
+    // catches a fresh violation that is in neither list, independent of
+    // whatever the real catalog's current contents happen to be.
+    const fakeCatalog = {
+      ...catalog,
+      'zzGuardTest.newViolation': '{{count}} new thing(s) with no plural forms',
+    }
+    const violations = findCountPluralViolations(fakeCatalog).filter(
+      (base) =>
+        !PRE_EXISTING_COUNT_NOT_YET_FIXED.has(base) &&
+        !Object.hasOwn(PRE_EXISTING_COUNT_EXEMPT, base),
+    )
+    expect(violations).toContain('zzGuardTest.newViolation')
+  })
+
+  it('PRE_EXISTING_COUNT_NOT_YET_FIXED never grows past its ceiling (#3882 ratchet)', () => {
+    expect(PRE_EXISTING_COUNT_NOT_YET_FIXED.size).toBeLessThanOrEqual(NOT_YET_FIXED_CEILING)
+  })
+
+  it('PRE_EXISTING_COUNT_NOT_YET_FIXED / PRE_EXISTING_COUNT_EXEMPT have no stale (already-fixed) entries', () => {
     const stillBroken = new Set(findCountPluralViolations(catalog))
-    const stale = [...PRE_EXISTING_COUNT_WITHOUT_PLURAL].filter((base) => !stillBroken.has(base))
+    const allListed = [
+      ...PRE_EXISTING_COUNT_NOT_YET_FIXED,
+      ...Object.keys(PRE_EXISTING_COUNT_EXEMPT),
+    ]
+    const stale = allListed.filter((base) => !stillBroken.has(base))
 
     if (stale.length > 0) {
       expect.fail(
-        `${stale.length} PRE_EXISTING_COUNT_WITHOUT_PLURAL entries now have complete plural ` +
-          `forms — remove them from the allowlist:\n${stale.map((k) => `  - "${k}"`).join('\n')}`,
+        `${stale.length} PRE_EXISTING_COUNT_NOT_YET_FIXED/PRE_EXISTING_COUNT_EXEMPT entries now ` +
+          `have complete plural forms — remove them:\n${stale.map((k) => `  - "${k}"`).join('\n')}`,
       )
     }
+  })
+})
+
+/**
+ * #3882 — direct catalog-literal checks for the three plural-form fixes
+ * whose call sites can't be pinned by a component render test the way the
+ * others in this PR are:
+ *
+ *  - `blockTree.deletedMessageUndo` / `blockTree.repeatLimitedMessage` are
+ *    consumed through `ctx.t`/`notify.success` inside
+ *    use-block-multi-select.ts / useSlashCommandProperty.ts, whose existing
+ *    test suites stub `ctx.t` to `(key) => key` (deliberately decoupled from
+ *    catalog text — see makeSyntheticCtx / use-block-multi-select.test.ts),
+ *    so no render of those call sites goes through the real translator.
+ *  - `pageBrowser.loadedMorePages` is a live-region announcement gated on an
+ *    infinite-scroll length delta inside a component (PageBrowser.tsx) whose
+ *    existing test suites are heavily mocked around IPC paging, not around
+ *    driving `pages.length` by a controlled delta of exactly 1.
+ *
+ * These assert the real i18next output against a hardcoded literal (not
+ * re-derived via the same t() call), so a catalog regression reddens them
+ * the same way the render tests do — just without the DOM in between.
+ */
+describe('i18n catalog — plural forms, direct literal checks (#3882)', () => {
+  it('blockTree.deletedMessageUndo', () => {
+    expect(i18n.t('blockTree.deletedMessageUndo', { count: 1 })).toBe(
+      'Deleted 1 block — Ctrl+Z to undo',
+    )
+    expect(i18n.t('blockTree.deletedMessageUndo', { count: 3 })).toBe(
+      'Deleted 3 blocks — Ctrl+Z to undo',
+    )
+  })
+
+  it('blockTree.repeatLimitedMessage', () => {
+    expect(i18n.t('blockTree.repeatLimitedMessage', { count: 1 })).toBe(
+      'Repeat limited to 1 occurrence',
+    )
+    expect(i18n.t('blockTree.repeatLimitedMessage', { count: 5 })).toBe(
+      'Repeat limited to 5 occurrences',
+    )
+  })
+
+  it('pageBrowser.loadedMorePages', () => {
+    expect(i18n.t('pageBrowser.loadedMorePages', { count: 1 })).toBe('Loaded 1 more page')
+    expect(i18n.t('pageBrowser.loadedMorePages', { count: 4 })).toBe('Loaded 4 more pages')
   })
 })
 

@@ -47,8 +47,10 @@ export const pages: Record<string, string> = {
   'journal.rescheduled': 'Task rescheduled to {{date}}',
   'journal.rescheduleFailed': 'Failed to reschedule task',
   'journal.goToDailyView': 'Go to daily view for {{date}}',
-  'journal.agendaCountBadge': '{{count}} {{label}} items, click to view',
-  'journal.backlinkCountBadge': '{{count}} references, click to view',
+  'journal.agendaCountBadge_one': '{{count}} {{label}} item, click to view',
+  'journal.agendaCountBadge_other': '{{count}} {{label}} items, click to view',
+  'journal.backlinkCountBadge_one': '{{count}} reference, click to view',
+  'journal.backlinkCountBadge_other': '{{count}} references, click to view',
   'journal.openInEditorLabel': 'Open {{date}} in editor',
   // Screen-reader density suffix appended to a monthly day cell's aria-label
   // when the day has agenda items and/or backlinks (#1730). The decorative
@@ -366,7 +368,8 @@ export const pages: Record<string, string> = {
   'templates.removeConfirmTitle': 'Remove template status',
   'templates.removeConfirmDesc':
     'Remove template status from "{{name}}"? Pages already created from this template will not be affected.',
-  'pageBrowser.loadedMorePages': 'Loaded {{count}} more pages',
+  'pageBrowser.loadedMorePages_one': 'Loaded {{count}} more page',
+  'pageBrowser.loadedMorePages_other': 'Loaded {{count}} more pages',
   'metadata.label': 'Info',
   'metadata.toggleLabel': 'Toggle page metadata',
   'metadata.wordCount_one': '{{count}} word',
