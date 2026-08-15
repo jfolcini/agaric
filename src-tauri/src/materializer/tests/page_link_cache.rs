@@ -498,36 +498,43 @@ async fn page_link_rollup_recount_keeps_supported_old_key_3842() {
     mat.shutdown();
 }
 
-/// #3842 — the `P1 → P2` sufficiency assumption, made EXECUTABLE.
+/// #3909 — the `P1 → P2` write DEGRADES; it does not panic the worker.
 ///
 /// The stale-key sweep in `reindex_page_link_cache_for_block` recomputes
-/// `{parent_id, own id}`. That is sufficient for `SetBlockPageId` ONLY because
-/// the key the block vacates is always NULL-derived: the sole production
-/// enqueue site (`dispatch.rs`'s create arm) fires on a block whose `page_id`
-/// is still NULL, and `set_block_page_id_from_parent_in_tx` writes the PARENT's
-/// `page_id`. A move between two REAL pages would strand rows under the old
-/// page, which the sweep never visits — silently reintroducing #3842.
+/// `{parent_id, own id}`. That is sufficient for `SetBlockPageId` only while
+/// the key the block vacates is NULL-derived, because
+/// `set_block_page_id_from_parent_in_tx` writes the PARENT's `page_id`. A move
+/// between two REAL pages strands rows under the old page, which the sweep
+/// never visits — silently reintroducing #3842. The handler's answer is a
+/// durable full `RebuildPageLinkCache` obligation, seeded in the SAME
+/// transaction as the `page_id` write.
 ///
-/// Nothing in the type system pins that, so the handler pins it with a
-/// `debug_assert!` (and, in release, degrades to a durable full
-/// `RebuildPageLinkCache` obligation). This test is that guard's teeth: it
-/// manufactures the `P1 → P2` write the assumption forbids and requires the
-/// guard to fire. If a future change adds a second `SetBlockPageId` enqueue
-/// site that can move `page_id` between pages, the guard — not a silently
-/// wrong `page_link_cache` — is what surfaces it.
+/// #3894 additionally asserted the shape away with a `debug_assert!`, on the
+/// premise that `dispatch.rs`'s create arm is the sole production enqueue site,
+/// so `Some(P1) → Some(P2)` could only come from a future second one. There is
+/// already a second one: the retry sweeper's `RetryKind::SetBlockPageId`
+/// rehydration (pinned by
+/// `sweep_once_reenqueues_set_block_page_id_second_site_3909`), which re-runs
+/// the task after ≥ 1 minute of backoff — long enough for the parent to have
+/// moved to another page, at which point the retry copies the parent's NEW
+/// value over the child's OLD one. That makes the transition a DATA
+/// disagreement between parent and child rather than a programming error, and
+/// asserting on it bought nothing except a panicking background worker with a
+/// write transaction open, in precisely the dev/test builds where such a
+/// disagreement is easiest to manufacture. #3909 downgraded it to an
+/// unconditional `tracing::error!` with the same payload.
+///
+/// So this test now requires what the panic used to hide: the handler RETURNS,
+/// `blocks.page_id` is repaired to the parent's page, and the durable full
+/// `RebuildPageLinkCache` obligation — the thing that actually saves the
+/// stranded rows — is owed. It is no longer gated on `debug_assertions`,
+/// because the behaviour it pins is now the same in both profiles.
 ///
 /// Paired with `set_block_page_id_demotion_to_null_is_refused_3908`, which pins
-/// the OTHER side of the narrowed condition: this test requires the panic on
-/// `Some(P1) → Some(P2)`, that one requires its ABSENCE on `Some(P) → NULL`
-/// (which, since #3908, never reaches the assert at all because the write
-/// itself refuses to demote). Together they say the assert fires on exactly the
-/// unreachable transition and not on the reachable one.
-///
-/// Debug-only: `debug_assert!` compiles out under `--release`.
-#[cfg(debug_assertions)]
+/// the other transition off a real page: `Some(P) → NULL` is refused at the
+/// write itself, so it vacates nothing and owes nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[should_panic(expected = "moved blocks.page_id between two existing pages")]
-async fn set_block_page_id_page_to_page_move_trips_the_stale_key_guard_3842() {
+async fn set_block_page_id_page_to_page_move_degrades_instead_of_panicking_3909() {
     let (pool, _dir) = test_pool().await;
 
     let page_1 = "P1000000000000000000000000";
@@ -578,7 +585,42 @@ async fn set_block_page_id_page_to_page_move_trips_the_stale_key_guard_3842() {
         None,
     )
     .await
+    .expect(
+        "a Some(P1) → Some(P2) stamp must not panic or error the background \
+         worker: the retry sweeper can re-run this task after the parent has \
+         moved to another page, so the shape is reachable data, not a \
+         programming error (#3909)",
+    );
+
+    let page_id: Option<String> = sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+        .bind(child_b)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        page_id.as_deref(),
+        Some(page_2),
+        "the write itself is correct and must land: the child now belongs to \
+         the parent's page. #3908 refuses only the NULL demotion, where the \
+         inherited value is `unknown`; here the parent names a real page"
+    );
+
+    let owed_full_rebuild: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM materializer_retry_queue WHERE block_id = ? AND task_kind = ?",
+    )
+    .bind(crate::materializer::retry_queue::GLOBAL_TASK_SENTINEL)
+    .bind("RebuildPageLinkCache")
+    .fetch_one(&pool)
+    .await
     .unwrap();
+    assert_eq!(
+        owed_full_rebuild, 1,
+        "vacating a REAL page key must owe a durable full RebuildPageLinkCache \
+         — the per-block sweep covers only {{parent_id, own id}}, so the rows \
+         keyed on P1 are otherwise stranded (#3842). This obligation is the \
+         whole reason the transition is survivable, and the debug_assert! that \
+         used to abort here made it unobservable in test builds (#3909)"
+    );
 }
 
 /// #3908 — the `Some(P) → NULL` DEMOTION is REFUSED, so `blocks.page_id` stays

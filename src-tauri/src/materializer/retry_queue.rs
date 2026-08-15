@@ -2144,6 +2144,91 @@ mod tests {
         mat.shutdown();
     }
 
+    /// #3909 — the retry sweeper is a SECOND `SetBlockPageId` enqueue site.
+    ///
+    /// `dispatch.rs`'s create arm is the only site that enqueues
+    /// `SetBlockPageId` from an op (pinned exhaustively by
+    /// `set_block_page_id_is_enqueued_only_by_the_create_arm_3920`), and the
+    /// #3908 demotion guard rests on that. But it is not the only site that
+    /// puts the task on the queue: a failed `SetBlockPageId` persists here and
+    /// the sweeper rehydrates it, so the SAME task runs again after a backoff
+    /// of at least a minute — against state that may have moved on. #3894's
+    /// `debug_assert!` justified itself with "the create arm is the sole
+    /// production enqueue site", which omitted this, and the omission mattered:
+    /// a parent that changes page inside the backoff window makes the retry
+    /// copy the parent's NEW `page_id` over the child's OLD one, the
+    /// `Some(P1) → Some(P2)` shape the assert called unreachable. See
+    /// `set_block_page_id_page_to_page_move_degrades_instead_of_panicking_3909`
+    /// for the handler side.
+    ///
+    /// Both halves of the round trip are pinned, because either one alone
+    /// would close the site: `from_task` deciding the task is not retryable
+    /// means no row is ever persisted, and `to_task` returning `None` means a
+    /// persisted row is dropped instead of re-enqueued. The end-to-end sweep
+    /// then shows a due row actually being re-enqueued.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_once_reenqueues_set_block_page_id_second_site_3909() {
+        use crate::materializer::Materializer;
+
+        // (a) A failed SetBlockPageId is PERSISTABLE — without this there is
+        //     no retry row and no second site.
+        let task = MaterializeTask::SetBlockPageId {
+            block_id: Arc::from("BLK_SBP1"),
+        };
+        let (kind, key) = RetryKind::from_task(&task)
+            .expect("SetBlockPageId must be persistable, or it can never be retried");
+        assert_eq!(kind, RetryKind::SetBlockPageId);
+        assert_eq!(
+            key, "BLK_SBP1",
+            "the per-block task must persist under its real block id, not the \
+             global sentinel"
+        );
+
+        // (b) …and REHYDRATABLE back into the same scoped task.
+        let rehydrated = kind
+            .to_task(key.clone())
+            .expect("a persisted SetBlockPageId row must reconstruct a task");
+        match rehydrated {
+            MaterializeTask::SetBlockPageId { block_id } => {
+                assert_eq!(
+                    block_id.as_ref(),
+                    "BLK_SBP1",
+                    "rehydration must target the same block"
+                );
+            }
+            other => panic!("expected SetBlockPageId, got {other:?}"),
+        }
+
+        // (c) End-to-end: a due row is re-enqueued by the sweeper — the second
+        //     enqueue site in action.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let past = crate::db::now_ms() - 5 * 60_000;
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, next_attempt_at) \
+             VALUES (?, ?, ?, ?)",
+            "BLK_SBP1",
+            "SetBlockPageId",
+            2_i64,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let seeded = pending_count(&pool).await.unwrap();
+        mat.metrics().seed_pending_retry_rows(seeded);
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "the sweeper must re-enqueue the due SetBlockPageId row: it is the \
+             SECOND enqueue site the #3894 assert's premise omitted (#3909)"
+        );
+
+        mat.shutdown();
+    }
+
     /// Issue #378 regression — the core bug. Drive the FULL
     /// sweep → run → fail → re-persist cycle against a deterministically
     /// failing task MORE than MAX_ATTEMPTS times and assert:

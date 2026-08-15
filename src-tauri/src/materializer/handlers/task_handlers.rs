@@ -626,35 +626,29 @@ async fn handle_background_task_inner(
             // #3842 P1 → P2 GUARD (executable, not prose).
             //
             // The per-block reindex's stale-key sweep covers `{parent_id, own
-            // id}`. That is sufficient ONLY because the key this block vacates
-            // is always NULL-derived: `set_block_page_id_from_parent_in_tx`
-            // writes the PARENT's `page_id`, and the sole production enqueue
-            // site (`dispatch.rs`'s create arm) fires on a block whose
-            // `page_id` is still NULL. A `page_id` move between two REAL pages
-            // (P1 → P2) would strand rows under P1, which the sweep never
-            // visits — reintroducing #3842 silently. Nothing in the type
-            // system pins that, so pin it here: loud in debug/test builds, and
-            // in release degrade to a durable full `RebuildPageLinkCache`
-            // obligation rather than silently stranding rows. Cross-page MOVES
-            // do not reach this arm (they fan out `FULL_CACHE_REBUILD_TASKS`,
-            // which already contains `RebuildPageLinkCache`); this covers a
-            // FUTURE second `SetBlockPageId` enqueue site that does not.
+            // id}`. That is sufficient ONLY while the key this block vacates is
+            // NULL-derived: `set_block_page_id_from_parent_in_tx` writes the
+            // PARENT's `page_id` onto a block whose own `page_id` was derived
+            // moments earlier by `resolve_owning_page`. A `page_id` move
+            // between two REAL pages (P1 → P2) would strand rows under P1,
+            // which the sweep never visits — reintroducing #3842 silently.
+            // Nothing in the type system pins that, so it is pinned here: loud,
+            // and degraded to a durable full `RebuildPageLinkCache` obligation
+            // rather than a silent strand. Cross-page MOVES do not reach this
+            // arm (they fan out `FULL_CACHE_REBUILD_TASKS`, which already
+            // contains `RebuildPageLinkCache`).
             //
-            // #3894 — the assert tests BOTH ends, not just `previous`. Two
+            // #3894 — the guard tests BOTH ends, not just `previous`. Two
             // different transitions vacate a real page key:
             //
-            //   * `Some(P1) → Some(P2)` — the page-to-page MOVE above. No
-            //     enqueue site can produce it today, so it is an invariant
-            //     VIOLATION and the assert is the right place to be loud.
-            //   * `Some(P) → NULL` — a DEMOTION, which #3894 found reachable
-            //     RIGHT NOW: `resolve_owning_page` stamps `page_id` by walking
-            //     the `parent_id` chain, whereas the write copies only
+            //   * `Some(P1) → Some(P2)` — a page-to-page MOVE.
+            //   * `Some(P) → NULL` — a DEMOTION, which #3894 found reachable:
+            //     `resolve_owning_page` stamps `page_id` by walking the
+            //     `parent_id` chain, whereas the write copies only
             //     `parent.page_id`, so a retried `SetBlockPageId` whose
             //     parent's own stamp is still pending — or whose parent was
             //     purged — inherited NULL off a block that already had a real
-            //     page. Asserting on `previous.is_some()` alone therefore
-            //     panicked the background worker on a shape production reaches
-            //     by design.
+            //     page.
             //
             // #3908 CLOSED the demotion at the source instead of repairing it
             // downstream. `set_block_page_id_from_parent_in_tx` now REFUSES to
@@ -670,23 +664,53 @@ async fn handle_background_task_inner(
             // every other `page_id` consumer, none of which the seeded
             // `RebuildPageLinkCache` touches.
             //
-            // Consequence for the two locals below: a refused demotion reports
-            // `changed: false`, so `vacated_page` and `moved_between_pages` now
-            // coincide — the ONLY surviving way to vacate a real page key on
-            // this path is the `P1 → P2` move. They are kept distinct anyway,
-            // because the DEGRADATION is keyed on "a real key was vacated"
-            // (true of any future transition off a page) while the assert is
-            // keyed on the narrower shape that is provably unreachable today.
+            // Consequence for the guard below: a refused demotion reports
+            // `changed: false`, so inside `if vacated_page` the `P1 → P2` shape
+            // is not a narrower case — it is the ONLY surviving way to vacate a
+            // real page key on this path. An earlier draft carried a
+            // `moved_between_pages` log field for it; that field was provably
+            // the constant `true` at its only use site, so it distinguished
+            // nothing and every reader filtering on it would have matched every
+            // vacate event. `previous_page_id` and `current_page_id` already
+            // carry the shape, so the field is gone rather than pinned.
+            //
+            // # #3909 — why this is a LOG and not a `debug_assert!`
+            //
+            // #3894 asserted `!moved_between_pages`, justified by the claim
+            // that `dispatch.rs`'s create arm is the SOLE production enqueue
+            // site, so `Some(P1) → Some(P2)` could only come from a future
+            // second one. There has always been a second one: the retry
+            // sweeper, via `RetryKind::SetBlockPageId.to_task()`
+            // (`retry_queue.rs`). The premise is "the create arm PLUS the retry
+            // sweeper's rehydration", and that changes the conclusion, because
+            // the sweeper re-runs the task against state that has moved on:
+            //
+            //   1. a `SetBlockPageId` fails and seeds a retry row;
+            //   2. the backoff is ≥ 1 minute;
+            //   3. in that window the block's parent moves to another page;
+            //   4. the retry fires and copies the parent's NEW `page_id` over
+            //      the child's OLD one → `Some(P1) → Some(P2)`.
+            //
+            // #3919 closed the one such window we could actually demonstrate
+            // (a move's in-tx `rederive_page_and_space_ids` skipped SOFT-
+            // DELETED descendants, so a tombstoned child kept the pre-move page
+            // while its parent moved on). But "we closed the window we found"
+            // is not "no window exists": the shape is a DATA disagreement
+            // between a parent and its child, not a programming error, and an
+            // assert is the wrong instrument for one. Its cost is a panicking
+            // background worker with a write transaction open — in exactly the
+            // dev and test builds where a transient disagreement is most likely
+            // to be manufactured — while the release build already degrades
+            // correctly through the seeded full `RebuildPageLinkCache` below.
+            // So: log it at ERROR with the same payload (that was the assert's
+            // only job — make a developer notice) and let the durable
+            // obligation do the repair. The enqueue-site set the #3908 guard
+            // depends on is pinned executably instead, by
+            // `set_block_page_id_is_enqueued_only_by_the_create_arm_3920` in
+            // `dispatch.rs` — a test that fails the moment a move- or
+            // delete-path enqueue is added, which is the change that would
+            // genuinely invalidate the reasoning here.
             let vacated_page = write.changed && write.previous.is_some();
-            let moved_between_pages = vacated_page && write.current.is_some();
-            debug_assert!(
-                !moved_between_pages,
-                "SetBlockPageId moved blocks.page_id between two existing pages ({:?} → {:?}) \
-                 — the page_link_cache stale-key sweep only covers {{parent_id, own id}}, so \
-                 the rows keyed on the OLD page are stranded (#3842). A new enqueue site must \
-                 either widen the sweep or fan out RebuildPageLinkCache.",
-                write.previous, write.current
-            );
             let mut seeded_repair = false;
             let mut seeded_full_rebuild = false;
             if write.changed {
@@ -709,11 +733,16 @@ async fn handle_background_task_inner(
                         block_id = %block_id,
                         previous_page_id = ?write.previous,
                         current_page_id = ?write.current,
-                        "#3842: SetBlockPageId moved page_id OFF a real page onto another \
-                         page; the per-block stale-key sweep cannot reach the vacated key — a \
-                         full RebuildPageLinkCache obligation was seeded instead. (The \
-                         Some(P) → NULL demotion that used to reach this branch is refused at \
-                         the write itself since #3908.)"
+                        "#3842/#3909: SetBlockPageId moved page_id OFF a real page; the \
+                         per-block stale-key sweep only covers {{parent_id, own id}} and \
+                         cannot reach the vacated key, so a full RebuildPageLinkCache \
+                         obligation was seeded instead. Since #3908 refuses the \
+                         Some(P) → NULL demotion at the write itself, the shape reaching \
+                         this branch is Some(P1) → Some(P2), reachable via the retry \
+                         sweeper's re-enqueue after the parent has moved on (#3909) — it \
+                         is logged, not asserted, because panicking a background worker \
+                         mid-write-tx is a worse answer than the durable rebuild this \
+                         already owes."
                     );
                 }
             }

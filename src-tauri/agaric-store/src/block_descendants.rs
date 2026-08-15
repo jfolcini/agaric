@@ -705,21 +705,63 @@ pub async fn restore_deleted_ancestor_chain(
 ///      root's own `id` for a page.
 ///   2. UPDATE the root's `page_id` (skipped for pages — a page is always
 ///      its own `page_id`).
-///   3. Cascade `page_id` to every non-page active descendant that belongs to
-///      the root's OWN page — the recursion STOPS at a nested-page boundary,
-///      so a content block under a nested page keeps that nested page's
+///   3. Cascade `page_id` to every non-page descendant that belongs to the
+///      root's OWN page — the recursion STOPS at a nested-page boundary, so
+///      a content block under a nested page keeps that nested page's
 ///      `page_id` instead of being flattened onto the moved root's page
 ///      (#2906).
-///   4. Cascade `space_id` to the root + those same non-page active
-///      descendants, deriving it from each row's owning page's `space_id`.
+///   4. Cascade `space_id` to the root + those same non-page descendants,
+///      deriving it from each row's owning page's `space_id`.
 ///
-/// The recursive CTEs filter `deleted_at IS NULL` in both members (a
-/// conflict copy inherits `parent_id` from the original and would otherwise
-/// be reparented under the subtree), bound `depth < 100` (invariant #9), and
-/// carry each row's `block_type` so the walk can stop at nested pages —
-/// mirroring the canonical `DESIRED_PAGE_ID_SQL` / `rebuild_space_ids` in
-/// `cache::page_id`, so the in-tx rederive reaches the SAME state a full
-/// `RebuildPageIds` + `rebuild_space_ids` would.
+/// The recursive CTEs bound `depth < 100` (invariant #9) and carry each row's
+/// `block_type` so the walk can stop at nested pages — mirroring the canonical
+/// `DESIRED_PAGE_ID_SQL` / `rebuild_space_ids` in `cache::page_id`, so the
+/// in-tx rederive reaches the SAME state a full `RebuildPageIds` +
+/// `rebuild_space_ids` would.
+///
+/// # #3919 — the walk covers SOFT-DELETED descendants too
+///
+/// Both CTE members used to filter `deleted_at IS NULL`, justified by the fact
+/// that a conflict copy inherits `parent_id` from the original and would
+/// otherwise be dragged along by the subtree walk. That reasoned about
+/// VISIBILITY where the question is OWNERSHIP, and the two differ for exactly
+/// the soft-deleted rows: a tombstoned block still sits at a definite place in
+/// the tree, and both authorities this function claims to mirror say so —
+/// neither `DESIRED_PAGE_ID_SQL` nor `rebuild_space_ids` carries a `deleted_at`
+/// filter, so each derives a soft-deleted row's owning page from its ancestry
+/// exactly as it does a live one's. A conflict copy is thereby routed to its
+/// own parent's page, which is precisely the answer the vault-wide rebuild
+/// gives it.
+///
+/// So the filter did not narrow the walk to a different-but-correct state; it
+/// made this function DISAGREE with the rebuild it is documented to match. A
+/// soft-deleted descendant of a moved root kept its pre-move `page_id`, and
+/// `MoveBlock` dropped `RebuildPageIds` from its invalidation set in #2200
+/// precisely because this walk was believed equivalent — so nothing repaired
+/// the row until an unrelated delete / restore / purge fanned the vault-wide
+/// rebuild out. Be exact about what that costs, because the two derived caches
+/// usually named here do NOT see it: `recompute_all_pages_cache_counts` filters
+/// `src.deleted_at IS NULL` / `descendant.deleted_at IS NULL`, and the
+/// `page_link_cache` roll-up filters `sb.deleted_at IS NULL`, so a tombstoned
+/// row's stale `page_id` contributes to neither while it stays tombstoned. What
+/// it IS wrong for is (a) the space-scoped trash list, which reads a
+/// soft-deleted row's derived `space_id` live (`pagination::trash::list_trash`
+/// filters `b.space_id = ?5` over `deleted_at IS NOT NULL` rows), so the
+/// tombstone sat in the OLD space's trash while its parent had moved to the
+/// new one; and (b) every `page_id` / `space_id` consumer the moment the block
+/// is RESTORED — alive again, naming a page it no longer belongs to.
+/// `restore_all_deleted` carries a hand-rolled whole-table `page_id` backfill
+/// whose comment named exactly this bug (see `commands/blocks/crud.rs`). That
+/// backfill is NOT made dead by this change and is deliberately left alone: it
+/// is a fixpoint over the whole table, so it also covers drift this walk
+/// cannot reach (subtrees below its `depth < 100` cap, replayed remote ops,
+/// half-written state after a crash). What changes is that it is no longer
+/// load-bearing for the move.
+///
+/// It also fed #3909: a retried `SetBlockPageId` on such a descendant copies
+/// the parent's NEW page over the child's stale OLD one, producing the
+/// `Some(P1) → Some(P2)` transition the task handler's guard was written to
+/// treat as unreachable.
 ///
 /// Operates on a borrowed `&mut SqliteConnection` (obtained by callers via
 /// `&mut **tx` from their existing `CommandTx` / `Transaction`). Opens no
@@ -775,10 +817,10 @@ pub async fn rederive_page_and_space_ids(
     //    set via a `json_each` anchor (the same multi-id anchor the `crud.rs`
     //    bulk cascades use). The captured set is invariant across the two
     //    UPDATEs: the `page_id` cascade in step 3 mutates neither `parent_id`,
-    //    `deleted_at`, `block_type`, nor depth — the columns the walk's anchor /
-    //    recursive filters read — so re-walking after step 3 would yield an
-    //    identical set. The single walk is therefore byte-identical in *output*
-    //    to the old two walks; it just walks once instead of twice.
+    //    `block_type`, nor depth — the columns the walk's anchor / recursive
+    //    filters read — so re-walking after step 3 would yield an identical
+    //    set. The single walk is therefore byte-identical in *output* to the
+    //    old two walks; it just walks once instead of twice.
     //
     //    The recursion carries each row's `block_type` and STOPS at a
     //    nested-page boundary (`d.block_type != 'page'`): a nested page is
@@ -794,14 +836,21 @@ pub async fn rederive_page_and_space_ids(
     // so the walk uses the runtime `query_scalar` form like the sibling
     // multi-seed walkers in this module.
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+    //
+    // #3919: NO `deleted_at` filter in either member. Ownership is structural,
+    // so a soft-deleted descendant has an owning page just like a live one —
+    // and both authorities this walk mirrors (`DESIRED_PAGE_ID_SQL`,
+    // `rebuild_space_ids`) derive it for tombstoned rows too. Filtering them
+    // out here left them stamped with the PRE-move page until an unrelated
+    // lifecycle event fanned out the vault-wide rebuild. See the doc comment.
     let descendant_ids: Vec<String> = sqlx::query_scalar::<_, String>(
         "WITH RECURSIVE descendants(id, depth, block_type) AS ( \
              SELECT b.id, 0, b.block_type FROM blocks b \
-             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+             WHERE b.parent_id = ?1 \
              UNION ALL \
              SELECT b.id, d.depth + 1, b.block_type FROM blocks b \
              JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL AND d.depth < 100 \
+             WHERE d.depth < 100 \
                AND d.block_type != 'page' \
          ) \
          SELECT id FROM descendants",
@@ -831,7 +880,8 @@ pub async fn rederive_page_and_space_ids(
     .await?;
 
     // 4. #533: keep space_id in step with the just-refreshed page_id for the
-    //    whole subtree (root + non-page active descendants), synchronously —
+    //    whole subtree (root + non-page descendants, #3919 included the
+    //    soft-deleted ones), synchronously —
     //    space-scoped lists are read right after commit. Non-page rows derive
     //    space_id from their owning page; pages keep their own (a page's
     //    space_id is authoritative, set by the `space` op, not re-derived here).
