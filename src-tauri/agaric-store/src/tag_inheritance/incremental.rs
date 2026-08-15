@@ -69,6 +69,49 @@ pub async fn propagate_tag_to_descendants(
 /// never healed. `remove_tag_incremental_matches_full_rebuild_2669` and
 /// `remove_tag_keeps_direct_holder_descendant_inheriting_3923` pin the
 /// convergence.
+///
+/// ## No backfill for pre-#3923 vaults — and why none is needed
+///
+/// This PR does not migrate existing rows. A vault that hit the bug before
+/// upgrading is still missing whatever `(descendant, tag, ancestor)` rows the
+/// old exclusions refused to (re-)insert, and nothing here retroactively
+/// scans `block_tag_inherited` for that shape.
+///
+/// It doesn't need to: every row this bug could drop belongs to a
+/// descendant that ALSO holds the tag DIRECTLY (all three removed
+/// exclusions were `NOT IN block_tags`-shaped — a descendant with no direct
+/// row of its own was never excluded). For such a descendant the missing
+/// row is provably silent: every "does this block have tag T, including
+/// inherited" read (`resolve_tag_leaves` & friends) is a `UNION` of
+/// `block_tags` with `block_tag_inherited`, and the inherited-chip UI
+/// (`useBlockTags.ts`) subtracts direct tags before rendering the
+/// "inherited" badge — so the missing row changes no query result and no
+/// pixel for as long as the descendant keeps the tag directly.
+///
+/// The state stops being latent only when that direct hold ends — and the
+/// two ways it can end both recompute the row instead of trusting the
+/// table: (a) `remove_tag(descendant, tag)` runs this very function with
+/// `block_id = descendant`, and the trailing `#3923 site 3 of 3` INSERT
+/// below re-derives the descendant's row from the LIVE ancestor chain,
+/// independent of whatever was (or wasn't) there before; (b) the descendant
+/// or its tag is deleted/purged/restored, which goes through the subtree
+/// maintenance or a full rebuild rather than reading the stale row. So the
+/// same event that would ever make a dropped row observable is also the
+/// event that fixes it — there is no window in which a user can see wrong
+/// data from this class of row.
+///
+/// Independently of that, a whole-vault `RebuildTagInheritanceCache` (fired
+/// by any `add_tag`, any `restore_block`, or a `delete_block` /
+/// `purge_block` of a non-`"content"`-hinted block — see
+/// `materializer::dispatch::lifecycle_rebuild_tasks`) heals every dropped
+/// row vault-wide as a side effect, and is common enough in an actively
+/// used vault (tagging anything, trashing/restoring anything, deleting a
+/// page) that convergence is typically incidental long before a
+/// descendant's own tag is ever re-touched. There is no bounded SLA on
+/// this — a vault that only ever removes tags, on a single device, with no
+/// restores and no non-content deletes, could carry a dropped row
+/// indefinitely — but per the above that row is inert, not a migration
+/// candidate.
 pub async fn remove_inherited_tag(
     conn: &mut SqliteConnection,
     block_id: &str,
@@ -143,9 +186,12 @@ pub async fn remove_inherited_tag(
         // that holds the tag DIRECTLY still gets its inherited row — `reseed`
         // only ever names a tagger STRICTLY above it (the `anc` walk starts at
         // the parent), so the provenance is the same one `rebuild_all` picks.
-        // The surviving `NOT IN block_tag_inherited` guard is unrelated: it
-        // keeps a row that step 1 did NOT delete (a nearer tagger's) from
-        // being second-guessed under the `(block_id, tag_id)` PK.
+        // The surviving `NOT IN block_tag_inherited` guard doesn't change the
+        // result: the `(block_id, tag_id)` PK already makes `INSERT OR IGNORE`
+        // skip any row step 1 didn't delete (a nearer tagger's), so this WHERE
+        // is redundant with that PK. Kept anyway so the "only rows missing an
+        // inherited entry get reseeded" intent is legible at the call site
+        // instead of relying on silently-ignored PK conflicts.
         "INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT r.block_id, ?2, r.inherited_from \
          FROM reseed r \
