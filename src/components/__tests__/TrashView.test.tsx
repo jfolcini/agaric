@@ -28,6 +28,7 @@ import { axe } from 'vitest-axe'
 import { emptyPage, makeBlock } from '@/__tests__/fixtures'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { TrashView } from '@/components/TrashView'
+import { MAX_TRASH_BATCH_IDS } from '@/lib/tauri/blocks'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -1578,15 +1579,25 @@ describe('TrashView', () => {
   })
 
   // #3835 — `purgeAllDeletedInSpace` chunks the purge into
-  // `MAX_TRASH_BATCH_IDS`-sized (1000) batches, each its OWN committed
+  // `MAX_TRASH_BATCH_IDS`-sized batches, each its OWN committed
   // transaction. A later chunk failing must surface what the earlier,
   // already-committed chunk(s) removed instead of the plain
   // `emptyTrashFailed` toast, which implies nothing happened at all.
   it('shows partial-progress toast (not the generic failure) when a later empty-trash chunk fails', async () => {
     const user = userEvent.setup()
-    // 1001 ids -> two purge_blocks_by_ids chunks: 1000 (succeeds), then 1
-    // (fails).
-    const trashItems = Array.from({ length: 1001 }, (_, i) =>
+    // MAX_TRASH_BATCH_IDS + 1 ids -> two purge_blocks_by_ids chunks:
+    // MAX_TRASH_BATCH_IDS (succeeds), then 1 (fails). #3885 — sized off the
+    // exported constant rather than a hardcoded 1001 so this stays exactly
+    // "one over the batch cap" if the cap ever changes.
+    //
+    // That self-describing-ness cuts the other way too: this test's render
+    // cost auto-scales with the cap. Raise MAX_TRASH_BATCH_IDS (currently
+    // 1000) to, say, 10000 and this silently becomes a 10001-item render
+    // that blows even the 60s budget below — nothing here would fail loudly
+    // until it did. The same is true of the two sibling fixtures at
+    // :1648/:1695. DI (dropping the fixture size below the cap entirely) is
+    // the tracked fix for the underlying cost — see #3885.
+    const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
       i === 0
         ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
         : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
@@ -1598,7 +1609,7 @@ describe('TrashView', () => {
       if (cmd === 'batch_resolve') return []
       if (cmd === 'purge_blocks_by_ids') {
         purgeCalls += 1
-        if (purgeCalls === 1) return { affected_count: 1000 }
+        if (purgeCalls === 1) return { affected_count: MAX_TRASH_BATCH_IDS }
         throw new Error('db error on second chunk')
       }
       return undefined
@@ -1612,13 +1623,18 @@ describe('TrashView', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
-        'Removed 1000 items before an error interrupted emptying trash',
+        `Removed ${MAX_TRASH_BATCH_IDS} items before an error interrupted emptying trash`,
       )
     })
     // NOT the generic "nothing happened" copy.
     expect(toast.error).not.toHaveBeenCalledWith('Failed to empty trash')
     expect(purgeCalls).toBe(2)
-  })
+    // 60s, not the 20s global. Deriving the fixture from MAX_TRASH_BATCH_IDS makes
+    // it self-describing but NOT smaller — the chunking loop closes over the
+    // module's own const, so no test can shrink N without DI (#3885). Still 1001
+    // rendered items, measured 7.4s-31.9s in isolation, and it tips over 20s under
+    // the pre-push gate's parallelism.
+  }, 60_000)
 
   // #3860 — `trash.emptyTrashPartial` had the same missing-plural defect as
   // `trash.allPurged`; pins the singular wording for a 1-item partial purge.
@@ -1628,7 +1644,8 @@ describe('TrashView', () => {
   // singular form.
   it('shows singular partial-progress toast when exactly 1 item was removed before the error', async () => {
     const user = userEvent.setup()
-    const trashItems = Array.from({ length: 1001 }, (_, i) =>
+    // Render cost auto-scales with MAX_TRASH_BATCH_IDS — see the note at :1600.
+    const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
       i === 0
         ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
         : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
@@ -1674,7 +1691,8 @@ describe('TrashView', () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
-    const trashItems = Array.from({ length: 1001 }, (_, i) =>
+    // Render cost auto-scales with MAX_TRASH_BATCH_IDS — see the note at :1600.
+    const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
       i === 0
         ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
         : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
@@ -1709,7 +1727,7 @@ describe('TrashView', () => {
     // Neither channel fell back to the "_other"-shaped plural wording.
     expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining('Removed 1 items'))
     expect(mockedAnnounce).not.toHaveBeenCalledWith(expect.stringContaining('1 items permanently'))
-    // 60s, not the 20s global: `MAX_TRASH_BATCH_IDS` is 1000 and module-private,
+    // 60s, not the 20s global: `MAX_TRASH_BATCH_IDS` is 1000 (exported, #3885),
     // so provoking a SECOND purge chunk requires a genuine 1001-block fixture —
     // the size is structural, not incidental. Measured 7.4s-31.9s in isolation,
     // and it tips over 20s under full-suite parallelism. See #3885.

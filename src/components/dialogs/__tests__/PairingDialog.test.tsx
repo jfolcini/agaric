@@ -613,13 +613,20 @@ describe('PairingDialog', () => {
   })
 
   it('shows loading state while the host is initializing', async () => {
-    // Make start_pairing hang
-    mockedInvoke.mockImplementation(() => new Promise(() => {})) // never resolves
+    // Make every invoke call hang until we release it below (rather than
+    // `new Promise(() => {})`, which never resolves at all — see #3810).
+    const pendingInvokes: Array<{ cmd: string; resolve: (value: unknown) => void }> = []
+    mockedInvoke.mockImplementation(
+      (cmd: string) =>
+        new Promise((resolve) => {
+          pendingInvokes.push({ cmd, resolve })
+        }),
+    )
 
     // #3463 (review): the host session now starts automatically on mount —
     // there is no button to click to reach this loading state, it's the
     // very first thing rendered.
-    render(<PairingDialog open onOpenChange={vi.fn()} />)
+    const { unmount } = render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
       const loadingEl = document.querySelector('.pairing-loading')
@@ -630,6 +637,80 @@ describe('PairingDialog', () => {
       expect(loadingEl?.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
       expect(loadingEl?.querySelector('[data-slot="spinner"]')).toBeFalsy()
     })
+
+    // #3810 — drain before the test ends, don't leave `start_pairing`
+    // hanging forever. `initHost` arms `backendArmedRef` before dispatching
+    // it (#3628), so RTL's global `afterEach(cleanup())` unmounting this
+    // still-open dialog queues a `cancel_pairing` BEHIND the still-pending
+    // `start_pairing` in the module-level mutation queue
+    // (`src/lib/pairing-mutations.ts`). That queued clear is bounded only by
+    // the mutation queue's REAL `PAIRING_MUTATION_TIMEOUT_MS` (15s) timer —
+    // a `new Promise(() => {})` that's never settled and never unmounted
+    // leaves that timer armed past this test's end. This file's own process
+    // exits well before 15s in an isolated run, so the queued
+    // `cancel_pairing` never actually dispatches — invisible. Under
+    // full-suite load, though, wall-clock execution stretches enough that
+    // the timer can fire while a LATER, unrelated test in this file is
+    // running, dispatching a phantom `cancel_pairing` invoke that inflates
+    // *that* test's count by exactly one. That is the mechanism behind
+    // #3810's "1 in isolation, 2 (or 3 under heavier load) under full-suite
+    // load" — settle, unmount, and drain here, like every other "hangs
+    // forever" test in this file already does.
+    //
+    // A single `forEach` pass over `pendingInvokes` only releases what was
+    // ALREADY pending at that instant. `unmount()` enqueues `cancel_pairing`
+    // behind the still-in-flight `start_pairing` mutation, and that invoke's
+    // resolver isn't pushed onto `pendingInvokes` until the mutation queue
+    // advances — a microtask AFTER a one-shot forEach has already run and
+    // returned. Left one-shot, that stray promise is the same leak shape
+    // this test exists to close, one hop further along: nothing ever
+    // resolves it, so it arms its own `PAIRING_MUTATION_TIMEOUT_MS` timer
+    // that never clears (review note on #3895). Draining in a loop — until
+    // a full microtask flush adds nothing new — releases whatever
+    // `unmount()` (or anything it triggers) enqueues, not just the
+    // snapshot taken before it ran. Resolving per command, rather than a
+    // blanket `undefined`, also keeps `executeLoadPeers`'s `onSuccess`
+    // (`peerList.map(...)`) from throwing into a swallowed `logger.warn`.
+    //
+    // This hand-rolls a drain that `unmountAndDrain` (below, near :2286)
+    // also provides. Not consolidated: that helper is a single
+    // `flushMicrotasks()` pass, scoped inside the `#3714/#3715` describe on
+    // the assumption that whatever `unmount()` enqueues settles on its own
+    // (those tests supply resolvers up front). This test needs the extra
+    // hop this loop exists for — see above — so a single-pass drain would
+    // silently under-drain it. If you touch either drain helper, check
+    // whether the other one's assumption still holds.
+    unmount()
+    const MAX_DRAIN_PASSES = 20
+    let drainPasses = 0
+    while (pendingInvokes.length > 0) {
+      drainPasses++
+      if (drainPasses > MAX_DRAIN_PASSES) {
+        throw new Error(
+          `still draining after ${MAX_DRAIN_PASSES} passes — ` +
+            `${pendingInvokes.length} invoke(s) still pending ` +
+            `(${pendingInvokes.map(({ cmd }) => cmd).join(', ')}); something is ` +
+            're-enqueuing faster than this loop can drain it',
+        )
+      }
+      pendingInvokes.splice(0).forEach(({ cmd, resolve }) => {
+        if (cmd === 'start_pairing') return resolve(mockPairingInfo)
+        if (cmd === 'list_peer_refs') return resolve([])
+        return resolve(undefined)
+      })
+      await flushMicrotasks()
+    }
+    // Draining `pendingInvokes` to empty is not itself the falsifiable
+    // claim: it would look identical if the queued `cancel_pairing` never
+    // got dispatched at all (e.g. the cleanup effect stopped calling it) or
+    // if it needed one more microtask hop than this loop happened to take —
+    // in both cases `pendingInvokes` would still end up empty of *other*
+    // things while silently missing the one command this test exists to
+    // prove was sent. Assert the actual invariant instead: the cleanup's
+    // `cancel_pairing` really was dispatched, and — because the loop above
+    // resolves it — settled, inside this test. (Same assertion the sibling
+    // fake-timer test uses at :2485.)
+    expect(countInvokes('cancel_pairing')).toBe(1)
   })
 
   it('has no a11y violations on the host path with pairing info', async () => {
@@ -2228,6 +2309,17 @@ describe('PairingDialog', () => {
      * never made it (it is the current `mockImplementation` that records it),
      * which is a real flake: it passed in isolation and failed in the full
      * suite. Draining it here keeps each test's counts its own.
+     *
+     * This is a single `flushMicrotasks()` pass, not a loop — it relies on
+     * every test in this describe supplying its resolvers up front, so
+     * whatever `unmount()` enqueues settles inside that one flush. The
+     * "shows loading state while the host is initializing" test above
+     * (~:615) hand-rolls a *looping* drain instead, because there nothing
+     * is resolved until after `unmount()`, so the mutation queue can need
+     * more than one hop to surface `cancel_pairing` on `pendingInvokes`. Not
+     * consolidated into one helper — if you change either drain, check
+     * whether the other site's assumption (single-flush vs. needs-a-loop)
+     * still holds.
      */
     async function unmountAndDrain(unmount: () => void) {
       unmount()
