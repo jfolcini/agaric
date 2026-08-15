@@ -1634,6 +1634,17 @@ function rowSentinelHits(token: string): string[] {
  * Atoms of a token that are still a raw 26-char id — heads AND attribute
  * values, since `relabel_head` is applied to both and an id-valued attribute
  * (`page_id`, `parent_id`, a `Ref` property) leaks the same way a head does.
+ *
+ * Deliberately WIDER than [`rowSentinelHits`], which went heads-only for the
+ * opposite reason (#3980 note 4). The asymmetry is not an oversight: the four
+ * sentinels are minted at head positions and nowhere else, so scanning values
+ * for them buys nothing, whereas a raw id genuinely does reach an attribute
+ * value and is stack-local there too. The cost is the same class of false
+ * positive the sentinel check just shed — a `value_text` that happens to be
+ * 26 Crockford characters is legal fixture content and is reported here. That
+ * is judged worth paying, because an unrelabelled id in an attribute makes the
+ * differential compare noise exactly as one in a head does; but the two cases
+ * have DIFFERENT fixes, so the failure message must distinguish them.
  */
 function rawIdHits(token: string): string[] {
   const { heads, values } = tokenAtoms(token)
@@ -2534,7 +2545,12 @@ describe('#3083 conformance-coverage ratchet', () => {
         `making the leak "visible rather than silently dropped" — visible to a reader, but ` +
         `until now nothing failed on it. A raw id is stack-local: the two runners mint ` +
         `different ones, so the differential can only ever compare them as unequal noise. ` +
-        `Add the id to the canonical label map (\`canonicalOrder\`), do not re-record the row.`,
+        `If the hit is a token HEAD or an id-valued attribute (\`page_id\`, \`parent_id\`, a ` +
+        `\`Ref\` property), add the id to the canonical label map (\`canonicalOrder\`). If it ` +
+        `is a CONTENT-valued attribute that merely looks like an id — a \`value_text\` of 26 ` +
+        `Crockford characters is legal fixture content — the label map is not the fix: this ` +
+        `check scans attribute values on purpose (see \`rawIdHits\`) and cannot tell the two ` +
+        `apart, so re-author the fixture's content instead. Either way, do not re-record the row.`,
     ).toEqual([])
   })
 

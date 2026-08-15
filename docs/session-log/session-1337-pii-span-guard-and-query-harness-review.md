@@ -150,3 +150,78 @@ tests on the diff as it arrived (76 with the four added here), not 80; adding
 `cargo nextest run 'test(conformance)'`, without `-E` — runs *zero* tests, because a bare
 argument is a substring filter and not a filterset. The vitest and `tsc -b` claims
 reproduced exactly.
+
+## Review round two: the one residual that pointed the wrong way
+
+PR #3980 came back APPROVED with seven notes. The guard's doc comment enumerates its own
+residual limits honestly and at length, and every single one of them OVER-flags: a receiver
+on the non-span exclusion list, a non-literal `.record` key, a macro whose name merely ends
+in `span!`. Under-flagging is the only direction that costs privacy, and the doc did not
+name a single case of it — because the author had not found one. Note 2 found it.
+
+`src[idx..].find('(')` hard-assumed a paren-delimited invocation. `info_span!{"n", page_title
+= t}` and `info_span!["n", search_query = t]` are both legal Rust, and against either one
+`find` walks straight past the invocation to some unrelated `(` further down the file, hands
+`balanced` an argument list belonging to something else, and the macro's real fields are
+never looked at. Both arms were confirmed unscanned before the fix: two probe macros
+carrying `page_title` and `search_query` — the exact field name this whole guard was written
+for, after `import_markdown_with_progress` shipped it — sat in `commands/bug_report.rs` and
+the guard passed. Not "would in principle"; it passed, twice, once per delimiter.
+
+The fix is an anchor rather than a wider search: the marker must be followed (modulo
+whitespace) by one of `(`, `[`, `{`, and the group that opens there is the only thing read.
+That also closes note 1, which is why the reviewer's suggested `!(` anchor was not taken —
+it would have fixed note 1 while re-cementing note 2.
+
+Note 1 needed correcting on its way in. The claim was that the scan matches its own
+`let marker = "span!";` and fabricates an offender pointing at itself; it cannot, because
+the scan skips `rel == file!()`. But the class is real one file over, and that is where it
+was reproduced: a bare `"span!"` string literal in `bug_report.rs`, followed by a paren call
+carrying `key = value`, produced
+
+    "src/commands/bug_report.rs: span! field `page_title`"
+
+for a macro that does not exist there. A guard that invents offenders in other people's
+files is a guard people learn to route around. The delimiter anchor rejects it, since a
+marker inside a string is followed by the closing quote and never by a delimiter.
+
+## Binding a table to its writers, one layer up
+
+Note 3: `SKELETON_SEQUENCES`'s own doc calls editing it "the review point", and nothing made
+an edit to a line-format writer *require* one. `stable_messages_pin_real_call_sites` has
+pinned exactly this shape of promise for `STABLE_MESSAGES` since #700, so the new guard is
+its sibling: scan `agaric-observability` for a `"end={end}` format literal, read the `<key>=`
+heads of its `\t`-separated segments, and assert set equality against the table. Both
+directions, because the property is symmetric — a writer with no entry was demonstrated by
+appending one field to `format_span`, and an entry with no writer by adding a fabricated
+`["end","gauge","value"]` row. The failure this prevents is fail-safe and therefore silent:
+adding a field to `format_span` does not leak anything, it collapses `dur_ms`, `status` and
+the entire attribute tail of every bundled trace line to `[REDACTED]`, and the bundle still
+ships looking fine.
+
+## A mirrored pair that was not mirrored
+
+Note 6 was the interesting one of the four judgement calls. `duplicate_step_names` skipped a
+step with an absent or non-string `name` via `filter_map`; the TS twin read `step.name`
+unconditionally, accumulated `undefined` into its `Set`, and reported
+
+    fixture has duplicate query step name(s) [null] — every `queries[].name` in a fixture
+    must be unique, or a failure cannot be attributed to the right step.
+
+— a duplicate of a name no step has, telling the author to de-duplicate something that is
+not there, while the Rust twin said nothing at all about the same input. Both sides parse
+their fixture into a shape they merely assert (`Value` here, `JSON.parse(...) as Fixture`
+there), so neither type is a check and the case is reachable in both. Made to agree by
+rejecting a nameless step by INDEX, up front, in both twins. The reproduction needed two
+nameless steps: one alone collides with nothing, which is why this survived — the
+degenerate-looking input was not degenerate enough.
+
+Note 4 keeps its asymmetry and says so: `rawIdHits` scans attribute values where
+`rowSentinelHits` went heads-only, because a raw id genuinely does reach an attribute value
+whereas the four sentinels are minted at heads and nowhere else. The price is a false
+positive on a `value_text` that happens to be 26 Crockford characters, and the message now
+names both fixes and says which is which, instead of sending every hit to the label map.
+Note 5 collapsed a ten-line rationale that existed twice. Note 7 needed no code, but the
+documentation now states what it is actually load-bearing for: nothing asserts `child_count`
+still has no production emitter, and nothing asserts `kind` still has one site — the entry a
+future `kind = user_input` would need already exists.

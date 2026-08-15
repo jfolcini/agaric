@@ -78,6 +78,15 @@ mod tests {
     /// second home. (`child_count` is emitted only by
     /// `agaric_observability`'s own in-crate leak-guard test, not by any
     /// production span; it is here because the scan covers test sources too.)
+    ///
+    /// Both of those carve-outs are held by this comment and NOTHING ELSE
+    /// (#3980 note 7). No test asserts that `child_count` still has no
+    /// production emitter, and none asserts that `kind` still has exactly one
+    /// site: the guard checks that a key is on this list, never how many
+    /// places spell it or what they put in it. So the entry that a future
+    /// `kind = user_input` would need already exists, and it would pass. That
+    /// is the cost of a name-keyed allowlist, and re-reading the sites is the
+    /// only control over it.
     const ALLOWED_SPAN_FIELDS: &[&str] = &[
         "block_id",
         "block_type",
@@ -160,26 +169,53 @@ mod tests {
         roots
     }
 
-    /// Return the substring of `src` inside the parentheses that open at
-    /// `open` (the index of the `(`), balancing nesting. `None` when the
-    /// parens are unbalanced (a truncated read).
+    /// Return the substring of `src` inside the delimiter group that opens at
+    /// `open`, balancing nesting of that same pair. `open` may index any of
+    /// the three macro-invocation delimiters — `(`, `[` or `{` — because
+    /// `m!(…)`, `m![…]` and `m!{…}` are all legal spellings of the same
+    /// invocation and a scan that assumes parens misses two thirds of them
+    /// (#3980 note 2). `None` when the group is unbalanced (a truncated read)
+    /// or `open` does not index an opening delimiter.
     fn balanced(src: &str, open: usize) -> Option<&str> {
         let bytes = src.as_bytes();
-        debug_assert_eq!(bytes[open], b'(');
+        let (opener, closer) = match bytes.get(open)? {
+            b'(' => (b'(', b')'),
+            b'[' => (b'[', b']'),
+            b'{' => (b'{', b'}'),
+            _ => return None,
+        };
         let mut depth = 0_usize;
         for (i, b) in bytes.iter().enumerate().skip(open) {
-            match b {
-                b'(' => depth += 1,
-                b')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return src.get(open + 1..i);
-                    }
+            if *b == opener {
+                depth += 1;
+            } else if *b == closer {
+                depth -= 1;
+                if depth == 0 {
+                    return src.get(open + 1..i);
                 }
-                _ => {}
             }
         }
         None
+    }
+
+    /// The index of the macro-invocation delimiter that immediately follows
+    /// `at` (skipping only whitespace, which `m! (…)` is allowed to contain),
+    /// or `None` when the next non-whitespace byte is not `(`, `[` or `{`.
+    ///
+    /// This is the `span!` scan's ANCHOR, and it does two jobs at once
+    /// (#3980 notes 1 and 2). It admits all three delimiter spellings, and —
+    /// because a bare marker inside a string literal is followed by the
+    /// closing quote, never by a delimiter — it rejects the guard's own
+    /// vocabulary. Anchoring on `!(` alone would have fixed note 1 while
+    /// re-introducing note 2; requiring "a delimiter, any of the three"
+    /// is the anchor that satisfies both.
+    fn delimiter_after(src: &str, at: usize) -> Option<usize> {
+        let bytes = src.as_bytes();
+        let mut i = at;
+        while matches!(bytes.get(i), Some(b) if b.is_ascii_whitespace()) {
+            i += 1;
+        }
+        matches!(bytes.get(i), Some(b'(' | b'[' | b'{')).then_some(i)
     }
 
     /// Split an argument list on TOP-LEVEL commas, preserving each entry
@@ -267,7 +303,8 @@ mod tests {
     /// This guard reads the source instead: every
     /// `#[instrument(… fields(…))]` key, every `…span!("name", …)` inline
     /// field — the generic `tracing::span!` and all five
-    /// `{info,debug,trace,warn,error}_span!` shorthands — and every
+    /// `{info,debug,trace,warn,error}_span!` shorthands, in all three legal
+    /// delimiter spellings `(…)` / `[…]` / `{…}` — and every
     /// `<receiver>.record("…", …)` key across the workspace must appear on
     /// [`ALLOWED_SPAN_FIELDS`]. A future attribute carrying user content
     /// fails here, at the site that adds it.
@@ -287,14 +324,24 @@ mod tests {
     /// recorder in `agaric_sync::transport::endpoint` also takes a leading
     /// string literal, so shape alone cannot tell the two apart.
     ///
-    /// Residual limits, stated exactly (it is a text scan, not a compile):
+    /// Residual limits, stated exactly (it is a text scan, not a compile).
+    /// Every one of these OVER-flags or is a review question; none of them
+    /// lets a field through unscanned, which is the only direction that
+    /// costs privacy:
     /// a `Span` recorded through a receiver whose trailing identifier is on
     /// [`NON_SPAN_RECORD_RECEIVERS`] is skipped; `.record_all(…)` and a
     /// non-literal first argument (`span.record(key_var, …)`) have no
-    /// literal key to check and are not seen; and a field whose key is
-    /// allowlisted but whose VALUE is later changed to carry user content is
-    /// a review question, not a mechanical one. What the guard does NOT
-    /// depend on any more is what the span binding is called.
+    /// literal key to check and are not seen; a string literal or block
+    /// comment that spells a full invocation — `"…span!(k = v)…"` — is read
+    /// as one and over-flags (a bare `span!` in a string no longer does, see
+    /// [`delimiter_after`]); and a field whose key is allowlisted but whose
+    /// VALUE is later changed to carry user content is a review question,
+    /// not a mechanical one. What the guard does NOT depend on any more is
+    /// what the span binding is called, or which of the three delimiters the
+    /// invocation is spelled with (#3980 note 2: `find('(')` from the marker
+    /// silently skipped past a `!{…}` or `![…]` invocation to an unrelated
+    /// paren group later in the file, so the real fields went UNSCANNED —
+    /// the one residual in this guard that pointed the wrong way).
     ///
     /// Scope note: this covers span ATTRIBUTES. Span EVENTS — the `tracing`
     /// events `tracing-opentelemetry` folds into the enclosing span, including
@@ -374,12 +421,24 @@ mod tests {
             // unscanned — the same blind spot one level down. Any other
             // macro whose name happens to end in `span!` is over-flagged,
             // which is the safe direction.
+            //
+            // The marker must be ANCHORED to a following delimiter
+            // ([`delimiter_after`]) rather than to the next `(` anywhere
+            // downstream. Unanchored, the scan fabricated an offender out of
+            // any source file that merely spells `span!` inside a string
+            // literal — the next `(` further down the file supplied an
+            // unrelated argument list, and the first `key = value` in it was
+            // reported as a span field of a macro that is not there (#3980
+            // note 1; reproduced against `commands/bug_report.rs`). Anchored
+            // on `(`/`[`/`{`, the invocation's OWN argument list is the only
+            // thing that can be read (#3980 note 2).
             {
                 let marker = "span!";
                 let mut from = 0_usize;
                 while let Some(rel_idx) = src[from..].find(marker) {
                     let idx = from + rel_idx;
-                    from = idx + marker.len();
+                    let after = idx + marker.len();
+                    from = after;
                     let line_start = src[..idx].rfind('\n').map_or(0, |n| n + 1);
                     if src[line_start..idx].trim_start().starts_with("//") {
                         continue;
@@ -388,8 +447,8 @@ mod tests {
                     let name_start = src[..idx]
                         .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
                         .map_or(0, |n| n + 1);
-                    let macro_name = &src[name_start..from];
-                    let Some(open) = src[idx..].find('(').map(|o| idx + o) else {
+                    let macro_name = &src[name_start..after];
+                    let Some(open) = delimiter_after(&src, after) else {
                         continue;
                     };
                     let Some(args) = balanced(&src, open) else {

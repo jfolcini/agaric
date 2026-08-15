@@ -375,6 +375,25 @@ describe('#3833 query step names are unique within a fixture', () => {
     )
   })
 
+  // #3980 note 6 — the two twins must AGREE on a step with no usable `name`.
+  // `QueryStep.name` is typed `string`, but the fixture is an unvalidated
+  // `JSON.parse(...) as Fixture`, so this is reachable. Unchecked, `undefined`
+  // flowed into the `Set` and this side reported a duplicate of `[null]` —
+  // a name no step has — while the Rust twin dropped the step in silence.
+  // TWO nameless steps, because that is the shape that fabricated the `[null]`
+  // (one alone collided with nothing); plus a non-string `name`, the other half
+  // of what the Rust `as_str()` rejects. The Rust twin runs the same three.
+  it('rejects a step with no string name, as the Rust twin does', () => {
+    const nameless = [
+      { command: 'list_page_links', args: {} },
+      { command: 'list_page_links', args: {} },
+      { name: 7, command: 'list_page_links' },
+    ] as unknown as QueryStep[]
+    expect(() => assertUniqueStepNames(nameless)).toThrow(
+      /query step\(s\) at index \[0,1,2\] with no string `name`/,
+    )
+  })
+
   // The CALL SITE, not just the body: a guard function that is tested in
   // isolation and never wired in is the half-covered pair this repo has
   // shipped before. `runQuerySteps` must reject before it replays anything.

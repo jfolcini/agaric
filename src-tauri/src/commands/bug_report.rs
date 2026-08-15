@@ -1632,6 +1632,98 @@ mod tests {
         );
     }
 
+    // -- SKELETON_SEQUENCES drift guard (#3980 note 3) -------------------
+
+    /// #3980 note 3 drift guard: every [`SKELETON_SEQUENCES`] entry must be
+    /// the ordered key list of a real OTel line-format writer, and every
+    /// writer must have an entry.
+    ///
+    /// The same failure mode `stable_messages_pin_real_call_sites` pins for
+    /// [`STABLE_MESSAGES`], one layer up: the table's doc calls editing it
+    /// "the review point", but until now nothing made an edit to a writer
+    /// REQUIRE one here. Add a field to `exporter::format_span` and the
+    /// positional walk in [`redact_kv_line`] stops matching that sequence at
+    /// the new key, so every field from there on — `dur_ms`, `status`, and
+    /// the whole attribute tail — loses the skeleton allowance and collapses
+    /// to `[REDACTED]` in every bundled trace line. That is fail-SAFE
+    /// (over-redaction, never leakage) and therefore silent: the bundle
+    /// still ships, just with no diagnostic value.
+    ///
+    /// The writers are found by scanning `agaric-observability`'s `src/` for
+    /// a format literal beginning `"end={end}` on a non-comment line, then
+    /// reading the `<key>=` heads of its `\t`-separated segments. Coarse on
+    /// purpose, in the repo's grep-based drift-guard style — it cannot prove
+    /// the literal is a `write!` format string. The one residual is a future
+    /// format that does NOT lead with `end=`; every OTel line format writes
+    /// the end timestamp first (it is the key the sink is ordered on), so a
+    /// writer that broke that convention would need an edit here anyway.
+    #[test]
+    fn skeleton_sequences_pin_real_line_format_writers() {
+        let obs_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("agaric-observability")
+            .join("src");
+
+        fn collect_rs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).expect("read_dir").flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_rs(&path, out);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                    out.push(path);
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        collect_rs(&obs_src, &mut files);
+        assert!(!files.is_empty(), "found no .rs files under {obs_src:?}");
+
+        // Every line format opens with the end timestamp; the doc-comment
+        // sketches of the same shapes spell it `end=<rfc3339-ms>` and start
+        // with `//`, so they are excluded twice over.
+        const OPENER: &str = "\"end={end}";
+
+        let mut found: Vec<Vec<String>> = Vec::new();
+        for path in &files {
+            let src = std::fs::read_to_string(path).expect("read source file");
+            for line in src.lines() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                let Some(open_at) = line.find(OPENER) else {
+                    continue;
+                };
+                let body = &line[open_at + 1..];
+                let Some(close_at) = body.find('"') else {
+                    continue;
+                };
+                let keys: Vec<String> = body[..close_at]
+                    .split("\\t")
+                    .filter_map(|seg| seg.split_once('=').map(|(k, _)| k.to_owned()))
+                    .collect();
+                found.push(keys);
+            }
+        }
+
+        let mut found_sorted = found.clone();
+        found_sorted.sort();
+        let mut expected: Vec<Vec<String>> = SKELETON_SEQUENCES
+            .iter()
+            .map(|seq| seq.iter().map(|k| (*k).to_owned()).collect())
+            .collect();
+        expected.sort();
+
+        assert_eq!(
+            found_sorted, expected,
+            "SKELETON_SEQUENCES has drifted from the OTel line-format writers \
+             in agaric-observability. Each entry must be the EXACT ordered key \
+             sequence one writer emits, and each writer must have an entry — \
+             an unlisted or mis-ordered sequence does not lose the bundle, it \
+             silently redacts the rest of every line of that shape down to \
+             [REDACTED]. Writers found: {found:#?}"
+        );
+    }
+
     // -- extract_recent_errors -------------------------------------------
 
     #[test]

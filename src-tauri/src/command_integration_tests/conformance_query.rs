@@ -1041,9 +1041,12 @@ fn relabel_token(token: &str, labels: &BTreeMap<String, String>) -> String {
 
 /// The `queries[].name` values appearing more than once, each reported ONCE
 /// however many times it repeats — parity with the TS twin's
-/// `assertUniqueStepNames`, which accumulates into a `Set`. (A step whose
-/// `name` is absent or non-string is skipped here; it panics with a clearer
-/// message at the point the step is actually run.)
+/// `assertUniqueStepNames`, which accumulates into a `Set`.
+///
+/// A step whose `name` is absent or non-string is skipped rather than
+/// counted. Its caller [`assert_unique_step_names`] rejects those steps
+/// FIRST, so by the time this runs there are none — see that function for why
+/// the rejection lives there and not here (#3980 note 6).
 fn duplicate_step_names(steps: &[Value]) -> Vec<&str> {
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut dupes: Vec<&str> = Vec::new();
@@ -1055,7 +1058,11 @@ fn duplicate_step_names(steps: &[Value]) -> Vec<&str> {
     dupes
 }
 
-/// #3833 item 7/12 — step names must be unique WITHIN a fixture.
+/// #3833 item 7/12 — every query step must carry a string `name`, and the
+/// names must be unique WITHIN a fixture.
+///
+/// THE canonical statement of this rule; the call site in
+/// [`run_query_steps`] points here rather than restating it.
 ///
 /// The coverage test's positional-alignment guard
 /// (`conformance-coverage.test.ts`) compares `recorded.name !== step.name` at
@@ -1066,8 +1073,29 @@ fn duplicate_step_names(steps: &[Value]) -> Vec<&str> {
 /// impossible to attribute to the right step.
 ///
 /// Checked once, up front, rather than per-step, so the fixture author sees
-/// every duplicate in one panic rather than only the first.
+/// every offender in one panic rather than only the first.
+///
+/// The name-PRESENCE half is checked here, ahead of the duplicate scan, so
+/// this stays an exact mirror of the TS `assertUniqueStepNames` (#3980 note
+/// 6). Before, the two twins disagreed on a nameless step: this side dropped
+/// it silently via `filter_map`, while TS read `step.name` unconditionally
+/// and reported a duplicate of `[null]`. Neither fixture format validates
+/// itself — both stacks parse the fixture JSON into a shape they merely
+/// ASSERT (`Value` here, an `as Fixture` cast there) — so an absent `name` is
+/// reachable in both, and a mirrored pair may not diverge on it.
 fn assert_unique_step_names(steps: &[Value]) {
+    let unnamed: Vec<usize> = steps
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| step.get("name").and_then(Value::as_str).is_none())
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        unnamed.is_empty(),
+        "fixture has query step(s) at index {unnamed:?} with no string `name` — every \
+         `queries[]` entry must carry one, or the step cannot be named in any diff."
+    );
+
     let dupes = duplicate_step_names(steps);
     assert!(
         dupes.is_empty(),
@@ -1088,16 +1116,11 @@ pub async fn run_query_steps(
         return Value::Null;
     };
 
-    // #3833 item 7/12 — step names must be unique WITHIN a fixture. The
-    // coverage test's positional-alignment guard (`conformance-coverage.
-    // test.ts`) compares `recorded.name !== step.name` at the SAME index, so
-    // two steps sharing a name still align correctly by position — this is
-    // not a correctness hole. It is a DIAGNOSTIC one: every message in this
-    // module (`misaligned`, `vacuous`, the branch-coverage errors) names the
-    // step by its `name`, and a duplicate makes a failure impossible to
-    // attribute to the right step. Checked once, up front, rather than
-    // per-step, so the fixture author sees every duplicate in one panic
-    // rather than only the first.
+    // #3833 item 7/12 — see [`assert_unique_step_names`] for why this is
+    // checked once up front and why a duplicate name is a diagnostic rather
+    // than a correctness problem. Stated there ONLY: the rationale used to be
+    // duplicated near-verbatim here, which is one copy too many to keep true
+    // (#3980 note 5).
     assert_unique_step_names(steps);
 
     let mut out: Vec<Value> = Vec::with_capacity(steps.len());
@@ -1602,6 +1625,24 @@ mod step_name_uniqueness_tests {
     #[should_panic(expected = "duplicate query step name(s) [\"dup\"]")]
     fn the_assertion_panics_on_a_duplicate() {
         assert_unique_step_names(&steps(&["dup", "other", "dup"]));
+    }
+
+    /// #3980 note 6 — the two twins must AGREE on a step with no usable
+    /// `name`, which is reachable in both (neither validates its fixture
+    /// parse). Unchecked, this side dropped the step via `filter_map` and
+    /// said nothing while the TS side reported a duplicate of `[null]`. TWO
+    /// nameless steps, because that is the shape that made TS fabricate one
+    /// (a single nameless step collided with nothing); plus a non-string
+    /// `name`, the other half of what `as_str()` rejects. The TS half of this
+    /// pair runs the same three, in `conformance.test.ts`.
+    #[test]
+    #[should_panic(expected = "query step(s) at index [0, 1, 2] with no string `name`")]
+    fn the_assertion_panics_on_a_step_with_no_name() {
+        assert_unique_step_names(&[
+            json!({ "command": "get_page" }),
+            json!({ "command": "get_page" }),
+            json!({ "name": 7, "command": "get_page" }),
+        ]);
     }
 
     /// The CALL SITE, not just the predicate: a guard function that is tested
