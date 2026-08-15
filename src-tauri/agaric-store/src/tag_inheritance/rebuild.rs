@@ -17,6 +17,27 @@ use agaric_core::error::AppError;
 ///
 /// Atomic DELETE + recompute in a single transaction. Called as a background
 /// materializer task (safety net / initial population).
+///
+/// # The definition of `block_tag_inherited`
+///
+/// This function is the canonical statement of what the table contains, and
+/// every incremental maintainer in [`super::incremental`] must converge on it
+/// (#3876). A row `(block_id, tag_id, inherited_from)` exists iff:
+///
+/// * some STRICT ancestor of `block_id` holds `tag_id` directly in
+///   `block_tags`, reached through a chain of live (`deleted_at IS NULL`)
+///   blocks, and
+/// * `inherited_from` is the NEAREST such ancestor (`tag_inh_rebuild_nearest!`
+///   collapses the walk by minimum depth, `MIN(inherited_from)` as tiebreak).
+///
+/// Notably the relation does NOT depend on whether `block_id` ALSO holds
+/// `tag_id` directly: a block that is tagged `#t` and sits under an ancestor
+/// tagged `#t` appears in BOTH `block_tags` and `block_tag_inherited`
+/// (#3876; migration 0021's backfill has always done this). Consumers wanting
+/// "inherited but not direct" subtract — `useBlockTags` does exactly that, and
+/// [`crate::tag_query::list_inherited_tags_for_block`] documents the overlap.
+/// No consumer counts the two tables additively: every read is a `UNION` or an
+/// `EXISTS`, so the overlap cannot double-count.
 pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
     // / issue #117: take the writer lock up-front via BEGIN IMMEDIATE
     // (same reason as `rebuild_all_split` below). `begin_immediate_logged`

@@ -55,13 +55,15 @@ const MAX_INHERITED_ANCESTOR_DISTANCE = 101
  * stale and there is no cache to invalidate.
  *
  * The relation implemented here is `rebuild_all`'s — the backend's own
- * ground-truth definition of what the cache should contain. Note the backend
- * is INTERNALLY inconsistent about one case and this follows `rebuild_all`:
- * for a block holding a tag both directly and by inheritance, `rebuild_all`
- * keeps the inherited row while `recompute_subtree_inheritance` (move/restore)
- * excludes it. Filed as #3876 — a fixture exercising "direct + inherited, then
- * move" would surface as an apparent MOCK divergence when the real
- * disagreement is between two backend paths.
+ * ground-truth definition of what the cache should contain. The backend used
+ * to be INTERNALLY inconsistent about one case, so this mock had to pick a
+ * side: for a block holding a tag both directly and by inheritance,
+ * `rebuild_all` kept the inherited row while the incremental maintainers
+ * excluded it. #3876 settled that on the KEEP semantics implemented here and
+ * converged `recompute_subtree_inheritance` (move/restore) onto it; #3923 did
+ * the same for `remove_inherited_tag` (RemoveTag). So a fixture exercising
+ * "direct + inherited, then move/remove" now agrees on both stacks, and a
+ * divergence there is a real bug rather than a known backend disagreement.
  *
  *   `(B, T)` is inherited iff some STRICT ancestor `A` of `B` holds `T`
  *   directly in `block_tags`, where `A`, `B` and every block between them is

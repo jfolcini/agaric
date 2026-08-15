@@ -122,12 +122,16 @@ pub(super) struct DebounceState {
     pub(super) needs_full: bool,
     /// #2934: LOCAL-lifecycle debounce only — whether the settled burst must
     /// include the whole-vault `RebuildTagInheritanceCache`. OR-accumulated
-    /// across the burst: `true` when ANY op is a `RestoreBlock` (whose scoped
-    /// `recompute_subtree_inheritance` provably diverges from the full rebuild
-    /// — a restored block that BOTH directly tags T AND inherits T from a live
-    /// ancestor above the cohort loses its inherited row; see
-    /// `restore_content_subtree_inheritance_diverges_needs_rebuild_2934`) or
-    /// when the burst `needs_full` (the full set already carries it). A pure
+    /// across the burst: `true` when ANY op is a `RestoreBlock` or when the
+    /// burst `needs_full` (the full set already carries it).
+    ///
+    /// The `RestoreBlock` arm was motivated by a proven divergence — a
+    /// restored block that BOTH directly tagged T AND inherited T from a live
+    /// ancestor above the cohort lost its inherited row. #3876 closed that
+    /// divergence (see
+    /// `restore_content_subtree_inheritance_matches_rebuild_3876`), so the
+    /// rebuild is now conservative belt-and-braces for restore rather than
+    /// load-bearing; dropping it is a separate change. A pure
     /// delete/purge content burst leaves this `false` and drops the rebuild
     /// (#2934 — delete/purge ARE equivalent). Reset to `false` on disarm. The
     /// inbound-sync debounce never touches this.

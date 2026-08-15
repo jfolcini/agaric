@@ -146,14 +146,16 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
 /// `{delete,purge}_content_subtree_inheritance_matches_full_rebuild_2934` in
 /// `command_integration_tests::conformance`.
 ///
-/// RESTORE is DELIBERATELY EXCLUDED from this narrowing — its scoped
-/// `tag_inheritance::recompute_subtree_inheritance` does NOT reproduce the full
-/// rebuild byte-for-byte (a restored block that both directly tags T and
-/// inherits T from a live ancestor above the cohort loses its inherited row via
-/// the step-3 self-tag exclusion), so a content restore uses the separate
-/// [`CONTENT_RESTORE_REBUILD_TASKS`] which RETAINS the rebuild. See that
-/// constant's doc and
-/// `restore_content_subtree_inheritance_diverges_needs_rebuild_2934`.
+/// RESTORE is DELIBERATELY EXCLUDED from this narrowing — historically its
+/// scoped `tag_inheritance::recompute_subtree_inheritance` did NOT reproduce
+/// the full rebuild byte-for-byte (a restored block that both directly tags T
+/// and inherits T from a live ancestor above the cohort lost its inherited row
+/// via the step-3 self-tag exclusion). #3876 removed that exclusion and the
+/// fixture now converges
+/// (`restore_content_subtree_inheritance_matches_rebuild_3876`), but a content
+/// restore still uses the separate [`CONTENT_RESTORE_REBUILD_TASKS`] which
+/// RETAINS the rebuild — narrowing restore too is a follow-up that must first
+/// audit the remaining divergence classes. See that constant's doc.
 ///
 /// Everything else in the full set is RETAINED, because a content block's
 /// lifecycle DOES affect it:
@@ -191,10 +193,11 @@ const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 7] = [
     // command tx already maintains `block_tag_inherited` incrementally, scoped
     // to the affected subtree, provably equal to the full rebuild
     // (`remove_subtree_inherited` / the purge cascade). RESTORE is NOT in this
-    // set: its scoped `recompute_subtree_inheritance` diverges from the full
-    // rebuild (step-3 exclusion drops the inherited row of a restored block that
-    // is itself a direct tagger), so a content restore uses
-    // [`CONTENT_RESTORE_REBUILD_TASKS`] which RETAINS the rebuild.
+    // set: its scoped `recompute_subtree_inheritance` used to diverge from the
+    // full rebuild (a step-3 exclusion dropped the inherited row of a restored
+    // block that is itself a direct tagger). #3876 removed that exclusion, but
+    // a content restore still uses [`CONTENT_RESTORE_REBUILD_TASKS`], which
+    // RETAINS the rebuild, until the narrowing is audited separately.
     MaterializeTask::RebuildPageIds,
     MaterializeTask::RebuildBlockTagRefsCache,
     MaterializeTask::RebuildPageLinkCache,
@@ -207,22 +210,27 @@ const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 7] = [
 /// Unlike delete/purge (whose scoped in-tx inheritance maintenance is
 /// byte-identical to the full rebuild — see [`CONTENT_LIFECYCLE_REBUILD_TASKS`]),
 /// a restore's scoped `tag_inheritance::recompute_subtree_inheritance` (rooted
-/// at the topmost live ancestor of the restored cohort) DIVERGES from
+/// at the topmost live ancestor of the restored cohort) USED TO DIVERGE from
 /// `rebuild_all`: its step 3
-/// (`agaric-store/src/tag_inheritance/incremental.rs`,
-/// `WHERE st.id NOT IN (SELECT block_id FROM block_tags WHERE tag_id = …)`)
-/// refuses to write an inherited row for a subtree block that DIRECTLY holds
-/// that tag, whereas `rebuild_all` / `propagate_tag_to_descendants` emit it. A
-/// restore recomputes at the top of the reconnected cohort, so a tag on a live
-/// ancestor ABOVE the cohort hits that exclusion for any restored block that is
-/// itself a direct tagger of the same tag — dropping its `(block, tag, ancestor)`
-/// row. This is the same class as the pinned
-/// `add_tag_nested_diverges_from_rebuild_provenance_only_2669`
-/// (`agaric-store` `tag_inheritance::tests`): when the scoped update is not
-/// byte-identical to the rebuild, the policy is to KEEP the full rebuild. So a
-/// content restore uses this set; the whole-vault rebuild heals the divergence.
-/// Proven by `restore_content_subtree_inheritance_diverges_needs_rebuild_2934`
-/// in `command_integration_tests::conformance`.
+/// (`agaric-store/src/tag_inheritance/incremental.rs`) carried a
+/// `WHERE st.id NOT IN (SELECT block_id FROM block_tags WHERE tag_id = …)`
+/// exclusion that refused to write an inherited row for a subtree block that
+/// DIRECTLY holds that tag, whereas `rebuild_all` /
+/// `propagate_tag_to_descendants` emit it. A restore recomputes at the top of
+/// the reconnected cohort, so a tag on a live ancestor ABOVE the cohort hit
+/// that exclusion for any restored block that is itself a direct tagger of the
+/// same tag — dropping its `(block, tag, ancestor)` row.
+///
+/// #3876 removed the exclusion and settled the table's definition on
+/// `rebuild_all`'s; that fixture now converges, pinned by
+/// `restore_content_subtree_inheritance_matches_rebuild_3876` in
+/// `command_integration_tests::conformance`. The rebuild is RETAINED here
+/// anyway: narrowing restore to [`CONTENT_LIFECYCLE_REBUILD_TASKS`] is a
+/// separate change that must first rule out the remaining divergence classes
+/// (notably the `inherited_from` provenance class pinned by
+/// `add_tag_nested_diverges_from_rebuild_provenance_only_2669` in `agaric-store`
+/// `tag_inheritance::tests`). The standing policy — keep the full rebuild
+/// unless the scoped update is proven byte-identical — is unchanged.
 ///
 /// Equals [`CONTENT_LIFECYCLE_REBUILD_TASKS`] with `RebuildTagInheritanceCache`
 /// re-inserted at its `FULL_CACHE_REBUILD_TASKS` position (pinned by
@@ -2341,11 +2349,13 @@ mod tests {
         assert_eq!(labels(&tasks), want);
         assert!(!contains_kind(&tasks, &MaterializeTask::RebuildPagesCache));
         assert!(contains_kind(&tasks, &MaterializeTask::RebuildTagsCache));
-        // #2934 regression sentinel: RESTORE MUST retain the vault-wide
-        // inheritance rebuild — its scoped `recompute_subtree_inheritance`
-        // diverges from the full rebuild for a restored direct-tagger (proven by
-        // `restore_content_subtree_inheritance_diverges_needs_rebuild_2934`).
-        // This is the exact difference from the delete/purge arms.
+        // #2934 regression sentinel: RESTORE retains the vault-wide inheritance
+        // rebuild. It was introduced because the scoped
+        // `recompute_subtree_inheritance` diverged from the full rebuild for a
+        // restored direct-tagger; #3876 closed that divergence (see
+        // `restore_content_subtree_inheritance_matches_rebuild_3876`) but the
+        // rebuild stays until the narrowing is audited separately. This is the
+        // exact difference from the delete/purge arms.
         assert!(
             contains_kind(&tasks, &MaterializeTask::RebuildTagInheritanceCache),
             "content restore MUST retain RebuildTagInheritanceCache (#2934); got {:?}",
