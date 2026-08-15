@@ -1,4 +1,4 @@
-# Session 1309 — page_link_cache correctness: invalidation ordering and the backfill gate (2026-08-15)
+# Session 1310 — page_link_cache correctness: invalidation ordering and the backfill gate (2026-08-15)
 
 | Metadata | Value |
 |----------|-------|
