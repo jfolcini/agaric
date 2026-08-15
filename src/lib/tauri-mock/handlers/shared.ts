@@ -845,15 +845,28 @@ export function compareMetaRows(x: PageMetaRow, y: PageMetaRow, sort: string): n
 /**
  * Map a sort mode to the cursor `position` discriminator the backend stamps
  * into the keyset cursor (mirrors `sort_discriminator` in
- * `src-tauri/src/commands/pages.rs`). The frontend ships the wire sort enum
- * (`default` / `recently-modified` / `most-linked` / `most-content`); the
- * frontend-only `alphabetical` value resolves to the same discriminator as
- * `default` because both ride the `default` wire keyset. The discriminator is
- * what `validate_pages_metadata_cursor` compares to reject a cursor reused
- * across a sort change (the `RequiresRefresh:` recovery path).
+ * `src-tauri/src/commands/pages/metadata.rs`). The discriminator is what
+ * `validate_pages_metadata_cursor` compares to reject a cursor reused across a
+ * sort change (the `RequiresRefresh:` recovery path).
+ *
+ * #3927 — `alphabetical` used to fall through to `default`'s `5`, on the
+ * stated grounds that it is "frontend-only" and "rides the `default` wire
+ * keyset". Both halves are wrong: `PageSort::Alphabetical` is a real wire
+ * variant (it is the `#[default]` one, so an OMITTED `sort` selects it), the
+ * backend gives it its own `SortKeyset::StringAsc` over
+ * `COALESCE(b.content,'') COLLATE NOCASE`, and `sort_discriminator` stamps it
+ * `1`. So the mock minted alphabetical cursors carrying the `default` tag, and
+ * accepted an alphabetical cursor replayed under `default` where the backend
+ * answers `RequiresRefresh`. Found while enumerating this command's five sort
+ * arms for the branch manifest; NOT caught by the conformance query steps,
+ * because a step can only record a SUCCESSFUL response and this divergence is
+ * visible only in the rejection.
  */
 export function sortDiscriminator(sort: string): number {
   switch (sort) {
+    case 'alphabetical': {
+      return 1
+    }
     case 'recently-modified': {
       return 2
     }
@@ -863,7 +876,9 @@ export function sortDiscriminator(sort: string): number {
     case 'most-content': {
       return 4
     }
-    // `alphabetical` and `default` both ride the default-wire keyset.
+    // `PageSort::Default`, and anything unrecognised: the backend's serde
+    // would reject an unknown value outright, so the fallthrough is only ever
+    // reached for `default` in practice.
     default: {
       return 5
     }

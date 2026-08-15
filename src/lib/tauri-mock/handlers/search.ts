@@ -23,7 +23,7 @@ import {
   rawOpLogLastEditedAt,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
-import { blocks, properties } from '@/lib/tauri-mock/seed'
+import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // #3837 — `run_advanced_query` sort + full-text narrowing.
@@ -854,6 +854,182 @@ export function compareEntryToCursor(
   return 0
 }
 
+// ---------------------------------------------------------------------------
+// #3927 — `search_blocks` structural filtering, arm dispatch and toggles
+// ---------------------------------------------------------------------------
+
+/** The `PageResponse<SearchBlockRow>` envelope every `search_blocks` arm
+ *  answers with — spelled out so the `TypedHandlers` contract checks each arm's
+ *  shape rather than widening to `Record<string, unknown>`. */
+interface SearchPageResponse {
+  items: unknown[]
+  next_cursor: string | null
+  has_more: boolean
+  total_count: number | null
+}
+
+/** `fts::MAX_SEARCH_RESULTS` — the FTS scan ceiling every `search_blocks` arm
+ *  clamps to (`search_blocks_inner` rejects a larger explicit `limit`). */
+const SEARCH_MAX_RESULTS = 100
+
+/** `toggle_filter::REGEX_PRE_FILTER_CAP` — the regex arm's SQL `LIMIT`, applied
+ *  to the recency-ordered candidate scan BEFORE the pattern runs, so a match
+ *  older than the newest 1000 structurally-filtered blocks is invisible. */
+const SEARCH_REGEX_PRE_FILTER_CAP = 1000
+
+/**
+ * Every `SearchFilter` field that makes `search_with_toggles`'s `has_filters`
+ * true — i.e. that turns a blank query from "the empty page" into "the
+ * filtered recency page". The first six are the disjuncts spelled out in
+ * `toggle_filter.rs`; the rest are the `SearchFilter` fields
+ * `prepare_metadata` folds into the `MetadataPredicates` whose `is_empty()` is
+ * the seventh disjunct.
+ *
+ * `scope` is deliberately absent: the backend always supplies a space, so it
+ * is not a USER filter and `has_filters` excludes it. So is every toggle —
+ * they select the MODE, not the candidate set.
+ */
+const SEARCH_STRUCTURAL_FILTER_FIELDS = [
+  'parentId',
+  'tagIds',
+  'includePageGlobs',
+  'excludePageGlobs',
+  'blockTypeFilter',
+  'stateFilter',
+  'priorityFilter',
+  'excludedStateFilter',
+  'excludedPriorityFilter',
+  'dueFilter',
+  'scheduledFilter',
+  'propertyFilters',
+  'excludedPropertyFilters',
+  'lastEdited',
+] as const
+
+/**
+ * Does this filter carry at least one structural predicate? Mirrors
+ * `search_with_toggles`'s `has_filters` disjunction, including its treatment
+ * of "present": a `Vec` field is absent when EMPTY (`!x.is_empty()`), not when
+ * null, so `tagIds: []` is no filter at all.
+ */
+function searchHasStructuralFilter(filter: Record<string, unknown>): boolean {
+  return SEARCH_STRUCTURAL_FILTER_FIELDS.some((field) => {
+    const v = filter[field]
+    if (v === undefined || v === null) return false
+    if (Array.isArray(v)) return v.length > 0
+    return true
+  })
+}
+
+/**
+ * The structurally-filtered, live block set every arm draws its candidates
+ * from — the mock's stand-in for `apply_structural_filters`'s WHERE clauses.
+ * See the `search_blocks` handler docstring for which clauses are modelled.
+ */
+function searchStructuralCandidates(filter: Record<string, unknown>): Record<string, unknown>[] {
+  const scope = filter['scope'] as { kind?: string; space_id?: string } | undefined
+  // An omitted `scope` deserialises to `SpaceScope::default()` = `Global`,
+  // which applies NO space filter — not a never-matching empty one.
+  const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+  const parentId = (filter['parentId'] as string | null | undefined) ?? null
+  const blockTypeFilter = (filter['blockTypeFilter'] as string | null | undefined) ?? null
+  const tagIds = (filter['tagIds'] as string[] | undefined) ?? []
+  return [...blocks.values()].filter((b) => {
+    if (b['deleted_at']) return false
+    if (!fbqInSpace(b, spaceId)) return false
+    if (parentId !== null && ((b['parent_id'] as string | null) ?? null) !== parentId) return false
+    if (blockTypeFilter !== null && b['block_type'] !== blockTypeFilter) return false
+    if (tagIds.length > 0) {
+      // ALL semantics, direct edges only (`block_tags`), matching the
+      // backend's tag clause.
+      const own = blockTags.get(b['id'] as string)
+      if (!own || !tagIds.every((t) => own.has(t))) return false
+    }
+    return true
+  })
+}
+
+/** `ORDER BY b.id DESC` — ULID prefixes are time-sortable, so this is the
+ *  backend's recency order on the two FTS-free arms. */
+function byIdDesc(x: Record<string, unknown>, y: Record<string, unknown>): number {
+  return (y['id'] as string).localeCompare(x['id'] as string)
+}
+
+/**
+ * `fts_fetch_filter_only_page`: the `b.id DESC` keyset with a `limit + 1`
+ * overflow probe and an id-keyed `next_cursor`. The cursor is the mock's own
+ * (`Cursor::for_id`'s wire shape is not reproduced byte-for-byte); each stack
+ * feeds the harness its own, which is why a `cursor_from` chain compares the
+ * ROWS a page holds rather than the cursor string.
+ */
+function searchIdDescPage(
+  candidates: Record<string, unknown>[],
+  cursor: string | null,
+  limit: number,
+): SearchPageResponse {
+  let rows = candidates.toSorted(byIdDesc)
+  if (cursor != null) {
+    let afterId: string | null = null
+    try {
+      afterId = (JSON.parse(base64UrlToUtf8(cursor)) as { id?: string }).id ?? null
+    } catch {
+      afterId = null
+    }
+    // `b.id < ?` — strictly after the previous page's last (oldest) row.
+    if (afterId != null) rows = rows.filter((b) => (b['id'] as string) < afterId)
+  }
+  const slice = rows.slice(0, limit + 1)
+  const hasMore = slice.length > limit
+  const items = hasMore ? slice.slice(0, limit) : slice
+  const last = items.at(-1)
+  return {
+    items,
+    next_cursor:
+      hasMore && last ? utf8ToBase64Url(JSON.stringify({ id: last['id'], version: 1 })) : null,
+    has_more: hasMore,
+    total_count: null,
+  }
+}
+
+/**
+ * Compose the pattern the way the backend does and compile it.
+ *
+ * `literal` picks the composition: `compose_literal_pattern` ESCAPES the query
+ * (so `a.b` stays literal on the toggle path), `regex_mode_query` takes it
+ * verbatim. Both then apply the same two wrappers — `(?i)` unless
+ * `caseSensitive`, and an ASCII word boundary either side when `wholeWord`.
+ *
+ * JS `\b` is already the ASCII-only boundary Rust spells `(?-u:\b)` as long as
+ * the regex is not compiled with the `u` flag, which is why none is passed.
+ */
+function buildSearchRegex(
+  query: string,
+  filter: Record<string, unknown>,
+  literal: boolean,
+): RegExp | null {
+  const body = literal ? query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : query
+  const source = filter['wholeWord'] === true ? `\\b(?:${body})\\b` : `(?:${body})`
+  const flags = filter['caseSensitive'] === true ? '' : 'i'
+  try {
+    return new RegExp(source, flags)
+  } catch {
+    // `build_regex` answers an invalid pattern with `AppError::Validation`
+    // (`InvalidRegex`); no conformance step drives that, and the handler's
+    // callers treat a throw here as a crash, so a null pattern matches
+    // nothing — the same visible result as a compile failure's empty page.
+    return null
+  }
+}
+
+/** Run a composed pattern against RAW `blocks.content` — the column both the
+ *  regex arm and `post_filter_row` match on (NOT `fts_blocks.stripped`). */
+function searchRegexMatches(re: RegExp | null, b: Record<string, unknown>): boolean {
+  if (re === null) return false
+  const content = b['content'] as string | null
+  if (content == null) return false
+  return re.test(content)
+}
+
 export const searchHandlers = {
   // #1280 — advanced-query engine. The mock cannot compile a `FilterExpr` tree
   // to SQL, so it INTERPRETS it in TypeScript instead. The GROUPED + AGGREGATE
@@ -1023,20 +1199,118 @@ export const searchHandlers = {
     }
   },
 
-  search_blocks: (args) => {
+  /**
+   * #3927 — the four reachable arms of `fts::search_with_toggles`
+   * (`agaric-store/src/fts/toggle_filter.rs`), in the backend's dispatch
+   * ORDER. Before this the handler was `if (!query) return empty` plus a
+   * folded-substring scan over every block: it ignored `filter` entirely, so
+   * three of the four arms were absent and the fourth was unscoped.
+   *
+   * The conformance ratchet reported `search_blocks` as covered throughout,
+   * because its single query step (`search_zebrafish`) left every toggle at
+   * its `serde(default) = false` and supplied no filter — it drove the one
+   * arm the mock happened to implement. The four steps in
+   * `query_search_blocks_modes.json` drive the rest, and each of the four
+   * divergences below was RED when they landed:
+   *
+   *   1. a blank query with a structural filter returned `[]` here and the
+   *      filtered recency page on the backend;
+   *   2. `isRegex` matched the pattern as a literal substring, so an anchored
+   *      or class-bearing pattern found nothing;
+   *   3. `caseSensitive` was ignored (the fold is unconditional);
+   *   4. `wholeWord` was ignored.
+   *
+   * ## What is modelled, and what is not
+   *
+   * The structural predicate mirrors `apply_structural_filters`'s clause set
+   * only as far as `parentId` / `tagIds` / `scope` / `blockTypeFilter`. The
+   * page-name GLOBS and the `MetadataPredicates` bundle (state / priority /
+   * due / scheduled / property / last-edited) are NOT applied — modelling
+   * them means reimplementing `prepare_metadata`, whose date arms resolve
+   * against `chrono::Local::now()`. They ARE counted by
+   * {@link searchHasStructuralFilter}, because that predicate selects which
+   * ARM runs and getting the arm wrong is the larger error. A query carrying
+   * only a glob or a metadata filter therefore reaches the right arm here and
+   * then over-returns; no conformance step drives one, which is exactly why
+   * the gap should be closed by a step rather than trusted.
+   *
+   * The FTS5 candidate set is approximated by {@link matchesSearchFolded}
+   * over the block's own `content` (the pre-existing approximation — the real
+   * index is a trigram scan over `fts_blocks.stripped`, which also carries
+   * resolved tag / page reference names). Its ORDER is insertion order, not
+   * bm25 rank, so the two toggle steps that ride it are unordered.
+   */
+  search_blocks: (args): SearchPageResponse => {
     const a = args as Record<string, unknown>
-    const query = (a['query'] as string) ?? ''
-    if (!query) return { items: [], next_cursor: null, has_more: false, total_count: null }
-    // Unicode-aware fold so the mock parity-matches the real
-    // backend's FTS5 / `COLLATE NOCASE` behaviour for Turkish / German
-    // / accented inputs.  Tests that assert Unicode matching against
-    // the mock now see consistent behaviour.
-    const items = [...blocks.values()].filter(
-      (b) =>
-        !(b['deleted_at'] as string | null) &&
-        matchesSearchFolded((b['content'] as string) ?? '', query),
+    const query = (a['query'] as string | null) ?? ''
+    const filter = (a['filter'] as Record<string, unknown> | undefined) ?? {}
+    const cursor = (a['cursor'] as string | null | undefined) ?? null
+    // `PageRequest::new(_, None)` → `DEFAULT_PAGE_SIZE`; `search_blocks_inner`
+    // then rejects anything above `MAX_SEARCH_RESULTS` and the scans clamp to
+    // it, so the effective ceiling is 100.
+    const limit = Math.min(Number((a['limit'] as number | null) ?? 50), SEARCH_MAX_RESULTS)
+
+    const candidates = searchStructuralCandidates(filter)
+    const empty = { items: [], next_cursor: null, has_more: false, total_count: null }
+
+    // Arm 1 + 2 — a blank query has nothing for FTS5 MATCH or the regex
+    // engine to act on, so the blank-ness test runs BEFORE the mode branch.
+    // With no structural filter the answer is the empty page (never the whole
+    // DB); with one it degrades to `fts_fetch_filter_only_page`, an
+    // FTS-free `FROM blocks b` scan ordered `b.id DESC`.
+    if (query.trim() === '') {
+      if (!searchHasStructuralFilter(filter)) return empty
+      return searchIdDescPage(candidates, cursor, limit)
+    }
+
+    // Arm 3 — regex mode BYPASSES FTS5: candidates come from the same
+    // structural scan (`ORDER BY b.id DESC`, capped), the pattern runs
+    // against RAW `blocks.content`, and the path never emits a cursor.
+    if (filter['isRegex'] === true) {
+      const re = buildSearchRegex(query, filter, false)
+      const items = candidates
+        .toSorted(byIdDesc)
+        .slice(0, SEARCH_REGEX_PRE_FILTER_CAP)
+        .filter((b) => searchRegexMatches(re, b))
+        .slice(0, limit)
+      return { items, next_cursor: null, has_more: false, total_count: null }
+    }
+
+    // Unicode-aware fold so the mock parity-matches the real backend's FTS5 /
+    // `COLLATE NOCASE` behaviour for Turkish / German / accented inputs.
+    const ftsCandidates = candidates.filter((b) =>
+      matchesSearchFolded((b['content'] as string) ?? '', query),
     )
-    return { items, next_cursor: null, has_more: false, total_count: null }
+
+    // Arm 4 — every toggle off: the FTS5 candidate set IS the answer.
+    if (filter['caseSensitive'] !== true && filter['wholeWord'] !== true) {
+      const slice = ftsCandidates.slice(0, limit + 1)
+      const hasMore = slice.length > limit
+      return {
+        items: hasMore ? slice.slice(0, limit) : slice,
+        // The mock's candidate order is insertion order, not bm25 rank, so it
+        // has no rank keyset to mint a resumable cursor from. `has_more` is
+        // still honest about the overflow.
+        next_cursor: null,
+        has_more: hasMore,
+        total_count: null,
+      }
+    }
+
+    // Arm 5 — `caseSensitive` and/or `wholeWord` (and NOT `isRegex`): narrow
+    // the case-insensitive FTS5 candidate set with the composed literal
+    // pattern (`compose_literal_pattern` escapes the query, so metacharacters
+    // stay literal here too).
+    const re = buildSearchRegex(query, filter, true)
+    const survivors = ftsCandidates.filter((b) => searchRegexMatches(re, b))
+    const slice = survivors.slice(0, limit + 1)
+    const hasMore = slice.length > limit
+    return {
+      items: hasMore ? slice.slice(0, limit) : slice,
+      next_cursor: null,
+      has_more: hasMore,
+      total_count: null,
+    }
   },
 
   search_blocks_partitioned: (args) => {

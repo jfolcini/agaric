@@ -501,6 +501,29 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
   'list_blocks::agenda-date':
     'agenda_cache rows require set_due_date/set_scheduled_date OPS before the ' +
     'query step, not just a seed — no query_*.json fixture does that yet (#3878)',
+
+  // #3927 — the two arms of the three commands added by that issue that a
+  // query step cannot express. Both blockers are in the HARNESS, not in the
+  // fixture seed, which is why neither reads "fixture candidate".
+  'search_blocks::blank-unfiltered':
+    'the arm returns the EMPTY page by construction (blank query + no structural ' +
+    'filter never reads a row), so its step would record zero rows: the vacuity ' +
+    'guard rejects that without "expect_empty", and the backend-only guard counts ' +
+    'an empty step as no differential evidence at all. Both are right in general ' +
+    'and wrong here — the empty answer IS the behaviour, and a mock returning the ' +
+    'whole DB would fail such a step. Lifting this needs the liveness guard to ' +
+    'admit an `expect_empty` step whose branch is empty BY DESIGN (as opposed to ' +
+    'one that merely selected nothing), which is a change to the guard, not a ' +
+    'fixture. Its sibling `blank-filtered` is covered and shares the blank-query ' +
+    'test, so the discriminator between them is exercised from one side (#3927)',
+  'run_advanced_query::grouped':
+    'the grouped path answers under `groups[].members` with `rows` left EMPTY, and ' +
+    'the query projection binds exactly one `rows` list plus one has_more/total_count ' +
+    'pair — the same shape blocker `search_blocks_partitioned` is waived for, so a ' +
+    'step needs a group-qualified row token in BOTH runners, not just a fixture. ' +
+    'The mock compounds it: its grouped path SYNTHESISES a single bucket from the ' +
+    'request shape rather than computing one (handlers/search.ts), so the step would ' +
+    'need that implemented too (#3927)',
 }
 // NOTE for whoever lifts the two agenda waivers above: `list_blocks_inner`'s
 // `agenda-range` and `agenda-date` arms both sub-dispatch a SECOND time on
@@ -557,13 +580,14 @@ const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
  * still have, see `READ_QUERY_BRANCH_ALLOWLIST`) ZERO query steps anywhere in
  * `conformance/fixtures/*.json`, and nothing said so.
  *
- * Each entry names the discriminator FIELD as it appears in a query step's
- * IPC args (the frontend's DTOs mirror the backend's optional dispatch params
- * 1:1 — this is not a proxy for the Rust identifiers, it is the same
- * information under IPC's naming convention), in the same order as the Rust
- * `else if` chain. `stepBranchKeys` below classifies a step by the FIRST
- * discriminator present and non-empty in its args — exactly mirroring the
- * chain — falling through to `defaultBranch` when none match.
+ * Each entry declares one or more DIMENSIONS (`BranchDimension`), each a chain
+ * of discriminators in the same order as the Rust's own `else if` /
+ * `match`. `stepBranchKeys` below classifies a step by the FIRST discriminator
+ * that matches — exactly mirroring the chain — falling through to
+ * `defaultBranch` when none do. A discriminator matches on a field's PRESENCE
+ * (`Option::is_some()` / `!Vec::is_empty()`), on a field's VALUE (`equals`, for
+ * an enum-shaped `match`), or on a hand-written predicate (`when`, for a
+ * dispatch that is neither).
  *
  * A command absent from this manifest gets exactly one implicit branch (its
  * own name) from `stepBranchKeys`, so THIS MANIFEST IS ADDITIVE: every
@@ -599,7 +623,7 @@ const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
  *      whose value shapes live PER ELEMENT of `args.propertyFilters` — so a
  *      step maps to a SET of branches (one per filter element), and a step
  *      with no property filters at all (tag-only / blockType-only) maps to
- *      NONE. Modelled by `BranchSpec.source`.
+ *      NONE. Modelled by `BranchDimension.source`.
  *   2. What "present" means. `value_text_in` is a `Vec<String>`, dispatched on
  *      `!is_empty()`, not `Option::is_some()` — an empty array is ABSENT to
  *      the backend, so it must be absent to the classifier too
@@ -627,22 +651,69 @@ const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
  *     the two sites agree with EACH OTHER, which is what makes one manifest
  *     entry legitimate for a command that dispatches on the same four shapes
  *     in two different places.
+ *
+ * #3927 — the sweep #3892 left behind found three more commands whose coverage
+ * was branch-invisible for the same reason, and each needed the shared
+ * machinery to grow rather than just gaining rows:
+ *
+ *   - `list_pages_with_metadata` dispatches on a field's VALUE, not its
+ *     presence (`match sort { PageSort::MostLinked => … }`), so
+ *     `BranchDiscriminator` gained `equals`. Its default arm is the
+ *     `#[serde(default)]` variant, so an OMITTED `sort` is a real arm rather
+ *     than a missing one — the inverse of `list_blocks`, where the terminal
+ *     `else` is a filter nobody set.
+ *   - `search_blocks` dispatches on a blank-STRING test crossed with a
+ *     six-way disjunction, then on three `bool` toggles. None of that is
+ *     presence-shaped — `discriminatorPresent` answers TRUE for `false` — so
+ *     `BranchDiscriminator` gained `when`, and with it the obligation that
+ *     every `when`-using command carry a cross-check parsing the real Rust.
+ *     Its five arms include one nobody would enumerate by naming what IS
+ *     there: `has_filters` splits the blank-query early return into an empty
+ *     page and a filtered recency page. That is the third time this manifest
+ *     has been extended by an arm defined by an ABSENCE (#3892's
+ *     `key-presence` was the second).
+ *   - `run_advanced_query` makes two INDEPENDENT routing choices that compose
+ *     rather than exclude, which a single first-match chain cannot express at
+ *     all, so `BranchSpec` became a list of dimensions. See `BranchDimension`
+ *     for what that model claims (each arm of each switch ran) and what it
+ *     does not (each COMBINATION ran).
  */
 interface BranchDiscriminator {
-  /** Field name in the query step's args that selects this branch when present
-   *  and non-empty (see `discriminatorPresent`). */
-  field: string
   /** Human-readable branch name, used in coverage keys (`${command}::${branch}`)
-   *  and failure messages. */
+   *  and failure messages. Must be unique across ALL of a command's dimensions. */
   branch: string
+  /** Field name in the dimension's source object that selects this branch when
+   *  present and non-empty (see `discriminatorPresent`) — the shape used when
+   *  the Rust dispatches on `Option::is_some()` / `!Vec::is_empty()`. */
+  field?: string
+  /** With `field`: select this branch when that field's VALUE equals this
+   *  literal — the shape used when the Rust dispatches on an ENUM
+   *  (`match sort { PageSort::MostLinked => … }`), where every arm reads the
+   *  same field and the arms differ by value, not by presence. */
+  equals?: string
+  /** Predicate over the whole source object, for a dispatch that is neither
+   *  presence- nor value-shaped: a blank-STRING test, a disjunction over many
+   *  fields, or a bare `bool`. `discriminatorPresent` reports a `false` bool as
+   *  PRESENT (it is not null), so a toggle-driven arm cannot be expressed with
+   *  `field` and must not be faked with one. Exactly one of `field` / `when`
+   *  is declared; the guard below fails on both or neither.
+   *
+   *  A `when` predicate is hand-written TypeScript mirroring Rust, so it is the
+   *  weakest link in the manifest — which is why every command using one also
+   *  carries a cross-check below that parses the actual Rust dispatch. */
+  when?: (bag: Record<string, unknown>) => boolean
 }
 
 /**
- * Where in a query step's `args` the discriminator fields live (#3892).
+ * Where in a query step's `args` a dimension's discriminators live (#3892,
+ * generalised to a PATH in #3927 so a nested DTO can be reached).
  *
- *  - `request` — `args.request.<field>`; the step classifies to exactly ONE
- *    branch (`list_blocks`).
- *  - `perElement` — `args.<arrayField>[].<field>`; EVERY element is classified
+ *  - `object` — the node at `path` is one discriminator-bearing object, and the
+ *    step classifies to exactly ONE branch of this dimension. `path: []` is the
+ *    args root (`search_blocks`, whose dispatch reads `query` AND `filter`);
+ *    `['request']` is `list_blocks`; `['filter']` is
+ *    `list_pages_with_metadata`.
+ *  - `perElement` — the node at `path` is an ARRAY; EVERY element is classified
  *    and the step covers the UNION of their branches, because the composed SQL
  *    contains one predicate per element. That is WEAKER evidence than "all of
  *    them must be right for the recorded rows to be right": with several
@@ -660,26 +731,137 @@ interface BranchDiscriminator {
  *    (`filtered_blocks_query`).
  */
 type BranchSource =
-  | { readonly kind: 'request' }
-  | { readonly kind: 'perElement'; readonly arrayField: string }
+  | { readonly kind: 'object'; readonly path: readonly string[] }
+  | { readonly kind: 'perElement'; readonly path: readonly string[] }
 
-interface BranchSpec {
+/**
+ * ONE dispatch chain of a command (#3927). A command whose `_inner` makes a
+ * single routing choice has one dimension; `run_advanced_query` makes several
+ * INDEPENDENT ones (`group_by` and `has_fulltext` compose rather than exclude),
+ * and a first-match chain cannot express that — it would credit `grouped` for a
+ * grouped+full-text step and leave `fulltext` looking uncovered, or worse,
+ * credit both arms of one switch from a step that exercised one.
+ *
+ * A step credits ONE branch per `object` dimension (or a set per `perElement`
+ * one), so the units are the SUM of the dimensions' arms, not their PRODUCT.
+ * That is the honest claim and it is weaker than it looks: "each arm of each
+ * switch ran in some step" is not "each COMBINATION ran". Where a combination
+ * is its own code path (`run_grouped` with `has_fulltext` reaches a different
+ * bucket query than without), that path is not a unit here and must be tracked
+ * as its own dimension or step — see the note under the manifest.
+ */
+interface BranchDimension {
+  /** Which dispatch this models. Documentation only — the coverage key is
+   *  `${command}::${branch}`, so branch names carry the identity. */
+  name: string
+  source: BranchSource
   discriminators: readonly BranchDiscriminator[]
   /** Branch name when none of `discriminators` matches (the terminal `else`). */
   defaultBranch: string
-  source: BranchSource
+  /** Arg keys a step MUST spell for this dimension's classification to mean
+   *  anything. Enforced by the shape guard below: without it, a step that
+   *  simply forgot an arg falls through to `defaultBranch` and silently credits
+   *  a branch it never drove. `list_blocks`'s `['request']` used to be
+   *  hardcoded in that guard; it is declared per dimension now because
+   *  `search_blocks` needs TWO keys (`query` decides the blank arms, `filter`
+   *  the toggle ones) and a root-path source has no single node to null-check. */
+  requiredArgs?: readonly string[]
+}
+
+interface BranchSpec {
+  dimensions: readonly BranchDimension[]
+}
+
+/** Follow a `BranchSource` path into a step's args. An empty path is the args
+ *  object itself. */
+function resolvePath(args: Record<string, unknown>, keys: readonly string[]): unknown {
+  let node: unknown = args
+  for (const key of keys) {
+    if (typeof node !== 'object' || node === null || Array.isArray(node)) return undefined
+    node = (node as Record<string, unknown>)[key]
+  }
+  return node
+}
+
+// ── `search_blocks` dispatch predicates (#3927) ──────────────────────────────
+//
+// `fts::search_with_toggles` does NOT dispatch on field presence: its first two
+// arms turn on `query.trim().is_empty()` crossed with a six-way disjunction,
+// and the last three on three `bool` toggles. `discriminatorPresent` answers
+// TRUE for `false`, so a `field`-shaped discriminator would credit the regex
+// arm for `"isRegex": false` — the exact over-credit this manifest exists to
+// stop. Hence `when` predicates, cross-checked against the Rust below.
+
+/** Every `SearchFilter` field that makes `search_with_toggles`'s `has_filters`
+ *  true. The first five are the disjuncts spelled out in `toggle_filter.rs`;
+ *  the rest are the `SearchFilter` fields `prepare_metadata` folds into the
+ *  `MetadataPredicates` whose `is_empty()` is the sixth disjunct. `scope` is
+ *  deliberately absent — the backend always supplies a space, so it is not a
+ *  USER filter and `has_filters` excludes it. So is every toggle: they select
+ *  the MODE, not the candidate set. Cross-checked against BOTH Rust sites. */
+const SEARCH_HAS_FILTERS_FIELDS: readonly string[] = [
+  'parentId',
+  'tagIds',
+  'includePageGlobs',
+  'excludePageGlobs',
+  'blockTypeFilter',
+  'stateFilter',
+  'priorityFilter',
+  'excludedStateFilter',
+  'excludedPriorityFilter',
+  'dueFilter',
+  'scheduledFilter',
+  'propertyFilters',
+  'excludedPropertyFilters',
+  'lastEdited',
+]
+
+function searchFilterOf(args: Record<string, unknown>): Record<string, unknown> {
+  const f = args['filter']
+  return typeof f === 'object' && f !== null && !Array.isArray(f)
+    ? (f as Record<string, unknown>)
+    : {}
+}
+
+/** `query.trim().is_empty()` — the FIRST thing the backend tests, before the
+ *  mode branch, because neither FTS5 MATCH nor an empty regex can act on it. */
+function searchQueryIsBlank(args: Record<string, unknown>): boolean {
+  const q = args['query']
+  return typeof q !== 'string' || q.trim() === ''
+}
+
+/** The `has_filters` disjunction. "Present" is `!is_empty()` for the `Vec`
+ *  fields, so `tagIds: []` is no filter at all — the same distinction
+ *  `discriminatorPresent` draws for `value_text_in` (#3892). */
+function searchHasFilters(args: Record<string, unknown>): boolean {
+  const filter = searchFilterOf(args)
+  return SEARCH_HAS_FILTERS_FIELDS.some((f) => discriminatorPresent(filter[f]))
+}
+
+/** `SearchToggles::any()`. */
+function searchAnyToggle(args: Record<string, unknown>): boolean {
+  const filter = searchFilterOf(args)
+  return (
+    filter['caseSensitive'] === true || filter['wholeWord'] === true || filter['isRegex'] === true
+  )
 }
 
 const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
   list_blocks: {
-    source: { kind: 'request' },
-    discriminators: [
-      { field: 'dateRange', branch: 'agenda-range' },
-      { field: 'date', branch: 'agenda-date' },
-      { field: 'tagId', branch: 'by-tag' },
-      { field: 'blockType', branch: 'by-type' },
+    dimensions: [
+      {
+        name: 'filter_count exclusive chain',
+        source: { kind: 'object', path: ['request'] },
+        requiredArgs: ['request'],
+        discriminators: [
+          { field: 'dateRange', branch: 'agenda-range' },
+          { field: 'date', branch: 'agenda-date' },
+          { field: 'tagId', branch: 'by-tag' },
+          { field: 'blockType', branch: 'by-type' },
+        ],
+        defaultBranch: 'children',
+      },
     ],
-    defaultBranch: 'children',
   },
   // #3892 — the four mutually-exclusive VALUE SHAPES of one `PropertyFilter`,
   // in `filtered_blocks_query_inner`'s dispatch order. Each arm emits a
@@ -689,20 +871,174 @@ const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
   // is why this is a predicate-correctness risk rather than the ordering risk
   // `list_blocks`'s arms carry — lower severity, same invisibility.
   filtered_blocks_query: {
-    source: { kind: 'perElement', arrayField: 'propertyFilters' },
-    discriminators: [
-      { field: 'valueText', branch: 'value-text' },
-      { field: 'valueTextIn', branch: 'value-text-in' },
-      { field: 'valueDate', branch: 'value-date' },
-      { field: 'valueDateRange', branch: 'value-date-range' },
+    dimensions: [
+      {
+        name: 'PropertyFilter value shape',
+        source: { kind: 'perElement', path: ['propertyFilters'] },
+        discriminators: [
+          { field: 'valueText', branch: 'value-text' },
+          { field: 'valueTextIn', branch: 'value-text-in' },
+          { field: 'valueDate', branch: 'value-date' },
+          { field: 'valueDateRange', branch: 'value-date-range' },
+        ],
+        // The real fifth arm, not a synthetic catch-all: a filter carrying only
+        // a `key` emits no value predicate at all, so the EXISTS is satisfied
+        // by mere key presence (`Ok(String::new())`) — a distinct SQL shape
+        // with its own way of being wrong.
+        defaultBranch: 'key-presence',
+      },
     ],
-    // The real fifth arm, not a synthetic catch-all: a filter carrying only a
-    // `key` emits no value predicate at all, so the EXISTS is satisfied by
-    // mere key presence (`Ok(String::new())`) — a distinct SQL shape with its
-    // own way of being wrong.
-    defaultBranch: 'key-presence',
+  },
+  // #3927 — `keyset_for`'s five-arm `match PageSort`
+  // (`src-tauri/src/commands/pages/metadata.rs`). Each arm picks a different
+  // `SortKeyset`: the sort-key EXPRESSION, the keyset WHERE that resumes a
+  // cursor page, and the cursor slot the anchor is stashed in. Unlike
+  // `filtered_blocks_query`'s arms (which differ in WHICH rows come back),
+  // these differ in WHAT ORDER — so a step that credits one of them without
+  // `"ordered": true` is credit for nothing, and all five steps in
+  // `query_pages_metadata_sorts.json` are ordered.
+  //
+  // The default branch is `sort-alphabetical` because `sort` is
+  // `#[serde(default)]` over a `#[default] Alphabetical` enum: an OMITTED sort
+  // key IS the alphabetical arm, not a sixth one. A step spelling
+  // `"alphabetical"` explicitly falls through to the same branch.
+  list_pages_with_metadata: {
+    dimensions: [
+      {
+        name: 'PageSort keyset',
+        source: { kind: 'object', path: ['filter'] },
+        requiredArgs: ['filter'],
+        discriminators: [
+          { field: 'sort', equals: 'recently-modified', branch: 'sort-recently-modified' },
+          { field: 'sort', equals: 'most-linked', branch: 'sort-most-linked' },
+          { field: 'sort', equals: 'most-content', branch: 'sort-most-content' },
+          { field: 'sort', equals: 'default', branch: 'sort-default' },
+        ],
+        defaultBranch: 'sort-alphabetical',
+      },
+    ],
+  },
+  // #3927 — `fts::search_with_toggles`'s arms, in ITS dispatch order (the
+  // blank-query test runs BEFORE the mode branch). Five arms, not the four the
+  // issue predicted: the blank-query early return is really two, because
+  // `has_filters` splits it into "the empty page" and "the filtered recency
+  // page" — the same shape of miss as #3892's fifth arm, an arm defined by
+  // what is NOT present. The arms differ in FROM clause, ORDER BY and
+  // pagination: `blank-filtered` and `regex` never touch FTS5 and order
+  // `b.id DESC`, `regex` cannot paginate at all (`next_cursor: None`), and
+  // `literal-post-filter` walks candidate WINDOWS so its `has_more` is
+  // computed from survivors rather than from a `limit + 1` probe.
+  search_blocks: {
+    dimensions: [
+      {
+        name: 'search_with_toggles arm',
+        source: { kind: 'object', path: [] },
+        requiredArgs: ['query', 'filter'],
+        discriminators: [
+          {
+            branch: 'blank-unfiltered',
+            when: (a) => searchQueryIsBlank(a) && !searchHasFilters(a),
+          },
+          { branch: 'blank-filtered', when: (a) => searchQueryIsBlank(a) },
+          { branch: 'regex', when: (a) => searchFilterOf(a)['isRegex'] === true },
+          // COVERED-BUT-NOT-FALSIFIABLE, recorded rather than left to be
+          // rediscovered. Deleting this arm from the Rust (so an
+          // all-toggles-off query falls through to `literal-post-filter`
+          // instead of short-circuiting to `search_fts`) leaves EVERY
+          // conformance fixture green — verified by mutation, not assumed.
+          // The arms really do differ, but every way they differ is invisible
+          // to this harness:
+          //
+          //   - with no toggle on, `compose_literal_pattern` composes
+          //     `(?i)<escaped query>`, which every FTS candidate already
+          //     satisfies — EXCEPT where `fts_blocks.stripped` differs from
+          //     raw `blocks.content` (markup stripped, `[[ULID]]` references
+          //     resolved to names, NFC applied). That is the one falsifier,
+          //     and the mock's FTS stand-in folds over raw `content`, so a
+          //     fixture block shaped to exercise it would redden the MOCK leg
+          //     for an unrelated reason. Lifting this needs the mock to model
+          //     `strip_for_fts`, not another step;
+          //   - the arms' other differences (`snippet` cleared vs kept,
+          //     `match_offsets` populated, survivor-derived `has_more` vs a
+          //     `limit + 1` probe) are not fields the query runner records.
+          //
+          // This is strictly weaker than `list_pages_with_metadata`'s
+          // `sort-default`, which is often described the same way: THAT arm's
+          // `b.id ASC` is byte-identical to the tiebreaker, so it cannot be
+          // deleted — but MISROUTING it to a sibling keyset does redden
+          // `pages_sorted_default`, so its routing is pinned. This arm's
+          // deletion IS its misrouting (the fallthrough is the sibling), and
+          // that is green. A branch whose deletion changes nothing OBSERVABLE
+          // is not the same as a branch that does nothing, and the difference
+          // has to be written down or the green ratchet claims evidence it
+          // does not have.
+          { branch: 'fts-match', when: (a) => !searchAnyToggle(a) },
+        ],
+        defaultBranch: 'literal-post-filter',
+      },
+    ],
+  },
+  // #3927 — the engine's two STRUCTURAL switches
+  // (`agaric-store/src/query/engine.rs`), which are INDEPENDENT rather than
+  // exclusive: `group_by` swaps the whole result shape (bucket rows +
+  // `ROW_NUMBER() OVER (PARTITION BY …)` member preview + a different cursor
+  // codec, with `rows` left empty), and `has_fulltext` swaps the FROM
+  // (`blocks b` → `fts_blocks fts JOIN blocks b`), prefixes the MATCH, shifts
+  // EVERY bind by one, populates `score` and flips the default sort. Two
+  // dimensions, four units, credited independently — see `BranchDimension` for
+  // why that is a sum and not a product.
+  run_advanced_query: {
+    dimensions: [
+      {
+        name: 'group_by dispatch',
+        source: { kind: 'object', path: ['request'] },
+        requiredArgs: ['request'],
+        discriminators: [{ field: 'groupBy', branch: 'grouped' }],
+        defaultBranch: 'flat',
+      },
+      {
+        name: 'has_fulltext composition',
+        source: { kind: 'object', path: ['request'] },
+        requiredArgs: ['request'],
+        // Presence, not blank-ness: `Some("")` sanitises to empty and the
+        // engine REJECTS it (`AppError::Validation`) before either arm runs, so
+        // a step spelling `"fulltext": ""` cannot record a green expectation to
+        // mis-credit this branch with.
+        discriminators: [{ field: 'fulltext', branch: 'fulltext' }],
+        defaultBranch: 'no-fulltext',
+      },
+    ],
   },
 }
+// NOTE — `run_advanced_query`'s entry models its two STRUCTURAL switches and
+// NOT the rest of its dispatch surface, which is large enough to need its own
+// change and is listed here so the omission is a stated remainder rather than a
+// silent cap (#3927):
+//
+//   - `resolve_sort` (`engine.rs:208`) — 6 arms (5 `SortColumn` variants, one
+//     of which adds the `pages_cache` LEFT JOIN, plus `Relevance`), THEN a
+//     conditional tail: an empty `sort` defaults to relevance-first WITH
+//     full-text and to the `b.id DESC` recency keyset without, and the terminal
+//     `b.id` tiebreaker is appended only when no `Created` key was supplied
+//     (`has_id`). Every conformance step today supplies NO sort, so exactly one
+//     of those arms has ever run — and the empty-sort default splits on
+//     `has_fulltext`, i.e. it is a combination this sum-of-dimensions model
+//     cannot express as a unit.
+//   - `group_key_expr` (`engine.rs:1166`) — SEVEN arms behind the (waived)
+//     `grouped` branch (`Tag` / `Page` / `State` / `BlockType` / `Priority` /
+//     `Property` / `DateBucket`), the last of which sub-dispatches again on
+//     `DateField`'s 4 variants crossed with `DateBucketUnit`. Counted off the
+//     `GroupKey` enum (`query/mod.rs:159`), not estimated — an understated
+//     remainder overstates coverage exactly as an inflated numerator does.
+//   - the 5 aggregate ops (`AggOp` — `count` / `sum` / `avg` / `min` / `max`)
+//     and the 15-leaf `FilterExpr` vocabulary this command accepts
+//     (`QUERY_ALLOWED_KEYS`, `query/projection.rs`; `FilterPrimitive` itself
+//     has 23 variants, but only 15 are reachable here), of which the four
+//     `run_advanced_query` steps drive TWO (`State`, `DueDate`).
+//
+// Modelling `resolve_sort` needs a per-element dimension over `request.sort`
+// whose DEFAULT arm is itself conditional, which the `defaultBranch: string`
+// shape above cannot carry. Do that in the change that adds the sort steps.
 // NOTE for whoever extends `filtered_blocks_query`'s entry: the four value
 // shapes are ONE of two dispatch dimensions. The other is whether `pf.key` is
 // a RESERVED key (`todo_state` / `priority` / `due_date` / `scheduled_date`),
@@ -717,15 +1053,18 @@ const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
 // above.
 
 /** All coverage UNITS a command decomposes into: `${command}::${branch}` for
- *  every declared branch (discriminators + the default), or just `command`
- *  itself when it carries no branch manifest entry. */
+ *  every declared branch of every dimension (discriminators + that dimension's
+ *  default), or just `command` itself when it carries no branch manifest
+ *  entry. */
 function branchUnitsOf(command: string): string[] {
   const spec = QUERY_STEP_BRANCH_DISCRIMINATORS[command]
   if (!spec) return [command]
-  return [
-    ...spec.discriminators.map((d) => `${command}::${d.branch}`),
-    `${command}::${spec.defaultBranch}`,
-  ]
+  const units: string[] = []
+  for (const dim of spec.dimensions) {
+    for (const d of dim.discriminators) units.push(`${command}::${d.branch}`)
+    units.push(`${command}::${dim.defaultBranch}`)
+  }
+  return units
 }
 
 /** Does an args value SELECT its branch? Mirrors the Rust dispatch conditions:
@@ -738,34 +1077,68 @@ function discriminatorPresent(v: unknown): boolean {
   return true
 }
 
-/** Classify one discriminator-bearing object (a request DTO, or one element of
- *  a per-element array) into its branch name, mirroring the Rust `else if`
- *  chain: FIRST declared discriminator present wins, none matching falls to
- *  `defaultBranch`. */
-function classify(spec: BranchSpec, bag: Record<string, unknown>): string {
-  for (const d of spec.discriminators) {
-    if (discriminatorPresent(bag[d.field])) return d.branch
+/** The one dimension of a single-dispatch command, for the cross-checks below.
+ *  Throws rather than returning a default: a command that lost its manifest
+ *  entry, or grew a second dimension, must fail LOUD in its own guard instead
+ *  of letting the guard pass over nothing. */
+function soleDimensionOf(command: string): BranchDimension {
+  const spec = QUERY_STEP_BRANCH_DISCRIMINATORS[command]
+  if (!spec) {
+    throw new Error(`${command} must stay declared in QUERY_STEP_BRANCH_DISCRIMINATORS`)
   }
-  return spec.defaultBranch
+  if (spec.dimensions.length !== 1) {
+    throw new Error(
+      `${command} now declares ${spec.dimensions.length} dimensions; this guard cross-checks ` +
+        `ONE dispatch chain against the Rust. Extend it to the new dimension rather than ` +
+        `letting it read only the first.`,
+    )
+  }
+  return spec.dimensions[0] as BranchDimension
+}
+
+/** Does one discriminator select `bag`? Mirrors the three Rust dispatch shapes
+ *  a `BranchDiscriminator` can carry — see its field docs. */
+function discriminatorMatches(d: BranchDiscriminator, bag: Record<string, unknown>): boolean {
+  if (d.when) return d.when(bag)
+  const v = bag[d.field as string]
+  return d.equals === undefined ? discriminatorPresent(v) : v === d.equals
+}
+
+/** Classify one discriminator-bearing object (a request DTO, one element of a
+ *  per-element array, or the args root) into its branch name for ONE
+ *  dimension, mirroring the Rust `else if` chain: FIRST declared discriminator
+ *  matching wins, none matching falls to `defaultBranch`. */
+function classify(dim: BranchDimension, bag: Record<string, unknown>): string {
+  for (const d of dim.discriminators) {
+    if (discriminatorMatches(d, bag)) return d.branch
+  }
+  return dim.defaultBranch
 }
 
 /** Every coverage unit a query step exercises. Commands with no manifest entry
- *  classify to their own bare name (unchanged from pre-#3878 behavior). A
- *  `request`-sourced command yields exactly one unit; a `perElement`-sourced
- *  one yields the union over the array (possibly EMPTY — see `BranchSource`). */
+ *  classify to their own bare name (unchanged from pre-#3878 behavior). Each
+ *  `object` dimension yields exactly one unit; each `perElement` dimension
+ *  yields the union over the array (possibly EMPTY — see `BranchSource`). */
 function stepBranchKeys(command: string, step: QueryStepShape): string[] {
   const spec = QUERY_STEP_BRANCH_DISCRIMINATORS[command]
   if (!spec) return [command]
-  if (spec.source.kind === 'request') {
-    const request = (step.args?.['request'] ?? {}) as Record<string, unknown>
-    return [`${command}::${classify(spec, request)}`]
-  }
-  const raw = step.args?.[spec.source.arrayField]
-  if (!Array.isArray(raw)) return []
+  const args = step.args ?? {}
   const units = new Set<string>()
-  for (const el of raw) {
-    if (typeof el !== 'object' || el === null || Array.isArray(el)) continue
-    units.add(`${command}::${classify(spec, el as Record<string, unknown>)}`)
+  for (const dim of spec.dimensions) {
+    const node = resolvePath(args, dim.source.path)
+    if (dim.source.kind === 'object') {
+      const bag =
+        typeof node === 'object' && node !== null && !Array.isArray(node)
+          ? (node as Record<string, unknown>)
+          : {}
+      units.add(`${command}::${classify(dim, bag)}`)
+      continue
+    }
+    if (!Array.isArray(node)) continue
+    for (const el of node) {
+      if (typeof el !== 'object' || el === null || Array.isArray(el)) continue
+      units.add(`${command}::${classify(dim, el as Record<string, unknown>)}`)
+    }
   }
   return [...units]
 }
@@ -924,6 +1297,174 @@ function extractFbqValueDispatch(site: FbqDispatchSite): { guard: string[]; chai
     rustSlice(source, chainStart, site.chainEnd, `${site.label}'s value-shape dispatch chain`),
   )
   return { guard, chain }
+}
+
+// ---------------------------------------------------------------------------
+// #3927 — Rust dispatch parsers for the three commands added by this change
+// ---------------------------------------------------------------------------
+
+const RUST_PAGES_METADATA_PATH = path.resolve(RUST_COMMANDS_DIR, 'commands', 'pages', 'metadata.rs')
+// `RUST_COMMANDS_DIR` is `src-tauri/src`, so one `..` reaches the crate root.
+const AGARIC_STORE_SRC = path.resolve(RUST_COMMANDS_DIR, '..', 'agaric-store', 'src')
+const RUST_TOGGLE_FILTER_PATH = path.resolve(AGARIC_STORE_SRC, 'fts', 'toggle_filter.rs')
+const RUST_METADATA_FILTER_PATH = path.resolve(AGARIC_STORE_SRC, 'fts', 'metadata_filter.rs')
+const RUST_QUERY_ENGINE_PATH = path.resolve(AGARIC_STORE_SRC, 'query', 'engine.rs')
+
+const rustSourceCache = new Map<string, string>()
+
+/** One cached read per Rust file — several guards below parse the same source. */
+function readRustSource(file: string): string {
+  let source = rustSourceCache.get(file)
+  if (source === undefined) {
+    source = readFileSync(file, 'utf8')
+    rustSourceCache.set(file, source)
+  }
+  return source
+}
+
+/**
+ * The `{ … }` body of a Rust item, located by a needle and brace-balanced from
+ * the first `{` after it. Balanced rather than terminated by a marker so a
+ * guard can never silently read a SHORT slice and under-report the arms it is
+ * there to count — the failure mode `extractFilterCountIdentifiers`'s
+ * bracket-balance comment names.
+ *
+ * Brace-balancing is naive about braces inside string literals; that is safe
+ * for every site parsed here because each such literal (`?{S}` in the
+ * `RecentlyModified` key template, the `format!`s) is itself balanced. A site
+ * with an UNBALANCED brace in a string would throw or over-read, loudly.
+ */
+function rustItemBody(file: string, needle: string): string {
+  const source = readRustSource(file)
+  const at = source.indexOf(needle)
+  if (at < 0) {
+    throw new Error(
+      `could not find ${JSON.stringify(needle)} in ${file} — this guard parses the Rust ` +
+        `dispatch; update the parser if the source moved, don't shrink the expectation.`,
+    )
+  }
+  const open = source.indexOf('{', at)
+  if (open < 0) throw new Error(`no block opens after ${JSON.stringify(needle)} in ${file}`)
+  let depth = 0
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i]
+    if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) return source.slice(open, i + 1)
+    }
+  }
+  throw new Error(`unterminated block after ${JSON.stringify(needle)} in ${file}`)
+}
+
+/** Distinct `Enum::Variant` names in source order, first occurrence wins. */
+function variantsInOrder(slice: string, enumName: string): string[] {
+  const seen: string[] = []
+  for (const m of slice.matchAll(new RegExp(`${enumName}::(\\w+)`, 'g'))) {
+    const id = m[1] as string
+    if (!seen.includes(id)) seen.push(id)
+  }
+  return seen
+}
+
+/**
+ * The THREE places `list_pages_with_metadata_inner` matches on `PageSort`. A
+ * single manifest entry is honest only while they agree: `keyset_for` picks the
+ * ORDER BY + keyset WHERE, `sort_discriminator` stamps the cursor's sort tag
+ * (the `RequiresRefresh` rejection keys on it), and `build_metadata_response`
+ * picks which cursor SLOT the anchor value is written to. A variant added to
+ * one and missed in another is a live bug — a cursor that round-trips into the
+ * wrong keyset — so the guard compares all three to each other, not just to
+ * the manifest.
+ */
+const PAGE_SORT_MATCH_SITES = [
+  { label: 'keyset_for (ORDER BY + keyset WHERE)', needle: 'fn keyset_for(sort: PageSort)' },
+  {
+    label: 'sort_discriminator (cursor sort tag)',
+    needle: 'fn sort_discriminator(sort: PageSort)',
+  },
+  { label: 'build_metadata_response (cursor slot)', needle: 'fn build_metadata_response(' },
+] as const
+
+/**
+ * `fts::search_with_toggles`'s arm dispatch, read out of the Rust three ways:
+ *
+ *  - `hasFilterDisjuncts` — the base identifier of every `||`-separated TERM of
+ *    the `let has_filters = …;` expression, i.e. the source's own statement of
+ *    what turns the blank-query early return into the filtered recency page.
+ *    Read term-by-term rather than by scanning for identifier shapes, so a
+ *    disjunct this parser does not recognise fails the comparison instead of
+ *    vanishing from it (see the note at the split);
+ *  - `metadataFields` — the `SearchFilter` fields `prepare_metadata_with_today`
+ *    reads, which is what `metadata.is_empty()` (the sixth disjunct) expands
+ *    to. Parsed from `metadata_filter.rs` because `toggle_filter.rs` only sees
+ *    the collapsed `MetadataPredicates`;
+ *  - `armOrder` — the offsets of the three dispatch conditions, so a reordered
+ *    chain fails loud. `stepBranchKeys` classifies by FIRST match, and this
+ *    command's order is load-bearing in a way the others' is not: the
+ *    blank-query test runs BEFORE the mode branch, so moving `is_regex` above
+ *    it would re-label every blank-query step.
+ */
+function extractSearchTogglesDispatch(): {
+  hasFilterDisjuncts: string[]
+  metadataFields: string[]
+  armOrder: string[]
+} {
+  const body = rustItemBody(RUST_TOGGLE_FILTER_PATH, 'pub async fn search_with_toggles(')
+  const letAt = body.indexOf('let has_filters =')
+  const semi = body.indexOf(';', letAt)
+  if (letAt < 0 || semi < 0) {
+    throw new Error(
+      `could not find the \`let has_filters = …;\` disjunction in ${RUST_TOGGLE_FILTER_PATH} — ` +
+        `this guard parses it; update the parser if the source moved.`,
+    )
+  }
+  // Split on `||` FIRST, then read the base identifier of each term — rather
+  // than regex-scanning the whole expression for `<ident>.` / `<ident>)`
+  // shapes. The scanning form matched only identifiers followed by a `.` or a
+  // `)`, so a disjunct that is a BARE bool (`|| some_flag;`) contributed
+  // nothing and this guard stayed green while `has_filters` had grown an arm
+  // — the precise failure this cross-check exists to stop, one level down.
+  // Term-splitting cannot miss a disjunct: every `||` yields a term, and a
+  // term that yields no identifier (or an unexpected one) fails the
+  // comparison below LOUD.
+  //
+  // Splitting on `||` is safe for the closures in this expression (`|t|` is
+  // two single pipes, not a `||`); a zero-argument closure would split into
+  // garbage terms, which also fails loud rather than silently under-reporting.
+  const hasFilterDisjuncts = body
+    .slice(letAt + 'let has_filters ='.length, semi)
+    .split('||')
+    .map((term) => term.replaceAll(/[\s!(]/g, ''))
+    .filter((term) => term !== '')
+    // The BASE identifier of the term: `parent_id.is_some()` → `parent_id`,
+    // `!metadata.is_empty()` → `metadata`, a bare `some_flag` → `some_flag`.
+    .map((term) => /^\w+/.exec(term)?.[0] ?? term)
+
+  const prepared = rustItemBody(RUST_METADATA_FILTER_PATH, 'pub fn prepare_metadata_with_today(')
+  const metadataFields = [
+    ...new Set([...prepared.matchAll(/filter\.(\w+)/g)].map((m) => m[1] as string)),
+  ]
+
+  const markers = [
+    ['blank-query', 'if query.trim().is_empty()'],
+    ['regex', 'if toggles.is_regex'],
+    ['no-toggle', 'if !toggles.any()'],
+  ] as const
+  const located = markers.map(([label, needle]) => {
+    const at = body.indexOf(needle)
+    if (at < 0) {
+      throw new Error(
+        `could not find ${JSON.stringify(needle)} inside search_with_toggles — this guard ` +
+          `parses the arm dispatch; update the parser if the source moved.`,
+      )
+    }
+    return { label, at }
+  })
+  // Sorted by OFFSET, so the returned sequence IS the Rust chain's order: a
+  // reordered chain yields a different list rather than the declared one.
+  const armOrder = located.toSorted((x, y) => x.at - y.at).map((m) => m.label)
+  return { hasFilterDisjuncts, metadataFields, armOrder }
 }
 
 const CONFORMANCE_TEST_PATH = path.resolve(import.meta.dirname, 'conformance.test.ts')
@@ -1232,8 +1773,8 @@ describe('#3083 conformance-coverage ratchet', () => {
   // is set (`list_blocks_inner`'s `filter_count` chain) — a command with
   // three of five arms covered read as fully green here. The requirement is
   // now expressed per coverage UNIT (`branchUnitsOf`: `${command}::${branch}`
-  // for a manifested command, or just `command` — unchanged — for the other
-  // 73 that carry no branch manifest), waived either at the branch level
+  // for a manifested command, or just `command` — unchanged — for every
+  // command that carries no branch manifest), waived either at the branch level
   // (`READ_QUERY_BRANCH_ALLOWLIST`) or, still, at the whole-command level
   // (`READ_NO_QUERY_ALLOWLIST` continues to exempt every branch of a command
   // that has no query coverage whatsoever).
@@ -1325,12 +1866,11 @@ describe('#3083 conformance-coverage ratchet', () => {
         `the two stay in sync, don't just widen the assertion.`,
     ).toEqual(expected)
 
-    const spec = QUERY_STEP_BRANCH_DISCRIMINATORS['list_blocks']
-    expect(spec, 'list_blocks must stay declared in QUERY_STEP_BRANCH_DISCRIMINATORS').toBeDefined()
+    const dim = soleDimensionOf('list_blocks')
     // discriminators.length + 1 (the default/parent_id fallthrough) must equal
     // the Rust exclusive-filter set size, so a new arm can't be added on one
     // side without the other.
-    expect((spec?.discriminators.length ?? 0) + 1).toBe(rustParams.length)
+    expect(dim.discriminators.length + 1).toBe(rustParams.length)
   })
 
   // #3892 — the same anti-rot mechanism for `filtered_blocks_query`, made
@@ -1386,14 +1926,10 @@ describe('#3083 conformance-coverage ratchet', () => {
       ).toEqual(expected)
     }
 
-    const spec = QUERY_STEP_BRANCH_DISCRIMINATORS['filtered_blocks_query']
-    expect(
-      spec,
-      'filtered_blocks_query must stay declared in QUERY_STEP_BRANCH_DISCRIMINATORS',
-    ).toBeDefined()
+    const dim = soleDimensionOf('filtered_blocks_query')
     const toCamel = (s: string): string => s.replaceAll(/_(\w)/g, (_, c: string) => c.toUpperCase())
     expect(
-      spec?.discriminators.map((d) => d.field),
+      dim.discriminators.map((d) => d.field),
       `The manifest's discriminator fields must be the camelCase of the Rust value ` +
         `fields, in dispatch order (PropertyFilter is #[serde(rename_all = "camelCase")]).`,
     ).toEqual(expected.map(toCamel))
@@ -1401,10 +1937,234 @@ describe('#3083 conformance-coverage ratchet', () => {
     // discriminators + 1 === rust params), EVERY value field here has its own
     // arm and the default branch is a genuine fifth one.
     expect(
-      spec?.discriminators.length,
+      dim.discriminators.length,
       `Every Rust value field must have its own declared discriminator — the ` +
         `key-presence default branch is EXTRA here, not one of them.`,
     ).toBe(expected.length)
+  })
+
+  // #3927 — `list_pages_with_metadata`'s five-arm `PageSort` dispatch. Two
+  // things this guard does that the two above do not need to:
+  //
+  //   - it compares THREE Rust sites to each other (see `PAGE_SORT_MATCH_SITES`
+  //     for why a disagreement between them is itself a bug), not just each to
+  //     the manifest;
+  //   - it pins the wire spelling of every variant, because this manifest
+  //     dispatches on a VALUE (`sort: "most-linked"`) rather than on a field's
+  //     presence. A renamed variant would not change the Rust identifier the
+  //     parse reads, so the literal below is the only thing standing between a
+  //     `#[serde(rename)]` and every step silently re-classifying to the
+  //     `alphabetical` default. (Same class of hand-written mapping #3930's
+  //     review flagged on `filtered_blocks_query`; stated, not implied.)
+  it('list_pages_with_metadata branch discriminators match the Rust PageSort dispatch', () => {
+    const expectedVariants = [
+      'Alphabetical',
+      'RecentlyModified',
+      'MostLinked',
+      'MostContent',
+      'Default',
+    ]
+    for (const site of PAGE_SORT_MATCH_SITES) {
+      const variants = variantsInOrder(
+        rustItemBody(RUST_PAGES_METADATA_PATH, site.needle),
+        'PageSort',
+      ).toSorted()
+      expect(
+        variants,
+        `${site.label}: matches on ${JSON.stringify(variants)} (expected ` +
+          `${JSON.stringify(expectedVariants.toSorted())}). The three PageSort match sites must ` +
+          `agree with each other AND with QUERY_STEP_BRANCH_DISCRIMINATORS.list_pages_with_metadata ` +
+          `— a variant handled by one and missed by another is a cursor that round-trips into ` +
+          `the wrong keyset. Update the manifest and this list together.`,
+      ).toEqual(expectedVariants.toSorted())
+    }
+
+    // Rust variant → the wire value a query step spells. HARDCODED, mimicking
+    // `#[serde(rename_all = "kebab-case")]` (plus `Default`'s explicit
+    // `rename = "default"`); nothing here parses those attributes.
+    const WIRE: Readonly<Record<string, string>> = {
+      Alphabetical: 'alphabetical',
+      RecentlyModified: 'recently-modified',
+      MostLinked: 'most-linked',
+      MostContent: 'most-content',
+      Default: 'default',
+    }
+    const dim = soleDimensionOf('list_pages_with_metadata')
+    // Four discriminators + the default; `Alphabetical` has no discriminator
+    // because it IS the `#[serde(default)]` fallthrough — a step that omits
+    // `sort` entirely runs that arm.
+    expect(dim.discriminators.length + 1).toBe(expectedVariants.length)
+    expect(
+      dim.discriminators.map((d) => d.equals).toSorted(),
+      `Every non-default PageSort variant must have a discriminator declaring its WIRE value.`,
+    ).toEqual(
+      expectedVariants
+        .filter((v) => v !== 'Alphabetical')
+        .map((v) => WIRE[v])
+        .toSorted(),
+    )
+    expect(
+      dim.discriminators.every((d) => d.field === 'sort'),
+      'Every PageSort discriminator reads the same `sort` field; the arms differ by VALUE.',
+    ).toBe(true)
+    expect(dim.defaultBranch).toBe('sort-alphabetical')
+  })
+
+  // #3927 — `search_blocks`. The one command in this manifest whose dispatch is
+  // neither presence- nor value-shaped, so its classifiers are hand-written
+  // `when` predicates and this guard is the only thing pinning them to the
+  // Rust. It reads the dispatch three ways (see `extractSearchTogglesDispatch`).
+  it('search_blocks branch discriminators match the Rust arm dispatch', () => {
+    const { hasFilterDisjuncts, metadataFields, armOrder } = extractSearchTogglesDispatch()
+
+    expect(
+      armOrder,
+      `search_with_toggles' arms are now ordered ${JSON.stringify(armOrder)}. The blank-query ` +
+        `test running BEFORE the mode branch is load-bearing: stepBranchKeys classifies by ` +
+        `FIRST match, so hoisting \`is_regex\` above it re-labels every blank-query step. ` +
+        `Reorder the manifest's discriminators to match, don't widen this.`,
+    ).toEqual(['blank-query', 'regex', 'no-toggle'])
+
+    // The `has_filters` disjunction, as the Rust spells it. `metadata` is the
+    // collapsed sixth disjunct, expanded by `metadataFields` below.
+    expect(
+      hasFilterDisjuncts,
+      `search_with_toggles' \`has_filters\` now reads ${JSON.stringify(hasFilterDisjuncts)}. ` +
+        `SEARCH_HAS_FILTERS_FIELDS mirrors it (camelCased) to decide which BLANK-query arm a ` +
+        `step drives — a disjunct added there and missed here makes a filtered blank query ` +
+        `credit \`blank-unfiltered\`, the empty arm it never ran.`,
+    ).toEqual([
+      'parent_id',
+      'tag_ids',
+      'include_page_globs',
+      'exclude_page_globs',
+      'block_type_filter',
+      'metadata',
+    ])
+
+    expect(
+      metadataFields,
+      `prepare_metadata_with_today now reads ${JSON.stringify(metadataFields)} off the ` +
+        `SearchFilter. Those are what \`metadata.is_empty()\` expands to, so they belong in ` +
+        `SEARCH_HAS_FILTERS_FIELDS too.`,
+    ).toEqual([
+      'state_filter',
+      'priority_filter',
+      'excluded_state_filter',
+      'excluded_priority_filter',
+      'due_filter',
+      'scheduled_filter',
+      'excluded_property_filters',
+      'property_filters',
+      'last_edited',
+    ])
+
+    // The manifest's own field list must be exactly the camelCase of the two
+    // Rust lists combined, minus the collapsed `metadata` placeholder.
+    const toCamel = (s: string): string => s.replaceAll(/_(\w)/g, (_, c: string) => c.toUpperCase())
+    expect(
+      [...SEARCH_HAS_FILTERS_FIELDS].toSorted(),
+      `SEARCH_HAS_FILTERS_FIELDS must be the camelCase union of has_filters' own disjuncts and ` +
+        `the SearchFilter fields prepare_metadata reads.`,
+    ).toEqual(
+      [...hasFilterDisjuncts.filter((f) => f !== 'metadata'), ...metadataFields]
+        .map(toCamel)
+        .toSorted(),
+    )
+
+    const dim = soleDimensionOf('search_blocks')
+    expect(
+      dim.discriminators.map((d) => d.branch),
+      'The declared branches must mirror the Rust chain order.',
+    ).toEqual(['blank-unfiltered', 'blank-filtered', 'regex', 'fts-match'])
+    expect(
+      dim.discriminators.every((d) => typeof d.when === 'function'),
+      'Every search_blocks arm is condition-shaped, so every discriminator must carry `when`: ' +
+        'a `field` discriminator reports a `false` toggle as PRESENT and would credit the ' +
+        'regex arm for `"isRegex": false`.',
+    ).toBe(true)
+  })
+
+  // #3927 — `run_advanced_query`'s two STRUCTURAL switches. Lighter than the
+  // guards above by design: it pins that both switches still exist and still
+  // read the fields the manifest names, which is what stops the entry rotting
+  // into a pair of branches nothing dispatches on. What it deliberately does
+  // NOT claim is completeness — see the NOTE under the manifest for the sort /
+  // group-key / aggregate / filter-leaf dispatch this entry does not model.
+  it("run_advanced_query branch discriminators match the engine's structural dispatch", () => {
+    const engine = readRustSource(RUST_QUERY_ENGINE_PATH)
+    for (const [what, needle] of [
+      ['the grouped dispatch', 'if let Some(spec) = request.group_by.as_ref()'],
+      ['the full-text switch', 'let has_fulltext = match_sanitized.is_some();'],
+      ['the full-text request field', 'request.fulltext.as_deref()'],
+      ['the full-text FROM swap', 'fts_blocks fts JOIN blocks b ON b.id = fts.block_id'],
+      ['the grouped path entry', 'return run_grouped(pool, spec, &request, ctx, limit).await;'],
+    ] as const) {
+      expect(
+        engine.includes(needle),
+        `could not find ${what} (${JSON.stringify(needle)}) in ${RUST_QUERY_ENGINE_PATH}. ` +
+          `QUERY_STEP_BRANCH_DISCRIMINATORS.run_advanced_query declares one branch per switch; ` +
+          `update the manifest and this guard together if the engine moved, don't delete the ` +
+          `assertion.`,
+      ).toBe(true)
+    }
+
+    const spec = QUERY_STEP_BRANCH_DISCRIMINATORS['run_advanced_query']
+    expect(spec?.dimensions.map((d) => d.name)).toEqual([
+      'group_by dispatch',
+      'has_fulltext composition',
+    ])
+    expect(
+      spec?.dimensions.map((d) => d.discriminators.map((x) => x.field)),
+      'Each structural switch is field-presence-shaped on the request DTO.',
+    ).toEqual([['groupBy'], ['fulltext']])
+  })
+
+  // #3927 — the manifest itself, independently of any one command. Each of
+  // these is a way to write an entry that COMPILES, passes every guard above,
+  // and silently credits a branch nothing drove.
+  it('the branch manifest is well-formed (one shape per discriminator, unique branch names)', () => {
+    const malformed: string[] = []
+    const collisions: string[] = []
+    const notReadOnly: string[] = []
+    for (const [command, spec] of Object.entries(QUERY_STEP_BRANCH_DISCRIMINATORS)) {
+      if (!isReadOnly(command) || !bindingsCommands.includes(command)) notReadOnly.push(command)
+      const seen = new Set<string>()
+      for (const dim of spec.dimensions) {
+        for (const d of [...dim.discriminators, { branch: dim.defaultBranch }]) {
+          if (seen.has(d.branch)) collisions.push(`${command}::${d.branch}`)
+          seen.add(d.branch)
+        }
+        for (const d of dim.discriminators) {
+          const shapes = [d.field !== undefined, d.when !== undefined].filter(Boolean).length
+          if (shapes !== 1) malformed.push(`${command}::${d.branch} (declares ${shapes} shapes)`)
+          if (d.equals !== undefined && d.field === undefined) {
+            malformed.push(`${command}::${d.branch} (\`equals\` without \`field\`)`)
+          }
+        }
+      }
+    }
+    expect(
+      malformed,
+      `Each discriminator declares EXACTLY ONE of \`field\` / \`when\` (and \`equals\` only ` +
+        `alongside \`field\`): ${JSON.stringify(malformed)}. Two shapes means one is dead and ` +
+        `the branch is classified by a rule nobody reading the entry expects; zero means it ` +
+        `never matches, so its branch is permanently uncovered and its arm permanently ` +
+        `mis-credited to the default.`,
+    ).toEqual([])
+    expect(
+      collisions,
+      `Branch names must be unique across ALL of a command's dimensions ` +
+        `${JSON.stringify(collisions)} — the coverage key is \`command::branch\`, with no ` +
+        `dimension in it, so a collision silently merges two arms into one unit that either ` +
+        `step can satisfy.`,
+    ).toEqual([])
+    expect(
+      notReadOnly,
+      `QUERY_STEP_BRANCH_DISCRIMINATORS entries must be read-only commands still present in ` +
+        `bindings.ts ${JSON.stringify(notReadOnly)}; nothing consumes a branch manifest for ` +
+        `anything else, so the entry (and any branch waiver naming it) is dead.`,
+    ).toEqual([])
   })
 
   // #3878 review note 4 — `stepBranchKeys` falls through to `defaultBranch`
@@ -1433,24 +2193,29 @@ describe('#3083 conformance-coverage ratchet', () => {
       for (const step of fx.querySteps) {
         const spec = QUERY_STEP_BRANCH_DISCRIMINATORS[step.command]
         if (!spec) continue
-        if (spec.source.kind === 'request') {
-          const request = step.args?.['request']
-          if (typeof request !== 'object' || request === null || Array.isArray(request)) {
-            missing.push(`${fx.name}/${step.name}`)
+        for (const dim of spec.dimensions) {
+          // #3927 — declared per dimension rather than inferred from the
+          // source path: `search_blocks` classifies off the args ROOT, which
+          // is never absent, so there is no node to null-check and the
+          // fallthrough would be silent without this.
+          for (const key of dim.requiredArgs ?? []) {
+            if (step.args?.[key] === undefined || step.args[key] === null) {
+              missing.push(`${fx.name}/${step.name} (missing '${key}')`)
+            }
           }
-          continue
-        }
-        const raw = step.args?.[spec.source.arrayField]
-        // Absent is legitimate: `filtered_blocks_query` accepts a tag-only or
-        // blockType-only call, which exercises no value-shape arm.
-        if (raw === undefined || raw === null) continue
-        if (!Array.isArray(raw)) {
-          missing.push(`${fx.name}/${step.name}`)
-          continue
-        }
-        for (const [i, el] of raw.entries()) {
-          if (typeof el !== 'object' || el === null || Array.isArray(el)) {
-            malformedElement.push(`${fx.name}/${step.name}[${i}]`)
+          if (dim.source.kind === 'object') continue
+          const raw = resolvePath(step.args ?? {}, dim.source.path)
+          // Absent is legitimate: `filtered_blocks_query` accepts a tag-only or
+          // blockType-only call, which exercises no value-shape arm.
+          if (raw === undefined || raw === null) continue
+          if (!Array.isArray(raw)) {
+            missing.push(`${fx.name}/${step.name} ('${dim.source.path.join('.')}' is not an array)`)
+            continue
+          }
+          for (const [i, el] of raw.entries()) {
+            if (typeof el !== 'object' || el === null || Array.isArray(el)) {
+              malformedElement.push(`${fx.name}/${step.name}[${i}]`)
+            }
           }
         }
       }

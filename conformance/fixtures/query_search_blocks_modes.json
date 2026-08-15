@@ -1,0 +1,317 @@
+{
+  "description": "#3927 — BRANCH differential over `search_blocks`'s four reachable dispatch arms in `fts::search_with_toggles` (`agaric-store/src/fts/toggle_filter.rs`), plus `run_advanced_query`'s full-text arm, which needs the same materializer-populated `fts_blocks` rows. `search_blocks` had ONE query step (`search_zebrafish`), which leaves every toggle at its `serde(default) = false` and a blank `filter`, so it drove the FTS5 MATCH arm alone while the ratchet read the command as covered. The three other reachable arms differ in FROM clause, ORDER BY and pagination, and the mock had implemented NONE of them. Every block's content arrives via `edit_block` rather than the seed insert: the seed bypasses the materializer, so only an op-driven content write populates `fts_blocks` — a step searching seeded text would compare an empty backend result against a populated mock one. The four `search_blocks` steps share one query family (`widget` / `note`) so each falsifies the others: the same term returns a different row set per arm.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Search Modes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Widget assembly notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "widget teardown notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "calibration note about widget pending",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Other Modes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Widget offsite notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "has_more": false,
+      "name": "search_fts_widget",
+      "rows": ["B2", "B3", "B4", "B6"],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "search_blank_query_parent_filter",
+      "rows": ["B4", "B3", "B2"],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "search_regex_anchored_widget",
+      "rows": ["B6", "B3", "B2"],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "search_case_sensitive_widget",
+      "rows": ["B2", "B6"],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "search_whole_word_note",
+      "rows": ["B4"],
+      "total_count": null
+    },
+    {
+      "has_more": false,
+      "name": "advanced_fulltext_widget",
+      "rows": ["B2", "B3", "B4", "B6"],
+      "total_count": 4
+    }
+  ],
+  "name": "query_search_blocks_modes",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "Widget assembly notes"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "widget teardown notes"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "calibration note about widget pending"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "toText": "Widget offsite notes"
+      },
+      "command": "edit_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "limit": 50,
+        "query": "widget"
+      },
+      "command": "search_blocks",
+      "comment": "Arm 4 — every toggle off, so `search_with_toggles` short-circuits to the FTS5 MATCH path. The trigram tokenizer matches `widget` as a SUBSTRING and case-insensitively, so all four edited blocks hit. This is the contrast row-set the two post-filter steps below narrow: same term, three different answers.",
+      "name": "search_fts_widget"
+    },
+    {
+      "args": {
+        "filter": {
+          "parentId": "S1",
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "Arm 2 — a BLANK query with at least one structural filter is NOT the empty early return: it degrades to `fts_fetch_filter_only_page`, a `FROM blocks b` scan with no FTS5 at all, ordered `b.id DESC`. `ordered` because that recency order is the arm's whole point and the ids are seed ids (byte-identical on both stacks). Pins three things at once: that a blank query with a filter returns rows, that `parentId` restricts to S1's three children (S6 hangs off the other page, S1/S5 are pages), and the DESC direction.",
+      "name": "search_blank_query_parent_filter",
+      "ordered": true
+    },
+    {
+      "args": {
+        "filter": {
+          "isRegex": true,
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "limit": 50,
+        "query": "^widget"
+      },
+      "command": "search_blocks",
+      "comment": "Arm 3 — `isRegex` BYPASSES FTS5 entirely and runs the compiled pattern against RAW `blocks.content` over a recency-ordered pre-filtered scan (`ORDER BY b.id DESC`, `next_cursor` always None). The `^` anchor is what makes this un-fakeable by a substring matcher: S4 contains `widget` mid-string and must NOT match, while a literal-substring search for the string `^widget` matches nothing at all. The default `case_sensitive: false` composes an `(?i)` prefix, so the lowercase pattern must still match `Widget`.",
+      "name": "search_regex_anchored_widget",
+      "ordered": true
+    },
+    {
+      "args": {
+        "filter": {
+          "caseSensitive": true,
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "limit": 50,
+        "query": "Widget"
+      },
+      "command": "search_blocks",
+      "comment": "Arm 5 — `caseSensitive` (with `isRegex` off) takes the post-filter path: the FTS5 trigram candidate set is case-INsensitive, so the arm's job is to narrow it with a `(?-i)` regex over the row's content. Unordered because the survivors keep FTS rank order, which is not comparable across stacks. Falsified by a case-folding implementation, which returns the full `search_fts_widget` set.",
+      "name": "search_case_sensitive_widget"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          },
+          "wholeWord": true
+        },
+        "limit": 50,
+        "query": "note"
+      },
+      "command": "search_blocks",
+      "comment": "Arm 5's other toggle — `wholeWord` composes `(?-u:\\b)note(?-u:\\b)`, so only the block carrying `note` as a standalone word survives; the three carrying `notes` are candidates from FTS and must be dropped by the post-filter. A substring implementation returns all four.",
+      "name": "search_whole_word_note"
+    },
+    {
+      "args": {
+        "request": {
+          "fulltext": "widget",
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "`run_advanced_query`'s full-text arm: `fulltext` flips the engine's FROM from `blocks b` to `fts_blocks fts JOIN blocks b`, prefixes the predicate with `fts_blocks MATCH ?1`, shifts every bind by one, and defaults the sort to relevance. Unordered because bm25 rank is not comparable across stacks; the row SET is, and it is what an ignored `fulltext` would blow open — a structural-only query over this space returns all six blocks.",
+      "name": "advanced_fulltext_widget"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Search Modes",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "page",
+        "content": "Other Modes",
+        "id": "S5",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S6",
+        "parent_id": "S5",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

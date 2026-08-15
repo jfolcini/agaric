@@ -194,10 +194,16 @@ describe('encodeNextCursor — non-ASCII titles (#3888 note 2)', () => {
   /**
    * The exact JSON `encodeNextCursor` builds for `alphabetical`, written out by
    * hand (insertion order `id`, `version`, `position`, `deleted_at`).
-   * `position: 5` is the `default`/`alphabetical` discriminator.
+   * `position: 1` is `PageSort::Alphabetical`'s discriminator
+   * (`sort_discriminator`, `src-tauri/src/commands/pages/metadata.rs`). It read
+   * `5` here until #3927, mirroring the mock's own bug rather than the backend:
+   * `alphabetical` was folded into `default`'s tag on the false premise that it
+   * is a frontend-only sort. Incidental to what these three tests assert (the
+   * UTF-8 base64url encoding), but it is a hand-written expectation and a
+   * hand-written expectation that repeats the bug is how the bug survives.
    */
   function alphabeticalJson(title: string): string {
-    return `{"id":"${ID}","version":1,"position":5,"deleted_at":${JSON.stringify(title)}}`
+    return `{"id":"${ID}","version":1,"position":1,"deleted_at":${JSON.stringify(title)}}`
   }
 
   it('encodes an above-U+00FF title (em dash) instead of throwing InvalidCharacterError', () => {
@@ -221,7 +227,7 @@ describe('encodeNextCursor — non-ASCII titles (#3888 note 2)', () => {
     expect(JSON.parse(base64UrlToUtf8(encoded)) as Record<string, unknown>).toEqual({
       id: ID,
       version: 1,
-      position: 5,
+      position: 1,
       deleted_at: 'Q3 — Roadmap',
     })
   })

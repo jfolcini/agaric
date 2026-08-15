@@ -124,11 +124,26 @@ test.describe('Search results — grouping + interaction (E2E-8)', () => {
 // (height fed by the `--vrl-total-size` custom property). jsdom has no
 // scroll geometry, so this is the only layer that can verify it for real.
 test.describe('Tall search group — scroll geometry via ::before spacer (#737)', () => {
-  const SEEDED = 60
+  // MUST stay at or below one search page (`PAGINATION_LIMIT` = 50, what
+  // `useSearchResults` sends as `search_blocks`' `limit`), because this spec
+  // never clicks "Load more": it asserts that EVERY seeded row is reachable by
+  // scrolling, which only holds while the whole fixture fits the first page.
+  //
+  // This used to be 60 and passed only against the old mock, whose
+  // `search_blocks` ignored `limit` and returned its entire folded-substring
+  // scan in one response. The backend never did that: `search_blocks_inner`
+  // builds a `PageRequest` (`limit` 50 here), `search_fts` clamps it to
+  // `MAX_SEARCH_RESULTS` and fetches `effective_limit + 1`
+  // (`agaric-store/src/fts/search/cursor.rs:103-105`), so a 60-block fixture
+  // answers with 50 rows + `has_more` and the last ten are a second page away.
+  // #3927 taught the mock the same ceiling, and the 60-row fixture then
+  // stalled at `data-index` 49. 40 keeps the group far taller than the `max-h`
+  // cap (~34px/row vs a 400px viewport) with headroom under the page limit.
+  const SEEDED = 40
 
   test('scrollHeight equals totalSize and the last row is reachable', async ({ page }) => {
     await openSearchView(page)
-    // Bulk-seed 60 content blocks under PAGE_PROJECTS — one group far
+    // Bulk-seed the content blocks under PAGE_PROJECTS — one group far
     // taller than the listbox's `max-h` viewport cap.
     await page.evaluate((n) => {
       ;(
