@@ -40,9 +40,19 @@
 //!   `block_links` row, rolls up the source to a page via
 //!   `COALESCE(blocks.page_id, parent_id, source_id)`, groups by
 //!   `(source_page, target_page)`, and DELETE + INSERTs the whole
-//!   table. Used by snapshot restore, the boot-time "table is empty"
-//!   fallback, and the delete/restore/purge FULL_CACHE_REBUILD_TASKS
-//!   fan-out.
+//!   table. Used by snapshot restore, the delete/restore/purge/cross-page-move
+//!   `FULL_CACHE_REBUILD_TASKS` fan-out, and the read path's lazy heal in
+//!   `commands::pages::links` (gated on the table being ENTIRELY empty).
+//!
+//! #3839 correction of record: this module previously documented a
+//! "boot-time `table is empty` fallback (recovery)". **No such recovery
+//! path exists** — `src/db/recovery/` never touches `page_link_cache`, and
+//! `rebuild_all_caches` is `#[cfg(test)]`. An upgrading vault is populated
+//! by migration `0110`, a one-shot backfill running the same roll-up as
+//! [`rebuild_page_link_cache`]; the read-path lazy heal is a redundancy
+//! behind it, not the mechanism (before 0110 it WAS the mechanism, and its
+//! "table entirely empty" gate is permanently disarmed by the first row any
+//! incremental maintenance writes).
 //!
 //! The static-literal queries here use the compile-checked `query!` /
 //! `query_as!` macros (#235), validated against the `.sqlx` offline cache.
@@ -90,6 +100,14 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 6; // 166
 ///       ON sb.id = bl.source_id AND COALESCE(sb.page_id, sb.parent_id, sb.id) =
 ///       source_page WHERE bl.target_id = target_page`. UPSERT non-zero
 ///      counts; DELETE zero counts.
+///   4. #3842: repeat (2)+(3) for every key this block may have been counted
+///      under BEFORE `page_id` was stamped (`parent_id`, and its own `id`).
+///      Without this, step (3) would ADD the correct page-keyed row while
+///      LEAVING the earlier content-block-keyed row behind — the "spurious
+///      row plus missing row" state #3842 describes. Because the recompute is
+///      keyed on the roll-up key alone, running it for a stranded key drops
+///      the rows nothing supports any more, and corrects the `edge_count` of
+///      any row other blocks still support.
 ///
 /// Single transaction so the cache and `block_links` stay coherent under
 /// concurrent reads — `list_page_links_inner` joining `blocks` and
@@ -120,22 +138,68 @@ pub async fn reindex_page_link_cache_for_block(
     // This `COALESCE(page_id, parent_id, id)` chain MUST stay identical to
     // the SQL roll-up below and in the full-rebuild query so the
     // Rust-resolved `source_page` matches what the SQL groups under.
-    let source_page: String = match sqlx::query!(
+    let row = sqlx::query!(
         "SELECT page_id, parent_id FROM blocks WHERE id = ?",
         block_id
     )
     .fetch_optional(&mut *tx)
-    .await?
-    {
-        Some(r) => r
-            .page_id
-            .or(r.parent_id)
-            .unwrap_or_else(|| block_id.to_owned()),
+    .await?;
+    let (page_id, parent_id) = match row {
+        Some(r) => (r.page_id, r.parent_id),
         // Block missing (purged). Fall back to block_id so the
         // recompute can still drop stale rows keyed under that id.
-        None => block_id.to_owned(),
+        None => (None, None),
     };
+    let source_page: String = page_id
+        .clone()
+        .or_else(|| parent_id.clone())
+        .unwrap_or_else(|| block_id.to_owned());
 
+    // #3842: the roll-up key is `COALESCE(page_id, parent_id, id)`, so a block
+    // whose `page_id` was NULL when a previous `ReindexBlockLinks` ran had its
+    // edges written under `parent_id` (or its own id). Once the deferred
+    // `SetBlockPageId` stamps the real owning page the key MOVES, and the rows
+    // written under the earlier key are stranded: `list_page_links_inner` then
+    // shows an edge sourced at a non-page block while the real page's edge is
+    // missing. Collect the earlier keys this block could have been counted
+    // under and recompute them too. Only keys that differ from the current
+    // `source_page` are candidates, and the recompute is support-checked, so a
+    // key that is still the legitimate roll-up target of some OTHER live block
+    // — a page-less subtree keyed on its top-level parent — keeps its rows
+    // (with a corrected count).
+    let stale_keys: Vec<String> = [parent_id, Some(block_id.to_owned())]
+        .into_iter()
+        .flatten()
+        .filter(|k| *k != source_page)
+        .collect();
+
+    // Recompute the block's CURRENT key, then every key it may have been
+    // counted under before `page_id` was stamped (#3842). Same recompute for
+    // both: it is keyed on the roll-up key alone, so re-running it for a
+    // stranded key both DROPS rows nothing supports any more and CORRECTS the
+    // `edge_count` of rows other blocks still support.
+    recompute_rows_for_rollup_key(&mut tx, &source_page).await?;
+    for stale_key in &stale_keys {
+        recompute_rows_for_rollup_key(&mut tx, stale_key).await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Recompute every `page_link_cache` row keyed on ONE roll-up key
+/// (`COALESCE(page_id, parent_id, id)` of some source block).
+///
+/// Split out of [`reindex_page_link_cache_for_block`] for #3842 so the same
+/// recompute can run for the changed block's current key AND for the keys it
+/// has moved away from. The result for a given key depends only on the key,
+/// `block_links` and `blocks` — so running it for extra keys is idempotent and
+/// converges on exactly the rows [`rebuild_page_link_cache`] would produce for
+/// them.
+async fn recompute_rows_for_rollup_key(
+    conn: &mut sqlx::SqliteConnection,
+    source_page: &str,
+) -> Result<(), AppError> {
     // Pairs touched: every target that currently appears in block_links
     // under any block whose roll-up == source_page, UNION every target
     // already in page_link_cache under source_page. This catches both
@@ -157,7 +221,7 @@ pub async fn reindex_page_link_cache_for_block(
          )",
         source_page,
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *conn)
     .await?
     .into_iter()
     .map(|row| row.target_id)
@@ -170,7 +234,6 @@ pub async fn reindex_page_link_cache_for_block(
     // result and fall through to the zero-edge DELETE below. Net cost:
     // 2 round-trips instead of 2K, no Rust-side counting.
     if touched_targets.is_empty() {
-        tx.commit().await?;
         return Ok(());
     }
     let targets_json = serde_json::to_string(&touched_targets)?;
@@ -210,7 +273,7 @@ pub async fn reindex_page_link_cache_for_block(
         source_page,
         targets_json,
     )
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
 
     // Zero-edge sweep: remove any touched target whose live edge count
@@ -231,10 +294,9 @@ pub async fn reindex_page_link_cache_for_block(
         source_page,
         targets_json,
     )
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
 
-    tx.commit().await?;
     Ok(())
 }
 
@@ -248,8 +310,14 @@ pub async fn reindex_page_link_cache_for_block(
 /// `block_links` to the page level. Used by:
 ///
 /// - snapshot restore (`apply_snapshot`),
-/// - boot-time "table is empty" fallback (`recovery`),
-/// - the delete/restore/purge `FULL_CACHE_REBUILD_TASKS` fan-out.
+/// - the delete/restore/purge/cross-page-move `FULL_CACHE_REBUILD_TASKS`
+///   fan-out,
+/// - the read path's lazy heal in `commands::pages::links`, gated on the
+///   table being ENTIRELY empty (#3839).
+///
+/// #3839: the previously-documented "boot-time `table is empty` fallback
+/// (`recovery`)" does NOT exist. The upgrade-time population of an existing
+/// vault is migration `0110`, whose SQL mirrors the roll-up below.
 ///
 /// Per-content-edit invalidation goes through
 /// [`reindex_page_link_cache_for_block`] from
@@ -295,6 +363,28 @@ async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError
     //   - `tgt_deleted` / `tgt_is_page` come from the target block
     //     (`target_page_id = bl.target_id` is a single block, so the
     //     `MAX`/`MIN` are identity per group).
+    //
+    // #3894 FOREIGN KEY guard — the `EXISTS` term in the WHERE. Both cache
+    // columns are `NOT NULL REFERENCES blocks(id)` (0065) and foreign keys
+    // are ON for every connection (`db::base_connect_options`). The TARGET
+    // side needs nothing: `target_page_id` is `bl.target_id` and the `tb`
+    // INNER join already drops an edge whose target is gone. The SOURCE side
+    // does, because `source_page_id` is not a joined column but the derived
+    // key `COALESCE(sb.page_id, sb.parent_id, bl.source_id)` — `sb` joining
+    // fine says nothing about whether the KEY names a live `blocks` row. A
+    // source block carrying a dangling `page_id` / `parent_id` (migrations
+    // 0073 and 0085 NULL exactly that historical state out, so vaults in the
+    // wild carry it) rolls up to an id that is not in `blocks`, and the
+    // INSERT below raises. `INSERT OR IGNORE` does NOT absorb that: per the
+    // SQLite docs the ON CONFLICT algorithm does not apply to FOREIGN KEY
+    // constraints. Skipping the group is the only outcome that leaves the
+    // rebuild total. It cannot distort a surviving row: the key is the first
+    // GROUP BY term, so the predicate is constant across a group and can only
+    // drop whole groups, never part of one group's `COUNT(*)`. This is also
+    // what makes migration 0110 (`0110_page_link_cache_backfill.sql`, an
+    // exact transcription of this statement) safe to run at boot, where the
+    // same abort would be an unrecoverable startup failure rather than a
+    // logged background error.
     let rows: Vec<(String, String, i64, i64, i64, i64)> = sqlx::query!(
         "SELECT
              COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!: String\",
@@ -308,6 +398,10 @@ async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError
          JOIN blocks tb ON tb.id = bl.target_id
          LEFT JOIN blocks sp ON sp.id = COALESCE(sb.page_id, sb.parent_id, bl.source_id)
          WHERE sb.deleted_at IS NULL
+           AND EXISTS (
+               SELECT 1 FROM blocks fk
+               WHERE fk.id = COALESCE(sb.page_id, sb.parent_id, bl.source_id)
+           )
          GROUP BY 1, 2",
     )
     .fetch_all(&mut *tx)
@@ -380,6 +474,13 @@ async fn rebuild_page_link_cache_split_impl(
     // single target block.
     // The `MAX`/`MIN` aggregates are identity per group, present only to
     // satisfy the GROUP BY.
+    //
+    // Carries the same #3894 `EXISTS` foreign-key guard as the single-pool
+    // variant — it writes the same `NOT NULL REFERENCES blocks(id)` columns,
+    // so a rollup key that names no `blocks` row would raise here too. See
+    // `rebuild_page_link_cache_impl` for why the source side needs it and the
+    // target side does not, and why dropping the group cannot distort a
+    // surviving row's `edge_count`.
     let rows: Vec<(String, String, i64, i64, i64, i64)> = sqlx::query!(
         "SELECT
              COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!: String\",
@@ -393,6 +494,10 @@ async fn rebuild_page_link_cache_split_impl(
          JOIN blocks tb ON tb.id = bl.target_id
          LEFT JOIN blocks sp ON sp.id = COALESCE(sb.page_id, sb.parent_id, bl.source_id)
          WHERE sb.deleted_at IS NULL
+           AND EXISTS (
+               SELECT 1 FROM blocks fk
+               WHERE fk.id = COALESCE(sb.page_id, sb.parent_id, bl.source_id)
+           )
          GROUP BY 1, 2",
     )
     .fetch_all(read_pool)

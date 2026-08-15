@@ -4263,6 +4263,102 @@ async fn reindex_block_links_cross_space_pushdown_preserves_soft_delete_p6() {
     );
 }
 
+/// #3903: the pushed-down cross-space filter must resolve the TARGET's space
+/// the same way it resolves the SOURCE's — `COALESCE(own space_id, owning
+/// page's space_id)`, per `space::resolve_block_space`.
+///
+/// The comment on the filter claimed the target subquery was "a verbatim copy
+/// of `space::resolve_block_space`'s SQL". It was not: it read only
+/// `blocks.space_id` and omitted the owning-page fallback, while the source
+/// side got the fallback for free by calling `resolve_block_space` directly.
+/// `blocks.space_id` on a freshly created content block is NULL until the
+/// post-commit `SetBlockPageId` task stamps it, so inside that window a
+/// SAME-space target resolved to NULL, `NULL = ?3` was falsy, and a legitimate
+/// link was silently dropped. Reachable through the in-tx edit hook, where the
+/// source's `space_id` is long since stamped.
+///
+/// Both targets below sit on pages in the source's space. Only the one whose
+/// own `space_id` column happens to be materialised survived the old filter.
+///
+/// Filed as its own issue (#3903) rather than riding the #3842/#3839 rollup
+/// PR's closing keywords, so a bisect that lands here finds a title about THIS
+/// defect. The fix is strictly widening — see the filter's comment.
+#[tokio::test]
+async fn reindex_block_links_target_space_falls_back_to_owning_page_3903() {
+    let (pool, _dir) = test_pool().await;
+    let space1 = "01SPACE0000000000000000001";
+    cs375_insert_page(&pool, space1).await;
+
+    // Source page + source block, both stamped with space1.
+    let src_page = "01SRCPAGE3894000000000000A";
+    cs375_insert_page(&pool, src_page).await;
+    cs375_set_space(&pool, src_page, space1).await;
+
+    // The target's owning page, in space1. `cs375_set_space` stamps the page
+    // AND everything paged to it, so insert the children AFTER it to leave
+    // their own `space_id` NULL — the pre-`SetBlockPageId` state.
+    let tgt_page = "01TGTPAGE3894000000000000B";
+    cs375_insert_page(&pool, tgt_page).await;
+    cs375_set_space(&pool, tgt_page, space1).await;
+
+    // Target A: `space_id` not yet materialised, but its page is in space1.
+    let tgt_pending = "01TGTPEND3894000000000000C";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+         VALUES (?, 'content', 'pending', ?, ?)",
+    )
+    .bind(tgt_pending)
+    .bind(tgt_page)
+    .bind(tgt_page)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Target B: same page, `space_id` already stamped — the control.
+    let tgt_stamped = "01TGTSTMP3894000000000000D";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) \
+         VALUES (?, 'content', 'stamped', ?, ?, ?)",
+    )
+    .bind(tgt_stamped)
+    .bind(tgt_page)
+    .bind(tgt_page)
+    .bind(space1)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let src_block = "01SRCBLOK3894000000000000E";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) \
+         VALUES (?, 'content', ?, ?, ?, ?)",
+    )
+    .bind(src_block)
+    .bind(format!("(({tgt_pending})) (({tgt_stamped}))"))
+    .bind(src_page)
+    .bind(src_page)
+    .bind(space1)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    reindex_block_links(&pool, src_block).await.unwrap();
+
+    let mut targets: Vec<String> =
+        sqlx::query_scalar("SELECT target_id FROM block_links WHERE source_id = ?")
+            .bind(src_block)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    targets.sort();
+    assert_eq!(
+        targets,
+        vec![tgt_pending.to_string(), tgt_stamped.to_string()],
+        "a target whose own space_id is not yet materialised must resolve through its \
+         owning page, exactly as resolve_block_space does for the source — dropping it \
+         loses a same-space link permanently (#3903)"
+    );
+}
+
 /// #375 helpers: a space-marker page (its own `page_id`) and a
 /// `blocks.space_id` stamp on a block.
 async fn cs375_insert_page(pool: &SqlitePool, id: &str) {

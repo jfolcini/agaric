@@ -279,23 +279,109 @@ async fn rebuild_page_ids_split_impl(
     Ok(written)
 }
 
-/// Set `page_id` for a single newly created block by inheriting from its parent.
+/// Outcome of one [`set_block_page_id_from_parent_in_tx`] write (#3842).
+///
+/// `changed` is the "the column actually moved" signal; `previous` and
+/// `current` are the values it moved BETWEEN, which the caller needs to decide
+/// whether the `page_link_cache` roll-up key it vacated is one the per-block
+/// reindex's stale-key sweep covers. See the `SetBlockPageId` arm in
+/// `materializer::handlers::task_handlers`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageIdWrite {
+    /// `true` iff the UPDATE touched the row — i.e. `blocks.page_id` now
+    /// holds a different value than it did before the call.
+    pub changed: bool,
+    /// The `page_id` the row held BEFORE the write. `None` is both "the
+    /// column was NULL" and "the row does not exist"; the two are
+    /// indistinguishable here and equivalent for every caller (a missing row
+    /// cannot be updated, so `changed` is `false`).
+    pub previous: Option<String>,
+    /// The `page_id` the row holds AFTER the write — the value inherited from
+    /// the parent, which is what the UPDATE writes. It is read in the same
+    /// statement as `previous`, inside the caller's transaction, so the pair
+    /// describes one atomic transition.
+    ///
+    /// `None` covers three cases that are all "the roll-up key is no longer a
+    /// real page": no parent row, a parent whose own `page_id` is still
+    /// unstamped, and a missing block. Distinguishing `Some(P) → None`
+    /// (#3894: a DEMOTION, reachable when a retried `SetBlockPageId` finds its
+    /// parent's stamp still pending or its parent purged) from `Some(P1) →
+    /// Some(P2)` (a page-to-page MOVE) is the whole reason this field exists:
+    /// both vacate a real page key and so owe the same durable repair, but
+    /// only the move is the invariant violation the handler's `debug_assert!`
+    /// means to catch.
+    pub current: Option<String>,
+}
+
+/// Set `page_id` for a single newly created block by inheriting from its
+/// parent, inside the CALLER's transaction.
 ///
 /// Used instead of the full `RebuildPageIds` rebuild on `create_block` — a
 /// fresh block has no descendants, so only one row ever changes.
-pub async fn set_block_page_id_from_parent(
-    pool: &SqlitePool,
+///
+/// Reports whether the write actually CHANGED `blocks.page_id`, and the values
+/// it moved between (#3842). The caller needs that signal because `page_id` is
+/// the first term of the `page_link_cache` roll-up key
+/// `COALESCE(page_id, parent_id, id)`: a block whose owning page was
+/// unresolved at op-apply time (the in-tx `resolve_owning_page` returned
+/// `None` — e.g. the parent row had not been delivered yet) already had its
+/// links rolled up under a *content-block* key, and that roll-up has to be
+/// redone once this task supplies the real page. See
+/// `materializer::handlers::task_handlers`'s `SetBlockPageId` arm.
+///
+/// The null-safe `IS NOT` guard makes the UPDATE touch the row only when the
+/// inherited value actually differs, so `rows_affected()` is exactly "the
+/// column changed". The value written is unchanged from the pre-#3842
+/// unconditional UPDATE — including the case where the parent is gone and the
+/// inherited value is `NULL` — only no-op writes are skipped.
+///
+/// Caller-transaction-only by design (#3894): the `SetBlockPageId` handler
+/// must commit the `page_id` write and the durable "the roll-up owes a repair"
+/// retry-queue obligation in ONE transaction. Without that atomicity the
+/// repair signal is transient — the write commits, the follow-up reindex fails
+/// or the process dies, and the re-run's null-safe guard matches zero rows, so
+/// `changed` is `false` and the repair is skipped forever (the #2831 defect
+/// class, applied to the roll-up). An autocommit wrapper used to sit alongside
+/// this function; it had no production caller (only a unit test), and a `pub`
+/// unused wrapper is invisible to the dead-code lint and free to drift from
+/// the form it delegates to, so it was removed rather than left to rot.
+///
+/// The `SELECT` runs on the same connection as the `UPDATE`, so inside a
+/// `BEGIN IMMEDIATE` transaction the triple is atomic: no other writer can
+/// move `page_id` between reading `previous` / `current` and writing the new
+/// value. `current` is read from the same statement as `previous` because it
+/// is exactly the subquery the UPDATE assigns — the inherited parent value —
+/// so it holds whether or not the UPDATE fires (when it does not fire, the
+/// column already equalled it).
+pub async fn set_block_page_id_from_parent_in_tx(
+    conn: &mut sqlx::SqliteConnection,
     block_id: &str,
-) -> Result<(), AppError> {
-    sqlx::query!(
-        "UPDATE blocks \
-         SET page_id = (SELECT b2.page_id FROM blocks b2 WHERE b2.id = blocks.parent_id) \
-         WHERE id = ?",
+) -> Result<PageIdWrite, AppError> {
+    let before = sqlx::query!(
+        "SELECT page_id AS \"previous?: String\", \
+                (SELECT b2.page_id FROM blocks b2 WHERE b2.id = blocks.parent_id) \
+                    AS \"inherited?: String\" \
+         FROM blocks WHERE id = ?",
         block_id
     )
-    .execute(pool)
+    .fetch_optional(&mut *conn)
     .await?;
-    Ok(())
+    let previous = before.as_ref().and_then(|r| r.previous.clone());
+    let current = before.as_ref().and_then(|r| r.inherited.clone());
+    let result = sqlx::query!(
+        "UPDATE blocks \
+         SET page_id = (SELECT b2.page_id FROM blocks b2 WHERE b2.id = blocks.parent_id) \
+         WHERE id = ? \
+           AND page_id IS NOT (SELECT b2.page_id FROM blocks b2 WHERE b2.id = blocks.parent_id)",
+        block_id
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(PageIdWrite {
+        changed: result.rows_affected() > 0,
+        previous,
+        current,
+    })
 }
 
 /// Full rebuild of the denormalized `space_id` column on `blocks` (#533).
@@ -356,7 +442,7 @@ async fn rebuild_space_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
 /// Set `space_id` for a single newly created block by inheriting from its
 /// parent (#533). A fresh block lives in the same space as its parent's
 /// page, so it copies the parent's already-materialized `space_id`. Used
-/// alongside [`set_block_page_id_from_parent`] on `create_block` — only
+/// alongside [`set_block_page_id_from_parent_in_tx`] on `create_block` — only
 /// the one new row ever changes, so the full `rebuild_space_ids` is
 /// unnecessary.
 pub async fn set_block_space_id_from_parent(
@@ -484,8 +570,12 @@ mod tests {
         .expect("tag row with NULL page_id must succeed (exempt from page_id_self_for_pages)");
     }
 
-    /// `set_block_page_id_from_parent` inherits `page_id` from the
+    /// `set_block_page_id_from_parent_in_tx` inherits `page_id` from the
     /// parent row — the O(1) incremental path used on `create_block` (#460).
+    ///
+    /// Drives the `_in_tx` form directly (#3894): the autocommit wrapper this
+    /// test used to exercise had no other caller, so it was deleted rather
+    /// than kept as a `pub` shim the dead-code lint cannot see.
     #[tokio::test]
     async fn set_block_page_id_from_parent_inherits_page_id_460() {
         let (pool, _dir) = test_pool().await;
@@ -518,9 +608,22 @@ mod tests {
         .await
         .expect("child block seed with NULL page_id");
 
-        super::set_block_page_id_from_parent(&pool, "CHILD01")
+        let mut tx = pool.begin().await.expect("begin tx");
+        let write = super::set_block_page_id_from_parent_in_tx(&mut tx, "CHILD01")
             .await
-            .expect("set_block_page_id_from_parent must succeed");
+            .expect("set_block_page_id_from_parent_in_tx must succeed");
+        tx.commit().await.expect("commit tx");
+
+        assert_eq!(
+            write,
+            super::PageIdWrite {
+                changed: true,
+                previous: None,
+                current: Some("PAGE01".to_owned()),
+            },
+            "the reported transition must be the NULL → page stamp the create \
+             arm assumes (#3842/#3894), not just a successful write"
+        );
 
         let page_id: Option<String> =
             sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'CHILD01'")
@@ -532,6 +635,61 @@ mod tests {
             page_id.as_deref(),
             Some("PAGE01"),
             "child block must inherit page_id from its ancestor page via parent chain"
+        );
+    }
+
+    /// #3894 — the DEMOTION transition `Some(P) → NULL`, reported honestly.
+    ///
+    /// `resolve_owning_page` stamps `page_id` by walking the `parent_id`
+    /// chain, while this function copies only the PARENT's `page_id` column.
+    /// So a block whose parent's own stamp is still pending (or whose parent
+    /// was purged) inherits `NULL` and moves OFF a real page. That is a
+    /// different shape from the `P1 → P2` move, and the handler has to be able
+    /// to tell them apart — see the `SetBlockPageId` arm's `debug_assert!`.
+    #[tokio::test]
+    async fn set_block_page_id_from_parent_reports_a_demotion_to_null_3894() {
+        let (pool, _dir) = test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('PAGE01', 'page', 'p', NULL, 1, 'PAGE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("page seed");
+        // The parent's OWN stamp has not landed yet (page_id NULL) …
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('PARENT01', 'content', 'parent', 'PAGE01', 1, NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("parent content seed with NULL page_id");
+        // … while the child already carries a real page.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('CHILD01', 'content', 'child', 'PARENT01', 1, 'PAGE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("child block seed with a real page_id");
+
+        let mut tx = pool.begin().await.expect("begin tx");
+        let write = super::set_block_page_id_from_parent_in_tx(&mut tx, "CHILD01")
+            .await
+            .expect("set_block_page_id_from_parent_in_tx must succeed");
+        tx.commit().await.expect("commit tx");
+
+        assert_eq!(
+            write,
+            super::PageIdWrite {
+                changed: true,
+                previous: Some("PAGE01".to_owned()),
+                current: None,
+            },
+            "a demotion must report `previous` non-NULL (a real page key was \
+             vacated, so the repair is still owed) AND `current` NULL (so the \
+             caller can tell it apart from a P1 → P2 move)"
         );
     }
 

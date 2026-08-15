@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET page_id = (SELECT b2.page_id FROM blocks b2 WHERE b2.id = blocks.parent_id) WHERE id = ? AND page_id IS NOT (SELECT b2.page_id FROM blocks b2 WHERE b2.id = blocks.parent_id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "7cbd68c608a8b0d4e4faaf6a24a0d45832675464df19074c28885919ca907b7b"
+}

@@ -156,13 +156,20 @@ pub async fn list_page_links_inner_split_with_cap(
     // `EXISTS / NOT EXISTS` short-circuit terminates after the first
     // matching row in either table). The fallback fires only when
     // `block_links` has been mutated outside the materializer (test
-    // fixtures that `INSERT OR IGNORE INTO block_links` directly, or
-    // a partial-migration window where the cache hasn't been backfilled
-    // yet) — in that case we run a one-shot full rebuild so the read
-    // path observes the same edge set the legacy query did. This keeps
-    // the hard constraint "All existing list_page_links tests must pass
-    // without modification" true while preserving the steady-state
-    // perf win.
+    // fixtures that `INSERT OR IGNORE INTO block_links` directly) — in
+    // that case we run a one-shot full rebuild so the read path observes
+    // the same edge set the legacy query did. This keeps the hard
+    // constraint "All existing list_page_links tests must pass without
+    // modification" true while preserving the steady-state perf win.
+    //
+    // #3839: this is a REDUNDANCY, not the backfill. It used to be the
+    // sole mechanism that ever populated the rollup for a vault upgrading
+    // past migration 0065 — and its "table entirely empty" gate is a
+    // proxy for "has this vault ever been backfilled?" that the first row
+    // any incremental maintenance writes disarms permanently, stranding
+    // every pre-existing edge. Migration `0110` now does the upgrade-time
+    // backfill (same roll-up SQL as `rebuild_page_link_cache`), so no
+    // vault depends on this read path running.
     //
     // SQL/C1 (#341): the rebuild is a DELETE+INSERT, so it MUST target
     // `write_pool`. Driving it through the read pool (`query_only=ON`)
