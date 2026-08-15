@@ -106,6 +106,11 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/** True for the whitespace characters `stripped` can contain. */
+function isSpace(c) {
+  return c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f' || c === '\v'
+}
+
 /** Collapse whitespace runs to a single space and trim — reformatting-tolerant, token-sensitive. */
 function canonicalize(text) {
   return text.replace(/\s+/g, ' ').trim()
@@ -151,18 +156,22 @@ function views(src) {
  * a type-literal nested inside a generic argument, so it is skipped over
  * via its own matching brace instead of ending the scan.
  *
- * Remaining limitation (documented, not silently wrong, NOT fixed by the
- * angle-depth tracking above): a return-type object-type literal with NO
- * enclosing angle brackets (`): { a: string } {`) still isn't
- * distinguished from the real body — angle-depth never leaves 0 for
- * either brace, so the first one (the type literal, not the body) is
- * still taken as the body open. This is a fail-open shape: the truncated
- * text hashes stably, a pin generated from it is self-consistently green
- * today, and stays green through arbitrary body drift. No function this
- * guard currently pins has that shape (verified by hand against every
- * pinned signature); a future pin that does would need a smarter scanner
- * — this extractor only disambiguates a brace that is nested inside
- * `< >`, not one written directly after `):` with no generic wrapper.
+ * The remaining shape angle-depth cannot disambiguate is a return-type
+ * object-type literal with NO enclosing angle brackets (`): { a: string }
+ * {`): angle-depth never leaves 0 for either brace, so the first one — the
+ * type literal, not the body — was taken as the body open. That was a
+ * FAIL-OPEN: the signature-only text hashed stably, and a pin generated
+ * from it stayed green through arbitrary body drift, which is the exact
+ * failure mode this guard exists to refuse (#3971).
+ *
+ * It is now DETECTED rather than documented. If the first significant
+ * character after the parameter list's `)` is a `:` and the next one is a
+ * `{`, the annotation itself begins with an object-type literal and this
+ * extractor cannot tell that brace from the body's without a real type
+ * grammar (a union like `): { a } | { b } {` would defeat any
+ * skip-one-literal heuristic). So it returns `ambiguous-return-type` and
+ * the pin FAILS, rather than hashing a prefix. A comment plus a hand audit
+ * repeated for every new pin is not a gate; this is.
  */
 function extractFunctionAt(src, stripped, m) {
   // Start of the actual declaration (skip the leading \n / whitespace the
@@ -171,6 +180,20 @@ function extractFunctionAt(src, stripped, m) {
   const openParenIdx = m.index + m[0].length - 1
   const closeParenIdx = findMatchingBracket(stripped, openParenIdx)
   if (closeParenIdx === -1) return { text: null, reason: 'unbalanced' }
+
+  // `): { … } {` — the annotation itself opens with an object-type literal,
+  // whose braces are indistinguishable from the body's here. Refuse instead
+  // of hashing the signature-only prefix. Comments are already blanked to
+  // spaces in `stripped`, so skipping whitespace skips them too.
+  {
+    let k = closeParenIdx + 1
+    while (k < stripped.length && isSpace(stripped[k])) k++
+    if (stripped[k] === ':') {
+      let q = k + 1
+      while (q < stripped.length && isSpace(stripped[q])) q++
+      if (stripped[q] === '{') return { text: null, reason: 'ambiguous-return-type' }
+    }
+  }
 
   let i = closeParenIdx + 1
   let angleDepth = 0
@@ -535,6 +558,14 @@ function checkTree({ root, harnessDir }) {
           message = `${where}, but no such function or const exists there anymore (renamed or removed — the clone is orphaned)`
         } else if (reason === 'no-initializer') {
           message = `${where}, which is declared without an initializer — there is no expression to hash`
+        } else if (reason === 'ambiguous-return-type') {
+          message =
+            `${where}, whose return-type annotation begins with an object-type literal ` +
+            "(`): { … } {`). This extractor cannot tell that brace from the body's opening " +
+            'brace without a real type grammar, and guessing would hash a signature-only ' +
+            'prefix that stays green through arbitrary body drift (#3971) — so it refuses. ' +
+            'Wrap the return type (`): Readonly<{ … }> {`), name it (`): Shape {`), or pin a ' +
+            'different symbol.'
         } else {
           message = `${where}, which is ambiguous (${matchCount} declarations) or has unbalanced brackets`
         }
@@ -749,6 +780,57 @@ export function scanExample(
     fail(
       'an object-type literal inside a generic return type (`Array<{ a: number }>`) does not truncate extraction to the signature',
       JSON.stringify(extGeneric),
+    )
+  }
+
+  // The LAST documented fail-open in this extractor (#3971): a return-type
+  // annotation that is a bare object-type literal, `): { a: string } {`.
+  // Angle-depth tracking does not disambiguate it — neither brace is inside
+  // `< >` — so the type literal was taken as the body and its same-line `}`
+  // as the body close. The extracted text was signature-only, hashed
+  // stably, and stayed green through ARBITRARY body drift: the exact
+  // failure mode this whole guard is organised around refusing. A comment
+  // plus a hand audit repeated per new pin is not a gate, so the shape is
+  // now DETECTED and refused rather than documented.
+  const objReturnA = `export function shape(n: number): { a: string } {\n  return { a: String(n) }\n}\n`
+  const objReturnB = `export function shape(n: number): { a: string } {\n  return { a: 'totally different body' }\n}\n`
+  const extObjA = extractPinned(objReturnA, 'shape')
+  const extObjB = extractPinned(objReturnB, 'shape')
+  if (
+    extObjA.text === null &&
+    extObjA.reason === 'ambiguous-return-type' &&
+    extObjB.text === null
+  ) {
+    ok(
+      'a bare object-type return annotation (`): { a: string } {`) FAILS CLOSED, not signature-only',
+    )
+  } else {
+    fail(
+      'a bare object-type return annotation (`): { a: string } {`) FAILS CLOSED, not signature-only',
+      JSON.stringify({ a: extObjA, b: extObjB }),
+    )
+  }
+
+  // Positive controls: the shapes that must keep extracting. A generic
+  // wrapper (`Array<{…}>`) and a plain named return type both start their
+  // annotation with something other than `{`.
+  const extArrayReturn = extractPinned(
+    `export function g(n: number): Array<{ a: number }> {\n  return [{ a: n }]\n}\n`,
+    'g',
+  )
+  const extPlainReturn = extractPinned(
+    `export function h(n: number): number {\n  return n + 1\n}\n`,
+    'h',
+  )
+  if (
+    extArrayReturn.text?.includes('return [{ a: n }]') &&
+    extPlainReturn.text?.includes('return n + 1')
+  ) {
+    ok('generic and plain return-type annotations still extract the full body')
+  } else {
+    fail(
+      'generic and plain return-type annotations still extract the full body',
+      JSON.stringify({ arr: extArrayReturn, plain: extPlainReturn }),
     )
   }
 

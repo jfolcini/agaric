@@ -143,16 +143,24 @@
 //     a QUOTE INSIDE A REGEX LITERAL, `/['"]/` — is fixed: the regex is
 //     lexed as a regex, so its quotes never open a string.
 //
-//     BLAST RADIUS, and it grew when this module landed. The old scanners
-//     mis-scanned the one offending file silently. This one raises
-//     `ScanError` for a quote that never closes, and `check-set-property-args`
-//     turns that into exit 1 for the WHOLE TREE — so a single contraction
-//     written as bare JSX text blocks every commit repo-wide until it is
-//     escaped (`<p>don&apos;t</p>` or `<p>{"don't"}</p>`). That is the
-//     fail-closed direction and is the right default for a drift gate, but
-//     the cost is now "the gate stops", not "one file is mis-scanned", and
-//     the failure message names a lexing construct rather than the JSX text
-//     that caused it. A repo sweep over 1781 files finds zero today.
+//     BLAST RADIUS. The LIKELY outcome is the bad one: `scanQuoted` does
+//     not stop at a newline, so the apostrophe usually pairs with some
+//     later, unrelated `'` in the same file and everything between them is
+//     silently consumed as a string — a desync of exactly the class #3950
+//     exists to close, reported by nobody. `ScanError` (and with it
+//     `check-set-property-args` exiting 1 for the WHOLE TREE, blocking every
+//     commit until the text is escaped as `<p>don&apos;t</p>` or
+//     `<p>{"don't"}</p>`) is the LUCKY outcome, and only happens when no
+//     later quote exists to pair with. Ranking them the other way round —
+//     as this note previously did — reads as "worst case: the gate stops",
+//     which understates it.
+//
+//     Both outcomes are inherited unchanged from the scanners this replaces
+//     (the old `skipString` also ignored newlines, and merely returned the
+//     end offset instead of raising), so this is not a regression — but it
+//     is the one place where this module can still desync silently, and it
+//     is not fixable without a JSX grammar. A repo sweep over 1781 files
+//     finds zero today.
 //
 //     The same JSX-text hazard is why an unterminated `/*` degrades rather
 //     than raising: `<span>path:Journal/*</span>` is real, valid source in
@@ -347,6 +355,13 @@ function tryScanRegex(src, i, to) {
     const c = src[j]
     if (c === '\n') return null
     if (c === '\\') {
+      // The escape must not step OVER the newline guard above. A backslash
+      // immediately before a newline used to consume it and let the scan
+      // keep hunting for a closing `/` on later lines, puncturing the
+      // "terminates on the SAME LINE" property that bounds a mis-decided
+      // `/`. A regex literal may not contain an unescaped OR escaped line
+      // terminator (ECMA-262), so this is a non-regex either way.
+      if (j + 1 >= to || src[j + 1] === '\n') return null
       j += 2
       continue
     }
@@ -574,16 +589,17 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
     if (isIdentStart(c)) {
       const start = i
       while (i < to && isIdentPart(src[i])) i++
-      // An identifier directly after `.` is a PROPERTY NAME, which may
-      // legally be a reserved word (`obj.in`, `map.delete`). Recorded here
-      // so `regexAllowedAfter` does not read it as the keyword. `?.` needs
-      // no special case: its `.` is lexed as the preceding punctuator.
+      // An identifier directly after `.` or `?.` is a PROPERTY NAME, which
+      // may legally be a reserved word (`obj.in`, `map?.delete`). Recorded
+      // here so `regexAllowedAfter` does not read it as the keyword. Both
+      // spellings must be listed since `?.` became a single token.
       prev = {
         kind: 'ident',
         value: src.slice(start, i),
         start,
         end: i,
-        propertyName: prev !== null && prev.kind === 'punct' && prev.value === '.',
+        propertyName:
+          prev !== null && prev.kind === 'punct' && (prev.value === '.' || prev.value === '?.'),
       }
       yield prev
       continue
@@ -594,7 +610,21 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
     // may follow the arrow) and `++`/`--` (postfix, see the table).
     const start = i
     let value
-    if ((c === '=' && c2 === '>') || (c === '+' && c2 === '+') || (c === '-' && c2 === '-')) {
+    // `??` and `?.` MUST be single tokens. Lexed as two bare `?`s, each one
+    // took the ternary branch below (its next significant char is neither
+    // `.` nor `:`), nothing balanced them, and the next two `:` tokens in
+    // the file were consumed as ternary closers — including a `): T {`
+    // return-type colon, silently disabling the return-type rule for any
+    // file containing an idiomatic `?? null`.
+    // `?.` followed by a DIGIT is not optional chaining: `a?.5:b` is the
+    // ternary `a ? .5 : b`.
+    if (
+      (c === '=' && c2 === '>') ||
+      (c === '+' && c2 === '+') ||
+      (c === '-' && c2 === '-') ||
+      (c === '?' && c2 === '?') ||
+      (c === '?' && c2 === '.' && !isDigit(src[i + 2]))
+    ) {
       value = c + c2
       i += 2
     } else {
@@ -612,12 +642,13 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
     // most common shape in a `.ts`/`.tsx` codebase. `returnTypeContext`
     // carries "a `:` directly after a `)`" forward across the type's tokens.
     if (value === '?') {
-      // Distinguish a ternary `?` from optional chaining (`?.`) and an
-      // optional parameter/property marker (`a?: T`), neither of which
-      // opens a ternary whose `:` would be mistaken for a return type.
+      // Only a BARE `?` reaches here — `?.` and `??` are single tokens
+      // above. What remains to exclude is the optional parameter/property
+      // marker `a?: T`, which is not a ternary and whose `:` therefore must
+      // stay available to the return-type rule.
       let k = i
       while (k < to && isWs(src[k])) k++
-      if (src[k] !== '.' && src[k] !== ':') ternaryDepth++
+      if (src[k] !== ':') ternaryDepth++
     } else if (value === ':') {
       if (ternaryDepth > 0) {
         ternaryDepth--
@@ -837,6 +868,8 @@ export function splitTopLevelCommas(src) {
  */
 const EXPR_CONTINUATION_PUNCT = new Set([
   '.',
+  '?.',
+  '??',
   ',',
   '?',
   ':',
@@ -1144,6 +1177,28 @@ function runSelfTest() {
     JSON.stringify(regexes('const r = /[/]/g')),
   )
 
+  // The escape branch used to be tested BEFORE the newline guard, so a
+  // backslash sitting immediately before a newline stepped straight over it
+  // and the scan kept hunting for a closing `/` on later lines. That is a
+  // hole in the same-line property the header presents as the second,
+  // independent safety net — the one thing that bounds a mis-decided `/`.
+  for (const [src, label] of [
+    ['function f() {\n  return / a\\\n  const t = b / c\n}', 'in open regex text'],
+    ['function f() {\n  return / [a\\\n]  const t = b / c\n}', 'inside a character class'],
+  ]) {
+    check(
+      `a backslash immediately before a newline does not escape the same-line rule (${label})`,
+      regexes(src).length === 0,
+      JSON.stringify(regexes(src)),
+    )
+  }
+
+  check(
+    'an ordinary escape inside a regex still works',
+    regexes(String.raw`const r = /a\/b/g`).join() === String.raw`/a\/b/g`,
+    JSON.stringify(regexes(String.raw`const r = /a\/b/g`)),
+  )
+
   // A TS RETURN-TYPE ANNOTATION sits between the parameter list's `)` and
   // the body `{`, so the token before the body brace is the last token of
   // the TYPE (`void`, `>`, `]`), not `)`. The brace stack classified those
@@ -1187,6 +1242,52 @@ function runSelfTest() {
       `blockClose=${methodClose?.blockClose}`,
     )
   }
+
+  // `??` and `?.` must lex as SINGLE punctuators. When `??` lexed as two
+  // bare `?` tokens, each one took the ternary branch (its next significant
+  // char is neither `.` nor `:`), nothing balanced them, and the next two
+  // `:` tokens anywhere in the file were eaten as ternary closers —
+  // including a `): T {` return-type colon. `?? null` is idiomatic here, so
+  // the return-type fix was silently disabled for most real `.ts` files
+  // after their first `??`. It reverted to the pre-#3950 classification, so
+  // nothing reddened; no self-test input contained a `??` outside a string.
+  check(
+    '`??` lexes as one punctuator, not two ternary `?`s',
+    kinds('const a = x ?? null').join(' ') ===
+      'ident:const ident:a punct:= ident:x punct:?? ident:null',
+    kinds('const a = x ?? null').join(' '),
+  )
+
+  check(
+    '`?.` lexes as one punctuator',
+    kinds('const a = x?.y').join(' ') === 'ident:const ident:a punct:= ident:x punct:?. ident:y',
+    kinds('const a = x?.y').join(' '),
+  )
+
+  for (const [lead, label] of [
+    ['const a = x ?? null', 'a single `??`'],
+    ['const a = x ?? null\nconst b = y ?? null', 'two `??`s'],
+    ['const a = { t: r.text ?? null, n: r.num ?? null }', '`??` inside an object literal'],
+    ['const a = x?.y ?? null', 'mixed `?.` and `??`'],
+  ]) {
+    const src = `${lead}\nfunction f(): void { g() }\n/re/.test(s)`
+    check(
+      `${label} before a typed function does not disarm the return-type rule`,
+      regexes(src).join() === '/re/',
+      JSON.stringify(regexes(src)),
+    )
+  }
+
+  // A real ternary must still balance after the `??` change.
+  check(
+    'a genuine ternary still consumes its `:` (no return-type false positive)',
+    (() => {
+      const src = 'const v = c ? f() : { a: 1 }'
+      const close = [...tokenize(src)].find((t) => t.kind === 'punct' && t.value === '}')
+      return close !== undefined && close.blockClose === false
+    })(),
+    'see source',
+  )
 
   {
     // Regression guard on the fix above: a `:` that belongs to a TERNARY,

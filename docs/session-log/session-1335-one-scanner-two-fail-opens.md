@@ -341,3 +341,97 @@ All 18 new assertions demonstrated RED first — 17 in the scanner, 1 in the set
 guard — and the eight mutations covering the new code all die. Counts: 65 → 86 scanner,
 40 clones (unchanged), 28 → 29 setProperty. All 13 pins still resolve; sweep still 1781
 files, zero `ScanError`s.
+
+## Round four: the input-coverage gap recurred inside its own fix
+
+Five notes on the second approving review. The one that matters is note 1, and what
+matters about it is not the bug.
+
+### `??` silently disarmed the fix from round three
+
+Round three added `returnTypeContext` because `function f(): void { … }` — the most common
+shape in this codebase — was being classified as an object literal. The ternary-exclusion
+logic it shipped with checked, for each `?`, whether the next significant character was
+`.` or `:`. But only `=>`, `++` and `--` were lexed as multi-character punctuators, so
+`??` arrived as two separate `?` tokens. For each one the next character is neither `.`
+nor `:`, so both incremented `ternaryDepth`, nothing balanced them, and the next two `:`
+tokens anywhere in the file were eaten as ternary closers — including a `): T {`
+return-type colon.
+
+`?? null` is idiomatic here. It appears in this guard's own self-test fixture. So the fix
+added specifically to handle the most common shape in the codebase was silently disabled
+for most real `.ts` files, from their first `??` onward:
+
+```
+no ?? : ["/re/"] blockClose [true]
+with ??: []
+```
+
+It fails conservatively — the body reverts to object-literal classification and a
+following `/` is division, which is exactly pre-#3950 behaviour — so nothing reddened.
+
+### The pattern, stated plainly
+
+Round three's own log entry says: *"Mutation testing answers 'what production change
+reddens this?' It cannot answer 'what production behaviour does this assertion never
+reach?' … Branch coverage is not input coverage."*
+
+That paragraph was written about the untyped-`function` fixture. The fix it was written to
+justify then shipped with the same defect: **no self-test input contained a `??` outside a
+string, so the entire `returnTypeContext` block was only ever exercised on inputs that
+could not reach its own weakest branch.** Diagnosing a class of blind spot, writing it
+down, and immediately reproducing it in the remedy is worth more as evidence than either
+bug alone. Naming a failure mode does not confer immunity to it; the check has to be run,
+not merely described.
+
+So this round the audit was run as a procedure rather than a resolution. For each block
+added in rounds one to three, the question asked was "what input has this never been
+given?" — and the answers were written as executable probes, not as prose:
+
+| block | inputs it had never been given | result |
+|---|---|---|
+| `returnTypeContext` | `??`, `?.`, ternary, `a?: T`, conditional types, optional properties, arrow return types | **`??` fails** — note 1 |
+| number lexer | `1e5`, `0.5e-3`, `1..toString()`, `0b1010+1` | all pass |
+| template blanking | empty `${}`, escaped backtick, template inside a string | all pass |
+| `tryScanRegex` same-line net | backslash before a newline, same inside a character class | **both fail** — note 2 |
+| `EXPR_TERMINAL_PUNCT` | line ending in a template, a regex, a `)` | all pass |
+
+The audit independently reproduced both reviewer findings and cleared everything else,
+which is the outcome that makes it worth keeping as a step rather than an anecdote. It
+also found a second manifestation of note 2 the review did not list — the same
+backslash-newline hole inside a regex character class.
+
+### The other four
+
+- **2** (fixed): `tryScanRegex`'s escape branch was tested BEFORE the newline guard, so a
+  backslash immediately before a newline stepped over it and the scan kept hunting on
+  later lines — a hole in the "terminates on the SAME LINE" property the header presents
+  as the second, independent safety net. A regex literal may contain neither an escaped
+  nor an unescaped line terminator, so the escape now refuses at a newline.
+- **3** (fixed): two skip paths (`closeParenIdx === -1`, `args.length < 3`) continued
+  without incrementing `skippedCount`, so an unparseable call site never appeared in the
+  `OK: N … (M skipped)` summary at all. Both are counted now, and the code matches the
+  header's claim that an undecidable construct is never a silent skip.
+- **4** (reworded): the JSX-apostrophe note ranked its outcomes backwards. `scanQuoted`
+  does not stop at a newline, so the apostrophe *usually* pairs with a later unrelated `'`
+  and silently consumes everything between — the same desync class #3950 exists to close.
+  `ScanError` and a repo-wide gate stop is the *lucky* case, and only occurs when no later
+  quote exists. The note now names the likely outcome first.
+- **5** (fixed, closes #3971): the `): { a: string } {` fail-open — the one shape that
+  hashed a signature-only prefix and stayed green through arbitrary body drift — is now
+  detected and refused with reason `ambiguous-return-type`, rather than documented and
+  hand-audited per new pin. A union like `): { a } | { b } {` defeats any
+  skip-one-literal heuristic, so refusing is the honest answer and correct extraction
+  would need a real type grammar. Generic (`Array<{…}>`), plain and untyped return types
+  all still extract their full bodies.
+
+### Coverage
+
+All 11 new assertions demonstrated RED first — 8 scanner, 2 setProperty, 1 clones — and
+the six mutations covering the new code all die. Two of those mutation runs initially
+reported false kills: the guard scripts import `./lib/js-scanner.mjs` relatively, so a
+mutated copy in a scratch directory dies of `ERR_MODULE_NOT_FOUND` rather than of any
+assertion. A mutant that "dies" because the harness could not load it proves nothing, and
+that is worth remembering the next time a mutation sweep looks unanimously green. Re-run
+inside `scripts/`, all six die on real assertions. Counts: 86 → 96 scanner, 40 → 42
+clones, 29 → 31 setProperty. 13 pins resolve; sweep 1781 files, zero `ScanError`s.

@@ -251,7 +251,14 @@ function analyzeSource(rawSrc) {
     while ((m = CALL_RE.exec(search))) {
       const openParenIdx = m.index + m[0].length - 1
       const closeParenIdx = findMatchingBracket(src, openParenIdx)
-      if (closeParenIdx === -1) continue // malformed/truncated — skip defensively
+      if (closeParenIdx === -1) {
+        // Counted, not dropped: a call site this guard could not parse must
+        // show up in the summary's skipped tally. Falling through silently
+        // made it invisible, which is precisely what this file's header
+        // says an undecidable construct must never be.
+        skippedCount++
+        continue
+      }
 
       const argsInner = src.slice(openParenIdx + 1, closeParenIdx)
       const line = src.slice(0, m.index).split('\n').length
@@ -263,7 +270,12 @@ function analyzeSource(rawSrc) {
       let literal
       try {
         args = splitTopLevelCommas(argsInner)
-        if (args.length < 3) continue // not a 3-arg call — not our shape, skip defensively
+        if (args.length < 3) {
+          // Also counted: "not the three-argument shape" is still a call
+          // site whose keys nobody verified.
+          skippedCount++
+          continue
+        }
         literal = parseObjectLiteral(args[2])
       } catch (err) {
         if (!(err instanceof ScanError)) throw err
@@ -709,6 +721,30 @@ function runSelfTest() {
     fail(
       'a call inside a template-literal interpolation is checked, not blanked away',
       JSON.stringify(callInInterpolation),
+    )
+  }
+
+  // Two skip paths used to `continue` WITHOUT incrementing `skippedCount`,
+  // so a call site the guard could not parse never appeared in the
+  // `OK: N … (M skipped)` summary at all — invisible, which is exactly what
+  // this file's header says an undecidable construct must never be.
+  const unclosedCall = analyzeSource('commands.setProperty(id, k, {\n  value_text: null,\n')
+  if (unclosedCall.violations.length === 0 && unclosedCall.skippedCount === 1) {
+    ok('a call whose parens never close is COUNTED as skipped, not silently dropped')
+  } else {
+    fail(
+      'a call whose parens never close is COUNTED as skipped, not silently dropped',
+      JSON.stringify(unclosedCall),
+    )
+  }
+
+  const twoArgCall = analyzeSource('commands.setProperty(id, k)\n')
+  if (twoArgCall.violations.length === 0 && twoArgCall.skippedCount === 1) {
+    ok('a call with fewer than three arguments is COUNTED as skipped, not silently dropped')
+  } else {
+    fail(
+      'a call with fewer than three arguments is COUNTED as skipped, not silently dropped',
+      JSON.stringify(twoArgCall),
     )
   }
 
