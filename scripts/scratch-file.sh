@@ -66,7 +66,10 @@
 
 set -euo pipefail
 
-usage() {
+# Split from `usage` because `exit` inside a bash function terminates the whole
+# PROCESS: the argument-less subcommand paths below need to report bad usage and
+# `return 2` so `run_self_test` can observe that status instead of dying on it.
+usage_text() {
   cat >&2 <<'EOF'
 usage:
   scratch-file.sh new <label>                 mint a fresh, collision-proof scratch file; prints its path
@@ -74,22 +77,46 @@ usage:
   scratch-file.sh verify <file> <fingerprint>  exit 0 iff <file>'s content still matches <fingerprint>
   scratch-file.sh --self-test
 EOF
+}
+
+usage() {
+  usage_text
   exit 2
 }
 
 scratch_root() {
-  # CLAUDE_SCRATCHPAD_DIR when the harness sets it — the session-scoped
-  # directory #3731 identified as the shared namespace — else TMPDIR/tmp.
+  # `${TMPDIR:-/tmp}` is the normal case: nothing in this repo or the harness
+  # sets CLAUDE_SCRATCHPAD_DIR, so it is an override for a caller that wants
+  # allocation inside the session-scoped scratchpad #3731 identified as the
+  # shared namespace — not the default. Uniqueness does not depend on which
+  # root wins; mktemp owns that either way (see header).
   printf '%s\n' "${CLAUDE_SCRATCHPAD_DIR:-${TMPDIR:-/tmp}}"
 }
 
+# NOTE: `return`, never `exit`, inside the three subcommand functions — `exit`
+# inside a bash function terminates the whole PROCESS, which would abort
+# `run_self_test` the instant it exercises a failure path instead of letting it
+# observe one. `main()` below is the only place a non-zero return becomes the
+# process's exit status, for direct CLI invocation. A missing argument returns
+# 2 ("bad usage", per the header) rather than letting `${1:?…}` expansion abort
+# the shell with 1.
 new_scratch_file() {
-  local label="${1:?usage: scratch-file.sh new <label>}"
+  if [ "$#" -lt 1 ] || [ -z "${1:-}" ]; then
+    echo "scratch-file.sh: new: missing <label>" >&2
+    usage_text
+    return 2
+  fi
+  local label="$1"
   # Sanitised for readability only (`ls` shows `pr-body.a1b2c3` rather than
   # `tmp.a1b2c3`) — never for uniqueness. See header: mktemp owns that.
   local safe_label
   safe_label="$(printf '%s' "$label" | tr -c 'A-Za-z0-9._-' '-')"
-  [ -n "$safe_label" ] || safe_label='scratch'
+  # `.` and `..` survive the allow-set unchanged and would make `$dir/$safe_label`
+  # name the directory itself (or its parent), so `: >"$file"` dies with "Is a
+  # directory". They are degenerate labels, not names — fall back like empty.
+  case "$safe_label" in
+    '' | '.' | '..') safe_label='scratch' ;;
+  esac
   local root
   root="$(scratch_root)"
   mkdir -p "$root"
@@ -100,13 +127,13 @@ new_scratch_file() {
   printf '%s\n' "$file"
 }
 
-# NOTE: `return`, never `exit`, inside these two — `exit` inside a bash
-# function terminates the whole PROCESS, which would abort `run_self_test`
-# the instant it exercises the failure path instead of letting it observe
-# one. `main()` below is the only place a non-zero return becomes the
-# process's exit status, for direct CLI invocation.
 fingerprint() {
-  local file="${1:?usage: scratch-file.sh fingerprint <file>}"
+  if [ "$#" -lt 1 ] || [ -z "${1:-}" ]; then
+    echo "scratch-file.sh: fingerprint: missing <file>" >&2
+    usage_text
+    return 2
+  fi
+  local file="$1"
   if [ ! -f "$file" ]; then
     echo "scratch-file.sh: fingerprint: no such file: $file" >&2
     return 3
@@ -115,8 +142,13 @@ fingerprint() {
 }
 
 verify() {
-  local file="${1:?usage: scratch-file.sh verify <file> <fingerprint>}"
-  local expected="${2:?usage: scratch-file.sh verify <file> <fingerprint>}"
+  if [ "$#" -lt 2 ] || [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
+    echo "scratch-file.sh: verify: missing <file> and/or <fingerprint>" >&2
+    usage_text
+    return 2
+  fi
+  local file="$1"
+  local expected="$2"
   if [ ! -f "$file" ]; then
     echo "scratch-file.sh: verify: REFUSING — $file no longer exists (removed since it was written)" >&2
     return 4
@@ -149,22 +181,37 @@ run_self_test() {
   export CLAUDE_SCRATCHPAD_DIR="$work/scratchpad"
   mkdir -p "$CLAUDE_SCRATCHPAD_DIR"
 
-  # 1. THE FALSIFICATION: the OLD shape — a fixed generic name shared by
-  #    concurrent writers — really does clobber under the exact timing #3731
-  #    describes (write, long wait, a second writer lands mid-wait, read).
-  local shared="$CLAUDE_SCRATCHPAD_DIR/msg.txt"
-  printf 'PR body for #3719 (the op-log frontier fix)' >"$shared"
-  local written_by_a
-  written_by_a="$(cat "$shared")"
-  # the long wait — a concurrent agent writes during it
-  printf 'PR body for #3718 (docs). Closes #3272. Closes #3273.' >"$shared"
-  local read_by_a
-  read_by_a="$(cat "$shared")"
-  if [ "$read_by_a" != "$written_by_a" ]; then
-    st_ok "OLD shape: shared generic name clobbers across a write/wait/read gap (reproduces #3719/#3725)"
+  # 1. THE FALSIFICATION: run the exact #3731 timing (write, long wait, a
+  #    second writer with the SAME label lands mid-wait, read) down two paths
+  #    side by side, and require the old one to clobber AND the new one not to.
+  #
+  #    The old path is not a hand-written literal in this test — writing two
+  #    string literals to one hardcoded name and asserting they differ would
+  #    invoke none of the code under test and could not fail. It is derived
+  #    from the script itself: `$(scratch_root)/<label>` is precisely what a
+  #    name-per-label allocator hands back, so if `new_scratch_file` ever
+  #    regressed to a path decided in advance it would return that same path,
+  #    the mid-wait writer would land on it, and the second conjunct below
+  #    would fail. (Verified by patching a copy of this script to drop
+  #    `mktemp -d`: this assertion fails against it.)
+  local body_a='PR body for #3719 (the op-log frontier fix)'
+  local body_b='PR body for #3718 (docs). Closes #3272. Closes #3273.'
+  local old_shape_a new_shape_a
+  old_shape_a="$(scratch_root)/pr-body" # what the pre-fix code produced
+  new_shape_a="$(new_scratch_file pr-body)"
+  printf '%s' "$body_a" >"$old_shape_a"
+  printf '%s' "$body_a" >"$new_shape_a"
+  # the long wait — a second concurrent agent, identical label, lands mid-wait
+  printf '%s' "$body_b" >"$(scratch_root)/pr-body"
+  printf '%s' "$body_b" >"$(new_scratch_file pr-body)"
+  local old_readback new_readback
+  old_readback="$(cat "$old_shape_a")"
+  new_readback="$(cat "$new_shape_a")"
+  if [ "$old_readback" = "$body_b" ] && [ "$new_readback" = "$body_a" ]; then
+    st_ok "the #3719 timing clobbers a path derived from the label, and does NOT clobber new's path"
   else
-    st_bad "OLD shape: shared generic name clobbers across a write/wait/read gap" \
-      "expected a clobber to reproduce the incident, got none — the fixture no longer models it"
+    st_bad "the #3719 timing clobbers a label-derived path but not new's path" \
+      "label-derived path read back [$old_readback]; new's path read back [$new_readback]"
   fi
 
   # 2. THE FIX: `new` with the SAME label, called twice, never returns the
@@ -189,7 +236,11 @@ run_self_test() {
     pids+=("$!")
   done
   local pid
-  for pid in "${pids[@]}"; do wait "$pid"; done
+  # `|| true`: a non-zero child status propagated by `wait` would trip `set -e`
+  # and kill the self-test before the assertion below can print its
+  # "$got lines, $uniq distinct" diagnostic. The line/uniq counts do the
+  # asserting — a caller that failed contributed no line, so it still fails.
+  for pid in "${pids[@]}"; do wait "$pid" || true; done
   local got uniq
   got="$(wc -l <"$pathsfile" | tr -d ' ')"
   uniq="$(sort -u "$pathsfile" | wc -l | tr -d ' ')"
@@ -248,6 +299,42 @@ run_self_test() {
     st_bad "verify: refuses a file that no longer exists" "verify exited 0 on a missing file"
   else
     st_ok "verify: refuses a file that no longer exists"
+  fi
+
+  # 8. The documented exit codes are the ones a caller actually observes. The
+  #    header promises "2 bad usage"; an argument-less subcommand used to reach
+  #    a `${1:?…}` expansion and abort the shell with 1, so anything branching
+  #    on status 2 to detect misuse never saw it.
+  local self="${BASH_SOURCE[0]}" bad_usage_fail=''
+  local case_desc rc
+  for case_desc in 'new' 'fingerprint' 'verify' 'verify /nonexistent' 'not-a-subcommand'; do
+    rc=0
+    # shellcheck disable=SC2086 # deliberate word-splitting: each case is an argv
+    bash "$self" $case_desc >/dev/null 2>&1 || rc=$?
+    [ "$rc" = 2 ] || bad_usage_fail="$bad_usage_fail [$case_desc exited $rc, wanted 2]"
+  done
+  if [ -z "$bad_usage_fail" ]; then
+    st_ok "usage: every argument-less subcommand and an unknown one exit 2, as the header documents"
+  else
+    st_bad "usage: every argument-less subcommand and an unknown one exit 2" "$bad_usage_fail"
+  fi
+
+  # 9. A degenerate label ('.' / '..') survives the allow-set unchanged and
+  #    would name the minted directory itself, so `: >"$file"` died with "Is a
+  #    directory" and aborted `new` under `set -e`. Nonsense in, a usable
+  #    scratch file out.
+  local degenerate df dfail=''
+  for degenerate in '.' '..' '/' '///'; do
+    df=''
+    df="$(new_scratch_file "$degenerate" 2>/dev/null)" || df=''
+    if [ -z "$df" ] || [ ! -f "$df" ]; then
+      dfail="$dfail [label '$degenerate' -> '${df:-<none>}']"
+    fi
+  done
+  if [ -z "$dfail" ]; then
+    st_ok "new: degenerate labels ('.', '..', '/', '///') still mint a real, writable file"
+  else
+    st_bad "new: degenerate labels still mint a real file" "$dfail"
   fi
 
   if [ "$st_fail" -ne 0 ]; then

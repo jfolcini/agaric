@@ -2650,9 +2650,11 @@ stages = ["pre-commit"]
 # concurrency (25 backgrounded callers racing on one label, not two
 # sequential calls a clock-based mktemp fallback could paper over) and
 # replays the exact #3719/#3725 timing through the fix to confirm the writer
-# reads back its own body, unclobbered — after first reproducing the ORIGINAL
-# clobber through the old shared-generic-name shape, so this can't silently
-# stop testing the failure it exists to prevent.
+# reads back its own body, unclobbered. It runs that same timing against the
+# PRE-FIX shape too — a path derived from the label via the script's own
+# `scratch_root`, not a hardcoded literal — and requires that one to clobber
+# while `new`'s real output does not, so an allocator that regressed to a
+# path decided in advance fails the suite instead of passing it.
 [[repos]]
 repo = "local"
 [[repos.hooks]]

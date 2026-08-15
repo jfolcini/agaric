@@ -39,9 +39,9 @@ one fallback path is not an allocator.
 The review would not let the claim stand unqualified, and it is right.
 
 `new`'s uniqueness **is** structural — proven by patching a copy to use a fixed path and running the
-self-test against it: three of seven assertions fail (identical-label distinctness, 25-way
-concurrency, the incident replay). The real script passes 7/7. So the test genuinely discriminates
-the fix from a naive implementation rather than decorating it.
+self-test against it: four of nine assertions fail (the incident reproduction, identical-label
+distinctness, 25-way concurrency, the incident replay). The real script passes 9/9. So the test
+genuinely discriminates the fix from a naive implementation rather than decorating it.
 
 But **whether it gets invoked at all is still convention.** `push.sh` has no reference to
 `scratch-file.sh`. The prek hook tests the tool's own correctness when the tool changes; nothing
@@ -57,10 +57,44 @@ failed twice, saying so plainly matters more than the fix reading well.
 A follow-up that would close it: a hook flagging `git commit -F` or `gh pr create --body-file`
 pointed at a generic scratchpad name.
 
+### The first assertion was a tautology, inside a PR whose subject is a guarantee
+
+The review approved the PR and still found this, which is the part worth recording: the suite's
+opening assertion — the one labelled THE FALSIFICATION, the one the prek hook comment cited as the
+reason the suite "can't silently stop testing the failure it exists to prevent" — wrote two different
+string literals to one hardcoded path and asserted they differed. It invoked no code from the script
+under test. Its failure branch was unreachable; it passed against the fixed-path copy exactly as it
+passed against the real thing, which is why it was not among the three that failed the falsification.
+A test that cannot fail is not weak evidence, it is no evidence, and asserting a guarantee on top of
+one is worse than having no test there at all.
+
+The fix derives the pre-fix shape from the script instead of hand-writing it. `$(scratch_root)/<label>`
+is precisely the path a name-per-label allocator hands back, so the assertion now runs the #3719
+timing down both paths at once and requires the label-derived one to clobber **and** `new`'s real
+output not to. A `new` that regressed to a path decided in advance returns that same label-derived
+path, the mid-wait writer lands on it, and the assertion fails — verified, not assumed: the patched
+copy now fails four assertions instead of three, this one among them. The hook comment was rewritten
+to claim that and nothing more.
+
+Three smaller things from the same review. `wait "$pid"` under `set -e` propagated a failed child's
+status and killed the run before the concurrency assertion could print its line/uniq counts — still a
+loud failure, but a bare exit status instead of a diagnostic, so it is `wait "$pid" || true` and the
+counts do the asserting. The header documented "2 bad usage" while an argument-less subcommand hit
+`${1:?…}` and aborted the shell with **1**, so a caller branching on 2 to detect misuse never saw it;
+the three subcommands now report and `return 2`, with `usage` split into a printing half so a function
+can use it without `exit` terminating the process mid-self-test. And a label of `.` or `..` survived
+the sanitiser unchanged, named the minted directory itself, and died on `: >"$file"` with "Is a
+directory" — nonsense input deserving a scratch file, not an abort. Both are covered by new
+assertions.
+
 ### No cleanup, stated rather than discovered later
 
 Nothing removes the minted directories in production use — only the self-test cleans its own fixture.
-The `${TMPDIR:-/tmp}` fallback, used when `CLAUDE_SCRATCHPAD_DIR` is unset, has no cleanup at all.
+That is `${TMPDIR:-/tmp}` in every real run: the review pointed out that `CLAUDE_SCRATCHPAD_DIR` is
+set by nothing in this repo and is not a variable the harness exports, so the branch reading it is an
+override no caller currently takes, and the pitfalls note claiming these files sit in the shared
+scratchpad described a placement that does not happen. Corrected there; the root makes no difference
+to uniqueness either way.
 There is no cleanup-versus-live-holder race, for the unsatisfying reason that there is no cleanup
 code.
 

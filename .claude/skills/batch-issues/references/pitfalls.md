@@ -72,9 +72,12 @@ reproduced under real concurrency, and reproduced-then-fixed on a replay of the 
 PR #3719/#3725 timing). Two DIFFERENT mitigations, both required: the unique name prevents the
 cross-agent collision; **scoped `git add -A -- <paths>`** (not a bare `git add -A`) prevents
 a leftover scratch file — unique name or not — from being staged into the commit in the
-first place. Keeping scratch files in the shared scratchpad (with a unique/branch-prefixed
-name) rather than inside the worktree is deliberate: a bare file under the worktree shows up
-in `git status` and is exposed to `git add -A` in a way a scratchpad file never is.
+first place. Keeping scratch files outside the worktree is deliberate either way: a bare file
+under the worktree shows up in `git status` and is exposed to `git add -A` in a way a file
+under `/tmp` never is. In practice that is where they land — `scratch-file.sh` allocates under
+`${TMPDIR:-/tmp}`; it honours a `CLAUDE_SCRATCHPAD_DIR` override, but nothing in this repo or
+the harness sets that variable, so the `/tmp` case is the normal one and the session-scoped
+scratchpad directory is not where these files go.
 
 ### Verify HEAD actually advanced after commit
 
