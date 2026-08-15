@@ -21,6 +21,7 @@ import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  assertUniqueStepNames,
   type QueryResult,
   type QueryStep,
   runQuerySteps,
@@ -345,4 +346,41 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
       },
     )
   }
+})
+
+// #3833 items 7/12 — the duplicate-step-name guard's own test. `runQuerySteps`
+// calls `assertUniqueStepNames` on every fixture, but no fixture has a
+// duplicate, so without this the guard body never executes and the check is
+// decoration. The Rust twin's copy of this property lives in
+// `conformance_query.rs::step_name_uniqueness_tests`.
+describe('#3833 query step names are unique within a fixture', () => {
+  const step = (name: string): QueryStep => ({ name, command: 'list_page_links', args: {} })
+
+  it('accepts distinct names', () => {
+    expect(() => assertUniqueStepNames([step('a'), step('b'), step('c')])).not.toThrow()
+    expect(() => assertUniqueStepNames([])).not.toThrow()
+  })
+
+  it('rejects a duplicate and names every offender once', () => {
+    expect(() => assertUniqueStepNames([step('a'), step('b'), step('a')])).toThrow(
+      /duplicate query step name\(s\) \["a"\]/,
+    )
+    // Three copies of one name report it once, not twice.
+    expect(() => assertUniqueStepNames([step('a'), step('a'), step('a')])).toThrow(
+      /duplicate query step name\(s\) \["a"\]/,
+    )
+    // Two distinct duplicated names are both reported.
+    expect(() => assertUniqueStepNames([step('a'), step('b'), step('a'), step('b')])).toThrow(
+      /duplicate query step name\(s\) \["a","b"\]/,
+    )
+  })
+
+  // The CALL SITE, not just the body: a guard function that is tested in
+  // isolation and never wired in is the half-covered pair this repo has
+  // shipped before. `runQuerySteps` must reject before it replays anything.
+  it('is enforced by runQuerySteps itself, before any step is replayed', async () => {
+    await expect(runQuerySteps([step('dup'), step('dup')], new Map())).rejects.toThrow(
+      /duplicate query step name\(s\) \["dup"\]/,
+    )
+  })
 })

@@ -1540,6 +1540,14 @@ interface QueryStepShape {
   /** Opt-in declaration that this step's recorded `rows` is legitimately empty
    *  (see the vacuity guard below). Ignored by both query runners. */
   expect_empty?: boolean
+  /** #3833 item 3 — required alongside `expect_empty: true` (enforced below):
+   *  which NEGATIVE the empty result pins. `expect_empty` is an escape hatch
+   *  from the vacuity guard, and a bare `true` with no justification lets a
+   *  fixture author wave off a step that is empty by MISTAKE as easily as one
+   *  that is empty on purpose. Every current `expect_empty` step already
+   *  carries one by convention; this makes the convention a gate. Ignored by
+   *  both query runners, like `expect_empty` itself. */
+  comment?: string
   /** #3878 — the step's IPC args, read (not replayed) to classify which
    *  dispatch BRANCH of `command` this step exercises. See
    *  `QUERY_STEP_BRANCH_DISCRIMINATORS`. */
@@ -1553,6 +1561,83 @@ interface LoadedFixture {
   querySteps: QueryStepShape[]
   expectedQueries: Array<{ name: string; rows: string[]; error?: string | null }>
   scenarios: Set<string>
+}
+
+// ---------------------------------------------------------------------------
+// Row-token sentinels (#3833 items 9/10)
+// ---------------------------------------------------------------------------
+
+/**
+ * The fallback strings BOTH `conformance_query.rs`'s `run_step` (`ids_in`'s
+ * `<missing-id>`, `property_token`'s `<missing-key>`, `scalar_tokens`'s
+ * `<not-a-string>`, the `list_page_links` edge projection's `?`) and the TS
+ * twin's `WIRE`-driven equivalents (`idToken`, `propertyToken`, `rowToken`'s
+ * scalar branch, the same edge fallback) mint when a row is missing the key a
+ * projector expects. A row token that carries one of these is not fixture
+ * data — it is a projector reading the wrong key, on BOTH stacks identically,
+ * so the differential compares two copies of the same placeholder instead of
+ * real rows.
+ */
+const ROW_SENTINELS = new Set(['<missing-id>', '<missing-key>', '<not-a-string>', '?'])
+
+/**
+ * A raw, UNRELABELLED block id — 26 Crockford-base32 characters, the shape
+ * both stacks' ids take before `relabel_token` / `relabelToken` swap them for
+ * a canonical `B<n>` label.
+ *
+ * `relabel_head` falls back to the raw string when an id is absent from the
+ * label map ("An id with no canonical label passes through unchanged so a leak
+ * is visible rather than silently dropped" — `conformance_query.rs`'s module
+ * doc). #3833 item 10's point is that "visible" meant visible to a HUMAN
+ * reading the fixture; nothing failed on it. This is the gate.
+ */
+const RAW_ID_SEGMENT = /^[0-9A-HJKMNP-TV-Z]{26}$/
+
+/**
+ * Split a relabeled row token into its comparable atoms, the same way
+ * `relabel_token` / `relabelToken` do: the HEAD (or its two `->` sides, for a
+ * pair token) and every attribute VALUE. Attribute NAMES are not atoms —
+ * neither relabeller touches them.
+ */
+function tokenAtoms(token: string): { heads: string[]; values: string[] } {
+  const [head, ...attrs] = token.split('#')
+  return {
+    heads: (head ?? token).split('->'),
+    values: attrs.map((a) => {
+      const eq = a.indexOf('=')
+      return eq < 0 ? a : a.slice(eq + 1)
+    }),
+  }
+}
+
+/**
+ * The [`ROW_SENTINELS`] carried by a token, matched by exact segment equality
+ * against its HEAD atoms only.
+ *
+ * Heads only, deliberately. All four sentinels are minted at a head position
+ * and nowhere else — `idToken`'s id, `propertyToken`'s key, `rowToken`'s
+ * scalar (which IS the whole token), and the `pair` branch's two arrow sides.
+ * `attrValue` / `attr_value` mint none of them. Scanning attribute VALUES too
+ * therefore adds no coverage and does add a false positive: `attr_value`
+ * forbids only `#` and `->` in a rendered value, so a property whose
+ * `value_text` is the single character `?` is legal fixture content that the
+ * wider check would report as a projector fault. An earlier revision of this
+ * comment asserted the opposite — that none of the four "is producible by any
+ * content the row-token guards allow through" — which is exactly the kind of
+ * overclaim about a guard's reach that #3712 was filed for.
+ */
+function rowSentinelHits(token: string): string[] {
+  return tokenAtoms(token).heads.filter((seg) => ROW_SENTINELS.has(seg))
+}
+
+/**
+ * Atoms of a token that are still a raw 26-char id — heads AND attribute
+ * values, since `relabel_head` is applied to both and an id-valued attribute
+ * (`page_id`, `parent_id`, a `Ref` property) leaks the same way a head does.
+ */
+function rawIdHits(token: string): string[] {
+  const { heads, values } = tokenAtoms(token)
+  return [...heads, ...values].filter((seg) => RAW_ID_SEGMENT.test(seg))
 }
 
 function loadFixtures(): LoadedFixture[] {
@@ -2310,6 +2395,34 @@ describe('#3083 conformance-coverage ratchet', () => {
     const staleEmptyClaim: string[] = []
     const misdeclaredRefusal: string[] = []
     const misaligned: string[] = []
+    // #3833 item 3 — `expect_empty` is an escape hatch from the `vacuous`
+    // check below; a bare `true` costs nothing to add, so nothing stops it
+    // from waving off a step that is empty by MISTAKE as readily as one that
+    // is empty on purpose. Every current `expect_empty` step already carries
+    // a `comment` by convention (the message at the `vacuous` assertion below
+    // has said so since #3826); this makes that convention load-bearing.
+    const uncommented: string[] = []
+    // #3833 items 9/10 — both runners fall back to the SAME sentinel string
+    // when a row is missing the shape a projector expects (`ids_in` /
+    // `idToken`'s `<missing-id>`, `propertyToken`'s `<missing-key>`,
+    // `rowToken`'s `<not-a-string>`, the `list_page_links` edge projection's
+    // `?`). If a `WIRE` / `run_step` id key were ever wrong for a command,
+    // BOTH runners would independently record N copies of the identical
+    // sentinel — non-empty, so it passes every check above, and the
+    // "differential" silently degrades to comparing row COUNT only. This is
+    // the vacuity guard's own blind spot, in the shape of its own fallback
+    // values.
+    const sentinelLeak: string[] = []
+    // #3833 item 10 — the other half, which the sentinel check above does NOT
+    // cover: `relabel_head` falls back to the RAW id when an id is missing
+    // from the canonical label map, and `conformance_query.rs`'s module doc
+    // sells that fallback as a safety property ("a leak is visible rather
+    // than silently dropped"). Visible to a reader, yes; nothing failed on
+    // it. The issue's literal suggestion — every row must match `B\d+` —
+    // is unsound (property and tag tokens are user-authored keys:
+    // `estimate#Num=3`), but its PROPERTY is not: no recorded atom may still
+    // be a raw 26-char id.
+    const rawIdLeak: string[] = []
     for (const fx of fixtures) {
       if (fx.querySteps.length === 0) continue
       for (const [i, step] of fx.querySteps.entries()) {
@@ -2332,6 +2445,22 @@ describe('#3083 conformance-coverage ratchet', () => {
         if (!isEmpty && step.expect_empty === true) staleEmptyClaim.push(`${fx.name}/${step.name}`)
         if (isRefusal && step.expect_empty === true)
           misdeclaredRefusal.push(`${fx.name}/${step.name}`)
+        if (step.expect_empty === true && !step.comment?.trim())
+          uncommented.push(`${fx.name}/${step.name}`)
+        for (const row of recorded.rows) {
+          const hits = rowSentinelHits(row)
+          if (hits.length > 0) {
+            sentinelLeak.push(
+              `${fx.name}/${step.name} (row ${JSON.stringify(row)} carries ${JSON.stringify(hits)})`,
+            )
+          }
+          const raw = rawIdHits(row)
+          if (raw.length > 0) {
+            rawIdLeak.push(
+              `${fx.name}/${step.name} (row ${JSON.stringify(row)} carries ${JSON.stringify(raw)})`,
+            )
+          }
+        }
       }
     }
 
@@ -2373,6 +2502,39 @@ describe('#3083 conformance-coverage ratchet', () => {
         `${JSON.stringify(misdeclaredRefusal)}. A REFUSAL is not an empty result: ` +
         `what the step pins is the AppErrorKind, and the empty rows follow from it. ` +
         `Drop the declaration — the recorded error is already the non-vacuous claim.`,
+    ).toEqual([])
+
+    // #3833 item 3.
+    expect(
+      uncommented,
+      `These query steps declare "expect_empty": true with no (or a blank) "comment" ` +
+        `${JSON.stringify(uncommented)}. The escape hatch from the \`vacuous\` check above ` +
+        `must cost a sentence: say which NEGATIVE the empty result pins, so a step that is ` +
+        `empty by mistake cannot be waved through as cheaply as one that is empty on purpose.`,
+    ).toEqual([])
+
+    // #3833 items 9/10.
+    expect(
+      sentinelLeak,
+      `These query steps recorded a row carrying a PROJECTION SENTINEL, not real data ` +
+        `${JSON.stringify(sentinelLeak)}. Both runners fall back to the same placeholder ` +
+        `(\`<missing-id>\`, \`<missing-key>\`, \`<not-a-string>\`, \`?\`) when a row is missing ` +
+        `the key a projector expects — so a wrong id/pair/scalar key in \`run_step\` (Rust) or ` +
+        `\`WIRE\` (TS) makes BOTH runners record N copies of the SAME sentinel, which is ` +
+        `non-empty and passes every check above while comparing nothing but row COUNT. Fix the ` +
+        `projector's key, not the fixture.`,
+    ).toEqual([])
+
+    // #3833 item 10.
+    expect(
+      rawIdLeak,
+      `These query steps recorded a RAW, unrelabelled 26-char block id ` +
+        `${JSON.stringify(rawIdLeak)}. \`relabel_head\` passes an id through unchanged when it ` +
+        `is absent from the canonical label map, which \`conformance_query.rs\` documents as ` +
+        `making the leak "visible rather than silently dropped" — visible to a reader, but ` +
+        `until now nothing failed on it. A raw id is stack-local: the two runners mint ` +
+        `different ones, so the differential can only ever compare them as unequal noise. ` +
+        `Add the id to the canonical label map (\`canonicalOrder\`), do not re-record the row.`,
     ).toEqual([])
   })
 

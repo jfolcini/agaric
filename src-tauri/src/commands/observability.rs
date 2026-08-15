@@ -68,18 +68,31 @@ mod tests {
     /// Adding a key here is the review point. If a field cannot be described
     /// in one of the shapes above, it does not belong on a span — log it
     /// instead, where the bug-report redactor's deny-by-default pass covers it.
+    ///
+    /// The allowlist is keyed on the NAME, so a shape-generic name is only as
+    /// safe as its current sites. `kind` (today: the two literals `"fg"` /
+    /// `"bg"` on `mat_batch`) and `size` are the ones to watch — a second site
+    /// adopting either name inherits the allowance without review, which is
+    /// precisely what an allowlisted key cannot do for `page_title`. Re-read
+    /// the emitting sites, not just this list, when one of these gains a
+    /// second home. (`child_count` is emitted only by
+    /// `agaric_observability`'s own in-crate leak-guard test, not by any
+    /// production span; it is here because the scan covers test sources too.)
     const ALLOWED_SPAN_FIELDS: &[&str] = &[
         "block_id",
         "block_type",
         "blocks_total",
+        "child_count",
         "content_len",
         "count",
+        "deduped",
         "depth",
         "device_id",
         "has_parent",
         "has_tag_filter",
         "index",
         "is_undo",
+        "kind",
         "limit",
         "msg",
         "ops_count",
@@ -89,6 +102,7 @@ mod tests {
         "queue",
         "retention_days",
         "seq",
+        "size",
         "space",
         "space_id",
         "state",
@@ -96,6 +110,23 @@ mod tests {
         "undo_depth",
         "undo_seq",
         "window_ms",
+    ];
+
+    /// Receiver identifiers whose `.record("literal", …)` is provably NOT a
+    /// `tracing::Span::record` — the only exclusions the `.record(` scan
+    /// makes. Everything else is treated as a span and its key must be on
+    /// [`ALLOWED_SPAN_FIELDS`]: deny-by-default, because a receiver-NAME
+    /// allowlist fails OPEN on exactly the span this guard exists to catch.
+    ///
+    /// Keep this list as short as the workspace allows, and only add a name
+    /// after confirming at the call site that its receiver's type is not a
+    /// `Span`. Adding a name here is the review point.
+    const NON_SPAN_RECORD_RECEIVERS: &[&str] = &[
+        // `agaric_sync::transport::endpoint`'s DNS query recorder (test
+        // helper): `recorder.record("before-panic.example")`. Takes a leading
+        // string literal exactly like `Span::record`, which is why argument
+        // SHAPE cannot tell the two apart and the receiver name must.
+        "recorder",
     ];
 
     /// Collect every `.rs` file under a directory tree.
@@ -151,14 +182,13 @@ mod tests {
         None
     }
 
-    /// Split a `fields(...)` body on TOP-LEVEL commas and return each entry's
-    /// key (the identifier before `=`, or the whole entry for a shorthand
-    /// field like `fields(page_id, limit)`).
-    fn field_keys(fields: &str) -> Vec<String> {
+    /// Split an argument list on TOP-LEVEL commas, preserving each entry
+    /// verbatim (untrimmed).
+    fn top_level_parts(args: &str) -> Vec<String> {
         let mut parts: Vec<String> = Vec::new();
         let mut depth = 0_i32;
         let mut cur = String::new();
-        for c in fields.chars() {
+        for c in args.chars() {
             match c {
                 '(' | '[' | '{' => depth += 1,
                 ')' | ']' | '}' => depth -= 1,
@@ -172,12 +202,53 @@ mod tests {
         }
         parts.push(cur);
         parts
-            .into_iter()
-            .filter_map(|p| {
-                let key = p.split('=').next().unwrap_or("").trim().to_owned();
-                (!key.is_empty()).then_some(key)
-            })
+    }
+
+    /// The key of one field entry: the identifier before `=`, or the whole
+    /// entry for a shorthand field like `fields(page_id, limit)`.
+    fn entry_key(part: &str) -> Option<String> {
+        let key = part.split('=').next().unwrap_or("").trim().to_owned();
+        (!key.is_empty()).then_some(key)
+    }
+
+    /// Split a `fields(...)` body on TOP-LEVEL commas and return each entry's
+    /// key.
+    fn field_keys(fields: &str) -> Vec<String> {
+        top_level_parts(fields)
+            .iter()
+            .filter_map(|p| entry_key(p))
             .collect()
+    }
+
+    /// Field keys of a `…span!(…)` invocation's argument list, after dropping
+    /// the leading POSITIONAL arguments every span macro takes ahead of its
+    /// fields: the optional `Level` / `parent:` / `target:` prefix that the
+    /// generic `tracing::span!` and the `{info,…}_span!` shorthands accept,
+    /// then the mandatory string-literal span NAME.
+    ///
+    /// A positional is recognised by having no top-level `=`. Dropping stops
+    /// AT AND INCLUDING the first string literal, so a shorthand field that
+    /// follows the name — `info_span!("n", page_id)`, which also has no `=` —
+    /// is kept and checked. (`tracing` requires the name to be a literal, so
+    /// the string literal is always present in a compiling invocation.)
+    fn span_macro_field_keys(args: &str) -> Vec<String> {
+        let parts = top_level_parts(args);
+        let mut rest = parts.as_slice();
+        while let Some((first, tail)) = rest.split_first() {
+            let t = first.trim();
+            if t.is_empty() {
+                rest = tail;
+                continue;
+            }
+            if t.contains('=') {
+                break;
+            }
+            rest = tail;
+            if t.starts_with('"') {
+                break;
+            }
+        }
+        rest.iter().filter_map(|p| entry_key(p)).collect()
     }
 
     /// #3317 — the PII leak-guard that actually looks at the codebase.
@@ -193,10 +264,37 @@ mod tests {
     /// green and SECURITY.md promised "opaque ids / counts / enums / durations
     /// / booleans only, never note content".
     ///
-    /// This guard reads the source instead: every `#[instrument(… fields(…))]`
-    /// key and every `span.record("…")` / `Span::current().record("…")` key
-    /// across the workspace must appear on [`ALLOWED_SPAN_FIELDS`]. A future
-    /// attribute carrying user content fails here, at the site that adds it.
+    /// This guard reads the source instead: every
+    /// `#[instrument(… fields(…))]` key, every `…span!("name", …)` inline
+    /// field — the generic `tracing::span!` and all five
+    /// `{info,debug,trace,warn,error}_span!` shorthands — and every
+    /// `<receiver>.record("…", …)` key across the workspace must appear on
+    /// [`ALLOWED_SPAN_FIELDS`]. A future attribute carrying user content
+    /// fails here, at the site that adds it.
+    ///
+    /// Both scans are DENY-BY-DEFAULT, which is the whole design. #3712's
+    /// first pass tried the other polarity — treat a `.record(` receiver as
+    /// a `Span` only when it is `Span::current()` or an identifier that IS
+    /// `span` or ENDS WITH `_span`, "the codebase's naming convention for a
+    /// held span binding". That is an allowlist of NAMES standing in for a
+    /// type check, and it fails OPEN on precisely the span this guard exists
+    /// to catch: a probe of `s`, `sp`, `tracing_ctx`, `make_span().record(…)`,
+    /// `spans[0].record(…)`, `holder.sp.record(…)` and a `let s: Span`
+    /// binding all evaded it while `page_title` sailed through. So the
+    /// polarity is inverted: EVERY `.record("literal", …)` is checked, and
+    /// only receivers named in [`NON_SPAN_RECORD_RECEIVERS`] are skipped.
+    /// Argument shape cannot substitute for that list — the DNS query
+    /// recorder in `agaric_sync::transport::endpoint` also takes a leading
+    /// string literal, so shape alone cannot tell the two apart.
+    ///
+    /// Residual limits, stated exactly (it is a text scan, not a compile):
+    /// a `Span` recorded through a receiver whose trailing identifier is on
+    /// [`NON_SPAN_RECORD_RECEIVERS`] is skipped; `.record_all(…)` and a
+    /// non-literal first argument (`span.record(key_var, …)`) have no
+    /// literal key to check and are not seen; and a field whose key is
+    /// allowlisted but whose VALUE is later changed to carry user content is
+    /// a review question, not a mechanical one. What the guard does NOT
+    /// depend on any more is what the span binding is called.
     ///
     /// Scope note: this covers span ATTRIBUTES. Span EVENTS — the `tracing`
     /// events `tracing-opentelemetry` folds into the enclosing span, including
@@ -264,35 +362,79 @@ mod tests {
                 }
             }
 
-            // `span.record("key", …)` / `Span::current().record("key", …)` —
-            // the back-fill form. Other `.record(` receivers (histograms,
-            // dirty-set trackers, DNS recorders) take no leading string
-            // literal, so keying on the `span` receiver keeps this specific.
-            for marker in ["span.record(\"", "Span::current().record(\""] {
+            // `…span!("name", key = val, …)` — the macro form
+            // (`#[instrument]`'s sibling that #3712 found this guard did not
+            // scan). Bare `key` shorthand (no `=`) is also a field.
+            //
+            // ONE marker, `span!`, deliberately: it is a substring of the
+            // generic `tracing::span!(Level::INFO, "name", …)` AND of every
+            // `{info,debug,trace,warn,error}_span!` shorthand, qualified or
+            // imported. Enumerating only the five shorthands (as the first
+            // #3712 pass did) leaves the base macro they all expand to
+            // unscanned — the same blind spot one level down. Any other
+            // macro whose name happens to end in `span!` is over-flagged,
+            // which is the safe direction.
+            {
+                let marker = "span!";
                 let mut from = 0_usize;
                 while let Some(rel_idx) = src[from..].find(marker) {
                     let idx = from + rel_idx;
                     from = idx + marker.len();
-                    // `batch_span.record(` etc. are a different receiver.
-                    if marker.starts_with("span.")
-                        && src[..idx]
-                            .chars()
-                            .next_back()
-                            .is_some_and(|c| c.is_alphanumeric() || c == '_')
-                    {
-                        continue;
-                    }
-                    // Mentions inside a comment are prose, not a call site.
                     let line_start = src[..idx].rfind('\n').map_or(0, |n| n + 1);
                     if src[line_start..idx].trim_start().starts_with("//") {
                         continue;
                     }
-                    let rest = &src[from..];
-                    let Some(end) = rest.find('"') else { continue };
-                    let key = &rest[..end];
-                    if !ALLOWED_SPAN_FIELDS.contains(&key) {
-                        offenders.push(format!("{rel}: Span::record key `{key}`"));
+                    // Report the macro by its full name, not the marker.
+                    let name_start = src[..idx]
+                        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .map_or(0, |n| n + 1);
+                    let macro_name = &src[name_start..from];
+                    let Some(open) = src[idx..].find('(').map(|o| idx + o) else {
+                        continue;
+                    };
+                    let Some(args) = balanced(&src, open) else {
+                        continue;
+                    };
+                    for key in span_macro_field_keys(args) {
+                        if !ALLOWED_SPAN_FIELDS.contains(&key.as_str()) {
+                            offenders.push(format!("{rel}: {macro_name} field `{key}`"));
+                        }
                     }
+                }
+            }
+
+            // `<receiver>.record("key", …)` — the back-fill form, checked
+            // DENY-BY-DEFAULT: the receiver is not inspected for span-ness at
+            // all beyond skipping the explicit
+            // [`NON_SPAN_RECORD_RECEIVERS`] list. #3712 first tried the
+            // opposite polarity (receiver must be `span` / `<x>_span` /
+            // `Span::current()`) and it failed open on every span held under
+            // any other name or reached through any expression — see the
+            // test's doc comment for the probe that demonstrated it.
+            let marker = ".record(\"";
+            let mut from = 0_usize;
+            while let Some(rel_idx) = src[from..].find(marker) {
+                let idx = from + rel_idx;
+                from = idx + marker.len();
+
+                // Mentions inside a comment are prose, not a call site.
+                let line_start = src[..idx].rfind('\n').map_or(0, |n| n + 1);
+                if src[line_start..idx].trim_start().starts_with("//") {
+                    continue;
+                }
+
+                let ident_start = src[..idx]
+                    .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .map_or(0, |n| n + 1);
+                let ident = &src[ident_start..idx];
+                if NON_SPAN_RECORD_RECEIVERS.contains(&ident) {
+                    continue;
+                }
+                let rest = &src[from..];
+                let Some(end) = rest.find('"') else { continue };
+                let key = &rest[..end];
+                if !ALLOWED_SPAN_FIELDS.contains(&key) {
+                    offenders.push(format!("{rel}: .record key `{key}`"));
                 }
             }
         }

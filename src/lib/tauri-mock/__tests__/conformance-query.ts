@@ -701,6 +701,32 @@ function rawRows(response: unknown, shape: WireShape): string[] {
 }
 
 /**
+ * #3833 item 7/12 — mirror of the Rust twin's duplicate-name check
+ * (`conformance_query.rs::run_query_steps`). Positional alignment (both
+ * twins index into `queries[i]` / `expected_queries[i]`) does not NEED
+ * unique names to be correct, but a diff message that names a step by
+ * `name` cannot be attributed to the right one when two steps share it.
+ *
+ * Exported so the property has a test of its own. No fixture can trip it
+ * today, so leaving it private would make it a guard whose body never runs —
+ * the failure mode it was written to prevent, one level up.
+ */
+export function assertUniqueStepNames(steps: ReadonlyArray<QueryStep>): void {
+  const seen = new Set<string>()
+  const dupes = new Set<string>()
+  for (const step of steps) {
+    if (seen.has(step.name)) dupes.add(step.name)
+    seen.add(step.name)
+  }
+  if (dupes.size === 0) return
+  throw new Error(
+    `fixture has duplicate query step name(s) ${JSON.stringify([...dupes])} — every ` +
+      `\`queries[].name\` in a fixture must be unique, or a failure cannot be attributed ` +
+      `to the right step.`,
+  )
+}
+
+/**
  * Replay a fixture's `queries` steps through the tauri-mock and project each
  * response exactly as the Rust twin does.
  */
@@ -708,6 +734,7 @@ export async function runQuerySteps(
   steps: ReadonlyArray<QueryStep>,
   labels: ReadonlyMap<string, string>,
 ): Promise<QueryResult[]> {
+  assertUniqueStepNames(steps)
   const out: QueryResult[] = []
   const cursors = new Map<string, string | null>()
   for (const step of steps) {

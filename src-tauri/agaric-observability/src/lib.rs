@@ -87,11 +87,22 @@
 //!    search query strings, tag names, or property values. This is enforced at
 //!    every `#[instrument(... fields(...))]` site — and, since #3317, by a
 //!    mechanism rather than a convention: `agaric::commands::observability`'s
-//!    `span_fields_stay_on_the_pii_allowlist` test scans every `#[instrument]`
-//!    field and `Span::record` key in the workspace against an opaque-only
-//!    allowlist. (It exists because the two leak-guard tests at the bottom of
-//!    this file only ever inspect spans they build themselves, so they could
-//!    not see the real `page_title` attribute #3317 removed.)
+//!    `span_fields_stay_on_the_pii_allowlist` test scans every
+//!    `#[instrument(... fields(...))]` key, every `...span!` inline field
+//!    (the generic `tracing::span!` and all five
+//!    `{info,debug,trace,warn,error}_span!` shorthands), and every
+//!    `<receiver>.record("key", ...)` call in the workspace against an
+//!    opaque-only allowlist. (It exists because the two leak-guard tests at
+//!    the bottom of this file only ever inspect spans they build themselves,
+//!    so they could not see the real `page_title` attribute #3317 removed.)
+//!    #3712 widened it three times over: span-macro inline fields were not
+//!    scanned at all, `.record` matched only a binding named exactly `span`,
+//!    and the generic `span!` the shorthands expand to was still missed.
+//!    Both scans are now deny-by-default — the `.record` scan checks every
+//!    receiver and skips only an explicit list confirmed not to be spans, so
+//!    the guard no longer rests on what a span binding is called. It is
+//!    still a text scan, so a non-literal key and `.record_all(...)` are
+//!    outside it.
 //!
 //!    Two surfaces are deliberately NOT covered by that allowlist, and the
 //!    honest statement of the guarantee is:
