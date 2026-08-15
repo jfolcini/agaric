@@ -7,12 +7,13 @@
 //!
 //! ## Recursive CTE policy (invariant #9)
 //!
-//! Every CTE that walks descendants via `parent_id` in this module filters
-//! `deleted_at IS NULL` in the recursive member. Exception:
-//! `remove_subtree_inherited` deliberately does NOT filter `deleted_at` —
-//! it is called AFTER the blocks have been soft-deleted, so filtering
-//! would miss the very rows we need to clean up. See the per-function
-//! doc comments for the specific rationale.
+//! Every CTE that walks the `parent_id` edge in this module — downwards to
+//! descendants, and (since #3926) upwards to ancestors — filters
+//! `deleted_at IS NULL` in the recursive member, so no walk passes THROUGH
+//! a soft-deleted block. Exception: `remove_subtree_inherited` deliberately
+//! does NOT filter `deleted_at` — it is called AFTER the blocks have been
+//! soft-deleted, so filtering would miss the very rows we need to clean up.
+//! See the per-function doc comments for the specific rationale.
 //!
 //! Every recursive CTE in this module is built from the macro family in
 //! [`crate::tag_inheritance_macros`]. The macros bake in

@@ -287,6 +287,24 @@ pub async fn remove_inherited_tag(
 /// would produce for the same tree: in particular a block that holds a tag
 /// BOTH directly and by inheritance keeps its inherited row. The
 /// `*_converges_with_rebuild_3876` tests pin that both paths agree.
+///
+/// Two further ways that equality used to fail, both fixed here:
+///
+/// * **#3925 — provenance.** Steps 2 and 3 each `INSERT OR IGNORE` from a
+///   walk that emits one row per tagging ancestor, and let the
+///   `(block_id, tag_id)` PK pick the survivor. That made `inherited_from`
+///   a function of the order SQLite happened to emit rows in. Step 3 did
+///   not merely rely on it, it got the answer WRONG: with two taggers above
+///   the subtree it attributed to the FURTHEST. Both steps now collapse to
+///   the nearest tagger explicitly, the same way `rebuild_all` does.
+/// * **#3926 — reachability.** `tag_inh_ancestors_walk!` climbed through
+///   soft-deleted ancestors, so step 3 could pull a tag across a tombstone
+///   that `rebuild_all`'s descendant walk refuses to cross. The macro now
+///   stops at the first deleted ancestor, which also makes step 3 agree
+///   with step 2's own descendant walk — `recompute_subtree_skips_deleted`
+///   has always asserted that a deleted intermediate breaks inheritance
+///   when recomputing from ABOVE it, and the same fixture recomputed from
+///   BELOW used to give the opposite answer.
 pub async fn recompute_subtree_inheritance(
     conn: &mut SqliteConnection,
     root_id: &str,
@@ -319,13 +337,25 @@ pub async fn recompute_subtree_inheritance(
     // Step 2: Recompute for the subtree. For each (block, tag) pair where
     // a block in the subtree has a direct tag, propagate to all its descendants
     // within the subtree.
+    //
+    // #3925: `tagged_descendants` emits one row per tagging ancestor, so a
+    // block under TWO in-subtree taggers appears twice with different
+    // `inherited_from`. Collapsing to the MIN-depth row makes the nearest
+    // tagger win by construction; inserting straight from the walk let the
+    // recursive-CTE emission order pick, which is a planner property rather
+    // than something the SQL states. `tag_inh_subtree_nearest!` is the same
+    // collapse `rebuild_all` applies (`tag_inh_rebuild_nearest!`), so the two
+    // paths agree because they compute the same thing, not because the queue
+    // happened to run nearest-first.
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_subtree_active!(),
         ", ",
         crate::tag_inh_tagged_descendants_in_subtree!(),
+        ", ",
+        crate::tag_inh_subtree_nearest!(),
         " INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
-         SELECT block_id, tag_id, inherited_from FROM tagged_descendants",
+         SELECT block_id, tag_id, inherited_from FROM tagged_descendants_nearest",
     ))
     .bind(root_id)
     .execute(&mut *conn)
@@ -346,25 +376,45 @@ pub async fn recompute_subtree_inheritance(
     // or an `EXISTS`), so keeping the row cannot double-count.
     //
     // I-Search-4: same ancestor-walk invariant as in `remove_inherited_tag`
-    // above — `tag_inh_ancestors_walk!(0)` walks the parent chain
-    // unfiltered; downstream projection joins `blocks` for whatever
-    // active-row filtering the caller needs.
+    // above — `tag_inh_ancestors_walk!(0)` climbs the parent chain and (since
+    // #3926) stops at the first soft-deleted ancestor, so a tag cannot reach
+    // the subtree through a tombstone; the projection below still joins
+    // `blocks` to reject the deleted ancestor the walk stopped ON as a tag
+    // source.
+    //
+    // #3925: `ancestor_tags` carries `depth` and is collapsed to the NEAREST
+    // tagging ancestor per tag before the CROSS JOIN. Cross-joining the whole
+    // set and letting `INSERT OR IGNORE` + the `(block_id, tag_id)` PK pick a
+    // winner made the attribution depend on the order the planner happened to
+    // emit rows in — and it picked WRONG: for `TOP[#T] > MID[#T] > root`, the
+    // subtree was attributed to TOP where `rebuild_all` (the arbiter,
+    // `tag_inh_rebuild_nearest!`) says MID. The collapse below is the same
+    // MIN-depth + `MIN(inherited_from)` rule the arbiter uses.
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_ancestors_walk!(0),
         ", ",
         "ancestor_tags AS ( \
-             SELECT bt.block_id AS inherited_from, bt.tag_id \
+             SELECT bt.block_id AS inherited_from, bt.tag_id, anc.depth AS depth \
              FROM ancestors anc \
              JOIN block_tags bt ON bt.block_id = anc.id \
              JOIN blocks b ON b.id = anc.id \
              WHERE b.deleted_at IS NULL \
          ), ",
+        "ancestor_tags_nearest AS ( \
+             SELECT at1.tag_id, MIN(at1.inherited_from) AS inherited_from \
+             FROM ancestor_tags at1 \
+             WHERE at1.depth = ( \
+                 SELECT MIN(at3.depth) FROM ancestor_tags at3 \
+                 WHERE at3.tag_id = at1.tag_id \
+             ) \
+             GROUP BY at1.tag_id \
+         ), ",
         crate::tag_inh_subtree_active!(),
         " INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT st.id, at2.tag_id, at2.inherited_from \
          FROM subtree st \
-         CROSS JOIN ancestor_tags at2",
+         CROSS JOIN ancestor_tags_nearest at2",
     ))
     .bind(root_id)
     .execute(&mut *conn)
