@@ -5109,3 +5109,429 @@ async fn attachments_0108_fs_path_shape_triggers_refuse_unsafe_writes_3370() {
         "the UPDATE trigger must fire too, got: {err}"
     );
 }
+
+// ----------------------------------------------------------------------
+// #3839 — migration 0110: the one-shot `page_link_cache` backfill.
+//
+// Before 0110 the ONLY thing that ever populated the rollup from
+// pre-existing `block_links` rows was the read path's lazy rebuild, gated
+// on `page_link_cache` being ENTIRELY empty. The first row any incremental
+// maintenance wrote disarmed that gate permanently, stranding every
+// pre-existing edge out of the graph. These two tests pin the migration as
+// the mechanism and the lazy heal as mere redundancy.
+// ----------------------------------------------------------------------
+
+/// Seed an upgrading vault at v109 (the last migration before 0110): page A
+/// holds a content block whose `block_links` row points at page B, and
+/// `page_link_cache` is empty because migration 0065 shipped without a
+/// backfill.
+async fn seed_pre_0110_vault(pool: &SqlitePool, page_a: &str, page_b: &str, child: &str) {
+    for (id, title) in [(page_a, "A"), (page_b, "B")] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', 'see B', ?, ?, 1)",
+    )
+    .bind(child)
+    .bind(page_a)
+    .bind(page_a)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(child)
+        .bind(page_b)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Migration 0110 must populate `page_link_cache` from the vault's existing
+/// `block_links` rows at upgrade time, with the #2070 denormalised flags set
+/// the same way a full `rebuild_page_link_cache` sets them.
+#[tokio::test]
+async fn page_link_cache_backfill_populates_upgrading_vault_3839() {
+    let page_a = "PA000000000000000000000000";
+    let page_b = "PB000000000000000000000000";
+    let child = "C0000000000000000000000001";
+
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 109).await;
+    seed_pre_0110_vault(&pool, page_a, page_b, child).await;
+
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_link_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        before, 0,
+        "seed: 0065 creates page_link_cache with no backfill, so an upgrading \
+         vault reaches 0110 with a populated block_links and an empty rollup"
+    );
+
+    apply_migrations_through(&pool, 109, 110).await;
+
+    let rows: Vec<(String, String, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, \
+                tgt_is_page \
+         FROM page_link_cache",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(page_a.to_string(), page_b.to_string(), 1, 0, 0, 1)],
+        "migration 0110 must roll the pre-existing block_links edge up to its \
+         owning page, with the #2070 predicate flags materialised"
+    );
+}
+
+/// The read path must not depend on its lazy "table entirely empty" rebuild.
+///
+/// After the upgrade, one row written by ordinary incremental maintenance
+/// disarms that gate forever (`SELECT NOT EXISTS (SELECT 1 FROM
+/// page_link_cache)` is now false). With migration 0110 in place the vault's
+/// pre-existing edge is already in the rollup, so it still reaches the graph;
+/// without it, the edge is stranded exactly as #3839 describes.
+#[tokio::test]
+async fn upgraded_vault_page_links_survive_a_disarmed_lazy_rebuild_3839() {
+    let page_a = "PA000000000000000000000000";
+    let page_b = "PB000000000000000000000000";
+    let child = "C0000000000000000000000001";
+    let page_c = "PC000000000000000000000000";
+    let page_d = "PD000000000000000000000000";
+
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 109).await;
+    seed_pre_0110_vault(&pool, page_a, page_b, child).await;
+    apply_migrations_to_head(&pool, 109).await;
+
+    // An unrelated edge maintained incrementally AFTER the upgrade — this is
+    // the single row that disarms the lazy rebuild for good.
+    for (id, title) in [(page_c, "C"), (page_d, "D")] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO page_link_cache \
+             (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page) \
+         VALUES (?, ?, 1, 0, 0, 1)",
+    )
+    .bind(page_c)
+    .bind(page_d)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let cache_empty: bool =
+        sqlx::query_scalar::<_, i32>("SELECT NOT EXISTS (SELECT 1 FROM page_link_cache)")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            == 1;
+    assert!(
+        !cache_empty,
+        "seed: the read path's lazy-rebuild gate must be DISARMED for this test \
+         to say anything about the migration"
+    );
+
+    let response = crate::commands::pages::links::list_page_links_inner(
+        &pool,
+        &agaric_store::space::SpaceScope::Global,
+        None,
+    )
+    .await
+    .unwrap();
+    let edges: Vec<(String, String)> = response
+        .edges
+        .iter()
+        .map(|e| {
+            (
+                e.source_id.as_str().to_owned(),
+                e.target_id.as_str().to_owned(),
+            )
+        })
+        .collect();
+    assert!(
+        edges.contains(&(page_a.to_string(), page_b.to_string())),
+        "the pre-upgrade edge must reach the graph without the lazy rebuild \
+         (migration 0110 is the backfill); got {edges:?}"
+    );
+}
+
+/// #3894 — migration 0110 must not be able to ABORT on a dirty vault.
+///
+/// `page_link_cache.source_page_id` / `target_page_id` are `NOT NULL
+/// REFERENCES blocks(id)` (0065) and foreign keys are ON for every connection
+/// (`base_connect_options`, which `unmigrated_pool` uses), migrations
+/// included. An FK violation raised from inside a migration is not a logged
+/// background error — it is an unrecoverable BOOT failure on a user's vault,
+/// and `INSERT OR IGNORE` does not absorb it (the SQLite ON CONFLICT algorithm
+/// does not apply to FOREIGN KEY constraints).
+///
+/// The exposure is the SOURCE side only, and it is not covered by the `sb`
+/// join: `source_page_id` is the derived key `COALESCE(sb.page_id,
+/// sb.parent_id, bl.source_id)`, so `sb` can join perfectly while the KEY
+/// names a row that no longer exists. Migrations 0073 and 0085 NULL out
+/// exactly this historical dangling `parent_id` / `page_id` state before their
+/// table rebuilds, which is the evidence that vaults in the wild carry it.
+///
+/// This test plants both dangling COALESCE terms with `foreign_keys = OFF`
+/// (manufacturing the historical FK-off-window state the guard exists for),
+/// then requires 0110 to COMMIT, to skip only the offending groups, and to
+/// leave a clean edge in the same vault untouched.
+#[tokio::test]
+async fn page_link_cache_backfill_skips_dangling_rollup_keys_3894() {
+    let page_a = "PA000000000000000000000000";
+    let page_b = "PB000000000000000000000000";
+    let child = "C0000000000000000000000001";
+    // Ids that are deliberately NOT inserted into `blocks`.
+    let ghost_page = "GHOSTPAGE0000000000000000A";
+    let ghost_parent = "GHOSTPARENT00000000000000A";
+
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 109).await;
+    seed_pre_0110_vault(&pool, page_a, page_b, child).await;
+
+    // Plant the historical dangling state. `PRAGMA foreign_keys = OFF` is what
+    // makes this reachable at all — it is how the state got into real vaults,
+    // and the pool is `max_connections(1)` so the pragma lands on the same
+    // connection the inserts use.
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Dangling `page_id`: COALESCE term 1 resolves to a missing page.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id, position) \
+         VALUES ('DANGLEPAGEID00000000000001', 'content', 'see B', ?, 2)",
+    )
+    .bind(ghost_page)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Dangling `parent_id` with a NULL `page_id`: COALESCE falls through to
+    // term 2, which is also missing.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES ('DANGLEPARENT000000000000001', 'content', 'see B', ?, 3)",
+    )
+    .bind(ghost_parent)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for src in ["DANGLEPAGEID00000000000001", "DANGLEPARENT000000000000001"] {
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(src)
+            .bind(page_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let fk_on: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        fk_on, 1,
+        "the migration must run with foreign keys ENFORCED or this test proves \
+         nothing about the abort it is guarding"
+    );
+
+    // The assertion: this call panics on any migration error, so reaching the
+    // next line at all is the "0110 did not abort the upgrade" claim.
+    apply_migrations_through(&pool, 109, 110).await;
+
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache \
+         ORDER BY source_page_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(page_a.to_string(), page_b.to_string(), 1)],
+        "0110 must skip only the groups whose rollup key names no `blocks` row \
+         and leave the clean edge in the same vault intact"
+    );
+}
+
+/// #3894 — the TARGET side needs no guard, and this pins WHY.
+///
+/// `target_page_id` is `bl.target_id`, which the `JOIN blocks tb ON tb.id =
+/// bl.target_id` INNER join already constrains to a live `blocks` row, so a
+/// `block_links` row pointing at a purged target contributes no output row
+/// rather than an FK violation. If someone ever weakens that join to a LEFT
+/// join to "keep more edges", this test is what fails.
+#[tokio::test]
+async fn page_link_cache_backfill_drops_edges_with_a_purged_target_3894() {
+    let page_a = "PA000000000000000000000000";
+    let page_b = "PB000000000000000000000000";
+    let child = "C0000000000000000000000001";
+    let ghost_target = "GHOSTTARGET00000000000000A";
+
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 109).await;
+    seed_pre_0110_vault(&pool, page_a, page_b, child).await;
+
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(child)
+        .bind(ghost_target)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    apply_migrations_through(&pool, 109, 110).await;
+
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache \
+         ORDER BY source_page_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(page_a.to_string(), page_b.to_string(), 1)],
+        "an edge whose target is gone must be dropped by the `tb` inner join, \
+         not inserted as a dangling `target_page_id`"
+    );
+}
+
+/// #3894 — the INCREMENTAL upsert must carry the same FK guard as the three
+/// rebuild sites, or guarding the rebuilds only moves the abort somewhere
+/// worse.
+///
+/// `recompute_rows_for_rollup_key` writes the same `NOT NULL REFERENCES
+/// blocks(id)` `source_page_id` from the same derived roll-up key, so it has
+/// always been exposed for a block's CURRENT key. #3842 widened the exposure:
+/// the sweep now runs the recompute for the block's STALE keys (`parent_id`,
+/// its own id) on EVERY reindex, so a dangling `blocks.parent_id` anywhere in
+/// the neighbourhood becomes a roll-up key here even when the reindexed block
+/// itself is perfectly clean.
+///
+/// Unguarded, that is strictly worse than the migration case this issue
+/// started from: 0110 skips the bad group silently, and then every single
+/// `ReindexBlockLinks` raises `FOREIGN KEY constraint failed` for the same
+/// key — logged and retried forever, a permanent background error loop rather
+/// than one boot failure.
+///
+/// The dangling `parent_id` is planted with `foreign_keys = OFF` (exactly the
+/// historical FK-off-window state migrations 0073 / 0085 exist to clean up);
+/// the reindex itself then runs with foreign keys ENFORCED, which is what
+/// makes the assertion say anything.
+#[tokio::test]
+async fn page_link_cache_incremental_skips_dangling_rollup_keys_3894() {
+    let page_a = "PA000000000000000000000000";
+    let page_b = "PB000000000000000000000000";
+    let child = "C0000000000000000000000001";
+    // A block that still rolls up to the dangling key, so the stale-key sweep
+    // finds real work to do under it.
+    let orphan = "ORPHAN00000000000000000001";
+    // Deliberately NOT inserted into `blocks`.
+    let ghost_parent = "GHOSTPARENT00000000000000A";
+
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 110).await;
+    seed_pre_0110_vault(&pool, page_a, page_b, child).await;
+
+    // `max_connections(1)`, so the pragma lands on the connection the writes
+    // below use.
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // The reindexed block is CLEAN under its current key (`page_id = page_a`)
+    // and dangles only under the STALE key #3842 added to the sweep.
+    sqlx::query("UPDATE blocks SET parent_id = ? WHERE id = ?")
+        .bind(ghost_parent)
+        .bind(child)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // `page_id` NULL, so this block's OWN roll-up key is the dangling
+    // `parent_id` — that is what makes the sweep's recompute for `ghost_parent`
+    // produce a group to insert instead of finding nothing.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', 'see B', ?, 2)",
+    )
+    .bind(orphan)
+    .bind(ghost_parent)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Both endpoints are live blocks, so this needs no FK-off window.
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(orphan)
+        .bind(page_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let fk_on: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        fk_on, 1,
+        "the reindex must run with foreign keys ENFORCED or this test proves \
+         nothing about the violation it is guarding"
+    );
+
+    // The assertion: unguarded, this returns `FOREIGN KEY constraint failed`
+    // from the stale-key recompute for `ghost_parent`.
+    agaric_store::cache::reindex_page_link_cache_for_block(&pool, child)
+        .await
+        .expect("a dangling stale roll-up key must SKIP its group, not raise");
+
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache \
+         ORDER BY source_page_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(page_a.to_string(), page_b.to_string(), 1)],
+        "the incremental path must skip only the group whose roll-up key names \
+         no `blocks` row and still write the clean page-keyed row"
+    );
+}

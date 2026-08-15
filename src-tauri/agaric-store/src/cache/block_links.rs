@@ -114,11 +114,30 @@ pub async fn reindex_block_links_conn(
     // per-target space resolution that used to run in a Rust loop is
     // pushed into the INSERT's correlated subquery below, so the whole
     // cross-space filter costs one set-based statement instead of N+1
-    // round-trips. The subquery is a verbatim copy of
-    // `space::resolve_block_space`'s SQL and KEEPS both soft-delete
-    // guards (invariant #9): the input-block `page_id` lookup
-    // (`AND deleted_at IS NULL`) and the holder join
-    // (`tgt.deleted_at IS NULL`).
+    // round-trips.
+    //
+    // #3903 correction of record (filed separately from the #3842/#3839
+    // rollup work this landed alongside, so a future regression here bisects
+    // to something whose title is about THIS defect): this comment previously
+    // claimed the subquery was "a verbatim copy of `resolve_block_space`'s".
+    // It was NOT. `resolve_block_space` (#533 Phase 2, `space.rs`) reads
+    // `COALESCE(b.space_id, p.space_id)` over a `LEFT JOIN blocks p ON
+    // p.id = b.page_id AND p.deleted_at IS NULL` — the owning-page fallback
+    // that covers a block whose own `space_id` column has not been
+    // materialised yet (it is stamped post-commit by `SetBlockPageId`'s
+    // `set_block_space_id_from_parent`). The target-side subquery read only
+    // `blocks.space_id`, so a target inside that window resolved to NULL,
+    // `NULL = ?3` was falsy, and a legitimate SAME-space link was silently
+    // dropped — asymmetric with the source side, which DOES take the
+    // fallback (it calls `resolve_block_space` directly). Reachable via the
+    // in-tx edit hook (`agaric-engine`'s `maintain_pages_cache_counts_after_op`,
+    // `PreOpState::Edit`), where the source block's `space_id` is long since
+    // stamped. The subquery below now mirrors `resolve_block_space` for real,
+    // fallback included. It KEEPS both soft-delete guards (invariant #9): the
+    // target row itself (`tgt.deleted_at IS NULL`) and the owning-page join
+    // (`tp.deleted_at IS NULL`). Strictly widening: a non-NULL
+    // `tgt.space_id` gives the old answer, and where it was NULL the old form
+    // was already falsy — so no link the old filter KEPT can be dropped.
     let source_space: Option<String> = if to_insert.is_empty() {
         None
     } else {
@@ -162,7 +181,8 @@ pub async fn reindex_block_links_conn(
         // space (`?3 IS NULL`) every target passes (mirrors the old
         // `if source_space.is_some()` skip). Otherwise a target is kept
         // only if its own resolved space equals the source's; targets
-        // whose space is NULL (unresolvable / soft-deleted holder) yield
+        // whose space is still NULL after the owning-page fallback
+        // (genuinely unresolvable / soft-deleted holder) yield
         // `NULL = ?3` → falsy → dropped, exactly as the prior loop did
         // (it only pushed `Ok(Some(space))` matches).
         let insert_json = serde_json::to_string(&to_insert)?;
@@ -171,8 +191,9 @@ pub async fn reindex_block_links_conn(
              SELECT ?1, je.value FROM json_each(?2) je \
              WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value AND deleted_at IS NULL) \
                AND (?3 IS NULL OR ?3 = ( \
-                   SELECT space_id FROM blocks \
-                   WHERE id = je.value AND deleted_at IS NULL \
+                   SELECT COALESCE(tgt.space_id, tp.space_id) FROM blocks tgt \
+                   LEFT JOIN blocks tp ON tp.id = tgt.page_id AND tp.deleted_at IS NULL \
+                   WHERE tgt.id = je.value AND tgt.deleted_at IS NULL \
                    LIMIT 1))",
         )
         .bind(block_id)
@@ -286,18 +307,22 @@ pub async fn reindex_block_links_split(
         //
         // #375: the `(?3 IS NULL OR ?3 = (…))` clause is the pushed-down
         // cross-space filter — a verbatim copy of the single-pool variant's
-        // (and `space::resolve_block_space`'s) SQL. Source has no space
-        // (`?3 IS NULL`) ⇒ every target passes; otherwise a target is kept only
-        // if its own resolved space equals the source's (a NULL target space
-        // yields `NULL = ?3` → dropped).
+        // SQL, which (as of #3903) really is `space::resolve_block_space`'s
+        // `COALESCE(own space_id, owning page's space_id)` with both
+        // soft-delete guards. Source has no space (`?3 IS NULL`) ⇒ every
+        // target passes; otherwise a target is kept only if its resolved
+        // space equals the source's (a still-NULL target space yields
+        // `NULL = ?3` → dropped). See the single-pool variant for why the
+        // owning-page fallback is load-bearing rather than cosmetic.
         let insert_json = serde_json::to_string(&to_insert)?;
         sqlx::query(
             "INSERT OR IGNORE INTO block_links (source_id, target_id) \
              SELECT ?1, je.value FROM json_each(?2) je \
              WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value AND deleted_at IS NULL) \
                AND (?3 IS NULL OR ?3 = ( \
-                   SELECT space_id FROM blocks \
-                   WHERE id = je.value AND deleted_at IS NULL \
+                   SELECT COALESCE(tgt.space_id, tp.space_id) FROM blocks tgt \
+                   LEFT JOIN blocks tp ON tp.id = tgt.page_id AND tp.deleted_at IS NULL \
+                   WHERE tgt.id = je.value AND tgt.deleted_at IS NULL \
                    LIMIT 1))",
         )
         .bind(block_id)

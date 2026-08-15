@@ -86,6 +86,21 @@ pub(crate) const SHED_LAST_ERROR: &str = "shed: background queue full (task neve
 pub(crate) const SEED_OBLIGATION_LAST_ERROR: &str =
     "seed: usage_count refresh owed by reindex (not yet attempted)";
 
+/// #3842: `last_error` marker for a `ReindexBlockLinks` row pre-seeded by the
+/// `SetBlockPageId` handler as a durable "the `page_link_cache` roll-up owes a
+/// repair" obligation. Same role as [`SEED_OBLIGATION_LAST_ERROR`], different
+/// text so a queue dump distinguishes the two seeds.
+pub(crate) const SEED_PAGE_LINK_REPAIR_LAST_ERROR: &str =
+    "seed: page_link_cache rollup repair owed by SetBlockPageId (not yet attempted)";
+
+/// #3842: `last_error` marker for the `RebuildPageLinkCache` row seeded when
+/// `SetBlockPageId` observes a `page_id` move the per-block stale-key sweep
+/// cannot cover (a real page → real page move). See the `SetBlockPageId` arm
+/// in `handlers::task_handlers` for why that is unreachable today and why the
+/// fallback exists anyway.
+pub(crate) const SEED_PAGE_LINK_FULL_REBUILD_LAST_ERROR: &str =
+    "seed: page_link_cache full rebuild owed by an unexpected page_id move (#3842)";
+
 /// Task kinds that may be persisted to the retry queue.
 ///
 /// Three families:
@@ -764,17 +779,53 @@ pub(crate) async fn seed_refresh_tag_usage_count_obligation_tx(
     conn: &mut sqlx::SqliteConnection,
     tag_id: &str,
 ) -> Result<bool, AppError> {
+    seed_obligation_tx(
+        conn,
+        &RetryKind::RefreshTagUsageCount,
+        tag_id,
+        SEED_OBLIGATION_LAST_ERROR,
+    )
+    .await
+}
+
+/// Kind-generic form of [`seed_refresh_tag_usage_count_obligation_tx`].
+///
+/// #3842 generalised the #2831 shape: any handler that commits a state change
+/// whose dependent maintenance runs OUTSIDE that write can seed a durable,
+/// idempotent obligation for the maintenance in the SAME transaction, so the
+/// "work is owed" signal survives a failure or a hard kill instead of living
+/// only in a transient in-memory boolean.
+///
+/// `key` is whatever the kind persists in the `block_id` column: a block id
+/// for per-block kinds, a tag id for [`RetryKind::RefreshTagUsageCount`], or
+/// [`GLOBAL_TASK_SENTINEL`] for global rebuilds.
+///
+/// Idempotent via `ON CONFLICT(block_id, task_kind) DO NOTHING`, so an
+/// existing row (with its accumulated `attempts`/backoff/`created_at`) is
+/// preserved untouched. A fresh row lands with `attempts = 1` and
+/// `next_attempt_at = now`, matching [`record_failure`]'s first-failure INSERT
+/// so the `pending_retry_rows` gauge stays consistent.
+///
+/// Returns `true` iff a new row was inserted. The caller MUST bump
+/// `pending_retry_rows` only AFTER the transaction commits — a bump before
+/// commit would over-count on rollback.
+pub(crate) async fn seed_obligation_tx(
+    conn: &mut sqlx::SqliteConnection,
+    kind: &RetryKind,
+    key: &str,
+    last_error: &str,
+) -> Result<bool, AppError> {
     let now = crate::db::now_ms();
-    let kind = RetryKind::RefreshTagUsageCount.task_kind_str();
-    let kind_str: &str = kind.as_ref();
+    let kind_string = kind.task_kind_str();
+    let kind_str: &str = kind_string.as_ref();
     let result = sqlx::query!(
         "INSERT INTO materializer_retry_queue \
              (block_id, task_kind, attempts, last_error, next_attempt_at) \
          VALUES (?1, ?2, 1, ?3, ?4) \
          ON CONFLICT(block_id, task_kind) DO NOTHING",
-        tag_id,
+        key,
         kind_str,
-        SEED_OBLIGATION_LAST_ERROR,
+        last_error,
         now,
     )
     .execute(&mut *conn)
@@ -796,11 +847,37 @@ pub(crate) async fn clear_refresh_tag_usage_count_obligation(
     tag_id: &str,
     metrics: Option<&super::metrics::QueueMetrics>,
 ) -> Result<(), AppError> {
-    let kind = RetryKind::RefreshTagUsageCount.task_kind_str();
-    let kind_str: &str = kind.as_ref();
+    clear_obligation(pool, &RetryKind::RefreshTagUsageCount, tag_id, metrics).await
+}
+
+/// Kind-generic form of [`clear_refresh_tag_usage_count_obligation`] (#3842):
+/// delete the durable obligation seeded by [`seed_obligation_tx`] once the
+/// inline attempt has durably succeeded.
+///
+/// Unlike [`clear_on_success`], this does NOT consult the `pending_retry_rows`
+/// gauge fast-path: the caller just seeded a row for this exact key, so the
+/// DELETE-by-PK is always warranted (and cheap against the tiny single-writer
+/// retry-queue table). `metrics` is optional so the direct-call handler path
+/// (unit tests with no live sweeper) can pass `None`.
+///
+/// The DELETE is unconditional, so it also discards a PRE-EXISTING row: if a
+/// genuine earlier failure had already queued this `(key, kind)`,
+/// [`seed_obligation_tx`]'s `ON CONFLICT DO NOTHING` preserved that row's
+/// `attempts` / backoff, and this call then deletes it outright rather than
+/// only the seed it paired with. The outcome is right — the work just
+/// succeeded durably, so there is nothing left to retry — but the accumulated
+/// attempt count and backoff position are lost, not merged.
+pub(crate) async fn clear_obligation(
+    pool: &SqlitePool,
+    kind: &RetryKind,
+    key: &str,
+    metrics: Option<&super::metrics::QueueMetrics>,
+) -> Result<(), AppError> {
+    let kind_string = kind.task_kind_str();
+    let kind_str: &str = kind_string.as_ref();
     let result = sqlx::query!(
         "DELETE FROM materializer_retry_queue WHERE block_id = ? AND task_kind = ?",
-        tag_id,
+        key,
         kind_str,
     )
     .execute(pool)

@@ -49,7 +49,7 @@
 //! |---|---|---|
 //! | `attachment_blobs` (blob refcount) | `attachments` | `persist_attachment` (insert arm) / `cleanup_orphaned_attachments` (prune arm) |
 //! | `pages_cache` ROW MEMBERSHIP | `blocks` | `rebuild_pages_cache` (the `RebuildPagesCache` task) |
-//! | `blocks.page_id` (page OWNERSHIP) | `blocks` | `set_block_page_id_from_parent` (create arm) / `rederive_page_and_space_ids` (move arm) / `rebuild_page_ids` (vault-wide arm) |
+//! | `blocks.page_id` (page OWNERSHIP) | `blocks` | `set_block_page_id_from_parent_in_tx` (create arm) / `rederive_page_and_space_ids` (move arm) / `rebuild_page_ids` (vault-wide arm) |
 //! | `pages_cache.{inbound_link_count,child_block_count}` | `blocks`, `block_links` | `maintain_pages_cache_counts_after_op` (sync arms) / `rebuild_pages_cache_counts` (deferred cohort arm) |
 //! | `page_link_cache` (the page-level `block_links` roll-up) | `blocks`, `block_links` | `reindex_page_link_cache_for_block` (the `ReindexBlockLinks` task — the SOLE per-block writer) / `rebuild_page_link_cache` (the `RebuildPageLinkCache` task) |
 //!
@@ -801,9 +801,10 @@ pub struct PageLinkEdge {
 ///   was never stamped rolls up under its immediate parent instead;
 /// * `edge_count` is how many such rows land in the group;
 /// * `src_deleted` is the state of the SOURCE PAGE — the group key — and is
-///   `true` when that page is soft-deleted OR does not exist at all (a purged
-///   or never-created page id, which the read must mask exactly as it masks a
-///   tombstone);
+///   `true` when that page is soft-deleted. A source page that does not exist
+///   at all yields NO row (#3894): `source_page_id` is `NOT NULL REFERENCES
+///   blocks(id)` with foreign keys ON, so such a row is unstorable and the
+///   writers' `EXISTS` guard skips the group;
 /// * `tgt_deleted` / `tgt_is_page` come from the single target block.
 ///
 /// Folded in Rust over two flat row dumps: no `GROUP BY`, no `COUNT`, no
@@ -852,12 +853,21 @@ pub async fn rebuild_page_link_cache_from_base(
             .clone()
             .or_else(|| source.parent_id.clone())
             .unwrap_or_else(|| source_id.clone());
-        // A source page that is absent from `blocks` is masked as deleted —
-        // the same outcome the writers' `COALESCE(…, 1)` / `CASE WHEN sp.id IS
-        // NULL THEN 1` produce, reached without borrowing their shape.
-        let src_deleted = by_id
-            .get(source_page.as_str())
-            .is_none_or(|p| p.deleted_at.is_some());
+        // A source page that is ABSENT from `blocks` yields no row at all
+        // (#3894). Not a rule borrowed from the writers — it is forced by the
+        // schema: `page_link_cache.source_page_id` is `NOT NULL REFERENCES
+        // blocks(id)` (0065) and foreign keys are ON, so a row keyed on an id
+        // that is not in `blocks` is UNSTORABLE. The writers' `EXISTS` guard
+        // skips exactly these groups for that reason (before it, they raised
+        // instead — either way the row cannot exist), so folding one here
+        // would report a permanent, unfixable divergence on any vault
+        // carrying a dangling `page_id` / `parent_id` from a historical
+        // `foreign_keys = OFF` window. A source page that EXISTS but is
+        // soft-deleted still yields a row, flagged.
+        let Some(source_page_block) = by_id.get(source_page.as_str()) else {
+            continue;
+        };
+        let src_deleted = source_page_block.deleted_at.is_some();
 
         let entry = out
             .entry((source_page, target_id.clone()))
@@ -1101,7 +1111,7 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
                     .clone()
                     .unwrap_or_else(|| "NULL (no page ancestor via parent_id)".to_owned()),
                 actual: actual_owner.map_or_else(|| "NULL".to_owned(), str::to_owned),
-                owner: "set_block_page_id_from_parent (the scoped leaf-create arm) / \
+                owner: "set_block_page_id_from_parent_in_tx (the scoped leaf-create arm) / \
                         commands::block_cleanup::rederive_page_and_space_ids (the in-tx \
                         move arm — a MOVE deliberately does NOT enqueue the vault-wide \
                         rebuild, #2200) / cache::rebuild_page_ids (the vault-wide arm \

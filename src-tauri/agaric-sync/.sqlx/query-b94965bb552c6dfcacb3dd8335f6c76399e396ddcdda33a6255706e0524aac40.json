@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT page_id AS \"previous?: String\", (SELECT b2.page_id FROM blocks b2 WHERE b2.id = blocks.parent_id) AS \"inherited?: String\" FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "previous?: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      },
+      {
+        "name": "inherited?: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "b94965bb552c6dfcacb3dd8335f6c76399e396ddcdda33a6255706e0524aac40"
+}

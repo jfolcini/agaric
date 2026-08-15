@@ -1286,6 +1286,30 @@ pub(crate) fn invalidations_for_op(
                 tasks.push(MaterializeTask::UpdateFtsBlock {
                     block_id: Arc::clone(&block_id),
                 });
+                // Incremental page_id set for the new block (no descendants to walk).
+                // Skipped for page blocks: their page_id = id invariant is enforced
+                // by the page_id_self_for_pages CHECK constraint at INSERT time.
+                // Falls through to the unconditional RebuildPageIds only if block_id
+                // is empty (defensive).
+                //
+                // #3842: enqueued BEFORE `ReindexBlockLinks` below. The
+                // background queue is FIFO, and the roll-up key
+                // `ReindexBlockLinks` writes under is
+                // `COALESCE(blocks.page_id, parent_id, id)` — so running the
+                // page_id stamp first means the reindex sees the settled key
+                // instead of rolling this block's edges up under a
+                // content-block key. It also lets `reindex_block_links`' own
+                // same-space guard read a stamped `space_id`. This ordering is
+                // a narrowing, not the fix: a parent delivered in a LATER op
+                // batch moves the key after this whole fan-out has drained, so
+                // the `SetBlockPageId` handler ALSO re-runs the reindex
+                // whenever it actually changes `page_id` (see
+                // `task_handlers.rs`).
+                if hint.block_type != "page" {
+                    tasks.push(MaterializeTask::SetBlockPageId {
+                        block_id: Arc::clone(&block_id),
+                    });
+                }
                 // #3296: a freshly created block can already contain inline
                 // `[[ULID]]` / `((ULID))` LINK tokens for exactly the same
                 // reason it can contain tag refs (imports, paste, template
@@ -1329,17 +1353,7 @@ pub(crate) fn invalidations_for_op(
                 // inline `#[ULID]` tag refs if the creator passed
                 // non-empty content (imports, paste, programmatic
                 // creates). Scan for them.
-                tasks.push(MaterializeTask::ReindexBlockTagRefs {
-                    block_id: Arc::clone(&block_id),
-                });
-                // Incremental page_id set for the new block (no descendants to walk).
-                // Skipped for page blocks: their page_id = id invariant is enforced
-                // by the page_id_self_for_pages CHECK constraint at INSERT time.
-                // Falls through to the unconditional RebuildPageIds only if block_id
-                // is empty (defensive).
-                if hint.block_type != "page" {
-                    tasks.push(MaterializeTask::SetBlockPageId { block_id });
-                }
+                tasks.push(MaterializeTask::ReindexBlockTagRefs { block_id });
             }
             // #2200 (Tier-2, same safe class as #2186): the whole-vault
             // `RebuildTagInheritanceCache` recompute is dropped from this arm.
@@ -1974,11 +1988,15 @@ mod tests {
             vec![
                 "RebuildTagsCache",
                 "UpdateFtsBlock(BLK1)",
+                // #3842: the page_id stamp is enqueued BEFORE the link reindex
+                // so the FIFO background queue settles the roll-up key
+                // (`COALESCE(page_id, parent_id, id)`) before the reindex keys
+                // rows on it.
+                "SetBlockPageId(BLK1)",
                 // #3296: link reindex is enqueued for EVERY create, not just
                 // content ones — a tag block's content can carry `[[ULID]]`.
                 "ReindexBlockLinks(BLK1)",
                 "ReindexBlockTagRefs(BLK1)",
-                "SetBlockPageId(BLK1)",
             ],
         );
         // #2200 sentinel: the whole-vault tag-inheritance rebuild is dropped —
@@ -2018,10 +2036,11 @@ mod tests {
             labels(&tasks),
             vec![
                 "UpdateFtsBlock(C1)",
+                // #3842: page_id stamp first — see the tag-hint test above.
+                "SetBlockPageId(C1)",
                 // #3296: the page-link rollup's only per-block maintainer.
                 "ReindexBlockLinks(C1)",
                 "ReindexBlockTagRefs(C1)",
-                "SetBlockPageId(C1)",
             ],
         );
     }
