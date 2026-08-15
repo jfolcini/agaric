@@ -13,9 +13,13 @@ import { defineConfig } from 'vitest/config'
 // Invocation (from repo root): `npx vitest run --config
 // scripts/mutation-harnesses/vitest.config.ts scripts/mutation-harnesses/<module>.harness.ts`
 export default defineConfig({
+  // #3907 review note: `include` was cwd-relative with no `root`, so the
+  // documented invocation only worked from the repo root. Pinning `root`
+  // here makes the config (and its `include` glob) location-independent.
+  root: import.meta.dirname,
   test: {
     environment: 'node',
-    include: ['scripts/mutation-harnesses/*.harness.ts'],
+    include: ['*.harness.ts'],
     // These are exhaustive/near-exhaustive sweeps over tens of thousands of
     // generated inputs; give them room instead of tripping the suite's 20s
     // default.

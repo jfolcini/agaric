@@ -4,6 +4,18 @@
  * `src/stores/__tests__/page-blocks.reorder.test.ts:1167` ("#3759 EQUIVALENCE
  * LEDGER").
  *
+ * #3907 — the mutant/control clones below are hand-copied from
+ * `reconcileBatchMove` and drift silently if the source changes with
+ * nothing to catch it (this file is out of CI and outside every tsconfig
+ * project). The source-pin marker on the next line is a gate against
+ * exactly that: it hashes the real function's current text and fails if it
+ * no longer matches (see `scripts/check-mutation-harness-clones.mjs`, wired
+ * into prek.toml). If this fires, re-sync every hand-copied clone below
+ * against the current `reconcileBatchMove`, then recompute and update the
+ * hash.
+ *
+ * mutation-harness-source-pin: src/stores/page-blocks-move.ts#reconcileBatchMove sha256=e09eeace3073cd990958006a63e3a53994059d0170ac0339a13e16472af663df
+ *
  * IMPORTANT — three of the four equivalence entries that ledger originally
  * described are now VOID, not merely line-shifted: #3887 (#3799) deleted the
  * code they were about outright (the `byId.has` pre-check and the vacated-
