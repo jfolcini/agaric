@@ -334,8 +334,10 @@ const INBOUND_SYNC_CACHE_REBUILD_TASKS: [MaterializeTask; 7] = [
 ///     full rebuild).
 ///   * RESTORE → [`CONTENT_RESTORE_REBUILD_TASKS`], which RETAINS
 ///     `RebuildTagInheritanceCache` (#2934 — restore's scoped
-///     `recompute_subtree_inheritance` diverges from the full rebuild for a
-///     restored direct-tagger, so the rebuild heals it).
+///     `recompute_subtree_inheritance` USED TO diverge from the full rebuild
+///     for a restored direct-tagger; #3876 closed that class, but the rebuild
+///     is retained until the narrowing is audited separately — see that
+///     constant's doc).
 ///
 /// Every other hint — `Some("page")`, `Some("tag")`, `Some(<unknown>)`, or
 /// `None` — falls back to the full [`FULL_CACHE_REBUILD_TASKS`], the
@@ -1159,8 +1161,11 @@ impl Materializer {
             let needs_full = block_type_hint != Some("content");
             // #2934: the vault-wide `RebuildTagInheritanceCache` is dropped for a
             // content delete/purge (scoped update is byte-identical) but RETAINED
-            // for a content restore (scoped `recompute_subtree_inheritance`
-            // diverges) and for the full set (which already carries it).
+            // for a content restore and for the full set (which already carries
+            // it). The restore arm was justified by a scoped
+            // `recompute_subtree_inheritance` divergence that #3876 has since
+            // closed; it is kept as belt-and-braces until the narrowing is
+            // audited (see [`CONTENT_RESTORE_REBUILD_TASKS`]).
             let needs_inheritance = needs_full || matches!(parsed_op, Ok(OpType::RestoreBlock));
             self.arm_lifecycle_rebuild_debounce(needs_full, needs_inheritance);
         }
@@ -1625,6 +1630,17 @@ pub(crate) fn invalidations_for_op(
             //     `remove_tag_incremental_matches_full_rebuild_2669` in
             //     agaric-store `tag_inheritance::tests`). Its redundant rebuild
             //     is DROPPED below.
+            //
+            //     #3923 — that equivalence did NOT actually hold when this
+            //     drop landed: `remove_inherited_tag` carried a
+            //     `NOT IN block_tags` exclusion that dropped a descendant's
+            //     re-attributed row when the descendant ALSO held the tag
+            //     directly, and #2669's fixture had no such descendant, so the
+            //     property could not be falsified. Because this arm has no
+            //     rebuild backstop, the missing row was DURABLE. #3923 removed
+            //     the exclusion and extended the fixture (plus
+            //     `remove_tag_keeps_direct_holder_descendant_inheriting_3923`),
+            //     so the equivalence this drop rests on is now actually pinned.
             //   * AddTag: `propagate_tag_to_descendants` is effective-tag
             //     complete (every descendant of the newly-tagged block gets
             //     the tag) but, being a plain `INSERT OR IGNORE`, does NOT
@@ -2463,8 +2479,9 @@ mod tests {
 
     /// #2934: lock the content RESTORE set's exact membership — it is the full
     /// set MINUS exactly `RebuildPagesCache` (#2037 pt2), RETAINING
-    /// `RebuildTagInheritanceCache` (restore's scoped recompute diverges from
-    /// the full rebuild, so the vault-wide rebuild heals it). It differs from
+    /// `RebuildTagInheritanceCache` (retained for restore — the scoped recompute
+    /// divergence that motivated it was closed by #3876, but the task stays
+    /// until the narrowing is audited). It differs from
     /// `CONTENT_LIFECYCLE_REBUILD_TASKS` (delete/purge) by exactly that one
     /// task.
     #[test]
@@ -2653,6 +2670,11 @@ mod tests {
     /// `remove_inherited_tag` reproduces the full rebuild byte-for-byte
     /// (nearest-ancestor re-attribution), so the vault-wide recompute is pure
     /// waste. (AddTag KEEPS it — see that arm's comment / test.)
+    ///
+    /// #3923: that byte-for-byte claim was only made true by removing the
+    /// `NOT IN block_tags` exclusion from `remove_inherited_tag`; with no
+    /// rebuild backstop on this arm, the row it used to drop was durable wrong
+    /// state. See the `AddTag | RemoveTag` arm's comment.
     #[test]
     fn invalidations_for_op_remove_tag_uses_scoped_tag_refresh() {
         let r = make_record(
