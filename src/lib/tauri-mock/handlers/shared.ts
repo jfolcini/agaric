@@ -16,6 +16,7 @@
  * command surface.
  */
 
+import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, commands } from '@/lib/bindings'
 import { asciiLowercase, pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { TASK_STATES } from '@/lib/task-states'
@@ -371,8 +372,16 @@ export interface PageMetaRow {
  * semantics in `src-tauri/agaric-store/src/filters/primitive.rs`); any other primitive is
  * a permissive no-op (the backend owns those, and FE tests that need them
  * mock at the IPC boundary directly).
+ *
+ * `lastEditedAt` selects which last-edited stamp the `LastEdited` arm reads;
+ * it defaults to `list_pages_with_metadata`'s seeded-fallback source. See
+ * {@link LastEditedSource}.
  */
-export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>): boolean {
+export function metaRowMatchesFilter(
+  r: PageMetaRow,
+  f: Record<string, unknown>,
+  lastEditedAt: LastEditedSource = DEFAULT_LAST_EDITED_SOURCE,
+): boolean {
   switch (f['type'] as string) {
     case 'Stub': {
       return r.childBlockCount === 0
@@ -433,7 +442,7 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
       return hasPropertyMatches(r, f)
     }
     case 'LastEdited': {
-      return lastEditedMatches(r, f['spec'] as Record<string, unknown> | undefined)
+      return lastEditedMatches(r, f['spec'] as Record<string, unknown> | undefined, lastEditedAt)
     }
     case 'State': {
       // Multi-value membership over `blocks.todo_state`, identical shape to
@@ -532,25 +541,40 @@ export function datePredicateMatches(
  * rather than silently dropping rows). The combinators themselves are the
  * engine's exact boolean identities, so this layer adds no new drift surface
  * beyond the already-pinned per-primitive matrix.
+ *
+ * `lastEditedAt` is forwarded unchanged to every leaf. `run_advanced_query`
+ * passes a memoizing {@link rawOpLogLastEditedAt} wrapper so its `LastEdited`
+ * filter and its `lastEdited` sort read the SAME column — #3863 fixed the sort
+ * getter only, which left the two halves of one command reading different data
+ * (#3888 review note 3).
  */
-export function metaRowMatchesExpr(r: PageMetaRow, expr: Record<string, unknown>): boolean {
+export function metaRowMatchesExpr(
+  r: PageMetaRow,
+  expr: Record<string, unknown>,
+  lastEditedAt: LastEditedSource = DEFAULT_LAST_EDITED_SOURCE,
+): boolean {
   switch (expr['type'] as string) {
     case 'Leaf': {
       return metaRowMatchesFilter(
         r,
         (expr['primitive'] as Record<string, unknown> | undefined) ?? {},
+        lastEditedAt,
       )
     }
     case 'And': {
       const children = (expr['children'] as Array<Record<string, unknown>> | undefined) ?? []
-      return children.every((c) => metaRowMatchesExpr(r, c))
+      return children.every((c) => metaRowMatchesExpr(r, c, lastEditedAt))
     }
     case 'Or': {
       const children = (expr['children'] as Array<Record<string, unknown>> | undefined) ?? []
-      return children.some((c) => metaRowMatchesExpr(r, c))
+      return children.some((c) => metaRowMatchesExpr(r, c, lastEditedAt))
     }
     case 'Not': {
-      return !metaRowMatchesExpr(r, (expr['child'] as Record<string, unknown> | undefined) ?? {})
+      return !metaRowMatchesExpr(
+        r,
+        (expr['child'] as Record<string, unknown> | undefined) ?? {},
+        lastEditedAt,
+      )
     }
     default: {
       // Unknown node kind: permissive, matching the per-primitive no-op default.
@@ -704,20 +728,48 @@ export function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): 
 }
 
 /**
- * Evaluate a `LastEdited` primitive against the page's `lastModifiedAt`,
+ * Resolve the last-edited stamp a `LastEdited` filter reads for one row.
+ *
+ * There are TWO answers in this mock and they are NOT interchangeable:
+ *
+ *  - {@link DEFAULT_LAST_EDITED_SOURCE} — `pageLastModifiedAt`, i.e. the
+ *    op-log MAX with the MOCK-ONLY seeded-stamp fallback layered on. What
+ *    `list_pages_with_metadata` reads, and what its dev-preview / e2e
+ *    fixtures depend on for differentiated timestamps. Divergent from the
+ *    engine, which has no seed analogue (#3884 for its sort keyset, #3898 for
+ *    its `LastEdited` filter); NOT changed here.
+ *  - The raw {@link rawOpLogLastEditedAt} scan with no fallback — exactly the
+ *    data source `compile_last_edited`
+ *    (`src-tauri/agaric-store/src/filters/primitive.rs:1035-1052`) compiles
+ *    to. `run_advanced_query` passes a memoizing wrapper around it (#3888
+ *    review note 3) so its `LastEdited` FILTER and its `lastEdited` SORT read
+ *    the same column — #3863 had fixed the sort alone.
+ */
+export type LastEditedSource = (r: PageMetaRow) => string | null
+
+/** See {@link LastEditedSource} — the seeded-fallback source, unchanged here. */
+export const DEFAULT_LAST_EDITED_SOURCE: LastEditedSource = (r) => r.lastModifiedAt
+
+/**
+ * Evaluate a `LastEdited` primitive against the row's last-edited stamp,
  * mirroring the backend's `compile_last_edited` buckets (rolling window
  * ending "now"):
  *   - `Rolling{days}`   — modified within the last N days,
  *   - `OlderThan{days}` — modified before the last-N-days cutoff (NULL counts
- *     as older, matching the backend's `COALESCE(..., '0001-01-01')`),
+ *     as older, matching the backend's COALESCE-to-epoch rule),
  *   - `Range{start,end}` — modified within `[start, end]` (inclusive).
+ *
+ * The NULL handling matches the engine's "no op-log ⇒ epoch" rule exactly
+ * (Rolling EXCLUDES, OlderThan INCLUDES, Range EXCLUDES); only the SOURCE of
+ * the stamp differs per caller — see {@link LastEditedSource}.
  */
 export function lastEditedMatches(
   r: PageMetaRow,
   spec: Record<string, unknown> | undefined,
+  lastEditedAt: LastEditedSource = DEFAULT_LAST_EDITED_SOURCE,
 ): boolean {
   if (!spec) return true
-  const lm = r.lastModifiedAt
+  const lm = lastEditedAt(r)
   const cutoff = (days: number): string => {
     const d = new Date()
     d.setDate(d.getDate() - days)
@@ -804,6 +856,21 @@ export function sortDiscriminator(sort: string): number {
  * Encode a next-page cursor matching the backend's per-sort shape so cursor
  * round-trips hit the same validation path. The `position` slot carries the
  * sort discriminator (see `sortDiscriminator`).
+ *
+ * Goes through `utf8ToBase64Url` (`@/lib/base64url`) rather than a bare
+ * `btoa`, for the same reason `run_advanced_query`'s `encodeCursor`
+ * (`search.ts`) does (#3863, extended here per #3888 review): under
+ * `alphabetical` the `deleted_at` slot carries `last.content` — the raw page
+ * TITLE, i.e. arbitrary USER TEXT. The backend's `Cursor::encode`
+ * (`agaric-store/src/pagination/mod.rs`) is
+ * `URL_SAFE_NO_PAD.encode(json.as_bytes())`, the UTF-8 bytes of the JSON;
+ * `btoa` maps each string CODE UNIT to a byte, so it threw
+ * `InvalidCharacterError` out of `list_pages_with_metadata` for a title like
+ * `Q3 — Roadmap` (U+2014) and silently emitted the Latin-1 byte 0xE9 for `é`
+ * where UTF-8 needs 0xC3 0xA9. The URL-safe alphabet matches the backend's
+ * too; {@link base64UrlToUtf8} (used to decode on the way back in, in
+ * `pages.ts`) still accepts the standard-alphabet cursors older callers and
+ * tests hand-roll with `btoa`, since standard base64 never emits `-` or `_`.
  */
 export function encodeNextCursor(last: PageMetaRow, sort: string): string {
   const disc = sortDiscriminator(sort)
@@ -826,18 +893,34 @@ export function encodeNextCursor(last: PageMetaRow, sort: string): string {
       break
     }
   }
-  return btoa(JSON.stringify(cursorObj))
+  return utf8ToBase64Url(JSON.stringify(cursorObj))
 }
 
 /**
- * Resolve a page's `last_modified_at`, mirroring the backend's
- * `MAX(op_log.created_at) WHERE block_id = b.id`: scan `opLog` for the latest
- * entry whose payload `block_id` is this page, then fall back to the
- * deterministic seeded `last_modified_at` stamp (set in `seed.ts`), and
- * finally `null` for a page with neither.
+ * Scan `opLog` for the latest entry whose payload `block_id` is `blockId`,
+ * i.e. `MAX(created_at) WHERE block_id = ?`. `null` when the block has no
+ * op-log activity. Mirrors the RAW subquery the engine uses for last-edited
+ * everywhere it appears — verbatim in `run_advanced_query`'s `LastEdited`
+ * sort key (`COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id =
+ * b.id), 0)`, `agaric-store/src/query/engine.rs:229`) and reused by
+ * `list_pages_with_metadata`'s `RecentlyModified` keyset
+ * (`LAST_MOD_NULL_SENTINEL = 0`, `src-tauri/src/commands/pages/metadata.rs:220,351`).
+ * NO other data source feeds this on the backend — a block with no op-log row
+ * coalesces to the SAME epoch sentinel as every other op-log-free block.
+ *
+ * `run_advanced_query`'s `SORT_COLUMN_GETTERS.lastEdited` (search.ts) calls
+ * this directly rather than going through {@link pageLastModifiedAt} below,
+ * because that function layers a mock-only seeded-stamp fallback on top that
+ * the engine has no analogue for (#3863) — using it for the SORT key made
+ * blocks with no op-log activity order by a seeded dev-preview timestamp the
+ * backend cannot see, instead of tying at the sentinel like the engine does.
+ * `pageLastModifiedAt`'s fallback is UNCHANGED here: #3863 names only the
+ * `run_advanced_query` sort getter, and the fallback also feeds
+ * `list_pages_with_metadata`'s own (separately divergent, NOT fixed by this
+ * change) `RecentlyModified` sort/`LastEdited` filter, which real e2e /
+ * dev-preview fixtures rely on for differentiated timestamps. Filed as #3884.
  */
-export function pageLastModifiedAt(b: Record<string, unknown>): string | null {
-  const pageId = b['id'] as string
+export function rawOpLogLastEditedAt(blockId: string): string | null {
   let maxOp: string | null = null
   for (const o of opLog) {
     let payload: Record<string, unknown>
@@ -846,9 +929,24 @@ export function pageLastModifiedAt(b: Record<string, unknown>): string | null {
     } catch {
       continue
     }
-    if (payload['block_id'] !== pageId) continue
+    if (payload['block_id'] !== blockId) continue
     if (maxOp === null || o.created_at > maxOp) maxOp = o.created_at
   }
+  return maxOp
+}
+
+/**
+ * Resolve a page's `last_modified_at` for `list_pages_with_metadata` /
+ * `buildPageMetaRow` consumers: {@link rawOpLogLastEditedAt}, falling back to
+ * the deterministic seeded `last_modified_at` stamp (set in `seed.ts`) when
+ * the block has no op-log activity, and finally `null` for a page with
+ * neither. The seeded fallback is a MOCK-ONLY convenience with no engine
+ * analogue — see the doc on {@link rawOpLogLastEditedAt} for why
+ * `run_advanced_query`'s `lastEdited` sort key does not use this function.
+ */
+export function pageLastModifiedAt(b: Record<string, unknown>): string | null {
+  const pageId = b['id'] as string
+  const maxOp = rawOpLogLastEditedAt(pageId)
   const seeded = pageLastModified.get(pageId) ?? null
   if (maxOp !== null && seeded !== null) return maxOp > seeded ? maxOp : seeded
   return maxOp ?? seeded

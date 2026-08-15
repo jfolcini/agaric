@@ -9,6 +9,7 @@
  * store.
  */
 
+import { base64UrlToUtf8 } from '@/lib/base64url'
 import {
   type PageMetaRow,
   type TypedHandlers,
@@ -213,7 +214,14 @@ export const pagesHandlers = {
     if (cursor) {
       let decoded: Record<string, unknown> | null = null
       try {
-        decoded = JSON.parse(atob(cursor)) as Record<string, unknown>
+        // `base64UrlToUtf8`, not `atob`: the inverse of `encodeNextCursor`'s
+        // UTF-8 base64url encoding (#3888). A bare `atob` reads the UTF-8
+        // bytes of a non-ASCII title back as Latin-1 code units, so the
+        // `alphabetical` cursor round-trip would mojibake. It also still
+        // accepts standard-alphabet `btoa` cursors (standard base64 never
+        // emits `-`/`_`), which is what keeps hand-rolled stale-cursor
+        // fixtures decoding into the discriminator-mismatch path.
+        decoded = JSON.parse(base64UrlToUtf8(cursor)) as Record<string, unknown>
       } catch {
         // Malformed cursor: start from the top (mirrors a cursorless fetch).
         decoded = null
