@@ -77,9 +77,34 @@ async function bootPages(page: Page, opts: BootOpts = {}): Promise<void> {
 
 const grid = (page: Page): Locator => page.getByRole('grid')
 
-/** Visible page titles, in DOM order. Stable behavioural read of the list. */
+/**
+ * Locator for every visible page title, in DOM order. Prefer this over
+ * `visibleTitles()` for assertions: `toHaveText()` (array form) auto-retries
+ * until the filter's re-render lands, instead of reading whatever is in the
+ * DOM at the instant it's called.
+ */
+const pageTitleLocator = (page: Page): Locator =>
+  grid(page).locator('[data-page-item] .page-browser-item-title')
+
+/**
+ * Visible page titles, in DOM order. One-shot read — `allTextContents()`
+ * does NOT auto-wait, so this resolves against whatever is in the DOM the
+ * instant it's called (#3902). Only safe to call once the state it reads has
+ * already been pinned by a retrying assertion (`toHaveText` on
+ * `pageTitleLocator`, `expect.poll(() => visibleTitles(page))`, or an
+ * equivalent web-first assertion) — never as the first read after a
+ * mutating action.
+ */
 function visibleTitles(page: Page): Promise<string[]> {
-  return grid(page).locator('[data-page-item] .page-browser-item-title').allTextContents()
+  return pageTitleLocator(page).allTextContents()
+}
+
+/** Local YYYY-MM-DD, matching `date-utils.formatDate` / the seed's `todayDate()`. */
+function localDateStr(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 /** The muted count chip text (e.g. "6 pages", "4 matching pages"). */
@@ -197,7 +222,7 @@ test.describe('facet narrowing (each facet does the thing)', () => {
     await pop.getByRole('button', { name: 'work', exact: true }).click()
 
     await expect(grid(page).getByText('Facet Fixture', { exact: true })).toBeVisible()
-    await expect(visibleTitles(page)).resolves.toEqual(['Facet Fixture'])
+    await expect(pageTitleLocator(page)).toHaveText(['Facet Fixture'])
     await expect(countChip(page)).toHaveText('1 matching page')
   })
 
@@ -206,7 +231,7 @@ test.describe('facet narrowing (each facet does the thing)', () => {
     await openAddFilter(page)
     await activePopover(page).getByRole('button', { name: '1', exact: true }).click()
 
-    await expect(visibleTitles(page)).resolves.toEqual(['Facet Fixture'])
+    await expect(pageTitleLocator(page)).toHaveText(['Facet Fixture'])
     await expect(countChip(page)).toHaveText('1 matching page')
   })
 
@@ -214,19 +239,27 @@ test.describe('facet narrowing (each facet does the thing)', () => {
     await bootPages(page)
     // Substring (bare word) — matches anywhere in the title.
     await addPathFilter(page, 'Meet')
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template', 'Meetings'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template', 'Meetings'])
     await page.getByRole('button', { name: /^Remove filter path:/ }).click()
 
     // Anchored wildcard — `Project*` anchors the start; only "Projects" wins.
     await addPathFilter(page, 'Project*')
-    await expect(visibleTitles(page)).resolves.toEqual(['Projects'])
+    await expect(pageTitleLocator(page)).toHaveText(['Projects'])
     await page.getByRole('button', { name: /^Remove filter path:/ }).click()
+    // Pin the removal before adding the next chip: without this, a stale
+    // Project*-filtered grid (just ['Projects']) already lacks "Meetings",
+    // so the exclude poll below would pass on its very first read against
+    // that stale state — the poll would pin nothing (same failure mode as
+    // the has-property test's comment below). Barriering the removal back
+    // to the unfiltered six (which DOES include "Meetings") makes the poll
+    // below a real false→true transition.
+    await expect.poll(() => visibleTitles(page)).toContain('Meetings')
 
     // Exclude — invert the "Meet" substring match: everything BUT the two
     // meeting pages.
     await addPathFilter(page, 'Meet', true)
+    await expect.poll(() => visibleTitles(page)).not.toContain('Meetings')
     const remaining = await visibleTitles(page)
-    expect(remaining).not.toContain('Meetings')
     expect(remaining).not.toContain('Meeting Notes Template')
     expect(remaining).toContain('Projects')
     await expect(countChip(page)).toHaveText('4 matching pages')
@@ -239,26 +272,34 @@ test.describe('facet narrowing (each facet does the thing)', () => {
 
     // exists → only the template page.
     await addPropertyFilter(page, 'template', 'exists')
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template'])
     await page.getByRole('button', { name: /^Remove filter has:/ }).click()
 
     // is value (template = true) → still only the template page.
     await addPropertyFilter(page, 'template', 'is', 'true')
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template'])
     await page.getByRole('button', { name: /^Remove filter/ }).click()
 
     // is-not (template ≠ true) → the other five pages (absent counts as ≠).
     await addPropertyFilter(page, 'template', 'is not', 'true')
-    let titles = await visibleTitles(page)
-    expect(titles).not.toContain('Meeting Notes Template')
+    await expect.poll(() => visibleTitles(page)).not.toContain('Meeting Notes Template')
+    const titles = await visibleTitles(page)
     expect(titles).toContain('Projects')
     await expect(countChip(page)).toHaveText('5 matching pages')
     await page.getByRole('button', { name: /^Remove filter/ }).click()
+    // Pin the removal before adding the next chip: without this, a stale
+    // is-not-filtered grid (5 pages, already missing "Meeting Notes
+    // Template") would satisfy the doesn't-exist poll below on its very
+    // first read, since that state is indistinguishable from the
+    // doesn't-exist result — the poll would pin nothing (same failure mode
+    // as line 333/#3915). Barriering the removal back to the unfiltered
+    // six (which DOES include the template page) makes the poll below a
+    // real false→true transition.
+    await expect.poll(() => visibleTitles(page)).toContain('Meeting Notes Template')
 
     // doesn't-exist → the five pages without the key.
     await addPropertyFilter(page, 'template', "doesn't exist")
-    titles = await visibleTitles(page)
-    expect(titles).not.toContain('Meeting Notes Template')
+    await expect.poll(() => visibleTitles(page)).not.toContain('Meeting Notes Template')
     await expect(countChip(page)).toHaveText('5 matching pages')
   })
 
@@ -299,7 +340,7 @@ test.describe('compound filters (AND-compose / widen / soft-cap)', () => {
     await addBooleanFacet(page, 'Orphan')
     await expect(countChip(page)).toHaveText('4 matching pages')
     await addPathFilter(page, 'Meet')
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template', 'Meetings'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template', 'Meetings'])
     await expect(countChip(page)).toHaveText('2 matching pages')
 
     // Remove the path chip → widen back to the four orphan pages.
@@ -314,9 +355,24 @@ test.describe('compound filters (AND-compose / widen / soft-cap)', () => {
     await addPathFilter(page, 'Meet', true) // drop the two meeting pages → 2
     await addPropertyFilter(page, 'template', "doesn't exist") // template page already gone
     // Orphan ∧ not-Meet → Projects + the daily page; both lack `template`.
+    // `toContain('Projects')` would hold before any chip is applied (Projects
+    // is a seed page, an orphan, AND in the final set) and pins nothing;
+    // `not.toContain('Meetings')` is false in the unfiltered/Orphan-only
+    // states (Meetings is a seed page and an orphan) and only turns true once
+    // the not-path chip has actually excluded it, so it genuinely barriers —
+    // but only through THAT (second) chip. The third chip (doesn't-exist
+    // template) makes no further difference to this page set: the template
+    // page was already excluded by the Orphan facet before it was even
+    // added, so "chip 2 landed" and "chip 3 landed" are indistinguishable by
+    // page identity in this fixture, and no visibleTitles-based poll can
+    // barrier the third click specifically. The one-shot reads below pin the
+    // fully-composed (chip1 ∧ chip2 ∧ chip3) result, not chip 3's own
+    // contribution to it; the retrying `toHaveCount(3)` group assertion at
+    // the end still catches a wrong chip count if the third click didn't
+    // land at all.
+    await expect.poll(() => visibleTitles(page)).not.toContain('Meetings')
     const titles = await visibleTitles(page)
     expect(titles).toContain('Projects')
-    expect(titles).not.toContain('Meetings')
     expect(titles).not.toContain('Meeting Notes Template')
     expect(titles).not.toContain('Getting Started')
     await expect(page.getByRole('group')).toHaveCount(3)
@@ -417,14 +473,14 @@ test.describe('search box', () => {
 
     // Plain title narrowing.
     await search.fill('Quick')
-    await expect(visibleTitles(page)).resolves.toEqual(['Quick Notes'])
+    await expect(pageTitleLocator(page)).toHaveText(['Quick Notes'])
     await search.fill('')
 
     // Orthogonal axes: chip filters server-side (orphans), text narrows the
     // loaded set client-side.
     await addBooleanFacet(page, 'Orphan')
     await search.fill('Project')
-    await expect(visibleTitles(page)).resolves.toEqual(['Projects'])
+    await expect(pageTitleLocator(page)).toHaveText(['Projects'])
     // A title outside the orphan set never reappears via text.
     await search.fill('Getting')
     await expect(page.getByText('No matching pages')).toBeVisible()
@@ -503,7 +559,30 @@ test.describe('sort', () => {
   test('sort preference persists across reload', async ({ page }) => {
     await bootPages(page)
     await selectSort(page, 'Most content')
-    // Capture the chosen order before reload.
+    // `selectSort` only waits for the Radix listbox to close (lines 148-157),
+    // not for the server-derived `most-content` round-trip to land, so a
+    // one-shot `visibleTitles` read here can capture the PRE-sort order
+    // (#3915's failure mode, reintroduced at this line).
+    //
+    // Barrier the capture with the known, deterministic `most-content`
+    // order instead of a stability heuristic: `compareMetaRows` sorts
+    // `child_block_count` DESC with an id-ASC tiebreak (`shared.ts`), and
+    // the seed's ids are fixed (`SEED_IDS`, `seed.ts`), so this order is
+    // reproducible. Confirmed independently of the UI/react-query pipeline
+    // by invoking `list_pages_with_metadata` directly against the mock.
+    // (A "stable across two reads" poll alone is NOT a safe substitute here
+    // -- verified this can lock onto an intermediate `keepPreviousData`
+    // render that is itself stable-but-wrong for the whole round-trip.)
+    const daily = localDateStr(new Date())
+    const mostContentOrder = [
+      'Getting Started',
+      daily,
+      'Projects',
+      'Meeting Notes Template',
+      'Quick Notes',
+      'Meetings',
+    ]
+    await expect(pageTitleLocator(page)).toHaveText(mostContentOrder)
     const before = await visibleTitles(page)
     await expect(page.getByRole('combobox', { name: 'Sort order' })).toContainText('Most content')
 
@@ -511,7 +590,7 @@ test.describe('sort', () => {
     await openPagesView(page)
     // The combobox restored the persisted choice and the same order applies.
     await expect(page.getByRole('combobox', { name: 'Sort order' })).toContainText('Most content')
-    await expect(visibleTitles(page)).resolves.toEqual(before)
+    await expect(pageTitleLocator(page)).toHaveText(before)
   })
 })
 
@@ -633,7 +712,7 @@ test.describe('CRUD + grooming', () => {
     // filter: filter to "has template", which the new page won't have.
     await page.getByRole('button', { name: 'Remove filter Orphan' }).click()
     await addPropertyFilter(page, 'template', 'exists')
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template'])
 
     await page.getByPlaceholder('New page name...').fill('No Template Page')
     await page
@@ -645,7 +724,7 @@ test.describe('CRUD + grooming', () => {
     // lacks `template` so it must not be in the filtered result.
     await expect(page.getByRole('group', { name: /^Filter: has:/ })).toBeVisible()
     await expect(grid(page).getByText('No Template Page', { exact: true })).toHaveCount(0)
-    await expect(visibleTitles(page)).resolves.toEqual(['Meeting Notes Template'])
+    await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template'])
   })
 
   test('delete shows a confirm dialog; confirming removes the row and drops the count', async ({
