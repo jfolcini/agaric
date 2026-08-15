@@ -33,7 +33,6 @@ import {
   blockTags,
   type MockOpLogEntry,
   opLog,
-  pageLastModified,
   properties,
   propertyDefs,
   pushOp,
@@ -730,24 +729,28 @@ export function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): 
 /**
  * Resolve the last-edited stamp a `LastEdited` filter reads for one row.
  *
- * There are TWO answers in this mock and they are NOT interchangeable:
+ * Both answers in this mock are now the SAME VALUE — the raw
+ * `MAX(op_log.created_at)` scan, exactly the data source `compile_last_edited`
+ * (`src-tauri/agaric-store/src/filters/primitive.rs:1035-1052`) compiles to.
+ * This seam survives only as a MEMOIZATION hook, not a semantic choice:
  *
- *  - {@link DEFAULT_LAST_EDITED_SOURCE} — `pageLastModifiedAt`, i.e. the
- *    op-log MAX with the MOCK-ONLY seeded-stamp fallback layered on. What
- *    `list_pages_with_metadata` reads, and what its dev-preview / e2e
- *    fixtures depend on for differentiated timestamps. Divergent from the
- *    engine, which has no seed analogue (#3884 for its sort keyset, #3898 for
- *    its `LastEdited` filter); NOT changed here.
- *  - The raw {@link rawOpLogLastEditedAt} scan with no fallback — exactly the
- *    data source `compile_last_edited`
- *    (`src-tauri/agaric-store/src/filters/primitive.rs:1035-1052`) compiles
- *    to. `run_advanced_query` passes a memoizing wrapper around it (#3888
- *    review note 3) so its `LastEdited` FILTER and its `lastEdited` SORT read
- *    the same column — #3863 had fixed the sort alone.
+ *  - {@link DEFAULT_LAST_EDITED_SOURCE} reads `r.lastModifiedAt`, which
+ *    `buildPageMetaRow` already populated from {@link rawOpLogLastEditedAt}.
+ *    This is what `list_pages_with_metadata` uses.
+ *  - `run_advanced_query` passes a per-row memoizing wrapper around
+ *    {@link rawOpLogLastEditedAt} (`search.ts`), because it evaluates the
+ *    filter over EVERY active block rather than over pre-built page rows and
+ *    would otherwise rescan `opLog` per comparison.
+ *
+ * It used to be a real fork: the default source was `pageLastModifiedAt`,
+ * which layered a mock-only seeded stamp on top of the op-log MAX (#3884 /
+ * #3898). That fallback and its seed map are gone — the seed writes real
+ * `op_log` rows instead — so a caller can no longer pick a divergent source
+ * by accident.
  */
 export type LastEditedSource = (r: PageMetaRow) => string | null
 
-/** See {@link LastEditedSource} — the seeded-fallback source, unchanged here. */
+/** See {@link LastEditedSource} — the pre-computed op-log MAX on the row. */
 export const DEFAULT_LAST_EDITED_SOURCE: LastEditedSource = (r) => r.lastModifiedAt
 
 /**
@@ -760,8 +763,12 @@ export const DEFAULT_LAST_EDITED_SOURCE: LastEditedSource = (r) => r.lastModifie
  *   - `Range{start,end}` — modified within `[start, end]` (inclusive).
  *
  * The NULL handling matches the engine's "no op-log ⇒ epoch" rule exactly
- * (Rolling EXCLUDES, OlderThan INCLUDES, Range EXCLUDES); only the SOURCE of
- * the stamp differs per caller — see {@link LastEditedSource}.
+ * (Rolling EXCLUDES, OlderThan INCLUDES, Range EXCLUDES). `lastEditedAt` is a
+ * {@link LastEditedSource} callback rather than a plain `r.lastModifiedAt`
+ * read, but that seam is now a MEMOIZATION hook, not a semantic choice: both
+ * callers resolve to the SAME raw `MAX(op_log.created_at)` value — see
+ * {@link LastEditedSource}'s own doc for why the fork used to be real and no
+ * longer is.
  */
 export function lastEditedMatches(
   r: PageMetaRow,
@@ -796,7 +803,18 @@ export function lastEditedMatches(
   }
 }
 
-/** Comparator mirroring the backend's per-sort keyset (id is the tiebreaker). */
+/**
+ * Comparator mirroring the backend's per-sort keyset (id is the tiebreaker).
+ *
+ * `'recently-modified'` reads `lastModifiedAt`, i.e. the raw
+ * `MAX(op_log.created_at)` {@link buildPageMetaRow} stored (#3884). Its
+ * `?? ''` is the mock's spelling of the engine's `LAST_MOD_NULL_SENTINEL`
+ * COALESCE (`src-tauri/src/commands/pages/metadata.rs:220,349-351`): under a
+ * DESC compare, the empty string sorts below every ISO timestamp exactly as
+ * `0` sorts below every epoch-ms value, so op-log-free rows tie at the
+ * sentinel and fall to the id tiebreaker — the engine's behaviour, not a
+ * seeded ordering.
+ */
 export function compareMetaRows(x: PageMetaRow, y: PageMetaRow, sort: string): number {
   let primary = 0
   switch (sort) {
@@ -908,17 +926,19 @@ export function encodeNextCursor(last: PageMetaRow, sort: string): string {
  * NO other data source feeds this on the backend — a block with no op-log row
  * coalesces to the SAME epoch sentinel as every other op-log-free block.
  *
- * `run_advanced_query`'s `SORT_COLUMN_GETTERS.lastEdited` (search.ts) calls
- * this directly rather than going through {@link pageLastModifiedAt} below,
- * because that function layers a mock-only seeded-stamp fallback on top that
- * the engine has no analogue for (#3863) — using it for the SORT key made
- * blocks with no op-log activity order by a seeded dev-preview timestamp the
- * backend cannot see, instead of tying at the sentinel like the engine does.
- * `pageLastModifiedAt`'s fallback is UNCHANGED here: #3863 names only the
- * `run_advanced_query` sort getter, and the fallback also feeds
- * `list_pages_with_metadata`'s own (separately divergent, NOT fixed by this
- * change) `RecentlyModified` sort/`LastEdited` filter, which real e2e /
- * dev-preview fixtures rely on for differentiated timestamps. Filed as #3884.
+ * This is now the SOLE last-edited source in the mock, for every command and
+ * for both arms (filter and sort) of each. It used to compete with
+ * `pageLastModifiedAt`, which layered a mock-only `pageLastModified` seeded
+ * stamp on top: `run_advanced_query`'s sort getter was moved off that
+ * fallback in #3863 and its `LastEdited` filter in #3888, leaving
+ * `list_pages_with_metadata`'s `RecentlyModified` sort (#3884) and
+ * `LastEdited` filter (#3898) as the last two consumers — one root cause, two
+ * symptoms. Both are closed by seeding REAL `op_log` rows instead
+ * (`stampPageLastEdited`, `seed.ts`) and deleting the fallback and its map
+ * outright, so there is no longer any code path by which a page's
+ * last-edited value can come from anywhere but this scan. A block with no
+ * op-log row is `null` here and coalesces to the same epoch sentinel as every
+ * other op-log-free block, exactly as on the engine.
  */
 export function rawOpLogLastEditedAt(blockId: string): string | null {
   let maxOp: string | null = null
@@ -936,20 +956,40 @@ export function rawOpLogLastEditedAt(blockId: string): string | null {
 }
 
 /**
- * Resolve a page's `last_modified_at` for `list_pages_with_metadata` /
- * `buildPageMetaRow` consumers: {@link rawOpLogLastEditedAt}, falling back to
- * the deterministic seeded `last_modified_at` stamp (set in `seed.ts`) when
- * the block has no op-log activity, and finally `null` for a page with
- * neither. The seeded fallback is a MOCK-ONLY convenience with no engine
- * analogue — see the doc on {@link rawOpLogLastEditedAt} for why
- * `run_advanced_query`'s `lastEdited` sort key does not use this function.
+ * Sort op-log ENTRIES newest-first, mirroring the backend's own ordering —
+ * `ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC` in BOTH
+ * `list_page_history` (`agaric-store/src/pagination/history.rs:180,222`) and
+ * `undo_page_op_inner`'s target-selection query
+ * (`src-tauri/src/commands/history.rs:1574`).
+ *
+ * No handler may treat `opLog`'s in-memory ARRAY order (push/insertion order)
+ * as already chronological. `find_undo_group` never did — it already sorts
+ * this way — but `list_page_history` (`[...opLog].toReversed()`) and
+ * `undo_page_op` (`undoableOps.length - 1 - undoDepth`) both used to, and
+ * `seedBulkPages` (`seed.ts`) proved the
+ * assumption false: it writes its bulk pages' `op_log` rows in DESCENDING
+ * `created_at` order (page 001 at `now` pushed FIRST, 005 at `now-4h` pushed
+ * LAST, so the array itself is newest-to-oldest for that block of pushes),
+ * so `opLog`'s array order stopped matching `created_at` order the moment
+ * that seed shipped. Sorting explicitly — the way `find_undo_group` and the
+ * backend's own `ORDER BY` both already do — closes the whole class rather
+ * than pinning it to today's particular seed shape; a future seed, a
+ * multi-device merge, or a batch of `pushOpAt` calls in non-chronological
+ * order would silently reopen the same bug in `list_page_history`/
+ * `undo_page_op` if either kept trusting array order.
+ *
+ * `seq` is the mock's per-push monotonic counter, standing in for the
+ * backend's `seq` column; `device_id DESC` is a no-op tiebreak in the mock
+ * because every mock-authored op shares the single `'mock-device'` id, so it
+ * is omitted rather than faked.
  */
-export function pageLastModifiedAt(b: Record<string, unknown>): string | null {
-  const pageId = b['id'] as string
-  const maxOp = rawOpLogLastEditedAt(pageId)
-  const seeded = pageLastModified.get(pageId) ?? null
-  if (maxOp !== null && seeded !== null) return maxOp > seeded ? maxOp : seeded
-  return maxOp ?? seeded
+export function sortOpLogNewestFirst<T extends { created_at: string; seq: number }>(
+  entries: readonly T[],
+): T[] {
+  return [...entries].toSorted((a, b) => {
+    if (a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1
+    return b.seq - a.seq
+  })
 }
 
 /**
@@ -982,12 +1022,16 @@ export function buildPageMetaRow(
     dueDate: (b['due_date'] as string | null) ?? null,
     scheduledDate: (b['scheduled_date'] as string | null) ?? null,
     pageId: (b['page_id'] as string | null) ?? null,
-    // last_modified_at mirrors the backend's `MAX(op_log.created_at)` over
-    // the page block: take the latest op_log entry targeting this page,
-    // falling back to the deterministic seeded `last_modified_at` stamp (and
-    // finally null). This gives the `last-edited:` compound filter and the
-    // recently-modified sort real, comparable ISO timestamps.
-    lastModifiedAt: pageLastModifiedAt(b),
+    // `last_modified_at` IS `MAX(op_log.created_at)` over this block and
+    // nothing else — the bare subquery `list_pages_with_metadata_inner`
+    // selects (`src-tauri/src/commands/pages/metadata.rs:778`), with no
+    // COALESCE and no seed analogue. `null` for a block with no op-log
+    // activity; the `last-edited:` filter and the `recently-modified` sort
+    // apply the engine's epoch-sentinel rule to that null themselves
+    // (`lastEditedMatches` / `compareMetaRows`). The seeded fixtures get
+    // comparable ISO timestamps by carrying real op-log rows
+    // (`stampPageLastEdited`, `seed.ts`), not by a fallback (#3884/#3898).
+    lastModifiedAt: rawOpLogLastEditedAt(pageId),
     inboundLinkCount: inbound,
     childBlockCount: descendants.length,
     hasOutboundLink: hasOutbound,

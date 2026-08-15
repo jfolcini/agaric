@@ -20,6 +20,7 @@ import {
   renumberSiblings,
   resolveUndoTarget,
   restoreCohort,
+  sortOpLogNewestFirst,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import { applyRevertForOp } from '@/lib/tauri-mock/revert'
@@ -55,8 +56,7 @@ export const historyHandlers = {
     const a = (args ?? {}) as Record<string, unknown>
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    const items = [...opLog]
-      .toReversed()
+    const items = sortOpLogNewestFirst(opLog)
       .filter((o) => {
         if (spaceId === null) return true
         let payloadObj: Record<string, unknown>
@@ -95,13 +95,11 @@ export const historyHandlers = {
     const depth = (a['depth'] as number) ?? 0
     const windowMs = (a['windowMs'] as number) ?? 0
 
-    // Newest-first ordering on (created_at DESC, seq DESC).
-    const undoableOps = [...opLog]
-      .filter((o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_'))
-      .toSorted((a2, b2) => {
-        if (a2.created_at !== b2.created_at) return a2.created_at < b2.created_at ? 1 : -1
-        return b2.seq - a2.seq
-      })
+    // Newest-first ordering on (created_at DESC, seq DESC) — see
+    // `sortOpLogNewestFirst` (shared.ts).
+    const undoableOps = sortOpLogNewestFirst(
+      opLog.filter((o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_')),
+    )
 
     if (depth < 0 || depth >= undoableOps.length) return 0
 
@@ -177,14 +175,20 @@ export const historyHandlers = {
     const a = args as Record<string, unknown>
     const undoDepth = (a['undoDepth'] as number) ?? 0
 
-    const undoableOps = opLog.filter(
-      (o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_'),
+    // Newest-first ordering on (created_at DESC, seq DESC), matching
+    // `undo_page_op_inner`'s own `ORDER BY created_at DESC, seq DESC, …`
+    // target-selection query (`src-tauri/src/commands/history.rs:1574`) — see
+    // `sortOpLogNewestFirst` (shared.ts). `undo_depth` then indexes directly
+    // into the sorted (newest-first) array: depth 0 is the newest op.
+    const undoableOps = sortOpLogNewestFirst(
+      opLog.filter((o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_')),
     )
-    const targetIndex = undoableOps.length - 1 - undoDepth
     // #2463 — mirrors `undo_page_op_inner`'s `NotFound` rejection
     // (`src-tauri/src/commands/history.rs`) when `undo_depth` overruns history.
-    if (targetIndex < 0) throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
-    const target = undoableOps[targetIndex]
+    if (undoDepth < 0 || undoDepth >= undoableOps.length) {
+      throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
+    }
+    const target = undoableOps[undoDepth]
     if (!target) throw notFoundRejection(`no op found at undo_depth ${undoDepth}`)
 
     const payload = JSON.parse(target.payload) as Record<string, unknown>

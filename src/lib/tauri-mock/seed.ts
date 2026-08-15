@@ -84,14 +84,6 @@ export const peerRefs = new Map<string, Record<string, unknown>>()
 // clock could never observe the reveal.
 export const pairingPeerReveal = { readsRemaining: 0 }
 
-// Per-page last-edited timestamp (page_id → ISO-8601 string). The backend
-// computes `last_modified_at` as `MAX(op_log.created_at)` over the page block
-// (it is NOT a `blocks` column), so the mock keeps it in a dedicated store
-// rather than on the BlockRow. Seeded with deterministic values below and
-// read by the `list_pages_with_metadata` handler for the `last-edited:`
-// compound filter and the recently-modified sort.
-export const pageLastModified = new Map<string, string>()
-
 // Op log for undo/redo/history
 export interface MockOpLogEntry {
   [key: string]: unknown
@@ -105,17 +97,73 @@ export interface MockOpLogEntry {
 export const opLog: MockOpLogEntry[] = []
 let opSeqCounter = 0
 
+/**
+ * Push an op-log entry stamped "now". Delegates to {@link pushOpAt} — see its
+ * doc for the full shape of a `MockOpLogEntry` and why the two must stay
+ * IDENTICAL apart from `created_at`: they used to be two verbatim, separately
+ * maintained copies, so a future field added to one could silently be
+ * forgotten on the other and seeded rows would drift from runtime-pushed
+ * ones. Delegating makes that impossible — there is exactly one entry shape,
+ * defined once.
+ */
 export function pushOp(opType: string, payload: Record<string, unknown>): MockOpLogEntry {
+  return pushOpAt(opType, payload, new Date().toISOString())
+}
+
+/**
+ * Seed-time sibling of {@link pushOp} that takes an EXPLICIT `created_at`
+ * instead of stamping "now".
+ *
+ * The backend has exactly ONE source for a page's `last_modified_at`: the
+ * bare `(SELECT MAX(created_at) FROM op_log WHERE block_id = b.id)` subquery
+ * `list_pages_with_metadata_inner` selects
+ * (`src-tauri/src/commands/pages/metadata.rs:778`), which the
+ * `RecentlyModified` keyset and `compile_last_edited`
+ * (`agaric-store/src/filters/primitive.rs`) then COALESCE to an epoch
+ * sentinel for COMPARISON only. There is no "seeded stamp" column, map, or
+ * fallback anywhere on the backend.
+ *
+ * This mock used to fake that with a mock-only `pageLastModified` map that
+ * `pageLastModifiedAt` layered on top of the op-log scan, which is what made
+ * `list_pages_with_metadata` diverge from the engine on both its `LastEdited`
+ * FILTER (#3898) and its `RecentlyModified` SORT (#3884) — one root cause,
+ * two symptoms. The map is gone: the seed now writes REAL `op_log` rows, so
+ * `MAX(op_log.created_at)` *is* the intended last-edited stamp and the mock
+ * reads it the way the engine does, through {@link rawOpLogLastEditedAt}
+ * alone.
+ */
+export function pushOpAt(
+  opType: string,
+  payload: Record<string, unknown>,
+  createdAt: string,
+): MockOpLogEntry {
   opSeqCounter += 1
   const entry: MockOpLogEntry = {
     device_id: 'mock-device',
     seq: opSeqCounter,
     op_type: opType,
     payload: JSON.stringify(payload),
-    created_at: new Date().toISOString(),
+    created_at: createdAt,
   }
   opLog.push(entry)
   return entry
+}
+
+/**
+ * Give `pageId` a real op-log edit at `createdAt`, so its
+ * `MAX(op_log.created_at)` — the only last-edited source the engine has — is
+ * exactly `createdAt`.
+ *
+ * `edit_block` (rather than `create_block`) is deliberate, and so is
+ * `from_text === to_text === the page's current title`: the reverse of an
+ * `edit_block` op is `content = from_text` (`revert.ts:105`,
+ * `historyHandlers.undo_page_op`), so if a spec ever undoes or reverts deep
+ * enough to reach a seeded row the effect is a content no-op, not a
+ * cascading cohort delete (which `create_block`'s reverse would be).
+ */
+export function stampPageLastEdited(pageId: string, createdAt: string): MockOpLogEntry {
+  const title = (blocks.get(pageId)?.['content'] as string | null) ?? null
+  return pushOpAt('edit_block', { block_id: pageId, to_text: title, from_text: title }, createdAt)
 }
 
 // ---------------------------------------------------------------------------
@@ -134,11 +182,12 @@ export function offsetDate(days: number): string {
 }
 
 /**
- * Full ISO-8601 timestamp at `now + days` (negative = past). Used to stamp
- * a deterministic `last_modified_at` on seeded page blocks so the
- * `last-edited:` compound filter (Rolling / OlderThan / Range buckets) and
- * the `recently-modified` sort have real, comparable timestamps to work
- * against. Mirrors the backend's `MAX(op_log.created_at)` value shape.
+ * Full ISO-8601 timestamp at `now + days` (negative = past). Used as the
+ * `created_at` of the seeded `op_log` rows {@link stampPageLastEdited}
+ * writes, so the `last-edited:` compound filter (Rolling / OlderThan / Range
+ * buckets) and the `recently-modified` sort have real, comparable
+ * `MAX(op_log.created_at)` values to work against — the same column the
+ * backend reads.
  */
 export function offsetIso(days: number): string {
   const d = new Date()
@@ -228,7 +277,6 @@ export function seedBlocks(): void {
   pageAliases.clear()
   attachments.clear()
   attachmentBytes.clear()
-  pageLastModified.clear()
   // #3469 (review) — `peerRefs` (and its pending-reveal counter) were added
   // as mock stores but never reset here, so a peer pinned by one seeded
   // session survived into the next one and every later `list_peer_refs`
@@ -642,12 +690,18 @@ export function seedBlocks(): void {
     value_ref: null,
   })
 
-  // Stamp a deterministic `last_modified_at` on every canonical seed page.
-  // These are intentionally OLD (≈90 days ago) so that (a) under the
+  // Give every canonical seed page one real `op_log` edit, dated ≈90 days
+  // ago. These are intentionally OLD so that (a) under the
   // `recently-modified` sort the canonical pages rank LAST (the bulk pages
   // seeded below are recent), and (b) the `last-edited:older` /
   // `last-edited:` rolling-window buckets can narrow the set — canonical
   // pages match `OlderThan`, bulk pages match `Rolling`.
+  //
+  // These rows ARE the pages' `last_modified_at`: the mock resolves it as
+  // `MAX(op_log.created_at)` and nothing else, exactly like the engine
+  // (#3898 / #3884 — see {@link stampPageLastEdited}). They must be written
+  // AFTER the page blocks exist, since the stamp copies each page's title
+  // into the op's `from_text`/`to_text`.
   for (const pageId of [
     SEED_IDS.PAGE_GETTING_STARTED,
     SEED_IDS.PAGE_QUICK_NOTES,
@@ -656,7 +710,7 @@ export function seedBlocks(): void {
     SEED_IDS.PAGE_MEETINGS,
     SEED_IDS.PAGE_TMPL_MEETING,
   ]) {
-    pageLastModified.set(pageId, offsetIso(-90))
+    stampPageLastEdited(pageId, offsetIso(-90))
   }
 
   seedBulkPages()
@@ -694,7 +748,9 @@ function seedFacetFixturePage(): void {
   // facet narrows to exactly this page.
   page['priority'] = '1'
   blocks.set(pageId, page)
-  pageLastModified.set(pageId, offsetIso(-90))
+  // Same ≈90d-old real op-log edit the canonical pages get, so this opt-in
+  // fixture lands in the same `last-edited:` bucket they do.
+  stampPageLastEdited(pageId, offsetIso(-90))
   if (!properties.has(pageId)) properties.set(pageId, new Map())
   properties.get(pageId)?.set('space', {
     block_id: pageId,
@@ -732,14 +788,14 @@ function seedBulkPages(): void {
     const pageId = fakeId()
     const title = `Bulk Page ${String(i).padStart(3, '0')}`
     blocks.set(pageId, makeBlock(pageId, 'page', title, null, 100 + i))
-    // Recent, monotonically-decreasing-by-index timestamps: bulk pages are
+    // Recent, monotonically-decreasing-by-index op-log edits: bulk pages are
     // newer than the canonical seed pages (≈90 days old) so they sort FIRST
     // under `recently-modified` and match the `last-edited:` rolling-window
     // buckets (today / this-week). Index 1 is the newest (now), each
     // subsequent page one hour older — all still within the last few days.
     const bulkTs = new Date()
     bulkTs.setHours(bulkTs.getHours() - (i - 1))
-    pageLastModified.set(pageId, bulkTs.toISOString())
+    stampPageLastEdited(pageId, bulkTs.toISOString())
     if (!properties.has(pageId)) properties.set(pageId, new Map())
     properties.get(pageId)?.set('space', {
       block_id: pageId,
