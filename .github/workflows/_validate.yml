@@ -507,7 +507,19 @@ jobs:
           # by construction. Must match `ZIZMOR_PINNED_VERSION` in
           # scripts/zizmor-hook.sh (the wrapper fails this job if it does not)
           # and the same pin in scheduled-deep-checks.yml.
-          tool: prek,zizmor@1.28.0,taplo-cli,typos-cli,sqruff@0.38.0
+          #
+          # prek/taplo-cli/typos-cli pinned (#3742): same failure shape, hit
+          # live via prek itself. `.github/zizmor.yml` went red on `check
+          # yaml` with a comment-count parser limit that prek 0.4.11
+          # (whatever CI happened to resolve) enforces and prek 0.3.8
+          # (whatever was installed locally) does not — a green tree turned
+          # red with no repo change, and the "fix" that passed locally still
+          # failed in CI. Must match `pinned_version_for` in
+          # scripts/setup-hooks.sh (which installs these versions locally,
+          # replacing any different one already on PATH) and the same pins
+          # in the two scheduled-deep-checks.yml install steps. Verified by
+          # scripts/check-prek-version-pin.mjs.
+          tool: prek@0.3.8,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.46.0,sqruff@0.38.0
 
       # ci/path-conditional-jobs: the cargo-* plugins are invoked only by the
       # Rust prek hooks (cargo-deny/cargo-machete) + the cargo-audit step below,
@@ -912,7 +924,9 @@ jobs:
         # docs-only diff does not touch).
         uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
         with:
-          tool: prek,typos-cli
+          # prek/typos-cli pinned (#3742) — must match `pinned_version_for`
+          # in scripts/setup-hooks.sh and the other tool: lists in this repo.
+          tool: prek@0.3.8,typos-cli@1.46.0
 
       - name: Install lychee (prebuilt binary)
         # The `lychee` prek hook is a `local` hook calling the system
