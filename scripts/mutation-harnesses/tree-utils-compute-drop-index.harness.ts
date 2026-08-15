@@ -2,6 +2,17 @@
  * #3804 — committed sweep harness backing the `computeDropIndex` equivalence
  * ledger in `src/lib/__tests__/tree-utils.mutants-drop.test.ts`.
  *
+ * #3907 — the mutant clones below are hand-copied from `computeDropIndex`
+ * and drift silently if the source changes with nothing to catch it (this
+ * file is out of CI and outside every tsconfig project). The source-pin
+ * marker on the next line is a gate against exactly that: it hashes the
+ * real function's current text and fails if it no longer matches (see
+ * `scripts/check-mutation-harness-clones.mjs`, wired into prek.toml). If
+ * this fires, re-sync every hand-copied clone below against the current
+ * `computeDropIndex`, then recompute and update the hash.
+ *
+ * mutation-harness-source-pin: src/lib/tree-utils.ts#computeDropIndex sha256=e951054ec08ef59bdeea2a1fd94984241dd366836711ee6e575edb3fc626b334
+ *
  * Module under test: `computeDropIndex` in `src/lib/tree-utils.ts` (currently
  * starts at line 513; verify with
  * `grep -n '^export function computeDropIndex' src/lib/tree-utils.ts` before

@@ -2666,6 +2666,68 @@ pass_filenames = false
 files = '^scripts/scratch-file\.sh$'
 stages = ["pre-commit"]
 
+# mutation-harness-clones (#3907): `scripts/mutation-harnesses/*.harness.ts`
+# each hand-clone the real function they sweep (plus hand-cloned mutants of
+# it) — necessary, since a sweep needs a copy of the mutant, but nothing
+# previously tied the clone to its source. The harnesses are deliberately
+# out of CI (minutes-long sweeps, no gating value, #3804) and `scripts/` is
+# in no tsconfig project, so editing the real function silently invalidated
+# every clone with no signal anywhere — the harness kept passing, reporting
+# numbers about code that no longer exists. This guard is the gate: every
+# harness must carry a `mutation-harness-source-pin: <path>#<fn>
+# sha256=<hex>` marker, and the guard fails when the pinned function's
+# current text no longer hashes to the pinned value (or when a harness has
+# no pin at all, or a pin points at a path/function that no longer exists).
+# Static and fast — no vitest, no execution of the sweeps themselves — so
+# unlike the sweeps it CAN run on every relevant commit. `files` covers both
+# the harnesses (the pins live there) and all `src/**` TS/TSX (a pinned
+# function's source can change without the harness file itself changing);
+# the guard's own scoped read of just the pinned files keeps this cheap
+# regardless of which src file triggered it. pass_filenames=false — the
+# script does its own walk of scripts/mutation-harnesses/.
+# `always_run = true` (verified live during #3907 review): prek's changed-
+# file set EXCLUDES deletions (same #806 gap the migrations-immutable hook
+# above already works around), so a staged `git rm src/lib/foo.ts` that
+# deletes a PINNED source file — with no other matched file in the same
+# commit — never matches `files` and prek reports "no files to check /
+# Skipped" with exit 0, even though the guard itself (run directly) would
+# correctly fail on the now-dead pin. The script is a fast, static walk over
+# a handful of harness files (single-digit ms), so running it unconditionally
+# costs nothing.
+# Note: because `always_run = true` (above) and `pass_filenames = false`
+# (below), `files` on this hook is inert — the hook always runs regardless
+# of what changed, and the matched set is never handed to the entry command.
+# It is kept anyway as documentation of intent (which paths this guard is
+# "about"), not because it governs anything at runtime.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "mutation-harness-clones"
+name = "mutation-harness clones are pinned to their source (#3907)"
+entry = "node scripts/check-mutation-harness-clones.mjs"
+language = "system"
+pass_filenames = false
+always_run = true
+files = '^(scripts/mutation-harnesses/.*\.harness\.ts|scripts/check-mutation-harness-clones\.mjs|src/.*\.(ts|tsx))$'
+stages = ["pre-commit"]
+
+# Self-test the mutation-harness-clones guard's own exit behavior (matching
+# pin PASSES including the JSDoc-block-comment form, a source edit inside
+# the pinned function FAILS, restoring it PASSES again, whitespace-only
+# reformatting PASSES via canonicalization, an edit outside the pinned
+# function does NOT trip it, a harness with no pin FAILS, a pin naming a
+# missing source file FAILS, a pin naming a function no longer present
+# FAILS) whenever the guard script itself changes, so a regression that
+# defangs it can't land.
+[[repos.hooks]]
+id = "mutation-harness-clones-selftest"
+name = "mutation-harness clones guard self-test"
+entry = "node scripts/check-mutation-harness-clones.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/check-mutation-harness-clones\.mjs$'
+stages = ["pre-commit"]
+
 [[repos]]
 repo = "local"
 [[repos.hooks]]

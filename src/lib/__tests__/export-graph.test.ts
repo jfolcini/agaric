@@ -1463,8 +1463,12 @@ describe('downloadBlob', () => {
  * 494:43 [StringLiteral] "\"Stryker was here!\""  (NoCoverage — `m[3] ?? ''`)
  *      Capture group 3 of `ATTACHMENT_REF_RE` is neither optional nor inside an
  *      alternation, so it always participates in a successful match and `m[3]`
- *      is always a string — the `?? ''` arm is unreachable. Checked over 636
- *      real matches from 1,008 ref-shaped inputs: group 3 was nullish 0 times.
+ *      is always a string — the `?? ''` arm is unreachable. Originally checked
+ *      over 636 real matches from 1,008 ref-shaped inputs (group 3 was nullish
+ *      0 times) via a sweep that was never committed. #3804 — re-verified with
+ *      a committed, re-runnable harness:
+ *      `scripts/mutation-harnesses/export-graph-collect-attachment-ids.harness.ts`
+ *      (0/50,000 differing on its own independently-generated sweep).
  *
  * 532:22 [StringLiteral] "\"Stryker was here!\""  (NoCoverage)
  *      The `assetsPathPrefix = ''` DEFAULT parameter of `rewriteAttachmentRefs`.
