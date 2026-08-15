@@ -907,7 +907,31 @@ fn cursor_shape(next_cursor: Option<&str>) -> Value {
 
 /// Render one encoded cursor string as its canonical shape. Split out from
 /// [`cursor_shape`] so the unit tests below can drive it directly. MUST stay
-/// byte-identical to `cursorShape` in the TS twin.
+/// byte-identical to `cursorShape` in the TS twin — with two known, narrow
+/// exceptions (#3942 review note 6), neither reachable from a cursor either
+/// stack actually MINTS today:
+///
+///  1. `URL_SAFE_NO_PAD.decode` here rejects non-canonical trailing bits (a
+///     final symbol whose leftover bits are not zero, e.g. `"AB"`) as
+///     `InvalidLastSymbol` — the base64 crate's `NO_PAD` config sets
+///     `decode_allow_trailing_bits: false`. The TS twin decodes through
+///     `atob`, which silently discards them instead. This is the SAME
+///     divergence `isBase64UrlNoPad`'s doc comment (`@/lib/base64url`)
+///     already declines to mirror in every mock cursor decoder, for the same
+///     reason: a cursor with such bytes cannot be produced by either
+///     encoder, only hand-built, so mirroring it here would make this ONE
+///     function stricter than the mock's own production decoders while
+///     fixing nothing an encoder could regress into.
+///  2. A JSON version literal written with a decimal point (`"version":1.0`)
+///     renders `v?` here — `Value::as_u64` returns `None` for a float-typed
+///     `serde_json::Number`, decimal point and all, regardless of its
+///     numeric value — but `v1` in the TS twin, where `Number.isInteger(1.0)`
+///     is `true`: JSON's `1` and `1.0` are indistinguishable once parsed into
+///     a JS `number`, so the TS side cannot even observe which one it was
+///     handed. Neither `Cursor::encode` nor the TS `encodeBlocksCursor` /
+///     `encodeNextCursor` / `encodeCursor` ever emit a decimal version, so no
+///     cursor either stack mints reaches this arm; only a hand-built one
+///     does.
 fn shape_of_cursor(raw: &str) -> String {
     use base64::Engine as _;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;

@@ -34,6 +34,49 @@ export function utf8ToBase64Url(s: string): string {
 }
 
 /**
+ * The unpadded base64url alphabet, plus the length rule
+ * `URL_SAFE_NO_PAD.decode` enforces — a remainder of 1 symbol carries no
+ * whole byte, so Rust rejects it as `InvalidLength`.
+ *
+ * Shared by every mock cursor decoder that must match `URL_SAFE_NO_PAD`'s
+ * strictness (`run_advanced_query`'s `decodeCursor` / `decodeGroupCursor` in
+ * `handlers/search.ts`, `list_blocks`'s `decodeBlocksCursor` in
+ * `handlers/blocks.ts`, #3942 review note 5) — extracted here rather than
+ * left as `search.ts`-local once a second caller needed the identical check,
+ * the same reasoning `utf8ToBase64Url`/`base64UrlToUtf8` were extracted for.
+ *
+ * Checked ahead of {@link base64UrlToUtf8} rather than relying on `atob` to
+ * throw, for two reasons: it separates the engine's FIRST failure mode (bad
+ * base64) from its SECOND (invalid UTF-8), which the single combined call
+ * cannot, and it does so without sniffing the host's exception type —
+ * `atob` throws a `DOMException` and a fatal `TextDecoder` a `TypeError`, but
+ * which of those is observable is a runtime detail (jsdom vs Node), the same
+ * host-dependence #3914 review note 2 objects to in the message. It is also
+ * what stops `atob`'s own leniency from reaching production: `atob` accepts
+ * the STANDARD alphabet (`+`, `/`) and tolerates `=` padding, where
+ * `URL_SAFE_NO_PAD` rejects both outright — #3942 review note 5 is a
+ * cursor decoder that skipped this gate and so accepted a foreign
+ * standard-alphabet cursor the backend refuses.
+ *
+ * Deliberately NOT mirrored: Rust's base64 also rejects non-canonical
+ * trailing bits — a final symbol whose leftover bits are not zero, such as
+ * `"AB"` (12 bits for one byte, and the spare 4 are `0001`) — which `atob`
+ * silently discards instead. That is a strictly narrower acceptance on the
+ * engine's side and a cursor with such bytes cannot be minted by any of this
+ * module's callers, so the residual divergence is unreachable except by a
+ * hand-built cursor whose payload would then have to also be valid UTF-8 and
+ * valid JSON to reach a keyset at all (#3942 review note 6a).
+ */
+export const BASE64URL_NO_PAD = /^[A-Za-z0-9_-]*$/
+
+/** True iff `s` is a well-formed `URL_SAFE_NO_PAD` token by alphabet and
+ *  length alone — see {@link BASE64URL_NO_PAD} for what that does and does
+ *  not catch. */
+export function isBase64UrlNoPad(s: string): boolean {
+  return BASE64URL_NO_PAD.test(s) && s.length % 4 !== 1
+}
+
+/**
  * Unpadded base64url → UTF-8 string (inverse of {@link utf8ToBase64Url}).
  *
  * `fatal` (default `false`) selects what happens to bytes that are NOT valid

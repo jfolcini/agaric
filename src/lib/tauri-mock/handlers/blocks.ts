@@ -9,7 +9,7 @@
  * store.
  */
 
-import { base64UrlToUtf8, utf8ToBase64Url } from '@/lib/base64url'
+import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
 import {
   type TypedHandlers,
   assertValidReservedPropertyValue,
@@ -257,12 +257,24 @@ function encodeBlocksCursor(key: SortKey, lead: CursorLeadSlot): string {
 /**
  * Decode a cursor minted by {@link encodeBlocksCursor} back into the branch's
  * {@link SortKey}; a malformed one is a `Validation` error, as `Cursor::decode`
- * is on the backend.
+ * is on the backend. The base64 itself is held to the backend's alphabet: see
+ * {@link isBase64UrlNoPad} (#3942 review note 5) for why a standard-alphabet
+ * or padded token — which `atob` would tolerate — is rejected here too,
+ * rather than accepted where `URL_SAFE_NO_PAD.decode` refuses it.
  *
- * The branch supplies `lead`, so a cursor minted on one keyset and replayed on
- * another is rejected rather than reinterpreted: `Cursor::decode` would hand
- * `list_children` a `Cursor` with no `position`, and the backend's
- * `position_keyset_binds` would then page from a key the cursor never carried.
+ * A cursor minted on one keyset and replayed on another is NOT rejected — it
+ * is reinterpreted, exactly as `Cursor::decode` reinterprets it. `Cursor` has
+ * no `deny_unknown_fields` (#3942 review note 4), so a payload naming a slot
+ * this branch never reads is accepted and the extra slot is ignored (`lead
+ * === null` below). And a payload MISSING the slot this branch reads is also
+ * accepted, not refused: `position_keyset_binds`
+ * (`agaric-store/src/pagination/mod.rs:271-276`) and `list_agenda_range`'s own
+ * bind (`pagination/agenda.rs:100`) both `unwrap_or` a missing lead to a
+ * SENTINEL rather than reject the cursor, so the query pages from that
+ * sentinel key instead of refusing the request. Rejecting a missing lead
+ * slot here made the mock STRICTER than production in the opposite direction
+ * from the one this harness exists to close (#3942 review note 3).
+ *
  * A MISSING `version` is accepted as 1, exactly as `Cursor::decode` accepts a
  * pre-versioning cursor; any other version is rejected.
  */
@@ -272,6 +284,7 @@ function decodeBlocksCursor(raw: unknown, lead: CursorLeadSlot): SortKey | null 
     throw validationRejection('invalid pagination cursor')
   }
   if (typeof raw !== 'string') return invalid()
+  if (!isBase64UrlNoPad(raw)) return invalid()
   let decoded: unknown
   try {
     decoded = JSON.parse(base64UrlToUtf8(raw, { fatal: true })) as unknown
@@ -292,6 +305,12 @@ function decodeBlocksCursor(raw: unknown, lead: CursorLeadSlot): SortKey | null 
   if (typeof id !== 'string') return invalid()
   if (lead === null) return [id]
   const leadValue = obj[lead]
+  // Absent or explicit `null` — the backend's `#[serde(default)]` Option
+  // slots read both the same way — defaults to the sentinel the matching bind
+  // function falls back to, rather than refusing the cursor.
+  if (leadValue === undefined || leadValue === null) {
+    return [lead === 'position' ? NULL_POSITION_SENTINEL : '', id]
+  }
   if (typeof leadValue !== 'string' && typeof leadValue !== 'number') return invalid()
   return [leadValue, id]
 }

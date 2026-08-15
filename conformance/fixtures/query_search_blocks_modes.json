@@ -104,36 +104,48 @@
   },
   "expected_queries": [
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "search_fts_widget",
       "rows": ["B2", "B3", "B4", "B6"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "search_blank_query_parent_filter",
       "rows": ["B4", "B3", "B2"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "search_regex_anchored_widget",
       "rows": ["B6", "B3", "B2"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "search_case_sensitive_widget",
       "rows": ["B2", "B6"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "search_whole_word_note",
       "rows": ["B4"],
       "total_count": null
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "advanced_fulltext_widget",
       "rows": ["B2", "B3", "B4", "B6"],

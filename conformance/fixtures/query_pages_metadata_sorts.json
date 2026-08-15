@@ -128,30 +128,40 @@
   },
   "expected_queries": [
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "pages_sorted_alphabetical",
       "rows": ["B2", "B3", "B1"],
       "total_count": 3
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "pages_sorted_default",
       "rows": ["B1", "B2", "B3"],
       "total_count": 3
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "pages_sorted_most_content",
       "rows": ["B1", "B3", "B2"],
       "total_count": 3
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "pages_sorted_most_linked",
       "rows": ["B3", "B2", "B1"],
       "total_count": 3
     },
     {
+      "cursor": null,
+      "error": null,
       "has_more": false,
       "name": "pages_sorted_recently_modified",
       "rows": ["B3", "B1", "B2"],

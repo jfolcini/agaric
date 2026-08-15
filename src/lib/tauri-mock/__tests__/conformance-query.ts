@@ -192,8 +192,10 @@ interface WireShape {
   hasMoreKey: string | null
   totalKey: string | null
   /** Envelope key holding the next page cursor. Defaults to the `PageResponse`
-   *  key `next_cursor`; `run_advanced_query` answers in camelCase. Read only to
-   *  thread a `cursor_from` chain — never recorded. */
+   *  key `next_cursor`; `run_advanced_query` answers in camelCase. Read to
+   *  thread a `cursor_from` chain AND, since #3893, projected through
+   *  {@link cursorShape} into the recorded `cursor` field — no longer "never
+   *  recorded". */
   cursorKey?: string
 }
 
@@ -414,6 +416,26 @@ function injectCursor(command: string, args: Record<string, unknown>, cursor: st
  * The concrete boundary VALUES are pinned elsewhere and better: a `cursor_from`
  * step compares the ROWS the resumed page holds, which is what a wrong boundary
  * value actually changes.
+ *
+ * MUST render byte-identically to `shape_of_cursor` in the Rust twin — with
+ * two known, narrow exceptions (#3942 review note 6), neither reachable from
+ * a cursor either stack actually MINTS today; see `shape_of_cursor`'s own doc
+ * comment for the full reachability argument on both:
+ *
+ *  1. Non-canonical trailing bits (e.g. `"AB"`, whose leftover 4 bits are not
+ *     zero) decode silently here via `atob`, where the Rust twin's
+ *     `URL_SAFE_NO_PAD` rejects them as `InvalidLastSymbol`. The SAME
+ *     divergence every mock cursor decoder deliberately leaves unmirrored
+ *     (`isBase64UrlNoPad`, `@/lib/base64url`) for the same reason: neither
+ *     encoder can produce such bytes, only a hand-built cursor can.
+ *  2. A JSON version literal written with a decimal point (`"version":1.0`)
+ *     renders `v1` here — `Number.isInteger(1.0)` is `true`, and JSON's `1`
+ *     vs `1.0` are indistinguishable once parsed into a JS `number` — where
+ *     the Rust twin renders `v?` (`Value::as_u64` returns `None` for any
+ *     float-typed `serde_json::Number`, decimal point and all). This
+ *     direction cannot be closed from the TS side at all: by the time this
+ *     function sees the value, the information it would need is already
+ *     gone.
  */
 export function cursorShape(raw: string | null): string | null {
   if (raw == null) return null
