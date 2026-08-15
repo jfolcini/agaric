@@ -257,3 +257,87 @@ the clone guard, 3 in the setProperty guard — and the six mutations covering t
 code (ASI both-ways, `EXPR_TERMINAL_PUNCT`, both `propertyName` stack guards, the block
 comment) all die. Assertion counts: 50 → 65 scanner, 37 → 40 clones, 24 → 28 setProperty.
 Repo sweep unchanged at 1781 files, zero `ScanError`s.
+
+## Round three: the approving review's seven notes
+
+#3969 was approved with seven notes; four were real gaps, one was inert-but-unstated, one
+was the PR body's stale count (the coordinator's), and one was a stated verification limit.
+
+### Note 1 — the assertion that could not fail
+
+Brace classification ignored TS return-type annotations. For `function f(): void { … }`
+the token before the body `{` is the ident `void`, which is in neither `BLOCK_PREV_PUNCT`
+nor `BLOCK_PREV_KEYWORD`, so the body was pushed as an *object literal* and its `}`
+carried `blockClose: false`. The decision-table row this PR added an assertion for —
+"`}` → REGEX if that `{` opened a BLOCK" — therefore did not fire for the most common
+function shape in a TypeScript codebase.
+
+What makes this worth writing down is *why* it survived two rounds of adversarial review,
+including a mutation sweep that specifically hunted for decorative assertions. The
+assertion covering that branch was:
+
+```js
+regexes('function f() { g() }\n/re/.test(s)')
+```
+
+Untyped. It passes with the bug and without it. Round one asked of each assertion "what
+production change would redden this?" and this one had a real answer — hard-wiring
+`blockClose` to `false` does redden it, which is exactly how the branch got its assertion
+in the first place. The question it never got asked was the *complementary* one: "what
+production behaviour does this assertion NOT reach?" A mutation sweep answers the first
+question. It cannot answer the second, because a mutant that only breaks the typed path
+still gets killed by some other assertion, and a fixture that is unrepresentative of the
+codebase is invisible to every mutant. Coverage of the *branch* is not coverage of the
+*inputs that reach it*.
+
+Fixed with a `returnTypeContext` flag: a `:` directly after a `)` opens a return-type
+annotation, and the next `{` at generic-depth 0 is the body. Ternary `:` is excluded (a
+`?` that is neither `?.` nor `a?:` opens one), so `c ? f() : { a: 1 }` stays an object
+literal, and generic depth is tracked so the type-literal brace in `): Array<{ a }> {`
+does not consume the annotation before the real body brace. Assertions cover five typed
+signatures, a class method, both regression guards, and the nested-generic shape — the
+last added only after a mutation showed the angle-depth guard had no assertion at all.
+
+### Note 4 — a `>` at a line end is undecidable, so it now refuses
+
+`EXPR_TERMINAL_PUNCT` had no `>`, so `leavesExpressionIncomplete` called a trailing `>`
+incomplete and `findStatementEnd` ran past the newline; `const El = <div>x</div>`
+over-extended into the next statement. The obvious fix — add `>` to the terminal set —
+is wrong in the dangerous direction: it truncates `const x = a >\n  b` into a stable hash
+over `a >`, which is the fail-open of round two, reintroduced for the third time.
+
+Both readings are real and a lexer cannot tell them apart, so the case now returns `null`
+and fails closed. A JSX-valued `const` is unpinnable rather than mis-pinned. That is the
+third time in this PR that the tempting fix for a noisy symptom was a silent fail-open,
+and the third time the right answer was to refuse.
+
+### Notes 3, 2, 5
+
+- **3** (fixed): `blankStringsAndTemplates` blanked `${…}` interpolations along with the
+  literal text, so a real `commands.setProperty(…)` inside one was invisible to call-site
+  discovery — not checked, and not counted as skipped either. Invisible, in the one guard
+  whose thesis is that a call nobody checked must never read as clean. Blanking now
+  recurses: literal chunks are blanked, interpolated *code* is preserved and itself
+  blanked for nested strings. The call is now genuinely checked rather than merely
+  surfaced.
+- **2** (fixed rather than stated): `0xE+1` lexed as one number token that swallowed the
+  `+`, because the exponent-sign rule never checked the radix; `1.5.toFixed(2)` ate the
+  member access entirely, because the `.`-consuming loop allowed a second dot. Both were
+  inert for bracket matching and for the division-vs-regex decision, and the note offered
+  "fix it or state it" — but round two's own criticism of the `/*` handling was that
+  leaving something neither fixed nor stated is the worst option, and both fixes were four
+  lines. Four positive controls (`1e-3`, `0x1F`, `1_000n`, `.5`) guard the change.
+- **5** (fixed): `check-set-property-args`'s prek `files` regex covered `src/**` and
+  `scripts/lib/js-scanner.mjs` but not the guard script itself, so a commit touching only
+  the guard ran its self-test and never re-evaluated the live tree. Closed with the
+  `metric-provable` shape (name the script in `files`) rather than
+  `mutation-harness-clones`'s `always_run = true`: `always_run` re-walks all of `src/**`
+  on every unrelated commit, while naming the script keeps the live re-check scoped to
+  exactly the commits that can invalidate it.
+
+### Coverage
+
+All 18 new assertions demonstrated RED first — 17 in the scanner, 1 in the setProperty
+guard — and the eight mutations covering the new code all die. Counts: 65 → 86 scanner,
+40 clones (unchanged), 28 → 29 setProperty. All 13 pins still resolve; sweep still 1781
+files, zero `ScanError`s.

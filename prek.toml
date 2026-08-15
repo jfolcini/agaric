@@ -745,13 +745,23 @@ stages = ["pre-commit"]
 # Non-literal third arguments (variable/spread/call) can't be statically
 # verified and are skipped, not failed. pass_filenames=false — the
 # script does its own scoped walk of src/.
+# `files` includes the guard script ITSELF, matching the `metric-provable`
+# hook below (prek.toml, "Every metric must have a test proving it can
+# fire"): without it, a commit touching only this guard runs its self-test
+# and never re-evaluates the LIVE tree, so a change that made a real call
+# site violate — or that quietly stopped finding call sites at all — would
+# land green. The sibling `mutation-harness-clones` hook closes the same
+# gap with `always_run = true`; this one follows `metric-provable` instead,
+# because `always_run` re-walks all of `src/**` on every unrelated commit,
+# whereas naming the script keeps the live re-check precisely scoped to the
+# commits that can actually invalidate it.
 [[repos.hooks]]
 id = "check-set-property-args"
 name = "setProperty args have all five value keys"
 entry = "node scripts/check-set-property-args.mjs"
 language = "system"
 pass_filenames = false
-files = "^(src/.*\\.(ts|tsx)|scripts/lib/js-scanner\\.mjs)$"
+files = "^(src/.*\\.(ts|tsx)|scripts/(check-set-property-args\\.mjs|lib/js-scanner\\.mjs))$"
 stages = ["pre-commit"]
 
 # Self-test the setProperty-args guard's own exit behavior (missing key

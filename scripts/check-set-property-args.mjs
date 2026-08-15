@@ -692,6 +692,26 @@ function runSelfTest() {
     )
   }
 
+  // A real call written inside a template-literal `${…}` interpolation. The
+  // interpolation holds CODE, so this is a genuine call site — it used to be
+  // blanked away with the surrounding literal text and was therefore neither
+  // checked nor counted as skipped. Invisible, in the one guard whose thesis
+  // is that a call nobody checked must never read as clean.
+  const callInInterpolation = analyzeSource(
+    'const msg = `before${ commands.setProperty(id, k, {\n  value_text: null,\n  value_num: null,\n  value_date: null,\n  value_ref: null,\n}) }after`\n',
+  )
+  if (
+    callInInterpolation.violations.length === 1 &&
+    callInInterpolation.violations[0].missingKeys.join() === 'value_bool'
+  ) {
+    ok('a call inside a template-literal interpolation is checked, not blanked away')
+  } else {
+    fail(
+      'a call inside a template-literal interpolation is checked, not blanked away',
+      JSON.stringify(callInInterpolation),
+    )
+  }
+
   const unscannable = analyzeSource(
     "const s = 'never closed\ncommands.setProperty(blockId, key, { value_text: null })\n",
   )

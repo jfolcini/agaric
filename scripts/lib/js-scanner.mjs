@@ -110,8 +110,14 @@
 //     `check-set-property-args` reported a file it had not checked as clean.
 //     Degrading keeps the tail lexed; it does NOT silently hide anything.
 //
-// `findStatementEnd` has its own fail-closed rule: it returns `null` when
-// the expression is still dangling on an operator at end of input.
+// `findStatementEnd` has its own fail-closed rules: it returns `null` when
+// the expression is still dangling on an operator at end of input, and when
+// a line ENDS IN `>` at a statement boundary. The latter is undecidable for
+// a lexer — either a JSX element just closed (expression complete) or a
+// relational operator is dangling (expression incomplete) — and the two
+// wrong answers are an over-extension into the next statement and a
+// truncated-prefix hash respectively. Refusing beats guessing either way,
+// so a JSX-valued `const` is currently unpinnable rather than mis-pinned.
 //
 // ─── Stated limitations (all chosen to fail closed or to be inert) ──
 //
@@ -154,9 +160,17 @@
 //     two cases differ because a stray quote in JSX text is rare and easy to
 //     escape, while a trailing `/*` in a glob is neither.
 //  3. Brace classification (block vs object literal) is the standard
-//     previous-token heuristic, not a parse. A misclassification only
-//     matters when a `/` immediately follows the `}` AND a well-formed
-//     same-line regex candidate follows it; otherwise it is inert.
+//     previous-token heuristic, not a parse, PLUS one extra rule for TS: a
+//     `:` directly after a `)` opens a return-type annotation, and the next
+//     `{` at generic-depth 0 is that function's BODY. Without it the token
+//     before the body brace of `function f(): void {` is the ident `void`,
+//     which is in neither BLOCK_PREV set, so the most common shape in this
+//     codebase was classified as an object literal and the "`}` → REGEX
+//     after a block" row never fired for it. Ternary `:` is excluded (a `?`
+//     that is not `?.` and not `a?:` opens one), so `c ? f() : { a: 1 }`
+//     stays an object literal. A misclassification only matters when a `/`
+//     immediately follows the `}` AND a well-formed same-line regex
+//     candidate follows it; otherwise it is inert.
 //  4. Automatic semicolon insertion is not modelled anywhere except the
 //     explicit `++`/`--` fail-closed case above and `findStatementEnd`'s
 //     boundary test, which looks BOTH ways: a newline is a boundary only if
@@ -429,6 +443,11 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
   let prev = initialPrev
   const parenStack = []
   const braceStack = []
+  // See the `?`/`:` handling below: `returnTypeContext` is true between a
+  // `): ` and the `{` that opens the annotated function's body.
+  let returnTypeContext = false
+  let returnTypeAngleDepth = 0
+  let ternaryDepth = 0
   let i = from
 
   while (i < to) {
@@ -512,14 +531,40 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
 
     if (isDigit(c) || (c === '.' && isDigit(c2))) {
       const start = i
+      // A radix prefix rules out both the exponent sign and a fraction dot:
+      // without the check, `0xE+1` lexed as ONE number token that swallowed
+      // the `+` operator, because `E` followed by `+` looked like an
+      // exponent. A number also has at most ONE `.`, so `1.5.toFixed` is a
+      // number, a `.` and a property — it used to be one token that ate the
+      // member access whole.
+      const radixPrefixed =
+        c === '0' &&
+        (c2 === 'x' || c2 === 'X' || c2 === 'b' || c2 === 'B' || c2 === 'o' || c2 === 'O')
+      let seenDot = c === '.'
       i++
-      while (i < to && (isIdentPart(src[i]) || src[i] === '.')) {
-        // Exponent sign: `1e-3` / `1E+3`.
-        if ((src[i] === 'e' || src[i] === 'E') && (src[i + 1] === '+' || src[i + 1] === '-')) {
+      while (i < to) {
+        const d = src[i]
+        if (d === '.') {
+          if (seenDot || radixPrefixed) break
+          seenDot = true
+          i++
+          continue
+        }
+        // Exponent sign: `1e-3` / `1E+3`, decimal literals only.
+        if (
+          !radixPrefixed &&
+          (d === 'e' || d === 'E') &&
+          (src[i + 1] === '+' || src[i + 1] === '-') &&
+          isDigit(src[i + 2])
+        ) {
           i += 2
           continue
         }
-        i++
+        if (isIdentPart(d)) {
+          i++
+          continue
+        }
+        break
       }
       prev = { kind: 'number', start, end: i }
       yield prev
@@ -557,6 +602,44 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
       i += 1
     }
     const tok = { kind: 'punct', value, start, end: i }
+
+    // ── TS return-type annotations ────────────────────────────────────
+    // A return type sits BETWEEN the parameter list's `)` and the body `{`,
+    // so for `function f(): void {` the token before the body brace is the
+    // ident `void`, and for `): Promise<T> {` it is `>`. Neither is in
+    // BLOCK_PREV_*, so those bodies were classified as OBJECT LITERALS and
+    // the "`}` → REGEX if that `{` opened a BLOCK" row never fired for the
+    // most common shape in a `.ts`/`.tsx` codebase. `returnTypeContext`
+    // carries "a `:` directly after a `)`" forward across the type's tokens.
+    if (value === '?') {
+      // Distinguish a ternary `?` from optional chaining (`?.`) and an
+      // optional parameter/property marker (`a?: T`), neither of which
+      // opens a ternary whose `:` would be mistaken for a return type.
+      let k = i
+      while (k < to && isWs(src[k])) k++
+      if (src[k] !== '.' && src[k] !== ':') ternaryDepth++
+    } else if (value === ':') {
+      if (ternaryDepth > 0) {
+        ternaryDepth--
+      } else if (prev !== null && prev.kind === 'punct' && prev.value === ')') {
+        returnTypeContext = true
+        returnTypeAngleDepth = 0
+      }
+    } else if (returnTypeContext) {
+      // Angle depth is tracked so a `,`/`(`/`)` INSIDE the type — as in
+      // `): Map<string, number> {` — does not end the annotation, and so a
+      // type-literal brace nested in a generic (`): Array<{ a: 1 }> {`)
+      // does not consume the context before the real body brace arrives.
+      if (value === '<') returnTypeAngleDepth++
+      else if (value === '>') {
+        if (returnTypeAngleDepth > 0) returnTypeAngleDepth--
+      } else if (value === '=>' || value === '=' || value === ';') {
+        returnTypeContext = false
+      } else if (returnTypeAngleDepth === 0 && (value === ',' || value === '(' || value === ')')) {
+        returnTypeContext = false
+      }
+    }
+
     // Both stacks must honour `propertyName` for the same reason
     // `regexAllowedAfter` does: `obj.with(a, b)` is a METHOD CALL, not a
     // `with` statement, so its `)` must not carry `controlHead` and permit
@@ -574,12 +657,16 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
       tok.controlHead = parenStack.length > 0 ? parenStack.pop() : false
     } else if (value === '{') {
       braceStack.push(
-        prev === null ||
+        returnTypeContext ||
+          prev === null ||
           (prev.kind === 'punct' && BLOCK_PREV_PUNCT.has(prev.value)) ||
           (prev.kind === 'ident' &&
             prev.propertyName !== true &&
             BLOCK_PREV_KEYWORD.has(prev.value)),
       )
+      // The body brace consumes the annotation; a brace still inside `< >`
+      // is a type literal, so it leaves the context in place.
+      if (returnTypeContext && returnTypeAngleDepth === 0) returnTypeContext = false
     } else if (value === '}') {
       tok.blockClose = braceStack.length > 0 ? braceStack.pop() : false
     }
@@ -622,6 +709,11 @@ export function stripComments(src) {
   return out
 }
 
+/** Blank every character of `text` except newlines, preserving length. */
+function blankKeepingNewlines(text) {
+  return text.replace(/[^\n]/g, ' ')
+}
+
 /**
  * The mirror image of `stripComments`: replace string/template literal
  * CONTENTS (quotes included) with equal-length whitespace, preserving
@@ -629,20 +721,65 @@ export function stripComments(src) {
  * matching so a marker-shaped line living inside a string or template
  * literal (data, not a real marker) is not mistaken for one, while a
  * genuine marker inside a comment is left intact.
+ *
+ * A template literal's `${…}` interpolations hold CODE, not literal text,
+ * and are therefore NOT blanked — only the literal chunks around them are.
+ * Blanking them too made a real `commands.setProperty(…)` written inside an
+ * interpolation invisible to `check-set-property-args`'s call-site
+ * discovery: not checked, and not counted as skipped either, which is the
+ * one outcome that guard exists to make impossible. Interpolated code is
+ * blanked recursively, so a string nested inside one is still blanked.
  */
 export function blankStringsAndTemplates(src) {
+  return blankStringsInRange(src, 0, src.length)
+}
+
+function blankStringsInRange(src, from, to) {
   let out = ''
-  let cursor = 0
-  for (const tok of tokenize(src)) {
+  let cursor = from
+  for (const tok of tokenize(src, { from, to })) {
     if (tok.start > cursor) out += src.slice(cursor, tok.start)
-    if (tok.kind === 'string' || tok.kind === 'template') {
-      out += src.slice(tok.start, tok.end).replace(/[^\n]/g, ' ')
+    if (tok.kind === 'string') {
+      out += blankKeepingNewlines(src.slice(tok.start, tok.end))
+    } else if (tok.kind === 'template') {
+      out += blankTemplateKeepingInterpolations(src, tok.start, tok.end)
     } else {
       out += src.slice(tok.start, tok.end)
     }
     cursor = tok.end
   }
-  if (cursor < src.length) out += src.slice(cursor)
+  if (cursor < to) out += src.slice(cursor, to)
+  return out
+}
+
+/**
+ * Blank a template literal's literal text while leaving each `${…}`
+ * interpolation's code in place (recursively blanked itself). `start` points
+ * at the opening backtick, `end` just past the closing one. Length and
+ * newline positions are preserved, so offsets stay valid.
+ */
+function blankTemplateKeepingInterpolations(src, start, end) {
+  let out = ''
+  let j = start
+  while (j < end) {
+    const c = src[j]
+    if (c === '\\') {
+      out += blankKeepingNewlines(src.slice(j, Math.min(j + 2, end)))
+      j += 2
+      continue
+    }
+    if (c === '$' && src[j + 1] === '{') {
+      // `scanTemplateExpr` returns the index just past the closing `}`.
+      const exprEnd = scanTemplateExpr(src, j + 2, end)
+      out += '  ' // the `${` delimiter itself carries no information
+      out += blankStringsInRange(src, j + 2, exprEnd - 1)
+      out += ' ' // the closing `}`
+      j = exprEnd
+      continue
+    }
+    out += c === '\n' ? '\n' : ' '
+    j++
+  }
   return out
 }
 
@@ -775,6 +912,23 @@ export function findStatementEnd(src, from) {
     // whose lines end in a binary operator (`'a' +\n  'b'`), because a
     // string is not a continuation token — even though no ASI can occur
     // after a `+`. The previous token settles it first.
+    // A line ending in `>` is genuinely undecidable here. It is either the
+    // close of a JSX element — expression COMPLETE, so this newline IS a
+    // boundary — or a dangling relational operator, expression INCOMPLETE,
+    // so it is not. Guessing "complete" truncates `a >\n b` into a stable
+    // hash over a prefix, which is the fail-open this module exists to
+    // close; guessing "incomplete" runs a JSX-valued initializer into the
+    // following statement. Refuse instead, per the fail-closed policy.
+    if (
+      depth === 0 &&
+      sawNewlineSinceLastToken &&
+      lastSignificantEnd !== null &&
+      lastSignificantTok !== null &&
+      lastSignificantTok.kind === 'punct' &&
+      lastSignificantTok.value === '>'
+    ) {
+      return null
+    }
     if (
       depth === 0 &&
       sawNewlineSinceLastToken &&
@@ -989,6 +1143,106 @@ function runSelfTest() {
     regexes('const r = /[/]/g').join() === '/[/]/g',
     JSON.stringify(regexes('const r = /[/]/g')),
   )
+
+  // A TS RETURN-TYPE ANNOTATION sits between the parameter list's `)` and
+  // the body `{`, so the token before the body brace is the last token of
+  // the TYPE (`void`, `>`, `]`), not `)`. The brace stack classified those
+  // bodies as OBJECT LITERALS, so the decision-table row "`}` → REGEX if
+  // that `{` opened a BLOCK" did not fire for the most common shape in this
+  // codebase. It went unnoticed because the only assertion covering that
+  // branch used the UNTYPED `function f() { g() }`, which passes either way.
+  for (const [sig, label] of [
+    ['function f(): void', 'a plain return type'],
+    ['function f(): Promise<void>', 'a generic return type'],
+    ['function f(): string[]', 'an array return type'],
+    ['function f(): A | B', 'a union return type'],
+    ['async function f(): Promise<void>', 'an async generic return type'],
+  ]) {
+    const src = `${sig} { g() }\n/re/.test(s)`
+    check(
+      `after a typed function body (${label}), a \`/\` at statement start is a regex`,
+      regexes(src).join() === '/re/',
+      JSON.stringify(regexes(src)),
+    )
+  }
+
+  {
+    // A type-literal brace NESTED IN A GENERIC return type must not consume
+    // the annotation before the real body brace arrives — `): Array<{ a }> {`
+    // has two braces, and only the second opens the body.
+    const src = 'function f(): Array<{ a: number }> { g() }\n/re/.test(s)'
+    check(
+      'a type-literal brace inside a generic return type does not steal the body classification',
+      regexes(src).join() === '/re/',
+      JSON.stringify(regexes(src)),
+    )
+  }
+
+  {
+    const src = 'class A { m(): void { g() } }'
+    const methodClose = [...tokenize(src)].find((t) => t.kind === 'punct' && t.value === '}')
+    check(
+      'a class method with a return type closes a BLOCK, not an object literal',
+      methodClose !== undefined && methodClose.blockClose === true,
+      `blockClose=${methodClose?.blockClose}`,
+    )
+  }
+
+  {
+    // Regression guard on the fix above: a `:` that belongs to a TERNARY,
+    // not to a return type, must still leave `{` an object literal.
+    const src = 'const v = c ? f() : { a: 1 }'
+    const close = [...tokenize(src)].find((t) => t.kind === 'punct' && t.value === '}')
+    check(
+      'a ternary `:` after `)` does not turn the following `{` into a block',
+      close !== undefined && close.blockClose === false,
+      `blockClose=${close?.blockClose}`,
+    )
+  }
+
+  {
+    // …and an ordinary object literal after a typed declaration is still an
+    // object literal once the return-type context has been consumed.
+    const src = 'function f(): void { g() }\nconst o = { a: 1 }\nconst n = 1'
+    const closes = [...tokenize(src)].filter((t) => t.kind === 'punct' && t.value === '}')
+    check(
+      'the return-type context does not leak onto the next object literal',
+      closes.length === 2 && closes[0].blockClose === true && closes[1].blockClose === false,
+      JSON.stringify(closes.map((t) => t.blockClose)),
+    )
+  }
+
+  // NUMBER LEXING. `0xE+1` used to lex as ONE number token, swallowing the
+  // `+`, because the exponent-sign special case never checked the radix.
+  // `1.5.toFixed(2)` lost `.toFixed` entirely for the same reason in the
+  // `.`-consuming loop. Both are inert for bracket matching and for the
+  // division-vs-regex decision (prev kind `number` answers as `ident` does),
+  // but they are wrong at the token level.
+  check(
+    '`0xE+1` is a hex literal, a `+` punctuator and a number — not one token',
+    kinds('const x = 0xE+1').join(' ') === 'ident:const ident:x punct:= number punct:+ number',
+    kinds('const x = 0xE+1').join(' '),
+  )
+
+  check(
+    '`1.5.toFixed(2)` keeps the member access as its own tokens',
+    kinds('const y = 1.5.toFixed(2)').join(' ') ===
+      'ident:const ident:y punct:= number punct:. ident:toFixed punct:( number punct:)',
+    kinds('const y = 1.5.toFixed(2)').join(' '),
+  )
+
+  for (const [expr, want] of [
+    ['const z = 1e-3', 'ident:const ident:z punct:= number'],
+    ['const w = 0x1F', 'ident:const ident:w punct:= number'],
+    ['const v = 1_000n', 'ident:const ident:v punct:= number'],
+    ['const u = .5', 'ident:const ident:u punct:= number'],
+  ]) {
+    check(
+      `\`${expr.slice(10)}\` still lexes as a single number`,
+      kinds(expr).join(' ') === want,
+      kinds(expr).join(' '),
+    )
+  }
 
   // The `}`-closes-a-BLOCK half of the brace-context stack. The two JSX
   // assertions below cover only the object-literal/expression-container
@@ -1205,10 +1459,43 @@ function runSelfTest() {
     const blanked = blankStringsAndTemplates(src)
     check(
       'blankStringsAndTemplates preserves length, keeps comments and regex literals',
-      blanked.length === src.length &&
-        blanked.includes('note') &&
-        blanked.includes('/[\'"]/') &&
-        !blanked.includes('${'),
+      blanked.length === src.length && blanked.includes('note') && blanked.includes('/[\'"]/'),
+      JSON.stringify(blanked),
+    )
+  }
+
+  {
+    // A template literal's `${…}` holds CODE, not literal text. Blanking it
+    // along with the surrounding text hid real call sites from the guards
+    // that use this view for discovery — a call nobody checked, reported as
+    // clean. The literal chunks are still blanked; only the interpolated
+    // expressions survive.
+    const src = 'const s = `LEADINGWORD${ commands.setProperty(a, b) }TRAILINGWORD`\n'
+    const blanked = blankStringsAndTemplates(src)
+    check(
+      'blankStringsAndTemplates preserves `${…}` interpolation CODE',
+      blanked.includes('commands.setProperty') && blanked.length === src.length,
+      JSON.stringify(blanked),
+    )
+    check(
+      'blankStringsAndTemplates still blanks the template literal TEXT around it',
+      !blanked.includes('LEADINGWORD') && !blanked.includes('TRAILINGWORD'),
+      JSON.stringify(blanked),
+    )
+  }
+
+  {
+    // Nested: a string inside an interpolation is still blanked, and a
+    // template inside an interpolation recurses the same way.
+    const src = 'const s = `a${ f("secret") }b${ `c${ g("deep") }d` }e`\n'
+    const blanked = blankStringsAndTemplates(src)
+    check(
+      'blanking recurses into nested interpolations, blanking their strings',
+      blanked.includes('f(') &&
+        blanked.includes('g(') &&
+        !blanked.includes('secret') &&
+        !blanked.includes('deep') &&
+        blanked.length === src.length,
       JSON.stringify(blanked),
     )
   }
@@ -1325,6 +1612,35 @@ function runSelfTest() {
       JSON.stringify(findStatementEnd(src, src.indexOf("'head'"))),
     )
   }
+
+  // A line ending in `>` is genuinely undecidable for a lexer: it is either
+  // the end of a JSX element (expression COMPLETE, so the newline is a
+  // statement boundary) or a dangling relational operator (expression
+  // INCOMPLETE, so it is not). Treating it as incomplete over-extends a
+  // JSX-valued const into the following statement; treating it as complete
+  // truncates `a >\n b`, which is the fail-open this scanner exists to
+  // close. Neither guess is defensible, so both refuse.
+  for (const [src, label] of [
+    ['const El = <div>x</div>\nconst next = 1\n', 'a JSX-valued initializer'],
+    ['const x = a >\n  b\nconst next = 1\n', 'a dangling relational operator'],
+  ]) {
+    const at = src.indexOf('=') + 1
+    check(
+      `${label} ending a line in \`>\` is refused (null), not guessed`,
+      findStatementEnd(src, at) === null,
+      JSON.stringify(src.slice(at, findStatementEnd(src, at) ?? undefined)),
+    )
+  }
+
+  check(
+    'a `>` that is NOT at a line end still terminates normally',
+    (() => {
+      const src = 'const x = a > b\nconst next = 1\n'
+      const at = src.indexOf('=') + 1
+      return src.slice(at, findStatementEnd(src, at) ?? undefined).trim() === 'a > b'
+    })(),
+    'see source',
+  )
 
   // The property-name correction must reach the paren and brace context
   // stacks too, not just `REGEX_PRECEDING_KEYWORDS`. `obj.with(…)` is a
