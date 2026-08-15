@@ -61,6 +61,14 @@
 # first). Nothing in this script prints its own diagnosis and then falls
 # through to exit 0 — every `echo "✗ …"` branch ends in an `exit`.
 #
+# `--self-test` (below) is a SEPARATE mode, not a real invocation, and its
+# codes are its own, not part of the 0/1/2 contract above (#3922): 0 on a
+# clean fixture run, 3 when a fixture assertion fails. It used to reuse 2
+# for a failed fixture run, which made 2 no longer mean "pre-flight
+# refusal, nothing was attempted" one-to-one — harmless today (prek only
+# checks non-zero) but an inaccurate contract for a caller that inspects
+# the actual code. 3 is unused elsewhere in this script.
+#
 # THE PUSH ITSELF CAN STILL FAIL (#3380)
 # ---------------------------------------
 # Verifying before opening the connection fixes the *idle-timeout* drop,
@@ -198,25 +206,47 @@ PUSH_LOCAL_REFUSAL_RE='The upstream branch of your current branch does not match
 # rare, self-inflicted hook-script choice, rather than the false
 # negative this fix closes (a real GitHub-side rejection misread as
 # local).
-PUSH_REMOTE_REJECTED_RE='^ ! \[remote rejected\]'
-PUSH_NO_REMOTE_LINE_RE='^remote:'
+#
+# `[remote rejected]` ANCHORING (#3922): the marker isn't only ever seen in
+# git's default human-readable status line (` ! [remote rejected] …`) — this
+# script forwards arbitrary caller args straight to `git push`, so a caller
+# can pass `--porcelain`, whose rejected-ref line has a different shape
+# entirely (`!\trefs/heads/x:refs/heads/x\t[remote rejected] (…)`), and git
+# also emits a sibling marker, `[remote failure]` (`… (remote failed to
+# report status)`), for a different far-side failure mode. Anchoring to the
+# human line's exact prefix let both shapes fall through to the
+# no-`remote:`-line heuristic and get misattributed as `local-rejection` —
+# the SAME misread #3883 fixed, reached via a transcript the anchor didn't
+# recognize. So the pattern below matches the bracketed marker text alone,
+# unanchored to position or field separator: `[remote rejected]` /
+# `[remote failure]` is git's own fixed vocabulary regardless of
+# `--porcelain` vs. human output, and is specific enough (two literal words
+# git chose, in brackets) that a hook coincidentally emitting the exact
+# same substring is not a realistic false-positive source — the same
+# "acceptable, bounded false-positive surface" trade-off already made for
+# the no-`remote:`-line heuristic just above.
+PUSH_REMOTE_REJECTED_RE='\[remote (rejected|failure)\]'
+# Despite the name, this MATCHES a `remote:`-prefixed line — the "NO" in
+# the old name (PUSH_NO_REMOTE_LINE_RE) came from the `!` at its one use
+# site below, which read inverted at the definition. Renamed for #3922.
+PUSH_REMOTE_LINE_RE='^remote:'
 PUSH_GENERIC_REJECTION_RE='^error: failed to push some refs'
 
 classify_push_failure() {
     # $1 = path to the captured git-push output. Echoes `local-refusal`
     # (refused before the connection was even used — see
     # PUSH_LOCAL_REFUSAL_RE), `local-rejection` (the connection was used,
-    # but nothing landed, git did NOT mark the ref `[remote rejected]`,
-    # and no `remote:` line appears anywhere in the log — a LOCAL
-    # pre-push hook or the ref negotiation itself said no), or `remote`
-    # (git explicitly marked the ref `[remote rejected]`, the far side
-    # sent back a `remote:`-prefixed line, or the failure doesn't match
-    # either local pattern — the safe default).
+    # but nothing landed, git did NOT mark the ref `[remote rejected]` /
+    # `[remote failure]`, and no `remote:` line appears anywhere in the
+    # log — a LOCAL pre-push hook or the ref negotiation itself said no),
+    # or `remote` (git explicitly marked the ref rejected/failed, the far
+    # side sent back a `remote:`-prefixed line, or the failure doesn't
+    # match either local pattern — the safe default).
     if grep -qE "$PUSH_LOCAL_REFUSAL_RE" "$1"; then
         echo "local-refusal"
     elif grep -qE "$PUSH_REMOTE_REJECTED_RE" "$1"; then
         echo "remote"
-    elif ! grep -q "$PUSH_NO_REMOTE_LINE_RE" "$1" \
+    elif ! grep -qE "$PUSH_REMOTE_LINE_RE" "$1" \
         && grep -qE "$PUSH_GENERIC_REJECTION_RE" "$1"; then
         echo "local-rejection"
     else
@@ -984,14 +1014,55 @@ FAKEGIT
     #      the gate runs, and the SCRIPT PROCESS must exit 2 (not 0, not
     #      1 — see EXIT CODES in the header comment). This is the exact
     #      shape of the original #3883 report.
+    #
+    #      FAKE_PUSH_DEFAULT='' is passed explicitly, empty, on purpose
+    #      (#3922): this spawn is a real subprocess that INHERITS this
+    #      shell's exported environment, and P2e above sets FAKE_PUSH_
+    #      DEFAULT="some-future-value" as a prefix-assignment on a
+    #      FUNCTION call — bash's env-for-one-command scoping is not
+    #      guaranteed to apply there the way it does for an external
+    #      command, so a lingering exported value is a real risk to guard
+    #      against, not a hypothetical: an unset FAKE_PUSH_DEFAULT here
+    #      would silently inherit whatever is ambient, route
+    #      preflight_push_target's `case` to its unmodelled-value `*)`
+    #      arm, and pass (rc=0) for the wrong reason. The `unset` near the
+    #      top of this self-test block runs once, long before P2e sets it,
+    #      so it does not protect this line. P7c-poison, right below,
+    #      proves the explicit reset actually matters by forcing exactly
+    #      this ambient-leak condition and confirming P7c still exits 2.
     rc=0
     out="$(FAKE_TOPLEVEL="$e2e_root" FAKE_CURRENT_BRANCH="claude/e2e-probe" \
-        FAKE_UPSTREAM="origin/main" \
+        FAKE_UPSTREAM="origin/main" FAKE_PUSH_DEFAULT='' \
         bash "${BASH_SOURCE[0]}" 2>&1)" || rc=$?
     if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q 'refusing BEFORE the verify gate'; then
         st_ok "end-to-end process exit code: mismatched-upstream refusal exits 2"
     else
         st_bad "end-to-end process exit code: mismatched-upstream refusal exits 2" \
+            "rc=$rc out=$out"
+    fi
+
+    # P7c-poison. Directly forces the #3922 hazard P7c's comment describes,
+    #      instead of relying on P2e's prefix-assignment to leak it (which
+    #      this bash/mode combination does not actually do — verified: the
+    #      leak is a real bash-version-dependent risk, not one reproducible
+    #      here today). FAKE_PUSH_DEFAULT is exported in THIS shell right
+    #      before the spawn — exactly the condition an unprotected spawn
+    #      would inherit — and P7c's own explicit `FAKE_PUSH_DEFAULT=''`
+    #      must still force exit 2. Reverting that explicit reset turns
+    #      this case red: the poisoned value would route
+    #      preflight_push_target to its unmodelled-value `*)` arm inside
+    #      the spawned process and the mismatched-upstream refusal would
+    #      never fire (rc=0, no "refusing BEFORE the verify gate" text).
+    export FAKE_PUSH_DEFAULT="some-future-value"
+    rc=0
+    out="$(FAKE_TOPLEVEL="$e2e_root" FAKE_CURRENT_BRANCH="claude/e2e-probe" \
+        FAKE_UPSTREAM="origin/main" FAKE_PUSH_DEFAULT='' \
+        bash "${BASH_SOURCE[0]}" 2>&1)" || rc=$?
+    unset FAKE_PUSH_DEFAULT
+    if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q 'refusing BEFORE the verify gate'; then
+        st_ok "P7c spawn is immune to an ambient/leaked FAKE_PUSH_DEFAULT (#3922)"
+    else
+        st_bad "P7c spawn is immune to an ambient/leaked FAKE_PUSH_DEFAULT (#3922)" \
             "rc=$rc out=$out"
     fi
 
@@ -1076,6 +1147,36 @@ FAKEGIT
         st_ok "silent remote pre-receive decline ([remote rejected], no remote: line) stays classified as remote"
     else
         st_bad "silent remote pre-receive decline ([remote rejected], no remote: line) stays classified as remote" \
+            "$(classify_push_failure "$st_log")"
+    fi
+
+    # P9e. The SAME silent remote rejection as P9d, but reported in
+    #      `git push --porcelain` shape instead of the human-readable
+    #      status line (#3922): this script forwards arbitrary caller
+    #      args straight to `git push`, so `--porcelain` is a shape a
+    #      caller can actually select. No `remote:` line here either, and
+    #      before #3922 the old anchor (`^ ! \[remote rejected\]`) did not
+    #      match this line at all, so it fell through to the no-`remote:`
+    #      heuristic and was misclassified as `local-rejection` — the
+    #      exact #3883 misattribution, reached via a different transcript.
+    printf '!\trefs/heads/main:refs/heads/main\t[remote rejected] (pre-receive hook declined)\nerror: failed to push some refs to '"'"'.../bare.git'"'"'\n' >"$st_log"
+    if [ "$(classify_push_failure "$st_log")" = "remote" ]; then
+        st_ok "porcelain-shape silent remote rejection ([remote rejected], no remote: line) stays classified as remote"
+    else
+        st_bad "porcelain-shape silent remote rejection ([remote rejected], no remote: line) stays classified as remote" \
+            "$(classify_push_failure "$st_log")"
+    fi
+
+    # P9f. Git's OTHER far-side marker, `[remote failure]` — a different
+    #      failure mode from `[remote rejected]` (git could not even get a
+    #      status report back from the remote) but the same shape problem:
+    #      no `remote:` line, and the pre-#3922 anchor only recognized the
+    #      word "rejected", not "failure".
+    printf 'To .../bare.git\n ! [remote failure] HEAD -> main (remote failed to report status)\nerror: failed to push some refs to '"'"'.../bare.git'"'"'\n' >"$st_log"
+    if [ "$(classify_push_failure "$st_log")" = "remote" ]; then
+        st_ok "[remote failure] marker (no remote: line) stays classified as remote"
+    else
+        st_bad "[remote failure] marker (no remote: line) stays classified as remote" \
             "$(classify_push_failure "$st_log")"
     fi
 
@@ -1397,9 +1498,36 @@ FAKEGIT
 
     rm -rf "$fake_git_dir"
 
+    # P11. The exit-code split documented above the fixture loop is only
+    #      intent until proven end-to-end — the same reason P7c/P7d spawn
+    #      a real subprocess and read its actual exit code rather than
+    #      modeling it. A fixture COPY of this whole script is doctored
+    #      (via sed) so its OWN self-test run always fails (`st_fail`
+    #      forced to 1) and then actually run; the process's real exit
+    #      code must be 3, not 2 (which now means exclusively "pre-flight
+    #      refusal" — see EXIT CODES above). PUSH_SH_ST_META_DEPTH guards
+    #      against infinite recursion: the spawned copy also contains this
+    #      same P11 case, and would otherwise spawn a further doctored
+    #      copy of itself forever; exporting the guard for the ONE nested
+    #      invocation makes it skip its own P11 rather than recurse.
+    if [ "${PUSH_SH_ST_META_DEPTH:-}" != "1" ]; then
+        st_meta_fixture="$(mktemp -t push-sh-st-meta.XXXXXX)"
+        sed 's/^    st_fail=0$/    st_fail=1 # forced failure — #3922 P11 meta-fixture/' \
+            "${BASH_SOURCE[0]}" >"$st_meta_fixture"
+        rc=0
+        PUSH_SH_ST_META_DEPTH=1 bash "$st_meta_fixture" --self-test >/dev/null 2>&1 || rc=$?
+        rm -f "$st_meta_fixture"
+        if [ "$rc" -eq 3 ]; then
+            st_ok "a failed self-test run exits 3, distinct from the real EXIT CODES 0/1/2 contract (#3922)"
+        else
+            st_bad "a failed self-test run exits 3, distinct from the real EXIT CODES 0/1/2 contract (#3922)" \
+                "rc=$rc"
+        fi
+    fi
+
     if [ "$st_fail" != 0 ]; then
         echo "push.sh self-test FAILED" >&2
-        exit 2
+        exit 3
     fi
     echo "push.sh self-test passed"
     exit 0

@@ -28,11 +28,39 @@
 # `# Session NNNN` heading inside the file. Renumbering by hand updated one
 # and forgot the other. The guard checks they agree.
 #
+# WHY EXACT max+1 WAS TOO STRICT (#3929)
+# ---------------------------------------
+# Requiring NNN to be exactly max+1 makes the identifier a dense sequence,
+# and a dense sequence cannot be allocated in parallel: with N PRs in
+# flight, only ONE can hold a valid number at a time — every other one is
+# holding a number that becomes a duplicate the instant any sibling merges.
+# Measured cost: a batch of five parallel PRs needed four renumber cycles
+# (each a commit + the full ~10-minute pre-push gate + a CI re-run) that
+# changed no shipped code at all.
+#
+# But exact contiguity was never what caught a collision — check 1 (below)
+# does that, independently, by testing the number against the ACTUAL union
+# of taken numbers, not against an "is it dense" rule. Contiguity was only
+# ever cosmetic: the header history above explains why the max must be
+# computed NUMERICALLY, and why it must include the merge target — neither
+# reason needed "no gaps" to hold. So check 2 now accepts a BOUNDED WINDOW
+# above the max (max+1 .. max+GAP_BOUND) instead of demanding max+1 on the
+# nose: several PRs forked from the same base can each claim a distinct
+# number in the window without colliding OR needing to renumber when a
+# sibling merges first, while a number wildly off the max (a stale
+# understanding of it, a typo) still fails outside the window. GAP_BOUND is
+# sized well above the project's own parallel-PR pipeline cap (5) so it
+# will not itself start forcing renumbers under normal parallelism.
+#
 # Checks, for each staged ADDED docs/session-log/session-NNN-*.md:
 #   1. NNN is not already taken — on this branch, in the merge target, or by
-#      another file in this same commit.
-#   2. NNN is exactly max+1 over the UNION of branch and merge target
-#      (multiple new files in one commit form a contiguous run above it).
+#      another file in this same commit. THIS is what makes a collision
+#      unrepresentable in the merge result; it does not depend on check 2.
+#   2. NNN falls in (max, max+GAP_BOUND] over the UNION of branch and merge
+#      target, updated as each staged file in this commit is accepted —
+#      catches a number that is not just non-collision-safe but plainly
+#      wrong, without forcing every parallel PR onto the single dense next
+#      value.
 #   3. The `# Session NNNN` heading inside the file matches the filename.
 #
 # Pre-existing duplicates (the fifteen session-1000 files, the two
@@ -44,6 +72,13 @@
 set -euo pipefail
 
 LOG_DIR="docs/session-log"
+
+# How far above the union max a new number may land without being treated
+# as "wrong" (#3929). Sized generously above the project's 5-PR pipeline
+# cap so ordinary parallel batches never hit the ceiling; a number past it
+# is still almost certainly a stale/miscalculated max, not legitimate
+# parallel work, so it stays a hard failure.
+GAP_BOUND=10
 
 num_of() { basename "$1" | sed -E 's/^session-([0-9]+)-.*$/\1/'; }
 
@@ -78,7 +113,7 @@ heading_num_of() {
 }
 
 run_guard() {
-  local added existing_max expected fail=0
+  local added existing_max expected max_allowed fail=0
   local target_ref target_nums head_nums taken n f heading
 
   added="$(git diff --cached --name-only --diff-filter=A -- "$LOG_DIR/session-*.md" || true)"
@@ -130,14 +165,24 @@ run_guard() {
       continue
     fi
 
-    # 2. Contiguity — no gaps above the union max.
-    if [ "$n" -ne "$expected" ]; then
-      echo "ERROR: $f is numbered $n but the next session number is $expected" >&2
-      echo "  (numeric max across this branch and ${target_ref:-HEAD} is $existing_max)." >&2
-      echo "  If $n looks right to you, your base is probably stale — fetch and rebase" >&2
-      echo "  onto origin/main first, which is where the number you want may already" >&2
+    # 2. Bounded window above the running max (#3929) — NOT exact max+1.
+    #    Several parallel PRs, each forked from the same base, can each
+    #    claim a distinct number in (max, max+GAP_BOUND] without a
+    #    renumber when a sibling merges first. A number outside the
+    #    window is still almost certainly wrong (a stale understanding of
+    #    the max, or a typo), so it is still a hard failure — the window
+    #    trades away "no gaps ever" (cosmetic; check 1 above is what
+    #    actually prevents a collision), not the uniqueness guarantee.
+    max_allowed=$((expected + GAP_BOUND - 1))
+    if [ "$n" -lt "$expected" ] || [ "$n" -gt "$max_allowed" ]; then
+      echo "ERROR: $f is numbered $n but must be between $expected and $max_allowed" >&2
+      echo "  (numeric max across this branch and ${target_ref:-HEAD} is $existing_max; a window" >&2
+      echo "  of $GAP_BOUND lets several parallel PRs each hold a distinct valid number without" >&2
+      echo "  a renumber when one of them merges first — see #3929)." >&2
+      echo "  If $n is still outside that window, your base is probably stale — fetch and" >&2
+      echo "  rebase onto origin/main first, which is where the number you want may already" >&2
       echo "  have been taken by a branch that merged while you were working." >&2
-      echo "  Compute it with:" >&2
+      echo "  Compute the max with:" >&2
       echo "    git ls-tree -r --name-only origin/main -- $LOG_DIR | grep -oP 'session-\\K[0-9]+' | sort -n | tail -1" >&2
       echo "  NEVER with plain 'ls | tail': it sorts lexicographically." >&2
       fail=1
@@ -311,16 +356,76 @@ if [ "${1:-}" = "--self-test" ]; then
     st_bad "filename/heading disagreement is caught" "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
   fi
 
-  # ── Case 5: a gap ────────────────────────────────────────────────────
+  # ── Case 5: a gap far past the window is still caught ────────────────
+  # max is 1280, so the window is (1280, 1290]; 1295 is well outside it —
+  # a real mistake (stale max, typo), not legitimate parallel work.
   d="$(st_new_repo gap)"
   st_write "$d" 1280 base
   st_commit "$d" "base"
-  st_write "$d" 1285 mine
+  st_write "$d" 1295 mine
   git -C "$d" add -A
   if st_run "$d"; then
-    st_bad "a gap above the max is caught" "guard passed"
+    st_bad "a gap past the window is caught" "guard passed"
   else
-    st_ok "a gap above the max is caught"
+    st_ok "a gap past the window is caught"
+  fi
+
+  # ── Case 5b: the #3929 motivating scenario — a bounded gap is NOT a
+  # renumber trigger ───────────────────────────────────────────────────
+  # Branch forked when main's max was 1280. A sibling already merged 1281
+  # (visible on origin/main). This branch was never rebased and picks
+  # 1283 for itself — not exactly max+1 (1282), the number another
+  # parallel PR might independently be holding — but inside the (1280,
+  # 1290] window and not actually taken anywhere. Before #3929 this failed
+  # ("must be exactly 1282") and forced a renumber-and-repush cycle purely
+  # to hold the dense next value; the fix's whole point is that this must
+  # now pass without touching the file. Reverting the window (back to
+  # requiring n == expected) turns this red again.
+  d="$(st_new_repo bounded-gap)"
+  st_write "$d" 1280 base
+  st_commit "$d" "base"
+  base_sha="$(git -C "$d" rev-parse HEAD)"
+  st_write "$d" 1281 sibling
+  st_commit "$d" "sibling merged to main"
+  git -C "$d" update-ref refs/remotes/origin/main "$(git -C "$d" rev-parse HEAD)"
+  git -C "$d" reset -q --hard "$base_sha"
+  st_write "$d" 1283 mine
+  git -C "$d" add -A
+  if st_run "$d"; then
+    st_ok "a bounded gap above the max (not exactly max+1) passes without a renumber (#3929)"
+  else
+    st_bad "a bounded gap above the max (not exactly max+1) passes without a renumber (#3929)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 5c: the top edge of the window passes ────────────────────────
+  # max is 1280, GAP_BOUND is 10, so max+GAP_BOUND (1290) is the LAST
+  # number the window allows. Off-by-one in either direction on the bound
+  # check would show up here or in Case 5d.
+  d="$(st_new_repo window-top)"
+  st_write "$d" 1280 base
+  st_commit "$d" "base"
+  st_write "$d" 1290 mine
+  git -C "$d" add -A
+  if st_run "$d"; then
+    st_ok "the number exactly at max+GAP_BOUND (the window's top edge) passes"
+  else
+    st_bad "the number exactly at max+GAP_BOUND (the window's top edge) passes" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 5d: one past the top edge of the window fails ────────────────
+  # The complement of 5c: proves the window has an actual ceiling, not
+  # just a floor — max+GAP_BOUND+1 (1291) must still fail.
+  d="$(st_new_repo window-over)"
+  st_write "$d" 1280 base
+  st_commit "$d" "base"
+  st_write "$d" 1291 mine
+  git -C "$d" add -A
+  if st_run "$d"; then
+    st_bad "one past max+GAP_BOUND is caught (the window has a ceiling)" "guard passed"
+  else
+    st_ok "one past max+GAP_BOUND is caught (the window has a ceiling)"
   fi
 
   # ── Case 6: two entries in one commit, contiguous ────────────────────
