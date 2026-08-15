@@ -37,11 +37,23 @@ structurally cannot cover a Rust comment citing a Rust symbol, and a general Rus
 real false-positive problem — name resolution is not substring matching.
 
 So a narrow, incident-scoped guard instead, mirroring the existing `check-architecture-citations.mjs`:
-fail on any tracked `.rs` citing `install_for_test` outside the one file that legitimately documents its
-deletion. The allowlist is an extensible symbol→file map with one entry, not a hardcoded special case.
+fail on any tracked `.rs` or `.md` citing `install_for_test` outside the one file that legitimately
+documents its deletion. The allowlist is an extensible symbol→file map with one entry, not a hardcoded
+special case.
+
+The `.md` half was not in the first draft. Review pointed out that
+`docs/architecture/sql-only-convergence.md` — the canonical design doc for this exact subsystem, and the
+one the guard's own error message tells readers to consult — still prescribed `install_for_test()` in the
+present tense. An `.rs`-only guard would never have seen it: the same defect, in the document the fix
+points at. Widening the scan meant excluding `docs/session-log/**`, since five session logs cite the
+symbol legitimately in the past tense, and widening `prek.toml`'s trigger to `\.(rs|md)$` — without that,
+an `.md`-only commit would never invoke the newly-widened scan, and the guard would have been extended in
+name only.
 
 Demonstrated rather than asserted: clean tree exits 0; injecting the citation into a tracked file exits
-1 with file and line.
+1 with file and line. The sharper evidence is that it fired unprompted — the first draft of the doc
+rewrite above named `install_for_test` while describing its replacement, and the guard caught it before
+any deliberate injection.
 
 ## What the sentinel test actually pins
 
