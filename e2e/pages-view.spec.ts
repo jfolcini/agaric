@@ -246,6 +246,14 @@ test.describe('facet narrowing (each facet does the thing)', () => {
     await addPathFilter(page, 'Project*')
     await expect(pageTitleLocator(page)).toHaveText(['Projects'])
     await page.getByRole('button', { name: /^Remove filter path:/ }).click()
+    // Pin the removal before adding the next chip: without this, a stale
+    // Project*-filtered grid (just ['Projects']) already lacks "Meetings",
+    // so the exclude poll below would pass on its very first read against
+    // that stale state — the poll would pin nothing (same failure mode as
+    // the has-property test's comment below). Barriering the removal back
+    // to the unfiltered six (which DOES include "Meetings") makes the poll
+    // below a real false→true transition.
+    await expect.poll(() => visibleTitles(page)).toContain('Meetings')
 
     // Exclude — invert the "Meet" substring match: everything BUT the two
     // meeting pages.
@@ -351,7 +359,17 @@ test.describe('compound filters (AND-compose / widen / soft-cap)', () => {
     // is a seed page, an orphan, AND in the final set) and pins nothing;
     // `not.toContain('Meetings')` is false in the unfiltered/Orphan-only
     // states (Meetings is a seed page and an orphan) and only turns true once
-    // the not-path chip has actually excluded it, so it genuinely barriers.
+    // the not-path chip has actually excluded it, so it genuinely barriers —
+    // but only through THAT (second) chip. The third chip (doesn't-exist
+    // template) makes no further difference to this page set: the template
+    // page was already excluded by the Orphan facet before it was even
+    // added, so "chip 2 landed" and "chip 3 landed" are indistinguishable by
+    // page identity in this fixture, and no visibleTitles-based poll can
+    // barrier the third click specifically. The one-shot reads below pin the
+    // fully-composed (chip1 ∧ chip2 ∧ chip3) result, not chip 3's own
+    // contribution to it; the retrying `toHaveCount(3)` group assertion at
+    // the end still catches a wrong chip count if the third click didn't
+    // land at all.
     await expect.poll(() => visibleTitles(page)).not.toContain('Meetings')
     const titles = await visibleTitles(page)
     expect(titles).toContain('Projects')
