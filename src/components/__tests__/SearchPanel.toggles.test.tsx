@@ -212,6 +212,25 @@ describe('SearchPanel toggles', () => {
     expect(screen.getByTestId('search-toggle-whole-word')).toHaveAttribute('aria-pressed', 'true')
   })
 
+  // #3881 — the default `useLocalStoragePreference` parse is a bare `as
+  // SearchToggleState` cast; a persisted value with a wrong-typed field
+  // (e.g. from a hand-edited devtools value, or a future schema change)
+  // would otherwise flow straight through as if it were valid. `SearchPanel`
+  // now supplies `validate` so a structurally-wrong stored value falls back
+  // to the defaults instead of being trusted.
+  it('falls back to default toggles when the persisted value has a wrong-typed field', () => {
+    localStorage.setItem(
+      'agaric:searchToggles:v1',
+      JSON.stringify({ caseSensitive: 'yes', wholeWord: false, isRegex: false }),
+    )
+    mockedInvoke.mockResolvedValue(emptyPage)
+    render(<SearchPanel />)
+    expect(screen.getByTestId('search-toggle-case-sensitive')).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+  })
+
   it('renders the toggle row inside a toolbar landmark', () => {
     render(<SearchPanel />)
     expect(screen.getByRole('toolbar', { name: /Search modes/i })).toBeInTheDocument()

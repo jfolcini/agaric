@@ -812,6 +812,44 @@ describe('GraphFilterBar', () => {
       expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
     })
 
+    // #3889 — when every persisted entry is invalid, the mount effect never
+    // dispatches (empty hydrated list) so the normal write-effect self-heal
+    // (persist the cleaned value once `filters` changes) never fires either.
+    // Without a dedicated fix, the wholly-corrupt value sits in storage
+    // forever and re-warns on every single mount. Assert the actual heal —
+    // the corrupt value is overwritten in place on the very first read — and
+    // that a second mount against the now-clean value does not warn again.
+    it('self-heals a wholly-invalid persisted value in place, so a later mount does not re-warn', async () => {
+      const stored = [{ kind: 'status', values: 'not-an-array' }]
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+      vi.mocked(logger.warn).mockClear()
+
+      const first = render(<StatefulHarness />)
+      await waitFor(() => {
+        expect(logger.warn).toHaveBeenCalledWith(
+          'GraphFilterBar',
+          'Dropped invalid persisted filter predicates',
+          { key: STORAGE_KEY, droppedCount: 1 },
+        )
+      })
+      // The heal itself: the corrupt raw value must have been replaced with
+      // a clean empty array, not left untouched for a write effect that
+      // never runs.
+      await waitFor(() => {
+        expect(localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify([]))
+      })
+      first.unmount()
+
+      // A second mount reads the now-healed value. Since it's a clean `[]`,
+      // nothing is dropped and the drop warning must not fire again.
+      vi.mocked(logger.warn).mockClear()
+      render(<StatefulHarness />)
+      await waitFor(() => {
+        expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+      })
+      expect(logger.warn).not.toHaveBeenCalled()
+    })
+
     it('persists filter clears (writes empty array on Clear all)', async () => {
       const user = userEvent.setup()
       const stored: GraphFilter[] = [{ type: 'status', values: ['TODO'] }]

@@ -76,6 +76,22 @@ const DEFAULT_SEARCH_TOGGLES: SearchToggleState = {
   isRegex: false,
 }
 
+/**
+ * #3881 — the default `useLocalStoragePreference` parse is `JSON.parse(raw)
+ * as SearchToggleState`: a bare type assertion, not a check. A corrupted or
+ * hand-edited stored value (e.g. a non-boolean `isRegex`) would otherwise
+ * flow straight to `SearchToggleRow` and, worse, `isRegex` feeds a `RegExp`
+ * construction elsewhere in the search pipeline — a wrong-typed value there
+ * is worth rejecting outright rather than trusting.
+ */
+function isSearchToggleState(value: SearchToggleState): boolean {
+  return (
+    typeof value.caseSensitive === 'boolean' &&
+    typeof value.wholeWord === 'boolean' &&
+    typeof value.isRegex === 'boolean'
+  )
+}
+
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
   return /[\u4E00-\u9FFF\u3400-\u4DBF\u3000-\u303F\u30A0-\u30FF\u3040-\u309F\uAC00-\uD7AF]/.test(
@@ -209,6 +225,7 @@ export function SearchPanel(): React.ReactElement {
   const [toggles, setToggles] = useLocalStoragePreference<SearchToggleState>(
     SEARCH_TOGGLE_STORAGE_KEY,
     DEFAULT_SEARCH_TOGGLES,
+    { validate: isSearchToggleState },
   )
   // History dropdown visibility (shown when the input is focused
   // AND empty).

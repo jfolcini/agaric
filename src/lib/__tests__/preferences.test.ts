@@ -407,6 +407,16 @@ describe('representative real preferences (#2466 migration)', () => {
     expect(readPreference(PREFERENCES.starredPages)).toEqual(['P1', 'P2'])
   })
 
+  // #3881 — both definitions used the bare generic `jsonParse<string[]>`
+  // (`JSON.parse(raw) as string[]`, no shape check). Mirrors the
+  // `starredPages` assertion above.
+  it('blockCollapse and blockCollapseLegacy drop non-string entries instead of casting them through', () => {
+    localStorage.setItem('collapsed_ids:page-1', JSON.stringify(['b1', 42, null, 'b2']))
+    localStorage.setItem('collapsed_ids', JSON.stringify(['legacy-1', { bogus: true }]))
+    expect(readPreference(PREFERENCES.blockCollapse, 'page-1')).toEqual(['b1', 'b2'])
+    expect(readPreference(PREFERENCES.blockCollapseLegacy)).toEqual(['legacy-1'])
+  })
+
   it('blockCollapse (page-scoped) and blockCollapseLegacy (device-scoped) never collide despite sharing a base key', () => {
     writePreference(PREFERENCES.blockCollapse, ['b1'], 'page-1')
     writePreference(PREFERENCES.blockCollapseLegacy, ['legacy-1'])

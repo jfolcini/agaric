@@ -81,6 +81,15 @@ export interface GraphFilterBarTag {
  * real per-`kind` validator (`src/lib/filters/validate.ts`) over the array
  * and drops any entry that fails — including one with an unrecognised
  * `kind` — before the survivors ever reach `canonicalToGraphFilters`.
+ *
+ * #3889: when every entry is dropped, `predicates` is `[]`. The caller's
+ * mount effect never dispatches an empty hydrated list (see below), so the
+ * normal write-effect self-heal — persisting the cleaned value once
+ * `filters` changes — never fires either: nothing changed from the parent's
+ * point of view. Left alone, the wholly-corrupt value would sit in storage
+ * forever and re-warn on every mount. So this is the one case where the read
+ * path writes back itself, overwriting the corrupt value with the (empty)
+ * cleaned one right here, rather than leaving it to the write effect.
  */
 function readPersistedFilters(): GraphFilter[] | null {
   if (typeof window === 'undefined') return null
@@ -102,6 +111,14 @@ function readPersistedFilters(): GraphFilter[] | null {
           key: STORAGE_KEY,
           droppedCount,
         })
+        if (predicates.length === 0) {
+          // Total corruption (#3889): nothing survived, so hydration below
+          // dispatches nothing and the write effect that would normally
+          // persist the cleaned value never runs. Self-heal here instead —
+          // overwrite the corrupt stored value with the (empty) cleaned one
+          // so the next mount finds a clean `[]` and stops re-warning.
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(predicates))
+        }
       }
       return canonicalToGraphFilters(predicates)
     }

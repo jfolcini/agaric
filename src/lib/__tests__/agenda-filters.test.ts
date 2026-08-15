@@ -254,6 +254,20 @@ describe('executeAgendaFilters', () => {
       expect(result.cursor).toBeNull()
       expect(mockedInvoke).not.toHaveBeenCalled()
     })
+
+    // #3881 — the composite cursor is `agenda-unfiltered:<JSON>`; the decoder
+    // used to only check that the JSON was AN object, not that its fields
+    // were the `string | null | undefined` the pagination call requires. A
+    // wrong-typed `due` must reject the whole cursor rather than reach
+    // `queryByProperty` as a bogus backend cursor.
+    it('#721: loadMoreUnfilteredAgenda rejects a well-formed-JSON cursor whose field is wrong-typed', async () => {
+      const cursor = `agenda-unfiltered:${JSON.stringify({ due: 42, scheduled: null })}`
+      const result = await loadMoreUnfilteredAgenda(cursor, null)
+      expect(result.blocks).toHaveLength(0)
+      expect(result.hasMore).toBe(false)
+      expect(result.cursor).toBeNull()
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
   })
 
   // -------------------------------------------------------------------------

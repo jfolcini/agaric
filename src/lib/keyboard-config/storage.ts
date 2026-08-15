@@ -36,6 +36,37 @@ const STORAGE_KEY = 'agaric-keyboard-shortcuts'
 let cachedRaw: string | null = null
 let cachedOverrides: Record<string, string> = {}
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Validate a parsed overrides blob (#3881): the previous `JSON.parse(raw) as
+ * Record<string, string>` was a bare type assertion — a hand-edited devtools
+ * value, a stale entry from an older schema, or a future migration could
+ * hand a non-string `keys` value straight to `normalizeBinding` /
+ * `s.keys.split(' / ')` elsewhere in this module. Rejects a non-object
+ * payload outright and drops any per-id entry whose value isn't a string,
+ * logging the drop count (mirrors `src/lib/filters/validate.ts`'s
+ * drop-and-log discipline).
+ */
+function sanitizeOverrides(parsed: unknown): Record<string, string> {
+  if (!isPlainRecord(parsed)) return {}
+  const result: Record<string, string> = {}
+  let droppedCount = 0
+  for (const [id, keys] of Object.entries(parsed)) {
+    if (typeof keys === 'string') result[id] = keys
+    else droppedCount++
+  }
+  if (droppedCount > 0) {
+    logger.warn('KeyboardConfig', 'Dropped invalid persisted shortcut overrides', {
+      key: STORAGE_KEY,
+      droppedCount,
+    })
+  }
+  return result
+}
+
 function invalidateCache(): void {
   // Force the next `getCustomOverrides` to re-parse even if the raw string
   // happens to compare equal (it won't, for a real write — but an explicit
@@ -64,10 +95,11 @@ export function getCustomOverrides(): Record<string, string> {
       return cachedOverrides
     }
     if (raw === cachedRaw) return cachedOverrides
-    const parsed = JSON.parse(raw) as Record<string, string>
+    const parsed: unknown = JSON.parse(raw)
+    const overrides = sanitizeOverrides(parsed)
     cachedRaw = raw
-    cachedOverrides = parsed
-    return parsed
+    cachedOverrides = overrides
+    return overrides
   } catch (e) {
     logger.warn('KeyboardConfig', 'failed to load custom shortcut overrides', undefined, e)
     cachedRaw = null

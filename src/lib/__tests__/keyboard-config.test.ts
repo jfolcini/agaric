@@ -117,6 +117,28 @@ describe('keyboard-config', () => {
     expect(getCustomOverrides()).toEqual({})
   })
 
+  // #3881 — the previous reader was `JSON.parse(raw) as Record<string,
+  // string>`, a bare type assertion. A non-string `keys` value would flow
+  // straight into `normalizeBinding`/`s.keys.split(' / ')` elsewhere in this
+  // module. Pin the actual drop, not just "no crash".
+  it('getCustomOverrides drops entries whose value is not a string, keeping the valid siblings, and logs the drop count', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ prevBlock: 'Ctrl + P', nextBlock: 42, indentBlock: null }),
+    )
+    expect(getCustomOverrides()).toEqual({ prevBlock: 'Ctrl + P' })
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      'KeyboardConfig',
+      'Dropped invalid persisted shortcut overrides',
+      { key: STORAGE_KEY, droppedCount: 2 },
+    )
+  })
+
+  it('getCustomOverrides returns empty (not a crash) for a non-object stored value', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(['prevBlock', 'Ctrl + P']))
+    expect(getCustomOverrides()).toEqual({})
+  })
+
   it('setCustomShortcut stores override', () => {
     setCustomShortcut('prevBlock', 'Ctrl + P')
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')

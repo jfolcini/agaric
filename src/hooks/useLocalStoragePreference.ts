@@ -25,14 +25,28 @@
  * Defensive against the three failure modes localStorage exhibits:
  *   1. Read throws (e.g. SecurityError in private mode) → fall back to
  *      `defaultValue`, log once per instance via the structured logger.
- *   2. Stored value can't be parsed (`parse` throws / invalid JSON) →
- *      fall back to `defaultValue`. No log — invalid stored data is
- *      common after schema migrations and not actionable.
+ *   2. Stored value can't be parsed (`parse` throws / invalid JSON), OR
+ *      parses to a well-formed JS value that isn't actually a valid `T`
+ *      (`validate` returns `false`) → fall back to `defaultValue`. No
+ *      log — invalid stored data is common after schema migrations and
+ *      not actionable.
  *   3. Write throws (quota exceeded, private mode) → swallow + log. The
  *      calling instance keeps the new value in memory for the session
  *      (preserving the legacy useState-based behavior, so e.g. a settings
  *      toggle still responds in private mode), but NO broadcast is sent —
  *      nothing was persisted for other instances to read.
+ *
+ * ## Shape validation (#3881)
+ *
+ * `parse` runs on `unknown` data fresh out of storage — `JSON.parse(raw) as
+ * T` (the default) type-asserts, it doesn't check. A stale entry from an
+ * older schema, a hand-edited devtools value, or a future migration can
+ * produce a well-formed value of the WRONG shape, which then flows to every
+ * consumer as if it were a valid `T`. Callers whose `T` is more than a bare
+ * primitive should supply `validate` so a structurally-wrong stored value is
+ * treated exactly like a parse failure (fall back to `defaultValue`) instead
+ * of being trusted. `validate` is optional and additive — omitting it keeps
+ * today's behavior unchanged for every existing caller.
  *
  * ## Contract details
  *
@@ -64,6 +78,14 @@ export interface LocalStoragePreferenceOptions<T> {
   parse?: (raw: string) => T
   /** Convert the value back to a string for storage. */
   serialize?: (value: T) => string
+  /**
+   * Optional structural check run on every successfully-`parse`d value
+   * (#3881). Return `false` to reject it — treated exactly like a `parse`
+   * throw, falling back to `defaultValue`. Use this when `T` is richer than
+   * a bare primitive/string-literal-union and a corrupted stored value could
+   * otherwise reach consumers typed as a valid `T` unchecked.
+   */
+  validate?: (value: T) => boolean
   /**
    * Source label for `logger.warn` calls. Defaults to
    * `'useLocalStoragePreference'`.
@@ -155,6 +177,7 @@ export function useLocalStoragePreference<T>(
   const optsRef = useRef({
     parse: options.parse ?? DEFAULT_PARSE<T>,
     serialize: options.serialize ?? DEFAULT_SERIALIZE<T>,
+    validate: options.validate,
     source: options.source ?? 'useLocalStoragePreference',
     defaultValue,
   })
@@ -191,7 +214,13 @@ export function useLocalStoragePreference<T>(
       value = optsRef.current.defaultValue
     } else {
       try {
-        value = optsRef.current.parse(raw)
+        const parsed = optsRef.current.parse(raw)
+        // #3881 — `parsed` may be well-formed JS of the WRONG shape (parse
+        // itself only throws on genuinely invalid input, e.g. bad JSON). A
+        // supplied `validate` catches that case too, falling back exactly
+        // like a parse failure.
+        const validate = optsRef.current.validate
+        value = validate === undefined || validate(parsed) ? parsed : optsRef.current.defaultValue
       } catch {
         // Invalid stored data — fall back silently. Not log-worthy: a
         // schema/format migration will hit this on first read.
