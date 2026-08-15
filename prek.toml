@@ -166,6 +166,50 @@ pass_filenames = false
 types_or = ["ts", "tsx"]
 stages = ["pre-commit"]
 
+# tsc root-file drop guard (#3912): `tsc -b` (the hook above) silently
+# DROPS a root file from a project's `include` set whenever it shares a
+# basename with a same-directory sibling of a different TS extension —
+# e.g. a `.ts` file makes tsc discard a same-named `.tsx` file, with no
+# error, no warning, and a clean exit. That is exactly how
+# `src/hooks/__tests__/useStarredPages.test.tsx` went unchecked since it
+# was added — the `tsc` hook above was green the entire time. This guard
+# independently re-derives each of the five referenced tsconfig projects'
+# intended `.ts`/`.tsx` root-file set from their raw include/exclude
+# patterns (without replicating tsc's same-basename collapsing) and
+# fails if it disagrees with what `tsc -p <project> --showConfig`
+# actually resolved — in either direction, so its own pattern-resolution
+# model can't quietly drift from tsc's either. always_run — this scans
+# the whole tree itself (pass_filenames=false) and a NEW collision is
+# always introduced by an add/rename that `files` would catch, but a
+# regression in the guard script itself (scripts/check-tsc-root-files.mjs)
+# must still be caught even on a commit that touches neither .ts/.tsx
+# source nor the script (#3722-class lesson: prek's changed-file set
+# excludes deletions, so a trigger regex is not a substitute for running
+# the check).
+[[repos.hooks]]
+id = "tsc-root-files"
+name = "tsc root-file drop guard (#3912)"
+entry = "node scripts/check-tsc-root-files.mjs"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
+# Self-test the tsc root-file drop guard's own exit behavior (a real
+# a.ts/a.tsx collision, driven end-to-end through the real
+# `tsc -p ... --showConfig`, FAILS; renaming away the collision PASSES;
+# plus the pure include/exclude pattern-resolution cases) whenever the
+# guard script itself changes, so a regression that defangs it can't
+# land.
+[[repos.hooks]]
+id = "tsc-root-files-self-test"
+name = "tsc root-file drop guard self-test (#3912 fixtures)"
+entry = "node scripts/check-tsc-root-files.mjs --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
 # CSS variable wrapper guard — theme uses oklch(), so hsl()/rgb() wrappers are invalid
 [[repos]]
 repo = "local"
