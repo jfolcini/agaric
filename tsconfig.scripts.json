@@ -1,0 +1,13 @@
+{
+  "//": "Typecheck project for scripts/**/*.ts (#3905). Before this existed, no project reference included scripts/, so `tsc -b` passed vacuously for every .ts file there — a review of #3804 found 6 real type errors under the repo's own strict options that this gate said nothing about (fixed in #3804/#3906; this project is the gap that hid them). REFERENCED from tsconfig.json, deliberately, per the same rule the other project tsconfigs state: a project outside the reference list is a project nothing checks. Scoped to `.ts` only — scripts/ also holds .mjs (plain JS, run directly by node/vitest, not type-checked anywhere else in the repo either) and .py/.sh (out of tsc's domain entirely); pulling those in is a separate decision, not silently bundled into this one. `@/*` mirrors tsconfig.app.json's alias because scripts/mutation-harnesses/*.harness.ts imports src/ modules through it; noEmit keeps this out of any build output.",
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.scripts.tsbuildinfo",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node", "vite/client"],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["scripts/**/*.ts"]
+}
