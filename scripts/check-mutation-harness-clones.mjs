@@ -517,6 +517,21 @@ function checkTree({ root, harnessDir }) {
         })
         continue
       }
+      // #3970 — name the path that was actually RESOLVED, not the text the
+      // pin author wrote. `path.join(root, '/etc/passwd')` is
+      // `<root>/etc/passwd`: the leading `/` is neutralised, which is the
+      // correct security behaviour and is why the absolute path is never
+      // opened. But a diagnostic reading "but /etc/passwd does not exist"
+      // names a path this guard never looked at — the reader confirms
+      // `/etc/passwd` is right there and concludes the guard is broken.
+      // Only the file-on-disk messages below use this; the pin's own
+      // identity is still reported verbatim so the marker can be found.
+      const resolvedRel = relToRoot.split(path.sep).join('/')
+      const resolvedNote =
+        resolvedRel === pin.sourcePath
+          ? pin.sourcePath
+          : `${resolvedRel} (the pin text "${pin.sourcePath}" is joined to the repo root, which ` +
+            `neutralises a leading "/" or "./" — ${resolvedRel} is the path this guard resolved and checked)`
       // Existence, file-ness, symlink containment and the read all happen
       // against ONE open descriptor rather than four lookups of the same
       // path. Checking a path and then reading it is a TOCTOU race
@@ -539,8 +554,8 @@ function checkTree({ root, harnessDir }) {
           harness: relHarness,
           message:
             err.code === 'ENOENT'
-              ? `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.symbolName}, but ${pin.sourcePath} does not exist`
-              : `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.symbolName}, but ${pin.sourcePath} could not be opened (${err.code ?? err.message})`,
+              ? `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.symbolName}, but ${resolvedNote} does not exist`
+              : `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.symbolName}, but ${resolvedNote} could not be opened (${err.code ?? err.message})`,
         })
         continue
       }
@@ -551,7 +566,7 @@ function checkTree({ root, harnessDir }) {
         if (!fs.fstatSync(fd).isFile()) {
           violations.push({
             harness: relHarness,
-            message: `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.symbolName}, but ${pin.sourcePath} is a directory, not a file`,
+            message: `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.symbolName}, but ${resolvedNote} is a directory, not a file`,
           })
           continue
         }
@@ -1601,6 +1616,60 @@ export function target(a: number, b: string): number {
       )
     }
     writeSource(originalBody)
+
+    // Case 15b (#3970): an ABSOLUTE pin path is neutralised by `path.join`
+    // (`path.join(root, '/etc/passwd')` → `<root>/etc/passwd`), so the file
+    // named in the marker is never opened. That resolution is the
+    // security-relevant part and is unchanged; what this case pins is the
+    // REPORT. The violation must name the path that was actually resolved
+    // and checked — a message reading "but /etc/passwd does not exist" is a
+    // claim about a path this guard never looked at, and a reader who goes
+    // and confirms /etc/passwd is right there concludes the guard is broken.
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: /etc/passwd#example sha256=${originalHash}\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    const absMsg = r.violations[0]?.message ?? ''
+    if (
+      r.violations.length === 1 &&
+      absMsg.includes('does not exist') &&
+      absMsg.includes('etc/passwd (the pin text "/etc/passwd" is joined to the repo root') &&
+      !absMsg.includes('but /etc/passwd does not exist')
+    ) {
+      ok('an absolute pin path is reported under the path RESOLVED, not the one written')
+    } else {
+      fail(
+        'an absolute pin path is reported under the path RESOLVED, not the one written',
+        JSON.stringify(r.violations),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
+
+    // Case 16b (#3970): the converse — an ordinary repo-relative pin, where
+    // written and resolved paths are the SAME, must keep its short message
+    // and not acquire the "resolved to …" clarification. Without this, a
+    // fix that unconditionally appended the resolution would pass case 15
+    // while making every everyday failure message noisier.
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: src/lib/does-not-exist.ts#example sha256=${originalHash}\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    const relMsg = r.violations[0]?.message ?? ''
+    if (
+      r.violations.length === 1 &&
+      relMsg.includes('but src/lib/does-not-exist.ts does not exist') &&
+      !relMsg.includes('joined to the repo root')
+    ) {
+      ok('a plain repo-relative pin keeps the short message (written path == resolved path)')
+    } else {
+      fail(
+        'a plain repo-relative pin keeps the short message (written path == resolved path)',
+        JSON.stringify(r.violations),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
   }
