@@ -1,11 +1,12 @@
 //! #1323 (Step 1, tags only): conformance test that drives the SAME
 //! `AddTag` then `RemoveTag` ops through BOTH the engine arm
 //! (`apply_*_via_loro`, via the real foreground `apply_op_tx` pipeline
-//! with the Loro engine installed) AND the sql_only fallback arm
-//! (`apply_*_sql_only`, called directly — exactly the fn the routing
-//! dispatches to when `agaric_engine::loro::shared::get()` is `None`), then
-//! asserts the resulting `block_tags` + `block_tag_inherited` rows are
-//! byte-for-byte IDENTICAL between the two arms after each settle.
+//! with a real `&LoroState`) AND the sql_only fallback arm
+//! (`apply_*_sql_only`, called directly — the same fn the engine arm's
+//! own routing falls back to when the block's space can't be resolved or
+//! the block is missing from the engine tree), then asserts the resulting
+//! `block_tags` + `block_tag_inherited` rows are byte-for-byte IDENTICAL
+//! between the two arms after each settle.
 //!
 //! The fixture uses a parent → child hierarchy so the tag inheritance
 //! fan-out (`tag_inheritance::propagate_tag_to_descendants` on add,
@@ -13,19 +14,22 @@
 //! PARENT must write a `block_tag_inherited` row for the CHILD in BOTH
 //! arms.
 //!
-//! #891 lesson: a test without `install_for_test` silently runs the
-//! FALLBACK, not production. The engine arm therefore asserts that
-//! `sql_only_fallback::count()` did NOT increment across its ops
-//! (delta == 0), proving the engine path actually ran.
+//! #891 lesson: a test that never checks whether the engine path actually
+//! ran can silently pass on the SQL-only FALLBACK instead of production.
+//! The engine arm therefore asserts that `sql_only_fallback::count()` did
+//! NOT increment across its ops (delta == 0), proving the engine path
+//! actually ran.
 //!
-//! Process isolation: the `GLOBAL` Loro `OnceLock` is process-wide and
-//! first-write-wins (see `loro::shared::install_for_test`), so a single
-//! process cannot toggle the engine off after installing it. The
-//! fallback arm therefore drives the `apply_*_sql_only` fns directly
-//! (the established pattern — see `move_sql_only_cycle_tests`), which is
-//! the identical code the via-loro routing calls on `get() == None`.
-//! Run under `cargo nextest run` (one process per test), never plain
-//! `cargo test`.
+//! #2249: `LoroState` is an ordinary per-instance value, not a process
+//! global — `run_engine_arm` constructs its own fresh instance and
+//! `run_fallback_arm` never constructs one at all, so the two arms cannot
+//! interfere with each other. The fallback arm drives the
+//! `apply_*_sql_only` fns directly (the established pattern — see
+//! `move_sql_only_cycle_tests`), which is the identical code the
+//! via-loro routing falls back to when space resolution fails or the
+//! engine tree is missing the block. These tests run fine under plain
+//! `cargo test`, same as `cargo nextest run` — isolation is per-instance,
+//! not per-process.
 
 use super::*;
 use crate::db::init_pool;
@@ -274,8 +278,9 @@ async fn run_engine_arm() -> (
 
 /// Fallback arm: NO engine. Seed the identical hierarchy directly in SQL,
 /// drive the `apply_add_tag_sql_only` then `apply_remove_tag_sql_only`
-/// fns directly (the exact code the via_loro routing dispatches to on
-/// `shared::get() == None`), snapshot after each.
+/// fns directly (the exact code the via_loro routing falls back to when
+/// space resolution fails or the engine tree is missing the block),
+/// snapshot after each.
 async fn run_fallback_arm() -> (
     Vec<TagRow>,
     Vec<InheritedRow>,

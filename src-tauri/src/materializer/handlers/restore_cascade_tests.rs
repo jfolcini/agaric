@@ -99,9 +99,9 @@ async fn seed_deleted_subtree(pool: &SqlitePool) {
         .unwrap();
 }
 
-/// Returns a fresh LoroState — install_for_test pattern.  Unlike
-/// `loro::shared::install_for_test` the global is process-local and
-/// per-nextest-process, so tests don't conflict.
+/// Returns a fresh, per-test `LoroState`. #2249: an ordinary value, not a
+/// process-global — each call is fully isolated, so tests don't conflict
+/// even running concurrently under plain `cargo test`.
 fn fresh_loro_state() -> LoroState {
     // #2249: per-test isolated state (no process global).
     LoroState::new()
@@ -266,18 +266,19 @@ async fn dispatch_restore_descendants_empty_list_is_noop() {
 /// skip so the divergence is observable instead of healing only on boot
 /// replay.
 ///
-/// Drives the parse-failure skip path: the engine IS installed (so the
-/// `agaric_engine::loro::shared::get()` early-return is not the one taken), and
-/// the cohort is non-empty (so the empty-list fast path is not taken),
-/// but the root record's payload is not valid JSON — so the
+/// Drives the parse-failure skip path: a real `&LoroState` is passed (#2249
+/// — `dispatch_restore_descendants` takes it as a required parameter, so
+/// there is no "engine not installed" early-return to avoid), and the
+/// cohort is non-empty (so the empty-list fast path is not taken), but the
+/// root record's payload is not valid JSON — so the
 /// `serde_json::from_str::<RestoreBlockPayload>` parse fails and the
 /// helper bumps the counter and returns.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_restore_descendants_parse_failure_bumps_divergence_metric() {
     let (pool, _dir) = fresh_pool().await;
     seed_deleted_subtree(&pool).await;
-    // Engine MUST be installed so the `get()` early-return is not the
-    // path exercised — we want to reach the payload parse.
+    // A real `&LoroState` is always passed (#2249: required parameter,
+    // not an optional process-global) — we want to reach the payload parse.
     let state = fresh_loro_state();
 
     // Root record with an UNPARSEABLE payload (not valid JSON, and in

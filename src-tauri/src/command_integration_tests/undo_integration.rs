@@ -797,8 +797,10 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
 /// pins that documented behaviour (see the comment on `reverse_create_block`)
 /// so a future change that silently switches to a hard purge fails loudly.
 ///
-/// Driven through the production ENGINE path (`install_for_test` + the
-/// foreground `dispatch_op`/undo pipeline), asserting the SETTLED state: the row
+/// Driven through the production ENGINE path (`test_materializer`'s real
+/// per-instance `LoroState` + the foreground `append_local_op` →
+/// `dispatch_op` → settle pipeline, via `dispatch_via_engine`, then undo),
+/// asserting the SETTLED state: the row
 /// is present-but-soft-deleted in SQL and the node is still readable from the
 /// per-space engine tree (a hard purge would have removed both).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -11,15 +11,17 @@
 //!
 //! ## Why the engine path is guaranteed (the #891 false-green trap)
 //!
-//! A test that applies ops WITHOUT `agaric_engine::loro::shared::install_for_test()`
-//! silently runs the `apply_*_sql_only` FALLBACK, whose provisional positions
-//! differ from production — so it would never see a reprojection bug. Every
-//! test here therefore:
+//! A test that never confirms the engine path ran can silently pass on the
+//! `apply_*_sql_only` FALLBACK, whose provisional positions differ from
+//! production — so it would never see a reprojection bug. Every test here
+//! therefore:
 //!
-//! * `install_for_test()`s the process-global Loro engine and `registry.clear()`s
-//!   it per case (the shared-registry isolation contract — run under
-//!   `cargo nextest`, one process per test, never plain `cargo test`; see
-//!   `loro::shared::install_for_test` and #1079);
+//! * constructs its own fresh `LoroState` per case (#2249: an ordinary
+//!   per-instance value, not a process-global — no install step, and no
+//!   nextest-only process isolation needed, unlike the retired
+//!   `OnceLock`-backed registry, #1079); a case that needs multiple
+//!   sequential "boots" clears that same instance's registry between them
+//!   via `state.registry.clear()`;
 //! * seeds a real page (with `space_id`) into BOTH SQL and the engine tree, and
 //!   re-anchors every harness ROOT `CreateBlock` under that page, so
 //!   `resolve_block_space` always resolves and ops route through

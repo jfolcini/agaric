@@ -3603,8 +3603,9 @@ async fn local_delete_restore_tombstones_cohort_no_phantom_1257() {
 // and P's delete get DISTINCT `deleted_at` values even within one wall-clock
 // ms, so restoring P (keyed on P's `deleted_at`) restores ONLY P + C and
 // leaves the independently-deleted G trashed. Driven through the production
-// pipeline (`install_for_test` engine + real `delete_block_inner` /
-// `restore_block_inner`); asserted on the SETTLED SQL + engine state.
+// pipeline (`test_materializer`'s real per-instance `LoroState` + real
+// `delete_block_inner` / `restore_block_inner`); asserted on the SETTLED
+// SQL + engine state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restore_does_not_over_restore_independently_deleted_nested_subtree_1549() {
     let s1 = seed_label_to_id("S1");

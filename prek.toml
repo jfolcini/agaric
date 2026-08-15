@@ -424,6 +424,27 @@ pass_filenames = false
 files = "\\.(md|rs|ts|tsx)$"
 stages = ["pre-commit"]
 
+# Dead-symbol citation guard (#3817). ~10 Rust test-tree comments instructed
+# readers to call `shared::install_for_test()` to drive the production
+# engine path; that fn was deleted in #2249/#2250 (engine state moved from a
+# process-global `OnceLock` to an explicit `&LoroState` parameter), and the
+# stale comments actively misled a later session before being fixed. This
+# hook fails any tracked `*.rs` file (other than the one file that
+# legitimately documents the deletion) that still mentions
+# `install_for_test`. Narrow and incident-specific by design — see
+# scripts/check-dead-symbol-citations.mjs for the rationale and how to add
+# another dead symbol if this recurs elsewhere.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "dead-symbol-citations"
+name = "no stale citations of deleted Rust symbols"
+entry = "node scripts/check-dead-symbol-citations.mjs"
+language = "system"
+pass_filenames = false
+files = "\\.rs$"
+stages = ["pre-commit"]
+
 # Frontend import-cycle guard (#761). The `src/` module graph was driven to
 # zero cycles (Tarjan SCC over ~600 first-party modules); this hook keeps it
 # there. A new value- or type-import cycle confuses bundlers (init-order

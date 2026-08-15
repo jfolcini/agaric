@@ -1,9 +1,10 @@
 //! #1323 (Step 4, move): conformance test that drives the SAME
 //! `MoveBlock(child → new parent)` op through BOTH the engine arm
 //! (`apply_move_block_via_loro`, via the real foreground `apply_op_tx`
-//! pipeline with the Loro engine installed) AND the sql_only fallback arm
-//! (`apply_move_block_sql_only`, called directly — exactly the fn the routing
-//! dispatches to when `agaric_engine::loro::shared::get()` is `None`), then asserts the
+//! pipeline with a real `&LoroState`) AND the sql_only fallback arm
+//! (`apply_move_block_sql_only`, called directly — the same fn the engine
+//! arm's own routing falls back to when space resolution fails or the
+//! engine tree is missing the block), then asserts the
 //! resulting `blocks.parent_id` is IDENTICAL between the two arms.
 //!
 //! The fixture seeds TWO parents (P1, P2) each with multiple children, so a
@@ -49,15 +50,16 @@
 //!   asserts the fallback's no-op-skip agrees with the command path's reject on
 //!   the SAME cycle input (the probe is the single source of truth).
 //!
-//! #891 lesson: a test without `install_for_test` silently runs the FALLBACK,
-//! not production. The engine arm asserts `sql_only_fallback::count()` did NOT
-//! increment across its move (delta == 0), proving the engine path ran.
+//! #891 lesson: a test that never checks whether the engine path actually ran
+//! can silently pass on the FALLBACK instead of production. The engine arm
+//! asserts `sql_only_fallback::count()` did NOT increment across its move
+//! (delta == 0), proving the engine path ran.
 //!
-//! Process isolation: the `GLOBAL` Loro `OnceLock` is process-wide and
-//! first-write-wins, so a single process cannot toggle the engine off after
-//! installing it. The fallback arm drives `apply_move_block_sql_only` directly
-//! (the established pattern). Run under `cargo nextest run` (one process per
-//! test), never plain `cargo test`.
+//! #2249: `LoroState` is an ordinary per-instance value, not a process
+//! global, so the two arms' engine states (where the engine arm has one at
+//! all) cannot interfere with each other. The fallback arm drives
+//! `apply_move_block_sql_only` directly (the established pattern). These
+//! tests run fine under plain `cargo test`, same as `cargo nextest run`.
 
 use super::*;
 use crate::db::init_pool;
@@ -252,8 +254,8 @@ async fn run_engine_arm() -> (Option<String>, i64) {
 
 /// Fallback arm: NO engine. Seed the identical hierarchy directly in SQL, drive
 /// `apply_move_block_sql_only(C1A → P2, index 2)` directly (the exact code the
-/// via_loro routing dispatches to on `shared::get() == None`). Returns
-/// `(c1a_parent, c1a_position)`.
+/// via_loro routing falls back to when space resolution fails or the engine
+/// tree is missing the block). Returns `(c1a_parent, c1a_position)`.
 async fn run_fallback_arm() -> (Option<String>, i64) {
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("fallback_arm.db"))
