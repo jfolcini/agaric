@@ -218,6 +218,11 @@ function controlLoopLTE(
   let slot = 0
   for (let i = 0; i <= insertAt; i++) {
     // MUTATED: < -> <=
+    // NOT byte-identical to Stryker's mutant: the `item &&` guard is ours. When
+    // insertAt === without.length the real mutant reads past the end and throws a
+    // TypeError, which Stryker counts as a kill; this clone silently skips instead.
+    // So the control UNDERCOUNTS, in the safe direction — every difference it does
+    // report is real, and the `> 0` assertion is if anything conservative.
     const item = without[i]
     if (item && (item.parent_id ?? null) === parentId && item.depth === childDepth) slot += 1
   }

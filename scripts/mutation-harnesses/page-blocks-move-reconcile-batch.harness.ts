@@ -17,7 +17,8 @@
  *
  * The ONE equivalence claim that still describes live code:
  *   - `const updatedBag: FlatBlock[] = []` [ArrayDeclaration] ->
- *     `['Stryker was here']`, currently `page-blocks-move.ts:217:3`
+ *     `['Stryker was here']`, currently `page-blocks-move.ts:217:35` (col 35 is the `[]` literal, which is
+ *     what ArrayDeclaration mutates; col 3 is `const`)
  *     (verify with `grep -n 'const updatedBag' src/stores/page-blocks-move.ts`).
  *     The ledger's own claim is two-sided: 526 differing inputs when
  *     `rootParentId: null` is allowed into the sweep, 0 when restricted to
