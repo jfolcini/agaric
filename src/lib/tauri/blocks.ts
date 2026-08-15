@@ -197,10 +197,12 @@ export async function purgeBlocksByIds(blockIds: string[]): Promise<number> {
  * {@link restoreAllDeletedInSpace} / {@link purgeAllDeletedInSpace} can
  * chunk an arbitrarily large trash into backend-accepted batches instead
  * of surfacing `AppError::Validation` for a busy trash. Exported (#3885)
- * purely so tests of the chunked path can build a fixture sized off this
+ * so tests of the chunked path can build a fixture sized off this
  * constant — `MAX_TRASH_BATCH_IDS + 1` — instead of a magic literal that
  * silently stops meaning "one over the batch cap" if this value ever
- * changes.
+ * changes. (It is a plain numeric constant, so being reachable via the
+ * `src/lib/tauri.ts` `*`-barrel too, beyond this module, is harmless —
+ * noted here since that's slightly wider than "tests only".)
  */
 export const MAX_TRASH_BATCH_IDS = 1000
 

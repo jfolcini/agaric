@@ -1594,8 +1594,11 @@ describe('TrashView', () => {
     // cost auto-scales with the cap. Raise MAX_TRASH_BATCH_IDS (currently
     // 1000) to, say, 10000 and this silently becomes a 10001-item render
     // that blows even the 60s budget below — nothing here would fail loudly
-    // until it did. The same is true of the two sibling fixtures at
-    // :1648/:1695. DI (dropping the fixture size below the cap entirely) is
+    // until it did. The same is true of the two sibling fixtures in
+    // "shows singular partial-progress toast when exactly 1 item was
+    // removed before the error" and "toast and screen-reader announcement
+    // agree on singular wording for a 1-item partial purge" below. DI
+    // (dropping the fixture size below the cap entirely) is
     // the tracked fix for the underlying cost — see #3885.
     const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
       i === 0
@@ -1644,7 +1647,9 @@ describe('TrashView', () => {
   // singular form.
   it('shows singular partial-progress toast when exactly 1 item was removed before the error', async () => {
     const user = userEvent.setup()
-    // Render cost auto-scales with MAX_TRASH_BATCH_IDS — see the note at :1600.
+    // Render cost auto-scales with MAX_TRASH_BATCH_IDS — see the note in
+    // "shows partial-progress toast (not the generic failure) when a later
+    // empty-trash chunk fails" above.
     const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
       i === 0
         ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
@@ -1691,7 +1696,9 @@ describe('TrashView', () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
-    // Render cost auto-scales with MAX_TRASH_BATCH_IDS — see the note at :1600.
+    // Render cost auto-scales with MAX_TRASH_BATCH_IDS — see the note in
+    // "shows partial-progress toast (not the generic failure) when a later
+    // empty-trash chunk fails" above.
     const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
       i === 0
         ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })

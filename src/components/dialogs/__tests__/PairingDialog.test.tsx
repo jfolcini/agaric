@@ -40,6 +40,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import { PairingDialog } from '@/components/dialogs/PairingDialog'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { announce } from '@/lib/announcer'
@@ -615,6 +616,17 @@ describe('PairingDialog', () => {
   it('shows loading state while the host is initializing', async () => {
     // Make every invoke call hang until we release it below (rather than
     // `new Promise(() => {})`, which never resolves at all — see #3810).
+    //
+    // #3904 (review) — this implementation closes over `pendingInvokes` and
+    // survives past this test's end, because `vi.clearAllMocks()` (in the
+    // shared `beforeEach`) clears calls, not implementations. A later test
+    // that forgot its own stub would inherit this one and hang on an
+    // unresolvable promise instead of hitting `strictInvokeFallback` and
+    // failing by name — the same sticky shape the old
+    // `new Promise(() => {})` had (pre-existing, not introduced by the drain
+    // added below). The `finally` at the end of this test restores the
+    // strict base implementation, so the stickiness is scoped to this
+    // test's own body.
     const pendingInvokes: Array<{ cmd: string; resolve: (value: unknown) => void }> = []
     mockedInvoke.mockImplementation(
       (cmd: string) =>
@@ -622,95 +634,115 @@ describe('PairingDialog', () => {
           pendingInvokes.push({ cmd, resolve })
         }),
     )
+    try {
+      // #3463 (review): the host session now starts automatically on mount —
+      // there is no button to click to reach this loading state, it's the
+      // very first thing rendered.
+      const { unmount } = render(<PairingDialog open onOpenChange={vi.fn()} />)
 
-    // #3463 (review): the host session now starts automatically on mount —
-    // there is no button to click to reach this loading state, it's the
-    // very first thing rendered.
-    const { unmount } = render(<PairingDialog open onOpenChange={vi.fn()} />)
-
-    await waitFor(() => {
-      const loadingEl = document.querySelector('.pairing-loading')
-      expect(loadingEl).toBeTruthy()
-      expect(loadingEl?.textContent).toContain('Starting pairing...')
-      // #2852 — a shaped LoadingSkeleton placeholder replaces the bare
-      // centered spinner; the "starting" label text is preserved.
-      expect(loadingEl?.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
-      expect(loadingEl?.querySelector('[data-slot="spinner"]')).toBeFalsy()
-    })
-
-    // #3810 — drain before the test ends, don't leave `start_pairing`
-    // hanging forever. `initHost` arms `backendArmedRef` before dispatching
-    // it (#3628), so RTL's global `afterEach(cleanup())` unmounting this
-    // still-open dialog queues a `cancel_pairing` BEHIND the still-pending
-    // `start_pairing` in the module-level mutation queue
-    // (`src/lib/pairing-mutations.ts`). That queued clear is bounded only by
-    // the mutation queue's REAL `PAIRING_MUTATION_TIMEOUT_MS` (15s) timer —
-    // a `new Promise(() => {})` that's never settled and never unmounted
-    // leaves that timer armed past this test's end. This file's own process
-    // exits well before 15s in an isolated run, so the queued
-    // `cancel_pairing` never actually dispatches — invisible. Under
-    // full-suite load, though, wall-clock execution stretches enough that
-    // the timer can fire while a LATER, unrelated test in this file is
-    // running, dispatching a phantom `cancel_pairing` invoke that inflates
-    // *that* test's count by exactly one. That is the mechanism behind
-    // #3810's "1 in isolation, 2 (or 3 under heavier load) under full-suite
-    // load" — settle, unmount, and drain here, like every other "hangs
-    // forever" test in this file already does.
-    //
-    // A single `forEach` pass over `pendingInvokes` only releases what was
-    // ALREADY pending at that instant. `unmount()` enqueues `cancel_pairing`
-    // behind the still-in-flight `start_pairing` mutation, and that invoke's
-    // resolver isn't pushed onto `pendingInvokes` until the mutation queue
-    // advances — a microtask AFTER a one-shot forEach has already run and
-    // returned. Left one-shot, that stray promise is the same leak shape
-    // this test exists to close, one hop further along: nothing ever
-    // resolves it, so it arms its own `PAIRING_MUTATION_TIMEOUT_MS` timer
-    // that never clears (review note on #3895). Draining in a loop — until
-    // a full microtask flush adds nothing new — releases whatever
-    // `unmount()` (or anything it triggers) enqueues, not just the
-    // snapshot taken before it ran. Resolving per command, rather than a
-    // blanket `undefined`, also keeps `executeLoadPeers`'s `onSuccess`
-    // (`peerList.map(...)`) from throwing into a swallowed `logger.warn`.
-    //
-    // This hand-rolls a drain that `unmountAndDrain` (below, near :2286)
-    // also provides. Not consolidated: that helper is a single
-    // `flushMicrotasks()` pass, scoped inside the `#3714/#3715` describe on
-    // the assumption that whatever `unmount()` enqueues settles on its own
-    // (those tests supply resolvers up front). This test needs the extra
-    // hop this loop exists for — see above — so a single-pass drain would
-    // silently under-drain it. If you touch either drain helper, check
-    // whether the other one's assumption still holds.
-    unmount()
-    const MAX_DRAIN_PASSES = 20
-    let drainPasses = 0
-    while (pendingInvokes.length > 0) {
-      drainPasses++
-      if (drainPasses > MAX_DRAIN_PASSES) {
-        throw new Error(
-          `still draining after ${MAX_DRAIN_PASSES} passes — ` +
-            `${pendingInvokes.length} invoke(s) still pending ` +
-            `(${pendingInvokes.map(({ cmd }) => cmd).join(', ')}); something is ` +
-            're-enqueuing faster than this loop can drain it',
-        )
-      }
-      pendingInvokes.splice(0).forEach(({ cmd, resolve }) => {
-        if (cmd === 'start_pairing') return resolve(mockPairingInfo)
-        if (cmd === 'list_peer_refs') return resolve([])
-        return resolve(undefined)
+      await waitFor(() => {
+        const loadingEl = document.querySelector('.pairing-loading')
+        expect(loadingEl).toBeTruthy()
+        expect(loadingEl?.textContent).toContain('Starting pairing...')
+        // #2852 — a shaped LoadingSkeleton placeholder replaces the bare
+        // centered spinner; the "starting" label text is preserved.
+        expect(loadingEl?.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
+        expect(loadingEl?.querySelector('[data-slot="spinner"]')).toBeFalsy()
       })
-      await flushMicrotasks()
+
+      // #3810 — drain before the test ends, don't leave `start_pairing`
+      // hanging forever. `initHost` arms `backendArmedRef` before dispatching
+      // it (#3628), so RTL's global `afterEach(cleanup())` unmounting this
+      // still-open dialog queues a `cancel_pairing` BEHIND the still-pending
+      // `start_pairing` in the module-level mutation queue
+      // (`src/lib/pairing-mutations.ts`). That queued clear is bounded only by
+      // the mutation queue's REAL `PAIRING_MUTATION_TIMEOUT_MS` (15s) timer —
+      // a `new Promise(() => {})` that's never settled and never unmounted
+      // leaves that timer armed past this test's end. This file's own process
+      // exits well before 15s in an isolated run, so the queued
+      // `cancel_pairing` never actually dispatches — invisible. Under
+      // full-suite load, though, wall-clock execution stretches enough that
+      // the timer can fire while a LATER, unrelated test in this file is
+      // running, dispatching a phantom `cancel_pairing` invoke that inflates
+      // *that* test's count by exactly one. That is the mechanism behind
+      // #3810's "1 in isolation, 2 (or 3 under heavier load) under full-suite
+      // load" — settle, unmount, and drain here, like every other "hangs
+      // forever" test in this file already does.
+      //
+      // A single `forEach` pass over `pendingInvokes` only releases what was
+      // ALREADY pending at that instant. `unmount()` enqueues `cancel_pairing`
+      // behind the still-in-flight `start_pairing` mutation, and that invoke's
+      // resolver isn't pushed onto `pendingInvokes` until the mutation queue
+      // advances — a microtask AFTER a one-shot forEach has already run and
+      // returned. Left one-shot, that stray promise is the same leak shape
+      // this test exists to close, one hop further along: nothing ever
+      // resolves it, so it arms its own `PAIRING_MUTATION_TIMEOUT_MS` timer
+      // that never clears (review note on #3895). Draining in a loop — until
+      // a full microtask flush adds nothing new — releases whatever
+      // `unmount()` (or anything it triggers) enqueues, not just the
+      // snapshot taken before it ran. Resolving per command, rather than a
+      // blanket `undefined`, also keeps `executeLoadPeers`'s `onSuccess`
+      // (`peerList.map(...)`) from throwing into a swallowed `logger.warn`.
+      //
+      // This hand-rolls a drain that `unmountAndDrain` (defined below, in
+      // the `#3714/#3715 the queue is device-scoped and bounded` describe
+      // block) also provides. Not consolidated: that helper is a single
+      // `flushMicrotasks()` pass, scoped inside that describe on the
+      // assumption that whatever `unmount()` enqueues settles on its own
+      // (those tests supply resolvers up front). This test needs the extra
+      // hop this loop exists for — see above — so a single-pass drain would
+      // silently under-drain it. If you touch either drain helper, check
+      // whether the other one's assumption still holds.
+      unmount()
+      const MAX_DRAIN_PASSES = 20
+      let drainPasses = 0
+      while (pendingInvokes.length > 0) {
+        drainPasses++
+        if (drainPasses > MAX_DRAIN_PASSES) {
+          // #3904 (review) — resolve whatever is still pending before
+          // throwing. Left unresolved, those promises would re-arm exactly
+          // the 15s `PAIRING_MUTATION_TIMEOUT_MS` timer this drain exists to
+          // remove: the test is already red at that point, but a red test
+          // that also poisons a LATER test in this file (via the stray timer
+          // firing mid-run, see the #3810 note above) is harder to diagnose
+          // than a red test alone.
+          const stillPending = pendingInvokes.splice(0)
+          stillPending.forEach(({ resolve }) => resolve(undefined))
+          throw new Error(
+            `still draining after ${MAX_DRAIN_PASSES} passes — ` +
+              `${stillPending.length} invoke(s) still pending ` +
+              `(${stillPending.map(({ cmd }) => cmd).join(', ')}); something is ` +
+              're-enqueuing faster than this loop can drain it',
+          )
+        }
+        pendingInvokes.splice(0).forEach(({ cmd, resolve }) => {
+          if (cmd === 'start_pairing') return resolve(mockPairingInfo)
+          if (cmd === 'list_peer_refs') return resolve([])
+          return resolve(undefined)
+        })
+        await flushMicrotasks()
+      }
+      // Draining `pendingInvokes` to empty is not itself the falsifiable
+      // claim: it would look identical if the queued `cancel_pairing` never
+      // got dispatched at all (e.g. the cleanup effect stopped calling it) or
+      // if it needed one more microtask hop than this loop happened to take —
+      // in both cases `pendingInvokes` would still end up empty of *other*
+      // things while silently missing the one command this test exists to
+      // prove was sent. Assert the actual invariant instead: the cleanup's
+      // `cancel_pairing` really was dispatched, and — because the loop above
+      // resolves it — settled, inside this test. (Same assertion the
+      // sibling fake-timer test, "a start_pairing that never answers
+      // surfaces the bound through the error banner (#3715)", uses.)
+      expect(countInvokes('cancel_pairing')).toBe(1)
+    } finally {
+      // #3904 (review) — this test's `mockImplementation` above closes over
+      // `pendingInvokes` and would otherwise survive past this test (see the
+      // comment on that `mockImplementation` call). Restore the strict base
+      // so a later test that forgets its own stub fails loudly by name via
+      // `strictInvokeFallback` instead of hanging on this test's leftover
+      // promises.
+      mockedInvoke.mockImplementation(strictInvokeFallback)
     }
-    // Draining `pendingInvokes` to empty is not itself the falsifiable
-    // claim: it would look identical if the queued `cancel_pairing` never
-    // got dispatched at all (e.g. the cleanup effect stopped calling it) or
-    // if it needed one more microtask hop than this loop happened to take —
-    // in both cases `pendingInvokes` would still end up empty of *other*
-    // things while silently missing the one command this test exists to
-    // prove was sent. Assert the actual invariant instead: the cleanup's
-    // `cancel_pairing` really was dispatched, and — because the loop above
-    // resolves it — settled, inside this test. (Same assertion the sibling
-    // fake-timer test uses at :2485.)
-    expect(countInvokes('cancel_pairing')).toBe(1)
   })
 
   it('has no a11y violations on the host path with pairing info', async () => {
@@ -1536,10 +1568,10 @@ describe('PairingDialog', () => {
       }
     })
 
-    // #3469 (review) — `DeviceManagement` mounts this dialog unconditionally
-    // (DeviceManagement.tsx:412), so every piece of its state survives each
-    // open/close cycle, and `usePollingQuery` never clears its `data` when
-    // `enabled` flips false (usePollingQuery.ts:100-105). Unpair-then-repair
+    // #3469 (review) — `DeviceManagement` mounts `<PairingDialog>`
+    // unconditionally, so every piece of its state survives each
+    // open/close cycle, and `usePollingQuery`'s `enabled`-flip effect calls
+    // `setLoading(false)` but never `setData(null)`. Unpair-then-repair
     // — the routine sync-troubleshooting path — walks straight into the gap
     // between those two facts: at the instant the second wait begins, the
     // poll still holds the FIRST attempt's peer list, while the fresh
@@ -2314,7 +2346,7 @@ describe('PairingDialog', () => {
      * every test in this describe supplying its resolvers up front, so
      * whatever `unmount()` enqueues settles inside that one flush. The
      * "shows loading state while the host is initializing" test above
-     * (~:615) hand-rolls a *looping* drain instead, because there nothing
+     * hand-rolls a *looping* drain instead, because there nothing
      * is resolved until after `unmount()`, so the mutation queue can need
      * more than one hop to surface `cancel_pairing` on `pendingInvokes`. Not
      * consolidated into one helper — if you change either drain, check
@@ -2564,8 +2596,10 @@ describe('PairingDialog', () => {
     expect(errorEl).toHaveTextContent(/network error/i)
 
     const retryBtn = screen.getByRole('button', { name: /Retry/i })
-    // The focus move lives in a passive effect (`PairingDialog.tsx:747-751`), and
-    // React schedules those asynchronously. `findByRole('alert')` above resolves
+    // The focus move lives in a passive effect keyed on `retryBtnRef`
+    // (`if ((error || isExpired) && retryBtnRef.current) retryBtnRef.current.focus()`
+    // in `PairingDialog.tsx`), and React schedules those asynchronously.
+    // `findByRole('alert')` above resolves
     // as soon as the alert is in the DOM, which can be one poll BEFORE that
     // effect flushes — so asserting focus synchronously here is a race, and it
     // loses on a loaded CI runner. When it loses, `activeElement` is still Radix's
@@ -2573,8 +2607,10 @@ describe('PairingDialog', () => {
     // regression rather than a test-timing one. `waitFor` removes the race
     // without weakening the assertion: the wrong element still fails.
     //
-    // The sibling assertion at ~line 961 does NOT need this — it drives fake
-    // timers inside `await act(...)`, which flushes effects before it returns.
+    // The sibling assertion in "shows Retry button when the host session
+    // expires and focuses it (#420, #430)" does NOT need this — it drives
+    // fake timers inside `await act(...)`, which flushes effects before it
+    // returns.
     await waitFor(() => expect(document.activeElement).toBe(retryBtn))
   })
 
