@@ -1080,6 +1080,12 @@ stages = ["pre-commit"]
 # collide on merge — which is how docs/session-log/ ended up with two
 # session-1281 files. The guard now checks against origin/main too, and
 # checks the `# Session NNNN` heading inside the file against the filename.
+# #3929: exact max+1 turned the number into a dense sequence, which only
+# ONE parallel PR can hold at a time — every sibling had to renumber (a
+# full re-push each) the moment any one of them merged. The guard now
+# accepts a bounded window above the max instead of demanding the exact
+# next value; the collision check above (against origin/main) is what
+# actually prevents a duplicate landing, and does not depend on density.
 [[repos.hooks]]
 id = "session-log-numbering"
 name = "session-log numbering guard"
