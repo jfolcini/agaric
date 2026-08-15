@@ -470,38 +470,60 @@ function checkTree({ root, harnessDir }) {
         })
         continue
       }
-      if (!fs.existsSync(sourceFile)) {
+      // Existence, file-ness, symlink containment and the read all happen
+      // against ONE open descriptor rather than four lookups of the same
+      // path. Checking a path and then reading it is a TOCTOU race
+      // (`js/file-system-race`): between the checks and the read the name
+      // can be repointed, so the thing validated and the thing read are not
+      // guaranteed to be the same inode. Opening first and validating the
+      // descriptor closes that — `fstat` and the read cannot disagree about
+      // which file they mean.
+      //
+      // `realpathSync` still takes a path, but it runs while we hold the fd,
+      // and its answer is only used to reject; a repoint between open and
+      // realpath can make us refuse a legitimate file, never accept an
+      // illegitimate one. Failing closed under a race is the correct
+      // direction for a guard.
+      let fd
+      try {
+        fd = fs.openSync(sourceFile, 'r')
+      } catch (err) {
         violations.push({
           harness: relHarness,
-          message: `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, but ${pin.sourcePath} does not exist`,
+          message:
+            err.code === 'ENOENT'
+              ? `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, but ${pin.sourcePath} does not exist`
+              : `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, but ${pin.sourcePath} could not be opened (${err.code ?? err.message})`,
         })
         continue
       }
-      // `existsSync` is true for a directory too; reading one with
-      // `readFileSync` throws an uncaught EISDIR instead of the intended
-      // violation message, so check file-ness explicitly first.
-      if (!fs.statSync(sourceFile).isFile()) {
-        violations.push({
-          harness: relHarness,
-          message: `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, but ${pin.sourcePath} is a directory, not a file`,
-        })
-        continue
+      let sourceSrc
+      try {
+        // `existsSync` would have been true for a directory too, and reading
+        // one throws an uncaught EISDIR instead of the intended violation.
+        if (!fs.fstatSync(fd).isFile()) {
+          violations.push({
+            harness: relHarness,
+            message: `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, but ${pin.sourcePath} is a directory, not a file`,
+          })
+          continue
+        }
+        // The lexical containment check above (`path.relative` on the
+        // unresolved path) catches a `../`-escaping pin path, but not a
+        // symlink that sits inside the repo and points outside it.
+        const realSourceFile = fs.realpathSync(sourceFile)
+        const relRealToRoot = path.relative(realRoot, realSourceFile)
+        if (relRealToRoot.startsWith('..') || path.isAbsolute(relRealToRoot)) {
+          violations.push({
+            harness: relHarness,
+            message: `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, which is a symlink resolving outside the repo root — refusing to read it`,
+          })
+          continue
+        }
+        sourceSrc = fs.readFileSync(fd, 'utf8')
+      } finally {
+        fs.closeSync(fd)
       }
-      // The lexical containment check above (`path.relative` on the
-      // unresolved path) catches a `../`-escaping pin path, but not a
-      // symlink that sits inside the repo and points outside it. Resolve
-      // symlinks and re-check containment against the real path before
-      // reading.
-      const realSourceFile = fs.realpathSync(sourceFile)
-      const relRealToRoot = path.relative(realRoot, realSourceFile)
-      if (relRealToRoot.startsWith('..') || path.isAbsolute(relRealToRoot)) {
-        violations.push({
-          harness: relHarness,
-          message: `${relHarness}:${pin.lineNo} pins ${pin.sourcePath}#${pin.functionName}, which is a symlink resolving outside the repo root — refusing to read it`,
-        })
-        continue
-      }
-      const sourceSrc = fs.readFileSync(sourceFile, 'utf8')
       const { text, matchCount, otherForm } = extractFunction(sourceSrc, pin.functionName)
       if (text === null) {
         let message
