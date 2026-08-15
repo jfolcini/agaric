@@ -1,4 +1,4 @@
-# Session 1306 — test reliability: a cross-test timer leak and a structural fixture cost (2026-08-14/15)
+# Session 1308 — test reliability: a cross-test timer leak and a structural fixture cost (2026-08-14/15)
 
 | Metadata | Value |
 |----------|-------|
