@@ -40,6 +40,27 @@
 # pre-push hook) — it just risks the stale-connection failure above on a
 # slow verify. Prefer this wrapper for anything non-trivial.
 #
+# EXIT CODES (#3883) — every non-success path is non-zero, and the two
+# failure classes are DELIBERATELY distinguishable so a caller (script, CI
+# step, or an agent driving `git push` through this wrapper) can tell "you
+# invoked me wrong" from "the push itself failed" without parsing output:
+#
+#   0   verified, pushed, AND confirmed landed on the remote.
+#   1   a genuine push/verify failure: the CI-equivalent gate failed, `git
+#       push` itself failed (refused, rejected, or dropped — see
+#       PUSH_FAILURE_KIND below), or the post-push landed-check failed.
+#       Something was attempted and did not succeed.
+#   2   pre-flight refusal: `preflight_push_target` determined BEFORE the
+#       gate ran that this invocation cannot land as given (mismatched
+#       upstream, detached HEAD, push.default=nothing, …). Nothing was
+#       attempted — this is a usage/config problem, not a push failure.
+#
+# A caller that only checks "zero or not" still gets the right answer for
+# both; the 1-vs-2 split is for a caller that wants to react differently
+# (e.g. retry a transient 1, but never retry a 2 without fixing the config
+# first). Nothing in this script prints its own diagnosis and then falls
+# through to exit 0 — every `echo "✗ …"` branch ends in an `exit`.
+#
 # THE PUSH ITSELF CAN STILL FAIL (#3380)
 # ---------------------------------------
 # Verifying before opening the connection fixes the *idle-timeout* drop,
@@ -79,10 +100,34 @@
 #
 # So `preflight_push_target` resolves and validates the destination
 # BEFORE the verifier runs, and fails in under a second naming the
-# branch, the upstream it found, and the one-line fix. And when a push
-# does fail, the message distinguishes a LOCAL refusal (nothing left the
-# machine; look at branch config) from a failure on the wire (look at the
-# connection), and echoes git's own last words at the bottom.
+# branch, the upstream it found, and the one-line fix — exiting 2 (see
+# EXIT CODES above), not 1, and not falling through to `exit 0` the way
+# a bare `echo "✗ …"` followed by nothing did until #3883. And when a
+# push does fail, the message distinguishes THREE causes, not two:
+#   - a LOCAL refusal (nothing left the machine — a refspec/upstream
+#     problem; look at branch config, not the connection),
+#   - a LOCAL REJECTION (the connection opened, but nothing landed
+#     because a pre-push git hook or the ref negotiation itself said no —
+#     see THE PRE-PUSH HOOK IS NOT FULLY COVERED below), and
+#   - a genuine failure on the wire (look at the connection),
+# and echoes git's own last words at the bottom either way.
+#
+# THE PRE-PUSH HOOK IS NOT FULLY COVERED (#3883)
+# -----------------------------------------------
+# "Verifying (CI-equivalent)" above runs `verify-ci-equivalent.sh`, which
+# is Phase A of the real pre-push hook (`prek run --all-files --hook-stage
+# pre-commit`, plus vitest/nextest scoped to the push range) — deliberately
+# only the SLOW checks, run once, before the connection opens. It is a
+# SUBSET: prek hooks staged `pre-push` in prek.toml (cargo-clippy,
+# cargo-fmt --check, better-npm-audit, knip, lychee, …) are NOT re-run by
+# `verify-ci-equivalent.sh` and are NOT short-circuited by
+# `SKIP_CI_VERIFY` — they still run for real, inline, inside the `git
+# push` below, on the theory that they are individually fast enough not
+# to risk the idle-timeout this script exists to avoid. When one of THEM
+# rejects the push (e.g. a clippy lint), the failure surfaces from `git
+# push` itself, classified as a LOCAL REJECTION above — "✓ Verification
+# passed" was true of what this script checked; it was never a claim that
+# nothing else could still say no.
 #
 # `--self-test` exercises these functions against a stubbed `git` — no
 # network, no repo mutation — wired as a prek pre-commit hook so a
@@ -105,11 +150,75 @@ PUSH_TRANSIENT_RE='Connection.*closed by remote host|Could not read from remote 
 # fix is one line of local branch config. Name which one it was.
 PUSH_LOCAL_REFUSAL_RE='The upstream branch of your current branch does not match|has no upstream branch|src refspec .* does not match any|dst refspec .* matches more than one|matches more than one|does not appear to be a git repository|--set-upstream-to|You are pushing to remote .* which is not the upstream'
 
+# ── A THIRD kind (#3883): a REJECTION, not a refusal or a wire failure ──
+# `PUSH_LOCAL_REFUSAL_RE` above catches refspec/upstream misconfiguration —
+# but there is another way `git push` fails without a byte of the push
+# actually being rejected BY the remote: the LOCAL pre-push hook says no
+# (a clippy/lint/test failure — see THE PRE-PUSH HOOK IS NOT FULLY
+# COVERED, above), or the ref negotiation itself refuses a non-fast-
+# -forward update. Neither of those originated on GitHub, but until this
+# fix `classify_push_failure` fell through its `else` and called both
+# "remote" — the script then printed "the PUSH FAILED on the wire",
+# which sent a real #3883 incident chasing a network problem that did
+# not exist; the actual cause (a clippy compile error) was on the LAST
+# line of the log, not the first, because push.sh's own retry/log
+# handling tails it (see PUSH_FAILURE_TAIL below) — but the HEADLINE
+# diagnosis was still wrong.
+#
+# The reliable signal is git's own transcript shape, not the hook's
+# wording (which this script cannot enumerate — clippy today, something
+# else tomorrow): a rejection reported BY the remote OFTEN arrives as
+# one or more `remote: …` lines (that prefix is how git marks text the
+# other side sent back) — but not always: a remote pre-receive hook that
+# declines SILENTLY (prints nothing) produces git's `[remote rejected]`
+# marker with no `remote:` line anywhere, e.g.:
+#
+#   To .../repo.git
+#    ! [remote rejected] HEAD -> main (pre-receive hook declined)
+#   error: failed to push some refs to '.../repo.git'
+#
+# (verified empirically against a real bare repo + a real silent
+# pre-receive hook). `[remote rejected]` is git's OWN terminology for
+# "the far side refused this ref" — reliable regardless of whether the
+# hook said anything — so it is checked FIRST, before the no-`remote:`
+# heuristic below gets a chance to misclassify it as local. Only once
+# that check has passed does absence of `remote:` become useful: a LOCAL
+# hook rejection or non-fast-forward never has a `remote:` line AND
+# never has `[remote rejected]` either (see PUSH_FAILURE_KIND cases in
+# the self-test) — git's own trailer (`error: failed to push some refs
+# to '…'`) is everything the caller of `git push` sees in those cases,
+# with nothing above it attributable to the far side.
+#
+# The no-`remote:`-line heuristic is purely syntactic, not semantic: it
+# reads git's transcript shape, not "did this reach the remote". A local
+# hook that happens to echo a line starting with `remote:` (contrived,
+# but possible — nothing stops a `pre-push` hook script from printing
+# whatever it wants) would flip this classification to `remote`. That
+# false positive is judged acceptable: it merely under-warns about a
+# rare, self-inflicted hook-script choice, rather than the false
+# negative this fix closes (a real GitHub-side rejection misread as
+# local).
+PUSH_REMOTE_REJECTED_RE='^ ! \[remote rejected\]'
+PUSH_NO_REMOTE_LINE_RE='^remote:'
+PUSH_GENERIC_REJECTION_RE='^error: failed to push some refs'
+
 classify_push_failure() {
     # $1 = path to the captured git-push output. Echoes `local-refusal`
-    # (git refused before opening/using the connection) or `remote`.
+    # (refused before the connection was even used — see
+    # PUSH_LOCAL_REFUSAL_RE), `local-rejection` (the connection was used,
+    # but nothing landed, git did NOT mark the ref `[remote rejected]`,
+    # and no `remote:` line appears anywhere in the log — a LOCAL
+    # pre-push hook or the ref negotiation itself said no), or `remote`
+    # (git explicitly marked the ref `[remote rejected]`, the far side
+    # sent back a `remote:`-prefixed line, or the failure doesn't match
+    # either local pattern — the safe default).
     if grep -qE "$PUSH_LOCAL_REFUSAL_RE" "$1"; then
         echo "local-refusal"
+    elif grep -qE "$PUSH_REMOTE_REJECTED_RE" "$1"; then
+        echo "remote"
+    elif ! grep -q "$PUSH_NO_REMOTE_LINE_RE" "$1" \
+        && grep -qE "$PUSH_GENERIC_REJECTION_RE" "$1"; then
+        echo "local-rejection"
     else
         echo "remote"
     fi
@@ -444,7 +553,8 @@ if [ "${1:-}" = "--self-test" ]; then
     cat >"$fake_git_dir/git" <<'FAKEGIT'
 #!/usr/bin/env bash
 # Stub git for push.sh --self-test. Behavior selected via env vars:
-#   FAKE_PUSH_BEHAVIOR      ok | fail_hard | fail_transient | fail_transient_then_ok
+#   FAKE_PUSH_BEHAVIOR      ok | fail_hard | fail_transient | fail_transient_then_ok |
+#                           fail_hook_rejected
 #   FAKE_SUCCEED_ON_ATTEMPT attempt number fail_transient_then_ok succeeds on
 #   FAKE_PUSH_ATTEMPT_FILE  counter file, one push invocation per line
 #   FAKE_UPSTREAM           value for `rev-parse --abbrev-ref --symbolic-full-name @{u}`
@@ -492,6 +602,15 @@ case "$cmd" in
                 echo "To github.com:org/repo.git"
                 exit 0
                 ;;
+            fail_hook_rejected)
+                # A LOCAL pre-push hook rejection (#3883) — modeled on a
+                # real `clippy` failure inside the real pre-push hook.
+                # NO `remote:` line anywhere: this is git's own trailer
+                # after a hook says no, never text the far side sent.
+                echo "error: could not compile \`agaric-store\` (lib) due to 3 previous errors" >&2
+                echo "error: failed to push some refs to 'github.com:org/repo.git'" >&2
+                exit 1
+                ;;
             *)
                 echo "fake git: unknown FAKE_PUSH_BEHAVIOR '$FAKE_PUSH_BEHAVIOR'" >&2
                 exit 99
@@ -511,6 +630,12 @@ case "$cmd" in
                 ;;
             'rev-parse --abbrev-ref HEAD')
                 echo "${FAKE_CURRENT_BRANCH:-stub-branch}"
+                exit 0
+                ;;
+            'rev-parse --show-toplevel')
+                # Used only by the real end-to-end self-test invocations
+                # below, which spawn the actual script as a subprocess.
+                echo "${FAKE_TOPLEVEL:?FAKE_TOPLEVEL must be set for --show-toplevel}"
                 exit 0
                 ;;
             'rev-parse --verify --quiet refs/tags/'*)
@@ -842,6 +967,55 @@ FAKEGIT
     fi
     rm -rf "$st_fix_dir"
 
+    # ── P7c/P7d: TRUE end-to-end exit codes (#3883) ──────────────────────
+    # Everything above exercises functions in-process, sourced-style — it
+    # proves `preflight_push_target` RETURNS non-zero, but the original
+    # #3883 bug was in the few lines of top-level script body that decide
+    # what to do with that return value (an `exit 1` — or, before #3683,
+    # nothing at all, falling through to `exit 0`). No function-level test
+    # can catch a regression THERE; it requires actually spawning this
+    # script and reading its real process exit code, which is what these
+    # two cases do — the gap the #3883 report named explicitly ("the
+    # self-test presumably exercises failures after the gate, not the
+    # pre-flight refusals before it").
+    e2e_root="$(mktemp -d -t push-sh-st-e2e.XXXXXX)"
+
+    # P7c. Mismatched upstream, no explicit args: preflight refuses before
+    #      the gate runs, and the SCRIPT PROCESS must exit 2 (not 0, not
+    #      1 — see EXIT CODES in the header comment). This is the exact
+    #      shape of the original #3883 report.
+    rc=0
+    out="$(FAKE_TOPLEVEL="$e2e_root" FAKE_CURRENT_BRANCH="claude/e2e-probe" \
+        FAKE_UPSTREAM="origin/main" \
+        bash "${BASH_SOURCE[0]}" 2>&1)" || rc=$?
+    if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q 'refusing BEFORE the verify gate'; then
+        st_ok "end-to-end process exit code: mismatched-upstream refusal exits 2"
+    else
+        st_bad "end-to-end process exit code: mismatched-upstream refusal exits 2" \
+            "rc=$rc out=$out"
+    fi
+
+    # P7d. A genuine failure past the gate must still exit 1, not 2 — the
+    #      two codes must actually be distinguishable end-to-end, not just
+    #      both "some nonzero number". Healthy upstream (preflight passes,
+    #      no args needed), a verify-ci-equivalent.sh stub that exits 0
+    #      instantly (isolates this case to the push step), and a push
+    #      that fails hard.
+    mkdir -p "$e2e_root/scripts"
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$e2e_root/scripts/verify-ci-equivalent.sh"
+    rc=0
+    out="$(FAKE_TOPLEVEL="$e2e_root" FAKE_CURRENT_BRANCH="stub-branch" \
+        FAKE_UPSTREAM="origin/stub-branch" FAKE_PUSH_BEHAVIOR="fail_hard" \
+        PUSH_MAX_ATTEMPTS=1 \
+        bash "${BASH_SOURCE[0]}" 2>&1)" || rc=$?
+    if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'denied'; then
+        st_ok "end-to-end process exit code: a genuine push failure exits 1 (distinct from the 2 above)"
+    else
+        st_bad "end-to-end process exit code: a genuine push failure exits 1 (distinct from the 2 above)" \
+            "rc=$rc out=$out"
+    fi
+    rm -rf "$e2e_root"
+
     # ── classify_push_failure (#3683) ────────────────────────────────
     # "verification passed but the PUSH FAILED" read as a network or
     # permissions problem for a failure that never opened a connection.
@@ -865,6 +1039,58 @@ FAKEGIT
         st_bad "permission/transport failure still classified as remote" \
             "$(classify_push_failure "$st_log")"
     fi
+
+    # P9b. A LOCAL pre-push hook rejection (#3883, live incident: a real
+    #      `clippy` failure inside the real pre-push hook was reported as
+    #      "the PUSH FAILED on the wire"). Fingerprint: git's generic
+    #      "failed to push some refs" trailer with NO `remote:` line
+    #      anywhere — that combination never originates on the far side.
+    printf 'error: could not compile `agaric-store` (lib) due to 3 previous errors\nerror: failed to push some refs to '"'"'github.com:org/repo.git'"'"'\n' >"$st_log"
+    if [ "$(classify_push_failure "$st_log")" = "local-rejection" ]; then
+        st_ok "hook-rejection failure (no remote: line) classified as a LOCAL rejection, not the wire"
+    else
+        st_bad "hook-rejection failure (no remote: line) classified as a LOCAL rejection, not the wire" \
+            "$(classify_push_failure "$st_log")"
+    fi
+
+    # P9d. A SILENT remote pre-receive decline — the regression case a
+    #      real adversarial review caught: the far side rejects the ref
+    #      but its hook prints nothing, so there is no `remote:` line
+    #      either, giving the exact same shape as P9b (generic trailer,
+    #      no `remote:` line) EXCEPT for git's own `[remote rejected]`
+    #      marker. Verified against a real bare repo with a real
+    #      `pre-receive` hook that does `exit 1` (prints nothing):
+    #
+    #        To .../bare.git
+    #         ! [remote rejected] HEAD -> main (pre-receive hook declined)
+    #        error: failed to push some refs to '.../bare.git'
+    #
+    #      This is common in practice (GitHub branch-protection and
+    #      required-status-check rejections often present exactly this
+    #      way) and MUST classify as `remote`, not `local-rejection` —
+    #      the old (pre-#3883) code got this right by falling through to
+    #      `remote`; a naive no-`remote:`-line-only heuristic gets it
+    #      wrong.
+    printf 'To .../bare.git\n ! [remote rejected] HEAD -> main (pre-receive hook declined)\nerror: failed to push some refs to '"'"'.../bare.git'"'"'\n' >"$st_log"
+    if [ "$(classify_push_failure "$st_log")" = "remote" ]; then
+        st_ok "silent remote pre-receive decline ([remote rejected], no remote: line) stays classified as remote"
+    else
+        st_bad "silent remote pre-receive decline ([remote rejected], no remote: line) stays classified as remote" \
+            "$(classify_push_failure "$st_log")"
+    fi
+
+    # P9c. The same generic trailer, but WITH a `remote:` line present,
+    #      must stay classified as `remote` — P9b's fingerprint is the
+    #      ABSENCE of `remote:`, and a rejection GitHub itself sent back
+    #      (e.g. branch protection) must not be misclassified as local
+    #      just because it also ends in the same generic trailer.
+    printf 'remote: error: GH006: Protected branch update failed.\nerror: failed to push some refs to '"'"'github.com:org/repo.git'"'"'\n' >"$st_log"
+    if [ "$(classify_push_failure "$st_log")" = "remote" ]; then
+        st_ok "branch-protection rejection (has a remote: line) stays classified as remote"
+    else
+        st_bad "branch-protection rejection (has a remote: line) stays classified as remote" \
+            "$(classify_push_failure "$st_log")"
+    fi
     rm -f "$st_log"
 
     # P10. push_with_retry must hand the caller BOTH the kind and git's
@@ -880,6 +1106,21 @@ FAKEGIT
             "rc=$rc kind=${PUSH_FAILURE_KIND:-} tail=${PUSH_FAILURE_TAIL:-}"
     fi
     unset PUSH_ARGS
+
+    # P10b. End-to-end through push_with_retry (not just classify_push_
+    #       failure in isolation): a hook-rejection-shaped `git push`
+    #       failure propagates non-zero AND is classified local-rejection,
+    #       so the main script body picks the right branch of its final
+    #       `case` and never prints "FAILED on the wire" for this case.
+    rc=0
+    FAKE_PUSH_BEHAVIOR=fail_hook_rejected push_with_retry >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ] && [ "${PUSH_FAILURE_KIND:-}" = "local-rejection" ] \
+        && printf '%s' "${PUSH_FAILURE_TAIL:-}" | grep -q 'could not compile'; then
+        st_ok "end-to-end hook rejection: non-zero, kind=local-rejection, tail keeps git's real cause"
+    else
+        st_bad "end-to-end hook rejection: non-zero, kind=local-rejection, tail keeps git's real cause" \
+            "rc=$rc kind=${PUSH_FAILURE_KIND:-} tail=${PUSH_FAILURE_TAIL:-}"
+    fi
 
     # ── push_with_retry ──────────────────────────────────────────────
 
@@ -1169,8 +1410,15 @@ ROOT="$(git rev-parse --show-toplevel)"
 # Resolve (and validate) the destination FIRST — it costs a git config
 # read, and an unpushable refspec is not worth an ~8-minute gate to
 # discover (#3683). PUSH_ARGS is built here and used unchanged below.
+#
+# Exit 2, not 1 (#3883): `preflight_push_target` already printed a full
+# diagnosis to stderr and returned before the gate ran or anything was
+# attempted — this is a usage/config refusal, not a push failure, and a
+# caller branching on the exit code should be able to tell them apart
+# (see EXIT CODES in the header comment). Exiting 0 here — the original
+# #3883 report — is what made a real refusal read as a successful push.
 if ! preflight_push_target "$@"; then
-    exit 1
+    exit 2
 fi
 
 echo ""
@@ -1197,16 +1445,35 @@ export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o ServerAliveInterval=15 -o Ser
 echo ""
 if ! push_with_retry "${PUSH_ARGS[@]+"${PUSH_ARGS[@]}"}"; then
     echo "" >&2
-    if [ "${PUSH_FAILURE_KIND:-}" = "local-refusal" ]; then
-        echo "✗ the push was REFUSED LOCALLY — it never left this machine." >&2
-        echo "  Nothing was sent to the remote and nothing there changed. This is a" >&2
-        echo "  branch/refspec configuration problem, NOT a network or permissions one:" >&2
-        echo "  look at the local branch config below, not at the connection." >&2
-    else
-        echo "✗ verification passed but the PUSH FAILED on the wire — the branch was NOT updated." >&2
-        echo "  git push reached the remote and did not succeed (after retries where" >&2
-        echo "  applicable); nothing landed." >&2
-    fi
+    case "${PUSH_FAILURE_KIND:-}" in
+        local-refusal)
+            echo "✗ the push was REFUSED LOCALLY — it never left this machine." >&2
+            echo "  Nothing was sent to the remote and nothing there changed. This is a" >&2
+            echo "  branch/refspec configuration problem, NOT a network or permissions one:" >&2
+            echo "  look at the local branch config below, not at the connection." >&2
+            ;;
+        local-rejection)
+            # #3883: this used to be lumped in with "remote" below, which
+            # reads as a network/permissions problem — exactly wrong for a
+            # LOCAL pre-push hook rejection (clippy, fmt, npm-audit, knip,
+            # lychee — see THE PRE-PUSH HOOK IS NOT FULLY COVERED in the
+            # header) or a non-fast-forward. Neither one is "the wire".
+            echo "✗ the push was REJECTED — nothing landed, and it does NOT look like a wire failure." >&2
+            echo "  Git did not mark this a remote rejection, and no \`remote:\` line appears" >&2
+            echo "  anywhere in git's output below — most likely either a LOCAL pre-push hook" >&2
+            echo "  said no (one of the checks push.sh's own gate above does NOT cover:" >&2
+            echo "  clippy, cargo fmt --check, npm-audit, knip, lychee — see THE PRE-PUSH HOOK" >&2
+            echo "  IS NOT FULLY COVERED at the top of this script), or the remote moved out" >&2
+            echo "  from under this branch (non-fast-forward — fetch/rebase and retry). This" >&2
+            echo "  is a heuristic based on git's transcript shape, not a certainty — read" >&2
+            echo "  git's own words below before ruling out the connection." >&2
+            ;;
+        *)
+            echo "✗ verification passed but the PUSH FAILED on the wire — the branch was NOT updated." >&2
+            echo "  git push reached the remote and did not succeed (after retries where" >&2
+            echo "  applicable); nothing landed." >&2
+            ;;
+    esac
     if [ -n "${PUSH_FAILURE_TAIL:-}" ]; then
         echo "" >&2
         echo "  git said:" >&2

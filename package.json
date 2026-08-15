@@ -30,6 +30,7 @@
     "typecheck": "tsc -b --noEmit",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json",
     "typecheck:e2e-tauri": "tsc -p tsconfig.wdio.json",
+    "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "mutation": "node scripts/run-mutation.mjs",
     "android:dev": "cargo tauri android dev",
     "android:build": "cargo tauri android build",
