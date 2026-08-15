@@ -50,6 +50,11 @@
 //     of new delete void throw
 //     yield instanceof await do
 //     else if while for with switch
+//   the same keyword spelled as a     DIVISION — `obj.in`, `map.delete`,
+//     PROPERTY NAME (directly after     `x.return` are member expressions,
+//     `.` or `?.`)                      i.e. COMPLETE expressions. This is
+//                                       the only position where a reserved
+//                                       word is a plain identifier.
 //   `)`                               depends on the matching `(`:
 //                                     REGEX if that `(` headed an
 //                                     `if`/`while`/`for`/`with`/`switch`
@@ -100,9 +105,17 @@
 //     treated as never introducing a regex, because in a `.tsx` file
 //     `</` is overwhelmingly a closing tag while `a < /re/.source` is
 //     absurd in real code. Cost: a regex literal written directly after
-//     a relational operator is read as division. That is inert — the
-//     `/` becomes a punctuator, exactly the pre-#3950 behaviour — not a
-//     truncation.
+//     a relational operator is read as division, which leaves the
+//     pre-#3950 behaviour in place for that one position — INCLUDING the
+//     pre-#3950 failure mode. `n < /\}/.source` really does truncate a
+//     bracket-depth scan at the regex's brace, exactly as #3950 describes;
+//     this is a deliberately unfixed corner, not an inert one, and the
+//     earlier "never a truncation" wording here was wrong.
+//     It is kept unfixed because the alternative is worse: permitting a
+//     regex after `<` makes a one-line `<div>{a}</div><span>{b}</span>`
+//     lex `</div><span>{b}<` as a regex literal, which desyncs brace depth
+//     across ordinary TSX rather than across a construct nobody writes.
+//     A repo-wide sweep found zero `<`-then-regex occurrences.
 //  2. JSX TEXT is lexed as if it were code. An apostrophe in bare JSX
 //     text (`<p>don't</p>`) is read as a string opener and consumes up to
 //     the next quote — inherited unchanged from the scanners this
@@ -122,6 +135,14 @@
 //  5. Regex-literal FLAGS are lexed as a run of ASCII letters. A regex
 //     immediately followed (no space) by an identifier is not valid JS,
 //     so this cannot mis-consume real code.
+//  6. `of` is the ONLY member of the keyword set above that is not a
+//     reserved word, so it is the only one that can also be a plain
+//     variable name. `for (x of /re/)` needs `of` in the set; `const of =
+//     4; of / 2 / 3` would then mis-lex `/ 2 /` as a regex. Deciding
+//     between them needs a parser, not a lexer, so the for-of reading
+//     wins. The property-name correction above already covers `obj.of`,
+//     which is the common shape; a bare `of` BINDING is not (a repo-wide
+//     sweep found zero). Reserved-word members of the set cannot hit this.
 //
 // Usage (library):
 //   import { findMatchingBracket, stripComments } from './lib/js-scanner.mjs'
@@ -314,6 +335,18 @@ function regexAllowedAfter(prev, src, slashIdx) {
       return false
     }
     case 'ident': {
+      // A keyword spelled as a PROPERTY NAME is not a keyword: `obj.in`,
+      // `map.delete`, `x.return` are member expressions, and a member
+      // expression is a COMPLETE expression, so a following `/` is
+      // division. Without this, `const x = obj.in / y / z` lexed `/ y /`
+      // as a regex literal and desynced everything after it — the same
+      // class of defect as #3950 itself (a `/` mis-decided as a regex
+      // swallows whatever sits between it and the next `/` on the line,
+      // including quotes and braces the bracket scan depends on).
+      // Property names are the one position where a reserved word may
+      // legally appear as a plain identifier, so it is also the only
+      // position this correction needs.
+      if (prev.propertyName === true) return false
       return REGEX_PRECEDING_KEYWORDS.has(prev.value)
     }
     case 'punct': {
@@ -444,7 +477,17 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
     if (isIdentStart(c)) {
       const start = i
       while (i < to && isIdentPart(src[i])) i++
-      prev = { kind: 'ident', value: src.slice(start, i), start, end: i }
+      // An identifier directly after `.` is a PROPERTY NAME, which may
+      // legally be a reserved word (`obj.in`, `map.delete`). Recorded here
+      // so `regexAllowedAfter` does not read it as the keyword. `?.` needs
+      // no special case: its `.` is lexed as the preceding punctuator.
+      prev = {
+        kind: 'ident',
+        value: src.slice(start, i),
+        start,
+        end: i,
+        propertyName: prev !== null && prev.kind === 'punct' && prev.value === '.',
+      }
       yield prev
       continue
     }
@@ -847,6 +890,72 @@ function runSelfTest() {
     'a `/` inside a regex character class does not terminate it',
     regexes('const r = /[/]/g').join() === '/[/]/g',
     JSON.stringify(regexes('const r = /[/]/g')),
+  )
+
+  // The `}`-closes-a-BLOCK half of the brace-context stack. The two JSX
+  // assertions below cover only the object-literal/expression-container
+  // half (`}` → division); without this one, hard-wiring `blockClose` to
+  // `false` passed the whole suite, so the stack's regex-permitting branch
+  // was decoration. A regex at statement start after a block close is the
+  // shape that exercises it.
+  check(
+    'after a `}` that closes a BLOCK, a `/` at statement start is a regex',
+    regexes('function f() { g() }\n/re/.test(s)').join() === '/re/',
+    JSON.stringify(regexes('function f() { g() }\n/re/.test(s)')),
+  )
+
+  // The documented `<`/`>` choice (limitation 1). Without this, flipping
+  // `<`/`>` to permit a regex passed the whole suite, so the decision was
+  // untested either way.
+  check(
+    'a `/` DIRECTLY after a relational `<` is division, per the documented TSX choice',
+    regexes('const ok = a < /re/.source').length === 0,
+    JSON.stringify(regexes('const ok = a < /re/.source')),
+  )
+
+  // The "second, independent safety net" the header leans on: a regex is
+  // only lexed if it TERMINATES ON THE SAME LINE. The existing
+  // "degrades to a punctuator" case never reached this code — its `/`
+  // followed an identifier, so `regexAllowedAfter` already said no. This
+  // one puts the `/` in a regex-ALLOWED position (after `return`) with the
+  // next `/` two lines down, so only the same-line rule can reject it.
+  {
+    const src = 'function f() {\n  return / a\n  const t = b / c\n}'
+    check(
+      'a regex-allowed `/` with no closing `/` on the SAME line is not lexed as a regex',
+      regexes(src).length === 0,
+      JSON.stringify(regexes(src)),
+    )
+    check(
+      'and the token stream after it stays in sync (nothing was swallowed)',
+      kinds(src).includes('ident:const') && kinds(src).includes('ident:t'),
+      kinds(src).join(' '),
+    )
+  }
+
+  // A reserved word spelled as a PROPERTY NAME is an ordinary member
+  // expression, so a following `/` is division. Before this, `obj.in / y /
+  // z` lexed `/ y /` as a regex literal and desynced from there.
+  for (const [expr, label] of [
+    ['const x = obj.in / y / z', 'obj.in'],
+    ['const x = obj.return / y / z', 'obj.return'],
+    ['const x = map.delete / y / z', 'map.delete'],
+    ['const x = obj?.of / y / z', 'obj?.of (optional chaining)'],
+  ]) {
+    check(
+      `a keyword used as a property name (\`${label}\`) is followed by DIVISION, not a regex`,
+      regexes(expr).length === 0,
+      JSON.stringify(regexes(expr)),
+    )
+  }
+
+  // The correction must not disarm the keyword rule in its real position:
+  // `in` after `.` is a property, `in` as a statement keyword still allows
+  // a regex.
+  check(
+    'the property-name correction does not disarm the keyword rule itself',
+    regexes('for (const k in /re/.source) { g(k) }').join() === '/re/',
+    JSON.stringify(regexes('for (const k in /re/.source) { g(k) }')),
   )
 
   // ── fail-closed cases ──────────────────────────────────────────────
