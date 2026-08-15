@@ -88,3 +88,19 @@ exercise the real hazard") overstates what it does.
 
 Left as-is and recorded here, which is the right resting place for a harmless assertion whose comment
 promises more than it delivers.
+
+## A sixth stale comment, in a file the fix didn't touch
+
+Review of the PR whose entire subject was stale/false harness-isolation comments found it had
+introduced a sixth: `restore_cascade_tests.rs`'s `fresh_loro_state()` doc claimed tests "don't conflict
+even running concurrently under plain `cargo test`," while a sibling test in the same file asserts an
+exact delta on the process-global `descendant_fanout_dropped` counter — bumped from several sites in
+`apply.rs` reachable by other tests in the binary. The comment and the code fifteen lines below it
+disagreed with each other.
+
+Fixed to match `create_edit_convergence_tests.rs`'s HOWEVER wording, but with one addition that
+wording doesn't need: `restore_cascade_tests` is absent from `.config/nextest.toml`'s
+`spy-counter-serial` test-group (confirmed at line 145 — the filter lists
+`create_edit_convergence_tests` and five other sibling files, not this one), so unlike those siblings it
+has no `max-threads = 1` backstop even under `cargo nextest run`. Its exposure is worse than the
+sibling files', not equivalent, and the comment now says so rather than borrowing their reassurance.

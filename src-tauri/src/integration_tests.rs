@@ -141,10 +141,13 @@ async fn settle_bg_tasks(mat: &Materializer) {
 //
 // #891 lesson: a conformance/integration test that applies ops through the
 // `*_inner` command helpers (bypassing `dispatch_via_engine`) silently
-// validates the SQL-only fallback, not production. Engine-path tests guard
-// against this by asserting `sql_only_fallback::count()` did NOT advance
-// across the ops under test (delta == 0), which proves the engine path
-// actually ran rather than assuming it from construction.
+// validates the SQL-only fallback, not production. The engine-path tests in
+// THIS file guard against that by asserting engine-tree presence
+// ([`assert_blocks_in_engine`] below), which proves the ops genuinely ran the
+// production `apply_*_via_loro` path rather than assuming it from
+// construction. (The sibling `*_convergence_tests` files use a different
+// guard: asserting `sql_only_fallback::count()` did NOT advance across the
+// ops under test — delta == 0 — which this file does not use.)
 
 /// Seed one pre-existing ROOT page into BOTH the SQL `blocks` table and the
 /// per-space Loro engine tree, then register it in [`TEST_SPACE_ID`].

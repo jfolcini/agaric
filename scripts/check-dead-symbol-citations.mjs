@@ -42,7 +42,7 @@
 //
 // Exit codes: 0 clean / 1 matches found / 2 invocation error.
 
-import { execFileSync, execSync } from 'node:child_process'
+import { execFileSync, execSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -54,8 +54,12 @@ const REPO_ROOT = (() => {
   }
 })()
 
-// This file's own repo-relative path — excluded from the scan so its
-// documentation above can name the symbol without tripping itself.
+// This file's own repo-relative path. `scanTargets` below only ever matches
+// `*.rs`/`*.md`, so a `.mjs` path can never reach this exclusion today — it
+// is defensive-only, in case `scanTargets`'s extension filter is ever
+// widened (e.g. to scripts) without anyone remembering this file also
+// contains a live citation of the dead symbol by name (see the module doc
+// above).
 const SELF_PATH = 'scripts/check-dead-symbol-citations.mjs'
 
 // The one file allowed to cite each dead symbol: the historical record of
@@ -91,8 +95,16 @@ function trackedFiles() {
       .trim()
       .split('\n')
       .filter(Boolean)
-  } catch {
-    return null
+  } catch (err) {
+    // "not a git repository" is the deliberate fail-open case (e.g. running
+    // from an extracted tarball) — skip quietly, exit 0. Anything else (git
+    // not installed, permission denied, etc.) is a genuine invocation error
+    // and must be reported loudly, not swallowed as if it were "clean".
+    const stderr = String(err?.stderr ?? '')
+    if (/not a git repository/i.test(stderr)) {
+      return null
+    }
+    throw err
   }
 }
 
@@ -128,7 +140,13 @@ function findHits(files) {
 }
 
 function check() {
-  const tracked = trackedFiles()
+  let tracked
+  try {
+    tracked = trackedFiles()
+  } catch (err) {
+    process.stderr.write(`check-dead-symbol-citations: invocation error: ${err.message}\n`)
+    return 2
+  }
   if (tracked === null) {
     console.warn('check-dead-symbol-citations: not a git repo; skipping.')
     return 0
@@ -151,4 +169,32 @@ function check() {
   return 1
 }
 
-process.exit(check())
+// Proves the exit-2 invocation-error path (added above) actually fires,
+// rather than just existing in source. Spawns this same script as a child
+// process with `git` removed from PATH — a genuine invocation error (ENOENT,
+// no "not a git repository" stderr), distinct from the deliberate fail-open
+// case. Asserts the child exits 2.
+function selfTest() {
+  const result = spawnSync(process.execPath, [import.meta.filename], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, PATH: '' },
+  })
+  if (result.status !== 2) {
+    console.error(
+      `self-test FAILED: expected exit 2 with \`git\` missing from PATH, got ${result.status}\n` +
+        `  stdout: ${result.stdout}\n  stderr: ${result.stderr}`,
+    )
+    return 1
+  }
+  if (!/invocation error/.test(result.stderr)) {
+    console.error(
+      `self-test FAILED: exit was 2 but stderr didn't name it an invocation error:\n${result.stderr}`,
+    )
+    return 1
+  }
+  console.log('self-test OK: git missing from PATH is a genuine invocation error and exits 2.')
+  return 0
+}
+
+process.exit(process.argv.includes('--self-test') ? selfTest() : check())

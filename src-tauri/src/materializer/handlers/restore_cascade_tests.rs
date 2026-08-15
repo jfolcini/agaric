@@ -100,8 +100,17 @@ async fn seed_deleted_subtree(pool: &SqlitePool) {
 }
 
 /// Returns a fresh, per-test `LoroState`. #2249: an ordinary value, not a
-/// process-global — each call is fully isolated, so tests don't conflict
-/// even running concurrently under plain `cargo test`.
+/// process-global — the ENGINE STATE itself is per-instance and cannot
+/// leak between tests. HOWEVER, `dispatch_restore_descendants_parse_failure_bumps_divergence_metric`
+/// below asserts an exact delta on `descendant_fanout_dropped`, a
+/// process-global counter that `apply.rs` bumps from several sites
+/// reachable by the other tests in this binary — so that test is NOT
+/// safe under concurrent plain `cargo test`. Unlike the sibling
+/// `*_convergence_tests` files, this file is NOT listed in
+/// `.config/nextest.toml`'s `spy-counter-serial` test-group, so it has
+/// no `max-threads = 1` backstop forcing it onto its own process even
+/// under `cargo nextest run` — its exposure to counter pollution is
+/// worse than theirs, not merely equivalent.
 fn fresh_loro_state() -> LoroState {
     // #2249: per-test isolated state (no process global).
     LoroState::new()
@@ -298,7 +307,10 @@ async fn dispatch_restore_descendants_parse_failure_bumps_divergence_metric() {
     let cohort = [PAGE_ID.to_string(), CHILD_1.to_string()];
 
     // Sample the process-global counter as a delta — it is monotonic and
-    // other tests in this nextest process may have bumped it concurrently.
+    // other tests in this nextest process may have bumped it concurrently
+    // (see the note on `fresh_loro_state` above: this file is not in the
+    // `spy-counter-serial` nextest group, so nothing forces this test
+    // onto its own process).
     let before = super::descendant_fanout_dropped::count();
     super::dispatch_restore_descendants(&pool, &root, &cohort, &state).await;
     let after = super::descendant_fanout_dropped::count();
