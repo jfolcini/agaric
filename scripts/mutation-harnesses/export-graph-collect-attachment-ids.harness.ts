@@ -29,20 +29,17 @@
  * the import IS the drift protection).
  *
  * mutation-harness-source-pin: src/lib/export-graph.ts#collectAttachmentIds sha256=6fc2b9c58cb784a5907c3248d0f2e6c72c52e12aaebf5ed473748a400cfaf1cf
+ * mutation-harness-source-pin: src/lib/export-graph.ts#ATTACHMENT_REF_RE sha256=acec392e4bd1daf070d508fe9b3e5e25710ee00acc65b635a28a60daa2957ed0
  *
- * KNOWN GAP in the pin coverage (documented, not silently missing — mirrors
- * the `WORD_RE` note in `in-page-find-matcher-folded-scan.harness.ts`): the
- * module-level `ATTACHMENT_REF_RE` regex constant `collectAttachmentIds`
- * reads is NOT itself pinned — the #3907 guard only tracks named `function`
- * declarations, not top-level `const`s. `ATTACHMENT_REF_RE` is hand-cloned
- * FOUR times below (`REAL_RE`, `MUTANT_RE`, `CONTROL_RE`, and the literal
- * inline in `runSweep`'s match-count line) so each sweep iteration gets its
- * own `lastIndex`; none of those four clones are pinned. The whole
- * equivalence claim above rests on group 3's structure ("neither optional
- * nor inside an alternation") — a `const`-only edit to `ATTACHMENT_REF_RE`
- * making group 3 optional would leave all four clones stale with this
- * guard green (though it would likely still trip export-graph.test.ts's
- * own assertions on attachment-ref parsing).
+ * The module-level `ATTACHMENT_REF_RE` regex constant `collectAttachmentIds`
+ * reads is pinned too (second marker above, #3953). It is hand-cloned FOUR
+ * times below (`REAL_RE`, `MUTANT_RE`, `CONTROL_RE`, and the literal inline
+ * in `runSweep`'s match-count line) so each sweep iteration gets its own
+ * `lastIndex` — and the whole equivalence claim above rests on group 3's
+ * structure ("neither optional nor inside an alternation"), so a
+ * `const`-only edit making group 3 optional used to leave all four clones
+ * stale with the guard green. That edit now fails the gate: re-sync all
+ * four clones, then update the pin.
  *
  * Mutant this harness discriminates (verbatim Stryker `replacement`,
  * `line:col` current as of this commit — verify with

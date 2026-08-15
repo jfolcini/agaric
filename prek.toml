@@ -751,21 +751,40 @@ name = "setProperty args have all five value keys"
 entry = "node scripts/check-set-property-args.mjs"
 language = "system"
 pass_filenames = false
-files = "^src/.*\\.(ts|tsx)$"
+files = "^(src/.*\\.(ts|tsx)|scripts/lib/js-scanner\\.mjs)$"
 stages = ["pre-commit"]
 
 # Self-test the setProperty-args guard's own exit behavior (missing key
 # FAILS with the right key named, complete literal / non-literal /
 # internal-spread / commented-out / test-file all PASS or are skipped as
-# documented) whenever the guard script itself changes, so a regression
-# that defangs it can't land.
+# documented; a regex literal in or before the call site does not desync
+# the scan, and a file that cannot be lexed is reported, not skipped)
+# whenever the guard script — or the shared scanner it now delegates its
+# lexing to (#3950) — changes, so a regression that defangs it can't land.
 [[repos.hooks]]
 id = "check-set-property-args-selftest"
 name = "setProperty args guard self-test"
 entry = "node scripts/check-set-property-args.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-set-property-args\\.mjs$"
+files = "^scripts/(check-set-property-args|lib/js-scanner)\\.mjs$"
+stages = ["pre-commit"]
+
+# Self-test the shared JS/TS scanner both guards above and the
+# mutation-harness-clones guard delegate their lexing to (#3950): regex
+# literals containing braces/quotes, division that must NOT be read as a
+# regex, a regex in each ambiguous position (after `)`, after an
+# identifier, after `return`, at statement start), and the inputs it
+# deliberately fails CLOSED on (ASI-dependent `++` / unterminated
+# literals). A silent regression here re-opens the fail-open both guards
+# were built to close.
+[[repos.hooks]]
+id = "js-scanner-selftest"
+name = "shared JS scanner self-test"
+entry = "node scripts/lib/js-scanner.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/lib/js-scanner\\.mjs$"
 stages = ["pre-commit"]
 
 # no-raw-local-storage (#2466): app code must declare a device/space/page-
@@ -2680,7 +2699,7 @@ entry = "node scripts/check-mutation-harness-clones.mjs"
 language = "system"
 pass_filenames = false
 always_run = true
-files = '^(scripts/mutation-harnesses/.*\.harness\.ts|scripts/check-mutation-harness-clones\.mjs|src/.*\.(ts|tsx))$'
+files = '^(scripts/mutation-harnesses/.*\.harness\.ts|scripts/check-mutation-harness-clones\.mjs|scripts/lib/js-scanner\.mjs|src/.*\.(ts|tsx))$'
 stages = ["pre-commit"]
 
 # Self-test the mutation-harness-clones guard's own exit behavior (matching
@@ -2688,16 +2707,18 @@ stages = ["pre-commit"]
 # the pinned function FAILS, restoring it PASSES again, whitespace-only
 # reformatting PASSES via canonicalization, an edit outside the pinned
 # function does NOT trip it, a harness with no pin FAILS, a pin naming a
-# missing source file FAILS, a pin naming a function no longer present
-# FAILS) whenever the guard script itself changes, so a regression that
-# defangs it can't land.
+# missing source file FAILS, a pin naming a symbol no longer present
+# FAILS, a `const` initializer pin gates on a real edit (#3953), and a
+# brace-bearing regex literal no longer truncates the extraction (#3950))
+# whenever the guard script — or the shared scanner it delegates its
+# lexing to — changes, so a regression that defangs it can't land.
 [[repos.hooks]]
 id = "mutation-harness-clones-selftest"
 name = "mutation-harness clones guard self-test"
 entry = "node scripts/check-mutation-harness-clones.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = '^scripts/check-mutation-harness-clones\.mjs$'
+files = '^scripts/(check-mutation-harness-clones|lib/js-scanner)\.mjs$'
 stages = ["pre-commit"]
 
 [[repos]]
