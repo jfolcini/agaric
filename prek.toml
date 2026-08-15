@@ -1241,10 +1241,18 @@ stages = ["pre-commit"]
 # never flagged. `always_run = true` for the same reason as
 # `migrations-immutable`: prek's changed-file set excludes deletions, so a
 # `files`-filtered hook would silently skip a staged `.sqlx/` deletion.
-# Staged-index mode only (like migrations-immutable); the `--range` backstop
-# for pre-push/CI (staged index is empty at push time) is invoked directly
-# from `scripts/verify-ci-equivalent.sh`, not through this stage. Detection
-# rules live in scripts/check-sqlx-cache-drift.sh.
+# Staged-index mode only (like migrations-immutable); the `--range`
+# backstop for LOCAL pre-push (staged index is empty at push time) is
+# invoked directly from `scripts/verify-ci-equivalent.sh`, not through
+# this stage — that script is a local hook only, never executed by any
+# GitHub Actions workflow (see PR #3945 review note 5). The per-PR CI net
+# for this same drift shape is `.github/actions/sqlx-offline-check`'s
+# four `cargo sqlx prepare --check` lanes in `_validate.yml`'s `lint` job
+# (invoked on every `pull_request` via `ci.yml`) — if a partial prepare
+# left the cache disagreeing with a crate's actual `query!` call sites,
+# that lane fails, independent of this bash guard and independent of the
+# scheduled `cargo sqlx prepare --check` in `scheduled-deep-checks.yml`.
+# Detection rules live in scripts/check-sqlx-cache-drift.sh.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
