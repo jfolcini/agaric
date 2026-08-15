@@ -1,4 +1,4 @@
-# Session 1311
+# Session 1315
 
 ## True at an instant
 
@@ -57,14 +57,31 @@ resolve and assert the drop zone first, scroll today's section last, immediately
 gesture. Re-measured on current `main` at 0 failures / 24 runs against the ~25% the issue
 recorded. Closed with that evidence rather than re-fixed.
 
-### Same defect class, still live
+### Same defect class, one instance fixed here, one still live
 
-The `sort` describe block in the same file has the identical pattern and is untouched
-here: `usePageBrowserSort` documents that `recently-modified`, `most-linked` and
+The `sort` describe block in the same file has the identical pattern. It is **not**
+untouched: `usePageBrowserSort` documents that `recently-modified`, `most-linked` and
 `most-content` are **server-derived** sorts that round-trip via IPC, while `selectSort()`
-waits only for the Radix listbox to close. Line 523 is the sharpest case — it captures a
-`before` baseline with no barrier, then compares it post-reload with a retrying assertion,
-which would simply retry against a wrong expected value and time out.
+waits only for the Radix listbox to close — and the "sort preference persists across
+reload" test (now ~lines 541-575) used to capture a `before` baseline with exactly that
+one-shot read, immediately after `selectSort(page, 'Most content')`, with no barrier
+before the reload comparison. That case is fixed in this diff: instead of trusting the
+one-shot `before` read (or a "stable across two reads" poll, which was tried and verified
+to lock onto an intermediate `keepPreviousData` render that is itself stable-but-wrong),
+the capture is now barriered against a hardcoded, independently-derived expected order
+(`mostContentOrder`, re-derived from `compareMetaRows`'s count-DESC/id-ASC ordering over
+the fixed seed ids and confirmed against `list_pages_with_metadata` directly). The reload
+comparison then asserts against that known-good order rather than against whatever the
+pre-reload one-shot read happened to catch.
 
-It passed 15/15 when checked, which is exactly the amount of reassurance the paragraph
-above says not to take. Filed rather than trusted.
+What genuinely is still live is the *other* sort test, "the seven modes reorder the list"
+(~line 486). It keeps four unbarriered one-shot `visibleTitles()` reads after
+`selectSort` for the server-derived Most-linked / Most-content / Recently-modified modes
+(~lines 491, 497, 503, 510). This was re-examined during the #3915 review, which found a
+more precise problem than the one originally suspected: these assertions are weak enough
+(`titles.slice(0, 2)`, `.length === 6`) that a stale, pre-round-trip read still satisfies
+them. That makes the four reads **vacuous rather than flaky** — they don't sometimes fail
+under timing pressure, they structurally can't fail regardless of whether the round-trip
+they claim to check ever lands. That is a different, more precise claim than "filed rather
+than trusted" above, and it is the one that's actually true of what remains. Tracked in
+#3918 rather than fixed here.
