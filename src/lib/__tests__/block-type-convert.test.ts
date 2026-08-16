@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 
 import { doc, listItem, orderedList, paragraph, text } from '@/editor/__tests__/builders'
 import { parse } from '@/editor/markdown-parse'
+import { MAX_MARKER_INDENT } from '@/editor/markdown-parse/vocab'
 import {
   convertBlockContent,
   detectBlockType,
@@ -52,6 +53,54 @@ describe('detectBlockType', () => {
 
   it('falls back to paragraph for empty content', () => {
     expect(detectBlockType('')).toBe('paragraph')
+  })
+})
+
+// -- #4019 follow-up: agree with the parser's marker-indent tolerance ---------
+// `detectBlockType` / `stripBlockMarker` and the markdown parser must classify
+// the same string the same way, or the Turn-into menu reports "paragraph" for a
+// block the editor renders as a list. The parser tolerates up to
+// `MAX_MARKER_INDENT` spaces before a LIST marker (CommonMark; a fourth space
+// is indented-code territory), so these do too — and only for the list markers:
+// heading / quote / callout productions are anchored at column 0 on both sides.
+describe('marker-indent tolerance agrees with the markdown parser', () => {
+  const TOLERATED = Array.from({ length: MAX_MARKER_INDENT + 1 }, (_, n) => ' '.repeat(n))
+  const PAST_TOLERANCE = ' '.repeat(MAX_MARKER_INDENT + 1)
+
+  it.each(TOLERATED)('detects a bullet indented by %j', (pad) => {
+    expect(detectBlockType(`${pad}- x`)).toBe('bullet-list')
+  })
+
+  it.each(TOLERATED)('detects an ordered marker indented by %j', (pad) => {
+    expect(detectBlockType(`${pad}1. x`)).toBe('numbered-list')
+  })
+
+  it.each(TOLERATED)('strips a bullet / ordered marker indented by %j', (pad) => {
+    expect(stripBlockMarker(`${pad}- x`)).toBe('x')
+    expect(stripBlockMarker(`${pad}1. x`)).toBe('x')
+  })
+
+  it('one space past the tolerance is plain text on both sides', () => {
+    expect(detectBlockType(`${PAST_TOLERANCE}- x`)).toBe('paragraph')
+    expect(detectBlockType(`${PAST_TOLERANCE}1. x`)).toBe('paragraph')
+    expect(stripBlockMarker(`${PAST_TOLERANCE}- x`)).toBe(`${PAST_TOLERANCE}- x`)
+    expect(stripBlockMarker(`${PAST_TOLERANCE}1. x`)).toBe(`${PAST_TOLERANCE}1. x`)
+  })
+
+  it('does NOT extend the tolerance to the column-0-anchored productions', () => {
+    // The parser's heading / blockquote productions match at column 0 only, so
+    // an indented one is paragraph text there and must be here too.
+    expect(detectBlockType('  # h')).toBe('paragraph')
+    expect(detectBlockType('  > q')).toBe('paragraph')
+    expect(detectBlockType('  > [!INFO] c')).toBe('paragraph')
+    expect(stripBlockMarker('  # h')).toBe('  # h')
+    expect(stripBlockMarker('  > q')).toBe('  > q')
+  })
+
+  it.each([...TOLERATED, PAST_TOLERANCE])('classifies %j the same way the parser does', (pad) => {
+    // The cross-check itself: same string, same verdict on both sides.
+    const parsedIsList = (parse(`${pad}- x`).content?.[0]?.type ?? '') === 'bulletList'
+    expect(detectBlockType(`${pad}- x`) === 'bullet-list').toBe(parsedIsList)
   })
 })
 
@@ -179,5 +228,23 @@ describe('list button — marker and content land on the SAME line (#2999)', () 
     expect(markdown).toBe('1. ')
     expect(markdown.split('\n')).toHaveLength(1)
     expect(parse(markdown)).toEqual(doc(orderedList(listItem(paragraph()))))
+  })
+  // The `content-regex-allow` markers on ORDERED_RE / BULLET_RE claim these
+  // patterns cannot splice into user prose, because they are `^`-anchored with
+  // no `g`/`m` flag and interpolate only a compile-time constant. This is that
+  // claim as a test rather than as a comment: a marker-looking sequence in the
+  // MIDDLE of a line must survive untouched, and so must one past the 3-space
+  // tolerance. Both are the #3313 shape (a matcher eating text it should not),
+  // which is what the guard exists to prevent.
+  it('strips a marker only at the start of the line, never mid-prose', () => {
+    expect(stripBlockMarker('see item 1. below')).toBe('see item 1. below')
+    expect(stripBlockMarker('a - b - c')).toBe('a - b - c')
+    expect(stripBlockMarker('Notebook - shopping list')).toBe('Notebook - shopping list')
+  })
+
+  it('leaves an over-indented marker alone, matching the parser cutoff', () => {
+    // Four spaces is past MAX_MARKER_INDENT, so the parser reads it as text.
+    expect(stripBlockMarker('    - x')).toBe('    - x')
+    expect(stripBlockMarker('   - x')).toBe('x')
   })
 })

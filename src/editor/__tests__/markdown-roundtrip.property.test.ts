@@ -453,3 +453,255 @@ describe('property: structural round-trip for the fixed audit shapes', () => {
     },
   )
 })
+
+// -- #4019: the marker-indent / nesting instrument ----------------------------
+/**
+ * The generators that discriminated the #4019 fix, committed so the evidence is
+ * reproducible by a reviewer and re-run by CI against future changes.
+ *
+ * The properties above fuzz DOCUMENTS at one nesting level over our own output.
+ * The fix #4019 landed is about the two places that is not enough:
+ *
+ *  - the serializer's leading-marker escape must be strictly WIDER than the
+ *    parser's marker-indent tolerance, because a paragraph nested in a list
+ *    item is emitted indented and re-parsed dedented by the item's content
+ *    column — so marker-ness has to be invariant under that dedent at every
+ *    depth, not just at depth 1 (P2), and
+ *  - `collectListItem`'s dedent must be the exact inverse of `indentLines` for
+ *    heterogeneous item children and deep structures (P1), including for
+ *    FOREIGN indentation the exporter never emits (P3: tabs, CRLF, 0-8-space
+ *    nesting steps, nested blockquotes).
+ *
+ * All three run at a FIXED SEED. They are a deterministic replay, not a new
+ * source of random CI reddening: #4049 (open) is a live seed-dependent fixpoint
+ * violation reachable from this suite's own alphabet, so an unseeded property
+ * here would be able to redden an unrelated PR. When #4049 lands, the seed can
+ * be dropped and `hasKnownIssue4049Drift` deleted with it.
+ */
+
+/**
+ * Runs per property — 15 000 executions in total. Chosen by measurement on this
+ * machine, not by feel; test time for this FILE, everything else held fixed:
+ *
+ *   without these properties  0.10s
+ *   2 000 runs                0.61s
+ *   5 000 runs                1.27s   ← chosen
+ *  10 000 runs                2.41s
+ *  20 000 runs                4.56s   (the 60 000-execution sweep from the PR)
+ *
+ * Growth is linear, so the knob is purely "how much of the original sweep do we
+ * pay for on every CI run". 5 000 buys a quarter of it for ~1.2s against a
+ * 160s full frontend suite (<1%), i.e. it does not dominate; the 20 000 that
+ * reproduces the full sweep is a visible tax on every push. Re-run the higher
+ * rows by hand when touching the parse/serialize pair.
+ */
+const NESTING_NUM_RUNS = 5000
+
+/**
+ * Fixed fast-check seed — see the block comment above. Any value works; this
+ * one is the issue number so its provenance is obvious.
+ */
+const NESTING_SEED = 4019
+
+/**
+ * KNOWN OPEN BUG, EXCLUDED BY NAME: #4049 — "markdown fixpoint still violated
+ * for a 2-space-indented paragraph after a list (underscore flanking flips
+ * under the dedent)".
+ *
+ * `underscoreRunFlank` (`markdown-common.ts`) classifies a `_` run at the START
+ * of a string differently from one preceded by a space, so a line that is both
+ * INDENTED and contains an underscore can change its escape decision when
+ * `collectListItem` dedents it — `  _ ` serializes clean but re-serializes as
+ * `  \_ `. That is a pre-existing inline-escape bug, orthogonal to the
+ * structural invariant these properties are the instrument for, and it is
+ * tracked and diagnosed in #4049 (with the exact repro and fix).
+ *
+ * The exclusion is deliberately visible rather than silent: DELETE this
+ * predicate and its three call sites when #4049 lands, and these properties
+ * should stay green.
+ */
+function hasKnownIssue4049Drift(md: string): boolean {
+  return md.split('\n').some((line) => /^[ \t]/.test(line) && line.includes('_'))
+}
+
+// -- P1: deep, heterogeneous list structures ---------------------------------
+
+/** Deepest list nesting generated. The serializer indents one level per step. */
+const MAX_GENERATED_LIST_DEPTH = 4
+
+/**
+ * A list item's NON-leading children — the "heterogeneous item children" arm.
+ * A list item is not just "paragraph + sub-list": the serializer indents every
+ * non-leading child by one `LIST_NEST_INDENT`, and the parser must dedent each
+ * back by exactly one content column whatever its kind. Code blocks and
+ * blockquotes are the interesting ones: their own productions are anchored at
+ * column 0, so they can only survive the round trip if the dedent restores that
+ * column exactly.
+ */
+function arbListItemChild(depth: number): fc.Arbitrary<BlockLevelNode> {
+  const kinds: fc.Arbitrary<BlockLevelNode>[] = [arbPlainParagraph, arbCodeBlock, arbBlockquote]
+  if (depth < MAX_GENERATED_LIST_DEPTH) kinds.push(arbNestedList(depth + 1))
+  return fc.oneof(...kinds)
+}
+
+/** A bullet/ordered list whose items carry heterogeneous children, to `depth`. */
+function arbNestedList(depth: number): fc.Arbitrary<BlockLevelNode> {
+  const arbItem: fc.Arbitrary<ListItemNode> = fc
+    .tuple(
+      arbParagraph,
+      fc.array(arbListItemChild(depth), { minLength: 0, maxLength: depth === 1 ? 2 : 1 }),
+    )
+    .map(([lead, rest]) => ({ type: 'listItem' as const, content: [lead, ...rest] }))
+  return fc
+    .tuple(fc.boolean(), fc.array(arbItem, { minLength: 1, maxLength: 2 }))
+    .map(([ordered, items]) => ({
+      type: ordered ? ('orderedList' as const) : ('bulletList' as const),
+      content: items,
+    }))
+}
+
+/**
+ * `hasGreedyAdjacency` applies the greedy-sibling-merge rule to the DOC's
+ * children; inside a list item the same rule applies to the item's children
+ * (two adjacent blockquotes merge, and a callout absorbed into a plain quote
+ * has its `[!INFO]` re-emitted as escaped literal text). Same pre-existing
+ * canonical-merge policy, one level down — a one-pass normalization, not a
+ * fixpoint, so it belongs to the convergence property rather than this one.
+ */
+function hasGreedyAdjacencyAnywhere(node: BlockLevelNode | DocNode | ListItemNode): boolean {
+  const children = (node.content ?? []) as readonly BlockLevelNode[]
+  const greedy = new Set<string>(['blockquote', 'table', 'orderedList', 'bulletList'])
+  for (let i = 1; i < children.length; i++) {
+    const prev = children[i - 1] as BlockLevelNode
+    const cur = children[i] as BlockLevelNode
+    if (prev.type === cur.type && greedy.has(cur.type)) return true
+  }
+  return children.some(
+    (c) => typeof c === 'object' && 'content' in c && hasGreedyAdjacencyAnywhere(c),
+  )
+}
+
+const arbDeepListDoc: fc.Arbitrary<DocNode> = fc
+  .array(arbNestedList(1), { minLength: 1, maxLength: 2 })
+  .map((content) => ({ type: 'doc' as const, content }))
+  // Adjacent ordered-list siblings merge and renumber (a one-pass
+  // normalization, covered by the convergence property above), so they are not
+  // strict fixpoints and belong to that property, not this one.
+  .filter((d) => !hasGreedyAdjacency(d) && !hasGreedyAdjacencyAnywhere(d))
+
+describe('property (#4019): deep, heterogeneous list nesting is a strict fixpoint', () => {
+  it('a depth-4 list with mixed item children re-serializes byte-identically', () => {
+    fc.assert(
+      fc.property(arbDeepListDoc, (d) => {
+        const md1 = serialize(d)
+        fc.pre(!hasKnownIssue4049Drift(md1))
+        expect(serialize(parse(md1))).toBe(md1)
+      }),
+      { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
+    )
+  })
+})
+
+// -- P2: marker-ness is invariant under the item dedent ----------------------
+
+/** The three leading list markers, at every indent from 0 to past the tolerance. */
+const arbMarkerLikeText: fc.Arbitrary<string> = fc
+  .tuple(
+    fc.integer({ min: 0, max: 7 }),
+    fc.constantFrom('- ', '* ', '1. ', '7. ', '- [ ] ', '- [x] ', '- [/] '),
+    fc.constantFrom('x', 'a b', 'y1'),
+  )
+  .map(([indent, marker, body]) => `${' '.repeat(indent)}${marker}${body}`)
+
+/**
+ * A paragraph whose literal TEXT looks like a list marker, buried at a random
+ * depth in a list. This is the shape the fix is about: it is emitted indented
+ * by `depth` levels and re-parsed dedented one level per recursion step, so an
+ * indent too deep to be a marker on the way out can land inside the parser's
+ * tolerance on the way back in. It must come back a PARAGRAPH — structural
+ * identity, not merely a stable string.
+ */
+const arbBuriedMarkerDoc: fc.Arbitrary<DocNode> = fc
+  .tuple(arbMarkerLikeText, fc.integer({ min: 0, max: MAX_GENERATED_LIST_DEPTH }))
+  .map(([markerText, depth]) => {
+    let node: BlockLevelNode = { type: 'paragraph', content: [{ type: 'text', text: markerText }] }
+    for (let i = 0; i < depth; i++) {
+      node = {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: 'p' }] }, node],
+          },
+        ],
+      }
+    }
+    return { type: 'doc' as const, content: [node] }
+  })
+
+describe('property (#4019): a marker-like paragraph never resurrects as a list', () => {
+  it('survives as a paragraph at every indent and nesting depth', () => {
+    fc.assert(
+      fc.property(arbBuriedMarkerDoc, (d) => {
+        const md = serialize(d)
+        expect(parse(md)).toEqual(d)
+        expect(serialize(parse(md))).toBe(md)
+      }),
+      { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
+    )
+  })
+})
+
+// -- P3: foreign markdown import converges in one pass ------------------------
+
+/**
+ * Markdown as a FOREIGN tool writes it, which is where the marker-indent
+ * tolerance earns its keep — indentation our own exporter never emits (tabs,
+ * 4- and 8-space nesting steps), CRLF line endings, and blockquote nesting
+ * around all of it. Import is allowed to NORMALIZE such a document once (that
+ * is what canonical storage means); it must then be a fixed point forever, or
+ * every open/close cycle rewrites the user's content.
+ *
+ * The alphabet is deliberately narrow — the inline grammar is fuzzed by the
+ * properties above; what is under test here is line SHAPE.
+ */
+const arbForeignLine: fc.Arbitrary<string> = fc
+  .tuple(
+    fc.constantFrom('', ' ', '  ', '   ', '    ', '      ', '        ', '\t', '\t\t'),
+    fc.constantFrom('', '> ', '> > ', '> > > '),
+    fc.constantFrom(
+      '- item',
+      '* item',
+      '+ item',
+      '1. item',
+      '3. item',
+      '- [ ] task',
+      '- [x] task',
+      'plain text',
+      '# heading',
+      '> quote',
+      '```',
+      'a | b',
+      '---',
+      '',
+    ),
+  )
+  .map(([indent, quote, body]) => `${quote}${indent}${body}`)
+
+const arbForeignMarkdown: fc.Arbitrary<string> = fc
+  .tuple(fc.array(arbForeignLine, { minLength: 1, maxLength: 8 }), fc.constantFrom('\n', '\r\n'))
+  .map(([lines, eol]) => lines.join(eol))
+
+describe('property (#4019): foreign markdown import converges in one pass', () => {
+  it('serialize(parse(·)) is a fixed point after the first normalization', () => {
+    fc.assert(
+      fc.property(arbForeignMarkdown, (md) => {
+        const md1 = serialize(parse(md))
+        fc.pre(!hasKnownIssue4049Drift(md1))
+        const md2 = serialize(parse(md1))
+        expect(md2).toBe(md1)
+      }),
+      { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
+    )
+  })
+})

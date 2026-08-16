@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { MAX_MARKER_INDENT, TASK_ITEM_RE } from '@/editor/markdown-parse/vocab'
 import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '@/lib/block-utils'
 
 describe('processCheckboxSyntax', () => {
@@ -84,6 +85,41 @@ describe('processCheckboxSyntax', () => {
     const result = processCheckboxSyntax('- [x]   extra spaces')
     // '- [x] ' is 6 chars, so content starts at index 6
     expect(result).toEqual({ cleanContent: '  extra spaces', todoState: 'DONE' })
+  })
+
+  // -- #4019 follow-up: agree with the parser's marker-indent tolerance -------
+  // `TASK_ITEM_RE` tolerates up to `MAX_MARKER_INDENT` spaces before the
+  // marker, so an indented task line already RENDERS as a task; without the
+  // same tolerance here it never folded into the `todo_state` column and the
+  // marker stayed in `content`. Like the parser, the tolerated indent is part
+  // of the marker, not of the task text.
+  describe('marker-indent tolerance agrees with the markdown parser', () => {
+    const TOLERATED = Array.from({ length: MAX_MARKER_INDENT + 1 }, (_, n) => ' '.repeat(n))
+
+    it.each(TOLERATED)('folds a task marker indented by %j', (pad) => {
+      expect(processCheckboxSyntax(`${pad}- [ ] buy milk`)).toEqual({
+        cleanContent: 'buy milk',
+        todoState: 'TODO',
+      })
+      expect(processCheckboxSyntax(`${pad}* [x] done`)).toEqual({
+        cleanContent: 'done',
+        todoState: 'DONE',
+      })
+    })
+
+    it('one space past the tolerance is plain content', () => {
+      const pad = ' '.repeat(MAX_MARKER_INDENT + 1)
+      expect(processCheckboxSyntax(`${pad}- [ ] buy milk`)).toEqual({
+        cleanContent: `${pad}- [ ] buy milk`,
+        todoState: null,
+      })
+    })
+
+    it.each(TOLERATED)('matches TASK_ITEM_RE on the same string (indent %j)', (pad) => {
+      const line = `${pad}- [/] doing`
+      expect(TASK_ITEM_RE.test(line)).toBe(true)
+      expect(processCheckboxSyntax(line).todoState).toBe('DOING')
+    })
   })
 })
 

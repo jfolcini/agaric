@@ -18,6 +18,8 @@
  * any other block.
  */
 
+import { MARKER_INDENT_SRC } from '@/editor/markdown-parse/vocab'
+
 /** Canonical block-type tokens used by the Turn-into menu. */
 export type BlockTypeToken =
   | 'paragraph'
@@ -37,8 +39,25 @@ const HEADING_RE = /^(#{1,6})\s+/
 // Plain blockquote: `> ` not followed by a `[!` callout marker.
 const QUOTE_RE = /^>\s+(?!\[!)/
 const CALLOUT_RE = /^>\s+\[![A-Za-z]+\]\s*/
-const ORDERED_RE = /^\d+\.\s+/
-const BULLET_RE = /^[-*+]\s+/
+// The two LIST markers carry the parser's marker-indent tolerance
+// (`MARKER_INDENT_SRC`, built from `MAX_MARKER_INDENT` — CommonMark's three
+// spaces). Without it these disagreed with what the editor actually renders:
+// `  - x` parses to a bulletList but reported `'paragraph'` in Turn-into, and
+// `stripBlockMarker` left the marker in place. The tolerated indent is part of
+// the marker (the parser's item text excludes it too), so it is stripped with
+// it. Heading / quote / callout stay anchored at column 0 — so are their parser
+// productions, so an indented one is paragraph text on both sides.
+// The two patterns below interpolate only `MARKER_INDENT_SRC`, a compile-time
+// constant holding the quantifier text ` {0,3}` — no user string ever reaches
+// them. Both are `^`-anchored with neither the `g` nor the `m` flag, so each can
+// only strip a prefix of a single line; there is no position at which one could
+// splice into the middle of a word. That is exactly what separates them from
+// #3313, where the interpolated value WAS user content (a page title, which
+// then matched inside `Notebook`). Pinned by tests, not just asserted here.
+// content-regex-allow: interpolates a compile-time quantifier, never user prose
+const ORDERED_RE = new RegExp(`^${MARKER_INDENT_SRC}\\d+\\.\\s+`)
+// content-regex-allow: interpolates a compile-time quantifier, never user prose
+const BULLET_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*+]\\s+`)
 const FENCE_RE = /^```/
 
 /**

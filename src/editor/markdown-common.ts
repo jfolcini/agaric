@@ -22,7 +22,17 @@ export const ULID_RE = /^[0-9A-Z]{26}$/
  * Indentation of ONE list-nesting level (#1513). Shared because the two halves
  * must agree exactly: the serializer prefixes every non-leading child of a list
  * item with it, and the parser recognizes a nested block by it and dedents by
- * whole multiples of it. Two spaces is the `- ` marker width.
+ * exactly ONE level of it per recursion step. Two spaces is the `- ` marker
+ * width.
+ *
+ * The dedent is measured from the ITEM'S OWN MARKER, not from column 0:
+ * `collectListItem` (`markdown-parse/parser.ts`) strips
+ * `leadingIndent(markerLine) + LIST_NEST_INDENT.length` columns, which is 2 for
+ * our own output but 3 or 5 for a foreign marker carrying 1 or 3 spaces of the
+ * CommonMark marker-indent tolerance (`MAX_MARKER_INDENT`) — i.e. the content
+ * column, not a whole multiple of this width. Measuring from column 0 instead
+ * would make a sibling of an over-indented list (`  - a` / `  - b`) look like a
+ * child of its own sibling.
  *
  * The width is also the THRESHOLD: a line indented by less than one whole level
  * is NOT nested content, it is a sibling block whose own text happens to start

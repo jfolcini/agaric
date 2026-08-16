@@ -32,6 +32,7 @@ import {
   flushBuf,
   type InlineState,
   type LinkMatch,
+  MARKER_INDENT_SRC,
   MAX_LINK_SCAN,
   MAX_PARSE_DEPTH,
   nodeToPlainText,
@@ -419,10 +420,12 @@ export function parseHorizontalRule(lines: readonly string[], i: number): BlockP
   return { blocks: [block], consumed: 1 }
 }
 
-// `^ {0,3}` is the CommonMark marker-indent tolerance (see MAX_MARKER_INDENT
-// in ./vocab); groups 1/2 are the number and the item text, neither of which
-// includes the indentation.
-const ORDERED_ITEM_RE = /^ {0,3}(\d+)\. (.*)$/
+// The leading `MARKER_INDENT_SRC` is the CommonMark marker-indent tolerance
+// (see MAX_MARKER_INDENT in ./vocab) — the SAME fragment the three marker
+// regexes there are built from, so this fourth production cannot be left
+// behind by a widening. Groups 1/2 are the number and the item text, neither
+// of which includes the indentation.
+const ORDERED_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}(\\d+)\\. (.*)$`)
 
 /**
  * Number of leading spaces on a line (its indentation). A line with no leading

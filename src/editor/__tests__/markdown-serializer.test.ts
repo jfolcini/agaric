@@ -1298,8 +1298,15 @@ describe('list nesting indent (#4019): a sub-level indent is not nested content'
 // so that residue is still a list marker — without the tolerance a 4-space
 // import degrades into literal paragraph text, which is a worse corruption than
 // the drift #4019 fixed. `MAX_MARKER_INDENT` (markdown-parse/vocab.ts) is the
-// parser side; `serializeParagraph`'s `^( {0,3})- ` / `^( {0,3})(\d+)\. `
-// escapes are the serializer side that keeps the round trip closed.
+// parser side; `serializeParagraph`'s `^( *)- ` / `^( *)(\d+)\. ` escapes are
+// the serializer side that keeps the round trip closed. Those escapes are
+// deliberately UNBOUNDED, i.e. strictly wider than the parser's `{0,3}`
+// tolerance: a paragraph nested in a list item is emitted indented and
+// re-parsed dedented by the item's content column, so an indent too deep to be
+// a marker on the way out lands inside the tolerance on the way back in. Do
+// NOT "restore" a `{0,3}` bound on the escape side — that narrower form IS the
+// second bug this section pins, and the `'  \\- x'` cases below assert the
+// wider one.
 describe('list marker indent tolerance (#4019): CommonMark 0-3 spaces', () => {
   it('reads a 4-space-nested bullet import as a real sub-list', () => {
     expect(parse('- parent\n    - child')).toEqual(
@@ -1360,12 +1367,20 @@ describe('list marker indent tolerance (#4019): CommonMark 0-3 spaces', () => {
   })
 
   // -- the boundary itself: 0-3 spaces are a marker, 4 is not -----------------
-  // Driven off `MAX_MARKER_INDENT` rather than a literal 3/4, so the constant
-  // is what these tests actually assert. Widening the `{0,3}` quantifiers
-  // without moving the constant fails the `MAX_MARKER_INDENT + 1` case below;
-  // moving the constant without widening the quantifiers fails the `.each`
-  // cases above it. Neither half can drift silently — which is exactly what the
-  // constant's doc comment in `markdown-parse/vocab.ts` claims.
+  // Driven off `MAX_MARKER_INDENT` rather than a literal 3/4, so these cases
+  // assert that ALL FOUR marker productions agree with the constant — the
+  // property that used to be at risk when each production spelled `{0,3}` for
+  // itself. They no longer pin the VALUE: the four productions are now built
+  // from `MARKER_INDENT_SRC`, so moving the constant moves the whole family and
+  // these relative cases follow it. The literal-value assertion directly below
+  // is what pins 3 to CommonMark's rule; keep both.
+  it('the tolerated indent is CommonMark’s three spaces', () => {
+    // A fourth space is indented-code territory, which is why 3 and not 4 (or
+    // 2) is the right number. Deliberately a LITERAL: it is the one place the
+    // value is asserted rather than derived.
+    expect(MAX_MARKER_INDENT).toBe(3)
+  })
+
   const TOLERATED_INDENTS = Array.from({ length: MAX_MARKER_INDENT + 1 }, (_, n) => n)
 
   it.each(TOLERATED_INDENTS)('a bullet marker indented by %i spaces starts a list', (n) => {

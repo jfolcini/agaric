@@ -163,12 +163,21 @@ Three requirements to actually get idempotence:
    widening — those productions are anchored at column 0.
 
    **Latent bug to fix as part of this work:** `stripBlockMarker`
-   (`src/lib/block-type-convert.ts:48`) strips `-` / `1.` **unconditionally**,
+   (`src/lib/block-type-convert.ts`) strips `-` / `1.` **unconditionally**,
    so a plain block beginning with those characters loses them. The parser side
    already guards this correctly — `leading-block-markers.test.ts` asserts that
    `- bullet-ish`, `1. ordered-ish`, etc. round-trip back to a plain paragraph —
    so the fix is to bring `stripBlockMarker` (and the `convertBlockContent` path,
    same file) in line with that escaping contract.
+
+   The *indent* half of that divergence is closed: `detectBlockType` /
+   `stripBlockMarker` and `processCheckboxSyntax`
+   (`src/lib/block-utils.ts`) build their list-marker regexes from the same
+   `MARKER_INDENT_SRC` fragment as the parser, so an indented marker is
+   classified identically on both sides — a two-space-indented `- x` no longer
+   renders as a bullet list while reporting "paragraph" in Turn-into, and an
+   indented `- [ ] x` folds into the `todo_state` column like its unindented
+   twin. Only the *escaping* half above remains.
 3. **Import tolerance: up to `MAX_MARKER_INDENT` (3) spaces before a marker**
    (`markdown-parse/vocab.ts`). CommonMark allows up to three spaces before a
    block start; a fourth begins indented-code territory. That tolerance is what
