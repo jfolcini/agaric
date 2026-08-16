@@ -225,3 +225,81 @@ Note 5 collapsed a ten-line rationale that existed twice. Note 7 needed no code,
 documentation now states what it is actually load-bearing for: nothing asserts `child_count`
 still has no production emitter, and nothing asserts `kind` still has one site — the entry a
 future `kind = user_input` would need already exists.
+
+## Review round three: the residual list asserted a property the code did not have
+
+Round two ended by sorting the guard's residual limits by direction and closing with a
+sentence I wrote myself:
+
+> Every one of these OVER-flags or is a review question; none of them lets a field through
+> unscanned, which is the only direction that costs privacy
+
+That sentence was false at the moment it was committed. `balanced` was not literal-aware, so
+a closing delimiter inside the span NAME truncated the group before the fields were reached:
+
+```rust
+tracing::info_span!("n)", page_title = t)
+```
+
+`balanced` returns `"n`, `span_macro_field_keys` finds no fields in it, and `page_title` —
+the exact attribute this guard was written after `import_markdown_with_progress` shipped it
+— goes unscanned. Confirmed end to end before touching anything: that probe sat in
+`commands/bug_report.rs` and the guard passed, `1 test run: 1 passed`.
+
+This is the third round in a row where the same shape has surfaced one layer further in. The
+guard scanned `#[instrument]` but not `span!` (#3712). It scanned `span!(…)` but not `!{…}`
+or `![…]` (round two). It balanced delimiters but not the literals containing them (this
+round). Each time the residual list was rewritten to be more careful, and each time the new
+list was more confident than the code underneath it. The failure mode is not the missing
+feature; it is that a *list of admitted weaknesses* is the artefact a reviewer trusts when
+deciding how hard to look at a new span, and this one promised a property nobody had checked.
+
+I fixed both halves rather than choosing. The reviewer offered "track string literals, or
+amend the sentence", and preferred amending — accurate prose beating an inaccurate claim plus
+a partial fix. That framing is right, but it is not actually a dilemma here: `opaque_prefix_len`
+is one self-contained function that recognises strings, raw and byte strings, char literals
+and (nesting) block and line comments, and both `balanced` and `top_level_parts` walk through
+it. So the sentence got deleted AND the case it was wrong about got closed — with the deletion
+kept visible in the doc rather than quietly swallowed, because "we once claimed this and it
+was not true" is the part a future reader needs.
+
+The residual list is now sorted by direction with the under-flags FIRST and stated as
+maintained-by-review rather than proved exhaustive, which is the distinction the old sentence
+blurred. Three known under-flags remain, all in the `.record("` marker: `.record_all`, a
+non-literal key, and — new to the list — a call rustfmt has wrapped so the quote no longer
+follows the paren.
+
+## The lifetime trap
+
+`'a'` is a char literal and `'a` is a lifetime, and a scanner that gets this backwards opens
+a literal that never closes and swallows every argument list containing a generic bound —
+an under-flag, produced by the fix for an under-flag. The rule is one char then a closing
+quote; `f::<'a>(x)` stays ordinary code and `j = ')'` does not truncate. Pinned, not assumed.
+
+Note 5 came in as "add it to the residual list" and got fixed instead, since the same helper
+covers it: `info_span!("n", k = "a,b")` used to split inside the value literal and invent a
+`b"` key. Safe polarity — but it reddens CI at an innocent site, which is how a guard earns
+the reputation that gets it disabled.
+
+## A panic that would have told nobody anything
+
+Note 3: `rfind(pred).map_or(0, |n| n + 1)` assumed the char before an identifier was one byte
+wide. Both arms reproduced before fixing, with a multibyte char immediately before the marker:
+
+```
+panicked at src/commands/observability.rs:450:42:
+start byte index 70632 is not a char boundary; it is inside '…' (bytes 70631..70634)
+```
+
+and at `:488:33` for the `.record("` receiver. Unreachable in today's sources, but the
+failure mode is what makes it worth fixing: a PII guard that dies with a byte-index panic
+tells its reader nothing about spans, and the natural response to an opaque failure in a
+test nobody understands is to delete the test. Note that the round-two `delimiter_after`
+anchor does not shield this — the `span!` arm slices the macro name before the anchor runs.
+
+Notes 4, 7 and 8 needed no code and I checked each rather than accepting the summary. The
+`recorder` exclusion does match a trailing identifier, so `holder.recorder.record(…)` is
+skipped too — consistent with the doc, wider than it reads, now stated at the skip itself.
+`child_count`'s carve-out is held by a comment and nothing else, as the doc already says.
+The twins' duplicate-name messages differ cosmetically (`["a", "b"]` vs `["a","b"]`) and each
+side asserts its own spelling — semantically mirrored, which is what the pairing is for.

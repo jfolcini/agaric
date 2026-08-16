@@ -169,13 +169,117 @@ mod tests {
         roots
     }
 
+    /// The byte length of the lexical element starting at `at` whose INTERIOR
+    /// must not be inspected — a string, raw-string, byte-string or char
+    /// literal, or a line / block comment — and `None` when `at` is ordinary
+    /// code. Never returns `Some(0)`.
+    ///
+    /// This is what makes [`balanced`] and [`top_level_parts`] literal-aware,
+    /// and the first of the two mattered for correctness in the direction
+    /// that counts (#3980 round-three notes 1 and 5). A `)` inside the span
+    /// NAME — `info_span!("n)", page_title = t)` — used to truncate the group
+    /// at the wrong byte, after which `span_macro_field_keys` saw no fields
+    /// at all and `page_title` went UNSCANNED. The comma case only ever
+    /// over-flagged: `info_span!("n", k = "a,b")` split mid-literal and
+    /// invented a `b"` key, which reddens CI at an innocent site.
+    ///
+    /// `'x'` is a char literal but `'a` alone is a LIFETIME, and the two are
+    /// told apart by what follows the char — get that wrong and every generic
+    /// bound in the workspace opens a literal that never closes.
+    ///
+    /// `at` must be a char boundary; the returned length always lands on one.
+    fn opaque_prefix_len(src: &str, at: usize) -> Option<usize> {
+        let b = src.as_bytes();
+        let rest = &b[at..];
+
+        if rest.starts_with(b"//") {
+            return Some(src[at..].find('\n').unwrap_or(src.len() - at));
+        }
+        // Block comments NEST in Rust, so this counts depth rather than
+        // stopping at the first `*/`.
+        if rest.starts_with(b"/*") {
+            let mut depth = 0_usize;
+            let mut j = at;
+            while j + 1 < b.len() {
+                if &b[j..j + 2] == b"/*" {
+                    depth += 1;
+                    j += 2;
+                } else if &b[j..j + 2] == b"*/" {
+                    depth -= 1;
+                    j += 2;
+                    if depth == 0 {
+                        return Some(j - at);
+                    }
+                } else {
+                    j += 1;
+                }
+            }
+            return Some(b.len() - at);
+        }
+
+        // `b` prefixes a byte string, `r` a raw string; `br#"…"#` takes both.
+        let mut j = at;
+        if b.get(j) == Some(&b'b') {
+            j += 1;
+        }
+        if b.get(j) == Some(&b'r') {
+            let hashes_at = j + 1;
+            let mut k = hashes_at;
+            while b.get(k) == Some(&b'#') {
+                k += 1;
+            }
+            if b.get(k) == Some(&b'"') {
+                let hashes = k - hashes_at;
+                let mut scan = k + 1;
+                loop {
+                    let Some(rel) = src[scan..].find('"') else {
+                        return Some(b.len() - at);
+                    };
+                    let after = scan + rel + 1;
+                    if b[after..].iter().take_while(|c| **c == b'#').count() >= hashes {
+                        return Some(after + hashes - at);
+                    }
+                    scan = after;
+                }
+            }
+        }
+        if b.get(j) == Some(&b'"') {
+            let mut k = j + 1;
+            while k < b.len() {
+                match b[k] {
+                    b'\\' => k += 2,
+                    b'"' => return Some(k + 1 - at),
+                    _ => k += 1,
+                }
+            }
+            return Some(b.len() - at);
+        }
+
+        if b.get(at) == Some(&b'\'') {
+            // `'\n'`, `'\''` — an escape is always a char literal.
+            if b.get(at + 1) == Some(&b'\\') {
+                return src[at + 2..].find('\'').map(|rel| at + 2 + rel + 1 - at);
+            }
+            // One char then a closing quote is a char literal; anything else
+            // (`'a,`, `'static>`) is a lifetime and stays ordinary code.
+            if let Some(c) = src[at + 1..].chars().next() {
+                let after = at + 1 + c.len_utf8();
+                if b.get(after) == Some(&b'\'') {
+                    return Some(after + 1 - at);
+                }
+            }
+        }
+        None
+    }
+
     /// Return the substring of `src` inside the delimiter group that opens at
-    /// `open`, balancing nesting of that same pair. `open` may index any of
-    /// the three macro-invocation delimiters — `(`, `[` or `{` — because
-    /// `m!(…)`, `m![…]` and `m!{…}` are all legal spellings of the same
-    /// invocation and a scan that assumes parens misses two thirds of them
-    /// (#3980 note 2). `None` when the group is unbalanced (a truncated read)
-    /// or `open` does not index an opening delimiter.
+    /// `open`, balancing nesting of that same pair and skipping literals and
+    /// comments ([`opaque_prefix_len`]). `open` may index any of the three
+    /// macro-invocation delimiters — `(`, `[` or `{` — because `m!(…)`,
+    /// `m![…]` and `m!{…}` are all legal spellings of the same invocation and
+    /// a scan that assumes parens misses two thirds of them (#3980 note 2).
+    /// `None` when the group is unbalanced (a truncated read) or `open` does
+    /// not index an opening delimiter.
     fn balanced(src: &str, open: usize) -> Option<&str> {
         let bytes = src.as_bytes();
         let (opener, closer) = match bytes.get(open)? {
@@ -185,17 +289,42 @@ mod tests {
             _ => return None,
         };
         let mut depth = 0_usize;
-        for (i, b) in bytes.iter().enumerate().skip(open) {
-            if *b == opener {
+        let mut i = open;
+        while i < bytes.len() {
+            if let Some(skip) = opaque_prefix_len(src, i) {
+                debug_assert!(skip > 0, "opaque element must consume at least one byte");
+                i += skip;
+                continue;
+            }
+            if bytes[i] == opener {
                 depth += 1;
-            } else if *b == closer {
+            } else if bytes[i] == closer {
                 depth -= 1;
                 if depth == 0 {
                     return src.get(open + 1..i);
                 }
             }
+            i += src[i..].chars().next().map_or(1, char::len_utf8);
         }
         None
+    }
+
+    /// Byte index at which the identifier ENDING at `end` starts.
+    ///
+    /// The delimiting char before an identifier is not necessarily one byte
+    /// wide, and `rfind(…).map_or(0, |n| n + 1)` assumed it was (#3980
+    /// round-three note 3). A multibyte char immediately before a `span!`
+    /// marker or a `.record("` receiver made the following slice panic with
+    /// "byte index is not a char boundary" — an opaque failure for a guard
+    /// whose entire job is to be legible to whoever it fails on. Note the
+    /// `span!` arm takes this slice BEFORE [`delimiter_after`] runs, so the
+    /// anchor does not shield it.
+    fn ident_start(src: &str, end: usize) -> usize {
+        src[..end]
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+            .map_or(0, |(n, c)| n + c.len_utf8())
     }
 
     /// The index of the macro-invocation delimiter that immediately follows
@@ -219,24 +348,32 @@ mod tests {
     }
 
     /// Split an argument list on TOP-LEVEL commas, preserving each entry
-    /// verbatim (untrimmed).
+    /// verbatim (untrimmed). Commas inside a literal or a comment are not
+    /// top-level ([`opaque_prefix_len`], #3980 round-three note 5).
     fn top_level_parts(args: &str) -> Vec<String> {
+        let bytes = args.as_bytes();
         let mut parts: Vec<String> = Vec::new();
         let mut depth = 0_i32;
-        let mut cur = String::new();
-        for c in args.chars() {
-            match c {
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' => depth -= 1,
+        let mut start = 0_usize;
+        let mut i = 0_usize;
+        while i < bytes.len() {
+            if let Some(skip) = opaque_prefix_len(args, i) {
+                debug_assert!(skip > 0, "opaque element must consume at least one byte");
+                i += skip;
+                continue;
+            }
+            match bytes[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                b',' if depth == 0 => {
+                    parts.push(args[start..i].to_owned());
+                    start = i + 1;
+                }
                 _ => {}
             }
-            if c == ',' && depth == 0 {
-                parts.push(std::mem::take(&mut cur));
-            } else {
-                cur.push(c);
-            }
+            i += args[i..].chars().next().map_or(1, char::len_utf8);
         }
-        parts.push(cur);
+        parts.push(args[start..].to_owned());
         parts
     }
 
@@ -325,23 +462,55 @@ mod tests {
     /// string literal, so shape alone cannot tell the two apart.
     ///
     /// Residual limits, stated exactly (it is a text scan, not a compile).
-    /// Every one of these OVER-flags or is a review question; none of them
-    /// lets a field through unscanned, which is the only direction that
-    /// costs privacy:
-    /// a `Span` recorded through a receiver whose trailing identifier is on
-    /// [`NON_SPAN_RECORD_RECEIVERS`] is skipped; `.record_all(…)` and a
-    /// non-literal first argument (`span.record(key_var, …)`) have no
-    /// literal key to check and are not seen; a string literal or block
-    /// comment that spells a full invocation — `"…span!(k = v)…"` — is read
-    /// as one and over-flags (a bare `span!` in a string no longer does, see
-    /// [`delimiter_after`]); and a field whose key is allowlisted but whose
-    /// VALUE is later changed to carry user content is a review question,
-    /// not a mechanical one. What the guard does NOT depend on any more is
-    /// what the span binding is called, or which of the three delimiters the
-    /// invocation is spelled with (#3980 note 2: `find('(')` from the marker
-    /// silently skipped past a `!{…}` or `![…]` invocation to an unrelated
-    /// paren group later in the file, so the real fields went UNSCANNED —
-    /// the one residual in this guard that pointed the wrong way).
+    /// An earlier revision of this list closed with "every one of these
+    /// OVER-flags or is a review question; none of them lets a field through
+    /// unscanned". That sentence was FALSE when it was written, and it is
+    /// worth saying so rather than quietly deleting it: `balanced` was not
+    /// literal-aware, so `info_span!("n)", page_title = t)` truncated the
+    /// group at the `)` inside the span name and the fields after it were
+    /// never looked at (#3980 round-three note 1). A guard's list of
+    /// admitted weaknesses is the artefact people trust when they decide how
+    /// hard to look at a new span, and this one asserted a property the code
+    /// did not have — the same overclaim, one layer in, that #3712 was filed
+    /// for. `opaque_prefix_len` now closes that case; the list below is what
+    /// is left, and it is sorted by direction rather than by topic.
+    ///
+    /// UNDER-flags — a real field the scan does not see. The known ones are
+    /// all in the `.record("` marker: `.record_all(…)` and a non-literal
+    /// first argument (`span.record(key_var, …)`) have no literal key to
+    /// check; and the marker requires the quote IMMEDIATELY after the paren,
+    /// so a call rustfmt has broken across lines — `span.record(` then a
+    /// newline then `    "key",` — does not match (#3980 round-three note 2).
+    /// All are pre-existing. This sub-list is maintained by review, not
+    /// proved exhaustive — that is precisely the distinction the deleted
+    /// sentence blurred — but it is kept because a residual list that omits
+    /// its own under-flags is worse than no list at all.
+    ///
+    /// SKIPS — deliberate, and only as narrow as their list: a `Span`
+    /// recorded through a receiver whose trailing identifier is on
+    /// [`NON_SPAN_RECORD_RECEIVERS`]. Trailing identifier means the exclusion
+    /// also covers a field access ending in that name
+    /// (`holder.recorder.record(…)`), which is wider than it reads; keep the
+    /// list to one entry.
+    ///
+    /// OVER-flags — safe, but they redden CI at an innocent site: a string
+    /// literal or block comment that spells a full invocation,
+    /// `"…span!(k = v)…"`, is read as one (a bare `span!` in a string no
+    /// longer is, see [`delimiter_after`]); and any macro whose name merely
+    /// ends in `span!` is scanned.
+    ///
+    /// REVIEW QUESTIONS, not mechanical ones: a field whose key is
+    /// allowlisted but whose VALUE later changes to carry user content, and
+    /// the name-generic allowlist entries called out on
+    /// [`ALLOWED_SPAN_FIELDS`].
+    ///
+    /// What the guard no longer depends on: what the span binding is called;
+    /// which of the three delimiters the invocation is spelled with (#3980
+    /// note 2 — `find('(')` skipped past a `!{…}` or `![…]` invocation to an
+    /// unrelated paren group and the real fields went unscanned); whether a
+    /// delimiter or comma sits inside a literal or comment (round-three notes
+    /// 1 and 5); and whether the byte before an identifier is one byte wide
+    /// ([`ident_start`], round-three note 3).
     ///
     /// Scope note: this covers span ATTRIBUTES. Span EVENTS — the `tracing`
     /// events `tracing-opentelemetry` folds into the enclosing span, including
@@ -444,10 +613,7 @@ mod tests {
                         continue;
                     }
                     // Report the macro by its full name, not the marker.
-                    let name_start = src[..idx]
-                        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-                        .map_or(0, |n| n + 1);
-                    let macro_name = &src[name_start..after];
+                    let macro_name = &src[ident_start(&src, idx)..after];
                     let Some(open) = delimiter_after(&src, after) else {
                         continue;
                     };
@@ -482,10 +648,7 @@ mod tests {
                     continue;
                 }
 
-                let ident_start = src[..idx]
-                    .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-                    .map_or(0, |n| n + 1);
-                let ident = &src[ident_start..idx];
+                let ident = &src[ident_start(&src, idx)..idx];
                 if NON_SPAN_RECORD_RECEIVERS.contains(&ident) {
                     continue;
                 }
@@ -507,5 +670,86 @@ mod tests {
              count / length / duration / bool); if it carries user content, move \
              it to a `tracing::*!` field instead. Offenders: {offenders:#?}"
         );
+    }
+
+    /// #3980 round-three note 1 — the UNDER-flag, pinned at the layer that
+    /// had it. A closing delimiter inside the span NAME truncated the group,
+    /// and `page_title` — the exact field this whole guard exists for — was
+    /// then never looked at. The end-to-end proof was a probe macro in
+    /// `commands/bug_report.rs` that the guard passed over in silence; this
+    /// is the same property without the probe.
+    #[test]
+    fn a_closing_delimiter_inside_a_literal_does_not_truncate_the_group() {
+        // The `(` of the invocation is at index 10.
+        let src = r#"info_span!("n)", page_title = t);"#;
+        assert_eq!(
+            balanced(src, 10),
+            Some(r#""n)", page_title = t"#),
+            "a `)` inside the span name must not end the argument list"
+        );
+        assert_eq!(
+            span_macro_field_keys(balanced(src, 10).expect("balanced")),
+            vec!["page_title".to_owned()],
+            "the field after the literal must still be scanned"
+        );
+
+        // The other two delimiter spellings, and the other two closers.
+        assert_eq!(
+            balanced(r#"info_span!{"n}", page_title = t}"#, 10),
+            Some(r#""n}", page_title = t"#)
+        );
+        assert_eq!(
+            balanced(r#"info_span!["n]", page_title = t]"#, 10),
+            Some(r#""n]", page_title = t"#)
+        );
+    }
+
+    /// #3980 round-three note 5 — the same blindness pointing the safe way.
+    /// A comma inside a field VALUE split the argument list mid-literal and
+    /// invented a `b"` key, which would redden CI at a legitimate site.
+    #[test]
+    fn a_comma_inside_a_literal_is_not_a_top_level_separator() {
+        assert_eq!(
+            top_level_parts(r#""n", k = "a,b""#),
+            vec![r#""n""#.to_owned(), r#" k = "a,b""#.to_owned()]
+        );
+        assert_eq!(
+            span_macro_field_keys(r#""n", k = "a,b""#),
+            vec!["k".to_owned()],
+            "no `b\"` key may be invented from inside the value literal"
+        );
+    }
+
+    /// A lifetime is not a char literal. Getting this backwards would open a
+    /// literal that never closes and swallow the rest of every generic-bound
+    /// argument list — an under-flag, so it is pinned rather than assumed.
+    #[test]
+    fn a_lifetime_is_ordinary_code_but_a_char_literal_is_not() {
+        assert_eq!(
+            balanced(r#"info_span!("n", k = f::<'a>(x), j = ')')"#, 10),
+            Some(r#""n", k = f::<'a>(x), j = ')'"#)
+        );
+        assert_eq!(
+            span_macro_field_keys(r#""n", k = f::<'a>(x), j = ')'"#),
+            vec!["k".to_owned(), "j".to_owned()]
+        );
+    }
+
+    /// #3980 round-three note 3 — a multibyte char immediately before the
+    /// identifier. `rfind(…).map_or(0, |n| n + 1)` landed mid-char and the
+    /// slice that followed panicked with "byte index is not a char boundary".
+    #[test]
+    fn ident_start_lands_on_a_char_boundary_after_a_multibyte_delimiter() {
+        let src = "…info_span";
+        let start = ident_start(src, src.len());
+        assert_eq!(&src[start..], "info_span");
+
+        let rec = "…holder";
+        assert_eq!(&rec[ident_start(rec, rec.len())..], "holder");
+
+        // An identifier at byte 0 still reports 0, and a one-byte delimiter
+        // is unaffected — the fix widens the step, it does not shift it.
+        assert_eq!(ident_start("info_span", 9), 0);
+        assert_eq!(&"a.holder"[ident_start("a.holder", 8)..], "holder");
     }
 }

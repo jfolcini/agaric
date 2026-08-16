@@ -1653,10 +1653,19 @@ mod tests {
     /// a format literal beginning `"end={end}` on a non-comment line, then
     /// reading the `<key>=` heads of its `\t`-separated segments. Coarse on
     /// purpose, in the repo's grep-based drift-guard style — it cannot prove
-    /// the literal is a `write!` format string. The one residual is a future
-    /// format that does NOT lead with `end=`; every OTel line format writes
-    /// the end timestamp first (it is the key the sink is ordered on), so a
-    /// writer that broke that convention would need an edit here anyway.
+    /// the literal is a `write!` format string.
+    ///
+    /// Two ways a writer drops out of `found` (#3980 round-three note 6), and
+    /// both are worth naming because the recognition is what the guard rests
+    /// on. It must lead with `end=` — every OTel line format writes the end
+    /// timestamp first, since that is the key the sink is ordered on, so a
+    /// writer breaking that convention would need an edit here anyway. And it
+    /// must stay on ONE source line: this matches per line, so a format
+    /// string rustfmt has wrapped is not seen. Neither residual is silent —
+    /// a dropped writer fails the set equality below rather than passing —
+    /// so both cost a confusing red build, not a missed drift. That is the
+    /// opposite polarity from the scan in `commands::observability`, whose
+    /// equivalent blind spots let a field through unscanned.
     #[test]
     fn skeleton_sequences_pin_real_line_format_writers() {
         let obs_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
