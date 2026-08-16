@@ -57,7 +57,7 @@ When a peer is so far behind that the log has been compacted past its frontier (
 In **DeviceManagement** you can per-peer:
 
 - **Rename** the device (the name shows up in tooltips, sync progress, the activity feed).
-- **Set a manual address** (`host:port`) for peers that mDNS can't see.
+- **Set a manual address** (`host:port`) for an already-paired peer on your subnet that mDNS hasn't surfaced (e.g. it hasn't re-announced since a restart). It is not a way to reach another network — see the pitfalls below.
 - **View status** (last sync, last error).
 - **Unpair** — confirmation required (non-reversible without re-pairing).
 
@@ -69,7 +69,8 @@ In **DeviceManagement** you can per-peer:
 
 ## Pitfalls to know
 
-- **Both devices must be on the same local network.** Agaric does not relay over the internet. For across-network sync, set a manual `host:port` on a reachable address (e.g. VPN-routed).
+- **Both devices must be on the same local network — always, and for a first pair specifically it must also carry multicast.** Agaric does not relay over the internet, and pairing for the first time requires working mDNS multicast between the two devices — that's currently the only way a device learns how to dial the other. If multicast doesn't reach (an isolated guest WiFi, AP/client isolation, multicast disabled on the router, two subnets), there's no way to complete a first pair — not even by typing an address, since the manual-address field only appears for a peer you've already paired.
+- **The manual address is not an across-network route.** Once paired, a peer's row in Device Management gains a manual `host:port` field, but it only helps for a peer on the same subnet Agaric bound — typically one that hasn't re-announced over mDNS yet. The sync endpoint is deliberately LAN-confined: it installs no relays and binds a single subnet as a non-default route, so a destination outside that subnet has no socket to leave by and the dial cannot be attempted at all. A VPN- or internet-routed address will not work.
 - **First-launch firewall prompt** (especially on macOS): allow incoming connections so peers can reach Agaric. Agaric listens on **UDP**, and on a port the operating system picks fresh at each launch — so a hand-written rule has to allow the application, not a fixed TCP port.
 - **mDNS on Android needs multicast — built in.** Some routers disable multicast; if your other devices can see each other on the network but Agaric can't, that's the likely cause.
 - **TOFU on first pair.** If you re-install Agaric on a peer and its app data is wiped, the device comes back with a different cryptographic identity — you'll need to unpair and re-pair.

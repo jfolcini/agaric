@@ -90,7 +90,7 @@ export const block: Record<string, string> = {
   'status.addressInvalidWithFormat':
     'Invalid address format. Expected host:port (e.g., {{format}}).',
   'status.manualIpHint':
-    'If mDNS discovery is unavailable, share this device\u2019s IP and sync port with the remote peer, then set it via the address edit button below.',
+    'A first pair needs mDNS discovery on a shared local network \u2014 there is no way to pair by typing an address. Once a device is paired, you can set its address below if mDNS stops finding it on that same network.',
   'status.importTitle': 'Import',
   'status.importDesc':
     'Import Logseq or Markdown files. Pages are created from filenames, blocks from indented list items.',

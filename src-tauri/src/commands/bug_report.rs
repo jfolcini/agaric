@@ -249,7 +249,7 @@ const STABLE_MESSAGES: &[&str] = &[
     "mDNS announce failed; peers must discover this device another way",
     "SyncDaemon shut down cleanly",
     "Failed to start SyncDaemon",
-    "Sync will work via manual IP entry only",
+    "mDNS disabled: no first-ever pair is possible; already-paired peers may still use a cached address",
     "rejecting sync with self",
     "rejecting sync from an unpaired device: no pairing is in progress",
     "responder locked peer for sync",

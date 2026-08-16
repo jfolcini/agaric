@@ -123,9 +123,13 @@ pub enum SyncEvent {
     },
     /// Emitted when mDNS peer discovery cannot be initialized (e.g. the
     /// iOS sandbox blocks raw UDP multicast, or the Android app is missing
-    /// its multicast lock). Sync still works via manual IP entry, but the
-    /// frontend should surface this to the user instead of showing an
-    /// Empty peer list. See.
+    /// its multicast lock). There is no fallback for a peer that has never
+    /// paired: a first pair requires an mDNS resolve to learn the peer's
+    /// `endpoint_id`, so with mDNS disabled a first-ever pair cannot be
+    /// completed at all (see `sync_daemon::discovery::resolve_peer_address`).
+    /// Already-paired peers can still be dialed via their cached
+    /// `peer_refs.last_address`, once bound. The frontend should surface
+    /// this to the user instead of showing an Empty peer list.
     MdnsDisabled { reason: String },
     /// #3864: emitted once per daemon start when the sync endpoint bound a
     /// **globally-routable** address, so the QUIC listener may be reachable
