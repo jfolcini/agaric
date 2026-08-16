@@ -180,7 +180,24 @@ export function assertScratchIsolation(dir, env) {
   return leaks
 }
 
-/** `git init` a fixture at `dir`, then assert its toplevel really is `dir`. */
+/**
+ * `git init` a fixture at `dir`, then assert that EVERY path git resolves
+ * from inside it lands inside it.
+ *
+ * The toplevel check this used to carry alone is blind to a leaked
+ * `GIT_INDEX_FILE` — measured on git 2.43, `--show-toplevel` and
+ * `--absolute-git-dir` both stay pinned to the fixture while only
+ * `--git-path index` moves (#4015). Delegating to `assertScratchIsolation`
+ * keeps the init check and the per-fixture check reading the SAME probe
+ * list, so the two cannot drift into disagreeing about what "isolated"
+ * means — the drift that let four private copies of this scrub be worse
+ * than none.
+ *
+ * Both the explicit `env` AND the ambient `process.env` are probed: an
+ * in-process helper that spawns `git` with no `env` uses the latter, and
+ * that is exactly how #3962's scenario 7 came to enumerate the real
+ * repository while looking like it enumerated a fixture.
+ */
 export function initScratchRepo(dir, env) {
   mkdirSync(dir, { recursive: true })
   const git = (...args) => execFileSync('git', args, { cwd: dir, env, encoding: 'utf8' })
@@ -192,10 +209,14 @@ export function initScratchRepo(dir, env) {
   git('config', 'commit.gpgsign', 'false')
   git('config', 'user.email', 'selftest@example.invalid')
   git('config', 'user.name', 'self test')
-  const top = git('rev-parse', '--show-toplevel').trim()
-  if (physical(top) !== physical(dir)) {
+  const leaks = [
+    ...assertScratchIsolation(dir, env).map((l) => `explicit env: ${l}`),
+    ...assertScratchIsolation(dir, process.env).map((l) => `ambient env: ${l}`),
+  ]
+  if (leaks.length > 0) {
     throw new Error(
-      `git-scratch-guard.mjs: fixture at '${dir}' resolved to '${top}' — refusing to continue`,
+      `git-scratch-guard.mjs: fixture at '${dir}' is NOT isolated — refusing to continue:\n  - ` +
+        `${leaks.join('\n  - ')}`,
     )
   }
   return git

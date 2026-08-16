@@ -383,6 +383,22 @@ pass_filenames = false
 types = ["markdown"]
 stages = ["pre-commit"]
 
+# …and its #3962/#4017 source suite: index-vs-working-tree in throwaway
+# fixtures. Keyed on the guard AND the two shared libraries it delegates to —
+# keyed on the script alone, editing `guard-file-source.mjs`, which decides
+# whether the guard judges the index or the working tree, fires no hook at
+# all (the #3993/#3997 shape: a guard defanged by editing its dependency).
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "md-link-targets-selftest"
+name = "markdown link-target guard source self-test (#4017 index vs working tree)"
+entry = "node scripts/check-md-link-targets.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/(check-md-link-targets\.mjs|lib/guard-file-source\.mjs|lib/git-scratch-guard\.(mjs|sh))$'
+stages = ["pre-commit"]
+
 # doc-vs-code drift detector (ui-improvements 2026-05-16 §Maintenance /
 # tooling). Complements `md-link-targets`: this hook scans inline-code
 # spans + markdown link targets in narrative docs for `src/…`,
@@ -402,6 +418,23 @@ entry = "node scripts/check-doc-code-paths.mjs"
 language = "system"
 pass_filenames = false
 types = ["markdown"]
+stages = ["pre-commit"]
+
+# …and its #3962/#4017 source suite. This guard carries TWO working-tree
+# reads, not one: the doc body, and the cited target's existence
+# (`existsSync`). The second is what made a citation of a file that is staged
+# but no longer on disk a red — a commit blocked over content that is
+# correct in what is being committed. Keyed on the shared libraries too, for
+# the reason `md-link-targets-selftest` gives above.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "doc-vs-code-paths-selftest"
+name = "doc-vs-code path guard source self-test (#4017 index vs working tree)"
+entry = "node scripts/check-doc-code-paths.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/(check-doc-code-paths\.mjs|lib/guard-file-source\.mjs|lib/git-scratch-guard\.(mjs|sh))$'
 stages = ["pre-commit"]
 
 # Stale-citation guard (#2546). `docs/ARCHITECTURE.md` used to be a big
@@ -2753,10 +2786,14 @@ stages = ["pre-commit"]
 # a throwaway fixture without the shared scrub does not fix the CLASS — four
 # scripts independently reinvented the same `unset GIT_DIR …` block, and a
 # fifth (pr-overlap-diverged.sh, #3736) shipped with NO scrub at all before
-# being migrated. This scans every `.sh` file under scripts/ and fails a
-# commit that either hand-rolls its own git-environment `unset` instead of
-# sourcing scripts/lib/git-scratch-guard.sh, or runs `git init` / `git -C
-# <dir> init` (builds a fixture) without sourcing it at all. `always_run`
+# being migrated. This scans every `.sh`, `.mjs` and `.py` file under
+# scripts/ and fails a commit that either hand-rolls its own git-environment
+# scrub instead of using the shared helper for its language, or builds a git
+# fixture (`git init`, in a command line or an argv array) without wiring
+# itself to that helper at all. `.mjs` and `.py` joined the scan in #4015:
+# the scanner was `.sh`-only, and a `.mjs` self-test added in #3962 duly
+# leaked, enumerating the real repository's 4,610 paths in place of its
+# 8-file fixture with every assertion green. `always_run`
 # because this is a whole-tree scan (pass_filenames = false) whose job is
 # partly to catch a DELETION — e.g. a script's sourcing line getting
 # stripped while its fixture code stays — and prek's changed-file set
@@ -2780,7 +2817,37 @@ name = "git fixture isolation meta-guard self-test"
 entry = "node scripts/check-git-fixture-isolation.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = '^scripts/check-git-fixture-isolation\.mjs$'
+# Its own script AND the helpers it is the meta-guard FOR (#4015). Keyed on
+# the script alone, editing either `git-scratch-guard` — including
+# "simplifying" the index probe back out of `git_scratch_init` — fired no
+# hook at all. That is the #3993/#3997 shape: a guard defanged by editing its
+# own dependency.
+files = '^scripts/(check-git-fixture-isolation\.mjs|lib/git-scratch-guard\.(mjs|sh))$'
+stages = ["pre-commit"]
+
+# py-guard-file-source (#4017): the falsification suite for the three PYTHON
+# guards' index-vs-working-tree behaviour. Each of them took prek's
+# changed-file list and `open()`ed those paths from disk, so a violation that
+# existed only in the STAGED content committed cleanly whenever the author
+# had already fixed it on disk without `git add`. The suite plants exactly
+# that — a staged violation behind a clean working tree — and asserts the
+# index reader reddens while the working-tree reader does not, plus the
+# mirror-image false red, a clean baseline, and the staged-DELETION case
+# prek's file list omits.
+#
+# In shell rather than Python because it builds git fixtures and there is no
+# Python sibling of scripts/lib/git-scratch-guard.sh to build them through;
+# writing one would be a fresh private copy of the scrub, which is what
+# #3722's helper and the meta-guard above exist to prevent.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "py-guard-file-source-selftest"
+name = "python guards judge the staged index (#4017 falsification suite)"
+entry = "bash scripts/test-py-guard-file-source.sh"
+language = "system"
+pass_filenames = false
+files = '^scripts/(check-(raw-tx|dynamic-sql|command-arity)\.py|lib/guard_file_source\.py|lib/git-scratch-guard\.sh|test-py-guard-file-source\.sh)$'
 stages = ["pre-commit"]
 
 # scheduled-failure-reporter-selftest (#3359): `report-scheduled-failures` is

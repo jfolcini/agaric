@@ -48,8 +48,36 @@
 #
 #   git_scratch_init <dir>
 #     `git init` a fixture at <dir> with hooks, signing and identity made
-#     safe, then assert its toplevel really is <dir> — the belt-and-braces
-#     check that catches anything the scrub missed, before a single commit.
+#     safe, then assert that EVERY path git resolves from inside it — the
+#     toplevel, the git dir, AND THE INDEX — lands inside <dir>. The
+#     belt-and-braces check that catches anything the scrub missed, before a
+#     single commit.
+#
+# ─── Why the index is probed separately (#4015) ───────────────────────────
+#
+# This function used to assert one property only:
+#
+#     top="$(git -C "$dir" rev-parse --show-toplevel)"; [ "$top" = "$dir" ]
+#
+# and that property is structurally blind to a leaked `GIT_INDEX_FILE`.
+# Measured on git 2.43, with `GIT_INDEX_FILE` exported at another repository
+# and no other git variable set:
+#
+#   git -C <fixture> rev-parse --show-toplevel      <fixture>          (pinned)
+#   git -C <fixture> rev-parse --absolute-git-dir   <fixture>/.git     (pinned)
+#   git -C <fixture> rev-parse --git-path index     <victim>/.git/index  ← MOVES
+#
+# So the guard written after three separate incidents (#3690, #3722, #3736)
+# was checking the one thing that cannot see this variant — and #3962 duly
+# shipped a `.mjs` self-test that enumerated the REAL repository's 4,610
+# paths in place of its 8-file fixture, with every assertion green. Only
+# `--git-path index` moves, so only `--git-path index` detects it. Do not
+# "simplify" the probe list back down to the toplevel: the self-test below
+# pins that the toplevel alone reports nothing.
+#
+# A RELATIVE `GIT_INDEX_FILE` (`.git/index` — what an ordinary `git commit`
+# exports) resolves against the fixture and is therefore NOT a leak; the
+# check resolves relative answers against <dir> rather than rejecting them.
 
 # Every variable through which git's ambient context can redirect a command,
 # as one list so the scrub and the verification cannot drift apart. That
@@ -90,6 +118,54 @@ git_scratch_guard() {
   fi
 }
 
+# Absolutise a path git reported, against the fixture's PHYSICAL root.
+# `rev-parse --git-path index` answers relatively (`.git/index`) when the
+# index really is the fixture's, and absolutely when it is somebody else's,
+# so both spellings have to reach the same comparison.
+_gsg_abs() {
+  case "$2" in
+    /*) printf '%s\n' "$2" ;;
+    *) printf '%s/%s\n' "$1" "$2" ;;
+  esac
+}
+
+# True iff "$2" (already absolutised) names "$1" or something under it. A
+# value containing a `..` segment is treated as OUTSIDE regardless of how it
+# spells itself — resolving it textually is how a check like this gets
+# talked out of a leak it should have caught.
+_gsg_inside() {
+  case "$2" in
+    *"/../"* | */..) return 1 ;;
+  esac
+  case "$2" in
+    "$1" | "$1"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# One `git rev-parse <args>` probe against the fixture. Empty (the command
+# failed) counts as a LEAK, not as a pass: a probe that could not look has
+# not established anything, which is the failure mode this whole file is
+# about.
+_gsg_probe_inside() {
+  local base="$1" label="$2" dir="$3"
+  shift 3
+  local value abs
+  value="$(git -C "$dir" rev-parse "$@" 2>/dev/null || true)"
+  if [ -z "$value" ]; then
+    echo "git-scratch-guard: fixture at '$dir' — \`git rev-parse $*\` produced no answer," >&2
+    echo "  so its isolation could not be established. Refusing to continue." >&2
+    exit 3
+  fi
+  abs="$(_gsg_abs "$base" "$value")"
+  if ! _gsg_inside "$base" "$abs"; then
+    echo "git-scratch-guard: fixture at '$dir' is NOT isolated — its $label resolves to" >&2
+    echo "  '$abs', outside the fixture. Every command run here would operate on that" >&2
+    echo "  tree instead (#3722, #4015). Refusing to continue." >&2
+    exit 3
+  fi
+}
+
 git_scratch_init() {
   local dir="$1"
   mkdir -p "$dir"
@@ -103,13 +179,14 @@ git_scratch_init() {
   git -C "$dir" config user.name 'self test'
   # Belt AND braces. If anything above was missed, the fixture resolves
   # somewhere other than $dir, and this is the last moment at which that is
-  # still harmless.
-  local top
-  top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
-  if [ "$top" != "$(cd "$dir" && pwd -P)" ]; then
-    echo "git-scratch-guard: fixture at '$dir' resolved to '$top' — refusing to continue" >&2
-    exit 3
-  fi
+  # still harmless. THREE probes, not one — see the header: the toplevel and
+  # the git dir both stay pinned to the fixture under a leaked
+  # `GIT_INDEX_FILE`, and only `--git-path index` moves.
+  local base
+  base="$(cd "$dir" && pwd -P)"
+  _gsg_probe_inside "$base" 'toplevel' "$dir" --show-toplevel
+  _gsg_probe_inside "$base" 'git dir' "$dir" --absolute-git-dir
+  _gsg_probe_inside "$base" 'index' "$dir" --git-path index
 }
 
 # ---------------------------------------------------------------------------
@@ -244,6 +321,75 @@ _gsg_self_test() {
   # ── 4. GIT_CEILING_DIRECTORIES stops upward discovery ───────────────────
   _eq 'the scratch root gets a ceiling so a fixture cannot find a repo above it' \
     "$(dirname "$tmp")" "${GIT_CEILING_DIRECTORIES:-}"
+
+  # ── 5. THE INDEX PROBE (#4015) ──────────────────────────────────────────
+  # `GIT_INDEX_FILE` leaks in without `GIT_DIR`: the fixture is created
+  # normally and every command run in it looks isolated, but the index git
+  # reads and writes is somebody else's. `victim` above stands in for the
+  # real repository — nothing here ever points at the real checkout.
+  #
+  # 5a. The leak MUST be refused. Exit 3, nothing after the init runs.
+  local idx_rc idx_out
+  idx_out=$(
+    export GIT_INDEX_FILE="$victim/.git/index"
+    git_scratch_init "$tmp/leaked-index"
+    echo "REACHED THE CODE AFTER git_scratch_init"
+  ) 2>/dev/null
+  idx_rc=$?
+  _eq 'a fixture built under a leaked GIT_INDEX_FILE is refused with exit 3' '3' "$idx_rc"
+  _eq 'and nothing after git_scratch_init runs' '' "$idx_out"
+
+  # 5b. …and the probe that catches it is the ONLY one that can. Pinned so
+  # that a later "simplification" back to the toplevel check is a failing
+  # test rather than a silent return to the #4015 blind spot. Measured on
+  # git 2.43: both of these stay pinned to the fixture under the same leak
+  # that 5a rejects.
+  local blind_top blind_gitdir blind_index
+  blind_top=$(
+    export GIT_INDEX_FILE="$victim/.git/index"
+    git -C "$tmp/leaked-index" rev-parse --show-toplevel 2>/dev/null || true
+  )
+  blind_gitdir=$(
+    export GIT_INDEX_FILE="$victim/.git/index"
+    git -C "$tmp/leaked-index" rev-parse --absolute-git-dir 2>/dev/null || true
+  )
+  blind_index=$(
+    export GIT_INDEX_FILE="$victim/.git/index"
+    git -C "$tmp/leaked-index" rev-parse --git-path index 2>/dev/null || true
+  )
+  _eq 'PINNED: --show-toplevel alone CANNOT see the leak (it stays on the fixture)' \
+    "$(cd "$tmp/leaked-index" && pwd -P)" "$blind_top"
+  _eq 'PINNED: --absolute-git-dir alone CANNOT see the leak either' \
+    "$(cd "$tmp/leaked-index" && pwd -P)/.git" "$blind_gitdir"
+  _eq 'PINNED: --git-path index is the one probe that moves — it names the victim' \
+    "$victim/.git/index" "$blind_index"
+
+  # 5c. The clean directions, so 5a is a discrimination and not a guard that
+  # refuses everything: no GIT_INDEX_FILE at all, and the RELATIVE
+  # `.git/index` an ordinary `git commit` exports (which resolves against the
+  # fixture and is therefore not a leak).
+  local ok_rc ok_out
+  ok_out=$(
+    git_scratch_init "$tmp/clean-index"
+    echo REACHED
+  ) 2>/dev/null
+  ok_rc=$?
+  _eq 'a fixture with no GIT_INDEX_FILE is accepted' '0' "$ok_rc"
+  _eq 'and execution continues past git_scratch_init' 'REACHED' "$ok_out"
+  local rel_rc rel_out
+  rel_out=$(
+    export GIT_INDEX_FILE=".git/index"
+    git_scratch_init "$tmp/relative-index"
+    echo REACHED
+  ) 2>/dev/null
+  rel_rc=$?
+  _eq "a RELATIVE GIT_INDEX_FILE (the shape a real commit exports) is not a leak" '0' "$rel_rc"
+  _eq 'and execution continues past git_scratch_init there too' 'REACHED' "$rel_out"
+
+  # 5d. The victim's index is untouched by all of the above — the damage the
+  # probe exists to prevent, asserted rather than assumed.
+  _eq 'the victim index is unchanged after every leaked-index attempt' \
+    "$victim_status_before" "$(git -C "$victim" status --porcelain)"
 
   if [ "$failures" -gt 0 ]; then
     printf '\nself-test: %s assertion(s) failed\n' "$failures" >&2

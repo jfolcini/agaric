@@ -10,8 +10,10 @@
 // their own throwaway `git -C <dir> init`, and reproduced the incident.
 //
 // scripts/lib/git-scratch-guard.sh is the shared fix (`git_scratch_guard` +
-// `git_scratch_init`). This script is the thing that makes it STICK: it
-// scans every shell script under scripts/ and fails the commit if either —
+// `git_scratch_init`), with `scripts/lib/git-scratch-guard.mjs` as its Node
+// sibling. This script is the thing that makes it STICK: it scans every
+// `.sh`, `.mjs` and `.py` file under scripts/ and fails the commit if
+// either —
 //
 //   1. it hand-rolls its own `unset ... GIT_DIR ...` scrub instead of
 //      sourcing the shared helper (the exact shape of all four incidents:
@@ -21,11 +23,41 @@
 //      the shared helper AT ALL (the "never learned about the danger"
 //      shape: pr-overlap-diverged.sh before #3724).
 //
-// scripts/lib/git-scratch-guard.sh itself is exempt from both checks — it IS
-// the canonical implementation of `git init` inside a fixture, and the one
-// place allowed to contain a raw `unset` of these variables (the scrub loop
-// itself, plus a deliberately UNGUARDED demonstration inside its own
-// self-test, proving the incident is real rather than hypothetical).
+// scripts/lib/git-scratch-guard.sh and its Node sibling
+// scripts/lib/git-scratch-guard.mjs are exempt from both checks — they ARE
+// the canonical implementations of `git init` inside a fixture, and the one
+// place allowed to contain a raw `unset` / `delete env[...]` of these
+// variables (the scrub loop itself, plus a deliberately UNGUARDED
+// demonstration inside the shell one's self-test, proving the incident is
+// real rather than hypothetical). This file is exempt too: it necessarily
+// contains the offending patterns as detector fixtures.
+//
+// ─── Why `.mjs` and `.py` are scanned, not just `.sh` (#4015) ─────────────
+//
+// This guard used to enumerate with `entry.name.endsWith('.sh')`, so it
+// inspected ~30 shell scripts and nothing else. That is the meta-guard
+// committing the exact error it was written to end: a per-LANGUAGE fix does
+// not end a class of defect any more than a per-SCRIPT one does, it just
+// moves the next occurrence somewhere new.
+//
+// It did. `scripts/lib/git-scratch-guard.mjs` was added during #3962 as the
+// Node sibling of the shell helper; its own header names this gap
+// explicitly — that a `.mjs` self-test spawning git is the unwatched case —
+// and the very file that says so shipped a scenario which leaked. One
+// scenario read the index IN PROCESS rather than through a spawned guard,
+// with no `env` threaded to `git ls-files`, so under a real `git commit` the
+// ambient `GIT_INDEX_FILE` (which OUTRANKS `cwd`) made it enumerate the real
+// repository's 4,610 paths instead of the fixture's 8. The standalone
+// self-test passed, `prek run --all-files` passed, and three adversarial
+// review passes over the diff passed; only an actual `git commit`
+// reproduced it, because that is the only context which sets
+// `GIT_INDEX_FILE`.
+//
+// `.py` is in scope for the same reason, pre-emptively rather than after the
+// fact: no Python script builds a git fixture today, and the first one that
+// does must not be the one that discovers this guard could not see it. There
+// is no Python sibling of the shared scrubber, so a `.py` fixture-builder is
+// reported as such — write the fixture in Node or shell, or add the sibling.
 //
 // Deliberately grep-based, not a real shell parser (matching the issue's own
 // suggested fix: "a meta-guard that greps hook scripts and self-tests for
@@ -67,22 +99,99 @@ import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 
 const SCRIPTS_DIR = join(import.meta.dirname)
-// The one file exempt from both checks — see the header.
+// The shared scrubbers, one per language that has one — see the header. The
+// shell name is also what a `.sh` script must be seen to SOURCE, and the
+// `.mjs` name what a Node script must be seen to IMPORT.
 const SHARED_GUARD_BASENAME = 'git-scratch-guard.sh'
+const SHARED_GUARD_MJS_BASENAME = 'git-scratch-guard.mjs'
+// Exempt from every check: the two canonical implementations, and this file,
+// which necessarily carries the offending patterns as detector fixtures.
+const EXEMPT_BASENAMES = new Set([
+  SHARED_GUARD_BASENAME,
+  SHARED_GUARD_MJS_BASENAME,
+  'check-git-fixture-isolation.mjs',
+  // The Python guards' file-source helper (#4017). It is the one place that
+  // decides which INDEX a Python guard reads, and doing that means removing a
+  // foreign `GIT_INDEX_FILE` from a subprocess environment — which rule 1
+  // cannot tell apart from a private copy of the fixture scrub, because
+  // textually it is the same statement.
+  //
+  // Exempt DELIBERATELY and narrowly, rather than reworded to slip past the
+  // detector: `{k: v for k, v in env.items() if k != …}` would pass this scan
+  // today, and writing it that way to avoid a true positive is the evasion
+  // this guard exists to make expensive. What this exemption does NOT excuse
+  // is a fixture: `guard_file_source.py` builds none, and rule 2 (`git` …
+  // `init`) is what would catch it if that ever changed — so the exemption is
+  // recorded here where the next reader sees it, not spent silently.
+  //
+  // The general shape — that rule 1 for `.py` currently reads as "no Python
+  // file may touch a GIT_ variable", since there is no Python sibling to
+  // point at — is a real over-reach and is filed separately.
+  'guard_file_source.py',
+])
 const EXCLUDED_DIR_NAMES = new Set(['node_modules', '__pycache__', '.git'])
+
+/** Extension -> language tag. The scanned corpus is exactly these keys, and
+ * the wiring guard below asserts each one still matches at least one real
+ * file, so an extension list that falls out of step with the repo is a loud
+ * failure rather than a silently narrower scan. */
+export const SCANNED_EXTENSIONS = new Map([
+  ['.sh', 'sh'],
+  ['.mjs', 'mjs'],
+  ['.py', 'py'],
+])
 
 // ---------------------------------------------------------------------------
 // Text-level detection
 // ---------------------------------------------------------------------------
 
-/** Drop whole-line `#` comments — a comment merely NAMING `git init` or
+/** A Python DOCSTRING, blanked in place.
+ *
+ * Anchored to the start of a line (after indentation, and after any of the
+ * `r`/`b`/`u`/`f` string prefixes), which is where a module, class or
+ * function docstring always begins and where an argument like
+ * `subprocess.run("""git init""", shell=True)` never does. Blanked rather
+ * than deleted so line structure — and therefore the per-line detectors
+ * below — is unchanged; see `stripLineComments`. */
+const PY_DOCSTRING_RE = /^[ \t]*[rRbBuUfF]{0,2}("""|''')[\s\S]*?\1/gm
+
+/** Drop whole-line comments — a comment merely NAMING `git init` or
  * `GIT_DIR` in prose (every migrated script's docstring does this, on
  * purpose, to explain the incident) must not be mistaken for the code this
- * guard actually cares about. */
-export function stripLineComments(text) {
-  return text
+ * guard actually cares about.
+ *
+ * `lang` picks the comment marker: `#` for shell and Python, `//` for Node.
+ * Getting this wrong is not cosmetic — a Node file whose entire 30-line
+ * header explains the incident would have every one of those lines read as
+ * CODE, and `hasFixtureGitInit` would flag the file that documents the
+ * hazard as if it committed it. Node block comments (`/* … *\/`) are
+ * stripped too, wherever they start.
+ *
+ * PYTHON'S PROSE IS THE DOCSTRING, not the `#` line, so stripping only `#`
+ * gave `.py` — the language #4015 added to the scan — the exact treatment
+ * the paragraph above says is not cosmetic. Measured: adding two lines of
+ * ordinary prose naming `git` and `init` to `scripts/lib/guard_file_source.py`
+ * (a file that spawns no fixture at all) made this guard fail the commit,
+ * advising the author to "write the fixture in Node or shell" — and unlike
+ * the other two languages there was no way to comment the sentence out,
+ * because the comment form IS the thing being scanned. Both existing `.py`
+ * scripts that pass today do so by luck: they already carry a quoted
+ * `"git"` and are one nearby `"init"` away. */
+export function stripLineComments(text, lang = 'sh') {
+  const body =
+    lang === 'mjs'
+      ? text.replace(/\/\*[\s\S]*?\*\//g, '')
+      : lang === 'py'
+        ? // Blanked, not deleted: the per-line detectors below split on
+          // `\n`, and deleting a multi-line docstring would splice the line
+          // above it onto the line below and invent a statement neither one
+          // contains. (The `.mjs` branch predates this and is left alone.)
+          text.replace(PY_DOCSTRING_RE, (m) => m.replace(/[^\n]/g, ' '))
+        : text
+  const commentRe = lang === 'mjs' ? /^\s*\/\// : /^\s*#/
+  return body
     .split('\n')
-    .filter((line) => !/^\s*#/.test(line))
+    .filter((line) => !commentRe.test(line))
     .join('\n')
 }
 
@@ -98,43 +207,101 @@ const GIT_ENV_VAR_RE =
   /\b(GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_OBJECT_DIRECTORY|GIT_COMMON_DIR|GIT_NAMESPACE)\b/
 
 /**
- * A hand-rolled scrub: a bash `unset` statement naming at least one of the
- * git-context variables that outrank `git -C <dir>` (#3722). This is what
- * every one of the four incidents' fixes looked like BEFORE being migrated
- * to the shared helper — each is a legitimate, working scrub, and each is
- * exactly the private copy this guard exists to stop from reappearing.
+ * A hand-rolled scrub: a statement that removes at least one of the
+ * git-context variables that outrank `git -C <dir>` (#3722) from the
+ * environment, in whichever way the language spells that. This is what every
+ * one of the four incidents' fixes looked like BEFORE being migrated to the
+ * shared helper — each is a legitimate, working scrub, and each is exactly
+ * the private copy this guard exists to stop from reappearing.
+ *
+ *   sh   `unset GIT_DIR …`
+ *   mjs  `delete env.GIT_DIR`, `delete process.env['GIT_INDEX_FILE']`
+ *   py   `del os.environ["GIT_DIR"]`, `env.pop("GIT_WORK_TREE", None)`
+ *
+ * Comments are stripped first, for the reason `stripLineComments` gives: the
+ * shared helper's own prose names every one of these variables, and so does
+ * every migrated script's header.
  */
-export function hasHandRolledGitEnvUnset(text) {
-  const joined = joinContinuations(text)
-  return joined.split('\n').some((line) => /^\s*unset\b/.test(line) && GIT_ENV_VAR_RE.test(line))
+export function hasHandRolledGitEnvUnset(text, lang = 'sh') {
+  const joined = joinContinuations(stripLineComments(text, lang))
+  const statementRe =
+    lang === 'mjs'
+      ? /\bdelete\s+[\w$.[\]'"]*GIT_/
+      : lang === 'py'
+        ? /\b(?:del\s+[\w.[\]'"]*GIT_|\.pop\s*\(\s*['"]GIT_)/
+        : /^\s*unset\b/
+  return joined.split('\n').some((line) => statementRe.test(line) && GIT_ENV_VAR_RE.test(line))
 }
 
 /**
- * A fixture-creating `git init`, bare or `-C`-scoped — the command that is
- * unsafe under an inherited GIT_DIR. Comments are stripped first (see
- * `stripLineComments`), and continuations are joined (mirroring
- * `hasHandRolledGitEnvUnset`) — `git -C "$dir" \` + `  init` is the same
- * unsafe command split across a line break, and a scanner that joins one
- * detector's continuations but not the other's is itself an evasion.
+ * A fixture-creating `git init` — the command that is unsafe under an
+ * inherited GIT_DIR — in either of the two shapes a script can spell it:
+ *
+ *   1. as a COMMAND LINE, bare or `-C`-scoped: `git init`,
+ *      `git -C "$dir" init`. This is the shell form, and also what a `.mjs`
+ *      `execSync('git init -q')` or a `.py` `subprocess.run("git init",
+ *      shell=True)` looks like textually.
+ *   2. as an ARGV ARRAY, which is how Node and Python normally spawn:
+ *      `execFileSync('git', ['init', …])`, `subprocess.run(["git", "-C",
+ *      dir, "init"])`. Nothing in that text puts the word `git` adjacent to
+ *      the word `init`, so shape 1's regex is blind to it — scanning `.mjs`
+ *      with only shape 1 would be a scanner that reports "checked" while
+ *      unable to see the dominant spelling in the language it just started
+ *      checking. The window is deliberately generous (400 chars, newlines
+ *      included) because the array is routinely wrapped across lines.
+ *
+ * Comments are stripped first (see `stripLineComments`), and continuations
+ * are joined (mirroring `hasHandRolledGitEnvUnset`) — `git -C "$dir" \` +
+ * `  init` is the same unsafe command split across a line break, and a
+ * scanner that joins one detector's continuations but not the other's is
+ * itself an evasion.
  */
-export function hasFixtureGitInit(text) {
-  return /\bgit\s+(-C\s+\S+\s+)?init\b/.test(joinContinuations(stripLineComments(text)))
+export function hasFixtureGitInit(text, lang = 'sh') {
+  const body = joinContinuations(stripLineComments(text, lang))
+  if (/\bgit\s+(-C\s+\S+\s+)?init\b/.test(body)) return true
+  if (lang === 'sh') return false
+  // `'git'` as a whole string literal, then `'init'` as a whole string
+  // literal within the same call. Both are anchored to the quote characters
+  // so a substring (`gitignore`, `initialise`) cannot satisfy either half.
+  return /(['"`])git\1[\s\S]{0,400}?(['"`])init\2/.test(body)
 }
 
 /**
- * Whether the file SOURCES the shared helper — a `.` or `source` statement
- * naming it — not merely whether the basename appears anywhere in the file.
- * Comments are stripped first: a docstring explaining the incident and
- * naming `scripts/lib/git-scratch-guard.sh` in prose (every migrated
- * script's header does this) must not be read as evidence the file sources
- * it, and neither must a stray runtime string that happens to contain the
- * basename. Not WHERE relative to the fixture code, see the header's stated
+ * Whether the file WIRES ITSELF to the shared helper for its language — a
+ * `.`/`source` statement for shell, an `import`/`require` for Node — not
+ * merely whether the basename appears anywhere in the file. Comments are
+ * stripped first: a docstring explaining the incident and naming
+ * `scripts/lib/git-scratch-guard.sh` in prose (every migrated script's
+ * header does this) must not be read as evidence the file uses it, and
+ * neither must a stray runtime string that happens to contain the basename.
+ * Not WHERE relative to the fixture code, see the header's stated
  * limitation.
+ *
+ * Python always returns false: there is no Python sibling of the scrubber to
+ * wire to. That is reported as its own problem rather than silently treated
+ * as "unsourced", so the message names the actual remedy.
  */
-export function sourcesSharedGuard(text) {
-  const escaped = SHARED_GUARD_BASENAME.replace('.', '\\.')
-  const nameRe = new RegExp(escaped)
-  const lines = joinContinuations(stripLineComments(text)).split('\n')
+export function sourcesSharedGuard(text, lang = 'sh') {
+  if (lang === 'py') return false
+  const basename = lang === 'mjs' ? SHARED_GUARD_MJS_BASENAME : SHARED_GUARD_BASENAME
+  const nameRe = new RegExp(basename.replace('.', '\\.'))
+  const lines = joinContinuations(stripLineComments(text, lang)).split('\n')
+  if (lang === 'mjs') {
+    // An ES `import` (the only form in this repo) or a CommonJS `require`,
+    // as its own statement. A multi-line `import { a, b } from '…'` is one
+    // logical line only after continuations are joined, which bash-style
+    // joining does not do for JS — so the specifier is matched against the
+    // WHOLE stripped body for `import`, anchored on the statement keyword.
+    const body = stripLineComments(text, lang)
+    const importRe = new RegExp(
+      `(?:^|\\n)\\s*import[\\s\\S]{0,200}?from\\s*['"\`][^'"\`]*${basename.replace('.', '\\.')}`,
+    )
+    const requireRe = new RegExp(`require\\s*\\(\\s*['"\`][^'"\`]*${basename.replace('.', '\\.')}`)
+    const bareImportRe = new RegExp(
+      `(?:^|\\n)\\s*import\\s*['"\`][^'"\`]*${basename.replace('.', '\\.')}`,
+    )
+    return importRe.test(body) || requireRe.test(body) || bareImportRe.test(body)
+  }
   return lines.some((line) => {
     const trimmed = line.trim()
     // A dot-command or `source` invocation, as its own statement (allowing a
@@ -152,11 +319,12 @@ export function sourcesSharedGuard(text) {
 // Corpus scan
 // ---------------------------------------------------------------------------
 
-/** Every `.sh` file under `dir`, recursively, as `{ path, text }` with
- * `path` relative to `dir` (posix-separated, so messages are stable across
- * platforms) — except the shared helper itself, which is exempt (see the
- * header). Sorted for deterministic output. */
-export function listShellScripts(dir) {
+/** Every `.sh`, `.mjs` and `.py` file under `dir`, recursively, as
+ * `{ path, lang, text }` with `path` relative to `dir` (posix-separated, so
+ * messages are stable across platforms) — except the canonical helpers and
+ * this file, which are exempt (see the header). Sorted for deterministic
+ * output. */
+export function listGuardedScripts(dir) {
   const out = []
   const walk = (d) => {
     for (const entry of readdirSync(d, { withFileTypes: true }).toSorted((a, b) =>
@@ -169,10 +337,15 @@ export function listShellScripts(dir) {
         walk(full)
         continue
       }
-      if (!entry.isFile() || !entry.name.endsWith('.sh')) continue
-      if (entry.name === SHARED_GUARD_BASENAME) continue
+      if (!entry.isFile()) continue
+      // Longest extension first, so `.test.mjs` is matched as `.mjs` rather
+      // than being missed for want of an exact key.
+      const ext = [...SCANNED_EXTENSIONS.keys()].find((e) => entry.name.endsWith(e))
+      if (!ext) continue
+      if (EXEMPT_BASENAMES.has(entry.name)) continue
       out.push({
         path: relative(dir, full).split(sep).join('/'),
+        lang: SCANNED_EXTENSIONS.get(ext),
         text: readFileSync(full, 'utf8'),
       })
     }
@@ -185,27 +358,46 @@ export function listShellScripts(dir) {
 // Consistency check
 // ---------------------------------------------------------------------------
 
-/** Every problem found across `files` (as returned by `listShellScripts`),
+/** The shared helper a file of this language is expected to wire itself to,
+ * or null when the language has no sibling. */
+const SHARED_GUARD_FOR = {
+  sh: 'scripts/lib/git-scratch-guard.sh',
+  mjs: 'scripts/lib/git-scratch-guard.mjs',
+  py: null,
+}
+
+const HAZARD =
+  'A self-test wired as a prek hook runs inside the pre-commit environment, where ' +
+  'GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE outrank `git -C <dir>` (and outrank a spawn ' +
+  "`cwd`) — every fixture command lands on the developer's REAL repository instead " +
+  '(#3722, #3690, #3736, #4015).'
+
+/** Every problem found across `files` (as returned by `listGuardedScripts`),
  * human-readable — empty means every fixture-building script is wired
- * through the shared guard. */
+ * through the shared guard for its language. */
 export function checkFixtureIsolation(files) {
   const problems = []
-  for (const { path, text } of files) {
-    if (hasHandRolledGitEnvUnset(text)) {
+  for (const { path, lang, text } of files) {
+    const helper = SHARED_GUARD_FOR[lang]
+    if (hasHandRolledGitEnvUnset(text, lang)) {
       problems.push(
-        `${path}: hand-rolls its own git-environment \`unset\` block instead of sourcing ` +
-          'scripts/lib/git-scratch-guard.sh (#3722) — every private copy of this scrub is ' +
-          'exactly how the NEXT script goes unprotected. Call `git_scratch_guard` (and ' +
-          '`git_scratch_init` for a fresh fixture) from the shared helper instead.',
+        `${path}: hand-rolls its own git-environment scrub instead of using ` +
+          `${helper ?? 'a shared helper'} (#3722) — every private copy of this scrub is ` +
+          'exactly how the NEXT script goes unprotected. Call the shared scrubber ' +
+          '(`git_scratch_guard`/`git_scratch_init`, or `scrubbedGitEnv`/' +
+          '`withScrubbedProcessEnv`/`initScratchRepo`) instead.',
       )
     }
-    if (hasFixtureGitInit(text) && !sourcesSharedGuard(text)) {
+    if (hasFixtureGitInit(text, lang) && !sourcesSharedGuard(text, lang)) {
       problems.push(
-        `${path}: runs \`git init\` / \`git -C <dir> init\` (builds a git fixture) without ` +
-          'sourcing scripts/lib/git-scratch-guard.sh at all. A self-test wired as a prek hook ' +
-          'runs inside the pre-commit environment, where GIT_DIR / GIT_WORK_TREE / ' +
-          'GIT_INDEX_FILE outrank `git -C <dir>` — every fixture command lands on the ' +
-          "developer's REAL repository instead (#3722, #3690, #3736).",
+        helper === null
+          ? `${path}: builds a git fixture (\`git\` … \`init\`) from Python, and there is no ` +
+              'Python sibling of the shared scrubber to route it through. ' +
+              `${HAZARD} Write the fixture in Node (scripts/lib/git-scratch-guard.mjs) or shell ` +
+              '(scripts/lib/git-scratch-guard.sh), or add the Python sibling and teach this ' +
+              'guard about it.'
+          : `${path}: runs \`git init\` (builds a git fixture) without wiring itself to ` +
+              `${helper} at all. ${HAZARD}`,
       )
     }
   }
@@ -214,16 +406,23 @@ export function checkFixtureIsolation(files) {
 
 /** Throws with every offending file named, or returns silently. */
 export function assertFixtureIsolation({ scriptsDir = SCRIPTS_DIR } = {}) {
-  const files = listShellScripts(scriptsDir)
-  // Wiring guard (mirrors check-zizmor-version-pin.mjs): if the scan finds
-  // no `.sh` files at all, this script fell out of step with the repo — the
-  // scripts/ directory is never actually empty of shell scripts — rather
-  // than silently reporting "zero problems, zero files checked" forever.
-  if (files.length === 0) {
+  const files = listGuardedScripts(scriptsDir)
+  // Wiring guard (mirrors check-zizmor-version-pin.mjs), PER EXTENSION. A
+  // total-count check is not enough: this guard's own #4015 defect was a scan
+  // that found ~30 files and reported "checked" while an entire language went
+  // uninspected, so the thing that has to be impossible is a scanned
+  // extension quietly matching nothing. scripts/ contains `.sh`, `.mjs` and
+  // `.py` files today and there is no plausible future in which it contains
+  // none of one of them without this guard needing to be revisited.
+  const missing = [...SCANNED_EXTENSIONS.keys()].filter(
+    (ext) => !files.some((f) => f.path.endsWith(ext)),
+  )
+  if (missing.length > 0) {
     throw new Error(
-      'scripts/check-git-fixture-isolation.mjs found ZERO .sh files under scripts/ — ' +
-        'the corpus scan itself is broken (wrong directory? scripts/ restructured?), ' +
-        'not a clean repo. Fix the scan before trusting its "clean" verdict.',
+      `scripts/check-git-fixture-isolation.mjs found ZERO ${missing.join(' / ')} file(s) under ` +
+        'scripts/ — the corpus scan itself is broken (wrong directory? scripts/ ' +
+        'restructured? extension list out of step?), not a clean repo. Fix the scan before ' +
+        'trusting its "clean" verdict.',
     )
   }
   const problems = checkFixtureIsolation(files)
@@ -233,7 +432,9 @@ export function assertFixtureIsolation({ scriptsDir = SCRIPTS_DIR } = {}) {
         `through the shared git-fixture guard (#3722):\n  - ${problems.join('\n  - ')}`,
     )
   }
-  return { checked: files.length }
+  const byLang = new Map()
+  for (const { lang } of files) byLang.set(lang, (byLang.get(lang) ?? 0) + 1)
+  return { checked: files.length, byLang }
 }
 
 // ---------------------------------------------------------------------------
@@ -241,11 +442,12 @@ export function assertFixtureIsolation({ scriptsDir = SCRIPTS_DIR } = {}) {
 // ---------------------------------------------------------------------------
 
 export function main() {
-  const { checked } = assertFixtureIsolation()
+  const { checked, byLang } = assertFixtureIsolation()
+  const breakdown = [...byLang].map(([lang, n]) => `${n} .${lang}`).join(', ')
   console.log(
-    `OK  git fixture isolation: ${checked} shell script(s) under scripts/ checked, ` +
-      'none hand-roll a git-environment scrub or build a fixture without ' +
-      'scripts/lib/git-scratch-guard.sh',
+    `OK  git fixture isolation: ${checked} script(s) under scripts/ checked (${breakdown}), ` +
+      'none hand-roll a git-environment scrub or build a fixture without the shared ' +
+      'scratch guard',
   )
 }
 
@@ -331,6 +533,156 @@ function selfTestDetection({ check }) {
       'does not count as sourcing it',
     '',
   )
+
+  // ── #4015: the same three detectors, per language ───────────────────────
+  //
+  // Every assertion below is a PAIR — the shape that must be detected and
+  // the shape that must not. A detector that returns true for everything
+  // satisfies half of this suite and would make the widened scan worse than
+  // the narrow one it replaced.
+  check(
+    hasFixtureGitInit("execFileSync('git', ['init', '-q'], { cwd: dir })\n", 'mjs') === true,
+    'mjs: an argv-array `git`/`init` spawn is detected (the shell regex sees no adjacency here)',
+    '',
+  )
+  check(
+    hasFixtureGitInit('subprocess.run(["git", "-C", str(d), "init"])\n', 'py') === true,
+    'py: an argv-array `git`/`init` spawn is detected',
+    '',
+  )
+  check(
+    hasFixtureGitInit("execSync('git init -q -b main', { cwd: dir })\n", 'mjs') === true,
+    'mjs: the command-line spelling inside a string is detected too',
+    '',
+  )
+  check(
+    hasFixtureGitInit("// execFileSync('git', ['init']) would re-init the real repo\n", 'mjs') ===
+      false,
+    'mjs: a `//` COMMENT narrating the spawn is not a false positive (`//` stripping)',
+    '',
+  )
+  check(
+    hasFixtureGitInit("/* execFileSync('git', ['init']) — the hazard */\n", 'mjs') === false,
+    'mjs: a BLOCK comment narrating the spawn is not a false positive either',
+    '',
+  )
+  check(
+    hasFixtureGitInit("execFileSync('git', ['rev-parse', '--show-toplevel'])\n", 'mjs') === false,
+    'mjs: a git spawn that is not an init is not a false positive',
+    '',
+  )
+  check(
+    hasFixtureGitInit("const s = 'gitignore'\nconst t = 'initialise'\n", 'mjs') === false,
+    'mjs: `gitignore` / `initialise` are not the words `git` and `init` (the literals are ' +
+      'quote-anchored, so a substring cannot satisfy either half)',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('delete env.GIT_DIR\n', 'mjs') === true &&
+      hasHandRolledGitEnvUnset("delete process.env['GIT_INDEX_FILE']\n", 'mjs') === true,
+    'mjs: a hand-rolled `delete env.GIT_*` scrub is detected, dotted or bracketed',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('delete env.SOME_OTHER_VAR\n', 'mjs') === false &&
+      hasHandRolledGitEnvUnset('// delete env.GIT_DIR — use the helper\n', 'mjs') === false,
+    'mjs: an unrelated delete, and a commented one, are not false positives',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('del os.environ["GIT_DIR"]\n', 'py') === true &&
+      hasHandRolledGitEnvUnset('env.pop("GIT_WORK_TREE", None)\n', 'py') === true,
+    'py: `del os.environ[...]` and `env.pop("GIT_*")` scrubs are detected',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('env.pop("SOME_OTHER_VAR", None)\n', 'py') === false &&
+      hasHandRolledGitEnvUnset('# del os.environ["GIT_DIR"] — use the helper\n', 'py') === false,
+    'py: an unrelated pop, and a commented scrub, are not false positives',
+    '',
+  )
+  check(
+    sourcesSharedGuard("import { initScratchRepo } from './lib/git-scratch-guard.mjs'\n", 'mjs') ===
+      true,
+    'mjs: importing the Node helper counts as wiring',
+    '',
+  )
+  check(
+    sourcesSharedGuard(
+      'import {\n  scrubbedGitEnv,\n  initScratchRepo,\n} from "../lib/git-scratch-guard.mjs"\n',
+      'mjs',
+    ) === true,
+    'mjs: a multi-line import is still wiring (the specifier is not on the `import` line)',
+    '',
+  )
+  check(
+    sourcesSharedGuard('// see ./lib/git-scratch-guard.mjs for the right way\n', 'mjs') === false,
+    'mjs: naming the helper in a `//` comment is NOT wiring — the .sh evasion, ported',
+    '',
+  )
+  check(
+    sourcesSharedGuard('. "$(dirname "$0")/lib/git-scratch-guard.sh"\n', 'mjs') === false,
+    'mjs: sourcing the SHELL helper is not wiring for a Node file (wrong sibling)',
+    '',
+  )
+  check(
+    sourcesSharedGuard('import subprocess\n', 'py') === false,
+    'py: nothing counts as wiring — there is no Python sibling, which is the reported problem',
+    '',
+  )
+
+  // ── Python DOCSTRINGS are prose, and prose is not code ───────────────────
+  //
+  // The `#` line is not how Python documents anything. Stripping only `#`
+  // gave `.py` the treatment `stripLineComments` says is not cosmetic: a
+  // module that spawns no fixture at all was flagged for EXPLAINING one, and
+  // told to rewrite itself in Node or shell. Both directions, because a
+  // stripper that swallowed the whole file would satisfy the first assertion
+  // alone and blind the scan to the language it was just widened to cover.
+  check(
+    hasFixtureGitInit('"""Why `git init` in a hook is unsafe."""\nimport sys\n', 'py') === false,
+    'py: a DOCSTRING narrating `git init` is not a false positive (the .sh/.mjs comment rule, ' +
+      'ported to the form Python actually uses for prose)',
+    '',
+  )
+  check(
+    hasFixtureGitInit('"""We spawn ["git", "status"]; never "init" from here."""\n', 'py') ===
+      false,
+    'py: a docstring quoting "git" and "init" in prose is not a false positive either — the ' +
+      'argv-array shape is what #4015 widened the scan FOR, so prose that merely resembles it ' +
+      'is the false positive most likely to fire',
+    '',
+  )
+  check(
+    hasFixtureGitInit(
+      '"""Builds a fixture; see the incident notes."""\nsubprocess.run(["git", "-C", d, "init"])\n',
+      'py',
+    ) === true,
+    'py: a REAL fixture init below a docstring is still detected — the docstring is blanked, ' +
+      'not the file',
+    '',
+  )
+  check(
+    hasFixtureGitInit("'''Prose.'''\nsubprocess.run(['git', 'init'])\n", 'py') === true &&
+      hasFixtureGitInit('"""Prose."""\n', 'py') === false,
+    "py: single-quoted (`'''`) docstrings are stripped too, and neither delimiter swallows the " +
+      'code after it',
+    '',
+  )
+  check(
+    hasFixtureGitInit('subprocess.run("""git init""", shell=True)\n', 'py') === true,
+    'py: a triple-quoted string used as an ARGUMENT is not a docstring and is still scanned ' +
+      '(the strip is anchored to the start of a statement, which is the only place a docstring ' +
+      'can begin)',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('"""Prose about GIT_DIR."""\ndel os.environ["GIT_DIR"]\n', 'py') ===
+      true,
+    'py: blanking a docstring preserves line structure, so the per-line scrub detector still ' +
+      'sees the statement below it',
+    '',
+  )
 }
 
 /** `checkFixtureIsolation` against real files on disk, not just parsed
@@ -391,27 +743,131 @@ function selfTestDiskScan({ check }) {
       '',
     ].join('\n')
 
+    // ── The #4015 cases: the same six shapes, in the languages the scanner
+    // used to be blind to. `naive.mjs` is the live instance the issue was
+    // filed about — a `.mjs` self-test spawning `git … init` through an argv
+    // array, which puts no `git` next to any `init` for the shell regex to
+    // find, in a file the old `entry.name.endsWith('.sh')` never opened.
+    //
+    // (g) imports the Node helper AND builds a fixture -> clean.
+    const goodMjs = [
+      "import { scrubbedGitEnv, initScratchRepo } from './lib/git-scratch-guard.mjs'",
+      'const env = scrubbedGitEnv(root)',
+      'const git = initScratchRepo(dir, env)',
+      "execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir, env })",
+      '',
+    ].join('\n')
+    // (h) THE LIVE INSTANCE: builds a fixture through an argv array, imports
+    // nothing.
+    const naiveMjs = [
+      "import { execFileSync } from 'node:child_process'",
+      "const dir = mkdtempSync(join(tmpdir(), 'fx-'))",
+      "execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir })",
+      '',
+    ].join('\n')
+    // (i) the `.mjs` twin of (e): a `//` header naming the helper in prose,
+    // and a real fixture init below it. Comment-stripping for `//` is what
+    // stands between this and a scanner that reads a 30-line incident
+    // docstring as code.
+    const headerMentionMjs = [
+      '// See scripts/lib/git-scratch-guard.mjs for the right way to do this;',
+      "// it wraps execFileSync('git', ['init']) with a scrubbed env.",
+      "spawnSync('git', ['-C', dir, 'init'], { encoding: 'utf8' })",
+      '',
+    ].join('\n')
+    // (j) the `.mjs` twin of (c): wired to the helper, but scrubs by hand.
+    const reinventedMjs = [
+      "import { initScratchRepo } from './lib/git-scratch-guard.mjs'",
+      'const env = { ...process.env }',
+      'delete env.GIT_DIR',
+      'delete env.GIT_INDEX_FILE',
+      "execFileSync('git', ['init'], { cwd: dir, env })",
+      '',
+    ].join('\n')
+    // (k) the `.mjs` twin of (d): no fixture at all, and a comment that
+    // NARRATES one. Must be clean, or every migrated file's header becomes a
+    // false positive.
+    const unrelatedMjs = [
+      '// A prek hook that runs `git -C "$dir" init` inherits GIT_DIR, so',
+      "// execFileSync('git', ['init']) there re-inits the real repo.",
+      "console.log('nothing to see here')",
+      '',
+    ].join('\n')
+    // (l) Python: builds a fixture, and there is no Python sibling to route
+    // it through — reported with the remedy that actually exists.
+    const naivePy = [
+      'import subprocess',
+      'subprocess.run(["git", "-C", str(tmp), "init", "-q"], check=True)',
+      '',
+    ].join('\n')
+    // (m) Python with no fixture -> clean.
+    const unrelatedPy = ['import sys', 'print("nothing to see here")', ''].join('\n')
+    // (n) the `.py` twin of (k): a module whose DOCSTRING narrates the hazard
+    // and spawns nothing. Python's prose form is the docstring, not the `#`
+    // line, so this is the file the widened scan is most likely to flag for
+    // documenting the very incident the scan exists for — and, unlike the
+    // other two languages, its author has no comment syntax to hide in.
+    const docstringPy = [
+      '"""Reads the staged index.',
+      '',
+      'Fixtures for this module are built in shell, never here: a `git`',
+      'fixture needs `init` under a scrubbed environment, and there is no',
+      'Python sibling of scripts/lib/git-scratch-guard.sh to provide one.',
+      '"""',
+      'import subprocess',
+      'subprocess.run(["git", "ls-files", "-s", "-z"], capture_output=True)',
+      '',
+    ].join('\n')
+
     writeFileSync(join(dir, 'good.sh'), good, 'utf8')
     writeFileSync(join(dir, 'naive.sh'), naive, 'utf8')
     writeFileSync(join(dir, 'reinvented.sh'), reinvented, 'utf8')
     writeFileSync(join(dir, 'unrelated.sh'), unrelated, 'utf8')
     writeFileSync(join(dir, 'comment-mention.sh'), commentMention, 'utf8')
     writeFileSync(join(dir, 'continuation-split.sh'), continuationSplit, 'utf8')
-    writeFileSync(join(dir, 'not-shell.py'), naive, 'utf8') // wrong extension, ignored
+    writeFileSync(join(dir, 'good.mjs'), goodMjs, 'utf8')
+    writeFileSync(join(dir, 'naive.mjs'), naiveMjs, 'utf8')
+    writeFileSync(join(dir, 'header-mention.mjs'), headerMentionMjs, 'utf8')
+    writeFileSync(join(dir, 'reinvented.mjs'), reinventedMjs, 'utf8')
+    writeFileSync(join(dir, 'unrelated.mjs'), unrelatedMjs, 'utf8')
+    writeFileSync(join(dir, 'naive.py'), naivePy, 'utf8')
+    writeFileSync(join(dir, 'unrelated.py'), unrelatedPy, 'utf8')
+    writeFileSync(join(dir, 'docstring-prose.py'), docstringPy, 'utf8')
+    writeFileSync(join(dir, 'notes.md'), naive, 'utf8') // unscanned extension, ignored
     mkdirSync(join(dir, 'lib'))
-    // The shared helper itself, even dropped in a scanned tree, is exempt —
-    // it necessarily contains the raw `git init` this guard looks for.
+    // The shared helpers themselves, even dropped in a scanned tree, are
+    // exempt — they necessarily contain the raw `git init` this guard looks
+    // for, and the raw scrub.
     writeFileSync(
       join(dir, 'lib', 'git-scratch-guard.sh'),
       'git -C "$dir" init -q -b main\nunset GIT_DIR\n',
       'utf8',
     )
+    writeFileSync(
+      join(dir, 'lib', 'git-scratch-guard.mjs'),
+      "execFileSync('git', ['init'], { cwd: dir })\ndelete env.GIT_DIR\n",
+      'utf8',
+    )
+    // …and so is this guard, which carries every offending pattern above as
+    // a detector fixture.
+    writeFileSync(
+      join(dir, 'check-git-fixture-isolation.mjs'),
+      "execFileSync('git', ['init'], { cwd: dir })\ndelete env.GIT_DIR\n",
+      'utf8',
+    )
 
-    const files = listShellScripts(dir)
+    const files = listGuardedScripts(dir)
     check(
-      files.length === 6,
-      'the scan finds exactly the six scoped .sh files, excluding the .py file and the shared helper',
+      files.length === 14,
+      'the scan finds all 14 scoped .sh/.mjs/.py files, excluding the .md, the two shared ' +
+        'helpers and the guard itself',
       JSON.stringify(files.map((f) => f.path)),
+    )
+    check(
+      files.filter((f) => f.lang === 'mjs').length === 5 &&
+        files.filter((f) => f.lang === 'py').length === 3,
+      'the .mjs and .py files are actually opened — the scan is no longer .sh-only (#4015)',
+      JSON.stringify(files.map((f) => `${f.path}:${f.lang}`)),
     )
 
     const problems = checkFixtureIsolation(files)
@@ -445,9 +901,53 @@ function selfTestDiskScan({ check }) {
       'a fixture-builder whose `git -C <dir> init` is split across a line continuation is still flagged',
       JSON.stringify(problems),
     )
+    // ── The #4015 assertions, both directions per language.
     check(
-      problems.length === 4,
-      'exactly the four offending files are reported, nothing else',
+      problems.some((p) => p.startsWith('naive.mjs:')),
+      'THE #4015 CASE: a .mjs that spawns `git` `init` through an argv array, importing ' +
+        'nothing, is flagged — the file the old .sh-only scan never opened',
+      JSON.stringify(problems),
+    )
+    check(
+      problems.some((p) => p.startsWith('header-mention.mjs:')),
+      'a .mjs that only NAMES the Node helper in a `//` comment is still flagged',
+      JSON.stringify(problems),
+    )
+    check(
+      problems.some((p) => p.startsWith('reinvented.mjs:')),
+      'a .mjs that scrubs by hand (`delete env.GIT_DIR`) is flagged even though it imports the helper',
+      JSON.stringify(problems),
+    )
+    check(
+      !problems.some((p) => p.startsWith('good.mjs:')),
+      'a .mjs that imports the Node helper and builds its fixture through it is clean',
+      JSON.stringify(problems),
+    )
+    check(
+      !problems.some((p) => p.startsWith('unrelated.mjs:')),
+      'a .mjs whose `//` comments merely NARRATE a fixture init is clean (`//` stripping works)',
+      JSON.stringify(problems),
+    )
+    check(
+      problems.some((p) => p.startsWith('naive.py:') && /no Python sibling/.test(p)),
+      'a .py that builds a git fixture is flagged, and named the remedy that exists',
+      JSON.stringify(problems),
+    )
+    check(
+      !problems.some((p) => p.startsWith('unrelated.py:')),
+      'a .py with no git fixture at all is clean',
+      JSON.stringify(problems),
+    )
+    check(
+      !problems.some((p) => p.startsWith('docstring-prose.py:')),
+      'a .py whose DOCSTRING narrates a fixture init — and which spawns a non-init git command ' +
+        'below it — is clean: Python prose is the docstring, so scanning it as code flagged ' +
+        'files for documenting the incident this guard exists for',
+      JSON.stringify(problems),
+    )
+    check(
+      problems.length === 8,
+      'exactly the eight offending files are reported, nothing else',
       JSON.stringify(problems),
     )
   } finally {
@@ -455,20 +955,50 @@ function selfTestDiskScan({ check }) {
   }
 }
 
-/** The wiring guard: zero `.sh` files found is a failure, not a vacuous pass. */
+/** The wiring guard: a scanned extension that matches NOTHING is a failure,
+ * not a vacuous pass — per extension, not merely in total. #4015 is the case
+ * this exists for: a scan that found 30 `.sh` files and reported "checked"
+ * while `.mjs` went entirely uninspected would satisfy any total-count
+ * check. */
 function selfTestWiringGuard({ check }) {
   const dir = mkdtempSync(join(tmpdir(), 'git-fixture-isolation-empty-'))
   try {
-    let threw = null
-    try {
-      assertFixtureIsolation({ scriptsDir: dir })
-    } catch (err) {
-      threw = err
+    const attempt = () => {
+      try {
+        assertFixtureIsolation({ scriptsDir: dir })
+        return null
+      } catch (err) {
+        return err
+      }
     }
+    const onEmpty = attempt()
     check(
-      threw !== null && /ZERO \.sh files/.test(threw.message),
-      'an empty directory (no .sh files at all) fails loud instead of reporting a vacuous clean scan',
-      threw ? threw.message : '(no throw)',
+      onEmpty !== null && /ZERO/.test(onEmpty.message),
+      'an empty directory (no scanned files at all) fails loud instead of reporting a vacuous clean scan',
+      onEmpty ? onEmpty.message : '(no throw)',
+    )
+    // …and a tree holding every extension BUT one still fails, naming the
+    // one that vanished. Without this, "ZERO files" is satisfiable by a
+    // guard that only notices a completely empty directory — which is
+    // exactly the shape that let `.mjs` go unscanned for as long as `.sh`
+    // kept matching.
+    writeFileSync(join(dir, 'a.sh'), 'echo hi\n', 'utf8')
+    writeFileSync(join(dir, 'a.py'), 'print(1)\n', 'utf8')
+    const onMissingMjs = attempt()
+    check(
+      onMissingMjs !== null && /ZERO \.mjs/.test(onMissingMjs.message),
+      'a tree with .sh and .py but NO .mjs still fails, and names .mjs — a per-extension ' +
+        'wiring guard, not a total-count one (#4015)',
+      onMissingMjs ? onMissingMjs.message : '(no throw)',
+    )
+    // …and with all three present it is clean, so the check above is a
+    // discrimination rather than a guard that refuses every tree.
+    writeFileSync(join(dir, 'a.mjs'), "console.log('hi')\n", 'utf8')
+    const onComplete = attempt()
+    check(
+      onComplete === null,
+      'a tree holding all three scanned extensions, none of them offending, is clean',
+      onComplete ? onComplete.message : '',
     )
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -479,11 +1009,12 @@ function selfTestWiringGuard({ check }) {
  * migration this guard exists to lock in. */
 function selfTestRealRepo({ check, fail }) {
   try {
-    const { checked } = assertFixtureIsolation()
+    const { checked, byLang } = assertFixtureIsolation()
     check(
-      checked >= 5,
-      `the real scripts/ tree is checked (found ${checked} .sh files, expected at least 5)`,
-      String(checked),
+      checked >= 5 && (byLang.get('mjs') ?? 0) >= 5 && (byLang.get('py') ?? 0) >= 1,
+      `the real scripts/ tree is checked in every scanned language (found ${checked} files: ` +
+        `${[...byLang].map(([l, n]) => `${n} .${l}`).join(', ')})`,
+      JSON.stringify([...byLang]),
     )
   } catch (err) {
     fail('the real repo is clean under this guard right now', err.message)

@@ -73,19 +73,21 @@ Stdlib only — no third-party deps.
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-BASELINE_PATH = REPO_ROOT / "src-tauri" / "dynamic-sql-baseline.txt"
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Reuse the battle-tested comment-stripper, raw-string handling,
 # test-file detection, and #[cfg(test)] line-set tracker from the
 # raw-tx guard rather than re-deriving them (and their #818 fixes).
-_spec = importlib.util.spec_from_file_location(
-    "_check_raw_tx", REPO_ROOT / "scripts" / "check-raw-tx.py"
-)
+#
+# Both loads are resolved from SCRIPT_DIR, not REPO_ROOT: the libraries live
+# beside this file wherever it is run from, while REPO_ROOT below is the
+# repository being JUDGED, which during a self-test is a throwaway fixture.
+_spec = importlib.util.spec_from_file_location("_check_raw_tx", SCRIPT_DIR / "check-raw-tx.py")
 assert _spec and _spec.loader
 _crt = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_crt)
@@ -94,6 +96,40 @@ strip_rust_comments = _crt.strip_rust_comments
 cfg_test_line_set = _crt.cfg_test_line_set
 is_test_file = _crt.is_test_file
 _glob_match = _crt._glob_match
+
+# Which COPY of each file this guard judges — the staged index during a
+# commit, the working tree otherwise (#3962, swept here by #4017). The
+# baseline machinery is the part that makes this guard different from its two
+# siblings: the ratchet compares a RECORDED count against a count read from a
+# file, and the orphan sweep asks whether a baselined file still exists. Both
+# questions have to be asked of the same copy, or the guard reports a file
+# grew past its baseline while judging content nobody is committing.
+_gfs_spec = importlib.util.spec_from_file_location(
+    "_guard_file_source", SCRIPT_DIR / "lib" / "guard_file_source.py"
+)
+assert _gfs_spec and _gfs_spec.loader
+guard_file_source = importlib.util.module_from_spec(_gfs_spec)
+_gfs_spec.loader.exec_module(guard_file_source)
+
+# The tree this guard JUDGES is the tree that CONTAINS it — never one
+# derived from the process cwd. See scripts/lib/guard_file_source.py
+# ("Which TREE is judged"): pr-merge-result-check.sh runs the MERGED
+# worktree's own copy of this script so that the copy's location is the
+# statement of which tree to judge, and check-table-ownership.py has
+# always spelled it this way.
+REPO_ROOT = SCRIPT_DIR.parent
+BASELINE_PATH = REPO_ROOT / "src-tauri" / "dynamic-sql-baseline.txt"
+
+# The source every disk-reading helper below consults. Module-level because
+# `read_source` / `in_scan_scope` / `orphan_entries` are called from a dozen
+# places, several of them deep inside the baseline machinery, and threading a
+# parameter through all of them is how two of them end up disagreeing about
+# which copy they are judging — the defect this is fixing. `main` replaces it
+# once, up front; it defaults to the working tree so `--update-baseline` and
+# the self-test keep their existing behaviour.
+SOURCE = guard_file_source.FileSource(
+    REPO_ROOT, guard_file_source.SOURCE_WORKTREE, "default: working tree"
+)
 
 # --- Scan roots -----------------------------------------------------------
 # The #2621 crate split moved substantial dynamic-SQL surface out of
@@ -287,11 +323,35 @@ def unmarked_sites(text: str, indices: list[int]) -> list[int]:
     return missing
 
 
-def read_source(path: Path) -> str:
+def _rel(path: Path) -> str:
+    """`path` as a repo-relative posix string, the spelling `SOURCE` speaks."""
     try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return ""
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def read_source(path: Path) -> str:
+    """`path`'s contents from the source being judged, "" if unreadable.
+
+    THE SINGLE FUNNEL. `count_sites`, `site_has_marker`, `in_scan_scope`,
+    `orphan_entries`, `all_production_files` and `main`'s violation-line
+    lookup all come through here, so there is exactly one place that can
+    be wrong about which copy the guard is reading.
+    """
+    text = SOURCE.read(_rel(path))
+    return "" if text is None else text
+
+
+def exists_in_source(path: Path) -> bool:
+    """Is `path` present in the source being judged?
+
+    Under the index that means "will be in the commit", which is what makes
+    a `git rm --cached` (staged deletion, file still on disk) visible to the
+    orphan sweep. `Path.is_file()` said yes to that, so the baseline entry it
+    should have reclaimed survived the commit that deleted its file.
+    """
+    return SOURCE.exists(_rel(path))
 
 
 def count_sites(path: Path) -> tuple[int, list[int]]:
@@ -389,7 +449,7 @@ def in_scan_scope(rel: str) -> bool:
     """
     path = REPO_ROOT / rel
     return (
-        path.is_file()
+        exists_in_source(path)
         and not is_excluded_file(rel)
         and not is_test_only_module(read_source(path))
     )
@@ -411,7 +471,7 @@ def orphan_entries(baseline: dict[str, int]) -> list[str]:
     orphans: list[str] = []
     for rel in sorted(baseline):
         path = REPO_ROOT / rel
-        if not path.is_file():
+        if not exists_in_source(path):
             orphans.append(f"{rel}: no such file (deleted or renamed)")
         elif is_excluded_file(rel):
             orphans.append(f"{rel}: now a test/fixture path, outside the scan")
@@ -474,10 +534,17 @@ def write_baseline(baseline: dict[str, int]) -> None:
 
 
 def read_baseline() -> dict[str, int]:
+    """The ratchet's recorded counts, from the source being judged.
+
+    Through `read_source` like everything else (#4017): a commit that stages
+    a re-anchored baseline alongside the file it re-anchors must be judged
+    against the STAGED baseline, or the ratchet compares tomorrow's counts
+    against yesterday's ceiling and reports a violation nobody is committing.
+    An absent file reads as "" and yields an empty baseline, exactly as the
+    old `BASELINE_PATH.exists()` early return did.
+    """
     baseline: dict[str, int] = {}
-    if not BASELINE_PATH.exists():
-        return baseline
-    for raw in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+    for raw in read_source(BASELINE_PATH).splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -933,8 +1000,36 @@ def main(argv: list[str]) -> int:
     if "--update-baseline" in argv:
         return update_baseline([a for a in argv if a != "--update-baseline"])
 
-    baseline = read_baseline()
+    global SOURCE
+    try:
+        SOURCE = guard_file_source.build(
+            argv,
+            os.environ,
+            REPO_ROOT,
+            extra_flags=("--self-test", "--update-baseline", "--all", "--print-source"),
+        )
+    except (guard_file_source.UsageError, guard_file_source.AmbiguousSourceError) as err:
+        print(f"check-dynamic-sql: invocation error: {err}", file=sys.stderr)
+        return 2
+    if "--print-source" in argv:
+        print(
+            f"check-dynamic-sql: "
+            f"{guard_file_source.describe_source(SOURCE.source)} ({SOURCE.why})"
+        )
+        return 0
 
+    try:
+        return _check(argv, read_baseline())
+    except guard_file_source.GitError as err:
+        # Fail CLOSED — see the same branch in check-raw-tx.py. Here the
+        # empty-index answer is doubly wrong: it would also report every
+        # baseline entry as an orphan, so the guard is loudly wrong about
+        # 60 files instead of silently wrong about all of them.
+        print(f"check-dynamic-sql: invocation error: {err}", file=sys.stderr)
+        return 2
+
+
+def _check(argv: list[str], baseline: dict[str, int]) -> int:
     # Determine which files to check. prek passes changed files; a manual
     # whole-tree run passes the full glob. Either way, only police production
     # .rs under one of the scanned crate roots (#3107).
@@ -954,7 +1049,10 @@ def main(argv: list[str]) -> int:
             continue
         if is_excluded_file(rel):
             continue
-        if not p.is_file():
+        # Presence is asked of the SOURCE BEING JUDGED, not of the disk:
+        # `p.is_file()` skipped a path that was `git add`ed and then removed
+        # from the working tree — a file that IS being committed.
+        if not exists_in_source(p):
             continue
         # A whole-file `#![cfg(test)]` module cannot reach a release binary
         # (#3653) — outside this guard's remit, whatever its filename.
@@ -978,19 +1076,23 @@ def main(argv: list[str]) -> int:
         missing = site_has_marker(p, indices)
         if missing:
             for idx in missing:
-                line_txt = ""
-                try:
-                    line_txt = (
-                        p.read_text(encoding="utf-8").splitlines()[idx].strip()
-                    )
-                except (OSError, UnicodeDecodeError, IndexError):
-                    pass
+                # Through `read_source`, like every other read here: quoting
+                # the working tree's line under a verdict about the index
+                # would print a line the author cannot find in what is
+                # actually being committed.
+                lines = read_source(p).splitlines()
+                line_txt = lines[idx].strip() if idx < len(lines) else ""
                 violations.append(f"{rel}:{idx + 1}: {line_txt}")
 
     if violations:
         print(
             "Dynamic-SQL justification guard (#646) — new runtime "
             "`sqlx::query(` site(s) without a `// dynamic-sql:` marker:\n",
+            file=sys.stderr,
+        )
+        print(
+            f"  (judged the {guard_file_source.describe_source(SOURCE.source)} "
+            f"— {SOURCE.why})",
             file=sys.stderr,
         )
         for v in violations:

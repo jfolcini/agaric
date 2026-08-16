@@ -8,21 +8,71 @@
 // Heuristic:
 //   - Scan every tracked `*.md` file under `docs/`, the repo root,
 //     `AGENTS.md`, `CONTRIBUTING.md`, `SECURITY.md`, `pending/`.
+//   - Read each doc from the copy the caller is actually judging — the
+//     STAGED INDEX during a commit, the WORKING TREE otherwise (#3962,
+//     swept here by #4017). `--cached` / `--worktree` force it; with
+//     neither, `GIT_INDEX_FILE` (git naming the index it is about to
+//     commit) decides. Rationale, the measurements behind the auto rule,
+//     and the deletion/unmerged/symlink decisions:
+//     scripts/lib/guard-file-source.mjs.
 //   - Extract candidate paths from inline-code spans (`` `path/...` `` —
 //     the dominant doc convention) AND from markdown link targets
 //     (`[label](relative/path)`).
-//   - For each candidate, check whether the path exists. Strip any
-//     `#anchor`, `?query`, `:N` line-number suffix before checking.
+//   - For each candidate, check whether the path exists IN THAT SAME
+//     SOURCE. Strip any `#anchor`, `?query`, `:N` line-number suffix
+//     before checking.
 //   - Skip http(s)://, `mailto:`, anchor-only refs (`#section`), and
 //     paths that obviously don't look like file references (no slash
 //     and no recognised extension).
 //   - Report the first 50 mismatches and exit non-zero.
 //
+// ─── The two working-tree reads this guard used to carry (#4017) ─────────
+//
+// It enumerated with `git ls-files` (the index) and then judged with
+// `readFileSync` / `existsSync` (the working tree). BOTH halves diverged:
+//
+//   1. DOC BODIES — a staged doc citing a path that was just deleted
+//      committed cleanly whenever the author had already fixed the citation
+//      on disk without `git add`, and vice versa.
+//   2. LINK TARGETS — `existsSync` asked the working tree whether the cited
+//      file exists. A file `git rm --cached`'d (staged deletion, still on
+//      disk) satisfied `existsSync` and every citation of it passed, while
+//      the commit removed it. Under the index source the tracked set IS the
+//      answer to "does this exist in what is being committed", so the
+//      on-disk half is dropped rather than combined with it — keeping it would
+//      reintroduce exactly the divergence being closed.
+//
+// Usage:
+//   node scripts/check-doc-code-paths.mjs              # auto source
+//   node scripts/check-doc-code-paths.mjs --cached     # staged index
+//   node scripts/check-doc-code-paths.mjs --worktree   # working tree
+//   node scripts/check-doc-code-paths.mjs --print-source
+//   node scripts/check-doc-code-paths.mjs --self-test
+//
+// Any OTHER argument is a usage error, not a silently ignored one: a
+// mistyped `--cache` that resolved to AUTO would judge a copy the caller did
+// not ask for, and say nothing about it.
+//
 // Exit codes: 0 clean / 1 mismatches / 2 invocation error.
 
-import { execFileSync, execSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { execSync, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { isAbsolute, join, normalize } from 'node:path'
+
+import {
+  initScratchRepo,
+  runSourceScenarios,
+  scrubbedGitEnv,
+  withScrubbedProcessEnv,
+} from './lib/git-scratch-guard.mjs'
+import {
+  describeSource,
+  listTrackedEntries,
+  readContents,
+  resolveSource,
+  SOURCE_INDEX,
+} from './lib/guard-file-source.mjs'
 
 const REPO_ROOT = (() => {
   try {
@@ -31,23 +81,6 @@ const REPO_ROOT = (() => {
     return process.cwd()
   }
 })()
-
-// Tracked-file set lets us reject working-tree-only paths (which would
-// silently pass on the author's machine but fail in CI's fresh checkout).
-function trackedFiles() {
-  try {
-    return new Set(
-      execFileSync('git', ['ls-files'], { cwd: REPO_ROOT, encoding: 'utf8' })
-        .trim()
-        .split('\n')
-        .filter(Boolean),
-    )
-  } catch {
-    return null
-  }
-}
-
-const TRACKED = trackedFiles()
 
 // Markdown files we audit. Keep this list explicit so node_modules and
 // other surfaces don't get accidentally pulled in.
@@ -71,17 +104,14 @@ const DOC_ROOTS = [
 //    `docs/security/README.md` is still audited.
 const EXCLUDE_PATH_RE = /^docs\/(session-log\/|security\/review-)/
 
-function listMarkdownFiles() {
-  if (!TRACKED) {
-    return []
-  }
+function listMarkdownFiles(tracked) {
   const out = []
-  for (const tracked of TRACKED) {
-    if (!tracked.endsWith('.md')) continue
-    if (EXCLUDE_PATH_RE.test(tracked)) continue
+  for (const path of tracked) {
+    if (!path.endsWith('.md')) continue
+    if (EXCLUDE_PATH_RE.test(path)) continue
     for (const root of DOC_ROOTS) {
-      if (tracked === root || tracked.startsWith(`${root}/`)) {
-        out.push(tracked)
+      if (path === root || path.startsWith(`${root}/`)) {
+        out.push(path)
         break
       }
     }
@@ -149,34 +179,62 @@ function resolveAgainstDoc(_docFile, ref) {
 }
 
 function check() {
-  if (!TRACKED) {
+  let chosen
+  try {
+    chosen = resolveSource(process.argv, process.env, {
+      // This guard's own flags, declared so an argument that is neither
+      // these nor a source flag is a usage error rather than a silent AUTO.
+      extraFlags: ['--print-source', '--self-test'],
+    })
+  } catch (err) {
+    process.stderr.write(`check-doc-code-paths: invocation error: ${err.message}\n`)
+    return 2
+  }
+  if (process.argv.includes('--print-source')) {
+    console.log(`check-doc-code-paths: ${describeSource(chosen.source)} (${chosen.why})`)
+    return 0
+  }
+  let entries
+  try {
+    entries = listTrackedEntries(REPO_ROOT)
+  } catch (err) {
+    process.stderr.write(`check-doc-code-paths: invocation error: ${err.message}\n`)
+    return 2
+  }
+  if (entries === null) {
     console.warn('check-doc-code-paths: not a git repo; skipping.')
     return 0
   }
-  const docs = listMarkdownFiles()
+  const tracked = new Set(entries.paths)
+  const docs = listMarkdownFiles(entries.paths)
   if (docs.length === 0) {
     return 0
   }
+  let bodies
+  try {
+    bodies = readContents(docs, { repoRoot: REPO_ROOT, source: chosen.source, entries })
+  } catch (err) {
+    process.stderr.write(`check-doc-code-paths: invocation error: ${err.message}\n`)
+    return 2
+  }
   const misses = []
   for (const doc of docs) {
-    const abs = join(REPO_ROOT, doc)
-    if (!existsSync(abs)) continue
-    let body
-    try {
-      body = readFileSync(abs, 'utf8')
-    } catch {
-      continue
-    }
+    // `=== undefined`, never a truthiness test: a zero-byte doc reads as
+    // `''` and must count as READ, not as skipped. See `readContents`.
+    const body = bodies.get(doc)
+    if (body === undefined) continue
     for (const ref of extractCandidates(body)) {
       const resolved = resolveAgainstDoc(doc, ref)
-      const absResolved = join(REPO_ROOT, resolved)
-      // Path must exist on disk AND be tracked by git (working-tree-only
-      // shadow files would mask a missed `git add`).
-      const onDisk = existsSync(absResolved)
-      const trackedExact = TRACKED.has(resolved)
-      const trackedDir = [...TRACKED].some((t) => t === resolved || t.startsWith(`${resolved}/`))
-      if (!onDisk || (!trackedExact && !trackedDir)) {
-        misses.push({ doc, ref, resolved, onDisk, tracked: trackedExact || trackedDir })
+      const trackedExact = tracked.has(resolved)
+      const trackedDir = [...tracked].some((t) => t === resolved || t.startsWith(`${resolved}/`))
+      const isTracked = trackedExact || trackedDir
+      // The index IS the answer to "will this path exist in the commit", so
+      // under `--cached` the tracked set alone decides. Under `--worktree`
+      // the path must ALSO be on disk, which is what catches a tracked file
+      // deleted from the working tree without a `git rm` (see the header).
+      const onDisk = chosen.source === SOURCE_INDEX ? null : existsSync(join(REPO_ROOT, resolved))
+      if (!isTracked || onDisk === false) {
+        misses.push({ doc, ref, resolved, onDisk, tracked: isTracked })
       }
     }
   }
@@ -185,9 +243,13 @@ function check() {
   }
   const shown = misses.slice(0, 50)
   process.stderr.write('ERROR: doc files reference paths missing from the tracked tree:\n')
+  // Name the source with the verdict. A red the author cannot reproduce by
+  // opening the file is otherwise indistinguishable from a broken guard.
+  process.stderr.write(`  (judged the ${describeSource(chosen.source)} — ${chosen.why})\n`)
   for (const m of shown) {
+    const onDisk = m.onDisk === null ? 'n/a' : String(m.onDisk)
     process.stderr.write(
-      `  - ${m.doc} → \`${m.ref}\`  (resolved: ${m.resolved}, onDisk=${m.onDisk}, tracked=${m.tracked})\n`,
+      `  - ${m.doc} → \`${m.ref}\`  (resolved: ${m.resolved}, onDisk=${onDisk}, tracked=${m.tracked})\n`,
     )
   }
   if (misses.length > shown.length) {
@@ -197,4 +259,108 @@ function check() {
   return 1
 }
 
-process.exit(check())
+/**
+ * The SECOND working-tree read (#4017): the cited TARGET's existence.
+ *
+ * `runSourceScenarios` covers the doc BODY — which copy of `README.md` the
+ * guard reads. It cannot see this one, because in every one of its fixtures
+ * the cited path is absent from both sources. The divergence lives in the
+ * `existsSync(join(REPO_ROOT, resolved))` that used to be combined with the
+ * tracked-set membership test: a file that is STAGED but has since been
+ * removed from the working tree IS in the commit and IS `git ls-files`-
+ * visible, and `existsSync` says no.
+ *
+ * So the pair below is: same fixture, `--worktree` red (the defect — a
+ * commit blocked over a citation that is correct in the content being
+ * committed), `--cached` green (the fix). Both fixtures are built through
+ * the shared scratch guard; nothing here touches the real repository.
+ */
+function linkTargetScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+    const dir = join(root, 'link-targets')
+    const env = scrubbedGitEnv(root)
+    const git = initScratchRepo(dir, env)
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'staged-only.ts'), 'export const x = 1\n')
+    writeFileSync(join(dir, 'README.md'), 'The module lives in `src/staged-only.ts`.\n')
+    git('add', '-A')
+    // Staged, then removed from the working tree WITHOUT a `git rm`. The
+    // commit still contains it; `existsSync` still says it is gone.
+    rmSync(join(dir, 'src', 'staged-only.ts'))
+    const run = (flags) => {
+      const r = spawnSync(process.execPath, [import.meta.filename, ...flags], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      })
+      return { status: r.status, stderr: r.stderr ?? '' }
+    }
+    const wt = run(['--worktree'])
+    const cached = run(['--cached'])
+    record(
+      'link target: the WORKING TREE reader blocks a citation of a STAGED file (the defect)',
+      wt.status === 1 && /staged-only\.ts/.test(wt.stderr),
+      `expected 1 naming src/staged-only.ts, got ${wt.status}: ${wt.stderr}`,
+    )
+    record(
+      'link target: the INDEX reader passes it — the path IS in the commit (the fix)',
+      cached.status === 0,
+      `expected 0, got ${cached.status}: ${cached.stderr}`,
+    )
+    // …and the guard has not simply stopped judging targets under the index:
+    // a citation of a path in NEITHER source is still red.
+    writeFileSync(join(dir, 'README.md'), 'See `src/never-existed.ts` for details.\n')
+    git('add', '-A')
+    const stillRed = run(['--cached'])
+    record(
+      'link target: a citation of a path in neither source is still red under --cached',
+      stillRed.status === 1 && /never-existed\.ts/.test(stillRed.stderr),
+      `expected 1 naming src/never-existed.ts, got ${stillRed.status}: ${stillRed.stderr}`,
+    )
+    return results
+  })
+}
+
+// #3962/#4017 — index vs working tree, in throwaway repositories built
+// through the shared scratch guard. Every assertion is a PAIR: the source
+// that must go red and the source that must stay green on the same fixture.
+// A one-sided "the fixed guard fails" would pass just as well against a
+// guard that fails on everything.
+//
+// The fixture doc is `README.md` because that is one of the DOC_ROOTS this
+// guard actually scans — a fixture outside the scan set would be green for
+// the wrong reason, which is the failure mode under test.
+function selfTest() {
+  const root = mkdtempSync(join(tmpdir(), 'doc-code-paths-selftest-'))
+  try {
+    const results = runSourceScenarios({
+      scriptPath: import.meta.filename,
+      file: 'README.md',
+      badLine: 'The pipeline lives in `src/nowhere/deleted-module.ts` today.',
+      goodLine: 'The pipeline lives where the architecture doc says it does.',
+      root,
+    })
+    results.push(...linkTargetScenarios(root))
+    let failures = 0
+    for (const result of results) {
+      if (result.ok) {
+        console.log(`  ok   - ${result.name}`)
+      } else {
+        failures += 1
+        console.error(`  FAIL - ${result.name}: ${result.detail}`)
+      }
+    }
+    if (failures > 0) {
+      console.error('\nself-test FAILED')
+      return 1
+    }
+    console.log('self-test OK')
+    return 0
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+process.exit(process.argv.includes('--self-test') ? selfTest() : check())
