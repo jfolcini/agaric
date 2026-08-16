@@ -1676,8 +1676,222 @@ mod reader_delegation_tests {
     /// to describe a set of arms that no longer exists.
     #[test]
     fn the_write_sweep_is_still_over_twenty_arms() {
-        let body = body_after(HARNESS_RS, "fn run_step(", "\n}\n");
-        let arms = body
+        let (commands, arms) = wired_commands(HARNESS_RS);
+        assert_eq!(
+            commands.len(),
+            SWEPT_ARM_COUNT,
+            "`run_step` now wires {} commands ({commands:?}), not the {SWEPT_ARM_COUNT} the \
+             write sweep on this test covered. Re-run the sweep for the new arm: does its \
+             `*_inner` (or anything it calls) WRITE? If it can, extend \
+             `derived_cache_digest` to the table it writes — the read-phase purity guard \
+             is TABLE-SCOPED, and a table it does not digest is a write it cannot see.",
+            commands.len()
+        );
+        // The walk must have reached the CATCH-ALL. Without this, a scanner
+        // that stopped early — on a construct it mis-parsed — would report a
+        // short list, and "20" would be a coincidence between the arms it
+        // managed to read and the arms that were swept.
+        //
+        // One arm more than commands, because every literal arm names exactly
+        // one command today. An OR-PATTERN arm would trip this as well as the
+        // count above, which is the right outcome: it is still a new command
+        // the sweep has not looked at.
+        assert_eq!(
+            arms,
+            SWEPT_ARM_COUNT + 1,
+            "the arm walk crossed {arms} arms but found {} command literals; it should have \
+             crossed exactly one MORE arm than commands — the `other =>` catch-all at the end \
+             of the dispatch. A mismatch means the walk stopped early (so the count above is \
+             not the whole dispatch), or an arm names several commands at once.",
+            commands.len()
+        );
+        let mut sorted = commands.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            commands.len(),
+            "`run_step` wires the same command name twice: {commands:?}. The second arm is \
+             unreachable, so a fixture step naming it would silently run the FIRST one."
+        );
+    }
+
+    /// The command names wired into `run_step`'s `match args.command`, and the
+    /// number of arms the walk crossed.
+    ///
+    /// This is a small scanner rather than a line-shape filter because the
+    /// filter it replaces (`line.starts_with('"') && line.ends_with("=> {")`)
+    /// was defeatable by three arm shapes rustfmt writes without complaint,
+    /// each of which would have added a command while leaving the denominator
+    /// at 20 — a ratchet whose whole purpose is to be falsifiable, silently
+    /// not falsified:
+    ///
+    ///   * an OR-PATTERN (`"a" | "b" => {`) — one line, two commands;
+    ///   * a pattern SPLIT ACROSS LINES, which rustfmt does as soon as the
+    ///     alternatives are long enough;
+    ///   * an EXPRESSION body (`"a" => foo(args).await?,`) — no brace at all.
+    ///
+    /// So the walk tracks the dispatch's structure instead: string literals in
+    /// PATTERN position are commands, `=>` at pattern level opens an arm, and
+    /// an arm ends at the close of its block or at the comma after its
+    /// expression. Comments, string bodies, char literals and lifetimes are
+    /// consumed so none of their braces or arrows are mistaken for structure.
+    ///
+    /// A string literal inside a pattern GUARD would be counted as a command
+    /// (there is none today). That is the safe direction for a tripwire: it
+    /// reddens and asks for a human, rather than passing while under-counting.
+    fn wired_commands(src: &str) -> (Vec<String>, usize) {
+        const DISPATCH: &str = "match args.command {";
+        let body = body_after(src, "fn run_step(", "\n}\n");
+        let start = body.find(DISPATCH).unwrap_or_else(|| {
+            panic!("{DISPATCH:?} not found inside `run_step` — did the dispatch move or rename?")
+        }) + DISPATCH.len();
+
+        let chars: Vec<char> = body[start..].chars().collect();
+        let mut commands = Vec::new();
+        let mut arms = 0usize;
+        let mut depth = 0i32;
+        let mut in_pattern = true;
+        let mut block_body = false;
+        let mut awaiting_body = false;
+        let mut i = 0usize;
+
+        while i < chars.len() {
+            let c = chars[i];
+            // ── Things that are not structure, whatever they contain ──
+            if c == '/' && chars.get(i + 1) == Some(&'/') {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if c == '/' && chars.get(i + 1) == Some(&'*') {
+                i += 2;
+                while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                    i += 1;
+                }
+                i = (i + 2).min(chars.len());
+                continue;
+            }
+            if c == '"' {
+                let mut literal = String::new();
+                i += 1;
+                while i < chars.len() && chars[i] != '"' {
+                    // An escape consumes the next char, so `\"` does not end
+                    // the literal and a `\\` before a quote does not either.
+                    if chars[i] == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    literal.push(chars[i]);
+                    i += 1;
+                }
+                i += 1;
+                if in_pattern {
+                    commands.push(literal);
+                }
+                continue;
+            }
+            if c == '\'' {
+                // A char literal (`'x'`, `'\n'`) is skipped whole; a LIFETIME
+                // (`'_`, `'static`) has no closing quote and is left to fall
+                // through as ordinary text.
+                let end = if chars.get(i + 1) == Some(&'\\') {
+                    chars[i + 2..]
+                        .iter()
+                        .position(|&d| d == '\'')
+                        .map(|p| i + 2 + p)
+                } else if chars.get(i + 2) == Some(&'\'') {
+                    Some(i + 2)
+                } else {
+                    None
+                };
+                i = end.map_or(i + 1, |e| e + 1);
+                continue;
+            }
+
+            if in_pattern {
+                if c == '=' && chars.get(i + 1) == Some(&'>') {
+                    arms += 1;
+                    in_pattern = false;
+                    awaiting_body = true;
+                    i += 2;
+                    continue;
+                }
+                match c {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' => depth -= 1,
+                    // The `}` that closes the whole dispatch.
+                    '}' if depth == 0 => break,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+                continue;
+            }
+
+            // ── Inside an arm body ──
+            if awaiting_body && !c.is_whitespace() {
+                // The first significant character decides how this arm ENDS:
+                // a block arm ends when its brace closes, an expression arm at
+                // the comma after it.
+                block_body = c == '{';
+                awaiting_body = false;
+            }
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    if depth == 0 {
+                        // An expression arm ran straight into the dispatch's
+                        // closing brace (a last arm with no trailing comma).
+                        break;
+                    }
+                    depth -= 1;
+                    if depth == 0 && block_body {
+                        in_pattern = true;
+                    }
+                }
+                ',' if depth == 0 && !block_body => in_pattern = true,
+                _ => {}
+            }
+            i += 1;
+        }
+        (commands, arms)
+    }
+
+    /// The three shapes the old line-shape filter could not see, in a fixture
+    /// built to be counted — because a denominator that only ever runs against
+    /// the one source file it guards is a denominator nobody has watched move.
+    ///
+    /// The legacy filter is recomputed here on the SAME fixture, so the
+    /// assertion is not "the new counter returns 7" (which any constant
+    /// satisfies) but "the new counter sees five commands the old one did
+    /// not".
+    #[test]
+    fn the_arm_walk_sees_or_patterns_split_patterns_and_expression_bodies() {
+        const FIXTURE: &str = r#"
+async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, AppError> {
+    Ok(match args.command {
+        // The only shape the old filter could see.
+        "plain" => {
+            let braces = "=> {";
+        }
+        // An or-pattern: ONE line, TWO commands.
+        "or_a" | "or_b" => {
+            let c = '}';
+        }
+        // rustfmt splits a pattern once the alternatives get long.
+        "split_a"
+        | "split_b" => {
+            let s: &'static str = "x";
+        }
+        // An expression body: no brace to end with.
+        "expr" => expr_only(pool, args).await?,
+        other => panic!("{other} is not wired"),
+    })
+}
+"#;
+        let legacy = body_after(FIXTURE, "fn run_step(", "\n}\n")
             .lines()
             .filter(|l| {
                 let t = l.trim();
@@ -1685,12 +1899,23 @@ mod reader_delegation_tests {
             })
             .count();
         assert_eq!(
-            arms, SWEPT_ARM_COUNT,
-            "`run_step` now wires {arms} commands, not the {SWEPT_ARM_COUNT} the write \
-             sweep on this test covered. Re-run the sweep for the new arm: does its \
-             `*_inner` (or anything it calls) WRITE? If it can, extend \
-             `derived_cache_digest` to the table it writes — the read-phase purity guard \
-             is TABLE-SCOPED, and a table it does not digest is a write it cannot see."
+            legacy, 2,
+            "the fixture is supposed to be one the OLD filter under-counts; it saw {legacy}"
+        );
+
+        let (commands, arms) = wired_commands(FIXTURE);
+        assert_eq!(
+            commands,
+            vec!["plain", "or_a", "or_b", "split_a", "split_b", "expr"],
+            "the arm walk missed a shape the denominator has to be able to see"
+        );
+        // FOUR literal arms — one of which names two commands — plus the
+        // catch-all. That commands (6) exceeds arms-minus-the-catch-all (4) is
+        // the or-pattern being counted per COMMAND rather than per arm, which
+        // is the denominator the sweep is about.
+        assert_eq!(
+            arms, 5,
+            "four literal arms plus the catch-all; got {arms} — the walk stopped early"
         );
     }
 

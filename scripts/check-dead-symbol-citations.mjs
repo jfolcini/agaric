@@ -70,6 +70,10 @@
 //   node scripts/check-dead-symbol-citations.mjs --print-source
 //   node scripts/check-dead-symbol-citations.mjs --self-test
 //
+// Any OTHER argument is a usage error, not a silently ignored one: a
+// mistyped `--cache` that resolved to AUTO would judge a copy the caller did
+// not ask for, and say nothing about it.
+//
 // Exit codes: 0 clean / 1 matches found / 2 invocation error.
 
 import { execSync, spawnSync } from 'node:child_process'
@@ -172,7 +176,11 @@ function findHits(files, bodies) {
 function check() {
   let chosen
   try {
-    chosen = resolveSource(process.argv)
+    chosen = resolveSource(process.argv, process.env, {
+      // This guard's own flags, declared so an argument that is neither
+      // these nor a source flag is a usage error rather than a silent AUTO.
+      extraFlags: ['--print-source', '--self-test'],
+    })
   } catch (err) {
     process.stderr.write(`check-dead-symbol-citations: invocation error: ${err.message}\n`)
     return 2

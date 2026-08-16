@@ -154,7 +154,13 @@ describe('runQuerySteps records the grouped payload', () => {
           ordered: true,
           args: {
             request: {
-              spaceId: '01TESTSPACE000000000000001',
+              // The IMPORT, not the literal — as the flat test below does,
+              // and as `conformance-query.ts`'s header requires (the id is
+              // spelled once, there). The mock synthesises a bucket for any
+              // space, so a drifted literal here would go on passing while
+              // querying a space that does not exist: measured, this block
+              // was green with `spaceId: '01NOSUCHSPACE00000000000X'`.
+              spaceId: CONFORMANCE_SPACE_ID,
               limit: 100,
               groupBy: { key: { type: 'BlockType' } },
             },

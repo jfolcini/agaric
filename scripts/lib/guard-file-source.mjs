@@ -93,6 +93,13 @@
 //     `*.tsx` symlink exists today; this is stated so the divergence is a
 //     decision rather than a surprise.
 //
+// Not on that list, because it is not a per-path condition: a `cat-file
+// --batch` response that does not have the shape git documents. The record
+// walk THROWS and the guard exits 2, rather than abandoning the rest of the
+// chunk — which is how the invariant above ("every enumerated path is read
+// from some source, or the guard says so") stays true. See
+// `parseBatchStream`.
+//
 // ─── Cost ─────────────────────────────────────────────────────────────────
 //
 // One `git show` per path would be ~2,900 process spawns for the citation
@@ -140,12 +147,40 @@ const CAT_FILE_MAX_BUFFER = 64 * 1024 * 1024
 /**
  * Resolve which copy of each file the caller wants read.
  *
+ * @param {string[]} argv         full `process.argv` (the node binary and the
+ *   script path are skipped; both guards run with `pass_filenames = false`,
+ *   so anything after them is a flag the caller typed).
+ * @param {object} env
+ * @param {object} [opts]
+ * @param {string[]} [opts.extraFlags] flags the CALLING guard understands, on
+ *   top of the two source flags this module owns.
  * @returns {{source: string, why: string}} `why` is quoted verbatim in the
  *   guard's failure output — the mechanism has to be legible from the
  *   verdict, not only from this file.
- * @throws {Error & {isUsageError: true}} if both flags are given.
+ * @throws {Error & {isUsageError: true}} if both source flags are given, or
+ *   if any argument is one this guard does not understand.
  */
-export function resolveSource(argv = process.argv, env = process.env) {
+export function resolveSource(argv = process.argv, env = process.env, { extraFlags = [] } = {}) {
+  // UNKNOWN ARGUMENTS ARE AN ERROR. Ignoring them makes `--cache` — one
+  // keystroke short of `--cached` — resolve to AUTO, so the caller who asked
+  // for the index silently gets whichever copy AUTO picked. That is the exact
+  // failure this module exists to end, arriving through the option parser
+  // instead of through the reader: the verdict is clean, the source it
+  // actually judged is not the one the caller named, and nothing says so.
+  // Rejecting is cheap because neither guard takes a positional argument —
+  // both hooks are `pass_filenames = false` (prek.toml), which is what makes
+  // "every argument must be a flag I recognise" a safe rule rather than a
+  // brittle one.
+  const known = new Set(['--cached', '--worktree', ...extraFlags])
+  const unknown = argv.slice(2).filter((arg) => !known.has(arg))
+  if (unknown.length > 0) {
+    const err = new Error(
+      `unknown option ${unknown.map((a) => `'${a}'`).join(', ')} — known options: ` +
+        `${[...known].join(', ')}`,
+    )
+    err.isUsageError = true
+    throw err
+  }
   const cached = argv.includes('--cached')
   const worktree = argv.includes('--worktree')
   if (cached && worktree) {
@@ -300,40 +335,116 @@ function readFromIndex(paths, repoRoot, entries, chunkSize = CAT_FILE_CHUNK, env
       input: `${chunk.map((e) => e.sha).join('\n')}\n`,
       maxBuffer: CAT_FILE_MAX_BUFFER,
     })
-    let off = 0
-    for (const { path } of chunk) {
-      const nl = out.indexOf(0x0a, off)
-      if (nl === -1) break
-      const header = out.toString('utf8', off, nl)
-      off = nl + 1
-      const parts = header.split(' ')
-      // `<oid> missing` is the only header with no payload behind it; every
-      // other type IS followed by <size> bytes and must be consumed even
-      // when it is not a blob, or the next record is read from the middle
-      // of this one.
-      //
-      // A staged entry whose blob is not in the object store means a damaged
-      // repository, but "damaged" must not mean "unscanned": dropping the
-      // path here would be a silent false green of exactly the kind #3962
-      // is about. It takes the unmerged path's treatment — read the copy on
-      // disk instead — so the file is still judged, by the only source left.
-      if (parts[1] === 'missing') {
-        fallToWorktree.push(path)
-        continue
-      }
-      const size = Number(parts[2])
-      if (!Number.isFinite(size)) break
-      // `size === 0` (a zero-byte tracked file) sets `''` DELIBERATELY, and
-      // must not be guarded behind `if (size)`: an empty file is a file that
-      // was read and judged, and dropping it here would make it indexed as
-      // "unreadable" — an unscanned path. `off` still advances by 1 past the
-      // LF git writes after a zero-length payload.
-      if (parts[1] === 'blob') bodies.set(path, out.toString('utf8', off, off + size))
-      off += size + 1
-    }
+    const parsed = parseBatchStream(out, chunk)
+    for (const [path, body] of parsed.bodies) bodies.set(path, body)
+    fallToWorktree.push(...parsed.missing)
   }
   for (const [path, body] of readFromWorktree(fallToWorktree, repoRoot)) {
     bodies.set(path, body)
   }
   return bodies
+}
+
+/**
+ * Walk ONE `git cat-file --batch` response against the chunk that produced
+ * it, in input order.
+ *
+ * @param {Buffer} out    the batch response (a Buffer, never a string — see
+ *   the call site)
+ * @param {Array<{path: string, sha: string}>} chunk the input lines, in order
+ * @returns {{bodies: Map<string, string>, missing: string[]}} `missing` names
+ *   the paths git answered `<oid> missing` for, which the caller judges from
+ *   the working tree instead.
+ * @throws {Error & {isBatchDesync: true}} if the response does not have the
+ *   shape `cat-file --batch` documents — see below.
+ *
+ * Extracted from `readFromIndex` so the desync branches have somewhere to be
+ * TESTED from: they cannot be reached through a fixture, because reaching
+ * them means git emitting a malformed stream. `runSourceScenarios` feeds this
+ * function hand-built buffers instead.
+ *
+ * ─── Why a malformed stream THROWS rather than falling back ───────────────
+ *
+ * Both branches below used to `break`, abandoning the remainder of the chunk
+ * — up to `CAT_FILE_CHUNK` (500) paths — with those paths absent from
+ * `bodies` and no working-tree fallback behind them. That is the silently
+ * unscanned file this whole module exists to prevent, arriving through the
+ * parser rather than through the source choice, and it is the loudest
+ * possible version of it: a guard that exits 0 having read almost nothing.
+ * Measured before the fix, on an 8-file fixture with the violation in the
+ * last staged file, a truncated stream produced `exit=0` with empty stderr.
+ *
+ * The alternative — pushing the remainder onto the working-tree fallback, as
+ * the `missing` and unmerged paths do — is rejected deliberately:
+ *
+ *   * Those two are DOCUMENTED per-file answers from git ("this blob is not
+ *     here", "this path has no stage 0"), and the fallback is a considered
+ *     verdict on a specific file. A desync is git not honouring the batch
+ *     protocol at all, so nothing about the remaining bytes is known —
+ *     including whether the paths still line up with the records.
+ *   * The guards PRINT the source with the verdict ("judged the staged
+ *     index"). Silently reading 499 files from the working tree under that
+ *     banner is the mis-attributed verdict #3962 is about, at scale.
+ *   * Exit 2 is fail-CLOSED: the commit is blocked and the cause is named.
+ *     A fallback is fail-open in the one direction that has burned this repo
+ *     — a green that describes content nobody scanned.
+ */
+export function parseBatchStream(out, chunk) {
+  const bodies = new Map()
+  const missing = []
+  const desync = (detail, i) => {
+    const err = new Error(
+      `git cat-file --batch desynchronised: ${detail}. ${chunk.length - i} of ${chunk.length} ` +
+        'staged path(s) in this batch would have gone unread, so the scan is abandoned rather ' +
+        'than reported clean (scripts/lib/guard-file-source.mjs).',
+    )
+    err.isBatchDesync = true
+    return err
+  }
+  let off = 0
+  for (const [i, { path }] of chunk.entries()) {
+    const nl = out.indexOf(0x0a, off)
+    if (nl === -1) throw desync(`the stream ended before the header for '${path}'`, i)
+    const header = out.toString('utf8', off, nl)
+    off = nl + 1
+    const parts = header.split(' ')
+    // `<oid> missing` is the only header with no payload behind it; every
+    // other type IS followed by <size> bytes and must be consumed even
+    // when it is not a blob, or the next record is read from the middle
+    // of this one.
+    //
+    // A staged entry whose blob is not in the object store means a damaged
+    // repository, but "damaged" must not mean "unscanned": dropping the
+    // path here would be a silent false green of exactly the kind #3962
+    // is about. It takes the unmerged path's treatment — read the copy on
+    // disk instead — so the file is still judged, by the only source left.
+    if (parts[1] === 'missing') {
+      missing.push(path)
+      continue
+    }
+    const size = Number(parts[2])
+    if (!Number.isFinite(size)) {
+      throw desync(`header ${JSON.stringify(header)} for '${path}' carries no readable size`, i)
+    }
+    // A payload that runs past the end of the response is the same failure
+    // one record earlier: `Buffer.toString` would CLAMP to the end of the
+    // buffer and hand back a short body as though it were the whole file,
+    // which is an unscanned tail rather than an unscanned file — quieter
+    // still, and it would only surface as a desync on the NEXT header, if at
+    // all.
+    if (off + size > out.length) {
+      throw desync(
+        `the payload for '${path}' claims ${size} bytes but only ${out.length - off} remain`,
+        i,
+      )
+    }
+    // `size === 0` (a zero-byte tracked file) sets `''` DELIBERATELY, and
+    // must not be guarded behind `if (size)`: an empty file is a file that
+    // was read and judged, and dropping it here would make it indexed as
+    // "unreadable" — an unscanned path. `off` still advances by 1 past the
+    // LF git writes after a zero-length payload.
+    if (parts[1] === 'blob') bodies.set(path, out.toString('utf8', off, off + size))
+    off += size + 1
+  }
+  return { bodies, missing }
 }

@@ -27,17 +27,47 @@
 // green for the wrong reason, and one `git add` away from being destructive.
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 import {
   listTrackedEntries,
+  parseBatchStream,
   readContents,
   SOURCE_INDEX,
   SOURCE_WORKTREE,
 } from './guard-file-source.mjs'
 
 const SHELL_GUARD = join(import.meta.dirname, 'git-scratch-guard.sh')
+
+/**
+ * `path.resolve` with SYMLINKS RESOLVED — the `pwd -P` the shell helper uses,
+ * and for the same reason.
+ *
+ * Every path git reports (`rev-parse --show-toplevel`,
+ * `--absolute-git-dir`, `--git-path`) comes back PHYSICALLY resolved, while
+ * `resolve()` leaves symlinks in place. Comparing the two is only an identity
+ * test on a platform where the scratch root happens to contain no link. On
+ * macOS `os.tmpdir()` is `/var/folders/…` and `/var` is a symlink to
+ * `/private/var`, so `mkdtempSync` hands back one spelling and git answers
+ * with the other: `initScratchRepo` then refuses to continue and
+ * `assertScratchIsolation` calls every probe a leak, failing both citation
+ * guards' self-test hooks on every commit from a Mac even though the fixture
+ * is perfectly isolated. CI is ubuntu-only, so nothing here would ever have
+ * caught it.
+ *
+ * Falls back to `resolve` when the path does not exist yet — a
+ * not-yet-created directory has no physical spelling to ask for, and the
+ * callers below either create it first or are only building a ceiling.
+ */
+function physical(p) {
+  const abs = resolve(p)
+  try {
+    return realpathSync(abs)
+  } catch {
+    return abs
+  }
+}
 
 /** The one list, read from the shell helper so the two cannot drift. */
 export const GIT_SCRATCH_LEAK_VARS = (() => {
@@ -72,7 +102,10 @@ export const GIT_SCRATCH_LEAK_VARS = (() => {
 export function scrubbedGitEnv(scratchRoot, extra = {}) {
   const env = { ...process.env }
   for (const name of GIT_SCRATCH_LEAK_VARS) delete env[name]
-  env.GIT_CEILING_DIRECTORIES = dirname(resolve(scratchRoot))
+  // Physical, because git walks the physical tree when it looks for a
+  // repository above the fixture: a ceiling spelled through a symlink is a
+  // ceiling git never compares against.
+  env.GIT_CEILING_DIRECTORIES = dirname(physical(scratchRoot))
   for (const [key, value] of Object.entries(extra)) {
     if (value === undefined) delete env[key]
     else env[key] = value
@@ -101,7 +134,7 @@ export function withScrubbedProcessEnv(scratchRoot, fn) {
     else process.env[name] = value
   }
   for (const name of GIT_SCRATCH_LEAK_VARS) set(name, undefined)
-  set('GIT_CEILING_DIRECTORIES', dirname(resolve(scratchRoot)))
+  set('GIT_CEILING_DIRECTORIES', dirname(physical(scratchRoot)))
   try {
     return fn()
   } finally {
@@ -124,12 +157,15 @@ export function withScrubbedProcessEnv(scratchRoot, fn) {
  * toplevel assertion watched the #3962 leak happen and reported nothing.
  */
 export function assertScratchIsolation(dir, env) {
-  const base = resolve(dir)
+  // Physical on BOTH sides — see `physical`. A relative answer (git returns a
+  // bare `.git/index` from the toplevel) is resolved against the physical
+  // base, so the two spellings cannot disagree by construction.
+  const base = physical(dir)
   const ask = (...args) =>
     execFileSync('git', ['rev-parse', ...args], { cwd: dir, env, encoding: 'utf8' }).trim()
   const leaks = []
   const inside = (p) => {
-    const abs = resolve(dir, p)
+    const abs = resolve(base, p)
     return abs === base || abs.startsWith(`${base}/`)
   }
   const probes = [
@@ -157,7 +193,7 @@ export function initScratchRepo(dir, env) {
   git('config', 'user.email', 'selftest@example.invalid')
   git('config', 'user.name', 'self test')
   const top = git('rev-parse', '--show-toplevel').trim()
-  if (resolve(top) !== resolve(dir)) {
+  if (physical(top) !== physical(dir)) {
     throw new Error(
       `git-scratch-guard.mjs: fixture at '${dir}' resolved to '${top}' — refusing to continue`,
     )
@@ -246,6 +282,87 @@ function verifyIndexFraming({ dir, env, file, decoys, check }) {
   )
 }
 
+/**
+ * The `cat-file --batch` record walk against MALFORMED streams.
+ *
+ * No fixture can produce these: reaching them means git not honouring its own
+ * batch protocol. They are checked here, against hand-built buffers, because
+ * the branches used to `break` — abandoning up to 500 staged paths with no
+ * fallback and no diagnostic, so the guard exited 0 having read almost
+ * nothing. A branch that answers "unscanned, silently" is the one failure
+ * this whole module is about, so it does not get to be the untested one.
+ *
+ * Each malformed case is paired with the well-formed stream it is derived
+ * from: an assertion that a corrupt buffer throws is satisfied just as well
+ * by a parser that throws on everything.
+ */
+function verifyBatchStreamFraming(check) {
+  // `<oid> blob <size>\n<payload>\n`, twice — the shape git actually emits.
+  const oid = '0'.repeat(40)
+  const record = (body) => `${oid} blob ${Buffer.byteLength(body)}\n${body}\n`
+  const good = Buffer.from(`${record('alpha')}${record('')}${record('omega')}`)
+  const chunk = [
+    { path: 'a.md', sha: oid },
+    { path: 'b.md', sha: oid },
+    { path: 'c.md', sha: oid },
+  ]
+  const parsed = parseBatchStream(good, chunk)
+  check(
+    'batch framing: a well-formed stream reads every record, empty payload included',
+    parsed.bodies.get('a.md') === 'alpha' &&
+      parsed.bodies.get('b.md') === '' &&
+      parsed.bodies.get('c.md') === 'omega' &&
+      parsed.missing.length === 0,
+    `got ${JSON.stringify([...parsed.bodies])} / missing ${JSON.stringify(parsed.missing)}`,
+  )
+
+  const throws = (name, buf, expect) => {
+    let err = null
+    try {
+      parseBatchStream(buf, chunk)
+    } catch (e) {
+      err = e
+    }
+    check(
+      `batch framing: ${name} is a desync error, not a silent drop`,
+      err?.isBatchDesync === true && expect.test(err.message),
+      err === null
+        ? 'no error thrown — the remaining paths would have gone unread'
+        : `message did not match ${expect}: ${err.message}`,
+    )
+  }
+  // Truncated mid-stream: the header for record 2 never arrives.
+  throws('a stream that ends before a header', good.subarray(0, -12), /ended before/)
+  // A header whose size field is not a number.
+  throws(
+    'a header with an unreadable size',
+    Buffer.from(`${record('alpha')}${oid} blob ?\nx\n`),
+    /no readable size/,
+  )
+  // A size that runs past the end of the buffer. `Buffer.toString` CLAMPS
+  // here, so without the bounds check this returns a short body that looks
+  // like a whole file.
+  throws(
+    'a payload larger than the bytes that remain',
+    Buffer.from(`${record('alpha')}${oid} blob 9999\nshort\n`),
+    /claims 9999 bytes but only/,
+  )
+  // ...while `missing` — a DOCUMENTED per-file answer — must still be a
+  // working-tree fallback rather than an error, or the fix above would have
+  // turned a damaged-object commit into an unconditional exit 2.
+  const withMissing = parseBatchStream(
+    Buffer.from(`${record('alpha')}${oid} missing\n${record('omega')}`),
+    chunk,
+  )
+  check(
+    'batch framing: a `missing` record still falls back instead of throwing',
+    withMissing.missing.join(',') === 'b.md' &&
+      withMissing.bodies.get('a.md') === 'alpha' &&
+      withMissing.bodies.get('c.md') === 'omega',
+    `missing=${JSON.stringify(withMissing.missing)} bodies=${JSON.stringify([...withMissing.bodies])}`,
+  )
+}
+
 // ---------------------------------------------------------------------------
 // The shared #3962 scenario runner
 // ---------------------------------------------------------------------------
@@ -270,6 +387,10 @@ export function runSourceScenarios(spec) {
 function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
   const results = []
   const check = (name, ok, detail = '') => results.push({ name, ok, detail })
+
+  // In-process, fixture-free: the record walk against streams git would have
+  // to misbehave to produce. See `verifyBatchStreamFraming`.
+  verifyBatchStreamFraming(check)
 
   let seq = 0
   const fixture = (setup) => {
@@ -633,19 +754,57 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
     verifyIndexFraming({ dir, env, file, decoys, check })
   }
 
-  // ── 8. Usage: the two flags are mutually exclusive, and saying so is an
-  // invocation error rather than a silent pick.
+  // ── 8. Usage: an argument the guard does not understand is an invocation
+  // error, not a silent pick of a source the caller did not ask for.
+  //
+  // The fixture is scenario 1's shape — VIOLATION STAGED, working tree clean
+  // — so a guard that swallows a mistyped `--cached` exits 0 while the broken
+  // content sails into the commit. Against a clean fixture every assertion
+  // below would be satisfied by "exit 0 because there is nothing to find".
   {
     const { dir, env } = fixture(({ git, write }) => {
       write(`${goodLine}\n`)
       git('add', '-A')
       git('commit', '-qm', 'base')
+      write(`${badLine}\n`)
+      git('add', '-A') // staged violation…
+      write(`${goodLine}\n`) // …invisible to the working tree
     })
     const both = run(dir, env, ['--cached', '--worktree'])
     check(
       '--cached and --worktree together is an exit-2 invocation error',
       both.status === 2 && /mutually exclusive/.test(both.stderr),
       `expected 2 mentioning "mutually exclusive", got ${both.status}: ${both.stderr}`,
+    )
+    // A MISSPELLED source flag is the same class of mistake as naming both,
+    // and it used to be the silent one: an unrecognised argument was ignored,
+    // so `--cache` resolved to AUTO and the caller who typed it got the
+    // working tree while believing they had asked for the index. The whole
+    // premise of #3962 is that reading the wrong copy is invisible in the
+    // verdict, so an unknown flag has to be an error rather than a default.
+    // Measured before the fix: `--cache` against this fixture exited 0 with
+    // empty stderr — the staged violation unseen, the verdict clean.
+    const typo = run(dir, env, ['--cache'])
+    check(
+      'a misspelled source flag is an exit-2 invocation error, not a silent AUTO',
+      typo.status === 2 && /unknown option/.test(typo.stderr) && /--cache\b/.test(typo.stderr),
+      `expected 2 naming the unknown option '--cache', got ${typo.status}: ${typo.stderr}`,
+    )
+    // ...including alongside a flag that IS recognised, which is how a typo
+    // most often arrives (`--cached --print-sources`).
+    const typoBeside = run(dir, env, ['--cached', '--print-sources'])
+    check(
+      'an unknown flag beside a recognised one is still an exit-2 invocation error',
+      typoBeside.status === 2 && /--print-sources\b/.test(typoBeside.stderr),
+      `expected 2 naming '--print-sources', got ${typoBeside.status}: ${typoBeside.stderr}`,
+    )
+    // ...and the flags the guards genuinely accept must keep working, or the
+    // check above is satisfiable by rejecting everything.
+    const printSource = run(dir, env, ['--print-source'])
+    check(
+      '--print-source is still accepted and names a source',
+      printSource.status === 0 && /(staged index|working tree)/.test(printSource.stdout),
+      `expected 0 naming a source, got ${printSource.status}: ${printSource.stdout}${printSource.stderr}`,
     )
   }
 

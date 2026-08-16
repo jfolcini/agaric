@@ -141,7 +141,7 @@ if [ "$SELF_TEST" -eq 1 ]; then
   set +e; bash "$SELF" >/dev/null 2>&1; rc=$?; set -e
   assert "staged modification -> fail" 1 "$rc"
 
-  # (8) run from a SUBDIRECTORY with a real violation staged (#3949).
+  # (7) run from a SUBDIRECTORY with a real violation staged (#3949).
   #     The pathspec is relative to the invocation directory, so from
   #     src-tauri/ it became 'src-tauri/src-tauri/migrations/*.sql',
   #     matched nothing, and the guard reported success. Both modes are
@@ -168,7 +168,7 @@ if [ "$SELF_TEST" -eq 1 ]; then
   assert "staged ADDITION, run from a subdirectory -> pass" 0 "$rc"
   cd "$tmp"
 
-  # (7) usage errors.
+  # (8) usage errors.
   set +e; bash "$SELF" --bogus >/dev/null 2>&1; rc=$?; set -e
   assert "unknown arg -> exit 2" 2 "$rc"
   set +e; bash "$SELF" --range >/dev/null 2>&1; rc=$?; set -e
