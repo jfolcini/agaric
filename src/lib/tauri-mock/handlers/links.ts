@@ -78,11 +78,15 @@ export const linksHandlers = {
         // `[[ULID]]` resolve to).
         //
         // One query-SIDE divergence is left standing, and is named rather than
-        // modelled: the backend's early returns make a blank or
-        // sanitizes-to-empty query an EMPTY result set
+        // modelled: the backend early-returns an EMPTY result set when
+        // `query.trim().is_empty()` or the query sanitizes to empty
         // (`filters.rs:382-388` / `:955-962`), where `matchesFtsIndex` admits
-        // every candidate for an empty needle — the pre-#4022 behaviour here,
-        // unchanged by this seam.
+        // every candidate for an empty needle. Note the backend TRIMS, so this
+        // covers two shapes — `''` (which `matchesFtsIndex` short-circuits to
+        // "match all") and whitespace-only such as `'   '` (which it runs as a
+        // three-space substring test). Both are the pre-#4022 behaviour here,
+        // unchanged by this seam, and both are reachable from this call site
+        // because it does not test blank-ness first.
         backlinkItems = backlinkItems.filter((b) =>
           matchesFtsIndex(stripForFts(b['content'] as string | null), query),
         )
