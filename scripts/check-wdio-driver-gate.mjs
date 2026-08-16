@@ -547,7 +547,12 @@ function selfTest() {
     // …and that reaches the EXIT CODE. A `port: 4444` sitting outside the
     // config is exactly the evidence the old file-wide scan would have
     // accepted, so this fixture also pins that it no longer does.
-    const tmp = path.join(os.tmpdir(), `wdio-gate-selftest-${process.pid}.ts`)
+    // mkdtemp, not a pid-derived name: `wdio-gate-selftest-<pid>.ts` in the
+    // shared temp dir is predictable, so anyone on the box can pre-place a
+    // symlink there and have this write follow it. mkdtemp gets a 0700 dir
+    // with an unguessable suffix (CodeQL js/insecure-temporary-file).
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wdio-gate-selftest-'))
+    const tmp = path.join(tmpDir, 'wdio.conf.ts')
     fs.writeFileSync(tmp, "const notTheConfig = { port: 4444, hostname: '10.0.0.9' }\n")
     const realConsoleError = console.error
     console.error = () => {}
@@ -556,7 +561,7 @@ function selfTest() {
       code = run(tmp)
     } finally {
       console.error = realConsoleError
-      fs.rmSync(tmp, { force: true })
+      fs.rmSync(tmpDir, { recursive: true, force: true })
     }
     check('an unscannable config exits non-zero rather than printing ok', code === 2)
   }
