@@ -206,7 +206,23 @@ async fn truncate_encapsulates_bypass_and_leaves_it_disabled() {
 
     // …and a fresh append succeeds while a bare DELETE still ABORTS, proving
     // the encapsulated bypass did not escape truncate's scope.
-    append_local_op_at(
+    //
+    // #3310/#3998: the DELETE must target the seq the fresh append ACTUALLY
+    // got, not a hard-coded 1. The post-truncate allocator now resumes from
+    // the durable high-water mark, so this op is seq 2 rather than seq 1.
+    //
+    // The assertion below is UNCHANGED in intent and strength — it still
+    // demands that a bare DELETE abort on the H-13 trigger, proving the
+    // bypass did not escape `truncate`'s scope. Only the row it aims at
+    // moved. Keeping the hard-coded `seq = 1` would have matched ZERO rows,
+    // and the per-row BEFORE DELETE trigger never fires on a zero-row
+    // DELETE: `execute` would return `Ok(changes: 0)` and `expect_err` would
+    // PANIC. Verified empirically during review — the un-adjusted form fails
+    // loudly ("bare DELETE must still ABORT …: SqliteQueryResult { changes:
+    // 0 }"), it does not pass vacuously. Binding the real seq restores the
+    // precondition the assertion always relied on (a row must actually
+    // match) instead of relaxing the assertion itself.
+    let fresh = append_local_op_at(
         &pool,
         TEST_DEVICE,
         make_create_payload("BLK-TRUNC-C"),
@@ -214,8 +230,9 @@ async fn truncate_encapsulates_bypass_and_leaves_it_disabled() {
     )
     .await
     .unwrap();
-    let bare_delete = sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = 1")
+    let bare_delete = sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = ?")
         .bind(TEST_DEVICE)
+        .bind(fresh.seq)
         .execute(&pool)
         .await;
     let err =

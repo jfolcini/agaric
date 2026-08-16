@@ -3,8 +3,8 @@ use sqlx::sqlite::SqlitePoolOptions;
 use std::path::Path;
 
 use super::recovery::{
-    engine_reproject_pending, ensure_blocks_table_exists, recover_derived_state_from_op_log,
-    reproject_blocks_from_engine,
+    engine_reproject_pending, ensure_blocks_table_exists, recover_attachments_from_op_log,
+    recover_derived_state_from_op_log, reproject_blocks_from_engine,
 };
 // The pure pool primitives (`DbPools`, `base_connect_options`, the acquire/begin
 // helpers, the pragma consts, `now_ms` / `next_delete_ms`) moved into
@@ -358,22 +358,44 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, agaric_core::error::A
     // DROP TABLE would have CASCADE-deleted. #616: gated on the positive
     // corruption signal from `ensure_blocks_table_exists` (this boot's flag
     // or the persisted pending marker), never on empty-table inference.
-    recover_derived_state_from_op_log(&write_pool, blocks_recovered).await?;
+    //
+    // #3268: `attachments` is deliberately NOT restored here — see part 4.
+    let attachment_replay_pending =
+        recover_derived_state_from_op_log(&write_pool, blocks_recovered).await?;
 
     // #2504: engine-first rebuild. The two op-log passes above reconstruct only
     // device-local content (the op_log is strictly device-local post-#490-M1),
     // so on a synced device every remote-authored block/property/tag is missing.
     // Reproject the SQL primary state authoritatively from the per-space Loro
     // engine snapshots (`loro_doc_state` — the complete convergent state), on top
-    // of the op-log passes (which also restored engine-independent `attachments`).
-    // Gated on the same this-boot block-recovery signal.
+    // of the op-log passes. Gated on the same this-boot block-recovery signal.
     // #2920: also re-attempt when a PRIOR boot's engine reprojection skipped
     // some spaces/blocks and armed the retry marker. The `blocks_recovered` gate
     // is this-boot-only (the `blocks` table is present again on the next boot),
     // so without the marker check a partial engine recovery would be silently,
     // permanently lost — remote-authored content invisible in SQL forever.
-    if blocks_recovered || engine_reproject_pending(&write_pool).await? {
+    // #3268: `attachment_replay_pending` joins the gate. It is true exactly when
+    // the derived recovery fired, which includes the crash-retry case (a prior
+    // boot armed `DERIVED_RECOVERY_PENDING_KEY` and died before finishing) —
+    // and part 4 below needs a COMPLETE `blocks`, peer-authored rows included,
+    // or it drops attachment metadata nothing can rebuild. The pass is
+    // idempotent and no-ops when there are no snapshots.
+    if blocks_recovered
+        || attachment_replay_pending
+        || engine_reproject_pending(&write_pool).await?
+    {
         reproject_blocks_from_engine(&write_pool).await?;
+    }
+
+    // Recovery part 4 (#3268): restore `attachments` — the one table the engine
+    // reprojection above explicitly CANNOT repair, and the only one whose replay
+    // needs `blocks` to be complete first. Its arms are FK-guarded on the owning
+    // block existing, and a peer-authored block only exists once the engine
+    // reprojection has run, so this must come after it. This pass is also what
+    // retires `DERIVED_RECOVERY_PENDING_KEY`: a crash anywhere earlier in the
+    // sequence leaves the marker armed for the next boot.
+    if attachment_replay_pending {
+        recover_attachments_from_op_log(&write_pool).await?;
     }
 
     // T-5: Update query planner statistics after migrations.
@@ -469,13 +491,22 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, agaric_core::error:
     tracing::info!("database migrations complete");
 
     // Recovery part 2 (#616: see `init_pools` for the gate rationale)
-    recover_derived_state_from_op_log(&pool, blocks_recovered).await?;
+    let attachment_replay_pending =
+        recover_derived_state_from_op_log(&pool, blocks_recovered).await?;
 
     // #2504: engine-first rebuild from the Loro snapshots — see `init_pools`.
     // #2920: see `init_pools` — re-attempt when a prior boot armed the retry
     // marker, not only when this boot rebuilt the `blocks` table.
-    if blocks_recovered || engine_reproject_pending(&pool).await? {
+    // #3268: …and whenever the attachment pass below is owed, which needs a
+    // COMPLETE `blocks` — see `init_pools`.
+    if blocks_recovered || attachment_replay_pending || engine_reproject_pending(&pool).await? {
         reproject_blocks_from_engine(&pool).await?;
+    }
+
+    // Recovery part 4 (#3268): `attachments`, after the engine reprojection has
+    // restored the peer-authored blocks its FK guard needs — see `init_pools`.
+    if attachment_replay_pending {
+        recover_attachments_from_op_log(&pool).await?;
     }
 
     // Match `init_pools` — refresh planner stats after migrations.

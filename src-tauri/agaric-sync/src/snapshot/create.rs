@@ -369,7 +369,18 @@ pub const DEFAULT_RETENTION_DAYS: u64 = 90;
 /// 2. **Encode phase** — CBOR + zstd compression runs outside any
 ///    transaction (pure computation).
 /// 3. **Write phase** — a brief `BEGIN IMMEDIATE` transaction inserts the
-///    snapshot row, deletes old ops, and cleans up old snapshots.
+///    snapshot row, deletes old ops, clamps the apply cursor down to the
+///    surviving frontier, and cleans up old snapshots.
+///
+/// **Cursor symmetry (#3310)**: the purge transaction also clamps
+/// `materializer_apply_cursor` down to the surviving
+/// `MAX(seq) WHERE is_replicated = 0`, mirroring what `apply_snapshot`
+/// already does for the RESET path. Without it, purging a vault whose newest
+/// op predates the retention window leaves `cursor >> MAX(seq)` — the H-4
+/// impossible state — and the next boot's `read_apply_cursor` logs
+/// "impossible-state corruption" on a perfectly healthy vault. See the inline
+/// comment at the clamp for why the target is the `is_replicated = 0`-scoped
+/// max and why lowering the cursor cannot lose work.
 ///
 /// **Stale-read safety**: between phases 1 and 3 new ops may arrive.  The
 /// DELETE in phase 3 is bounded by *both* `created_at < cutoff` *and*
@@ -535,6 +546,74 @@ pub async fn compact_op_log(
     let mut deleted_count: u64 = 0;
     for (dev_id, max_seq) in &data.up_to_seqs {
         deleted_count += agaric_store::op_log::prune(&mut tx, cutoff_ms, dev_id, *max_seq).await?;
+    }
+
+    // #3310 — restore the symmetry with the OTHER wholesale op_log wipe.
+    // `apply_snapshot` (the snapshot RESET, `restore.rs`) truncates op_log
+    // and zeroes `materializer_apply_cursor` in the SAME transaction,
+    // precisely because a cursor pointing past the end of the log is the
+    // H-4 impossible state. Compaction reset only the log: a vault whose
+    // newest op predates the retention window is purged to zero rows while
+    // the cursor still holds e.g. 50_000, and the next boot's
+    // `read_apply_cursor` (`recovery/replay.rs`) logs "impossible-state
+    // corruption" on a perfectly healthy vault. Clamping here in the purge
+    // tx makes that log line mean what it says again.
+    //
+    // CLAMP TARGET — the surviving `MAX(seq) WHERE is_replicated = 0`,
+    // byte-for-byte the ceiling that `read_apply_cursor` and
+    // `heal_orphaned_apply_cursor` compare against. The `is_replicated = 0`
+    // scope is load-bearing (#2481): replicated audit rows are never
+    // applied and never advance the cursor, so they must not raise its
+    // legitimate ceiling either — clamping to an UNSCOPED `MAX(seq)` would
+    // leave the boot warn firing whenever a replicated row sat above the
+    // local frontier. `NULL` (log now empty) collapses to 0, which is
+    // exactly what `apply_snapshot` writes over its own emptied log.
+    //
+    // ONLY EVER LOWERS. The `WHERE materialized_through_seq > ?1` guard
+    // makes a compaction that removed nothing above the cursor — the
+    // overwhelmingly common case, since prune deletes the OLDEST rows and
+    // therefore normally moves `MIN(seq)`, not `MAX(seq)` — a strict
+    // no-op, and can never raise the cursor over ops that were not in fact
+    // materialised.
+    //
+    // LOWERING CANNOT LOSE WORK. The cursor means "everything at or below
+    // this seq is materialised", so a lower value can only cause
+    // RE-application, never skipping; and re-application on this path is
+    // idempotent (`advance_apply_cursor` is
+    // `MAX(materialized_through_seq, ?)`, the projections are
+    // `INSERT OR IGNORE`/`INSERT OR REPLACE`/keyed `UPDATE`, per
+    // `heal_orphaned_apply_cursor`'s documented contract — that heal
+    // rewinds the same column much further, to `MIN(applied_through_seq)`
+    // or 0, on every boot that needs it). Here it cannot even cause
+    // re-application: the boot replay walk is
+    // `WHERE is_replicated = 0 AND seq > cursor` and we clamp to exactly
+    // the largest such seq, so the post-clamp walk selects zero rows.
+    let surviving_max: i64 = sqlx::query_scalar!(
+        r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#,
+    )
+    .fetch_one(&mut *tx)
+    .await?
+    .unwrap_or(0);
+    let cursor_clamped_at = agaric_store::db::now_ms();
+    let clamped_rows = sqlx::query!(
+        "UPDATE materializer_apply_cursor \
+         SET materialized_through_seq = ?1, \
+             updated_at = ?2 \
+         WHERE id = 1 AND materialized_through_seq > ?1",
+        surviving_max,
+        cursor_clamped_at,
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if clamped_rows > 0 {
+        tracing::info!(
+            surviving_max_seq = surviving_max,
+            "compaction: clamped materializer_apply_cursor down to the surviving \
+             MAX(op_log.seq) (#3310); the purge removed every op the cursor \
+             pointed at, and a cursor past the end of the log is the H-4 \
+             impossible state the boot clamp exists to flag"
+        );
     }
 
     // Cleanup old snapshots — kept in the same tx as the op_log purge so

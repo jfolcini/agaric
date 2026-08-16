@@ -9,9 +9,26 @@
 //!
 //! Cadence: a fixed [`TICK_INTERVAL`] (60 s). On each tick the daemon
 //! walks the job vector; jobs whose individual `interval` has elapsed
-//! since their last run AND whose `predicate` returns `true` are run
-//! in declared order, with errors logged at warn level (no propagation
-//! — a failed job is retried only after its own `interval` elapses again, not on the very next tick). Jobs run sequentially within a
+//! since their last SUCCESSFUL run AND whose `predicate` returns `true`
+//! are run in declared order, with errors logged at warn level and never
+//! propagated.
+//!
+//! Retry-on-failure (#3311): a failed job is retried on the very NEXT
+//! tick, not after its own `interval` elapses again — `run_tick` advances
+//! `last_run` only on `Ok`, so a job that has never succeeded stays
+//! permanently due. This is deliberate (and pinned by
+//! `run_tick_does_not_advance_last_run_on_failure`): the realistic failure
+//! for these jobs is transient — SQLITE_BUSY on the single writer, a
+//! momentarily unavailable pool — and rate-limiting the retry to the job's
+//! own 1 h / 24 h cadence would delay reclaiming WAL space, op-log rows and
+//! tombstones by that long for a failure that would have cleared in
+//! seconds. The cost of the other case, a DETERMINISTICALLY failing job, is
+//! one predicate-gated attempt plus one warn line per 60 s until it is
+//! fixed; there is no failure counter and no backoff. Job bodies that can
+//! fail per-item are expected to be poison-tolerant internally (see
+//! [`tombstone_purge`]) rather than to rely on the daemon backing off.
+//!
+//! Jobs run sequentially within a
 //! single tick rather than in parallel because (a) most jobs touch the
 //! same DB pool and serialisation kills lock contention, (b) the
 //! deferred jobs are cheap relative to the 60 s ticker so a short
@@ -89,8 +106,11 @@ pub struct MaintenanceJob {
     pub name: &'static str,
     /// Wall-clock target between successful runs.
     pub interval: Duration,
-    /// Last time `run` was invoked, in monotonic instants. `None`
-    /// means "never run in this process" — the first eligible tick
+    /// #3311: last time `run` SUCCEEDED, in monotonic instants — NOT the
+    /// last time it was invoked. A run that returns `Err` leaves this
+    /// untouched, so a failing job stays due and is retried on the very next
+    /// tick (see the retry-on-failure note in the module docs). `None`
+    /// means "never succeeded in this process" — the first eligible tick
     /// fires the job immediately rather than waiting one `interval`.
     pub last_run: Option<Instant>,
     /// Gating predicate. Returning `false` skips the job for this
@@ -251,6 +271,20 @@ const TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN: usize = 4;
 /// at ~1000 rows/day, while keeping every individual delete batched and
 /// bounded. The eligibility predicate (`deleted_at < cutoff`) is
 /// unchanged; only the per-run throughput grows.
+///
+/// **Poison tolerance (#3311):** a batch that fails to purge no longer
+/// aborts the run. This is the same contract every other unattended loop
+/// in this domain already honours — `replay_unmaterialized_ops` logs and
+/// continues per op, `replay_sync_inbox` advances its cursor past poison
+/// slots, `save_all_engines` logs and continues per space — and it matters
+/// most here because this is the only unattended disk-space-reclaiming
+/// path: a single bad root used to leave `blocks` growing monotonically
+/// with tombstones that were never reclaimed. On a batch error the run
+/// retries that batch ONE ROOT AT A TIME, so only the genuinely poison
+/// roots are skipped, and those roots are then excluded for the remainder
+/// of the run (which is what keeps the drain loop from re-selecting them
+/// forever). Skipped roots stay eligible and are retried on the next run,
+/// because the exclusion list is per-invocation and holds nothing durable.
 pub async fn tombstone_purge(
     pool: &SqlitePool,
     device_id: &str,
@@ -264,33 +298,92 @@ pub async fn tombstone_purge(
     let batch_limit = TOMBSTONE_PURGE_BATCH_LIMIT;
     let mut total_purged: usize = 0;
     let mut batches: usize = 0;
+    // #3311 — roots that failed to purge during THIS run. Excluded from
+    // later batches so the drain loop keeps making progress instead of
+    // re-selecting the same poison rows forever. Nothing durable is
+    // written: the next run retries them from scratch.
+    //
+    // A SET, not a Vec: this is scanned once per fetched id and `fetch_limit`
+    // grows with it, so in the worst case (every root fails — pool down, a
+    // persistent `SQLITE_BUSY`) the last batch filters ~`batch_limit +
+    // poisoned.len()` ids against ~`poisoned.len()` entries. Linear `contains`
+    // makes that quadratic in the batch ceiling for no reason.
+    let mut poisoned: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     loop {
+        // #3311 — widen the read window by the number of known-poison roots
+        // so that dropping them below still leaves a FULL batch of live
+        // candidates. At most `poisoned.len()` of the fetched rows can be
+        // poison, so this cannot under-fill a batch (which the
+        // short-batch-means-backlog-exhausted break below relies on).
+        let fetch_limit = batch_limit
+            .saturating_add(i64::try_from(poisoned.len()).unwrap_or(i64::MAX - batch_limit));
         let ids: Vec<String> = sqlx::query_scalar!(
             "SELECT id FROM blocks \
              WHERE deleted_at IS NOT NULL AND deleted_at < ? \
              ORDER BY deleted_at ASC \
              LIMIT ?",
             cutoff_ms,
-            batch_limit
+            fetch_limit
         )
         .fetch_all(pool)
         .await?;
+
+        let ids: Vec<String> = ids
+            .into_iter()
+            .filter(|id| !poisoned.contains(id))
+            .take(TOMBSTONE_PURGE_BATCH_LIMIT_USIZE)
+            .collect();
 
         if ids.is_empty() {
             break;
         }
 
         let batch_count = ids.len();
-        let _resp = crate::commands::blocks::crud::purge_blocks_by_ids_inner(
+        match crate::commands::blocks::crud::purge_blocks_by_ids_inner(
             pool,
             device_id,
             materializer,
-            ids.into_iter().map(Into::into).collect(),
+            ids.iter().cloned().map(Into::into).collect(),
         )
-        .await?;
+        .await
+        {
+            Ok(_resp) => total_purged += batch_count,
+            Err(e) => {
+                // #3311 — the whole batch rolled back. Retry it one root at
+                // a time so a single poison root costs only itself, and
+                // record the roots that still fail so the loop advances.
+                tracing::warn!(
+                    error = %e,
+                    batch_count,
+                    first = ids.first().map_or("", String::as_str),
+                    last = ids.last().map_or("", String::as_str),
+                    "tombstone_purge: batch purge failed; falling back to one root at a time"
+                );
+                for id in ids {
+                    match crate::commands::blocks::crud::purge_blocks_by_ids_inner(
+                        pool,
+                        device_id,
+                        materializer,
+                        vec![id.clone().into()],
+                    )
+                    .await
+                    {
+                        Ok(_resp) => total_purged += 1,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                block_id = %id,
+                                "tombstone_purge: root could not be purged; skipping it for the \
+                                 rest of this run (it stays eligible for the next run)"
+                            );
+                            poisoned.insert(id);
+                        }
+                    }
+                }
+            }
+        }
 
-        total_purged += batch_count;
         batches += 1;
 
         // Short batch (< limit) means the backlog is exhausted; stop
@@ -304,6 +397,7 @@ pub async fn tombstone_purge(
             tracing::info!(
                 purged = total_purged,
                 batches,
+                skipped = poisoned.len(),
                 cutoff = %cutoff_ms,
                 "tombstone_purge: hit per-run batch ceiling; remaining backlog rolls to next tick"
             );
@@ -311,6 +405,15 @@ pub async fn tombstone_purge(
         }
     }
 
+    if !poisoned.is_empty() {
+        tracing::warn!(
+            skipped = poisoned.len(),
+            purged = total_purged,
+            cutoff = %cutoff_ms,
+            "tombstone_purge: some roots could not be purged and were skipped for this run \
+             (#3311); they remain eligible and are retried on the next run"
+        );
+    }
     if total_purged == 0 {
         tracing::debug!(
             cutoff = %cutoff_ms,
@@ -320,6 +423,7 @@ pub async fn tombstone_purge(
         tracing::info!(
             purged = total_purged,
             batches,
+            skipped = poisoned.len(),
             cutoff = %cutoff_ms,
             "tombstone_purge: hard-deleted soft-tombstones past the retention window"
         );
@@ -436,6 +540,10 @@ pub async fn run_tick(jobs: &mut [MaintenanceJob]) {
                 job.last_run = Some(Instant::now());
                 tracing::debug!(job = job.name, "maintenance job ran");
             }
+            // #3311: `last_run` is deliberately NOT advanced here — the job
+            // stays due and is retried on the very next tick. See the
+            // retry-on-failure note in the module docs for why this is the
+            // policy and not an oversight.
             Err(e) => tracing::warn!(job = job.name, error = %e, "maintenance job failed"),
         }
     }
@@ -568,6 +676,69 @@ mod tests {
         assert!(
             jobs[0].last_run.is_none(),
             "last_run must stay None after a failing job so it is retried immediately on the next tick"
+        );
+    }
+
+    /// #3311 — the CONSEQUENCE of the `last_run`-only-on-`Ok` rule that
+    /// `run_tick_does_not_advance_last_run_on_failure` pins as state: a
+    /// failed job actually re-runs on the very NEXT tick, without waiting
+    /// for its own (24 h here) `interval`. This is the contract the module
+    /// docs used to deny; the docs were the defect, not the code.
+    ///
+    /// The third tick is the other half of the pair: once the job SUCCEEDS,
+    /// its own interval gates it again — "always due" must not be sticky.
+    #[tokio::test]
+    async fn run_tick_retries_a_failed_job_on_the_very_next_tick_3311() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let job = MaintenanceJob {
+            name: "flaky_job",
+            interval: Duration::from_secs(24 * 3600),
+            last_run: None,
+            predicate: dummy_predicate_true(),
+            run: {
+                let calls = calls.clone();
+                Box::new(move || {
+                    let calls = calls.clone();
+                    Box::pin(async move {
+                        // Fail once, then succeed — the transient-failure
+                        // shape these jobs actually hit (SQLITE_BUSY on the
+                        // single writer).
+                        if calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                            Err(AppError::validation("transient job failure".into()))
+                        } else {
+                            Ok(())
+                        }
+                    })
+                })
+            },
+        };
+        let mut jobs = vec![job];
+
+        run_tick(&mut jobs).await;
+        assert_eq!(calls.load(Ordering::Relaxed), 1, "first tick runs the job");
+        // (`last_run` after the failure is pinned by
+        // `run_tick_does_not_advance_last_run_on_failure`; this test pins
+        // what that state actually BUYS.)
+
+        // No time has elapsed — far less than the job's 24 h interval.
+        run_tick(&mut jobs).await;
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            2,
+            "a failed job must be retried on the very next tick, not after its own \
+             interval elapses again (#3311)"
+        );
+        assert!(
+            jobs[0].last_run.is_some(),
+            "the successful retry records last_run"
+        );
+
+        run_tick(&mut jobs).await;
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            2,
+            "after a success the job's own interval gates it again — the \
+             retry-immediately state must not be sticky"
         );
     }
 
@@ -728,6 +899,90 @@ mod tests {
         assert_eq!(
             recent_present, 1,
             "recent tombstone must stay (still inside retention window)"
+        );
+    }
+
+    /// #3311 — one root that cannot be purged must cost only itself: the run
+    /// still returns `Ok`, every other aged tombstone drains, and the poison
+    /// root survives (staying eligible for the next run) instead of aborting
+    /// the whole pass and leaving `blocks` growing monotonically forever.
+    ///
+    /// The poison is injected with a `BEFORE DELETE` trigger that aborts the
+    /// hard-delete of one specific root, so the batch transaction containing
+    /// it rolls back exactly as a real per-root failure would.
+    ///
+    /// Uses the `cfg(test)` batch limit of 3, and gives the poison root the
+    /// OLDEST `deleted_at` so it lands in the first batch (`ORDER BY
+    /// deleted_at ASC`) — i.e. the failure happens with backlog still to
+    /// drain, which is the case the old bare `?` aborted.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tombstone_purge_skips_poison_root_and_drains_the_rest_3311() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        let aged_deleted_at = (chrono::Utc::now()
+            - chrono::Duration::days(TOMBSTONE_RETENTION_DAYS + 5))
+        .timestamp_millis();
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES ('POISON00', 'content', 'unpurgeable', NULL, 0, ?)",
+        )
+        .bind(aged_deleted_at - 1000)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // More than one batch of healthy tombstones behind the poison root.
+        let healthy = TOMBSTONE_PURGE_BATCH_LIMIT_USIZE + 2;
+        for i in 0..healthy {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+                 VALUES (?, 'content', 'aged tombstone', NULL, ?, ?)",
+            )
+            .bind(format!("AGED{i:04}"))
+            .bind(i64::try_from(i).unwrap() + 1)
+            .bind(aged_deleted_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        sqlx::query(
+            "CREATE TRIGGER poison_block_delete \
+             BEFORE DELETE ON blocks WHEN OLD.id = 'POISON00' \
+             BEGIN SELECT RAISE(ABORT, 'simulated unpurgeable root'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        tombstone_purge(&pool, "test-device", &mat)
+            .await
+            .expect("one poison root must not abort the whole run (#3311)");
+
+        let healthy_remaining: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE id LIKE 'AGED%' AND deleted_at IS NOT NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            healthy_remaining, 0,
+            "every healthy aged tombstone must still drain despite the poison root (#3311)"
+        );
+
+        let poison_present: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'POISON00'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            poison_present, 1,
+            "the poison root survives — it is skipped, not silently reported purged"
         );
     }
 

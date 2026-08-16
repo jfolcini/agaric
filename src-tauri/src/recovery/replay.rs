@@ -33,6 +33,19 @@ use agaric_store::op_log::OpRecord;
 /// per-chunk depth never exceeds `FOREGROUND_CAPACITY`.
 pub(crate) const REPLAY_CHUNK_SIZE: i64 = 200;
 
+/// #3311 — prefix of the `replay_errors` entries that describe a DEGRADED
+/// end-of-replay reprojection rather than a failed replay.
+///
+/// Entries carrying this prefix arrive on the `Ok` path: every op was
+/// applied and the apply cursor advanced past all of them; only one sibling
+/// group's SQL `position` ranks stayed stale (they heal on that group's next
+/// move/create). They are diagnostics, not a "the materialized view is
+/// behind the op-log" signal — see [`RecoveryReport::replay_failed`], which
+/// filters on exactly this prefix.
+///
+/// [`RecoveryReport::replay_failed`]: crate::recovery::RecoveryReport::replay_failed
+pub(crate) const REPROJECT_DEGRADED_PREFIX: &str = "reproject degraded (";
+
 /// Summary of a single replay pass returned to the caller.
 ///
 /// `ops_replayed` counts every `ApplyOp` enqueued onto the foreground
@@ -223,9 +236,24 @@ pub(super) async fn compacted_floor_above(
 /// apply handler is idempotent (`MAX(materialized_through_seq, ?)` +
 /// `INSERT OR IGNORE/REPLACE` / keyed `UPDATE` projections + in-order
 /// engine re-apply), so re-applying over already-materialized SQL and
-/// already-caught-up engines is safe. The reset target is the most-stale
-/// watermark across all spaces; because `save_all_engines` refreshes every
-/// snapshot each pass, that is bounded by ~one snapshot interval of ops.
+/// already-caught-up engines is safe.
+///
+/// # Rewind target (#3309)
+///
+/// The reset target is the most-stale watermark across all spaces. What
+/// bounds it is `save_all_engines`: since #2201 that pass re-encodes only
+/// DIRTY spaces, but it also advances `applied_through_seq` for every space
+/// it did not re-encode (`snapshot::advance_clean_space_watermarks`) — a
+/// clean engine already reflects every applied op, so the claim is true
+/// without rewriting the blob. Every row therefore tracks the apply cursor
+/// to within roughly one snapshot interval, and so does this `MIN`.
+///
+/// Do NOT "optimise" this to `MAX`, nor narrow it to a per-space subset:
+/// the target must cover the MOST-behind engine, and a rewind that lands
+/// too high leaves that engine short of the cursor — the "loro: block not
+/// found" wedge this heal exists to fix. If clean-space watermarks ever
+/// stop being refreshed, the frozen-`MIN` boot stall of #3309 comes back;
+/// fix that at the source (the persist path), not by narrowing this bound.
 ///
 /// MUST be called at boot only (after snapshot rehydrate, before the
 /// replay walk).
@@ -267,7 +295,9 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
         // Snapshots exist. Each reflects ops only up to its
         // `applied_through_seq`; the most-stale one bounds what replay must
         // re-apply. A backfilled/legacy `0` watermark forces a full rebuild
-        // for that space, which is correct (one-time cost after migration).
+        // for that space, which is correct — and #3309 makes it genuinely
+        // one-time: the first `save_all_engines` pass after the rebuild
+        // advances that row even if its space is never touched again.
         let min_watermark: i64 = sqlx::query_scalar!(
             r#"SELECT MIN(applied_through_seq) as "wm!: i64" FROM loro_doc_state"#,
         )
@@ -513,9 +543,11 @@ pub async fn replay_unmaterialized_ops(
         // group (their SQL `position` ranks stayed stale with no later pass
         // to heal them; no background task rebuilds positions — RebuildPageIds
         // covers `page_id` only). Instead, each group is attempted
-        // independently and failures land in `report.replay_errors` with a
-        // "reproject degraded" prefix so the boot report distinguishes a
-        // degraded reprojection from an aborted replay.
+        // independently and failures land in `report.replay_errors` with the
+        // [`REPROJECT_DEGRADED_PREFIX`] prefix. #3311: that prefix is what
+        // `RecoveryReport::replay_failed` filters on, so a degraded
+        // reprojection no longer raises the user-visible "replay failed"
+        // signal reserved for an aborted replay — it stays a diagnostic.
         let record_group_error = |errors: &mut Vec<String>,
                                   space_id: &str,
                                   parent: Option<&str>,
@@ -530,8 +562,10 @@ pub async fn replay_unmaterialized_ops(
                  group — continuing with the remaining groups (#2541); this \
                  group's SQL positions stay stale until its next move/create"
             );
+            // #3311: the prefix is the STRUCTURAL marker `replay_failed()`
+            // filters on — it must stay in lockstep with the constant.
             errors.push(format!(
-                "reproject degraded ({space_id}/{}, {stage}): {e}",
+                "{REPROJECT_DEGRADED_PREFIX}{space_id}/{}, {stage}): {e}",
                 parent.unwrap_or("<root>")
             ));
         };
@@ -867,6 +901,105 @@ mod tests {
         assert_eq!(
             row_seq, 1,
             "cursor must rewind to the snapshot watermark so replay re-applies seq 2..3"
+        );
+    }
+
+    /// #3309: the multi-space regression. A vault with a space that was used
+    /// once and then went quiescent must NOT make every boot rewind the apply
+    /// cursor to that space's frozen watermark.
+    ///
+    /// End-to-end because the defect spans two modules: the heal's `MIN` is
+    /// correct (it must cover the most-behind engine), and what used to be
+    /// broken was the persist side — since #2201 `save_all_engines` re-encodes
+    /// only DIRTY spaces, so the quiescent row's `applied_through_seq` stayed
+    /// frozen at 1 forever and `MIN` with it. This test runs a real snapshot
+    /// pass (one dirty space, one quiescent row) and then the heal, and pins
+    /// the rewind target to ~one snapshot interval instead of the whole log.
+    #[tokio::test]
+    async fn heal_rewind_target_is_not_pinned_by_a_quiescent_space_3309() {
+        use agaric_engine::loro::registry::LoroEngineRegistry;
+        use agaric_engine::loro::snapshot::save_all_engines;
+        use agaric_store::space::SpaceId;
+
+        const ACTIVE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        const QUIESCENT: &str = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
+
+        let (pool, _dir) = test_pool().await;
+
+        for seq in 1..=20i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // The quiescent space: persisted long ago at watermark 1, never
+        // touched again, so it never enters the dirty set.
+        sqlx::query(
+            "INSERT INTO loro_doc_state \
+             (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+             VALUES (?, X'00', 1767225600000, 0, 1)",
+        )
+        .bind(QUIESCENT)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The user has been working in ACTIVE ever since; the cursor is at 20.
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = 20, updated_at = 1767225600000 WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let registry = LoroEngineRegistry::new();
+        let active = SpaceId::from_trusted(ACTIVE);
+        // As at boot: rehydration installs an engine for the quiescent space
+        // too (it just never goes dirty again). Only a space whose blob FAILS
+        // to import is left without one, and that row must keep pinning MIN.
+        registry.install_engine(
+            SpaceId::from_trusted(QUIESCENT),
+            agaric_engine::loro::engine::LoroEngine::with_peer_id("test-device").expect("engine"),
+        );
+        {
+            let mut guard = registry
+                .for_space(&active, "test-device")
+                .expect("for_space");
+            guard
+                .engine_mut()
+                .apply_create_block("BLOCKACT", "content", "in active", None, 0)
+                .expect("create");
+        }
+        let saved = save_all_engines(&pool, &registry).await;
+        assert_eq!(saved, 1, "only the dirty space is re-encoded (#2201)");
+
+        let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
+        assert!(
+            healed,
+            "the cursor (20) is one op ahead of the pass watermark (19), so the \
+             heal still rewinds by that one op"
+        );
+
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 19,
+            "the rewind target must track the snapshot pass watermark, NOT the \
+             quiescent space's frozen watermark of 1 — otherwise every boot replays \
+             the whole op-log tail (#3309)"
         );
     }
 

@@ -3159,12 +3159,17 @@ export type QueryResultRow = {
  *  should be warned before layering more writes on top.
  */
 export type RecoveryStatus = {
-	/**  `true` when the boot op-log replay failed wholesale. */
+	/**
+	 *  `true` when the boot op-log replay left ops unapplied — see
+	 *  [`RecoveryReport::replay_failed`].
+	 */
 	degraded: boolean,
 	/**
 	 *  The replay error messages (the same as
 	 *  [`RecoveryReport::replay_errors`]) for diagnostics / the bug-report
-	 *  bundle. Empty when `degraded` is false.
+	 *  bundle. #3311: this can be non-empty while `degraded` is false — a
+	 *  degraded end-of-replay reprojection is reported here but does not
+	 *  raise the user-visible signal.
 	 */
 	replay_errors: string[],
 };

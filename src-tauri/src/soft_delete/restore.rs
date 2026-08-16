@@ -12,14 +12,26 @@ use agaric_store::op_log::OpRecord;
 ///
 /// **Test/bench-only primitive — not a production path.** As of #386/#1656
 /// this function has no production callers: the live restore paths are
-/// `loro::engine::apply_restore_block` /
-/// `materializer::handlers::project_restore_block_to_sql`. The only
-/// consumers are `#[cfg(test)]` modules and the `soft_delete_bench` perf
-/// harness. It exists to exercise — and let those tests assert — the
-/// materializer cache-rebuild fan-out for a `restore_block` op end-to-end;
-/// the `&Materializer` parameter and op-dispatch wiring below are there to
-/// make that fan-out observable in tests, not as guidance for a production
-/// caller. Do NOT wire this into production.
+/// `commands::blocks::crud::restore_block_inner` (the command entry point)
+/// and `loro::projection::project_restore_block_to_sql` (the SQL projection
+/// sync replay and boot replay funnel through). Be precise about the
+/// relationship between those two: the command does NOT call the
+/// projection. Unlike `delete_block_inner` it never routes through
+/// `apply_op_projected` at all (its own post-commit comment in `crud.rs`
+/// says so explicitly) — it open-codes the same two primitives inline
+/// (`collect_subtree_ids_unbounded` under `DescendantWalkFilter::Cohort`,
+/// then `restore_deleted_ancestor_chain`). Command and projection share
+/// PRIMITIVES, not a call edge. The only
+/// consumers are `#[cfg(test)]` modules (including, since #386/#1656,
+/// `soft_delete_bench`'s perf harness) — `soft_delete::proptest_b3`'s B3
+/// property tests were repointed at `restore_block_inner` directly (#3312
+/// finding 1; see that file's module doc) precisely because this primitive
+/// no longer matches production's reach. It exists to exercise — and let
+/// its own unit tests assert — the materializer cache-rebuild fan-out for a
+/// `restore_block` op end-to-end; the `&Materializer` parameter and
+/// op-dispatch wiring below are there to make that fan-out observable in
+/// tests, not as guidance for a production caller. Do NOT wire this into
+/// production.
 ///
 /// #1119: cohort filter uses the shared [`agaric_store::descendants_cte_cohort`]
 /// walk (the same primitive #1055 adopted in
@@ -32,6 +44,18 @@ use agaric_store::op_log::OpRecord;
 /// non-monotonic `now_ms` value). The recursive member bounds the walk
 /// with `depth < 100` (invariant #9). Three binds: seed id, then the
 /// cohort timestamp twice (recursive arm + outer filter).
+///
+/// **#3312: parity with production is now only PARTIAL, and only in this
+/// one respect.** The claim above is limited to the recursive-arm
+/// structural filter (`descendants_cte_cohort`) — that macro is genuinely
+/// shared. It is NOT true of the walk's shape or reach any more: production
+/// (`project_restore_block_to_sql`) walks depth-UNBOUNDED in re-anchored
+/// batches (R27, `collect_subtree_ids_unbounded`) where this primitive is a
+/// single-shot `depth < 100` CTE, and production additionally restores the
+/// contiguous soft-deleted ANCESTOR chain (#1884,
+/// `restore_deleted_ancestor_chain`), which this primitive does not do at
+/// all. Do not read this doc comment as claiming end-to-end parity with any
+/// production restore path.
 ///
 /// SQL-review takes `materializer: &Materializer` so the test-only
 /// cache-rebuild fan-out is wired through the type system rather than left

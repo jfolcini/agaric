@@ -2313,9 +2313,18 @@ async fn derived_recovery_requires_positive_corruption_signal_616() {
         .execute(&pool)
         .await
         .unwrap();
-    recover_derived_state_from_op_log(&pool, false)
+    // #3268: the recovery is now TWO passes (state, then attachments after the
+    // engine reprojection), and the marker is the whole sequence's — retired by
+    // the LAST pass, so a crash in between still retries. Drive both, as
+    // `init_pool` does.
+    let attachments_pending = recover_derived_state_from_op_log(&pool, false)
         .await
         .unwrap();
+    assert!(
+        attachments_pending,
+        "the marker opened the gate, so the attachment pass is owed (#3268)"
+    );
+    recover_attachments_from_op_log(&pool).await.unwrap();
     let tags: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags")
         .fetch_one(&pool)
         .await

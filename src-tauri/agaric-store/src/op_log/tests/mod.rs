@@ -13,6 +13,7 @@
 
 mod append;
 mod hash;
+mod high_water;
 mod immutability;
 mod origin;
 mod payload;
