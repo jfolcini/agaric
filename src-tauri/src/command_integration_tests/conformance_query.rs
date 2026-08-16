@@ -251,10 +251,11 @@ fn attr_value(name: &str, v: Option<&Value>) -> String {
             |f| {
                 assert!(
                     (f == 0.0 && !f.is_sign_negative()) || JS_PLAIN_RANGE.contains(&f.abs()),
-                    "query attribute '{name}' holds {f}, whose Rust and JS renderings \
+                    "{}query attribute '{name}' holds {f}, whose Rust and JS renderings \
                      differ (exponent form / signed zero), so the two conformance \
                      runners could never agree on its token. Give the fixture a value \
-                     in ±[1e-6, 1e21) or exactly 0."
+                     in ±[1e-6, 1e21) or exactly 0.",
+                    projecting_at()
                 );
                 f.to_string()
             },
@@ -263,11 +264,12 @@ fn attr_value(name: &str, v: Option<&Value>) -> String {
     };
     assert!(
         !rendered.contains('#') && !rendered.contains("->"),
-        "query attribute '{name}' renders as {rendered:?}, which contains a token \
+        "{}query attribute '{name}' renders as {rendered:?}, which contains a token \
          separator ('#' or '->'). Both runners would build the SAME string, so this \
          does not redden — it ALIASES: a differently-split row can match the same \
          token, and a real projection bug in this column would compare equal. Pick \
-         fixture content without those sequences."
+         fixture content without those sequences.",
+        projecting_at()
     );
     rendered
 }
@@ -288,12 +290,13 @@ fn attr_value(name: &str, v: Option<&Value>) -> String {
 fn token_head(what: &str, head: &str) -> String {
     assert!(
         !head.contains('#') && !head.contains("->"),
-        "query {what} {head:?} contains a token separator ('#' or '->'). Both \
+        "{}query {what} {head:?} contains a token separator ('#' or '->'). Both \
          runners would build the SAME string, so this does not redden — it \
          ALIASES: the head runs straight into the '#'-joined attribute segments \
          (and into the '->' of a map pair), so a differently-split token matches \
          it and a real projection bug compares equal. Pick fixture keys without \
-         those sequences."
+         those sequences.",
+        projecting_at()
     );
     head.to_owned()
 }
@@ -384,6 +387,121 @@ fn map_rows_tokens(v: &Value, token: &dyn Fn(&Value) -> String) -> Vec<String> {
     })
 }
 
+/// Project `AdvancedQueryResponse.groups` — the GROUPED-mode payload (#3833
+/// item 2).
+///
+/// The two modes are exclusive by construction: `group_by` absent fills `rows`
+/// and leaves `groups` empty, `group_by` present fills `groups` and leaves
+/// `rows` empty (see [`agaric_store::query::AdvancedQueryResponse`]). The arm
+/// therefore CONCATENATES the two projections — exactly one contributes — so
+/// flat steps are byte-unchanged and a grouped step stops projecting to `[]`.
+/// Until this existed, a grouped step recorded nothing at all: the vacuity
+/// guard would have caught the empty projection, but only after the ratchet had
+/// already counted `run_advanced_query` as covered, so the command read as
+/// exercised in a mode neither runner compared.
+///
+/// Each bucket contributes
+///
+///   * `<key>#count=<n>` — the bucket's FULL size, which is the load-bearing
+///     number in grouped mode (`members` is a capped preview, and `total_count`
+///     counts GROUPS rather than rows), and
+///   * one `<key>-><member row>` per preview member, or `<key>->(none)` when
+///     the preview is empty — the same `head->row` shape [`map_rows_tokens`]
+///     uses, for the same reason: a bucket that serves no members must be
+///     visible rather than collapse into its count token.
+///
+/// …plus one `#agg<i>=<op>/<value>/<count>` segment on the count token per
+/// entry of the bucket's own `aggregates`, in request order.
+///
+/// ## Why per-group `aggregates` IS bound and response-level `aggregates` is not
+///
+/// This distinction is load-bearing, because the reason first offered for
+/// skipping the per-group field — "the mock synthesises it, so a recorded
+/// expectation pins the stub" — is equally true of `groups`, which is bound
+/// here regardless. Synthesis is not the discriminator. Two things are:
+///
+///   * **It is a field of the thing this function projects.** `QueryGroup`
+///     (`agaric-store/src/query/mod.rs`) has four fields; reading three of them
+///     is a projection with a hole in it, and a hole in a projection is
+///     invisible in exactly the way #3833 item 2 is about. Response-level
+///     `aggregates` is a sibling of `groups`, not a part of it, and belongs to
+///     whatever binds the response envelope.
+///   * **The divergence is live, not hypothetical.** Per-group aggregates are
+///     computed per bucket on the backend and are NOT first-page-gated
+///     (`engine.rs`'s `run_grouped` decodes an `a0…aN` cell per bucket and
+///     clones it into each `QueryGroup`), while the mock reuses ONE
+///     index-derived stub array for both the response-level and the per-group
+///     field (`handlers/search.ts`). Binding this does not "pin the stub": it
+///     makes the first fixture that requests an aggregate REDDEN, which is the
+///     correct outcome for a mock that answers `sum` with `(i + 1) * 10`.
+///
+/// The values go through [`attr_value`], so the same JS/Rust float-rendering
+/// refusal that guards every other numeric attribute guards these too.
+fn group_tokens(v: &Value) -> Vec<String> {
+    v.get("groups")
+        .and_then(Value::as_array)
+        .map_or_else(Vec::new, |groups| {
+            groups
+                .iter()
+                .flat_map(|g| {
+                    let head = token_head(
+                        "group key",
+                        g.get("key")
+                            .and_then(Value::as_str)
+                            .unwrap_or("<missing-key>"),
+                    );
+                    let mut out = vec![format!(
+                        "{head}#count={}{}",
+                        attr_value("count", g.get("count")),
+                        aggregate_segments(g)
+                    )];
+                    let members = g
+                        .get("members")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    if members.is_empty() {
+                        out.push(format!("{head}->(none)"));
+                    } else {
+                        out.extend(
+                            members
+                                .iter()
+                                .map(|m| format!("{head}->{}", row_token(m, "id", &[]))),
+                        );
+                    }
+                    out
+                })
+                .collect()
+        })
+}
+
+/// One `#agg<i>=<op>/<value>/<count>` segment per entry of a bucket's
+/// `aggregates`, appended to that bucket's count token (#3833 item 2 — see
+/// [`group_tokens`] for why this field is bound).
+///
+/// All three cells are recorded rather than "whichever is non-null", because
+/// WHICH one an operator fills is the projection under test:
+/// [`agaric_store::query::AggregateResult`] fills `count` for `Count` and
+/// `value` for the folds, and a reimplementation that answers a `Sum` in
+/// `count` would compare equal to one that answers it in `value` if only the
+/// populated cell were recorded. The INDEX is in the segment name because the
+/// contract is "same order as the request's `aggregates`", so a reordering must
+/// redden. Empty string when the bucket carries none, which is every bucket a
+/// fixture authors today.
+fn aggregate_segments(g: &Value) -> String {
+    let mut out = String::new();
+    let aggs = g.get("aggregates").and_then(Value::as_array);
+    for (i, a) in aggs.into_iter().flatten().enumerate() {
+        out.push_str(&format!(
+            "#agg{i}={}/{}/{}",
+            attr_value("aggregates[].op", a.get("op")),
+            attr_value("aggregates[].value", a.get("value")),
+            attr_value("aggregates[].count", a.get("count")),
+        ));
+    }
+    out
+}
+
 /// Project a bare `Vec<String>` response (the tag-id readers) — the row IS the
 /// token, relabeled like any other id.
 fn scalar_tokens(v: &Value) -> Vec<String> {
@@ -404,21 +522,115 @@ fn ids_at(v: &Value, rows_key: &str, id_key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn opt_arg(args: &Value, key: &str) -> Option<Value> {
+/// One step's args, carrying WHO is asking (#3833 item 5).
+///
+/// Every accessor below fires on exactly one person: the author of a brand-new
+/// fixture, who has just mistyped a key or given it the wrong JSON shape. Until
+/// this existed those panics named only the arg (`query step is missing
+/// required arg 'scope'`) — and since a fixture may hold a dozen steps and the
+/// suite holds a dozen fixtures, all run under one `#[tokio::test]`, that
+/// message did not say which of ~150 sites produced it. #3429 fixed exactly
+/// this class for the op runner, where `read_structural_op_parent` threads
+/// `fixture_name` + `command` + `block_id` through for the same reason.
+///
+/// It is a WRAPPER rather than three extra parameters on purpose. The context
+/// is needed at ~50 accessor call sites across 20 match arms; threading it
+/// explicitly would have rewritten all 50, while replacing the `&Value` they
+/// already take leaves every one of them character-for-character unchanged.
+/// The arms read `args.command` instead of a separate parameter for the same
+/// reason — the command is part of the identity of the step, not of the call.
+struct StepArgs<'a> {
+    /// The step's `args` object, already `$SPACE`/`S<n>`-expanded and with any
+    /// `cursor_from` cursor injected.
+    value: &'a Value,
+    /// The fixture's `name` — the file the author is editing.
+    fixture: &'a str,
+    /// The step's `name` within that fixture.
+    step: &'a str,
+    /// The read command this step runs.
+    command: &'a str,
+}
+
+impl StepArgs<'_> {
+    fn get(&self, key: &str) -> Option<&Value> {
+        self.value.get(key)
+    }
+
+    /// The prefix every failure in this module carries. One phrasing, used by
+    /// every accessor, so a fixture author greps for their own fixture name.
+    fn at(&self) -> String {
+        step_context(self.fixture, self.step, self.command)
+    }
+}
+
+/// THE phrasing of the #3833 item 5 context. One function so the accessor
+/// panics (which reach it through [`StepArgs::at`]) and the token-grammar
+/// panics (which reach it through [`PROJECTING_STEP`]) cannot drift apart.
+fn step_context(fixture: &str, step: &str, command: &str) -> String {
+    format!("fixture '{fixture}' query step '{step}' (command '{command}')")
+}
+
+tokio::task_local! {
+    /// The step whose response is currently being PROJECTED, for the #3833
+    /// item 5 panics that fire inside the token grammar rather than in an
+    /// accessor (#3980 follow-up).
+    ///
+    /// [`StepArgs`] gives the accessors their context by REPLACING the `&Value`
+    /// they already took, which is why threading it there cost no call-site
+    /// churn. The grammar has no such value to replace: [`attr_value`],
+    /// [`token_head`] and [`inject_cursor`] are reached from ~40 sites across
+    /// [`row_token`], [`property_token`], the two map projections and
+    /// [`group_tokens`], and several of those are called from unit tests that
+    /// have no fixture at all. A task-local carries it instead — set once per
+    /// step by [`run_query_steps`], read only on a failure path.
+    ///
+    /// These four panics are MORE likely to meet a new fixture's author than a
+    /// mistyped arg key is: they trip on seeded property KEYS and VALUES (a `#`
+    /// in a page title, a `value_num` of `1e-9`), i.e. on fixture content
+    /// rather than on harness plumbing.
+    ///
+    /// Deliberately a task-local and not a thread-local: `run_step` awaits, and
+    /// a multi-thread runtime may resume the task on another thread, which
+    /// would silently drop a thread-local set before the await.
+    /// `agaric_store::task_locals::ACTOR` is the same shape for the same
+    /// reason.
+    static PROJECTING_STEP: String;
+}
+
+/// [`step_context`] plus its separator, or the EMPTY string when no step is in
+/// scope (the grammar's own unit tests, which have no fixture to name).
+fn projecting_at() -> String {
+    PROJECTING_STEP
+        .try_with(|s| format!("{s}: "))
+        .unwrap_or_default()
+}
+
+fn opt_arg(args: &StepArgs<'_>, key: &str) -> Option<Value> {
     args.get(key).filter(|v| !v.is_null()).cloned()
 }
 
-fn arg_or<T: serde::de::DeserializeOwned + Default>(args: &Value, key: &str) -> T {
-    opt_arg(args, key).map_or_else(T::default, |v| {
-        serde_json::from_value(v).unwrap_or_else(|e| panic!("query arg '{key}': {e}"))
+/// [`opt_arg`] plus a typed deserialize, so an optional arg of the wrong SHAPE
+/// reports where it came from instead of `.expect("tagFilters")`.
+fn opt_arg_as<T: serde::de::DeserializeOwned>(args: &StepArgs<'_>, key: &str) -> Option<T> {
+    opt_arg(args, key).map(|v| {
+        serde_json::from_value(v)
+            .unwrap_or_else(|e| panic!("{}: query arg '{key}': {e}", args.at()))
     })
 }
 
-fn arg_req<T: serde::de::DeserializeOwned>(args: &Value, key: &str) -> T {
+fn arg_or<T: serde::de::DeserializeOwned + Default>(args: &StepArgs<'_>, key: &str) -> T {
+    opt_arg(args, key).map_or_else(T::default, |v| {
+        serde_json::from_value(v)
+            .unwrap_or_else(|e| panic!("{}: query arg '{key}': {e}", args.at()))
+    })
+}
+
+fn arg_req<T: serde::de::DeserializeOwned>(args: &StepArgs<'_>, key: &str) -> T {
     let raw = args
         .get(key)
-        .unwrap_or_else(|| panic!("query step is missing required arg '{key}'"));
-    serde_json::from_value(raw.clone()).unwrap_or_else(|e| panic!("query arg '{key}': {e}"))
+        .unwrap_or_else(|| panic!("{}: query step is missing required arg '{key}'", args.at()));
+    serde_json::from_value(raw.clone())
+        .unwrap_or_else(|e| panic!("{}: query arg '{key}': {e}", args.at()))
 }
 
 /// Run ONE read command against the real backend and project its response.
@@ -440,14 +652,27 @@ fn arg_req<T: serde::de::DeserializeOwned>(args: &Value, key: &str) -> T {
 /// `serde_json::to_value` failures are fixture or harness bugs with no
 /// counterpart on the mock side, and turning those into recorded data would
 /// let a mis-typed fixture arg author itself into the expectation.
-async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> Result<RawResult, AppError> {
-    Ok(match command {
+///
+/// The `arg_*` half of that sentence names the FIXTURE it fired on (#3833 item
+/// 5, see [`StepArgs`]); the `serde_json::to_value` half deliberately does not,
+/// because it takes no fixture input — it serializes an owned, statically typed
+/// response struct, so it cannot fail on anything a fixture author wrote and
+/// naming their fixture would misdirect them.
+async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, AppError> {
+    Ok(match args.command {
         "run_advanced_query" => {
             let request: AdvancedQueryRequest = arg_req(args, "request");
             let resp = compile_and_run(pool, request).await?;
             let v = serde_json::to_value(&resp).expect("serialize AdvancedQueryResponse");
             RawResult {
-                rows: ids_at(&v, "rows", "id"),
+                // FLAT rows and GROUPED buckets are mutually exclusive, so this
+                // concatenation contributes exactly one of the two (#3833 item
+                // 2 — see [`group_tokens`]).
+                rows: {
+                    let mut rows = ids_at(&v, "rows", "id");
+                    rows.extend(group_tokens(&v));
+                    rows
+                },
                 has_more: v.get("hasMore").and_then(Value::as_bool),
                 total_count: v.get("totalCount").and_then(Value::as_i64),
                 next_cursor: v
@@ -460,7 +685,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> Result<RawR
             let resp = filtered_blocks_query_inner(
                 pool,
                 arg_or(args, "propertyFilters"),
-                opt_arg(args, "tagFilters").map(|v| serde_json::from_value(v).expect("tagFilters")),
+                opt_arg_as(args, "tagFilters"),
                 opt_arg(args, "blockType").and_then(|v| v.as_str().map(str::to_owned)),
                 &arg_req::<SpaceScope>(args, "scope"),
                 opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
@@ -514,8 +739,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> Result<RawR
             page_result(&serde_json::to_value(&resp).expect("serialize PageResponse"))
         }
         "list_page_links" => {
-            let tag_ids: Option<Vec<String>> =
-                opt_arg(args, "tagIds").map(|v| serde_json::from_value(v).expect("tagIds"));
+            let tag_ids: Option<Vec<String>> = opt_arg_as(args, "tagIds");
             let resp = list_page_links_inner(
                 pool,
                 &arg_req::<SpaceScope>(args, "scope"),
@@ -796,9 +1020,23 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> Result<RawR
                 next_cursor: None,
             }
         }
+        // Adding arm #21? Three things, not one:
+        //
+        //   1. the arm here, and the matching `WIRE` entry in the TS twin;
+        //   2. a fixture step, or the ratchet counts a command nothing runs;
+        //   3. the READ-PHASE PURITY GUARD. `run_query_steps` digests the
+        //      derived caches before and after the read phase and reddens if
+        //      one moved — but that digest is TABLE-SCOPED
+        //      (`derived_cache_digest`: `page_link_cache`, `pages_cache`,
+        //      `fts_blocks`), so a new reader that lazily backfills some OTHER
+        //      table writes invisibly. If the command's reader can write, add
+        //      its table there. `reader_delegation_tests` holds the write sweep
+        //      that decided today's three, and its arm-count tripwire will
+        //      redden the moment this list grows.
         other => panic!(
-            "conformance query command '{other}' is not wired in the Rust runner \
-             (add an arm in conformance_query.rs and the matching entry in the TS twin)"
+            "{}: conformance query command '{other}' is not wired in the Rust runner \
+             (add an arm in conformance_query.rs and the matching entry in the TS twin)",
+            args.at()
         ),
     })
 }
@@ -1000,7 +1238,18 @@ fn inject_cursor(command: &str, args: &mut Value, cursor: Option<String>) {
         if !node[*key].is_object() {
             node[*key] = json!({});
         }
-        node = node.get_mut(*key).expect("cursor path segment");
+        // Unreachable as written — the branch above has just made `node[key]`
+        // an object. It carries the fixture context anyway (#3833 item 5),
+        // because "unreachable" is precisely the kind of claim that decays: it
+        // holds only while `cursor_path` returns paths whose intermediate
+        // segments are objects, which is a property of a table three hundred
+        // lines away.
+        node = node.get_mut(*key).unwrap_or_else(|| {
+            panic!(
+                "{}cursor path segment '{key}' is not an object",
+                projecting_at()
+            )
+        });
     }
     let leaf = path[path.len() - 1];
     node[leaf] = cursor.map_or(Value::Null, Value::String);
@@ -1083,7 +1332,7 @@ fn duplicate_step_names(steps: &[Value]) -> Vec<&str> {
 /// itself — both stacks parse the fixture JSON into a shape they merely
 /// ASSERT (`Value` here, an `as Fixture` cast there) — so an absent `name` is
 /// reachable in both, and a mirrored pair may not diverge on it.
-fn assert_unique_step_names(steps: &[Value]) {
+fn assert_unique_step_names(fixture_name: &str, steps: &[Value]) {
     let unnamed: Vec<usize> = steps
         .iter()
         .enumerate()
@@ -1092,16 +1341,82 @@ fn assert_unique_step_names(steps: &[Value]) {
         .collect();
     assert!(
         unnamed.is_empty(),
-        "fixture has query step(s) at index {unnamed:?} with no string `name` — every \
-         `queries[]` entry must carry one, or the step cannot be named in any diff."
+        "fixture '{fixture_name}' has query step(s) at index {unnamed:?} with no string \
+         `name` — every `queries[]` entry must carry one, or the step cannot be named in \
+         any diff."
     );
 
     let dupes = duplicate_step_names(steps);
     assert!(
         dupes.is_empty(),
-        "fixture has duplicate query step name(s) {dupes:?} — every `queries[].name` in a \
-         fixture must be unique, or a failure cannot be attributed to the right step."
+        "fixture '{fixture_name}' has duplicate query step name(s) {dupes:?} — every \
+         `queries[].name` in a fixture must be unique, or a failure cannot be attributed \
+         to the right step."
     );
+}
+
+/// A content digest of the DERIVED CACHES, for the read-phase purity guard in
+/// [`run_query_steps`] (#3833 item 8).
+///
+/// ## Why these three tables and not all of them
+///
+/// `page_link_cache` is the only table any WIRED read command can write today.
+/// That is the conclusion of the write sweep recorded in
+/// [`reader_delegation_tests`] — see `the_write_sweep_is_still_over_twenty_arms`
+/// there for the enumeration and for what was ruled out. The one writer is
+/// `list_page_links` → `list_page_links_inner_split_with_cap`'s lazy rebuild (a
+/// DELETE+INSERT), gated on the cache being empty while `block_links` is not.
+///
+/// `pages_cache` and `fts_blocks` are digested anyway, and neither is
+/// speculative padding: they are the app's other two lazily-rebuildable derived
+/// caches (`rebuild_pages_cache`, `rebuild_fts_index`), so they are what arm
+/// #21 is most likely to touch. Digesting them costs two more subqueries over
+/// tables a conformance fixture holds a handful of rows in, and it means a
+/// future read arm that backfills one is CAUGHT rather than discovered by the
+/// fixture author whose later step read the rebuilt state.
+///
+/// A general all-tables digest is still declined: it would need dynamic SQL
+/// over `pragma_table_info` to stay schema-agnostic, and it would fold in the
+/// tables the OPS legitimately wrote, which this guard has no business
+/// asserting on.
+///
+/// ## On the ordering
+///
+/// Each subquery is `ORDER BY` its primary key, which makes the digest a
+/// function of CONTENT rather than of SQLite's scan order IN PRACTICE — the
+/// ordered subquery is satisfied by a PK index scan. It is not a documented
+/// guarantee: `group_concat(x, sep)` has no defined aggregation order, and only
+/// the 3.44+ `group_concat(x ORDER BY …)` form promises one. The weaker
+/// property is enough here because the digest is only ever compared to ITSELF
+/// across one read phase: a reordering would be a FALSE RED, never a false
+/// green, and the assertion's own message points at the state it captured.
+async fn derived_cache_digest(pool: &SqlitePool) -> String {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT \
+           coalesce((SELECT group_concat(r, char(10)) FROM ( \
+             SELECT source_page_id || '|' || target_page_id || '|' || edge_count \
+                    || '|' || src_deleted || '|' || tgt_deleted || '|' || tgt_is_page AS r \
+             FROM page_link_cache \
+             ORDER BY source_page_id, target_page_id \
+           )), '') \
+           || char(10) || '-- pages_cache --' || char(10) || \
+           coalesce((SELECT group_concat(r, char(10)) FROM ( \
+             SELECT page_id || '|' || title || '|' || updated_at \
+                    || '|' || inbound_link_count || '|' || child_block_count AS r \
+             FROM pages_cache \
+             ORDER BY page_id \
+           )), '') \
+           || char(10) || '-- fts_blocks --' || char(10) || \
+           coalesce((SELECT group_concat(r, char(10)) FROM ( \
+             SELECT block_id || '|' || stripped AS r \
+             FROM fts_blocks \
+             ORDER BY block_id \
+           )), '')",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("read derived cache digest")
+    .unwrap_or_default()
 }
 
 /// Run every query step of a fixture and return the projected `expected_queries`
@@ -1116,24 +1431,63 @@ pub async fn run_query_steps(
         return Value::Null;
     };
 
+    // #3833 item 5 — every failure below names the fixture. `<unnamed>` mirrors
+    // the caller's own fallback (`conformance.rs`'s `run_fixture`), so the two
+    // never disagree about what an unnamed fixture is called.
+    let fixture_name = fixture
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("<unnamed>");
+
     // #3833 item 7/12 — see [`assert_unique_step_names`] for why this is
     // checked once up front and why a duplicate name is a diagnostic rather
     // than a correctness problem. Stated there ONLY: the rationale used to be
     // duplicated near-verbatim here, which is one copy too many to keep true
     // (#3980 note 5).
-    assert_unique_step_names(steps);
+    assert_unique_step_names(fixture_name, steps);
+
+    // #3833 item 8 — the read phase must leave the backend exactly as the
+    // snapshot found it.
+    //
+    // `list_page_links` is a read command that can WRITE: it delegates to
+    // `list_page_links_inner_split(pool, pool, …)`, which rebuilds
+    // `page_link_cache` (DELETE+INSERT) when the cache is empty while
+    // `block_links` is not. Neither end of that is removable. The write is
+    // production behaviour — a documented redundancy behind migration 0110's
+    // backfill — and #3928 is the standing lesson that a harness arm which
+    // calls something OTHER than what the shipped command calls certifies a
+    // path the IPC surface does not take. Nor is the phase classification
+    // wrong: `list_page_links` really is a read.
+    //
+    // So the write stays and is DETECTED instead. It is inert today (the
+    // materializer's per-`ReindexBlockLinks` rollup leaves the cache
+    // non-empty, and the one fixture with a `list_page_links` step positions
+    // it first), but "inert today" is precisely the shape of every other item
+    // in #3833: nothing stopped a later step in the same fixture from reading
+    // state the backend had just rebuilt for itself and the mock never
+    // produces — a divergence that would present as a mock bug.
+    let cache_before = derived_cache_digest(pool).await;
 
     let mut out: Vec<Value> = Vec::with_capacity(steps.len());
     let mut cursors: BTreeMap<String, Option<String>> = BTreeMap::new();
     for step in steps {
-        let name = step["name"].as_str().expect("query step name").to_owned();
-        let command = step["command"].as_str().expect("query step command");
+        let name = step["name"]
+            .as_str()
+            .unwrap_or_else(|| panic!("fixture '{fixture_name}': query step name"))
+            .to_owned();
+        let command = step["command"]
+            .as_str()
+            .unwrap_or_else(|| panic!("fixture '{fixture_name}' query step '{name}': no command"));
+        // #3833 item 5 — the context the token-grammar panics read. Built once
+        // per step and shared with `StepArgs::at` through `step_context`, so
+        // the two families of failure carry the identical prefix.
+        let at = step_context(fixture_name, &name, command);
         let mut args = expand_query_args(step.get("args").unwrap_or(&Value::Null));
         if let Some(from) = step.get("cursor_from").and_then(Value::as_str) {
             let cursor = cursors.get(from).cloned().unwrap_or_else(|| {
-                panic!("query step '{name}' reads `cursor_from` '{from}', which is not an EARLIER step in this fixture")
+                panic!("fixture '{fixture_name}' query step '{name}' reads `cursor_from` '{from}', which is not an EARLIER step in this fixture")
             });
-            inject_cursor(command, &mut args, cursor);
+            PROJECTING_STEP.sync_scope(at.clone(), || inject_cursor(command, &mut args, cursor));
         }
         let ordered = step
             .get("ordered")
@@ -1145,7 +1499,18 @@ pub async fn run_query_steps(
         // string and the rest of the projection reads as an empty result, so a
         // mock that serves the row a command 404s — or 404s where the command
         // serves — reddens on the `error` field alone.
-        let (raw, error) = match run_step(pool, command, &args).await {
+        let step_args = StepArgs {
+            value: &args,
+            fixture: fixture_name,
+            step: &name,
+            command,
+        };
+        // Scoped, not just called: every panic raised inside the token grammar
+        // during this step's projection names this fixture and this step.
+        let (raw, error) = match PROJECTING_STEP
+            .scope(at.clone(), run_step(pool, &step_args))
+            .await
+        {
             Ok(raw) => (raw, Value::Null),
             Err(e) => (
                 RawResult {
@@ -1176,6 +1541,22 @@ pub async fn run_query_steps(
             "error": error,
         }));
     }
+
+    // #3833 item 8 — see the `cache_before` capture above for why these tables
+    // and why detection rather than removal.
+    assert_eq!(
+        cache_before,
+        derived_cache_digest(pool).await,
+        "fixture '{fixture_name}': the READ phase mutated a derived cache \
+         (`page_link_cache` / `pages_cache` / `fts_blocks`). A read step rebuilt \
+         backend-only derived state that the mock never produces, so every LATER \
+         step in this fixture compared against a backend the snapshot no longer describes. \
+         The usual cause is a fixture whose link edges reach `block_links` without the \
+         materializer: drive them through an op (`edit_block` with a `[[id]]` token) so \
+         the per-`ReindexBlockLinks` rollup fills `page_link_cache` during the OP phase, \
+         where both stacks can see it."
+    );
+
     Value::Array(out)
 }
 
@@ -1242,8 +1623,76 @@ mod reader_delegation_tests {
     /// Each is a fixture-authoring hazard rather than a live divergence (no
     /// current fixture supplies a non-canonical id or omits a required arg), so
     /// they are scoped out of #3928 rather than silently dropped.
+    ///
+    /// ## The sweep above answers a DIFFERENT question from the one item 8 asks
+    ///
+    /// It is a FUNCTION-IDENTITY sweep: does each arm reach the same reader its
+    /// command does. It says nothing about whether any of those readers WRITES,
+    /// which is the premise the read-phase purity guard in
+    /// [`super::derived_cache_digest`] rests on. That second sweep is recorded
+    /// separately, on [`the_write_sweep_is_still_over_twenty_arms`], because a
+    /// justification that cites the wrong sweep is a proof that is not in the
+    /// repo at all.
     const QUERIES_RS: &str = include_str!("../commands/blocks/queries.rs");
     const HARNESS_RS: &str = include_str!("conformance_query.rs");
+
+    /// The number of commands wired into `run_step` when the WRITE sweep below
+    /// was taken. A 21st arm reddens
+    /// [`the_write_sweep_is_still_over_twenty_arms`], which is the only thing
+    /// that makes the sweep's conclusion a claim about the CURRENT code.
+    const SWEPT_ARM_COUNT: usize = 20;
+
+    /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
+    ///
+    /// [`super::derived_cache_digest`] scopes the read-phase purity guard to
+    /// three tables on the strength of "exactly one wired read command can
+    /// write". That claim was checked by hand over all
+    /// [`SWEPT_ARM_COUNT`] arms, and this is where the result lives:
+    ///
+    ///   * **The one writer.** `list_page_links` →
+    ///     `list_page_links_inner_split_with_cap` (`commands/pages/links.rs`),
+    ///     whose lazy-rebuild guard calls
+    ///     `agaric_store::cache::rebuild_page_link_cache_split`
+    ///     (`agaric-store/src/cache/page_links.rs`) — a DELETE+INSERT over
+    ///     `page_link_cache`, gated on the cache being empty while
+    ///     `block_links` is not. A documented redundancy behind migration
+    ///     0110's backfill.
+    ///   * **Ruled out, explicitly, because each is a plausible lazy writer.**
+    ///     The FTS rebuild (`rebuild_fts_index`) is a boot/maintenance path,
+    ///     not something `search_blocks_inner` triggers; the `pages_cache`
+    ///     rebuild is likewise a materializer/boot path, and
+    ///     `list_pages_with_metadata_inner` READS the cache without
+    ///     backfilling it; `get_journal_page_by_date_inner` looks a journal
+    ///     page up and does NOT create one on a miss (the creating path is a
+    ///     separate command, and is not wired here); and
+    ///     `run_advanced_query`'s compiler builds its grouped/aggregate work in
+    ///     ordinary subqueries rather than materialising a TEMP table.
+    ///   * **Everything else** is a `SELECT` behind an `*_inner` that takes
+    ///     `&SqlitePool` and returns rows.
+    ///
+    /// This test cannot re-derive that by scanning source — a real answer
+    /// needs the call graph under 20 readers. What it CAN do is make the
+    /// sweep's denominator falsifiable, so the conclusion cannot quietly come
+    /// to describe a set of arms that no longer exists.
+    #[test]
+    fn the_write_sweep_is_still_over_twenty_arms() {
+        let body = body_after(HARNESS_RS, "fn run_step(", "\n}\n");
+        let arms = body
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                t.starts_with('"') && t.ends_with("=> {")
+            })
+            .count();
+        assert_eq!(
+            arms, SWEPT_ARM_COUNT,
+            "`run_step` now wires {arms} commands, not the {SWEPT_ARM_COUNT} the write \
+             sweep on this test covered. Re-run the sweep for the new arm: does its \
+             `*_inner` (or anything it calls) WRITE? If it can, extend \
+             `derived_cache_digest` to the table it writes — the read-phase purity guard \
+             is TABLE-SCOPED, and a table it does not digest is a write it cannot see."
+        );
+    }
 
     /// The body of `<needle>` up to the first `closer` line after it, where
     /// `closer` is the CLOSING BRACE AT THE CONSTRUCT'S OWN INDENTATION.
@@ -1605,7 +2054,7 @@ mod step_name_uniqueness_tests {
     fn distinct_names_have_no_duplicates() {
         assert!(duplicate_step_names(&steps(&["a", "b", "c"])).is_empty());
         assert!(duplicate_step_names(&[]).is_empty());
-        assert_unique_step_names(&steps(&["a", "b", "c"]));
+        assert_unique_step_names("fx", &steps(&["a", "b", "c"]));
     }
 
     /// Three copies of one name report it ONCE — the naive
@@ -1622,9 +2071,9 @@ mod step_name_uniqueness_tests {
     }
 
     #[test]
-    #[should_panic(expected = "duplicate query step name(s) [\"dup\"]")]
+    #[should_panic(expected = "fixture 'fx' has duplicate query step name(s) [\"dup\"]")]
     fn the_assertion_panics_on_a_duplicate() {
-        assert_unique_step_names(&steps(&["dup", "other", "dup"]));
+        assert_unique_step_names("fx", &steps(&["dup", "other", "dup"]));
     }
 
     /// #3980 note 6 — the two twins must AGREE on a step with no usable
@@ -1636,13 +2085,18 @@ mod step_name_uniqueness_tests {
     /// `name`, the other half of what `as_str()` rejects. The TS half of this
     /// pair runs the same three, in `conformance.test.ts`.
     #[test]
-    #[should_panic(expected = "query step(s) at index [0, 1, 2] with no string `name`")]
+    #[should_panic(
+        expected = "fixture 'fx' has query step(s) at index [0, 1, 2] with no string `name`"
+    )]
     fn the_assertion_panics_on_a_step_with_no_name() {
-        assert_unique_step_names(&[
-            json!({ "command": "get_page" }),
-            json!({ "command": "get_page" }),
-            json!({ "name": 7, "command": "get_page" }),
-        ]);
+        assert_unique_step_names(
+            "fx",
+            &[
+                json!({ "command": "get_page" }),
+                json!({ "command": "get_page" }),
+                json!({ "name": 7, "command": "get_page" }),
+            ],
+        );
     }
 
     /// The CALL SITE, not just the predicate: a guard function that is tested
@@ -1663,5 +2117,436 @@ mod step_name_uniqueness_tests {
             ]
         });
         let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+}
+
+/// #3833 item 2 — the GROUPED projection.
+///
+/// [`group_tokens`] is a pure function over the serialized response, so its
+/// grammar is pinned here; the CALL SITE — the concatenation inside the
+/// `run_advanced_query` arm — is pinned by
+/// `grouped_and_flat_projection_tests::a_grouped_request_records_its_buckets`,
+/// because a projector nothing calls is the same decoration this issue is
+/// about.
+#[cfg(test)]
+mod group_token_tests {
+    use super::group_tokens;
+    use serde_json::json;
+
+    /// The FLAT response. `groups` is absent from neither stack's wire form
+    /// (it serializes as `[]`), and both readings must contribute nothing so
+    /// every existing flat step projects byte-identically to before.
+    #[test]
+    fn a_flat_response_contributes_no_group_tokens() {
+        assert!(group_tokens(&json!({ "rows": [{ "id": "B1" }], "groups": [] })).is_empty());
+        assert!(group_tokens(&json!({ "rows": [{ "id": "B1" }] })).is_empty());
+    }
+
+    #[test]
+    fn a_bucket_projects_its_count_and_one_token_per_preview_member() {
+        assert_eq!(
+            group_tokens(&json!({
+                "rows": [],
+                "groups": [{
+                    "key": "DONE",
+                    "count": 2,
+                    "members": [{ "id": "B1" }, { "id": "B4" }],
+                }],
+            })),
+            vec!["DONE#count=2", "DONE->B1", "DONE->B4"]
+        );
+    }
+
+    /// A bucket whose preview is EMPTY must stay visible. The mock's grouped
+    /// path currently synthesises a single bucket with no members at all, so
+    /// this is the token that makes that stub show up in a diff instead of
+    /// collapsing into a bare count.
+    #[test]
+    fn a_bucket_with_no_preview_members_projects_none() {
+        assert_eq!(
+            group_tokens(&json!({
+                "groups": [{ "key": "none", "count": 7, "members": [] }],
+            })),
+            vec!["none#count=7", "none->(none)"]
+        );
+    }
+
+    /// Every bucket contributes, and the buckets keep the order the engine
+    /// paged them in (a step may then set `"ordered": true` to pin it).
+    #[test]
+    fn every_bucket_contributes() {
+        assert_eq!(
+            group_tokens(&json!({
+                "groups": [
+                    { "key": "page", "count": 1, "members": [{ "id": "B1" }] },
+                    { "key": "content", "count": 1, "members": [{ "id": "B2" }] },
+                ],
+            })),
+            vec!["page#count=1", "page->B1", "content#count=1", "content->B2"]
+        );
+    }
+
+    /// #3833 item 2 (review) — `QueryGroup`'s FOURTH field. All three cells of
+    /// each result are recorded, so an operator that answers in the wrong cell
+    /// is visible rather than normalised away.
+    #[test]
+    fn a_bucket_projects_its_per_group_aggregates() {
+        assert_eq!(
+            group_tokens(&json!({
+                "groups": [{
+                    "key": "DONE",
+                    "count": 2,
+                    "members": [],
+                    "aggregates": [
+                        { "op": "count", "value": null, "count": 2 },
+                        { "op": "sum", "value": 7.5, "count": null },
+                    ],
+                }],
+            })),
+            vec![
+                "DONE#count=2#agg0=count/null/2#agg1=sum/7.5/null",
+                "DONE->(none)"
+            ]
+        );
+    }
+
+    /// The contract is "in the SAME order as the request's `aggregates`", so a
+    /// reordering is a different projection. Indexing the segment name is what
+    /// buys that; a set of `#count=`/`#sum=` segments would not.
+    #[test]
+    fn reordered_aggregates_are_a_different_projection() {
+        let a = group_tokens(&json!({ "groups": [{ "key": "k", "count": 1, "members": [],
+            "aggregates": [{ "op": "count", "count": 1 }, { "op": "sum", "value": 2.0 }] }] }));
+        let b = group_tokens(&json!({ "groups": [{ "key": "k", "count": 1, "members": [],
+            "aggregates": [{ "op": "sum", "value": 2.0 }, { "op": "count", "count": 1 }] }] }));
+        assert_ne!(a, b);
+    }
+
+    /// A bucket missing the `key` the projector reads records the SAME
+    /// `<missing-key>` sentinel `property_token` uses, so the coverage test's
+    /// sentinel-leak guard (#3833 items 9/10) already covers this projection
+    /// rather than needing a sentinel of its own.
+    #[test]
+    fn a_bucket_with_no_key_records_the_shared_sentinel() {
+        assert_eq!(
+            group_tokens(&json!({ "groups": [{ "count": 1, "members": [] }] })),
+            vec!["<missing-key>#count=1", "<missing-key>->(none)"]
+        );
+    }
+}
+
+/// #3833 items 2, 5 and 8 — the three properties that need a real backend
+/// under them: the grouped arm's call site, the fixture-naming of an accessor
+/// failure, and the read-phase purity guard.
+#[cfg(test)]
+mod query_runner_context_tests {
+    use super::super::common::{TEST_SPACE_ID, assign_all_to_test_space, insert_block, test_pool};
+    use super::{derived_cache_digest, run_query_steps};
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    const PAGE: &str = "00000000000000000000000P01";
+    const CHILD: &str = "00000000000000000000000C01";
+    const PAGE2: &str = "00000000000000000000000P02";
+
+    /// One page with one text child, both in the harness space.
+    async fn seeded_pool() -> (sqlx::SqlitePool, tempfile::TempDir) {
+        let (pool, dir) = test_pool().await;
+        insert_block(&pool, PAGE, "page", "Page One", None, Some(0)).await;
+        insert_block(&pool, CHILD, "content", "A child", Some(PAGE), Some(1)).await;
+        assign_all_to_test_space(&pool).await;
+        (pool, dir)
+    }
+
+    /// #3833 item 2, the CALL SITE. Before the grouped projection was bound,
+    /// this step recorded `rows: []` — non-comparable, and the ratchet counted
+    /// `run_advanced_query` as covered anyway.
+    #[tokio::test]
+    async fn a_grouped_request_records_its_buckets() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "grouped_demo",
+            "queries": [{
+                "name": "grouped_by_block_type",
+                "command": "run_advanced_query",
+                "ordered": true,
+                "args": { "request": {
+                    "spaceId": TEST_SPACE_ID,
+                    "limit": 100,
+                    "groupBy": { "key": { "type": "BlockType" } },
+                }},
+            }],
+        });
+        let out = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+        let rows = out[0]["rows"].as_array().expect("rows array").clone();
+        let rows: Vec<&str> = rows.iter().filter_map(serde_json::Value::as_str).collect();
+
+        // The two seeded blocks bucket by `block_type`, one each. Asserting the
+        // COUNT tokens (rather than the whole vector) keeps this about the
+        // projection being bound, not about the engine's bucket order.
+        assert!(
+            rows.contains(&"page#count=1") && rows.contains(&"content#count=1"),
+            "grouped response projected {rows:?}, which carries no bucket counts — the \
+             GROUPED arm is unbound again"
+        );
+        assert!(
+            rows.iter().any(|t| *t == format!("page->{PAGE}"))
+                && rows.iter().any(|t| *t == format!("content->{CHILD}")),
+            "grouped response projected {rows:?}, which carries no preview members"
+        );
+    }
+
+    /// #3833 item 5. `list_page_links` requires `scope`; the message must name
+    /// the fixture and the step, because the suite runs every fixture under one
+    /// `#[tokio::test]` and the arg name alone identifies ~150 sites.
+    #[tokio::test]
+    #[should_panic(
+        expected = "fixture 'accessor_demo' query step 'links_without_a_scope' (command \
+                    'list_page_links'): query step is missing required arg 'scope'"
+    )]
+    async fn a_missing_required_arg_names_the_fixture_and_the_step() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "accessor_demo",
+            "queries": [
+                { "name": "links_without_a_scope", "command": "list_page_links", "args": {} },
+            ],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// #3833 item 5, the other accessor failure: an arg that is PRESENT but of
+    /// the wrong shape.
+    #[tokio::test]
+    #[should_panic(
+        expected = "fixture 'accessor_demo' query step 'scope_of_the_wrong_shape' (command \
+                    'list_page_links'): query arg 'scope'"
+    )]
+    async fn a_malformed_arg_names_the_fixture_and_the_step() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "accessor_demo",
+            "queries": [{
+                "name": "scope_of_the_wrong_shape",
+                "command": "list_page_links",
+                "args": { "scope": "global" },
+            }],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// Insert one `block_properties` row directly, so a test can seed the
+    /// fixture CONTENT the token grammar refuses. No op-log entry: these tests
+    /// are about the projection, not about a write path.
+    async fn insert_property(
+        pool: &sqlx::SqlitePool,
+        block_id: &str,
+        key: &str,
+        value_text: Option<&str>,
+        value_num: Option<f64>,
+    ) {
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text, value_num) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(block_id)
+        .bind(key)
+        .bind(value_text)
+        .bind(value_num)
+        .execute(pool)
+        .await
+        .expect("seed a block_properties row");
+    }
+
+    /// #3833 item 5 — the panics inside the TOKEN GRAMMAR name the fixture too,
+    /// not only the arg accessors.
+    ///
+    /// These three are the ones a NEW fixture is likeliest to meet, because
+    /// they trip on seeded content rather than on harness plumbing: a `#` in a
+    /// page title, a `#` in a property key, a `value_num` outside the range the
+    /// two runners render identically. None of them can reach [`StepArgs`] —
+    /// they fire beneath `row_token` / `property_token`, which take a
+    /// serialized response row — so the context arrives through the
+    /// [`super::PROJECTING_STEP`] task-local instead.
+    #[tokio::test]
+    #[should_panic(
+        expected = "fixture 'grammar_demo' query step 'resolve_the_page' (command \
+                    'batch_resolve'): query attribute 'title' renders as"
+    )]
+    async fn a_separator_in_a_seeded_title_names_the_fixture_and_the_step() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, PAGE, "page", "Sharp # title", None, Some(0)).await;
+        assign_all_to_test_space(&pool).await;
+        let fixture = json!({
+            "name": "grammar_demo",
+            "queries": [{
+                "name": "resolve_the_page",
+                "command": "batch_resolve",
+                "args": { "ids": [PAGE], "scope": { "kind": "active", "space_id": TEST_SPACE_ID } },
+            }],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// The HEAD half of the same hazard: a property KEY is user-authored text
+    /// (`set_property` takes it straight from the caller), so `#` in one is
+    /// reachable rather than theoretical.
+    #[tokio::test]
+    #[should_panic(
+        expected = "fixture 'grammar_demo' query step 'read_the_properties' (command \
+                    'get_properties'): query property key \"a#b\""
+    )]
+    async fn a_separator_in_a_seeded_property_key_names_the_fixture_and_the_step() {
+        let (pool, _dir) = seeded_pool().await;
+        insert_property(&pool, PAGE, "a#b", Some("x"), None).await;
+        let fixture = json!({
+            "name": "grammar_demo",
+            "queries": [{
+                "name": "read_the_properties",
+                "command": "get_properties",
+                "args": { "blockId": PAGE },
+            }],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// The float-rendering refusal ([`super::JS_PLAIN_RANGE`]): `1e-9` prints
+    /// as `0.000000001` in Rust and `1e-9` in JS, so recording it would redden
+    /// a fixture holding no divergence at all.
+    #[tokio::test]
+    #[should_panic(
+        expected = "fixture 'grammar_demo' query step 'read_the_properties' (command \
+                    'get_properties'): query attribute 'value_num' holds"
+    )]
+    async fn an_unrenderable_number_names_the_fixture_and_the_step() {
+        let (pool, _dir) = seeded_pool().await;
+        insert_property(&pool, PAGE, "tiny", None, Some(1e-9)).await;
+        let fixture = json!({
+            "name": "grammar_demo",
+            "queries": [{
+                "name": "read_the_properties",
+                "command": "get_properties",
+                "args": { "blockId": PAGE },
+            }],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// #3833 item 5 — the unwired-command panic is the FIRST thing a fixture
+    /// author extending the harness meets, so it names them too.
+    #[tokio::test]
+    #[should_panic(
+        expected = "fixture 'accessor_demo' query step 'unwired' (command 'get_page'): \
+                    conformance query command 'get_page' is not wired"
+    )]
+    async fn an_unwired_command_names_the_fixture_and_the_step() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "accessor_demo",
+            "queries": [{ "name": "unwired", "command": "get_page", "args": {} }],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// #3833 item 8 — the read phase writing is DETECTED.
+    ///
+    /// This reproduces the exact state `list_page_links_inner_split_with_cap`'s
+    /// lazy-rebuild branch is gated on: `block_links` populated OUTSIDE the
+    /// materializer (a direct INSERT, which is what the branch's own comment
+    /// names as its trigger) while `page_link_cache` is still empty. The read
+    /// step then rebuilds the cache, and the guard reddens instead of letting
+    /// a later step in the same fixture read the rebuilt state.
+    #[tokio::test]
+    #[should_panic(expected = "fixture 'writing_reader': the READ phase mutated a derived cache")]
+    async fn a_read_step_that_rebuilds_the_link_cache_is_caught() {
+        let (pool, _dir) = seeded_pool().await;
+        insert_block(&pool, PAGE2, "page", "Page Two", None, Some(2)).await;
+        assign_all_to_test_space(&pool).await;
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(CHILD)
+            .bind(PAGE2)
+            .execute(&pool)
+            .await
+            .expect("seed a block_links edge outside the materializer");
+
+        let fixture = json!({
+            "name": "writing_reader",
+            "queries": [{
+                "name": "page_links_global",
+                "command": "list_page_links",
+                "args": { "scope": { "kind": "global" } },
+            }],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// The purity guard is exactly as wide as [`derived_cache_digest`], and two
+    /// of its three tables have no wired read command that writes them — so if
+    /// either subquery were silently empty (a renamed column, a table that no
+    /// longer exists, a `coalesce` swallowing an error) nothing else in the
+    /// suite would notice and the widening would be decoration. This pins that
+    /// each of the three actually contributes.
+    #[tokio::test]
+    async fn every_digested_table_contributes_to_the_digest() {
+        let (pool, _dir) = seeded_pool().await;
+        insert_block(&pool, PAGE2, "page", "Page Two", None, Some(2)).await;
+        let base = derived_cache_digest(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+             VALUES (?, ?, 1)",
+        )
+        .bind(PAGE)
+        .bind(PAGE2)
+        .execute(&pool)
+        .await
+        .expect("seed a page_link_cache row");
+        let with_links = derived_cache_digest(&pool).await;
+        assert_ne!(
+            base, with_links,
+            "a `page_link_cache` row did not change the digest"
+        );
+
+        sqlx::query(
+            "INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, 'Page Two', 1)",
+        )
+        .bind(PAGE2)
+        .execute(&pool)
+        .await
+        .expect("seed a pages_cache row");
+        let with_pages = derived_cache_digest(&pool).await;
+        assert_ne!(
+            with_links, with_pages,
+            "a `pages_cache` row did not change the digest"
+        );
+
+        sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, 'page two')")
+            .bind(PAGE2)
+            .execute(&pool)
+            .await
+            .expect("seed an fts_blocks row");
+        assert_ne!(
+            with_pages,
+            derived_cache_digest(&pool).await,
+            "an `fts_blocks` row did not change the digest"
+        );
+    }
+
+    /// The PAIR of the test above: the same step over a fixture whose link
+    /// state came from the materializer leaves the cache alone, so the guard
+    /// is not simply "any fixture with a `list_page_links` step fails".
+    #[tokio::test]
+    async fn a_read_step_that_does_not_rebuild_passes_the_guard() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "clean_reader",
+            "queries": [{
+                "name": "page_links_global",
+                "command": "list_page_links",
+                "args": { "scope": { "kind": "global" } },
+            }],
+        });
+        let out = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+        assert_eq!(out[0]["name"], json!("page_links_global"));
     }
 }

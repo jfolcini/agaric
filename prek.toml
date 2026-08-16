@@ -438,7 +438,11 @@ name = "architecture citation guard self-test (#3982 exit-2 path)"
 entry = "node scripts/check-architecture-citations.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-architecture-citations\\.mjs$"
+# Its own script AND the shared libraries it delegates to (#3962). Keyed on the
+# script alone, editing `guard-file-source.mjs` — which decides whether the
+# guard judges the index or the working tree — fired no hook at all. That is
+# the #3993/#3997 shape: a guard defanged by editing its own dependency.
+files = "^scripts/(check-architecture-citations\\.mjs|lib/guard-file-source\\.mjs|lib/git-scratch-guard\\.(mjs|sh))$"
 stages = ["pre-commit"]
 
 # Dead-symbol citation guard (#3817). ~10 Rust test-tree comments instructed
@@ -485,7 +489,9 @@ name = "dead-symbol citation guard self-test (#3817 exit-2 path)"
 entry = "node scripts/check-dead-symbol-citations.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-dead-symbol-citations\\.mjs$"
+# See the sibling hook above: its own script AND the shared libraries it
+# delegates to, so editing `guard-file-source.mjs` cannot silently defang it.
+files = "^scripts/(check-dead-symbol-citations\\.mjs|lib/guard-file-source\\.mjs|lib/git-scratch-guard\\.(mjs|sh))$"
 stages = ["pre-commit"]
 
 # Frontend import-cycle guard (#761). The `src/` module graph was driven to

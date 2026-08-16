@@ -28,7 +28,10 @@
  *
  * The backend scopes a block via the `blocks.space_id` COLUMN, which the Rust
  * runner stamps out-of-band with `assign_all_to_test_space`. The mock scopes a
- * block via a `space` REF PROPERTY on its owning page. `stampMockSpace` is the
+ * block via a `space` REF PROPERTY on its owning page — and, since #3081, ALSO
+ * via a literal `space_id` column of its own, which is what
+ * `list_all_tags_in_space` filters on; `stampMockSpace` writes both, see its
+ * docstring. `stampMockSpace` is the
  * mirror image of the Rust stamp — without it every space-scoped read returns
  * empty on the mock and the two stacks would "agree" only on emptiness. It is
  * called BOTH before and after the op replay (mirroring the Rust runner's two
@@ -197,6 +200,17 @@ interface WireShape {
    *  {@link cursorShape} into the recorded `cursor` field — no longer "never
    *  recorded". */
   cursorKey?: string
+  /**
+   * #3833 item 2 — also project `groups`, the GROUPED-mode payload, and append
+   * it to the row tokens. Mirror of `group_tokens` in the Rust twin, which
+   * carries the full rationale; the two modes are mutually exclusive
+   * (`groupBy` absent fills `rows`, present fills `groups`), so exactly one
+   * side of the concatenation ever contributes and flat steps are unchanged.
+   *
+   * Set on `run_advanced_query` only — it is the sole command with a grouped
+   * response shape.
+   */
+  groups?: true
 }
 
 /**
@@ -226,6 +240,7 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: 'hasMore',
     totalKey: 'totalCount',
     cursorKey: 'nextCursor',
+    groups: true,
   },
   filtered_blocks_query: {
     rows: PAGED,
@@ -561,11 +576,97 @@ function relabelToken(token: string, labels: ReadonlyMap<string, string>): strin
  * The #763 snapshot builder explicitly skips the `space` key (the backend keeps
  * it in the `blocks.space_id` column, not `block_properties`), so these writes
  * are invisible to the snapshot regardless of call order.
+ *
+ * ## #3833 item 1 — why this DEFAULTS rather than OVERWRITES
+ *
+ * The Rust twin is not a blanket stamp. It is
+ *
+ * ```sql
+ * UPDATE blocks SET space_id = ?TEST
+ *  WHERE id <> ?TEST AND id = page_id AND space_id IS NULL
+ * ```
+ *
+ * — two guards this function used to lack, both of which decide what happens
+ * to a page the fixture has ALREADY placed somewhere:
+ *
+ *   * `space_id IS NULL` makes the backend stamp a DEFAULT. A fixture that
+ *     seeds a `space` property pointing at another space keeps it, "so
+ *     cross-space tests still work" (`common.rs`). Overwriting it here put
+ *     such a page in the test space on the mock and left it elsewhere on the
+ *     backend — a HARNESS divergence wearing the costume of an implementation
+ *     one, which is the exact failure this file's header warns about. No
+ *     query-carrying fixture seeds a cross-space page today, so the hole was
+ *     latent; the first one that did would have been debugged as a mock bug.
+ *   * `id <> ?TEST` excludes the space block from its own membership. Inert
+ *     while no fixture seeds a page with that id, and mirrored anyway: the two
+ *     stamps must not disagree about a row either can see.
+ *
+ * ## #3833 item 1 — why BOTH the property and the `space_id` column are written
+ *
+ * The mock is a DUAL-WRITE model of space membership. `blocks.space_id` is the
+ * #533 sole source of truth on the backend, and the mock has a literal
+ * analogue of that column (`seed.ts`'s `makeBlock` initialises `space_id:
+ * null`), maintained by `create_block` (`handlers/blocks.ts`) and by
+ * `set_property` (`handlers/properties.ts`, which routes a `space` write to
+ * BOTH). The `space` REF PROPERTY is the mock's own, older mechanism, and it is
+ * what the query handlers under this differential resolve through
+ * (`fbqInSpace` reads the owning page's `space` property).
+ *
+ * Writing only the property would leave every conformance page with
+ * `space_id === null` on the mock while its backend twin holds
+ * `TEST_SPACE_ID` — inert for the 20 wired read commands, which all go through
+ * `fbqInSpace`, but NOT inert in general: `list_all_tags_in_space`
+ * (`handlers/tags.ts`) already filters on `space_id` today, so the first
+ * fixture that wires it would have compared a stamped backend against an
+ * unstamped mock. So the stamp writes the column too, and the mirror is real
+ * rather than "this side's analogue".
+ *
+ * The GUARD, by contrast, reads the property alone, and that is not an
+ * asymmetry: every mechanism that can place a mock page in a space before the
+ * stamp runs writes the property, and the two that write the column
+ * (`create_block`, `set_property`) write it as well — the property is a
+ * superset signal, so testing it cannot miss an existing membership the column
+ * records. A cross-space page reaches the stamp with its property set and its
+ * column still null (the fixture seed loader in `conformance.test.ts` writes
+ * only the property map), so the preserve branch RECONCILES the column onto the
+ * seeded space rather than skipping outright — the backend skips that row
+ * because its column already holds the right value, which is the state this
+ * mirrors, not the write it omits.
+ *
+ * The backend's stamp is THREE statements, and the column follows all three
+ * (the property still follows only the first, and only for `page` blocks —
+ * widening the property write would change what today's property-reading
+ * handlers see, and the property is not the thing item 1 is about):
+ *
+ *   1. `UPDATE blocks SET page_id = id WHERE page_id IS NULL` — a root row owns
+ *      itself. Mirrored READ-ONLY by {@link ownerPageOf} rather than by
+ *      mutating `page_id`, which the mock's handlers read everywhere.
+ *   2. the `id = page_id AND space_id IS NULL` default, above.
+ *   3. `UPDATE blocks SET space_id = (SELECT pg.space_id … WHERE pg.id =
+ *      blocks.page_id) WHERE id <> ?TEST AND id <> page_id` — propagate a
+ *      root's membership to every block paged to it. Without this the mock's
+ *      column would be right for pages and null for their children, where the
+ *      backend's is populated for both.
  */
 export function stampMockSpace(): void {
+  // Statement 2 — DEFAULT a root row's membership, preserving a seeded one.
   for (const b of blocks.values()) {
-    if (b['block_type'] !== 'page') continue
     const id = b['id'] as string
+    // `WHERE id <> ?TEST_SPACE_ID` — the space is not a member of itself.
+    if (id === CONFORMANCE_SPACE_ID) continue
+    // `AND id = page_id`, over statement 1's normalisation of a null `page_id`.
+    if (ownerPageOf(b) !== id) continue
+    // `AND space_id IS NULL` — stamp the DEFAULT, never an existing membership.
+    const seeded = properties.get(id)?.get('space')?.['value_ref'] as string | null | undefined
+    if (seeded != null) {
+      b['space_id'] = seeded
+      continue
+    }
+    b['space_id'] = CONFORMANCE_SPACE_ID
+    // The mock's own, older scoping mechanism: `page` blocks only, so the set
+    // of rows carrying a `space` PROPERTY is exactly what it was before the
+    // column joined it.
+    if (b['block_type'] !== 'page') continue
     if (!properties.has(id)) properties.set(id, new Map())
     properties.get(id)?.set('space', {
       key: 'space',
@@ -576,6 +677,31 @@ export function stampMockSpace(): void {
       value_bool: null,
     })
   }
+  // Statement 3 — propagate each root's membership to the blocks paged to it.
+  for (const b of blocks.values()) {
+    const id = b['id'] as string
+    if (id === CONFORMANCE_SPACE_ID) continue
+    const owner = ownerPageOf(b)
+    if (owner === id) continue
+    b['space_id'] = (blocks.get(owner)?.['space_id'] as string | null) ?? null
+  }
+}
+
+/**
+ * The owning page of a mock block, with the backend stamp's
+ * `UPDATE blocks SET page_id = id WHERE page_id IS NULL` normalisation applied
+ * READ-ONLY.
+ *
+ * The normalisation matters rather than being a formality: the backend's
+ * `insert_block` gives a parentless non-page `page_id = id`, while the mock's
+ * `makeBlock` gives it `page_id = parent_id`, i.e. `null` — a seeded top-level
+ * TAG is a root on the backend and page_id-less here. Reading through this
+ * helper makes the two agree on which rows statements 2 and 3 apply to without
+ * writing `page_id`, which every mock handler reads and which is not this
+ * function's to change.
+ */
+function ownerPageOf(b: Record<string, unknown>): string {
+  return (b['page_id'] as string | null) ?? (b['id'] as string)
 }
 
 // ---------------------------------------------------------------------------
@@ -674,6 +800,57 @@ function locateRows(response: unknown, where: RowsLocation): unknown {
   }
 }
 
+/**
+ * One `#agg<i>=<op>/<value>/<count>` segment per entry of a bucket's
+ * `aggregates`. Mirror of `aggregate_segments` in the Rust twin, which carries
+ * the rationale — including why all three cells are recorded rather than only
+ * the populated one, and why this per-GROUP field is bound where the
+ * response-level `aggregates` sibling is not.
+ */
+function aggregateSegments(g: Record<string, unknown>): string {
+  const aggs = Array.isArray(g['aggregates']) ? g['aggregates'] : []
+  let out = ''
+  for (const [i, raw] of aggs.entries()) {
+    const a = (raw ?? {}) as Record<string, unknown>
+    out +=
+      `#agg${i}=${attrValue('aggregates[].op', a['op'])}` +
+      `/${attrValue('aggregates[].value', a['value'])}` +
+      `/${attrValue('aggregates[].count', a['count'])}`
+  }
+  return out
+}
+
+/**
+ * #3833 item 2 — project `AdvancedQueryResponse.groups`. Mirror of
+ * `group_tokens` in the Rust twin, which carries the design rationale (why the
+ * bucket COUNT is the load-bearing number, why an empty member preview still
+ * emits a `->(none)` token, and why the per-group `aggregates` field IS bound
+ * while the response-level one is not).
+ *
+ * Exported so the grammar has a test of its own: no fixture authors a grouped
+ * step today, and an unexported projector nothing reaches would be the same
+ * decoration this issue collects.
+ */
+export function groupTokens(response: unknown): string[] {
+  const groups = (response as Record<string, unknown> | null)?.['groups']
+  if (!Array.isArray(groups)) return []
+  const out: string[] = []
+  for (const raw of groups) {
+    const g = (raw ?? {}) as Record<string, unknown>
+    const head = (g['key'] as string | undefined) ?? '<missing-key>'
+    out.push(`${head}#count=${attrValue('count', g['count'])}${aggregateSegments(g)}`)
+    const members = Array.isArray(g['members']) ? g['members'] : []
+    if (members.length === 0) {
+      out.push(`${head}->(none)`)
+      continue
+    }
+    for (const m of members) {
+      out.push(`${head}->${rowToken(m, ID_TOKEN)}`)
+    }
+  }
+  return out
+}
+
 function rawRows(response: unknown, shape: WireShape): string[] {
   if (shape.rows.kind === 'map-of-row' || shape.rows.kind === 'map-of-rows') {
     const map = (response ?? {}) as Record<string, unknown>
@@ -696,8 +873,10 @@ function rawRows(response: unknown, shape: WireShape): string[] {
     return out
   }
   const rows = locateRows(response, shape.rows)
-  if (!Array.isArray(rows)) return []
-  return rows.map((r) => rowToken(r, shape.token))
+  const flat = Array.isArray(rows) ? rows.map((r) => rowToken(r, shape.token)) : []
+  // FLAT rows and GROUPED buckets are mutually exclusive, so exactly one side
+  // of this concatenation ever contributes (#3833 item 2).
+  return shape.groups === true ? [...flat, ...groupTokens(response)] : flat
 }
 
 /**
