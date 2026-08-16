@@ -993,37 +993,39 @@ const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
           },
           { branch: 'blank-filtered', when: (a) => searchQueryIsBlank(a) },
           { branch: 'regex', when: (a) => searchFilterOf(a)['isRegex'] === true },
-          // COVERED-BUT-NOT-FALSIFIABLE, recorded rather than left to be
-          // rediscovered. Deleting this arm from the Rust (so an
-          // all-toggles-off query falls through to `literal-post-filter`
-          // instead of short-circuiting to `search_fts`) leaves EVERY
-          // conformance fixture green — verified by mutation, not assumed.
-          // The arms really do differ, but every way they differ is invisible
-          // to this harness:
+          // FALSIFIABLE since #3938 — it was not, and the history is kept
+          // because it is the clearest example this manifest has of the
+          // difference between "covered" and "pinned".
           //
-          //   - with no toggle on, `compose_literal_pattern` composes
-          //     `(?i)<escaped query>`, which every FTS candidate already
-          //     satisfies — EXCEPT where `fts_blocks.stripped` differs from
-          //     raw `blocks.content` (markup stripped, `[[ULID]]` references
-          //     resolved to names, NFC applied). That is the one falsifier,
-          //     and the mock's FTS stand-in folds over raw `content`, so a
-          //     fixture block shaped to exercise it would redden the MOCK leg
-          //     for an unrelated reason. Lifting this needs the mock to model
-          //     `strip_for_fts`, not another step;
-          //   - the arms' other differences (`snippet` cleared vs kept,
-          //     `match_offsets` populated, survivor-derived `has_more` vs a
-          //     `limit + 1` probe) are not fields the query runner records.
+          // Deleting this arm (so an all-toggles-off query falls through to
+          // `literal-post-filter` instead of short-circuiting to `search_fts`)
+          // USED to leave every conformance fixture green, verified by
+          // mutation. With no toggle on, `compose_literal_pattern` composes
+          // `(?i)<escaped query>`, which every FTS candidate already satisfies
+          // — EXCEPT where `fts_blocks.stripped` differs from raw
+          // `blocks.content` (markup stripped, `#[ULID]` / `[[ULID]]`
+          // references resolved to names, NFC applied), because
+          // `post_filter_row` matches against the RAW column. That was the one
+          // available falsifier, and the mock's FTS stand-in folded over raw
+          // `content`, so a fixture shaped to exercise it would have reddened
+          // the MOCK leg for an unrelated reason. #3938 taught the mock
+          // `strip_for_fts` (`handlers/search.ts`), and
+          // `query_search_blocks_modes.json`'s `search_fts_stripped_markup`
+          // step is that fixture: its block's search term survives only in the
+          // stripped text, so deleting the fast path returns [] on both stacks.
           //
-          // This is strictly weaker than `list_pages_with_metadata`'s
-          // `sort-default`, which is often described the same way: THAT arm's
-          // `b.id ASC` is byte-identical to the tiebreaker, so it cannot be
+          // Still NOT recorded by the query runner, and so still not part of
+          // what pins this arm: `snippet` cleared vs kept, `match_offsets`
+          // populated, and survivor-derived `has_more` vs a `limit + 1` probe.
+          //
+          // The lesson the old note drew stands even though its subject moved:
+          // a branch whose deletion changes nothing OBSERVABLE is not the same
+          // as a branch that does nothing, and the difference has to be written
+          // down or the green ratchet claims evidence it does not have. The
+          // sibling case is `list_pages_with_metadata`'s `sort-default`, whose
+          // `b.id ASC` is byte-identical to the tiebreaker and so cannot be
           // deleted — but MISROUTING it to a sibling keyset does redden
-          // `pages_sorted_default`, so its routing is pinned. This arm's
-          // deletion IS its misrouting (the fallthrough is the sibling), and
-          // that is green. A branch whose deletion changes nothing OBSERVABLE
-          // is not the same as a branch that does nothing, and the difference
-          // has to be written down or the green ratchet claims evidence it
-          // does not have.
+          // `pages_sorted_default`, so its routing is pinned.
           { branch: 'fts-match', when: (a) => !searchAnyToggle(a) },
         ],
         defaultBranch: 'literal-post-filter',
