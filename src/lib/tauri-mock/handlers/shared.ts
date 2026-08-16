@@ -24,6 +24,7 @@ import {
   type MockLinkEdge,
   contentLinksTo,
   deriveLinkEdges,
+  linkTokenRe,
   scanLinkTargets,
 } from '@/lib/tauri-mock/link-scan'
 import { applyRevertForOp } from '@/lib/tauri-mock/revert'
@@ -288,7 +289,7 @@ export const returnEmptyPage = () => ({
 // snapshot builder can assert on the SAME derivation the handlers run instead
 // of re-declaring the regex. Re-exported here so the domain handler modules
 // keep their single "everything shared comes from ./shared" import.
-export { type MockLinkEdge, contentLinksTo, deriveLinkEdges, scanLinkTargets }
+export { type MockLinkEdge, contentLinksTo, deriveLinkEdges, linkTokenRe, scanLinkTargets }
 
 /**
  * The space a block's edges belong to: the space property of its OWNING page

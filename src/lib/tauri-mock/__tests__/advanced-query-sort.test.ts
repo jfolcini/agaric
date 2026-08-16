@@ -20,13 +20,15 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { base64UrlToUtf8, utf8ToBase64Url } from '@/lib/base64url'
-import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
   type CursorKind,
   approximateFtsRank,
   compareEntryToCursor,
   cursorValueFor,
+  foldForFtsIndex,
+  matchesFtsIndex,
+  stripForFts,
 } from '@/lib/tauri-mock/handlers/search'
 import {
   blockTags,
@@ -1031,9 +1033,9 @@ describe('run_advanced_query — LastEdited filter reads the op-log, not the see
  *    (`EngineRow::cursor_value`'s `self.rank.map_or(CursorValue::Null,
  *    CursorValue::Real)`, `engine.rs:322`), so that is what the guard emits.
  *    Unreachable through `run_advanced_query` — the MATCH narrowing
- *    (`matchesSearchFolded`) and the ranker fold the SAME query with the SAME
- *    function, so a surviving row always has ≥1 occurrence — which is exactly
- *    why it is asserted against `cursorValueFor` directly.
+ *    (`matchesFtsIndex`) and the ranker fold the SAME `stripForFts` text with
+ *    the SAME function, so a surviving row always has ≥1 occurrence — which is
+ *    exactly why it is asserted against `cursorValueFor` directly.
  *
  *  - **Integral ranks (a documented representation difference, NOT fixed).**
  *    `JSON.stringify(10)` is `10` where `serde_json` writes a `f64` 10.0 as
@@ -1712,19 +1714,22 @@ describe('run_advanced_query — cursor rejection messages are fixed, not host-d
  * that never terminates. It is the one place in the keyset where the two
  * comparison domains do not agree.
  *
- * Nothing made that state reachable when this was written, and the reason is a
- * coupling between two modules: `run_advanced_query` narrows with
- * `matchesSearchFolded(content, fulltext)` and ranks with
- * `approximateFtsRank(content, foldForSearch(fulltext))` — the same haystack
- * through the same `foldForSearch`, against the same folded needle — so
- * `includes` being true guarantees `split` finds ≥ 1 occurrence. That is now
- * load-bearing for keyset monotonicity, and it lives in a file
- * (`fold-for-search.ts`) whose own tests have no idea. Hence this.
+ * Nothing makes that state reachable, and the reason is a coupling:
+ * `run_advanced_query` narrows with `matchesFtsIndex(strippedFtsOf(m),
+ * fulltext)` and ranks with `approximateFtsRank(strippedFtsOf(m),
+ * foldForFtsIndex(fulltext))` — the same `stripForFts` haystack (one memo,
+ * read by both) through the same `foldForFtsIndex`, against the same folded
+ * needle — so `includes` being true guarantees `split` finds ≥ 1 occurrence.
+ * That is load-bearing for keyset monotonicity, and it spans two functions
+ * either of which could be changed alone. Hence this.
  *
- * The corpus deliberately leans on cases where the fold is NOT the identity —
- * `ß` → `ss` changes LENGTH, `İ` decomposes, a lone combining mark folds to
- * the EMPTY string — because a coupling between two folds can only break where
- * folding actually does something.
+ * #3938 moved BOTH sides off raw content and off `foldForSearch` in one step,
+ * which is what kept the coupling intact; this property is the pin that would
+ * have caught moving only one. The corpus leans on cases where the strip and
+ * the fold are NOT the identity — markup that hides a term from raw content, a
+ * `[[ULID]]` that only the stripped text spells out, NFD input that NFC
+ * recomposes, and case differences — because a coupling between two
+ * transformations can only break where they actually do something.
  */
 describe('approximateFtsRank — every row the MATCH narrowing keeps has a FINITE rank (#3914 review note 3)', () => {
   const CONTENTS = [
@@ -1739,6 +1744,16 @@ describe('approximateFtsRank — every row the MATCH narrowing keeps has a FINIT
     '',
     'ß',
     'aaa',
+    // #3938 — content the STRIP changes. Markup hides `gadget` from raw
+    // content and the reference tokens carry no plain text at all, so these are
+    // rows where the narrowing and the ranking would read different strings if
+    // either were still on `blocks.content`.
+    'Sprocket **gad**get inventory',
+    '`aaa` and ~~aaa~~ and ==aaa==',
+    '\\*not emphasis\\* aaa',
+    `see [[${'MISSINGPAGE'.padStart(26, '0')}]] and #[${'MISSINGTAG'.padStart(26, '0')}]`,
+    // NFD: `e` + combining acute, which NFC recomposes to `é`.
+    'cafe\u0301 au lait',
   ]
   const QUERIES = [
     'strasse',
@@ -1756,16 +1771,25 @@ describe('approximateFtsRank — every row the MATCH narrowing keeps has a FINIT
     'ss',
     'a',
     'zzz-no-match',
-    // A non-empty term that folds AWAY entirely: `matchesSearchFolded` admits
-    // every row for it, so the rank side must stay finite on rows that share
-    // no character with the query at all.
+    // A lone combining mark. Under `foldForSearch` this folded AWAY entirely
+    // and reached the empty-needle branch through the handler; under
+    // `foldForFtsIndex` (NFC + lowercase, neither of which deletes) it is an
+    // ordinary needle. Kept because it still exercises a needle that matches
+    // only after NFC on one side and not the other.
     '́',
+    // The empty needle itself, now reachable only by calling the seam
+    // directly: `matchesFtsIndex` admits EVERY row for it, so the rank side
+    // must stay finite on rows sharing no character with the query.
+    '',
+    'gadget',
+    'café',
   ]
 
   it.each(CONTENTS)('content %j: a kept row never ranks non-finite', (content) => {
     for (const query of QUERIES) {
-      const kept = matchesSearchFolded(content, query)
-      const rank = approximateFtsRank(content, foldForSearch(query))
+      const stripped = stripForFts(content)
+      const kept = matchesFtsIndex(stripped, query)
+      const rank = approximateFtsRank(stripped, foldForFtsIndex(query))
       // The implication, not an equivalence: a row the narrowing DROPS is
       // allowed to rank `Infinity` (that is what the guard is for), and one of
       // the fixtures above exercises exactly that.
@@ -1781,8 +1805,23 @@ describe('approximateFtsRank — every row the MATCH narrowing keeps has a FINIT
   it('the guard IS reachable when the two sides are not coupled — so the check above is not vacuous', () => {
     // A needle the narrowing rejects: this is the only way to reach the
     // `Infinity` branch, and it proves the corpus is capable of producing it.
-    expect(matchesSearchFolded('aaa', 'zzz-no-match')).toBe(false)
-    expect(approximateFtsRank('aaa', foldForSearch('zzz-no-match'))).toBe(Number.POSITIVE_INFINITY)
+    expect(matchesFtsIndex('aaa', 'zzz-no-match')).toBe(false)
+    expect(approximateFtsRank('aaa', foldForFtsIndex('zzz-no-match'))).toBe(
+      Number.POSITIVE_INFINITY,
+    )
+  })
+
+  // The empty-needle branch, which is now reachable ONLY through this seam
+  // (every handler tests blank-ness first, and `foldForFtsIndex` cannot map a
+  // non-empty string to `''`). Deleting the branch does not merely change a
+  // number: `''.split('')` reports `len - 1` "occurrences", so the guard below
+  // would be skipped and the density silently wrong.
+  it('an empty needle admits every row and ranks it by length, not by density', () => {
+    expect(matchesFtsIndex('abcd', '')).toBe(true)
+    expect(approximateFtsRank('abcd', '')).toBe(4)
+    // The two halves of the coupling agree on the degenerate input too.
+    expect(matchesFtsIndex('', '')).toBe(true)
+    expect(approximateFtsRank('', '')).toBe(0)
   })
 })
 
@@ -1790,10 +1829,17 @@ describe('approximateFtsRank — every row the MATCH narrowing keeps has a FINIT
  * The end-to-end half of note 3: a `Relevance DESC` walk terminates.
  *
  * The unit property above pins the coupling; this pins the CONSEQUENCE at the
- * boundary that would actually hurt a client, over a fulltext term whose fold
- * is not the identity (`STRASSE` matches `Straße` only after folding). If the
+ * boundary that would actually hurt a client, over a corpus where BOTH
+ * transformations do work: the fulltext term matches only after case folding,
+ * and one row's term survives only in the STRIPPED text (`**gad**get`), so a
+ * narrowing still reading raw `blocks.content` would drop it. If the
  * `Rank` → `Null` narrowing ever became reachable through the handler, this
  * loop would re-deliver the first row forever and abort on the page cap.
+ *
+ * #3938 replaced the previous corpus, which leaned on `ß` ⇒ `ss`: that fold
+ * belongs to `foldForSearch` (the interactive-filter fold) and the FTS index
+ * does not perform it, so the old fixture asserted a match the backend never
+ * produces.
  */
 describe('run_advanced_query — a Relevance DESC keyset walk terminates (#3914 review note 3)', () => {
   const PAGE = id('P0')
@@ -1805,9 +1851,10 @@ describe('run_advanced_query — a Relevance DESC keyset walk terminates (#3914 
     clearMock()
     blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
     setSpace(PAGE, SPACE_A)
-    // Different occurrence counts and lengths ⇒ three distinct ranks.
+    // Different occurrence counts and lengths ⇒ three distinct ranks. `ONE`
+    // hides its term behind bold markup, so it matches only via `stripForFts`.
     for (const [blockId, content] of [
-      [ONE, 'Straße'],
+      [ONE, '**Stra**sse'],
       [TWO, 'STRASSE strasse'],
       [THREE, 'strasse and a good deal of additional unrelated content'],
     ] as Array<[string, string]>) {

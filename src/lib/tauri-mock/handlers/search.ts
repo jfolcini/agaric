@@ -10,7 +10,6 @@
  */
 
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
-import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import {
   type PageMetaRow,
   type TypedHandlers,
@@ -19,11 +18,212 @@ import {
   fbqInSpace,
   fbqPropertyFilterMatches,
   fbqTagFilterMatches,
+  linkTokenRe,
   metaRowMatchesExpr,
   rawOpLogLastEditedAt,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
+
+// ---------------------------------------------------------------------------
+// #3938 — the `fts_blocks.stripped` stand-in
+//
+// The backend does NOT index `blocks.content`. Every FTS5 candidate set is a
+// trigram scan over `fts_blocks.stripped`, the column
+// `strip_for_fts_with_maps` writes
+// (`src-tauri/agaric-store/src/fts/strip.rs:114-163`). Until #3938 this mock
+// ran `matchesSearchFolded` (`@/lib/fold-for-search`) over the RAW content,
+// which was wrong in both directions at once:
+//
+//  - it FOLDED DIACRITICS (NFKD-decompose, strip `U+0300..U+036F`, `ß`→`ss`),
+//    which the trigram index does not do at all — migration `0006`'s
+//    `tokenize = 'trigram case_sensitive 0'` folds CASE and nothing else. So
+//    `naive` matched `naïve` here and matched nothing on the backend;
+//  - it read text the index never sees: markup delimiters are still present in
+//    raw content (a query containing `**` matched here, never there), while
+//    the tag / page NAMES that `#[ULID]` / `[[ULID]]` resolve to are present
+//    only in the index (a query for a linked page's title matched there,
+//    never here).
+//
+// The four steps below are `strip_for_fts_with_maps`'s own, in its order.
+// ---------------------------------------------------------------------------
+
+/**
+ * `MARKUP_RE` — the five inline-formatting delimiters in one alternation, in
+ * the backend's order (`strip.rs:44-47`). Bold precedes italic so leftmost-first
+ * alternation prefers the longer delimiter at a given position.
+ *
+ * Spelled `[^\n]` where the backend spells `.`, which is NOT pedantry: Rust's
+ * `.` excludes `\n` alone, while JS's excludes every LINE TERMINATOR — `\n`,
+ * `\r`, U+2028 and U+2029. A `.` here would leave `**a\rb**` unstripped in the
+ * mock and stripped on the backend, and CRLF-pasted content is not exotic.
+ * `[^\n]` is byte-for-byte Rust's `.`, so the two agree on all four.
+ */
+const FTS_MARKUP_RE = /\*\*([^\n]+?)\*\*|\*([^\n]+?)\*|`([^\n]+?)`|~~([^\n]+?)~~|==([^\n]+?)==/g
+
+/** `TAG_REF_RE` — `#[ULID]` (`src-tauri/agaric-store/src/cache/mod.rs:72-73`). */
+const FTS_TAG_REF_RE = /#\[([0-9A-Z]{26})\]/g
+
+// `PAGE_LINK_RE` — `[[ULID]]` (`src-tauri/agaric-store/src/cache/mod.rs:75-76`)
+// — is NOT declared here. `link-scan.ts` is its single owner in this tree
+// (#3332) and {@link linkTokenRe} hands out a fresh `g`-flagged copy; a
+// private one would fork the link grammar away from the conformance snapshot's
+// derivation, which is the failure that guard exists to prevent. The backend
+// shares one regex between `cache` and `fts::strip` for the same reason
+// (`strip.rs:85-98`).
+
+/**
+ * `strip_inline_markup` (`strip.rs:63-83`): apply {@link FTS_MARKUP_RE} until
+ * the result stops changing, which is what preserves the nested case
+ * (`**bold *italic***` ⇒ `bold italic`). Every replacement strictly shrinks the
+ * string — the captured group is always shorter than its delimiters — so the
+ * loop terminates.
+ */
+function stripInlineMarkup(content: string): string {
+  let current = content
+  for (;;) {
+    const next = current.replace(FTS_MARKUP_RE, (...args: unknown[]): string => {
+      // Exactly one of the five groups matched; return its inner text.
+      for (let i = 1; i <= 5; i++) {
+        const group = args[i]
+        if (typeof group === 'string') return group
+      }
+      return ''
+    })
+    if (next === current) return current
+    current = next
+  }
+}
+
+/**
+ * `load_ref_maps`' two maps (`strip.rs:210-236`), resolved per lookup instead
+ * of pre-loaded: the name a `#[ULID]` / `[[ULID]]` token resolves to, or `''`
+ * when the target is missing, tombstoned, of the wrong `block_type`, or has no
+ * content — every one of which is a row the SQL's
+ * `block_type = ? AND deleted_at IS NULL` + `filter_map(content)` drops from
+ * the map, so `unwrap_or_default()` substitutes the empty string.
+ */
+function ftsRefName(ulid: string, blockType: 'tag' | 'page'): string {
+  const target = blocks.get(ulid)
+  if (!target) return ''
+  if (target['deleted_at'] != null) return ''
+  if (target['block_type'] !== blockType) return ''
+  return (target['content'] as string | null) ?? ''
+}
+
+/** `FTS_MAX_INDEXED_BYTES` (`strip.rs:171`) — 128 KiB of UTF-8, per block. */
+const FTS_MAX_INDEXED_BYTES = 128 * 1024
+
+/**
+ * `cap_indexed_text` (`strip.rs:179-195`): truncate to at most
+ * {@link FTS_MAX_INDEXED_BYTES} UTF-8 bytes, on a char boundary.
+ *
+ * Modelled rather than declared-and-omitted. Nothing in this tree is within
+ * three orders of magnitude of the cap, so the argument for omitting it was
+ * that it adds a branch no fixture takes — but that is the argument for
+ * omitting the whole of {@link stripForFts}'s reachable-only-by-seam
+ * behaviour, and this module already answers it the same way twice
+ * (`approximateFtsRank`'s empty-needle and zero-occurrence branches are both
+ * unreachable through a handler and both falsified through the export). An
+ * omission a doc comment NAMES still diverges silently the day a fixture grows
+ * past it; eight lines and a seam test cannot.
+ *
+ * Rust's `is_char_boundary(end)` is exactly "byte `end` is not a UTF-8
+ * continuation byte", which is what the walk-back tests.
+ */
+function capIndexedText(s: string): string {
+  // A UTF-8 encoding is at most 3 bytes per UTF-16 code unit (an astral pair
+  // is 4 bytes for 2 units), so this skips the encode for every realistic
+  // block without ever skipping one that could exceed the cap.
+  if (s.length * 3 <= FTS_MAX_INDEXED_BYTES) return s
+  const bytes = new TextEncoder().encode(s)
+  if (bytes.length <= FTS_MAX_INDEXED_BYTES) return s
+  let end = FTS_MAX_INDEXED_BYTES
+  while (end > 0 && ((bytes[end] as number) & 0xc0) === 0x80) end--
+  return new TextDecoder().decode(bytes.subarray(0, end))
+}
+
+/**
+ * `strip_for_fts_with_maps` (`src-tauri/agaric-store/src/fts/strip.rs:114-163`)
+ * — the text a block contributes to `fts_blocks.stripped`, and therefore the
+ * ONLY text any FTS5 candidate set in this file may match against.
+ *
+ * Four steps, in the backend's order:
+ *
+ *  1. strip inline markup to a fixed point ({@link stripInlineMarkup});
+ *  2. resolve `#[ULID]` tag references to the tag's name;
+ *  3. resolve `[[ULID]]` page links to the page's title;
+ *  4. unescape `\*` `\`` `\~` `\=`, NFC-normalise, then cap the indexed bytes
+ *     ({@link capIndexedText}) — `strip.rs:141-162`.
+ */
+export function stripForFts(content: string | null | undefined): string {
+  let result = stripInlineMarkup(content ?? '')
+  result = result.replace(FTS_TAG_REF_RE, (_match, ulid: string) => ftsRefName(ulid, 'tag'))
+  result = result.replace(linkTokenRe(), (_match, ulid: string) => ftsRefName(ulid, 'page'))
+  result = result
+    .replaceAll('\\*', '*')
+    .replaceAll('\\`', '`')
+    .replaceAll('\\~', '~')
+    .replaceAll('\\=', '=')
+  return capIndexedText(result.normalize('NFC'))
+}
+
+/**
+ * The trigram tokenizer's fold — `tokenize = 'trigram case_sensitive 0'`
+ * (migration `0006_fts5_trigram.sql`), i.e. CASE only.
+ *
+ * Emphatically NOT `foldForSearch` (`@/lib/fold-for-search`), which is the
+ * interactive-filter fold: NFKD + combining-mark stripping + `ß`⇒`ss`. That
+ * one is right for a client-side list filter and wrong for anything claiming
+ * to stand in for the index, which does not fold diacritics — `naive` does not
+ * match `naïve` in `fts_blocks`, and #3938 is that the mock said it did.
+ *
+ * NFC on both sides because the indexed text is NFC (`strip_for_fts`'s last
+ * step) and the query is NFC (`sanitize_fts_query`, the pair to it —
+ * `agaric-store/src/fts/search/sanitizer.rs`).
+ *
+ * `toLowerCase()` is CLOSE TO, not equal to, the tokenizer's fold. FTS5 folds
+ * with `sqlite3Fts5UnicodeFold`, a SIMPLE 1:1 codepoint map with no context
+ * rule; `toLowerCase()` is the Unicode DEFAULT case conversion, which can
+ * change length and reads context. Two counterexamples, both measured against
+ * a real `tokenize = 'trigram case_sensitive 0'` table rather than reasoned:
+ *
+ *  - content `İstanbul`, query `i` + U+0307 + `stanbul` — matches here
+ *    (`'İ'.toLowerCase()` EXPANDS to `i` + combining dot) and not in the index
+ *    (`U+0130` folds to itself there). An over-match;
+ *  - content `ΣΟΦΟΣ`, query `σοφοσ` — matches in the index (every `Σ` folds
+ *    to `σ`) and not here (the Final_Sigma context rule lowercases the
+ *    trailing `Σ` to `ς`). An under-match.
+ *
+ * Both need a Turkish dotted capital or a word-final Greek sigma to reach, so
+ * they are left as named divergences rather than paid for with a fold table.
+ * The DIACRITIC claim above is exact, and was measured the same way: `naive`
+ * / `naïve`, `strasse` / `Straße` and `istanbul` / `İstanbul` are all misses
+ * in the real index, as they are here.
+ */
+export function foldForFtsIndex(s: string): string {
+  return s.normalize('NFC').toLowerCase()
+}
+
+/**
+ * The mock's FTS5 MATCH: does `stripped` contain `query` after the index's own
+ * fold?
+ *
+ * Still a whole-query SUBSTRING test rather than a real trigram scan over
+ * `sanitize_fts_query`'s quoted token list, so the two known query-SIDE
+ * divergences are unchanged by #3938 and still apply: the backend AND-joins
+ * whitespace-separated tokens (this requires them adjacent and in order), and
+ * it drops sub-trigram tokens, rejecting a query that is exclusively them
+ * where this happily matches. What #3938 changed is the HAYSTACK and the FOLD
+ * — see {@link stripForFts} and {@link foldForFtsIndex}.
+ *
+ * An empty needle admits every row, matching {@link matchesSearchFolded}'s
+ * convention; no caller reaches it (every arm tests blank-ness first).
+ */
+export function matchesFtsIndex(stripped: string, query: string): boolean {
+  if (query === '') return true
+  return foldForFtsIndex(stripped).includes(foldForFtsIndex(query))
+}
 
 // ---------------------------------------------------------------------------
 // #3837 — `run_advanced_query` sort + full-text narrowing.
@@ -46,6 +246,15 @@ interface MatchedEntry {
    * the computed "no op-log activity" answer.
    */
   lastEditedRaw?: string | null
+  /**
+   * #3938 — memoized {@link stripForFts} of this row's content: the text BOTH
+   * the MATCH narrowing and the relevance rank run over. Memoized for the same
+   * reason `lastEditedRaw` is (the rank getter runs inside the sort
+   * comparator), and shared between the two so they cannot drift onto
+   * different haystacks — the coupling `approximateFtsRank`'s zero-occurrence
+   * guard depends on.
+   */
+  strippedFts?: string
 }
 
 /**
@@ -66,6 +275,13 @@ function rawLastEditedOf(m: MatchedEntry): string | null {
     m.lastEditedRaw = rawOpLogLastEditedAt(m.b['id'] as string)
   }
   return m.lastEditedRaw
+}
+
+/** {@link stripForFts} of `m`'s content, computed AT MOST ONCE per row — see
+ *  {@link MatchedEntry.strippedFts}. */
+function strippedFtsOf(m: MatchedEntry): string {
+  m.strippedFts ??= stripForFts(m.row.content)
+  return m.strippedFts
 }
 
 type SortValue = string | number | null
@@ -132,35 +348,18 @@ interface QueryCursorPayload {
  *    shorter surrounding content both score lower/better). It produces a
  *    STABLE, non-arbitrary relative order for the mock's relevance sort —
  *    it is not a bm25 stand-in for anything ranking-accuracy sensitive.
- *  - Real ranking runs over `strip_for_fts_with_maps`'s stripped text, which
- *    also embeds referenced tag/page NAMES, so a block linking `[[Foo]]`
- *    ranks for a `Foo` query even without the literal substring. This scores
- *    the block's raw `content` only — the same simplification this file's
- *    `search_blocks` / `search_blocks_partitioned` handlers already make.
- *    Same for the MATCH narrowing itself (below): it is a folded substring
- *    test, not an FTS5 trigram/`sanitize_fts_query` query.
- *
- * That second divergence runs in BOTH directions, which is easy to miss
- * because only the false-negative half is obvious:
- *
- *  - FALSE NEGATIVE (the `[[Foo]]` case above): real FTS matches text this
- *    scan cannot see, so the mock under-matches.
- *  - FALSE POSITIVE: real FTS indexes the STRIPPED text, so the markdown
- *    delimiters themselves are gone from it. This scans raw `content`, where
- *    they are still present — a query containing `**`, `[[` or `#` can match
- *    here and match nothing in the real index. The same asymmetry skews the
- *    score even when both agree on matching, since `foldedText.length` counts
- *    delimiter characters that real bm25's document length never saw, so a
- *    heavily-formatted block ranks worse here than it does in the backend.
- *
- * Neither direction is a defect to fix in the mock — reproducing them needs
- * the real stripper and an FTS5 index. They are the boundary of what a mock
- * relevance assertion can be trusted to prove, and a test that depends on
- * either direction is testing this approximation, not the backend.
+ *  - Real ranking runs over `strip_for_fts_with_maps`'s stripped text. Since
+ *    #3938 so does this: the caller passes {@link stripForFts}'s output, so
+ *    `foldedText.length` is the same document length bm25 sees and a block
+ *    linking `[[Foo]]` ranks for a `Foo` query without the literal substring.
+ *    The MATCH narrowing rides the same text ({@link matchesFtsIndex}), which
+ *    is what keeps the zero-occurrence guard below unreachable — see it. What
+ *    remains approximated is the SCORE (density, not bm25) and the QUERY side
+ *    (a whole-query substring test, not `sanitize_fts_query`'s token list).
  *
  * Exported ONLY as a test seam (#3914 review note 3): the zero-occurrence
  * branch below is unreachable through `run_advanced_query`, and what makes it
- * unreachable is a COUPLING to `matchesSearchFolded` that is now load-bearing
+ * unreachable is a COUPLING to {@link matchesFtsIndex} that is load-bearing
  * for keyset monotonicity (see that branch, and the `Rank` case in
  * {@link cursorValueFor}). Asserting the coupling needs both halves callable
  * side by side; a handler-level test cannot reach one of them by construction.
@@ -176,12 +375,21 @@ interface QueryCursorPayload {
  * failure mode this module exists to prevent. Treat any `fulltext` shorter
  * than 3 characters as untrustworthy here until the rejection is mirrored.
  */
-export function approximateFtsRank(content: string | null, foldedQuery: string): number {
-  const foldedText = foldForSearch(content ?? '')
-  // A non-empty `fulltext` CAN fold to `''` (a lone combining mark folds
-  // away entirely), and `matchesSearchFolded` admits every row when it does —
-  // so this branch is on the reachable path and must return a FINITE length,
-  // not fall through to the zero-occurrence guard below.
+export function approximateFtsRank(stripped: string | null, foldedQuery: string): number {
+  const foldedText = foldForFtsIndex(stripped ?? '')
+  // The empty-needle case, which {@link matchesFtsIndex} admits every row for
+  // — so the two sides must agree and this must return a FINITE length rather
+  // than falling through to the zero-occurrence guard below. (Without it,
+  // `''.split('')` yields `len - 1` "occurrences", which is not 0 and so would
+  // not even reach that guard — it would return a silently wrong density.)
+  //
+  // #3938 narrowed how this is reached. Under `foldForSearch` a NON-empty
+  // needle could fold away entirely (a lone combining mark), so a `fulltext`
+  // term reached it through the handler. `foldForFtsIndex` is NFC + lowercase,
+  // neither of which deletes a character, so `foldForFtsIndex(q) === ''` iff
+  // `q === ''` — and every caller tests blank-ness first. It is now reachable
+  // only through this exported seam, like the zero-occurrence guard below, and
+  // is falsified there (`search-fts-strip.test.ts`).
   if (foldedQuery === '') return foldedText.length
   const occurrences = foldedText.split(foldedQuery).length - 1
   // No match. Unreachable via the MATCH narrowing in `run_advanced_query`,
@@ -199,10 +407,13 @@ export function approximateFtsRank(content: string | null, foldedQuery: string):
   // set — a `while (hasMore)` client that never terminates.
   //
   // What rules it out: `run_advanced_query` narrows with
-  // `matchesSearchFolded(row.content ?? '', fulltext)` (`fold-for-search.ts`)
-  // and ranks with `approximateFtsRank(row.content, foldForSearch(fulltext))`
-  // — the SAME haystack through the SAME `foldForSearch`, against the SAME
-  // folded needle. `includes` is true exactly when `split` yields ≥ 2 parts,
+  // `matchesFtsIndex(strippedFtsOf(entry), fulltext)` and ranks with
+  // `approximateFtsRank(strippedFtsOf(entry), foldForFtsIndex(fulltext))` —
+  // the SAME `stripForFts` haystack through the SAME `foldForFtsIndex`,
+  // against the SAME folded needle. #3938 moved BOTH sides onto the stripped
+  // text together for exactly this reason: moving only the narrowing would
+  // have made this guard reachable and the keyset non-monotonic.
+  // `includes` is true exactly when `split` yields ≥ 2 parts,
   // so a surviving row always has ≥ 1 occurrence. Change either fold (a
   // stripper on one side, a stemmer on the other) and the guard becomes
   // reachable — pinned by the coupling test in `advanced-query-sort.test.ts`,
@@ -299,7 +510,7 @@ function resolveSortTerms(
       }
       terms.push({
         desc,
-        get: (m) => approximateFtsRank(m.row.content, foldedQuery),
+        get: (m) => approximateFtsRank(strippedFtsOf(m), foldedQuery),
         column: 'Rank',
       })
       continue
@@ -319,7 +530,7 @@ function resolveSortTerms(
   if (terms.length === 0 && hasFulltext) {
     terms.push({
       desc: false,
-      get: (m) => approximateFtsRank(m.row.content, foldedQuery),
+      get: (m) => approximateFtsRank(strippedFtsOf(m), foldedQuery),
       column: 'Rank',
     })
   }
@@ -378,8 +589,9 @@ export function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorV
       // engine can actually produce.
       //
       // Unreachable through this handler — the MATCH narrowing
-      // (`matchesSearchFolded`) and `approximateFtsRank` fold the SAME query
-      // with the SAME function, so every surviving row has ≥1 occurrence —
+      // (`matchesFtsIndex`) and `approximateFtsRank` fold the SAME
+      // `stripForFts` text with the SAME function, so every surviving row has
+      // ≥1 occurrence —
       // hence the guard is falsified against `cursorValueFor` directly.
       //
       // #3914 review note 3 — that unreachability is not a nicety. This tag
@@ -933,12 +1145,130 @@ function byIdDesc(x: Record<string, unknown>, y: Record<string, unknown>): numbe
   return (y['id'] as string).localeCompare(x['id'] as string)
 }
 
+// ---------------------------------------------------------------------------
+// #3943 — `pagination::Cursor`, the keyset every `search_blocks` arm pages on
+// ---------------------------------------------------------------------------
+
+/**
+ * `CURRENT_CURSOR_VERSION` (`agaric-store/src/pagination/mod.rs:114`). Distinct
+ * from {@link CURSOR_VERSION}, the engine's `QueryCursor` version — the two
+ * codecs are unrelated and happen to sit at the same number.
+ */
+const PAGINATION_CURSOR_VERSION = 1
+
+/**
+ * The `pagination::Cursor` struct (`pagination/mod.rs:553-564`) as far as
+ * `search_blocks` populates it: `id` always, and `rank` on the FTS arm
+ * (`Cursor::for_id_and_rank`, `mod.rs:788-796`). The other three slots
+ * (`position` / `deleted_at` / `seq`) belong to other queries and are never
+ * written here, so they are never READ here either — a cursor carrying them is
+ * a foreign one, and `search_blocks` ignores the slots its keyset does not use.
+ *
+ * One divergence that leaves, named rather than papered over: the backend
+ * ignores those slots' VALUES but not their TYPES. `Cursor` is one struct, so
+ * `serde_json::from_value` still deserialises `position` / `seq` as
+ * `Option<i64>` and `deleted_at` as `Option<String>` and rejects a cursor
+ * whose unread slot is the wrong shape (`{"id":"x","seq":"nope"}`). This
+ * decoder never looks, so it accepts that cursor. Closing it means modelling
+ * three slots no `search_blocks` arm can ever mint.
+ */
+interface SearchCursor {
+  id: string
+  rank: number | null
+}
+
+/**
+ * `Cursor::encode` (`pagination/mod.rs:620-631`): URL-safe unpadded base64 of
+ * the struct's JSON with a `version` key injected.
+ *
+ * The unset slots are OMITTED, not written as `null` — every optional field
+ * carries `skip_serializing_if = "Option::is_none"` (`mod.rs:556-563`), and
+ * presence IS the keyset, which is precisely what the conformance harness's
+ * `cursorShape` (#3893) records: `v1:{id}` for the filter-only arm and
+ * `v1:{id,rank}` for the FTS arm. Writing an explicit `"rank":null` would
+ * render `v1:{id,rank}` on BOTH and hide the difference.
+ */
+function encodeSearchCursor(id: string, rank: number | null): string {
+  const payload: Record<string, unknown> = { id }
+  if (rank !== null) payload['rank'] = rank
+  payload['version'] = PAGINATION_CURSOR_VERSION
+  return utf8ToBase64Url(JSON.stringify(payload))
+}
+
+/**
+ * `Cursor::decode` (`pagination/mod.rs:645-679`), THROWING a
+ * {@link validationRejection} on malformed input.
+ *
+ * `search_blocks_inner` decodes through `PageRequest::new`
+ * (`src-tauri/src/commands/queries.rs:228`), which runs BEFORE
+ * `search_with_toggles` picks an arm and propagates `AppError::Validation` —
+ * so the strictness belongs to the COMMAND, not to one arm, and this is shared
+ * by both paging arms for that reason. The filter-only arm previously swallowed
+ * every failure and silently restarted from row 0, which is the same
+ * more-permissive-than-the-backend divergence #3899 removed from
+ * {@link decodeCursor}.
+ *
+ * Two deliberate differences from {@link decodeCursor}, both because this
+ * mirrors a DIFFERENT Rust function:
+ *
+ *  - a MISSING `version` key decodes as the current version. `Cursor::decode`
+ *    treats pre-versioning cursors as version 1 by design (`mod.rs:654-657`);
+ *    `QueryCursor::decode` has no such clause;
+ *  - `id` is a required `String` and `rank` an optional `f64`, so those are
+ *    what serde would reject on — there is no `values` array here.
+ */
+function decodeSearchCursor(s: string): SearchCursor {
+  if (!isBase64UrlNoPad(s)) {
+    throw validationRejection('invalid cursor: invalid base64')
+  }
+  let json: string
+  try {
+    json = base64UrlToUtf8(s, { fatal: true })
+  } catch {
+    throw validationRejection('invalid cursor UTF-8: invalid utf-8 sequence')
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    throw validationRejection('invalid cursor JSON: not valid JSON')
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw validationRejection('invalid cursor JSON: not an object')
+  }
+  const obj = parsed as Record<string, unknown>
+  // The version comparison runs BEFORE the field shapes, which is the order
+  // `Cursor::decode` reads them in: it pulls `version` off the untyped
+  // `serde_json::Value` and rejects a mismatch (`mod.rs:654-670`), and only
+  // THEN hands the value to `serde_json::from_value::<Cursor>`
+  // (`mod.rs:675-676`). Get this backwards and `{"version":2}` reports a
+  // missing `id` on a cursor the backend refuses for its version.
+  const version = obj['version'] === undefined ? PAGINATION_CURSOR_VERSION : obj['version']
+  if (version !== PAGINATION_CURSOR_VERSION) {
+    throw validationRejection(
+      `cursor: unsupported version ${String(version)} (expected ${PAGINATION_CURSOR_VERSION})`,
+    )
+  }
+  if (typeof obj['id'] !== 'string') {
+    throw validationRejection('invalid cursor JSON: missing `id`')
+  }
+  const rawRank = obj['rank']
+  if (rawRank !== undefined && rawRank !== null && !Number.isFinite(rawRank)) {
+    throw validationRejection('invalid cursor JSON: `rank` is not a number')
+  }
+  return { id: obj['id'], rank: typeof rawRank === 'number' ? rawRank : null }
+}
+
 /**
  * `fts_fetch_filter_only_page`: the `b.id DESC` keyset with a `limit + 1`
- * overflow probe and an id-keyed `next_cursor`. The cursor is the mock's own
- * (`Cursor::for_id`'s wire shape is not reproduced byte-for-byte); each stack
- * feeds the harness its own, which is why a `cursor_from` chain compares the
- * ROWS a page holds rather than the cursor string.
+ * overflow probe and an id-keyed `next_cursor` (`Cursor::for_id`, hence the
+ * `v1:{id}` shape).
+ *
+ * `has_more` is READ OFF the cursor rather than computed beside it (#3943):
+ * the two answer the same question, and a handler that computes them
+ * separately can — and in the FTS arm below, did — report `has_more: true`
+ * with `next_cursor: null`, a state no backend produces and no client can act
+ * on.
  */
 function searchIdDescPage(
   candidates: Record<string, unknown>[],
@@ -947,24 +1277,81 @@ function searchIdDescPage(
 ): SearchPageResponse {
   let rows = candidates.toSorted(byIdDesc)
   if (cursor != null) {
-    let afterId: string | null = null
-    try {
-      afterId = (JSON.parse(base64UrlToUtf8(cursor)) as { id?: string }).id ?? null
-    } catch {
-      afterId = null
-    }
     // `b.id < ?` — strictly after the previous page's last (oldest) row.
-    if (afterId != null) rows = rows.filter((b) => (b['id'] as string) < afterId)
+    const after = decodeSearchCursor(cursor).id
+    rows = rows.filter((b) => (b['id'] as string) < after)
   }
-  const slice = rows.slice(0, limit + 1)
-  const hasMore = slice.length > limit
-  const items = hasMore ? slice.slice(0, limit) : slice
-  const last = items.at(-1)
+  const window = rows.slice(0, limit + 1)
+  const items = window.slice(0, limit)
+  const boundary = window.length > limit ? items.at(-1) : undefined
+  const nextCursor = boundary ? encodeSearchCursor(boundary['id'] as string, null) : null
   return {
     items,
-    next_cursor:
-      hasMore && last ? utf8ToBase64Url(JSON.stringify({ id: last['id'], version: 1 })) : null,
-    has_more: hasMore,
+    next_cursor: nextCursor,
+    has_more: nextCursor !== null,
+    total_count: null,
+  }
+}
+
+/**
+ * `search_fts` (`agaric-store/src/fts/search/cursor.rs`): the `(rank, id)`
+ * keyset the FTS arm pages on, over `ORDER BY fts.rank, b.id`
+ * (`fts/search/fetch.rs:292`).
+ *
+ * #3943 — before this the arm returned insertion order with a `limit + 1`
+ * probe and `next_cursor: null`, so it reported a second page that no client
+ * could fetch. Two things were missing and both are here: a total ORDER to
+ * resume within, and the `(rank, id)` cursor `search_fts` mints from the
+ * boundary row (`cursor.rs`, `Cursor::for_id_and_rank`).
+ *
+ * The keyset predicate is `fetch.rs:199-201`'s, epsilon included:
+ * `rank > cursor_rank + eps OR (|rank - cursor_rank| <= eps AND id > cursor_id)`
+ * with `eps = 1e-9 * MAX(1, |cursor_rank|)` — a RELATIVE band (#1598) so the
+ * tolerance scales with the rank's magnitude. The mock's ranks are exact
+ * doubles that never round-trip through SQLite, so the band absorbs nothing
+ * here; it is mirrored because it is what decides which side of the boundary
+ * an EQUAL-ranked row falls on, and equal ranks are the common case in a small
+ * fixture (two blocks with identical stripped text rank identically on both
+ * stacks, and are then separated by `id` alone).
+ *
+ * A cursor minted by the FILTER-ONLY arm carries no `rank`; `rank ?? 0` is
+ * then the same `c.rank.unwrap_or(0.0)` `search_fts` applies (`cursor.rs`),
+ * so a caller that swaps arms mid-pagination degrades identically on both
+ * stacks instead of crashing on either.
+ */
+function searchFtsRankedPage(
+  candidates: Record<string, unknown>[],
+  foldedQuery: string,
+  cursor: string | null,
+  limit: number,
+): SearchPageResponse {
+  let ranked = candidates
+    .map((b) => ({
+      b,
+      rank: approximateFtsRank(stripForFts(b['content'] as string | null), foldedQuery),
+    }))
+    .toSorted((x, y) => x.rank - y.rank || (x.b['id'] as string).localeCompare(y.b['id'] as string))
+  if (cursor != null) {
+    const after = decodeSearchCursor(cursor)
+    const afterRank = after.rank ?? 0
+    const eps = 1e-9 * Math.max(1, Math.abs(afterRank))
+    ranked = ranked.filter(
+      (r) =>
+        r.rank > afterRank + eps ||
+        (Math.abs(r.rank - afterRank) <= eps && (r.b['id'] as string) > after.id),
+    )
+  }
+  const window = ranked.slice(0, limit + 1)
+  const items = window.slice(0, limit)
+  const boundary = window.length > limit ? items.at(-1) : undefined
+  // `search_fts` mints the cursor from `rows[limit - 1]` — the LAST row of the
+  // page it is about to return, not the probe row it discards.
+  const nextCursor = boundary ? encodeSearchCursor(boundary.b['id'] as string, boundary.rank) : null
+  return {
+    items: items.map((r) => r.b),
+    next_cursor: nextCursor,
+    // Derived, not computed alongside — see `searchIdDescPage`.
+    has_more: nextCursor !== null,
     total_count: null,
   }
 }
@@ -979,13 +1366,20 @@ function searchIdDescPage(
  *
  * JS `\b` is already the ASCII-only boundary Rust spells `(?-u:\b)` as long as
  * the regex is not compiled with the `u` flag, which is why none is passed.
+ *
+ * BOTH composers NFC-normalise the pattern first — `compose_literal_pattern`
+ * (`toggle_filter.rs:567`) and `regex_mode_query` (`toggle_filter.rs:762`) —
+ * and neither normalises the CONTENT they run against, which stays as the user
+ * typed it. That asymmetry is the backend's, so it is reproduced rather than
+ * repaired: an NFD-stored block still evades an NFC pattern on both stacks.
  */
 function buildSearchRegex(
   query: string,
   filter: Record<string, unknown>,
   literal: boolean,
 ): RegExp | null {
-  const body = literal ? query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : query
+  const nfc = query.normalize('NFC')
+  const body = literal ? nfc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : nfc
   const source = filter['wholeWord'] === true ? `\\b(?:${body})\\b` : `(?:${body})`
   const flags = filter['caseSensitive'] === true ? '' : 'i'
   try {
@@ -1021,8 +1415,9 @@ export const searchHandlers = {
   // The FLAT path (no `groupBy`) now evaluates the `FilterExpr` against every
   // active, in-space block via `metaRowMatchesExpr` (which reuses the
   // conformance-guarded per-primitive matrix), narrows to a `fulltext` MATCH
-  // when one is present (a folded-substring test over the block's own
-  // `content` — see `approximateFtsRank`'s docs for what that leaves out),
+  // when one is present (#3938 — a case-folded substring test over the
+  // block's `fts_blocks.stripped` text, NOT its raw `content`; see
+  // `stripForFts` and `approximateFtsRank`'s docs for what that leaves out),
   // and orders the matched blocks via `resolveSortTerms` (#3837 — mirrors
   // `resolve_sort` in `agaric-store/src/query/engine.rs`: explicit `sort`
   // keys in request order, else `Relevance` when `fulltext` is present else
@@ -1095,7 +1490,7 @@ export const searchHandlers = {
     // `search_blocks`'s `!query` short-circuit.
     const fulltext = (request['fulltext'] as string | null | undefined) ?? ''
     const hasFulltext = fulltext.length > 0
-    const foldedQuery = hasFulltext ? foldForSearch(fulltext) : ''
+    const foldedQuery = hasFulltext ? foldForFtsIndex(fulltext) : ''
     const edges = deriveLinkEdges(blocks)
     const matched: MatchedEntry[] = []
     for (const b of blocks.values()) {
@@ -1128,11 +1523,13 @@ export const searchHandlers = {
       const entry: MatchedEntry = { b, row }
       if (!metaRowMatchesExpr(row, filterExpr, () => rawLastEditedOf(entry))) continue
       // Full-text narrowing: the engine INTERSECTS `fts_blocks MATCH ?` with
-      // the structural predicate (`FROM fts_blocks fts JOIN blocks b …`).
-      // The mock approximates the MATCH with a folded substring test over
-      // the row's own content — see `approximateFtsRank`'s docs for what
-      // that leaves out (referenced tag/page names, real FTS5 query syntax).
-      if (hasFulltext && !matchesSearchFolded(row.content ?? '', fulltext)) continue
+      // the structural predicate (`FROM fts_blocks fts JOIN blocks b …`). The
+      // mock approximates the MATCH with a case-folded substring test over the
+      // row's `fts_blocks.stripped` text ({@link stripForFts}, #3938) — the
+      // SAME memo the relevance rank reads, which is what keeps the two
+      // coupled. See `approximateFtsRank`'s docs for what remains approximated
+      // (the score, and the FTS5 query grammar).
+      if (hasFulltext && !matchesFtsIndex(strippedFtsOf(entry), fulltext)) continue
       matched.push(entry)
     }
     // #3837 — honour the request's `sort`, defaulting to relevance-first when
@@ -1181,7 +1578,7 @@ export const searchHandlers = {
    * #3927 — the four reachable arms of `fts::search_with_toggles`
    * (`agaric-store/src/fts/toggle_filter.rs`), in the backend's dispatch
    * ORDER. Before this the handler was `if (!query) return empty` plus a
-   * folded-substring scan over every block: it ignored `filter` entirely, so
+   * substring scan over every block: it ignored `filter` entirely, so
    * three of the four arms were absent and the fourth was unscoped.
    *
    * The conformance ratchet reported `search_blocks` as covered throughout,
@@ -1212,11 +1609,21 @@ export const searchHandlers = {
    * then over-returns; no conformance step drives one, which is exactly why
    * the gap should be closed by a step rather than trusted.
    *
-   * The FTS5 candidate set is approximated by {@link matchesSearchFolded}
-   * over the block's own `content` (the pre-existing approximation — the real
-   * index is a trigram scan over `fts_blocks.stripped`, which also carries
-   * resolved tag / page reference names). Its ORDER is insertion order, not
-   * bm25 rank, so the two toggle steps that ride it are unordered.
+   * The FTS5 candidate set is {@link matchesFtsIndex} over
+   * {@link stripForFts}'s text (#3938) — the same `fts_blocks.stripped` column
+   * the trigram index holds, so markup is gone, `#[ULID]` / `[[ULID]]`
+   * references read as their target's NAME, and diacritics are NOT folded. It
+   * was `matchesSearchFolded` over raw `content` until #3938, which both
+   * over-matched (a diacritic-insensitive hit the index cannot produce) and
+   * under-matched (a referenced page title the index carries and raw content
+   * does not). What is still approximated is the QUERY side: a whole-query
+   * substring test, not `sanitize_fts_query`'s trigram token list.
+   *
+   * Its ORDER is `(rank, id)` (#3943) — `approximateFtsRank` ascending, `id`
+   * ascending as the tiebreak, mirroring `ORDER BY fts.rank, b.id`. The rank
+   * VALUES are a density approximation, not bm25, so the order is comparable
+   * across stacks only where ranks tie and `id` decides; the toggle steps that
+   * ride it stay unordered for that reason.
    */
   search_blocks: (args): SearchPageResponse => {
     const a = args as Record<string, unknown>
@@ -1254,48 +1661,58 @@ export const searchHandlers = {
       return { items, next_cursor: null, has_more: false, total_count: null }
     }
 
-    // Unicode-aware fold so the mock parity-matches the real backend's FTS5 /
-    // `COLLATE NOCASE` behaviour for Turkish / German / accented inputs.
+    // The FTS5 MATCH: a case-folded (NOT diacritic-folded) test over each
+    // block's `fts_blocks.stripped` text — see `stripForFts` (#3938).
     const ftsCandidates = candidates.filter((b) =>
-      matchesSearchFolded((b['content'] as string) ?? '', query),
+      matchesFtsIndex(stripForFts(b['content'] as string | null), query),
     )
 
-    // Arm 4 — every toggle off: the FTS5 candidate set IS the answer.
+    // Arm 4 — every toggle off: the FTS5 candidate set IS the answer,
+    // rank-ordered and `(rank, id)`-keyset paginated (`search_fts`).
     if (filter['caseSensitive'] !== true && filter['wholeWord'] !== true) {
-      const slice = ftsCandidates.slice(0, limit + 1)
-      const hasMore = slice.length > limit
-      return {
-        items: hasMore ? slice.slice(0, limit) : slice,
-        // The mock's candidate order is insertion order, not bm25 rank, so it
-        // has no rank keyset to mint a resumable cursor from. `has_more` is
-        // still honest about the overflow.
-        next_cursor: null,
-        has_more: hasMore,
-        total_count: null,
-      }
+      return searchFtsRankedPage(ftsCandidates, foldForFtsIndex(query), cursor, limit)
     }
 
     // Arm 5 — `caseSensitive` and/or `wholeWord` (and NOT `isRegex`): narrow
     // the case-insensitive FTS5 candidate set with the composed literal
     // pattern (`compose_literal_pattern` escapes the query, so metacharacters
     // stay literal here too).
+    //
+    // THIS is what arm 4's deletion would fall through to, and the two now
+    // disagree wherever `fts_blocks.stripped` differs from raw `blocks.content`
+    // — `post_filter_row` (`toggle_filter.rs:618-642`) matches the composed
+    // pattern against the RAW column, so a block whose term survives only in
+    // the stripped text is an arm-4 hit and an arm-5 miss. That divergence is
+    // the whole of #3938: it is the only observable difference between the two
+    // arms, and modelling `strip_for_fts` is what made it expressible here.
     const re = buildSearchRegex(query, filter, true)
     const survivors = ftsCandidates.filter((b) => searchRegexMatches(re, b))
-    const slice = survivors.slice(0, limit + 1)
-    const hasMore = slice.length > limit
-    return {
-      items: hasMore ? slice.slice(0, limit) : slice,
-      next_cursor: null,
-      has_more: hasMore,
-      total_count: null,
-    }
+    // `fts_fetch_post_filtered_page` (`fts/search/post_filter.rs:228-250`) pages
+    // the SURVIVOR set on the same `(rank, id)` keyset, minting
+    // `Cursor::for_id_and_rank` from the last RETURNED survivor — so this arm
+    // gets the same treatment as arm 4, over a narrowed candidate list.
+    //
+    // Its `truncated_by_window_cap` branch (#1556 — the survivor scan ran out
+    // of WINDOWS before filling a page, so `has_more` is true off an
+    // under-full page) has no analogue here: this scan walks every candidate
+    // in one pass, so `fts_exhausted` always holds when the page is short and
+    // the branch's condition `!page_full && !fts_exhausted` is unsatisfiable.
+    // Modelling it would need a window ceiling the mock does not have.
+    return searchFtsRankedPage(survivors, foldForFtsIndex(query), cursor, limit)
   },
 
   search_blocks_partitioned: (args) => {
-    // Phase 1 — partitions a single content-fold over `blocks`
+    // Phase 1 — partitions a single content scan over `blocks`
     // into `pages` (block_type='page') and `blocks` (unrestricted). The
     // real backend caps each partition independently from one FTS scan;
-    // the mock mirrors that wire shape on a folded-substring filter.
+    // the mock mirrors that wire shape on a substring filter.
+    //
+    // #3938 — the two `search_fts_partitioned` scans read the SAME
+    // `fts_blocks.stripped` column `search_fts` does, so this filter runs the
+    // same {@link matchesFtsIndex} over {@link stripForFts} as `search_blocks`.
+    // It was `matchesSearchFolded` over raw content, which made the two
+    // commands disagree about which blocks match the same query — a divergence
+    // between two mock handlers, on top of the one from the backend.
     const a = args as Record<string, unknown>
     const query = (a['query'] as string) ?? ''
     const pageLimit = (a['pageLimit'] as number) ?? 0
@@ -1306,7 +1723,7 @@ export const searchHandlers = {
     const matching = [...blocks.values()].filter(
       (b) =>
         !(b['deleted_at'] as string | null) &&
-        matchesSearchFolded((b['content'] as string) ?? '', query),
+        matchesFtsIndex(stripForFts(b['content'] as string | null), query),
     )
 
     const pagesAll = matching.filter((b) => (b['block_type'] as string) === 'page')

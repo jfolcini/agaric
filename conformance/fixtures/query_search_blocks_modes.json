@@ -1,5 +1,5 @@
 {
-  "description": "#3927 — BRANCH differential over `search_blocks`'s four reachable dispatch arms in `fts::search_with_toggles` (`agaric-store/src/fts/toggle_filter.rs`), plus `run_advanced_query`'s full-text arm, which needs the same materializer-populated `fts_blocks` rows. `search_blocks` had ONE query step (`search_zebrafish`), which leaves every toggle at its `serde(default) = false` and a blank `filter`, so it drove the FTS5 MATCH arm alone while the ratchet read the command as covered. The three other reachable arms differ in FROM clause, ORDER BY and pagination, and the mock had implemented NONE of them. Every block's content arrives via `edit_block` rather than the seed insert: the seed bypasses the materializer, so only an op-driven content write populates `fts_blocks` — a step searching seeded text would compare an empty backend result against a populated mock one. The four `search_blocks` steps share one query family (`widget` / `note`) so each falsifies the others: the same term returns a different row set per arm.",
+  "description": "#3927 — BRANCH differential over `search_blocks`'s four reachable dispatch arms in `fts::search_with_toggles` (`agaric-store/src/fts/toggle_filter.rs`), plus `run_advanced_query`'s full-text arm, which needs the same materializer-populated `fts_blocks` rows. `search_blocks` had ONE query step (`search_zebrafish`), which leaves every toggle at its `serde(default) = false` and a blank `filter`, so it drove the FTS5 MATCH arm alone while the ratchet read the command as covered. The three other reachable arms differ in FROM clause, ORDER BY and pagination, and the mock had implemented NONE of them. Every block's content arrives via `edit_block` rather than the seed insert: the seed bypasses the materializer, so only an op-driven content write populates `fts_blocks` — a step searching seeded text would compare an empty backend result against a populated mock one. The four `search_blocks` steps share one query family (`widget` / `note`) so each falsifies the others: the same term returns a different row set per arm. #3938 / #3943 extend it: S7 carries markup that HIDES its search term from raw content (the only input on which arm 4 and its post-filter fallthrough disagree, so the `!toggles.any()` branch is falsifiable at last), and S8/S9 are a byte-identical pair used to pin a two-page FTS walk through the `(rank, id)` cursor arm 4 now mints.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -80,11 +80,59 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Sprocket **gad**get inventory",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "gizmo calibration record",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "gizmo calibration record",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 4,
+      "count": 7,
       "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
         {
           "op_type": "edit_block"
         },
@@ -158,6 +206,30 @@
       "name": "advanced_fulltext_widget",
       "rows": ["B2", "B3", "B4", "B6"],
       "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_fts_stripped_markup",
+      "rows": ["B7"],
+      "total_count": null
+    },
+    {
+      "cursor": "v1:{id,rank}",
+      "error": null,
+      "has_more": true,
+      "name": "search_fts_paged_page1",
+      "rows": ["B8"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_fts_paged_page2",
+      "rows": ["B9"],
+      "total_count": null
     }
   ],
   "name": "query_search_blocks_modes",
@@ -187,6 +259,27 @@
       "args": {
         "blockId": "S6",
         "toText": "Widget offsite notes"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "toText": "Sprocket **gad**get inventory"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "toText": "gizmo calibration record"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "toText": "gizmo calibration record"
       },
       "command": "edit_block"
     }
@@ -300,6 +393,54 @@
       "command": "run_advanced_query",
       "comment": "`run_advanced_query`'s full-text arm: `fulltext` flips the engine's FROM from `blocks b` to `fts_blocks fts JOIN blocks b`, prefixes the predicate with `fts_blocks MATCH ?1`, shifts every bind by one, and defaults the sort to relevance. Unordered because bm25 rank is not comparable across stacks; the row SET is, and it is what an ignored `fulltext` would blow open — a structural-only query over this space returns all six blocks.",
       "name": "advanced_fulltext_widget"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "limit": 50,
+        "query": "gadget"
+      },
+      "command": "search_blocks",
+      "comment": "#3938 — arm 4's FALSIFIER. `fts_blocks.stripped` is `strip_for_fts_with_maps`'s output, so S7's `Sprocket **gad**get inventory` is indexed as `Sprocket gadget inventory` and the term `gadget` exists ONLY there — it is absent from the raw `blocks.content` column. That is the one input on which the `!toggles.any()` fast path and its post-filter fallthrough disagree: `compose_literal_pattern` composes `(?i)gadget` and `post_filter_row` runs it against RAW content, which does not match. Delete the fast path (on either stack) and this step returns []. Before #3938 the mock folded over raw content, so it could not express the difference and the arm was declared covered-but-not-falsifiable.",
+      "name": "search_fts_stripped_markup"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "limit": 1,
+        "query": "gizmo"
+      },
+      "command": "search_blocks",
+      "comment": "#3943 — page 1 of a PAGED FTS search. S8 and S9 carry byte-identical content, so they rank identically on both stacks (bm25 depends on term frequency and document length, both equal) and `ORDER BY fts.rank, b.id` is decided by the id tiebreak alone — the one shape in which an FTS page is comparable across stacks at all, since the rank VALUES are not. `ordered` for that reason. Records `has_more: true` WITH a `v1:{id,rank}` cursor: the mock used to answer `has_more: true` with `next_cursor: null` here, which no backend produces and no client can act on.",
+      "name": "search_fts_paged_page1",
+      "ordered": true
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "limit": 1,
+        "query": "gizmo"
+      },
+      "command": "search_blocks",
+      "comment": "#3943 — page 2, resumed from page 1's `(rank, id)` cursor. This is the step a `next_cursor: null` regression reddens: the mock would re-deliver B8 forever. Each stack feeds itself its OWN cursor bytes, so what is compared is the ROW the resumed page holds.",
+      "cursor_from": "search_fts_paged_page1",
+      "name": "search_fts_paged_page2",
+      "ordered": true
     }
   ],
   "seed": {
@@ -345,6 +486,27 @@
         "id": "S6",
         "parent_id": "S5",
         "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S7",
+        "parent_id": "S5",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S8",
+        "parent_id": "S5",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S9",
+        "parent_id": "S5",
+        "position": 4
       }
     ],
     "properties": [],
