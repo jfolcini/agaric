@@ -87,6 +87,60 @@ export interface QueryStep {
    * contains (#3821: an ordering divergence changes WHICH rows a page holds).
    */
   cursor_from?: string
+  /**
+   * DECLARATION, not input: this runner and its Rust twin both ignore it
+   * completely, and nothing about the replay or the projection changes if it
+   * is added, removed or wrong here. It exists for the guards that read the
+   * fixture FILE — see "Declaration keys" below.
+   *
+   * "The empty result this step records is the assertion, not an accident."
+   * Required on any step whose recorded `rows` is `[]` without a recorded
+   * `error`: an empty projection is authored and compared exactly like a
+   * populated one, so a step whose args select nothing passes the differential
+   * having compared nothing. #3937: a DECLARED-empty step also counts as live
+   * coverage of its branch, since a mock answering with rows fails it — an
+   * undeclared one does not.
+   */
+  expect_empty?: boolean
+  /**
+   * DECLARATION, not input, exactly like {@link QueryStep.expect_empty}: the
+   * `AppErrorKind` wire string ({@link QueryResult.error}) this step's command
+   * is expected to REFUSE with.
+   *
+   * "The refusal is the point." Required on any step that records an `error`
+   * (#3946). `run_step` propagates production errors rather than `expect`ing
+   * them (#3928), which is what made an intended refusal expressible — and
+   * also what made a fixture-authoring mistake (an out-of-range `limit`, a bad
+   * argument combination, a malformed id) record as `"error": "validation"`
+   * instead of panicking. Both look identical downstream, so the author says
+   * which was meant.
+   *
+   * ## Declaration keys
+   *
+   * Every key in this group is inert to BOTH runners and enforced elsewhere,
+   * in two places that must agree:
+   *
+   * - `run_query_steps` in the Rust twin, at AUTHORING time — it panics on a
+   *   non-string `expect_error`, an undeclared refusal, a declaration that
+   *   succeeded and a declaration naming a different kind, all before
+   *   `CONFORMANCE_UPDATE=1` can write the recording. This is the gate that
+   *   actually stops a mistake reaching a fixture.
+   * - the `#3083 conformance-coverage ratchet` suite in
+   *   `conformance-coverage.test.ts`, over the fixture FILE — the same four
+   *   arms plus `expect_empty`'s (`vacuous`, `staleEmptyClaim`,
+   *   `misdeclaredRefusal`, and a `comment` requirement on both keys). It
+   *   catches a hand-edit with no Rust toolchain and names every offender at
+   *   once, and it is where the liveness verdict reads the declarations.
+   */
+  expect_error?: string
+  /**
+   * Which NEGATIVE the declaration above pins, in prose. Required alongside
+   * `expect_empty` and alongside `expect_error` (enforced by the ratchet, not
+   * here): both keys are escape hatches from a guard, and a bare one waves off
+   * a step that is empty — or that refuses — by MISTAKE as cheaply as one that
+   * is so on purpose. Inert here.
+   */
+  comment?: string
 }
 
 export interface QueryResult {

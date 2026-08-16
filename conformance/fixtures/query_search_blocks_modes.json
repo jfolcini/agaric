@@ -123,6 +123,14 @@
       "cursor": null,
       "error": null,
       "has_more": false,
+      "name": "search_blank_query_unfiltered",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
       "name": "search_regex_anchored_widget",
       "rows": ["B6", "B3", "B2"],
       "total_count": null
@@ -215,6 +223,22 @@
       "comment": "Arm 2 — a BLANK query with at least one structural filter is NOT the empty early return: it degrades to `fts_fetch_filter_only_page`, a `FROM blocks b` scan with no FTS5 at all, ordered `b.id DESC`. `ordered` because that recency order is the arm's whole point and the ids are seed ids (byte-identical on both stacks). Pins three things at once: that a blank query with a filter returns rows, that `parentId` restricts to S1's three children (S6 hangs off the other page, S1/S5 are pages), and the DESC direction.",
       "name": "search_blank_query_parent_filter",
       "ordered": true
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "Arm 1 (#3937) — the OTHER half of the blank-query test, and the reason `search_with_toggles` splits its early return in two: with no structural filter at all (`scope` is not a user filter, so `has_filters` is false) the arm returns the EMPTY page by construction, without reading a row. `expect_empty` because that emptiness IS the behaviour, not a selection that happened to miss: it is the negative half of a pair with `search_blank_query_parent_filter` directly above, which is the SAME blank query plus one `parentId` — so the two steps differ in exactly the discriminator (`has_filters`) and a mock that ignored it would redden one of them whichever way it guessed. A mock that answered a blank unfiltered search with the whole database — the natural \"no filters means no restriction\" reading — fails this step.",
+      "expect_empty": true,
+      "name": "search_blank_query_unfiltered"
     },
     {
       "args": {

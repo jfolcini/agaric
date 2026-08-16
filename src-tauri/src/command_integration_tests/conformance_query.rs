@@ -1522,6 +1522,66 @@ pub async fn run_query_steps(
                 serde_json::to_value(e.kind()).expect("serialize AppErrorKind"),
             ),
         };
+        // #3946 — a refusal must be DECLARED. `?`-propagation (#3928) is what
+        // made an intended refusal expressible, but it also removed the
+        // authoring safety net it replaced: before it, a fixture-authoring
+        // mistake that made a command fail — an out-of-range `limit`, a bad
+        // argument combination, a malformed id — panicked here, loudly. After
+        // it, the same mistake is recorded as `"error": "validation"` and
+        // baked into `expected_queries` by `CONFORMANCE_UPDATE=1`, where the
+        // coverage ratchet then reads it as LIVE evidence that the command was
+        // exercised. A step that never reached the command would read exactly
+        // like one that did.
+        //
+        // `expect_error` restores the net without giving up the capability: an
+        // intended refusal SAYS so and is recorded; an unintended one fails
+        // here, before the update flow can write it down. This is the same
+        // "declare the negative" discipline `expect_empty` applies to an empty
+        // row set, for the same reason — an empty answer and a failed answer
+        // are both indistinguishable from a broken harness unless the author
+        // says which they meant. Both keys are inert to the projection: they
+        // gate what may be RECORDED, they are not part of the recording.
+        //
+        // Three arms, because a half-checked pair is how a declaration rots:
+        // an undeclared refusal, a declaration that no longer refuses, and a
+        // declaration that names a DIFFERENT kind than the one raised.
+        let declared: Option<&str> = match step.get("expect_error") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) => Some(s.as_str()),
+            Some(other) => panic!(
+                "{at}: `expect_error` must be an AppErrorKind wire string (e.g. \"not_found\"), \
+                 got {other}"
+            ),
+        };
+        match (declared, error.as_str()) {
+            (None, Some(kind)) => panic!(
+                "{at}: the command REFUSED with `{kind}`, and the step did not declare it. \
+                 A refusal is only evidence when it was intended: an out-of-range `limit`, a \
+                 bad argument combination or a malformed id refuses exactly like a pinned \
+                 404 does, and recording it would bake the authoring mistake into \
+                 `expected_queries` where the coverage ratchet counts it as live coverage of \
+                 a command the step never reached. FIX by EITHER correcting the step's args, \
+                 OR — if the refusal IS the behaviour being pinned — adding \
+                 \"expect_error\": \"{kind}\" to the step plus a \"comment\" saying which \
+                 refusal it pins."
+            ),
+            (Some(kind), None) => panic!(
+                "{at}: the step declares \"expect_error\": \"{kind}\" but the command \
+                 SUCCEEDED. Both arms or neither: a declaration that no longer refuses is a \
+                 stale claim, and leaving it would let the step read as a pinned refusal \
+                 while asserting a served answer. FIX by EITHER restoring the input that \
+                 makes the command refuse, OR dropping the declaration."
+            ),
+            (Some(declared), Some(kind)) if declared != kind => panic!(
+                "{at}: the step declares \"expect_error\": \"{declared}\" but the command \
+                 refused with `{kind}`. The recorded kind is what the mock has to reproduce, \
+                 so a declaration naming a different one describes a refusal nobody is \
+                 asserting. FIX by EITHER declaring `{kind}`, OR restoring the input that \
+                 raises `{declared}`."
+            ),
+            _ => {}
+        }
+
         cursors.insert(name.clone(), raw.next_cursor.clone());
         let cursor = cursor_shape(raw.next_cursor.as_deref());
         let mut rows: Vec<String> = raw.rows.iter().map(|t| relabel_token(t, labels)).collect();
@@ -2556,6 +2616,119 @@ mod query_runner_context_tests {
                 "command": "list_page_links",
                 "args": { "scope": "global" },
             }],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    // ── #3946: a refusal is only recorded when it was DECLARED ──────────────
+    //
+    // These five drive `run_query_steps` itself rather than a helper, because
+    // the thing under test is what the RUNNER agrees to write down. All five
+    // arms are otherwise untestable from the fixture set: every shipped fixture
+    // is green by construction, so the panics below never fire in the suite and
+    // would rot unnoticed.
+
+    /// An id that exists nowhere, so `get_block` answers `NotFound`.
+    const MISSING: &str = "00000000000000000000000ZZZ";
+
+    /// The hole #3946 names: `run_step` propagates production errors, so an
+    /// authoring mistake (a bad id here; an out-of-range `limit` or a wrong
+    /// argument combination just as easily) is a recordable answer. Undeclared,
+    /// it must not become one.
+    #[tokio::test]
+    #[should_panic(
+        expected = "fixture 'refusal_demo' query step 'block_that_is_not_there' (command \
+                    'get_block'): the command REFUSED with `not_found`, and the step did not \
+                    declare it"
+    )]
+    async fn an_undeclared_refusal_is_rejected_rather_than_recorded() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "refusal_demo",
+            "queries": [
+                { "name": "block_that_is_not_there", "command": "get_block",
+                  "args": { "blockId": MISSING } },
+            ],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// The other half: DECLARED, the same refusal is the recording — the #3928
+    /// capability is not what #3946 takes away.
+    #[tokio::test]
+    async fn a_declared_refusal_is_recorded() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "refusal_demo",
+            "queries": [
+                { "name": "block_that_is_not_there", "command": "get_block",
+                  "expect_error": "not_found", "args": { "blockId": MISSING } },
+            ],
+        });
+        let out = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+        assert_eq!(out[0]["error"], json!("not_found"));
+        assert_eq!(out[0]["rows"], json!([]));
+    }
+
+    /// Both arms or neither: a declaration whose command now SUCCEEDS is a
+    /// stale claim, and leaving it would let a served answer read as a pinned
+    /// refusal.
+    #[tokio::test]
+    #[should_panic(
+        expected = "fixture 'refusal_demo' query step 'block_that_is_there' (command \
+                    'get_block'): the step declares \"expect_error\": \"not_found\" but the \
+                    command SUCCEEDED"
+    )]
+    async fn a_declaration_that_no_longer_refuses_is_rejected() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "refusal_demo",
+            "queries": [
+                { "name": "block_that_is_there", "command": "get_block",
+                  "expect_error": "not_found", "args": { "blockId": CHILD } },
+            ],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// A declaration naming a DIFFERENT kind than the one raised describes a
+    /// refusal nobody is asserting — the recorded kind is what the mock has to
+    /// reproduce.
+    #[tokio::test]
+    #[should_panic(
+        expected = "fixture 'refusal_demo' query step 'block_that_is_not_there' (command \
+                    'get_block'): the step declares \"expect_error\": \"validation\" but the \
+                    command refused with `not_found`"
+    )]
+    async fn a_declaration_naming_the_wrong_kind_is_rejected() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "refusal_demo",
+            "queries": [
+                { "name": "block_that_is_not_there", "command": "get_block",
+                  "expect_error": "validation", "args": { "blockId": MISSING } },
+            ],
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
+    }
+
+    /// `expect_error: true` would read as "declared" to a bare `as_str()` and
+    /// then silently fail to match any kind, so the shape is checked rather
+    /// than coerced — a mis-typed declaration must not degrade into no
+    /// declaration at all.
+    #[tokio::test]
+    #[should_panic(
+        expected = "fixture 'refusal_demo' query step 'block_that_is_not_there' (command \
+                    'get_block'): `expect_error` must be an AppErrorKind wire string"
+    )]
+    async fn a_non_string_declaration_is_rejected() {
+        let (pool, _dir) = seeded_pool().await;
+        let fixture = json!({
+            "name": "refusal_demo",
+            "queries": [
+                { "name": "block_that_is_not_there", "command": "get_block",
+                  "expect_error": true, "args": { "blockId": MISSING } },
+            ],
         });
         let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
     }
