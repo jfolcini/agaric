@@ -6,6 +6,14 @@
  * - Zoom in/out/reset navigation callbacks
  * - Breadcrumb trail computation
  * - Visible blocks filtered and depth-adjusted for the zoomed view
+ *
+ * Scope of the collapse filter (#4038): the zoomed projection is derived from
+ * the UNFILTERED tree and re-applies collapse WITHIN the pane, instead of
+ * filtering the page-wide collapse-filtered list. A zoom root is the pane's
+ * root, so the collapse state of blocks at or ABOVE it is out of scope — it
+ * describes a page layout the pane is not showing. Filtering the page-wide
+ * list let a collapsed ANCESTOR of the zoom root delete the pane's entire
+ * contents, rendering breadcrumbs over an empty pane; see `zoomedVisible`.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -41,7 +49,12 @@ export interface UseBlockZoomReturn {
   zoomOut: () => void
   zoomToRoot: () => void
   breadcrumbs: BreadcrumbItem[]
-  /** Blocks visible in the zoomed view (depth-adjusted). Falls back to collapseVisible when not zoomed. */
+  /**
+   * Blocks visible in the zoomed view (depth-adjusted). Falls back to
+   * `collapseVisible` when not zoomed — at the page root the page-wide
+   * collapse filter IS the pane's filter. While zoomed the pane re-derives
+   * its own collapse filtering from the full tree (#4038, see below).
+   */
   zoomedVisible: ZoomedBlocks
   /**
    * Ids Ctrl/Cmd+A selects. At the page root this is the documented page-wide
@@ -64,11 +77,18 @@ export interface UseBlockZoomReturn {
 
 /**
  * @param blocks       The full flat block list (unfiltered).
- * @param collapseVisible  Blocks after collapse filtering (before zoom).
+ * @param collapseVisible  Blocks after page-wide collapse filtering (before
+ *   zoom). Used for the NOT-zoomed projection only.
+ * @param collapsedIds The EFFECTIVE collapsed set (`useBlockCollapse`'s
+ *   persisted layout minus its transient reveal overlay) — the same set
+ *   `collapseVisible` was filtered by. Required, not optional: the zoomed
+ *   projection re-applies collapse itself (#4038), so a caller that forgot to
+ *   pass it would silently render a pane with every collapsed subtree open.
  */
 export function useBlockZoom(
   blocks: FlatBlock[],
   collapseVisible: FlatBlock[],
+  collapsedIds: ReadonlySet<string>,
 ): UseBlockZoomReturn {
   const [zoomedBlockId, setZoomedBlockId] = useState<string | null>(null)
 
@@ -124,18 +144,45 @@ export function useBlockZoom(
     return trail
   }, [zoomedBlockId, blocks])
 
+  // #4038 — the pane is derived from `blocks` (unfiltered) and re-filtered by
+  // the collapsed ids found INSIDE it, rather than by filtering the page-wide
+  // `collapseVisible`. The page-wide list bakes in the collapse state of the
+  // zoom root's ancestors, and those rows are not part of this pane: with
+  // ancestor `A` collapsed and a zoom into its descendant `C`, `C` and
+  // everything under it are absent from `collapseVisible` altogether, so the
+  // pane filtered down to `[]` and rendered breadcrumbs over nothing. That
+  // became reachable when #4002 made the navigation reveal transient — the
+  // reveal holding `A` open is released by the next focus move (a same-page
+  // search hit or backlink, which `PageEditor` applies unconditionally),
+  // which silently emptied the open pane. Resolving the pane against the
+  // unfiltered tree removes the whole class: nothing above the zoom root can
+  // subtract from the pane's contents, whatever releases it and whenever.
+  //
+  // Collapse INSIDE the pane still filters, by the same single-pass
+  // skip-the-collapsed-subtree scan as `useBlockCollapse`'s page-wide
+  // `visibleBlocks` (kept inline here because this pass also restricts to the
+  // zoom root's descendants and rebases `depth` in the same walk). The zoom
+  // root's own collapsed flag is deliberately NOT consulted: it is the pane's
+  // root, and "zoom into a block" means show its contents.
   const zoomedVisible = useMemo<ZoomedBlocks>(() => {
     if (!zoomedBlockId) return viewScope(collapseVisible)
     const zoomedBlock = blocks.find((b) => b.id === zoomedBlockId)
     if (!zoomedBlock) return viewScope(collapseVisible)
     const depthOffset = zoomedBlock.depth + 1
     const descendants = getDragDescendants(blocks, zoomedBlockId)
-    return viewScope(
-      collapseVisible
-        .filter((b) => descendants.has(b.id))
-        .map((b) => Object.assign({}, b, { depth: b.depth - depthOffset })),
-    )
-  }, [zoomedBlockId, blocks, collapseVisible])
+    const result: FlatBlock[] = []
+    const skipUntilDepth: number[] = []
+    for (const block of blocks) {
+      if (!descendants.has(block.id)) continue
+      while (skipUntilDepth.length > 0 && block.depth <= (skipUntilDepth.at(-1) as number)) {
+        skipUntilDepth.pop()
+      }
+      if (skipUntilDepth.length > 0) continue
+      result.push(Object.assign({}, block, { depth: block.depth - depthOffset }))
+      if (collapsedIds.has(block.id)) skipUntilDepth.push(block.depth)
+    }
+    return viewScope(result)
+  }, [zoomedBlockId, blocks, collapseVisible, collapsedIds])
 
   // See `UseBlockZoomReturn.selectAllIds` for why the page-wide arm is legal.
   const selectAllIds = useMemo<SelectAllScopeIds>(

@@ -549,5 +549,30 @@ describe('useBlockCollapse', () => {
       expect(result.current.collapsedIds.has('A')).toBe(true)
       expect(stored()).toEqual(['A'])
     })
+
+    // #4038 note 3 — the JSDoc used to promise a reference-stable no-op for an
+    // unknown id, which was never what the code did. The doc now states the
+    // real (and safer) behaviour: an unknown target reveals nothing, so it
+    // releases the overlay exactly like a target with no collapsed ancestors.
+    // Pinned here so the doc and the code cannot drift apart again —
+    // `BlockTree`'s `blocksById.has(...)` guard means no production caller
+    // reaches it, so nothing else would notice a change.
+    it('releases the reveal when asked to reveal an id that is not on the page', () => {
+      localStorage.setItem('collapsed_ids:PAGE_1', JSON.stringify(['A']))
+      const { result } = renderHook(() => useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1' }))
+
+      act(() => {
+        result.current.expandAncestors('C')
+      })
+      expect(result.current.collapsedIds.has('A')).toBe(false)
+
+      act(() => {
+        result.current.expandAncestors('GONE')
+      })
+
+      expect(result.current.collapsedIds.has('A')).toBe(true)
+      expect(result.current.visibleBlocks.map((b) => b.id)).toEqual(['A', 'E'])
+      expect(stored()).toEqual(['A'])
+    })
   })
 })

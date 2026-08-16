@@ -87,9 +87,21 @@ export interface UseBlockCollapseReturn {
    * #4002 — the reveal is EPHEMERAL and EXCLUSIVE: it never writes the
    * persisted layout, and each call REPLACES the previous reveal. Callers pass
    * the current navigation target on every focus change, so moving focus out
-   * of a revealed subtree restores the saved collapse layout by itself. No-op
-   * (reference-stable) when `blockId` is unknown or none of its ancestors are
-   * collapsed and nothing is currently revealed.
+   * of a revealed subtree restores the saved collapse layout by itself.
+   *
+   * Reference-stable (a true no-op) only when the newly computed chain equals
+   * what is already revealed — in particular when nothing is revealed and the
+   * target has no collapsed ancestors.
+   *
+   * An UNKNOWN `blockId` is not a no-op: it yields an empty chain and
+   * therefore RELEASES any active reveal, exactly like a target with no
+   * collapsed ancestors. (#4038 — this JSDoc used to claim the opposite.)
+   * That is the safe direction for a "reveal whatever hides the current
+   * target" primitive: a target this hook cannot place is not being kept on
+   * screen by the overlay, so holding the previous chain open would strand a
+   * subtree the user has already navigated away from. `BlockTree` never
+   * reaches it — it guards with `blocksById.has(focusedBlockId)` first — but
+   * the behaviour is defined rather than accidental, and pinned by a test.
    */
   expandAncestors: (blockId: string) => void
   /** Blocks visible after collapse filtering. */

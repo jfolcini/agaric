@@ -208,11 +208,19 @@ export function BlockTree({
     // Uncapped on purpose — the mount envelope limits React rows, not the
     // semantic contents of the active zoom.
     selectAllIds,
-  } = useBlockZoom(blocks, collapseFilteredVisible)
+    // `collapsedIds` (third arg) is the EFFECTIVE collapsed set: #4038 has the
+    // zoomed projection re-apply collapse WITHIN the pane, from the unfiltered
+    // tree, instead of inheriting the page-wide filtering — under which a
+    // collapsed ANCESTOR of the zoom root emptied the pane outright.
+  } = useBlockZoom(blocks, collapseFilteredVisible, collapsedIds)
 
   // Zoom means "show me inside this block". Expand the target through the
-  // collapse hook's persisted, idempotent path before changing projection so
-  // a previously-collapsed subtree cannot become a blank zoom pane.
+  // collapse hook's persisted, idempotent path before changing projection, so
+  // the block the user just opened is still open in the saved layout when
+  // they zoom back out. Since #4038 this is no longer what keeps the pane
+  // from rendering blank — the zoomed projection ignores the zoom root's own
+  // collapsed flag (it is the pane's root) — but the intent is still the
+  // user's, so it is still saved.
   const handleZoomIn = useCallback(
     (blockId: string) => {
       expandBlock(blockId)
@@ -242,7 +250,11 @@ export function BlockTree({
   // once the block is actually mounted, doesn't belong to this page, or
   // falls outside the current zoom pane (crossing a zoom boundary is a
   // separate, not-yet-addressed case — same scope note as
-  // `mountCapExcludedIds` above).
+  // `mountCapExcludedIds` above). Still not addressed means exactly that:
+  // focusing a block outside the pane does not bring it into view. It no
+  // longer EMPTIES the pane either — the reveal released here can drop a
+  // collapsed ancestor of the zoom root, which used to delete the pane's
+  // whole contents until #4038 scoped the zoomed projection to the pane.
   //
   // #4002 — `expandAncestors` is deliberately called BEFORE the "already
   // mounted" bail: its reveal is transient and exclusive, so re-asserting the

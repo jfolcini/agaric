@@ -435,7 +435,9 @@ describe('drop pipeline — zoomed view (#712)', () => {
     // helper's output, (b) push that output through the same projection +
     // slot math as the EJECTION CASE and land on the identical reorder.
     const rows = reflatten(zoomFixture())
-    const { result } = renderHook(() => useBlockZoom(rows, rows))
+    // Third arg: the effective collapsed set (#4038). Nothing is collapsed in
+    // this fixture, so the pane's own collapse filter is a pass-through.
+    const { result } = renderHook(() => useBlockZoom(rows, rows, new Set<string>()))
     act(() => result.current.zoomIn('Z'))
 
     const realZoomedVisible = result.current.zoomedVisible
