@@ -181,8 +181,15 @@ function topLevelMembersOnly(objSource) {
   return out.join('')
 }
 
-/** The view gate 2 reads: the config object's own members, comments blanked. */
-export function remoteDriverScope(source) {
+/**
+ * The view gate 2 reads: the config object's own members, comments blanked.
+ *
+ * Module-local on purpose. It was exported with no consumer inside or outside
+ * this file — the self-test reaches it through `remoteDriverEvidence`, which is
+ * the surface that actually decides the gate. An exported helper nothing calls
+ * is a public API to keep honest for free.
+ */
+function remoteDriverScope(source) {
   return topLevelMembersOnly(configObjectSource(stripComments(source)))
 }
 
@@ -195,10 +202,18 @@ function keyPattern(name, valueTail) {
   return new RegExp(`(^|[^\\w$.])['"]?${name}['"]?\\s*:\\s*${valueTail}`, 'g')
 }
 
-// Value forms that mean "a port is configured": a numeric literal, or the
-// usual env/parse wrappers. A `port` set to something unrecognised is
-// deliberately NOT counted — this guard errs toward firing.
-const PORT_TAIL = String.raw`(\d[\d_]*|process\.env|Number\s*\(|parseInt\s*\()`
+// EVERY `port:` member, whatever its value — the value is classified after
+// the fact by `portIsTruthy`. Matching only the recognised value forms here
+// (what the old `PORT_TAIL` did) cannot be made last-wins correctly: an
+// unrecognised trailing `port: somePort` would not match at all, so an
+// earlier `port: 4444` would win as "the last match" while JS resolves the
+// key to the later one.
+const ANY_VALUE = String.raw`([^,\n}]*)`
+// A numeric literal whose truthiness this guard can decide statically.
+const NUMERIC_LITERAL_RE = /^(?:0[xX][\dA-Fa-f_]+|0[oO][0-7_]+|0[bB][01_]+|\d[\d_]*(?:\.[\d_]*)?)$/
+// Value forms whose runtime value is not knowable from source but which are
+// deliberately read as "a port is configured".
+const DYNAMIC_PORT_RE = /^(?:process\.env\b|Number\s*\(|parseInt\s*\()/
 const STRING_VALUE = String.raw`['"]([^'"]*)['"]`
 const BROWSER_NAME_RE = /(^|[^\w$.])['"]?browserName['"]?\s*:/
 
@@ -221,13 +236,37 @@ function lastStringValue(scope, name) {
 }
 
 /**
+ * Does the config's `port` member make `Boolean(options.port)` true?
+ *
+ * Two ways this used to disagree with `definesRemoteDriver`, which is the one
+ * thing this predicate exists to mirror:
+ *
+ *   - ANY-match, not last-wins. `port` was the last key still read with
+ *     `hasKey` after hostname/protocol/path moved to `lastStringValue`, so
+ *     `port: 4444, … port: 0` reported "port is set" while JS resolves the key
+ *     to `0` and `definesRemoteDriver` sees `Boolean(0) === false`.
+ *   - A falsy literal counted as evidence. `\d[\d_]*` matched `0`, so even a
+ *     LONE `port: 0` — a config with no working port at all — held the gate.
+ *
+ * Unrecognised values (`port: somePort`) stay NOT evidence: the guard errs
+ * toward firing, and a human resolves a false alarm in a minute.
+ */
+function portIsTruthy(scope) {
+  let raw
+  for (const m of scope.matchAll(keyPattern('port', ANY_VALUE))) raw = m[2].trim()
+  if (raw === undefined) return false
+  if (NUMERIC_LITERAL_RE.test(raw)) return Number(raw.replaceAll('_', '')) !== 0
+  return DYNAMIC_PORT_RE.test(raw)
+}
+
+/**
  * Gate 2 — does the config statically satisfy `definesRemoteDriver`?
  * Returns the list of reasons it does (empty ⇒ the gate is gone).
  */
 export function remoteDriverEvidence(source) {
   const scope = remoteDriverScope(source)
   const evidence = []
-  if (hasKey(scope, 'port', PORT_TAIL)) evidence.push('port is set')
+  if (portIsTruthy(scope)) evidence.push('port is set')
   const hostname = lastStringValue(scope, 'hostname')
   if (hostname !== undefined && hostname !== DEFAULT_HOSTNAME) {
     evidence.push(`hostname is non-default (${hostname})`)
@@ -276,7 +315,23 @@ export function checkWdioConf(source) {
         'extract-zip.',
     })
   }
-  if (remoteDriverEvidence(source).length === 0) {
+  let evidence
+  try {
+    evidence = remoteDriverEvidence(source)
+  } catch (err) {
+    if (!(err instanceof UnscannableConfError) && !(err instanceof ScanError)) throw err
+    // Gate 1 scans the WHOLE file and needs no `export const config`, so it can
+    // already have found the breach by the time gate 2 discovers it cannot read
+    // the config structurally at all. Dropping that finding on the floor is how
+    // `export default { capabilities: [{ browserName: 'chrome' }] }` reported
+    // only "no `export const config` declaration found" — true, and silent
+    // about the capability that is the actual breach. The unscannable verdict
+    // still stands (gate 2 is genuinely undecided, so this stays exit 2); it
+    // just carries what gate 1 did manage to establish.
+    err.brokenGates = broken
+    throw err
+  }
+  if (evidence.length === 0) {
     broken.push({
       id: 'remote-driver-options',
       why:
@@ -337,6 +392,14 @@ function run(confPath) {
     // leaves alert #50's reachability argument unverified — which must exit
     // non-zero, not print ok.
     console.error(`check-wdio-driver-gate: cannot verify ${displayPath(confPath)} — ${err.message}`)
+    // Anything gate 1 established before gate 2 gave up is still a breach and
+    // still the most useful thing on screen — naming only the unreadability
+    // buries the capability that is the actual problem.
+    const found = err.brokenGates ?? []
+    if (found.length > 0) {
+      console.error('\nWhat this guard DID establish before it lost the thread:\n')
+      for (const gate of found) console.error(`  [${gate.id}] ${gate.why}\n`)
+    }
     console.error(
       '\nThe two gates are decided by reading `export const config`. Without it this guard has\n' +
         'not disproved anything, so it reports failure rather than success. Restore a readable\n' +
@@ -453,6 +516,34 @@ function selfTest() {
     twoHostnames('10.0.0.9', DEFAULT_HOSTNAME).length === 0,
   )
 
+  // ── `port` has to agree with `Boolean(options.port)` the same way the
+  // string keys agree with theirs. It was the last key still read with an
+  // ANY-match after hostname/protocol/path became last-wins, and its value
+  // pattern (`\d[\d_]*`) accepted a falsy `0`. Both halves are pinned, in
+  // both directions — a fix that simply vetoed any `0` anywhere would pass
+  // the two failing cases while breaking a config that is genuinely fine.
+  const withPorts = (...ports) =>
+    remoteDriverEvidence(
+      sub(noRemote, 'runner:', `${ports.map((p) => `port: ${p},`).join('\n  ')}\n  runner:`),
+    )
+  check(
+    'a LONE `port: 0` does not satisfy the gate (definesRemoteDriver sees Boolean(0) === false)',
+    withPorts(0).length === 0,
+  )
+  check(
+    'a port RESET to 0 later in the config wins over the earlier real one',
+    withPorts(4444, 0).length === 0,
+  )
+  check(
+    'a real port LATER in the config is still seen (the zero check is not a blanket veto)',
+    withPorts(0, 4444).length === 1,
+  )
+  check('a lone real port satisfies the gate', withPorts(4444).length === 1)
+  check(
+    'an UNRECOGNISED port value later in the config is not evidence (errs toward firing)',
+    withPorts(4444, 'somePort').length === 0,
+  )
+
   // Gate 1 — a browserName capability appears.
   const withBrowser = real.replace(
     "'tauri:options': {",
@@ -541,6 +632,47 @@ function selfTest() {
     check(
       'a source with no `export const config` is reported UNSCANNABLE, not as a broken gate',
       threw instanceof UnscannableConfError,
+    )
+  }
+  {
+    // …and an unscannable config must not swallow what gate 1 ALREADY found.
+    // A config refactored to a default export is unreadable for gate 2, but
+    // the `browserName` capability is right there in the source. Reporting
+    // only "no `export const config` declaration found" is true and useless:
+    // it names the guard's problem and hides the config's.
+    const defaultExport = "export default { capabilities: [{ browserName: 'chrome' }] }"
+    let threw = null
+    try {
+      checkWdioConf(defaultExport)
+    } catch (err) {
+      threw = err
+    }
+    check(
+      'an unscannable config still carries the browserName breach gate 1 already found',
+      threw instanceof UnscannableConfError &&
+        (threw.brokenGates ?? []).some((g) => g.id === 'no-browser-session'),
+    )
+
+    // …and it reaches the printed REPORT, not just the thrown object, while
+    // the exit code stays 2 — gate 2 is genuinely undecided, so this is a
+    // message-quality fix and must not quietly become an exit-1 verdict.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wdio-gate-selftest-'))
+    const tmp = path.join(tmpDir, 'wdio.conf.ts')
+    fs.writeFileSync(tmp, `${defaultExport}\n`)
+    const realConsoleError = console.error
+    const printed = []
+    console.error = (...args) => printed.push(args.join(' '))
+    let code
+    try {
+      code = run(tmp)
+    } finally {
+      console.error = realConsoleError
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+    const report = printed.join('\n')
+    check(
+      'the unscannable-config report NAMES the browserName capability, still exiting 2',
+      code === 2 && report.includes('browserName') && report.includes('no-browser-session'),
     )
   }
   {

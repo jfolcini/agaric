@@ -751,29 +751,34 @@ stages = ["pre-commit"]
 # keep that true — no `browserName` capability, and remote-driver options
 # (`port`) that make `definesRemoteDriver` true — and both are checked
 # here, because until now the dismissal rested on a line of config that
-# nothing watched. Keyed to the config AND the guard script so neither
-# side can be edited without the check running. pass_filenames=false —
-# the script resolves wdio.conf.ts itself.
+# nothing watched. Keyed to the config, the guard script, AND the shared
+# scanner the guard delegates its lexing to (#3991) so no side can be
+# edited without the check running — a js-scanner edit that breaks
+# `configObjectSource` on wdio.conf.ts defangs this gate just as
+# thoroughly as editing the guard itself. pass_filenames=false — the
+# script resolves wdio.conf.ts itself.
 [[repos.hooks]]
 id = "wdio-driver-gate"
 name = "wdio never downloads a browser (extract-zip alert #50)"
 entry = "node scripts/check-wdio-driver-gate.mjs"
 language = "system"
 pass_filenames = false
-files = "^(wdio\\.conf\\.ts|scripts/check-wdio-driver-gate\\.mjs)$"
+files = "^(wdio\\.conf\\.ts|scripts/(check-wdio-driver-gate\\.mjs|lib/js-scanner\\.mjs))$"
 stages = ["pre-commit"]
 
 # Self-test the gate's own exit behavior (a config that loses its
 # remote-driver options FAILS, one that grows a browserName capability
-# FAILS, a commented-out port does NOT count as satisfying it) whenever
-# the guard script changes, so a defanged guard can't land quietly.
+# FAILS, a commented-out port does NOT count as satisfying it, and a
+# duplicate/zero `port` agrees with `Boolean(options.port)`) whenever the
+# guard script — or the shared scanner it delegates its lexing to (#3991)
+# — changes, so a defanged guard can't land quietly.
 [[repos.hooks]]
 id = "wdio-driver-gate-selftest"
 name = "wdio driver-gate guard self-test"
 entry = "node scripts/check-wdio-driver-gate.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-wdio-driver-gate\\.mjs$"
+files = "^scripts/(check-wdio-driver-gate|lib/js-scanner)\\.mjs$"
 stages = ["pre-commit"]
 
 # tauri-import-baseline (#2927): `src/lib/tauri.ts` is a hand-written IPC
