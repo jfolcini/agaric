@@ -113,12 +113,11 @@ const SYMBOL_RE = new Map(
 
 // `git ls-files` output today: 4,572 paths / ~278 KB, i.e. ~27% of Node's 1 MB
 // default `maxBuffer`, which the tree would cross at roughly 17k tracked files.
-// Overflow is not a graceful degradation in either direction: here the ENOBUFS
-// throw does not match /not a git repository/i, so it becomes an exit-2
-// invocation error that fails every commit; in the sibling
-// `check-architecture-citations.mjs` it is swallowed by a bare `catch` and
-// silently disables the guard. Both are raised to 64 MB (~230x current output)
-// and should stay in step.
+// Overflow is not a graceful degradation: the ENOBUFS throw does not match
+// /not a git repository/i, so it becomes an exit-2 invocation error that
+// fails every commit — in both this file and the sibling
+// `check-architecture-citations.mjs`, which discriminates the same way.
+// Both are raised to 64 MB (~230x current output) and should stay in step.
 const GIT_LS_FILES_MAX_BUFFER = 64 * 1024 * 1024
 
 function trackedFiles() {

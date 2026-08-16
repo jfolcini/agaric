@@ -57,9 +57,10 @@ const SECTION_MARK = String.fromCharCode(0xa7)
 const CITATION_RE = new RegExp(`ARCHITECTURE\\.md\\s*${SECTION_MARK}`)
 
 // Raised from Node's 1 MB default: `git ls-files` emits ~278 KB over 4,572
-// tracked paths today, and the bare `catch` below would turn an ENOBUFS
-// overflow into a silent "not a git repo; skipping" — the guard disabled with
-// no signal at all. Kept in step with the same constant in
+// tracked paths today, and an ENOBUFS overflow does not match
+// /not a git repository/i, so the catch below rethrows it and the guard
+// exits 2 with the cause named, rather than silently disabling itself.
+// Kept in step with the same constant in
 // `scripts/check-dead-symbol-citations.mjs`.
 const GIT_LS_FILES_MAX_BUFFER = 64 * 1024 * 1024
 

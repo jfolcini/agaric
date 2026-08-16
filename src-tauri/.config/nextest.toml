@@ -150,11 +150,12 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 # sibling can move it between the two reads. `max-threads = 1` is a
 # concurrency semaphore over the group's members — it serialises them; it does
 # not grant process isolation that nextest already provides. The corrected
-# statement of the mechanism now lives in the module docs of the delta-
-# asserting files themselves (e.g.
-# `src/materializer/handlers/tag_convergence_tests.rs`) and in
-# `agaric-engine/src/loro/shared.rs`; those files cite THIS file only for the
-# fact of the pin, never for the reason.
+# statement of the mechanism now lives in the module docs of
+# `agaric-engine/src/loro/shared.rs` (the canonical statement, #3983); the
+# delta-asserting files themselves (e.g.
+# `src/materializer/handlers/tag_convergence_tests.rs`) carry only a
+# one-line pointer back to `shared.rs`, not a restatement, and those files
+# cite THIS file only for the fact of the pin, never for the reason.
 #
 # What is NOT explained, and is deliberately not guessed at here: the symptom
 # was measured, not theorised. The group was introduced in b51d1ddb0

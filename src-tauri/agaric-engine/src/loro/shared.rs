@@ -50,8 +50,9 @@
 //!   This paragraph is the CANONICAL statement of the mechanism (#3983 —
 //!   it used to be duplicated near-verbatim across seven places and drifted
 //!   in all of them at once). The delta-asserting peer files —
-//!   `materializer::handlers::{tag,move,delete_restore}_convergence_tests`,
-//!   `apply_reproject_proptest`, and `restore_cascade_tests` — each carry
+//!   `materializer::handlers::{tag,move,delete_restore,create_edit}_convergence_tests`,
+//!   `apply_reproject_proptest`, `restore_cascade_tests`,
+//!   `import_scaling_tests`, and `space_hydration_tests` — each carry
 //!   only a one-line pointer back to this paragraph; they do not restate
 //!   it. Edit the mechanism HERE, not there.
 //!
