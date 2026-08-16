@@ -350,8 +350,8 @@ pub async fn tombstone_purge(
                 tracing::warn!(
                     error = %e,
                     batch_count,
-                    first = ids.first().map(String::as_str).unwrap_or(""),
-                    last = ids.last().map(String::as_str).unwrap_or(""),
+                    first = ids.first().map_or("", String::as_str),
+                    last = ids.last().map_or("", String::as_str),
                     "tombstone_purge: batch purge failed; falling back to one root at a time"
                 );
                 for id in ids {
