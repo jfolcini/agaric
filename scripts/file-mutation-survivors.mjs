@@ -17,6 +17,22 @@
 // baseline file — the workflow only needs `issues: write`, never
 // `contents: write`, and there is nothing to keep in sync with a repo file.
 //
+// #3788 — "survivor" in the paragraph above is a historical name. What this
+// tracks is two DIFFERENT findings, and for a year it silently tracked only
+// one: Stryker's `NoCoverage` (no test executed the mutated code at all) was
+// dropped alongside `Killed`, so code with NO TEST WHATSOEVER was reported
+// nowhere while the weakly-tested lines beside it were. `date-utils` filed 11
+// entries for 22 provably-equivalent survivors (#3787) and said nothing about
+// its 14 `NoCoverage` mutants, which covered four exported functions with no
+// test anywhere in `src` — triage was pointed at the one part of the file where
+// no test could help. Both outcomes are now kept, counted separately everywhere
+// a human reads them, and no-coverage ranks FIRST. See § Mutant outcomes below.
+// The same change gave frontend ids the mutant's COLUMN: without it the id key
+// was (file, line, mutator) and distinct mutants on one line collapsed into a
+// single entry (agenda-sort rendered 21 lines for 31 survivors), which matters
+// because status diverges by column — the whole-condition mutant is killed
+// while a sub-operand mutant on the same line survives.
+//
 // Usage (from the repo root or anywhere — paths are resolved as given):
 //   node scripts/file-mutation-survivors.mjs \
 //     --rust-missed <path to cargo-mutants missed.txt> \
@@ -189,6 +205,86 @@ export const DEFAULT_MAX_CHILDREN = 43
 export const MAX_BODY_CHARS = 60_000
 
 // ---------------------------------------------------------------------------
+// Mutant outcomes (#3788)
+// ---------------------------------------------------------------------------
+//
+// Two Stryker statuses are worth tracking and they are NOT the same finding:
+//
+//   Survived   — a test executed the mutated code and did not fail. The test
+//                is weak; strengthening it is the fix.
+//   NoCoverage — no test executed the mutated code at all. There is no test to
+//                strengthen; the fix is to write one.
+//
+// Until #3788 the filer kept only `Survived`, so the strictly WORSE outcome was
+// invisible: `date-utils` carried 14 `NoCoverage` mutants covering four exported
+// functions with no test anywhere in `src` (`getWeekRange`, `getWeekDays`,
+// `formatWeekRange`, `getCalendarMonthRange`) while the issue it filed pointed
+// triage at 22 survivors that turned out to be provably equivalent (#3787). The
+// lane's own step summary (`scripts/render-mutation-summary.mjs`) has always had
+// a `No cov` column — it was only the PERSISTENT report that dropped it.
+//
+// Both outcomes live in the ONE marker block (single-copy state is what keeps
+// the filer from re-reporting, #3245/#3364), so each line has to self-identify.
+// `NoCoverage` ids carry this verbatim-Stryker-status suffix; an id without it
+// is a survivor. The suffix is at the END so `survivorArea` — which anchors at
+// the start — is unaffected, and it is greppable from the rendered body.
+export const NO_COVERAGE_SUFFIX = ' (NoCoverage)'
+
+/** `'NoCoverage'` for a no-coverage id, `'Survived'` for everything else. */
+export function mutantOutcome(id) {
+  return id.endsWith(NO_COVERAGE_SUFFIX) ? 'NoCoverage' : 'Survived'
+}
+
+/**
+ * Splits a set of ids by outcome, preserving order. The two halves are counted
+ * and rendered separately everywhere a human reads them, because the action
+ * they ask for is different — merging them into one number tells a reader "the
+ * tests missed this" when the truth is "there are no tests".
+ */
+export function partitionByOutcome(ids) {
+  const survived = []
+  const noCoverage = []
+  for (const id of ids) {
+    if (mutantOutcome(id) === 'NoCoverage') noCoverage.push(id)
+    else survived.push(id)
+  }
+  return { survived, noCoverage }
+}
+
+/**
+ * #3788 MIGRATION — the pre-#3788 form of a frontend survivor id, or
+ * `undefined` when `id` has no pre-#3788 form.
+ *
+ * Frontend ids gained a `:<column>` this release (the second half of #3788: the
+ * old line-level id collapsed several genuinely distinct mutants into one entry
+ * — agenda-sort rendered 21 lines for 31 survivors, and status DIVERGES by
+ * column, so an agent that killed the mutant at col 7 reasonably read the line
+ * as done while col 24 stayed alive). Every existing frontend id in the
+ * tracking issue therefore changes shape exactly once.
+ *
+ * Without a mapping back, the first run after this change would report the whole
+ * standing frontend backlog as resolved AND as new in the same breath, and
+ * restamp every first-seen date to today — the precise lie #3350 exists to
+ * prevent, and #3245's double count in a new costume. So: a current id whose
+ * pre-#3788 form is already tracked is NOT new, its predecessor is NOT resolved,
+ * and it inherits its predecessor's first-seen date.
+ *
+ * Deliberately `undefined` for `NoCoverage` ids. Their pre-#3788 form would be
+ * the survivor id at the same line and mutator, which the old filer could well
+ * have been tracking for a different mutant on that line — inheriting from it
+ * would silence the very finding this change exists to surface. A NoCoverage
+ * mutant was never tracked before, so it is genuinely new, and says so.
+ *
+ * Self-retiring: once a run rewrites the block with the new ids, no legacy id
+ * remains for this to match, and it becomes inert.
+ */
+export function legacyFrontendId(id) {
+  if (mutantOutcome(id) !== 'Survived') return undefined
+  const m = /^(\[frontend\] .+?:\d+):\d+( \[[^\]]+\])$/.exec(id)
+  return m ? `${m[1]}${m[2]}` : undefined
+}
+
+// ---------------------------------------------------------------------------
 // Parsing survivor sources
 // ---------------------------------------------------------------------------
 
@@ -198,6 +294,12 @@ export const MAX_BODY_CHARS = 60_000
  * in ...`). We treat each non-blank trimmed line as an opaque survivor ID —
  * it's already unique and stable across runs as long as the mutant and its
  * location don't change.
+ *
+ * #3788 note: there is no rust half to the NoCoverage fix. cargo-mutants has no
+ * such outcome — every mutant it generates is built and run, and its outcomes
+ * are caught/missed/unviable/timeout — so `missed.txt` is survivors and only
+ * survivors. The blind spot was Stryker-only. These ids already carry a column
+ * (`<file>:<line>:<col>:`), so they also need no migration.
  */
 export function parseRustSurvivors(missedTxtPath) {
   if (!existsSync(missedTxtPath)) return []
@@ -212,10 +314,28 @@ export function parseRustSurvivors(missedTxtPath) {
 /**
  * Recursively finds every `mutation.json` under `dir` (Stryker's per-module
  * JSON report, one per module directory — see `stryker.modules.mjs` /
- * `scripts/run-mutation.mjs`) and extracts its `Survived` mutants, in the
- * same `<module>: <file>:<line> [<mutatorName>]` shape the existing
- * `mutants-frontend` step-summary step already builds (continuity with what
- * a maintainer sees in the summary).
+ * `scripts/run-mutation.mjs`) and extracts its actionable mutants, in the
+ * `<module>: <file>:<line>:<col> [<mutatorName>]` shape (plus the
+ * `NO_COVERAGE_SUFFIX` for a no-coverage mutant).
+ *
+ * #3788, two changes to what this returns, both of them "the report was not
+ * faithful to the JSON":
+ *
+ *   NoCoverage is kept.  It used to be dropped along with Killed/Timeout, so a
+ *     function with NO TEST AT ALL was reported nowhere while the weakly-tested
+ *     lines beside it were. See the § Mutant outcomes note above.
+ *
+ *   The id carries the COLUMN.  Without it the id is a (file, line, mutator)
+ *     key, and `diffSurvivors` deduplicates on it — so several distinct mutants
+ *     on one line collapsed into a single entry and the counts under-reported
+ *     (agenda-sort: 21 entries for 31 survivors). Column is exactly where the
+ *     status diverges: on a compound condition the whole-condition mutant is
+ *     routinely killed while a sub-operand mutant on the same line survives, and
+ *     a line-level entry cannot say so. `location.start.column` makes the key
+ *     (file, line, column, mutator), which is Stryker's own mutant identity.
+ *
+ * Everything else (Killed, Timeout, CompileError, RuntimeError, Ignored) is not
+ * a finding and stays out.
  */
 export function parseFrontendSurvivors(dir) {
   if (!existsSync(dir)) return []
@@ -232,9 +352,13 @@ export function parseFrontendSurvivors(dir) {
     const module_ = jsonPath.split('/').at(-2) ?? 'unknown'
     for (const [file, entry] of Object.entries(report.files ?? {})) {
       for (const mutant of entry.mutants ?? []) {
-        if (mutant.status !== 'Survived') continue
+        if (mutant.status !== 'Survived' && mutant.status !== 'NoCoverage') continue
         const line = mutant.location?.start?.line ?? '?'
-        survivors.push(`[frontend] ${module_}: ${file}:${line} [${mutant.mutatorName}]`)
+        const column = mutant.location?.start?.column ?? '?'
+        const suffix = mutant.status === 'NoCoverage' ? NO_COVERAGE_SUFFIX : ''
+        survivors.push(
+          `[frontend] ${module_}: ${file}:${line}:${column} [${mutant.mutatorName}]${suffix}`,
+        )
       }
     }
   }
@@ -355,8 +479,14 @@ export function survivorArea(id) {
 }
 
 /**
- * Groups survivor ids by `survivorArea`, worst first (most survivors, ties
- * broken by area name so the rendering is deterministic).
+ * Groups mutant ids by `survivorArea`, worst first.
+ *
+ * "Worst" is NO-COVERAGE FIRST (#3788), then total, then area name for
+ * determinism. An area with untested code outranks an area with the same number
+ * of weakly-tested lines: the second has tests that can be sharpened, the first
+ * has none at all, and the ranking is the whole navigational claim of the
+ * report. Each group also carries its two halves so callers never have to
+ * re-derive (and risk disagreeing about) the split.
  */
 export function groupByArea(ids) {
   const byArea = new Map()
@@ -366,15 +496,45 @@ export function groupByArea(ids) {
     byArea.get(area).push(id)
   }
   return [...byArea.entries()]
-    .map(([area, members]) => ({ area, members: members.toSorted() }))
-    .toSorted((a, b) => b.members.length - a.members.length || a.area.localeCompare(b.area))
+    .map(([area, members]) => {
+      const sorted = members.toSorted()
+      const { survived, noCoverage } = partitionByOutcome(sorted)
+      return { area, members: sorted, survived, noCoverage }
+    })
+    .toSorted(
+      (a, b) =>
+        b.noCoverage.length - a.noCoverage.length ||
+        b.members.length - a.members.length ||
+        a.area.localeCompare(b.area),
+    )
 }
 
 export function diffSurvivors(current, known) {
   const currentSet = new Set(current)
-  const newOnes = [...currentSet].filter((s) => !known.has(s)).toSorted()
-  const resolvedOnes = [...known].filter((s) => !currentSet.has(s)).toSorted()
+  // #3788 — a tracked id whose successor is in `current` was not resolved, and
+  // that successor is not new. See `legacyFrontendId` for why skipping this
+  // would make the release itself report the entire frontend backlog twice, as
+  // resolved and as new, and reset every first-seen date.
+  const superseded = new Set()
+  for (const id of currentSet) {
+    const legacy = legacyFrontendId(id)
+    if (legacy !== undefined && known.has(legacy)) superseded.add(legacy)
+  }
+  const newOnes = [...currentSet]
+    .filter((s) => !known.has(s) && !superseded.has(legacyFrontendId(s)))
+    .toSorted()
+  const resolvedOnes = [...known].filter((s) => !currentSet.has(s) && !superseded.has(s)).toSorted()
   return { newOnes, resolvedOnes, all: [...currentSet].toSorted() }
+}
+
+/**
+ * #3788 — the first-seen date of `id`, inheriting its pre-#3788 predecessor's
+ * date when the id itself has none. One resolution rule, shared by the parent
+ * table, the parent state block and the child bodies, so the three cannot
+ * disagree about how old a finding is.
+ */
+function recordedFirstSeen(firstSeen, id) {
+  return firstSeen.get(id) ?? firstSeen.get(legacyFrontendId(id))
 }
 
 // ---------------------------------------------------------------------------
@@ -482,54 +642,86 @@ export function decideChildActions({
 }
 
 /**
- * A child's body: the area's survivor lines, dated, plus the way back to the
- * parent. It carries NO marker block — the parent holds all state — so a plain
+ * A child's body: the area's findings, dated, plus the way back to the parent.
+ * It carries NO marker block — the parent holds all state — so a plain
  * truncation is safe when a pathological area outgrows the body limit.
+ *
+ * #3788 — TWO sections, no-coverage first, each with its own count and its own
+ * instruction. The child is the thing an agent actually works from, so this is
+ * where the distinction has to be legible: "no test executed this line" and
+ * "a test executed it and shrugged" ask for different work, and a single
+ * "Survivors (N)" heading over both told every reader the second story. The
+ * parent cannot repeat the split as a list (#3245 forbids any finding appearing
+ * twice in that body); it carries the split as counts in its area table.
  */
 export function buildChildBody({ area, members, firstSeen = new Map(), parentNumber, runUrl }) {
   const parentRef = parentNumber ? `#${parentNumber}` : `"${TRACKING_ISSUE_TITLE}"`
+  const { survived, noCoverage } = partitionByOutcome(members)
   const head = [
-    `Mutation survivors in **${area}** — the ${members.length} mutant(s) below survived the weekly \`scheduled-deep-checks.yml\` mutation lanes, i.e. no test failed when the code was changed.`,
+    `Mutation findings in **${area}** from the weekly \`scheduled-deep-checks.yml\` mutation lanes: **${noCoverage.length} with no coverage** (no test executed the mutated code at all) and **${survived.length} survivor(s)** (a test ran and did not fail).`,
     '',
     `Parent: ${parentRef} (the rolling tracking issue). This child is filed, re-rendered and closed automatically by \`scripts/file-mutation-survivors.mjs\` — **do not rename the title**, the filer matches on it verbatim to re-find this issue instead of opening a duplicate.`,
     '',
-    `Fix them the same way the parent asks: add or strengthen a test that kills the mutant, or record it as an accepted gap. The list below is re-rendered from the parent's machine-readable block on every run and holds no state of its own — remove a survivor's line **in the parent**, not here. This issue closes itself once ${area} has no survivors left.`,
+    `Start with the no-coverage list: those mutants are unkillable by construction until a test exercises the code, so no amount of strengthening an existing test touches them. Survivors are the opposite — the test exists and is too weak. Either way, fix it the way the parent asks: add or strengthen a test that kills the mutant, or record it as an accepted gap. The lists below are re-rendered from the parent's machine-readable block on every run and hold no state of their own — remove a line **in the parent**, not here. This issue closes itself once ${area} has no findings left.`,
     '',
-    `### Survivors (${members.length})`,
-    '```',
   ]
-  const tail = ['```']
+  const tail = []
   if (runUrl) tail.push('', `_Last updated by [this run](${runUrl})._`)
 
-  const dated = members.map((id) => {
-    const seen = firstSeen.get(id)
-    return seen ? `${seen}\t${id}` : id
-  })
-  const render = (body) => [...head, ...body, ...tail].join('\n')
-  const full = render(dated)
+  const dated = (ids) =>
+    ids.map((id) => {
+      const seen = recordedFirstSeen(firstSeen, id)
+      return seen ? `${seen}\t${id}` : id
+    })
+  // A section renders only when it has members: an empty `### No coverage (0)`
+  // on every survivor-only child is noise, and its absence is the honest
+  // rendering of "nothing here went untested".
+  const section = (heading, ids) => (ids.length === 0 ? [] : [heading, '```', ...ids, '```', ''])
+  const render = (nc, sv) =>
+    [
+      ...head,
+      ...section(`### No coverage — no test executed this code (${noCoverage.length})`, nc),
+      ...section(`### Survivors — a test ran and did not fail (${survived.length})`, sv),
+      ...tail,
+    ].join('\n')
+
+  const datedNc = dated(noCoverage)
+  const datedSv = dated(survived)
+  const full = render(datedNc, datedSv)
   if (full.length <= MAX_BODY_CHARS) return full
 
-  // No state here, so truncating the list is safe — unlike the parent, whose
-  // block must never be cut mid-way.
-  const note = `…(${dated.length} survivors do not fit in one issue body — see the parent's machine-readable block for the full list)`
-  const budget = MAX_BODY_CHARS - render([note]).length
-  const kept = []
+  // No state here, so truncating the lists is safe — unlike the parent, whose
+  // block must never be cut mid-way. The no-coverage half is filled FIRST so it
+  // is the half that survives the cut: it is the more serious finding and,
+  // historically, much the smaller list.
+  const note = `…(${members.length} findings do not fit in one issue body — see the parent's machine-readable block for the full list)`
+  const withNote = (ids, kept) => (kept.length < ids.length ? [...kept, note] : kept)
+  const budget =
+    MAX_BODY_CHARS -
+    render(datedNc.length > 0 ? [note] : [], datedSv.length > 0 ? [note] : []).length
+  const keptNc = []
+  const keptSv = []
   let used = 0
-  for (const line of dated) {
+  for (const [line, into] of [
+    ...datedNc.map((l) => [l, keptNc]),
+    ...datedSv.map((l) => [l, keptSv]),
+  ]) {
     used += line.length + 1
     if (used > budget) break
-    kept.push(line)
+    into.push(line)
   }
-  return render([...kept, note])
+  return render(withNote(datedNc, keptNc), withNote(datedSv, keptSv))
 }
 
 export function buildChildComment({ area, newMembers, runUrl }) {
+  const { survived, noCoverage } = partitionByOutcome(newMembers)
   const lines = [
-    `${newMembers.length} new mutation survivor${newMembers.length === 1 ? '' : 's'} in **${area}** this run:`,
-    '```',
-    ...newMembers,
-    '```',
+    `${newMembers.length} new mutation finding${newMembers.length === 1 ? '' : 's'} in **${area}** this run — ${noCoverage.length} with no coverage, ${survived.length} survivor(s):`,
   ]
+  if (noCoverage.length > 0)
+    lines.push('', `**No coverage (${noCoverage.length})**`, '```', ...noCoverage, '```')
+  if (survived.length > 0)
+    lines.push('', `**Survivors (${survived.length})**`, '```', ...survived, '```')
   if (runUrl) lines.push('', `Run: ${runUrl}`)
   const text = lines.join('\n')
   if (text.length <= MAX_BODY_CHARS) return text
@@ -539,7 +731,7 @@ export function buildChildComment({ area, newMembers, runUrl }) {
 
 export function buildChildCloseComment({ area, runUrl }) {
   const lines = [
-    `No mutants survive in **${area}** any more — closing. If a survivor reappears there, the next run reopens this issue rather than filing a new one.`,
+    `No mutants survive or go uncovered in **${area}** any more — closing. If a finding reappears there, the next run reopens this issue rather than filing a new one.`,
   ]
   if (runUrl) lines.push('', `Run: ${runUrl}`)
   return lines.join('\n')
@@ -582,17 +774,29 @@ export function buildIssueBody({
   childLinks = new Map(),
 }) {
   const newSet = new Set(newOnes)
+  const { survived, noCoverage } = partitionByOutcome(all)
   const head = []
   head.push(
-    'This issue tracks mutation-testing survivors (cargo-mutants + StrykerJS) surfaced by the weekly `scheduled-deep-checks.yml` run (#2947). It is filed and updated automatically by `scripts/file-mutation-survivors.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
+    'This issue tracks mutation-testing findings (cargo-mutants + StrykerJS) surfaced by the weekly `scheduled-deep-checks.yml` run (#2947). It is filed and updated automatically by `scripts/file-mutation-survivors.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
   )
   head.push('')
   head.push(
-    'Triage each survivor below: either (a) add/strengthen a test that kills it and remove its line here, or (b) leave a comment explaining why it is an accepted gap and remove its line here anyway — once a line is gone, the next run that sees that survivor again will re-add it as "new".',
+    `Currently tracked: **${noCoverage.length} with no coverage** and **${survived.length} survivor(s)**. The two are different findings and #3788 stopped merging them:`,
   )
   head.push('')
   head.push(
-    "The list below is the single deduped source of truth (#3245): survivors that are NEW in a given run are reported in that run's comment on this issue, never re-listed here.",
+    `- **No coverage** — no test executed the mutated code at all, so the mutant is unkillable until one does. Lines carry a trailing \`${NO_COVERAGE_SUFFIX.trim()}\`. These outrank survivors: there is no test to strengthen, and an area full of them is code nothing has ever run.`,
+  )
+  head.push(
+    '- **Survivor** — a test executed the mutated code and did not fail. The test exists and is too weak.',
+  )
+  head.push('')
+  head.push(
+    'Triage each line below: either (a) add (no coverage) or strengthen (survivor) a test that kills it and remove its line here, or (b) leave a comment explaining why it is an accepted gap and remove its line here anyway — once a line is gone, the next run that sees that mutant again will re-add it as "new".',
+  )
+  head.push('')
+  head.push(
+    "The list below is the single deduped source of truth (#3245): mutants that are NEW in a given run are reported in that run's comment on this issue, never re-listed here — including the no-coverage ones, which is why they are not repeated as a section of their own here. The per-area split lives in the table below, and the per-area child issues render the two lists separately.",
   )
   head.push('')
 
@@ -605,23 +809,27 @@ export function buildIssueBody({
   // is the whole reason a non-zero survivor count means anything.
   // ONE resolution rule, used by both the table and the state block below, so
   // the age a maintainer reads is exactly the age that gets written back.
-  const dateOf = (id) => firstSeen.get(id) ?? (newSet.has(id) ? today : undefined)
+  const dateOf = (id) => recordedFirstSeen(firstSeen, id) ?? (newSet.has(id) ? today : undefined)
 
   const areaSection = []
   const groups = groupByArea(all)
   if (groups.length > 0) {
-    areaSection.push(`### Where the survivors are (${groups.length} area(s), worst first)`)
+    areaSection.push(`### Where the findings are (${groups.length} area(s), worst first)`)
     areaSection.push('')
     // The `Fix in` column appears only once children exist. A column of `—`
     // on every row for a repo running without `--children` is noise, and its
     // absence is the honest rendering of "this area has no child issue yet".
     const withChildren = childLinks.size > 0
+    // #3788 — TWO count columns, no-coverage first, matching the ranking. A
+    // single merged "Survivors" number ranked an area with 14 untested
+    // functions below one with 22 equivalent-and-unkillable survivors, which is
+    // exactly backwards as a "look here first" signal.
     areaSection.push(
       withChildren
-        ? '| Area | Survivors | Oldest first seen | Fix in |'
-        : '| Area | Survivors | Oldest first seen |',
+        ? '| Area | No coverage | Survivors | Oldest first seen | Fix in |'
+        : '| Area | No coverage | Survivors | Oldest first seen |',
     )
-    areaSection.push(withChildren ? '|---|--:|---|---|' : '|---|--:|---|')
+    areaSection.push(withChildren ? '|---|--:|--:|---|---|' : '|---|--:|--:|---|')
     for (const g of groups) {
       const dates = g.members.map(dateOf).filter(Boolean).toSorted()
       // An UNDATED member is not a missing value to be skipped — it means the
@@ -631,10 +839,11 @@ export function buildIssueBody({
       // which is the opposite of the fact this column exists to carry.
       const oldest = dates.length === g.members.length ? dates[0] : '_unknown_'
       const child = childLinks.get(g.area)
+      const counts = `${g.noCoverage.length} | ${g.survived.length}`
       areaSection.push(
         withChildren
-          ? `| ${g.area} | ${g.members.length} | ${oldest} | ${child ? `#${child}` : '—'} |`
-          : `| ${g.area} | ${g.members.length} | ${oldest} |`,
+          ? `| ${g.area} | ${counts} | ${oldest} | ${child ? `#${child}` : '—'} |`
+          : `| ${g.area} | ${counts} | ${oldest} |`,
       )
     }
     areaSection.push('')
@@ -650,9 +859,11 @@ export function buildIssueBody({
   }
 
   const state = []
-  state.push('### All currently-known survivors')
   state.push(
-    '_Machine-readable — do not hand-edit the marker lines below. Remove a survivor line once it is triaged; leave the rest untouched. Each line is `<first-seen date><TAB><survivor>`; the date is bookkeeping and is ignored when the set is compared, so removing it by hand changes nothing except the age reported above._',
+    `### All currently-known mutants (${noCoverage.length} no coverage, ${survived.length} survived)`,
+  )
+  state.push(
+    `_Machine-readable — do not hand-edit the marker lines below. Remove a line once it is triaged; leave the rest untouched. Each line is \`<first-seen date><TAB><mutant>\`; the date is bookkeeping and is ignored when the set is compared, so removing it by hand changes nothing except the age reported above. A line ending in \`${NO_COVERAGE_SUFFIX.trim()}\` had no test executing it at all._`,
   )
   state.push(MARKER_START)
   state.push('```')
@@ -728,7 +939,7 @@ export function buildIssueBody({
   // can make the table outweigh the state block it sits above.
   const droppedHere = []
   if (groups.length > 0)
-    droppedHere.push(`the "where the survivors are" table (${groups.length} area(s))`)
+    droppedHere.push(`the "where the findings are" table (${groups.length} area(s))`)
   if (resolvedOnes.length > 0) droppedHere.push(resolvedPart)
   const clampedHarder = render(droppedHere.length > 0 ? note(droppedHere) : [])
   if (clampedHarder.length <= MAX_BODY_CHARS) return clampedHarder
@@ -743,8 +954,9 @@ export function buildIssueBody({
 export function buildNewSurvivorComment({ newOnes, runUrl }) {
   const lines = []
   const groups = groupByArea(newOnes)
+  const totals = partitionByOutcome(newOnes)
   lines.push(
-    `${newOnes.length} new mutation survivor${newOnes.length === 1 ? '' : 's'} this run, in ${groups.length} area${groups.length === 1 ? '' : 's'}:`,
+    `${newOnes.length} new mutation finding${newOnes.length === 1 ? '' : 's'} this run, in ${groups.length} area${groups.length === 1 ? '' : 's'} — ${totals.noCoverage.length} with no coverage, ${totals.survived.length} survivor(s):`,
   )
   lines.push('')
   // #3350 — grouped and ranked rather than one flat block. A 200-line
@@ -754,11 +966,24 @@ export function buildNewSurvivorComment({ newOnes, runUrl }) {
   // visually distinct from a REGRESSION (a handful of new lines spread across
   // areas that were already being tracked), which is the difference between
   // "expected" and "someone weakened a test".
+  // #3788 — the per-area block is split by outcome for the same reason the
+  // child bodies are: "3 new" that are all no-coverage is a different piece of
+  // news from "3 new" survivors, and the merged wording told the second story
+  // for both.
   for (const g of groups) {
-    lines.push(`**${g.area}** — ${g.members.length}`)
-    lines.push('```')
-    lines.push(...g.members)
-    lines.push('```')
+    lines.push(
+      `**${g.area}** — ${g.members.length} (${g.noCoverage.length} no coverage, ${g.survived.length} survived)`,
+    )
+    if (g.noCoverage.length > 0) {
+      lines.push('```')
+      lines.push(...g.noCoverage)
+      lines.push('```')
+    }
+    if (g.survived.length > 0) {
+      lines.push('```')
+      lines.push(...g.survived)
+      lines.push('```')
+    }
   }
   if (runUrl) lines.push('', `Run: ${runUrl}`)
   const text = lines.join('\n')
@@ -897,7 +1122,7 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, new
           buildChildBody({ ...a, firstSeen, parentNumber, runUrl }),
         )
         links.set(a.area, created)
-        console.log(`  child #${created} filed for ${a.area} (${a.members.length} survivor(s))`)
+        console.log(`  child #${created} filed for ${a.area} (${a.members.length} finding(s))`)
         continue
       }
       // Adopted: an earlier run filed it and died before recording the number,
@@ -923,7 +1148,7 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, new
         gh(['issue', 'comment', String(number), '--repo', repo, '--body-file', f]),
       )
       if (state !== 'CLOSED') gh(['issue', 'close', String(number), '--repo', repo])
-      console.log(`  child #${number} closed (${a.area} has no survivors left)`)
+      console.log(`  child #${number} closed (${a.area} has no findings left)`)
       continue
     }
 
@@ -1072,8 +1297,9 @@ export function main(argv = process.argv.slice(2)) {
   const frontendSurvivors = args.frontendDir ? parseFrontendSurvivors(args.frontendDir) : []
   const current = [...rustSurvivors, ...frontendSurvivors]
 
+  const { survived, noCoverage } = partitionByOutcome(current)
   console.log(
-    `mutation survivors this run: ${current.length} (rust: ${rustSurvivors.length}, frontend: ${frontendSurvivors.length})`,
+    `mutation findings this run: ${current.length} — ${noCoverage.length} no-coverage, ${survived.length} survived (rust: ${rustSurvivors.length}, frontend: ${frontendSurvivors.length})`,
   )
 
   // --known-body-file is a TEST-ONLY escape hatch: it substitutes for the
@@ -1126,10 +1352,10 @@ export function main(argv = process.argv.slice(2)) {
   const childWork = childActions.filter((a) => a.action !== 'sync')
 
   if (newOnes.length === 0 && childWork.length === 0) {
-    console.log('no new mutation survivors — no-op (tracking issue left untouched)')
+    console.log('no new mutation findings — no-op (tracking issue left untouched)')
     if (resolvedOnes.length > 0) {
       console.log(
-        `(${resolvedOnes.length} previously-known survivor(s) no longer present — not a reason to touch the issue on their own: ${resolvedOnes.join(', ')})`,
+        `(${resolvedOnes.length} previously-known finding(s) no longer present — not a reason to touch the issue on their own: ${resolvedOnes.join(', ')})`,
       )
     }
     return
@@ -1197,7 +1423,7 @@ function writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
         ...labelArgs,
       ])
     })
-    console.log(`filed a new tracking issue (${newOnes.length} survivor(s))`)
+    console.log(`filed a new tracking issue (${newOnes.length} finding(s))`)
     return
   }
 
@@ -1205,7 +1431,7 @@ function writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
   if (newOnes.length === 0) {
     withTempFile(body, (f) => gh(['issue', 'edit', number, '--repo', repo, '--body-file', f]))
     console.log(
-      `synced tracking issue #${number} body (${childWork.length} child action(s); no new survivors, so no comment — a partial recovery is not news)`,
+      `synced tracking issue #${number} body (${childWork.length} child action(s); no new findings, so no comment — a partial recovery is not news)`,
     )
     return
   }
@@ -1215,7 +1441,7 @@ function writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
   }
   withTempFile(body, (f) => gh(['issue', 'edit', number, '--repo', repo, '--body-file', f]))
   withTempFile(comment, (f) => gh(['issue', 'comment', number, '--repo', repo, '--body-file', f]))
-  console.log(`updated tracking issue #${number} (${newOnes.length} new survivor(s))`)
+  console.log(`updated tracking issue #${number} (${newOnes.length} new finding(s))`)
 }
 
 function printDryRun({
@@ -1240,13 +1466,13 @@ function printDryRun({
     console.log(`[dry-run] would CREATE a new issue titled "${TRACKING_ISSUE_TITLE}"`)
   }
   console.log(
-    `[dry-run] new survivors: ${newOnes.length}, resolved: ${resolvedOnes.length}, total known: ${all.length}`,
+    `[dry-run] new findings: ${newOnes.length}, resolved: ${resolvedOnes.length}, total known: ${all.length}`,
   )
   if (args.children) {
     console.log(`[dry-run] child issues (cap ${args.maxChildren}):`)
     for (const a of childActions) {
       console.log(
-        `[dry-run]   ${a.action.padEnd(6)} ${a.number ? `#${a.number}` : '(new)'} ${a.area} — ${a.members.length} survivor(s)`,
+        `[dry-run]   ${a.action.padEnd(6)} ${a.number ? `#${a.number}` : '(new)'} ${a.area} — ${a.members.length} finding(s)`,
       )
       if (a.action === 'create') {
         console.log(`[dry-run]     title: ${childIssueTitle(a.area)}`)
@@ -1427,7 +1653,7 @@ function selfTestSurvivorAges({ ok, fail, survivor }) {
         newOnes: [survivor(2)],
       })
       const row = mixed.slice(mixed.indexOf('| frontend: glob-validate |'))
-      if (row.startsWith('| frontend: glob-validate | 2 | _unknown_ |'))
+      if (row.startsWith('| frontend: glob-validate | 0 | 2 | _unknown_ |'))
         ok('an area mixing dated and undated members reports "unknown" (#3350)')
       else
         fail(
@@ -1524,7 +1750,7 @@ function selfTestGroupingAndRanking({ ok, fail, survivor }) {
     const body = buildIssueBody({ all, resolvedOnes, today: '2026-07-31' })
     if (
       body.length <= MAX_BODY_CHARS &&
-      body.includes('Where the survivors are') &&
+      body.includes('Where the findings are') &&
       !body.includes(resolvedOnes[0]) &&
       parseKnownSurvivors(body).size === 200
     )
@@ -1532,7 +1758,7 @@ function selfTestGroupingAndRanking({ ok, fail, survivor }) {
     else
       fail(
         'the clamp drops the resolved list before the area table (#3350)',
-        `len=${body.length} area=${body.includes('Where the survivors are')} state=${parseKnownSurvivors(body).size}`,
+        `len=${body.length} area=${body.includes('Where the findings are')} state=${parseKnownSurvivors(body).size}`,
       )
   }
 
@@ -1559,8 +1785,8 @@ function selfTestGroupingAndRanking({ ok, fail, survivor }) {
     })
     if (
       body.length <= MAX_BODY_CHARS &&
-      !body.includes('Where the survivors are') &&
-      body.includes('"where the survivors are" table (430 area(s))') &&
+      !body.includes('Where the findings are') &&
+      body.includes('"where the findings are" table (430 area(s))') &&
       !body.includes('0 resolved-since-last-run') &&
       parseKnownSurvivors(body).size === 430
     )
@@ -1568,7 +1794,7 @@ function selfTestGroupingAndRanking({ ok, fail, survivor }) {
     else
       fail(
         'dropping the area table says so, and never claims "0 resolved" (#3350)',
-        `len=${body.length} table=${body.includes('Where the survivors are')} state=${parseKnownSurvivors(body).size} note=${body.split('\n').find((l) => l.includes('Omitted to keep'))}`,
+        `len=${body.length} table=${body.includes('Where the findings are')} state=${parseKnownSurvivors(body).size} note=${body.split('\n').find((l) => l.includes('Omitted to keep'))}`,
       )
 
     // …and when BOTH sections go, the note names both rather than one.
@@ -1730,7 +1956,7 @@ function selfTestChildPlanning({ check, survivor }) {
     )
     // …and the area table names where to go.
     check(
-      body.includes(`| ${FE} | 2 | 2026-08-09 | #41 |`),
+      body.includes(`| ${FE} | 0 | 2 | 2026-08-09 | #41 |`),
       'the area table carries the child link when children exist',
       body.slice(body.indexOf('| Area'), body.indexOf('### All currently-known')),
     )
@@ -1741,7 +1967,7 @@ function selfTestChildPlanning({ check, survivor }) {
   {
     const body = buildIssueBody({ all: [survivor(1)], resolvedOnes: [], today: '2026-08-09' })
     check(
-      body.includes('| Area | Survivors | Oldest first seen |') &&
+      body.includes('| Area | No coverage | Survivors | Oldest first seen |') &&
         !body.includes('Fix in') &&
         !body.includes(CHILD_MARKER_START),
       'without children the body is unchanged (no column, no block)',
@@ -1848,7 +2074,7 @@ function selfTestChildPlanning({ check, survivor }) {
     })
     check(
       body.length <= MAX_BODY_CHARS &&
-        !body.includes('Where the survivors are') &&
+        !body.includes('Where the findings are') &&
         parseChildLinks(body).get('frontend: module-000-with-a-long-descriptive-name') === 77 &&
         parseKnownSurvivors(body).size === 430,
       'the clamp drops the area table but never the child block',
@@ -2190,6 +2416,331 @@ function selfTestChildGh({ check }) {
   }
 }
 
+// #3788 fixtures. This script's failure mode is SILENCE — it reported only
+// `Survived` for a year and nothing went red, because a report that omits a
+// finding looks exactly like a report that had none. So the fixtures below are
+// written to fail loudly if the omission comes back: they drive a real Stryker
+// `mutation.json` through `parseFrontendSurvivors` and on through the rendered
+// parent body, the child body and `main()` itself, and they assert both the
+// PRESENCE of the no-coverage entry and its SEPARATION from the survivors — a
+// fix that merged the two buckets would still "surface" it while telling every
+// reader the wrong story about what is wrong with the code.
+const STRYKER_FIXTURE = {
+  files: {
+    'src/lib/date-utils.ts': {
+      // Two survivors on ONE line, differing only by column: the case the
+      // pre-#3788 line-level id collapsed into a single entry (#3749).
+      mutants: [
+        {
+          id: '1',
+          mutatorName: 'ConditionalExpression',
+          status: 'Survived',
+          location: { start: { line: 86, column: 7 }, end: { line: 86, column: 40 } },
+        },
+        {
+          id: '2',
+          mutatorName: 'ConditionalExpression',
+          status: 'Survived',
+          location: { start: { line: 86, column: 24 }, end: { line: 86, column: 40 } },
+        },
+        // The finding the filer used to drop entirely: `getWeekRange` has no
+        // test anywhere in `src`, so nothing executed this line at all.
+        {
+          id: '3',
+          mutatorName: 'BlockStatement',
+          status: 'NoCoverage',
+          location: { start: { line: 120, column: 3 }, end: { line: 131, column: 2 } },
+        },
+        // Neither of these is a finding and neither may be reported.
+        {
+          id: '4',
+          mutatorName: 'BooleanLiteral',
+          status: 'Killed',
+          location: { start: { line: 12, column: 1 }, end: { line: 12, column: 9 } },
+        },
+        {
+          id: '5',
+          mutatorName: 'ArrowFunction',
+          status: 'Timeout',
+          location: { start: { line: 13, column: 1 }, end: { line: 13, column: 9 } },
+        },
+      ],
+    },
+  },
+}
+
+const NC_ID = '[frontend] date-utils: src/lib/date-utils.ts:120:3 [BlockStatement] (NoCoverage)'
+const SV_COL7 = '[frontend] date-utils: src/lib/date-utils.ts:86:7 [ConditionalExpression]'
+const SV_COL24 = '[frontend] date-utils: src/lib/date-utils.ts:86:24 [ConditionalExpression]'
+const LEGACY_SV = '[frontend] date-utils: src/lib/date-utils.ts:86 [ConditionalExpression]'
+
+/** Writes `report` as `<tmp>/<module>/mutation.json` and returns the tmp root. */
+function writeStrykerFixture(module_, report) {
+  const root = mkdtempSync(join(tmpdir(), 'survivor-outcome-'))
+  mkdirSync(join(root, module_), { recursive: true })
+  writeFileSync(join(root, module_, 'mutation.json'), JSON.stringify(report))
+  return root
+}
+
+/** Runs `main(argv)` capturing stdout, so a fixture can assert on what it said. */
+function captureMain(argv) {
+  const realLog = console.log
+  const out = []
+  console.log = (...parts) => out.push(parts.join(' '))
+  try {
+    main(argv)
+    return { out: out.join('\n'), err: null }
+  } catch (err) {
+    return { out: out.join('\n'), err }
+  } finally {
+    console.log = realLog
+  }
+}
+
+function selfTestNoCoverage({ ok, fail }) {
+  // 12a. PARSING. Both actionable statuses come through, nothing else does,
+  //      and the two same-line survivors stay two.
+  {
+    const ids = parseFrontendSurvivors(writeStrykerFixture('date-utils', STRYKER_FIXTURE))
+    const set = new Set(ids)
+    if (
+      ids.length === 3 &&
+      set.size === 3 &&
+      set.has(NC_ID) &&
+      set.has(SV_COL7) &&
+      set.has(SV_COL24) &&
+      !ids.some((i) => i.includes(':12:') || i.includes(':13:'))
+    )
+      ok('a NoCoverage mutant is parsed, distinctly, and Killed/Timeout are not (#3788)')
+    else
+      fail(
+        'a NoCoverage mutant is parsed, distinctly, and Killed/Timeout are not (#3788)',
+        JSON.stringify(ids),
+      )
+
+    // …and the outcome is recoverable from the id alone, which is what lets
+    // the ONE marker block hold both without a second state block.
+    const outcomes = ids.map(mutantOutcome).toSorted()
+    if (JSON.stringify(outcomes) === JSON.stringify(['NoCoverage', 'Survived', 'Survived']))
+      ok('an id carries its own outcome, so one state block holds both (#3788)')
+    else
+      fail('an id carries its own outcome, so one state block holds both (#3788)', outcomes.join())
+  }
+
+  // 12b. THE PARENT BODY. Present AND separated: the counts are split, the
+  //      state block says which is which, and the no-coverage entry is not
+  //      described as something a test ran over.
+  {
+    const all = [NC_ID, SV_COL7, SV_COL24].toSorted()
+    const body = buildIssueBody({
+      all,
+      resolvedOnes: [],
+      today: '2026-08-16',
+      newOnes: all,
+      runUrl: undefined,
+    })
+    const table = body.slice(body.indexOf('| Area |'), body.indexOf('### All currently-known'))
+    if (
+      body.includes(NC_ID) &&
+      table.includes('| frontend: date-utils | 1 | 2 | 2026-08-16 |') &&
+      body.includes('### All currently-known mutants (1 no coverage, 2 survived)') &&
+      // #3245 still holds across the split: nothing is listed twice.
+      all.every((id) => body.split(id).length - 1 === 1)
+    )
+      ok('the parent body surfaces the NoCoverage mutant with its own count (#3788)')
+    else
+      fail(
+        'the parent body surfaces the NoCoverage mutant with its own count (#3788)',
+        `present=${body.includes(NC_ID)} table=${table.trim()}`,
+      )
+
+    // 12c. THE CHILD BODY — the thing an agent actually works from. Two
+    //      sections, no-coverage first, each id under the right heading.
+    const child = buildChildBody({
+      area: 'frontend: date-utils',
+      members: all,
+      parentNumber: 3142,
+    })
+    const ncAt = child.indexOf('### No coverage')
+    const svAt = child.indexOf('### Survivors')
+    if (
+      ncAt !== -1 &&
+      svAt > ncAt &&
+      child.includes('### No coverage — no test executed this code (1)') &&
+      child.includes('### Survivors — a test ran and did not fail (2)') &&
+      child.indexOf(NC_ID) > ncAt &&
+      child.indexOf(NC_ID) < svAt &&
+      child.indexOf(SV_COL7) > svAt
+    )
+      ok('the child body renders no-coverage and survivors as separate sections (#3788)')
+    else
+      fail(
+        'the child body renders no-coverage and survivors as separate sections (#3788)',
+        `nc@${ncAt} sv@${svAt} ncId@${child.indexOf(NC_ID)}`,
+      )
+
+    // 12d. THE PER-RUN COMMENT carries the split too, or the notification says
+    //      "3 new survivors" for a run whose news was an untested function.
+    const comment = buildNewSurvivorComment({ newOnes: all, runUrl: undefined })
+    if (
+      comment.includes('1 with no coverage, 2 survivor(s)') &&
+      comment.includes('(1 no coverage, 2 survived)') &&
+      comment.includes(NC_ID)
+    )
+      ok('the per-run comment counts no-coverage separately (#3788)')
+    else fail('the per-run comment counts no-coverage separately (#3788)', comment)
+  }
+
+  // 12e. RANKING. An area with untested code outranks a bigger survivor-only
+  //      area — the ordering is the report's whole "look here first" claim, and
+  //      before #3788 date-utils' 14 untested mutants ranked below 22
+  //      provably-equivalent survivors (#3787).
+  {
+    const bigSurvivorArea = Array.from(
+      { length: 5 },
+      (_, i) => `[frontend] tree-utils: src/lib/tree-utils.ts:${i + 1}:1 [ConditionalExpression]`,
+    )
+    const groups = groupByArea([...bigSurvivorArea, NC_ID])
+    if (groups[0].area === 'frontend: date-utils' && groups[0].noCoverage.length === 1)
+      ok('an area with no-coverage outranks a larger survivor-only area (#3788)')
+    else
+      fail('an area with no-coverage outranks a larger survivor-only area (#3788)', groups[0].area)
+  }
+}
+
+function selfTestNoCoverageEmptyAndMigration({ ok, fail }) {
+  // 12f. THE EMPTY CASE. A lane that ran and found nothing must be a NO-OP,
+  //      not a report. Filing/editing an issue that says "0 findings" would be
+  //      a claim of coverage this script never verified — and it must stay
+  //      distinguishable from the #3364 "no data at all" case, which is an
+  //      error, not an all-clear.
+  {
+    const killedOnly = {
+      files: {
+        'src/lib/date-utils.ts': {
+          mutants: [
+            {
+              id: '1',
+              mutatorName: 'BooleanLiteral',
+              status: 'Killed',
+              location: { start: { line: 12, column: 1 } },
+            },
+          ],
+        },
+      },
+    }
+    const dir = writeStrykerFixture('date-utils', killedOnly)
+    const found = parseFrontendSurvivors(dir)
+    const reports = frontendReportCount(dir)
+    const { out, err } = captureMain([
+      '--dry-run',
+      '--known-body-file',
+      join(dir, 'no-such-body.md'),
+      '--frontend-dir',
+      dir,
+      '--require-frontend',
+    ])
+    if (
+      found.length === 0 &&
+      reports === 1 &&
+      err === null &&
+      out.includes('no new mutation findings — no-op') &&
+      !out.includes('would CREATE') &&
+      !out.includes('would edit')
+    )
+      ok('a lane that ran and found nothing is a no-op, not an all-clear report (#3788)')
+    else
+      fail(
+        'a lane that ran and found nothing is a no-op, not an all-clear report (#3788)',
+        `found=${found.length} reports=${reports} err=${err?.message} out=${out}`,
+      )
+
+    // The complement, end-to-end: the mixed fixture DOES produce a report, and
+    // the no-coverage line reaches the body `main()` would write. Without this
+    // half, 12f above passes just as well on a filer that reports nothing ever.
+    const mixedDir = writeStrykerFixture('date-utils', STRYKER_FIXTURE)
+    const mixed = captureMain([
+      '--dry-run',
+      '--known-body-file',
+      join(mixedDir, 'no-such-body.md'),
+      '--frontend-dir',
+      mixedDir,
+      '--require-frontend',
+    ])
+    if (
+      mixed.err === null &&
+      mixed.out.includes('would CREATE') &&
+      mixed.out.includes('1 no-coverage, 2 survived') &&
+      mixed.out.includes(NC_ID)
+    )
+      ok('the same path DOES report when there is something to report (#3788)')
+    else
+      fail(
+        'the same path DOES report when there is something to report (#3788)',
+        `err=${mixed.err?.message} out=${mixed.out.slice(0, 600)}`,
+      )
+  }
+
+  // 12g. THE MIGRATION. Frontend ids gained a column this release, so every
+  //      tracked frontend survivor changes shape exactly once. Unmigrated, the
+  //      deploy run would report the whole standing backlog as resolved AND as
+  //      new and restamp every first-seen date to today — #3350's lie and
+  //      #3245's double count in one. See `legacyFrontendId`.
+  {
+    const known = new Set([LEGACY_SV])
+    const { newOnes, resolvedOnes, all } = diffSurvivors([SV_COL7, SV_COL24, NC_ID], known)
+    // Both columnar survivors descend from the one tracked line: neither is
+    // NEW (the mutants were always there, only under-reported) and the line
+    // they replace is not RESOLVED. The NoCoverage entry is genuinely new —
+    // nothing has ever tracked it — and deliberately does not inherit.
+    if (
+      resolvedOnes.length === 0 &&
+      newOnes.length === 1 &&
+      newOnes[0] === NC_ID &&
+      all.length === 3
+    )
+      ok('the pre-#3788 id migrates instead of churning the whole backlog (#3788)')
+    else
+      fail(
+        'the pre-#3788 id migrates instead of churning the whole backlog (#3788)',
+        `new=${JSON.stringify(newOnes)} resolved=${JSON.stringify(resolvedOnes)}`,
+      )
+
+    // …and the age survives the reshape, which is the fact the migration
+    // exists to protect.
+    const body = buildIssueBody({
+      all,
+      resolvedOnes,
+      firstSeen: new Map([[LEGACY_SV, '2026-01-15']]),
+      today: '2026-08-16',
+      newOnes,
+    })
+    const ages = parseFirstSeen(body)
+    if (
+      ages.get(SV_COL7) === '2026-01-15' &&
+      ages.get(SV_COL24) === '2026-01-15' &&
+      ages.get(NC_ID) === '2026-08-16'
+    )
+      ok('a migrated survivor keeps its first-seen date; the new finding gets today (#3788)')
+    else
+      fail(
+        'a migrated survivor keeps its first-seen date; the new finding gets today (#3788)',
+        `col7=${ages.get(SV_COL7)} col24=${ages.get(SV_COL24)} nc=${ages.get(NC_ID)}`,
+      )
+
+    // A NoCoverage id must never adopt a legacy survivor id, even at the same
+    // line and mutator: inheriting would suppress it as "already known", which
+    // is precisely the silence #3788 is about.
+    if (legacyFrontendId(NC_ID) === undefined && legacyFrontendId(SV_COL7) === LEGACY_SV)
+      ok('no-coverage ids do not inherit a survivor predecessor (#3788)')
+    else
+      fail(
+        'no-coverage ids do not inherit a survivor predecessor (#3788)',
+        `nc=${legacyFrontendId(NC_ID)} sv=${legacyFrontendId(SV_COL7)}`,
+      )
+  }
+}
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -2336,6 +2887,12 @@ function runSelfTest() {
   const check = (cond, name, detail) => (cond ? ok(name) : fail(name, detail))
   selfTestChildPlanning({ check, survivor })
   selfTestChildGh({ check })
+
+  // 12. #3788 — NoCoverage is surfaced, and surfaced SEPARATELY from Survived;
+  //     the column makes same-line mutants distinct; nothing-found stays a
+  //     no-op; and the one-off id reshape migrates instead of churning.
+  selfTestNoCoverage({ ok, fail })
+  selfTestNoCoverageEmptyAndMigration({ ok, fail })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
