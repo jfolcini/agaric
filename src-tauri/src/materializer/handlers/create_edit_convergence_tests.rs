@@ -51,14 +51,13 @@
 //! `OnceLock` registry anymore — so the registry race that made engine-path
 //! tests nextest-only (#1079) is gone. HOWEVER, the `count() == delta` guard
 //! above reads the process-global `sql_only_fallback::count()` counter, which
-//! is still shared across every test in the binary: two count-measuring tests
-//! running CONCURRENTLY in one process pollute each other's delta. These
-//! count-delta arms therefore still require process-per-test — run them under
-//! `cargo nextest run` (as CI and the pre-push hook do), NOT concurrent plain
-//! `cargo test`. (The state-only isolation tests in `loro::shared` and the
-//! seed-based conformance/undo tests, which do not read the counter, DO run
-//! safely under plain `cargo test`.) The fallback arm drives the
-//! `apply_*_sql_only` fns directly.
+//! is still shared across every test in the binary. For why that read is
+//! still sound under `cargo nextest run` and NOT under concurrent plain
+//! `cargo test` — and why `[test-groups.spy-counter-serial]`'s
+//! `max-threads = 1` is not what supplies that — see
+//! `agaric_engine::loro::shared`'s module docs (the canonical statement,
+//! #3983); this file does not restate the mechanism. The fallback arm
+//! drives the `apply_*_sql_only` fns directly.
 
 use super::*;
 use crate::db::init_pool;

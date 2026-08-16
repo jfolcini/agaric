@@ -101,24 +101,20 @@ async fn seed_deleted_subtree(pool: &SqlitePool) {
 
 /// Returns a fresh, per-test `LoroState`. #2249: an ordinary value, not a
 /// process-global — the ENGINE STATE itself is per-instance and cannot
-/// leak between tests. HOWEVER, `dispatch_restore_descendants_parse_failure_bumps_divergence_metric`
+/// leak between tests. HOWEVER,
+/// `dispatch_restore_descendants_parse_failure_bumps_divergence_metric`
 /// below asserts an exact delta on `descendant_fanout_dropped`, a
 /// process-global counter that `apply.rs` bumps from several sites
-/// reachable by the other tests in this binary — so that test is NOT
-/// safe under concurrent plain `cargo test`, which runs the whole binary
-/// in ONE process with the tests on threads. Under `cargo nextest run`
-/// it is safe, because nextest "executes each individual test in a
-/// separate process" (nexte.st, "How nextest works").
+/// reachable by the other tests in this binary. For why that read is
+/// still sound under `cargo nextest run` and NOT under concurrent plain
+/// `cargo test`, see `agaric_engine::loro::shared`'s module docs (the
+/// canonical statement, #3983); this file does not restate the mechanism.
 ///
 /// This file is NOT listed in `.config/nextest.toml`'s
 /// `spy-counter-serial` test-group, unlike the sibling
-/// `*_convergence_tests` files — but that makes no difference to counter
-/// pollution either way. A test group is a concurrency semaphore over its
-/// members: `max-threads = 1` serialises the group, it does not put a test
-/// in its own process (nextest already does that for every test, grouped
-/// or not). So this file's exposure is the SAME as those siblings', not
-/// worse: safe under `cargo nextest run`, unsafe under concurrent plain
-/// `cargo test`, for all of them alike.
+/// `*_convergence_tests` files — but per that same canonical statement,
+/// group membership makes no difference to counter pollution either way,
+/// so this file's exposure is the SAME as those siblings', not worse.
 fn fresh_loro_state() -> LoroState {
     // #2249: per-test isolated state (no process global).
     LoroState::new()

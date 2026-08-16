@@ -13,7 +13,11 @@
 //! `registry.for_space(...).engine_mut()`) and the process-global
 //! `sql_only_fallback::count()` DELTA — the counter is monotonic and shared
 //! across the binary, so every assertion is a before/after delta, never an
-//! absolute.
+//! absolute. For why that delta read is sound under `cargo nextest run` and
+//! NOT under concurrent plain `cargo test` — and why
+//! `[test-groups.spy-counter-serial]`'s `max-threads = 1` is not what
+//! supplies that — see `agaric_engine::loro::shared`'s module docs (the
+//! canonical statement, #3983); this file does not restate the mechanism.
 
 use crate::db::init_pool;
 use agaric_core::ulid::BlockId;

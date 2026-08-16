@@ -16,11 +16,17 @@
 //!   path (a chunk-of-one each) produces the SAME final state, proving the
 //!   deferral changed only WHEN the work runs, not its result.
 //!
-//! Run under `cargo nextest run` (one process per test): the two spy counters
-//! are process-global monotonic statics, so the invocation-count assertions in
-//! (c) are only sound when no other test can bump them between reads. (The
-//! engine state is not a concern — #2249 deleted the process-global `OnceLock`
-//! registry; `LoroState` is an ordinary per-instance value now.)
+//! The two spy counters that (c) reads from are process-global monotonic
+//! statics, so the invocation-count assertions are delta reads with the
+//! same process-isolation requirement as the module's other count()-delta
+//! guards.
+//! For why that read is sound under `cargo nextest run` and NOT under
+//! concurrent plain `cargo test` — and why
+//! `[test-groups.spy-counter-serial]`'s `max-threads = 1` is not what
+//! supplies that — see `agaric_engine::loro::shared`'s module docs (the
+//! canonical statement, #3983); this file does not restate the mechanism.
+//! (The engine state is not a concern — #2249 deleted the process-global
+//! `OnceLock` registry; `LoroState` is an ordinary per-instance value now.)
 
 // The assertions below cast small compile-time `const N: usize` fixtures (≤ 12)
 // and loop indices to `i64` for rank/count comparisons; the values are tiny, so

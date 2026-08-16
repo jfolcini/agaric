@@ -424,6 +424,23 @@ pass_filenames = false
 files = "\\.(md|rs|ts|tsx)$"
 stages = ["pre-commit"]
 
+# Self-test the guard's own exit-2 invocation-error path (spawns itself with
+# `git` stripped from PATH and asserts exit 2 + an "invocation error" stderr)
+# whenever the guard script itself changes. Without this the exit-2 branch is
+# reachable only by hand, so a regression that re-swallowed a genuine git
+# failure as fail-open-clean would land unnoticed. Mirrors
+# `dead-symbol-citations-selftest` below.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "architecture-citations-selftest"
+name = "architecture citation guard self-test (#3982 exit-2 path)"
+entry = "node scripts/check-architecture-citations.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-architecture-citations\\.mjs$"
+stages = ["pre-commit"]
+
 # Dead-symbol citation guard (#3817). ~10 Rust test-tree comments instructed
 # readers to call a test-harness installer on the Loro engine state to drive
 # the production engine path; that fn was deleted in #2249/#2250 (engine

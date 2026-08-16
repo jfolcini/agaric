@@ -34,23 +34,11 @@
 //!
 //! HOWEVER, that last guard reads the process-global
 //! `sql_only_fallback::count()` counter, a monotonic `AtomicU64` shared by every
-//! test running in the SAME process: two count-measuring tests interleaving in
-//! one process corrupt each other's delta. Run these under `cargo nextest run`
-//! (as CI and the pre-push hook do), NOT concurrent plain `cargo test` —
-//! nextest "executes each individual test in a separate process" (nexte.st,
-//! "How nextest works"), so each test gets a fresh counter and no sibling can
-//! land between its two reads, whereas plain `cargo test` runs the whole binary
-//! in ONE process with the tests on threads. (`cargo test -- --test-threads=1`
-//! is sound for the same reason serialisation is; it just costs the binary's
-//! parallelism.)
-//!
-//! Note what does NOT supply that isolation: `src-tauri/.config/nextest.toml`
-//! pins this file (and its delta-asserting peers) into
-//! `[test-groups.spy-counter-serial]` `max-threads = 1`, but a test group is a
-//! concurrency semaphore over its members — one permit serialises the group, it
-//! does not put a test in its own process, because nextest already does that
-//! for every test, grouped or not. Group membership is not what makes this
-//! delta valid.
+//! test running in the SAME process. For why that read is still sound under
+//! `cargo nextest run` and NOT under concurrent plain `cargo test` — and why
+//! `[test-groups.spy-counter-serial]`'s `max-threads = 1` is not what
+//! supplies that — see `agaric_engine::loro::shared`'s module docs (the
+//! canonical statement, #3983); this file does not restate the mechanism.
 //!
 //! ## Properties
 //!
