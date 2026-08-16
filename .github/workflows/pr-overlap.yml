@@ -44,9 +44,9 @@ jobs:
     # Generous ceiling on a job whose real cost is seconds; if this ever fires,
     # something is retrying an API call, not computing an overlap.
     timeout-minutes: 10
-    # `ratchets`/`diverged` are consumed by `merge-result` below, to decide
-    # whether it has anything to do — see that job for why "any overlap" is
-    # the wrong gate and ratchets/diverged is the right one. `overlaps`
+    # `ratchets`/`diverged`/`basechanged` are consumed by `merge-result`
+    # below, to decide whether it has anything to do — see that job for why
+    # "any overlap" is the wrong gate and these are the right one. `overlaps`
     # (any shared file, ratchet or not) is NOT consumed by anything — it is
     # informational only, surfaced for a human reading `gh run view`'s
     # output alongside the sticky PR comment this job also posts, not a
@@ -55,6 +55,11 @@ jobs:
       overlaps: ${{ steps.overlap.outputs.overlaps }}
       ratchets: ${{ steps.overlap.outputs.ratchets }}
       diverged: ${{ steps.overlap.outputs.diverged }}
+      # #3979: every path `main` has changed since this branch's merge base,
+      # UNFILTERED by whether this branch touches any of them. See
+      # `merge-result`'s own comment for why `diverged` (filtered to shared
+      # paths) alone let the gate skip the exact case it exists for.
+      basechanged: ${{ steps.overlap.outputs.basechanged }}
     permissions:
       contents: read
       # Posting the informational comment. Read-only on fork PRs, which is why
@@ -161,36 +166,58 @@ jobs:
   # does not do: actually verify the MERGE RESULT, not just report which
   # files two PRs touch.
   #
-  # Gated on `ratchets`/`diverged`, NOT on `overlaps` (any shared file). An
+  # Gated on `ratchets`/`basechanged`, NOT on `overlaps` (any shared file). An
   # ordinary shared file is "a fact a human has to weigh" (see the `overlap`
   # job's own header) — this lane must not manufacture unactionable red over
   # it, same reasoning #3350 argues for `overlap` itself. `ratchets` IS a
   # whole-tree-ratchet-only count (`pr-file-overlap.mjs`'s `ratchetCount`).
-  # `diverged`, precisely stated, is NOT: it is `divergedFiles.length` —
-  # every file `main` has changed since this branch's base that this branch
-  # ALSO touches, ratchet or not. `pr-file-overlap.mjs` separately computes
-  # `divergedRatchets` (the ratchet-only subset, used in the sticky
-  # comment's own wording) but never exports it to `$GITHUB_OUTPUT`, so this
-  # gate cannot key on it without that script also changing. Over-triggering
-  # is the safe direction — this job runs on some divergence that turns out
-  # not to touch a ratchet file, at the cost of a checkout and three Python
-  # invocations, never the reverse — so this is left as `diverged`
-  # deliberately rather than narrowed to a count that does not exist yet.
+  #
+  # `basechanged` (#3979 fix; `pr-file-overlap.mjs`'s `baseChangedCount`) is
+  # every path `main` has changed since this branch's merge base, deliberately
+  # UNFILTERED by whether this branch touches any of them. This job used to
+  # gate on `diverged` instead — `divergedFiles.length`, the mine-FILTERED
+  # subset — and that let it skip the exact case it exists for: a ratchet is a
+  # whole-tree invariant, so a `.rs` file the base adds under a crate root can
+  # break `check-dynamic-sql` without this branch sharing one path with it.
+  # Then `ratchets=0` (no open-PR overlap either) and `diverged=0` (the added
+  # file is in nobody's "mine" set), and the job never ran — even though the
+  # merged tree is exactly the tree nobody built, which is the whole premise
+  # of this job. #3979 reproduced it: a base commit adding an unrelated `.rs`
+  # file, a PR touching nothing near it, `ratchets`/`diverged` both `0`, the
+  # job skipping; after `basechanged` replaced `diverged` in this condition,
+  # the same fixture runs the job and it catches a planted ratchet violation
+  # in the base-only file. Over-triggering is the safe direction — this job
+  # runs on some base movement that turns out not to touch a ratchet file, at
+  # the cost of a checkout and three Python invocations, never the reverse —
+  # so `basechanged` is left as "any base movement" deliberately rather than
+  # narrowed to a ratchet-only count `pr-file-overlap.mjs` does not compute
+  # yet (it would need to scan `main`'s diverged set with `isRatchetFile`,
+  # unfiltered by "mine", which is a `pr-file-overlap.mjs` change of its own).
+  # `diverged` itself is left in `pr-file-overlap.mjs`'s output and this job's
+  # `outputs:` block — the sticky PR comment still reads it for the #3724
+  # near-miss wording — but it is redundant IN THIS CONDITION: `divergedFiles`
+  # is by construction a subset of the unfiltered set `basechanged` counts, so
+  # `diverged != '0'` can never be true while `basechanged == '0'`. Dropping it
+  # here removes a class of reasoning about which gate is correct, which given
+  # this job's whole history of gates reasoned wrong is worth something on its
+  # own.
+  #
   # A whole-tree RATCHET file overlapping or diverging is different in kind
   # from an ordinary shared file: both branches can hold a self-consistent
   # version and the MERGE still be wrong (the #3724 near-miss), which is a
   # claim this job can actually TEST — build the merge fresh and run the
   # guards that police ratchet files against it — rather than merely flag
-  # for a human to re-derive. #3979 tracks the broader gap this leaves (a
-  # merge that breaks a ratchet with no shared path at all never trips
-  # `ratchets` OR `diverged`); this comment is only about what the existing
-  # `diverged` count does and does not mean, not that gap.
+  # for a human to re-derive.
   #
   # This is therefore the first thing in this repo's CI that verifies a
   # merge RESULT rather than a branch. It is deliberately narrow: no Rust
-  # toolchain, no node_modules — `scripts/pr-merge-result-check.sh` runs
-  # three stdlib-only Python guards (the five-crate-root ratchet trio,
-  # #3107) against a disposable worktree. Running the FULL `prek
+  # toolchain, no node_modules — `scripts/pr-merge-result-check.sh` runs the
+  # six whole-tree ratchet guards against a disposable worktree: the
+  # stdlib-only Python trio that shares the five-crate-root scan (#3107),
+  # two bash guards (unsafe-allowlist, migrations-immutable) and one node
+  # guard (tauri-import-baseline, which imports nothing beyond the stdlib
+  # and its sibling scripts/lib/js-scanner.mjs, so it needs no
+  # node_modules either) — #3978. Running the FULL `prek
   # --all-files` here (#3672 comment 3's step 3, in full) needs the whole
   # toolchain this lane deliberately does not carry; see that script's own
   # header for the scoping rationale and how to extend it.
@@ -232,11 +259,11 @@ jobs:
   # one merge path where it matters most.
   merge-result:
     needs: overlap
-    # `diverged` is a count, or the literal `unknown` when
+    # `basechanged` is a count, or the literal `unknown` when
     # pr-overlap-diverged.sh could not compute it. `unknown` must TRIGGER this
     # job, not exempt it: the #3724 shape has no open-PR overlap at all
     # (#3717 had already merged when #3724 opened), so `ratchets` is 0 for it
-    # and the divergence half is the only thing that would fire. Excluding
+    # and the base-divergence half is the only thing that would fire. Excluding
     # `unknown` meant a failure in the divergence script silently switched the
     # merge-result lane off for exactly the case it exists for. Running it
     # costs a checkout and three Python invocations; not running it costs the
@@ -265,7 +292,7 @@ jobs:
     if: |
       !cancelled() && (
         needs.overlap.outputs.ratchets != '0' ||
-        needs.overlap.outputs.diverged != '0'
+        needs.overlap.outputs.basechanged != '0'
       )
     runs-on: ubuntu-24.04
     # Real cost is a checkout + one git merge + three short python

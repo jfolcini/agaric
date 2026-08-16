@@ -46,9 +46,12 @@
 //        self-test failure.
 // ─────────────────────────────────────────────────────────────────────
 
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+
+import { ScanError, stripComments } from './lib/js-scanner.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const SRC_DIR = path.join(ROOT, 'src')
@@ -108,18 +111,6 @@ function isExempt(rel) {
 }
 
 /**
- * Replace block comments (`/* … *\/`, incl. JSDoc) and line comments
- * (`// …`) with spaces so a documented/commented-out `invoke('…')` is
- * not flagged. Newlines inside block comments are preserved so line
- * numbers stay accurate for reporting.
- */
-function stripComments(src) {
-  let out = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-  out = out.replace(/\/\/[^\n]*/g, (m) => ' '.repeat(m.length))
-  return out
-}
-
-/**
  * Return the raw-invoke violations in a single source string as an
  * array of `{ line, command }`.
  */
@@ -140,21 +131,30 @@ function scanSource(src) {
  * Analyze all source files under `srcDir` for raw-invoke violations,
  * honoring the exemption list. Pure over the filesystem so the
  * self-test can drive it against a synthetic tree. Returns
- * `{ violations, scanned }`.
+ * `{ violations, scanned, scanErrors }`, where `scanErrors` is
+ * `{ file, message }` for files the shared scanner could not lex
+ * unambiguously — a FAILURE, not a skip: a file this guard cannot parse
+ * is a file whose raw-invoke calls nobody checked (#3993).
  */
 function analyze({ root, srcDir }) {
   const violations = []
+  const scanErrors = []
   let scanned = 0
   for (const file of listSourceFiles(srcDir)) {
     const rel = toPosix(path.relative(root, file))
     if (isExempt(rel)) continue
     scanned += 1
     const src = fs.readFileSync(file, 'utf8')
-    for (const v of scanSource(src)) {
-      violations.push({ file: rel, line: v.line, command: v.command })
+    try {
+      for (const v of scanSource(src)) {
+        violations.push({ file: rel, line: v.line, command: v.command })
+      }
+    } catch (err) {
+      if (!(err instanceof ScanError)) throw err
+      scanErrors.push({ file: rel, message: err.message })
     }
   }
-  return { violations, scanned }
+  return { violations, scanned, scanErrors }
 }
 
 // ─── main ───────────────────────────────────────────────────────────
@@ -171,7 +171,20 @@ function runGuard() {
     process.exit(2)
   }
 
-  const { violations, scanned } = analyze({ root: ROOT, srcDir: SRC_DIR })
+  const { violations, scanned, scanErrors } = analyze({ root: ROOT, srcDir: SRC_DIR })
+
+  if (scanErrors.length > 0) {
+    console.error('ERROR: file(s) could not be scanned unambiguously, so their invoke() calls')
+    console.error('were NOT verified:')
+    console.error('')
+    for (const e of scanErrors) {
+      console.error(`  ${e.file} — ${e.message}`)
+    }
+    console.error('')
+    console.error('The shared scanner (scripts/lib/js-scanner.mjs) fails closed rather than')
+    console.error('guessing. Fix the construct it names, or extend the scanner.')
+    process.exit(1)
+  }
 
   if (violations.length > 0) {
     console.error('ERROR: raw Tauri invoke() calls found in app code:')
@@ -254,8 +267,29 @@ function runSelfTest() {
       path.join(testDir, 'Bad.test.tsx'),
       "it('x', () => invoke('mcp_set_enabled'))\n",
     )
+    // 8. #3993: a string literal containing `/*` (`'./fixtures/**'`) sits
+    //    above a real invoke() call, and a real JSDoc block comment closes
+    //    later in the file. The byte-identical private `stripComments` this
+    //    guard used to carry is not string-aware: it reads the `/*` inside
+    //    the string as a comment opener and blanks everything up to the
+    //    JSDoc's `*/`, hiding the invoke() call entirely and reporting the
+    //    file clean. The shared scanner's `stripComments` is string-aware,
+    //    so this must still be flagged. (Demonstrated verbatim in #3993.)
+    fs.writeFileSync(
+      path.join(compDir, 'FakeCommentOpener.tsx'),
+      "const GLOB = './fixtures/**'\nexport async function load() {\n  return await invoke('listBlocks')\n}\n/** any JSDoc block below it */\n",
+    )
+    // 9. #3993: a file with an unterminated string literal cannot be lexed
+    //    unambiguously. The shared scanner fails CLOSED (throws
+    //    `ScanError`), and this guard must surface that as a scanError — a
+    //    FAILURE the human sees — not silently drop the file from both
+    //    `violations` and the scanned count.
+    fs.writeFileSync(
+      path.join(compDir, 'Unterminated.tsx'),
+      "export const bad = 'unterminated string literal, never closes\n",
+    )
 
-    const { violations } = analyze({ root: tmp, srcDir })
+    const { violations, scanErrors } = analyze({ root: tmp, srcDir })
     const hit = (f) => violations.some((v) => v.file === `src/${f}`)
 
     if (hit('components/Bad.tsx')) ok('raw invoke in component is flagged')
@@ -278,8 +312,80 @@ function runSelfTest() {
 
     if (!violations.some((v) => v.file.includes('__tests__'))) ok('test file is ignored')
     else fail('test file is ignored', 'a __tests__ file was flagged')
+
+    if (hit('components/FakeCommentOpener.tsx'))
+      ok('a string containing `/*` above a real invoke() call is still flagged (#3993)')
+    else
+      fail(
+        'a string containing `/*` above a real invoke() call is still flagged',
+        JSON.stringify(violations),
+      )
+
+    if (
+      scanErrors.some((e) => e.file === 'src/components/Unterminated.tsx') &&
+      !hit('components/Unterminated.tsx')
+    )
+      ok('an unlexable file is reported as a scanError (failure), not silently skipped')
+    else
+      fail(
+        'an unlexable file is reported as a scanError, not silently skipped',
+        JSON.stringify({ scanErrors, violations }),
+      )
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
+  }
+
+  // ─── CLI-level self-test: real subprocess, real exit code ───────────
+  //
+  // Everything above drives analyze()/scanSource() directly and only
+  // inspects the RETURN VALUE's `scanErrors` array — it never reaches
+  // process.exit(). A regression that dropped the `process.exit(1)` in the
+  // scanErrors branch of runGuard() (falling through to the violations
+  // check and, when there happen to be no OTHER violations, all the way to
+  // the `console.log('OK: ...')` success branch) would print the ERROR
+  // block to stderr but still exit 0, and every assertion above would stay
+  // green through it. Spawn the real CLI (copied into a scaffold tree with
+  // its own `scripts/lib/js-scanner.mjs`, since runGuard() resolves SRC_DIR
+  // from the script's own location, not `cwd`) against a tree containing
+  // ONE typed-binding call (clean) plus ONE unlexable file with no raw
+  // `invoke()` calls at all (so no violation could paper over the missing
+  // exit) and assert the real exit code is non-zero.
+  const scanErrTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'raw-invoke-scanerror-'))
+  try {
+    const seScripts = path.join(scanErrTmp, 'scripts')
+    const seLib = path.join(seScripts, 'lib')
+    const seSrc = path.join(scanErrTmp, 'src', 'components')
+    fs.mkdirSync(seLib, { recursive: true })
+    fs.mkdirSync(seSrc, { recursive: true })
+    fs.writeFileSync(
+      path.join(seSrc, 'Clean.tsx'),
+      "import { commands } from '@/lib/bindings'\nexport const C = () => unwrap(await commands.mcpSetEnabled(true))\n",
+    )
+    fs.writeFileSync(
+      path.join(seSrc, 'Broken.tsx'),
+      "const bad = 'unterminated string literal, never closes\n",
+    )
+    const seScript = path.join(seScripts, 'check-raw-invoke.mjs')
+    fs.copyFileSync(import.meta.filename, seScript)
+    fs.copyFileSync(
+      path.join(import.meta.dirname, 'lib', 'js-scanner.mjs'),
+      path.join(seLib, 'js-scanner.mjs'),
+    )
+    const resSE = spawnSync(process.execPath, [seScript], { encoding: 'utf8' })
+    if (
+      resSE.status === 1 &&
+      /could not be scanned unambiguously/.test(resSE.stderr) &&
+      !resSE.stdout.includes('OK:')
+    ) {
+      ok('CLI exits 1 (not OK) when a file cannot be scanned, even with no other violations')
+    } else {
+      fail(
+        'CLI exits 1 when a file cannot be scanned (scanErrors branch), even with no other violations',
+        `status=${resSE.status} stdout=${resSE.stdout} stderr=${resSE.stderr}`,
+      )
+    }
+  } finally {
+    fs.rmSync(scanErrTmp, { recursive: true, force: true })
   }
 
   if (failures.length > 0) {

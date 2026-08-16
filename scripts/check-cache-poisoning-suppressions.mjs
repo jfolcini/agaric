@@ -94,6 +94,16 @@ export const EXPECTED_INLINE_SUPPRESSIONS = 4
  * because a `files` pattern that quietly stopped naming one of these paths
  * would take that coverage with it and nothing would say so. `prek.toml` is
  * in the list too: this guard now reads it, so an edit to it must re-run.
+ *
+ * This hook's `files` pattern is deliberately narrow (four exact paths), NOT
+ * `.github/workflows/**` — which is exactly why the EXACT-COUNT check
+ * (`EXPECTED_INLINE_SUPPRESSIONS`, checked in `assertCachePoisoningSuppressionHygiene`
+ * below) does not live behind it: a fifth `# zizmor: ignore[cache-poisoning]`
+ * added to some other workflow, say `release.yml`, touches none of these
+ * four paths, so this hook would never re-run to notice it (#3987). The count
+ * check instead lives in `main()`, gated only by the OTHER hook —
+ * `cache-poisoning-suppressions`, `always_run = true` — which fires on every
+ * commit regardless of which files changed. See `selfTestMainHookAlwaysRun`.
  */
 export const SELF_TEST_HOOK_ID = 'cache-poisoning-suppressions-self-test'
 export const SELF_TEST_HOOK_DEPENDENCIES = Object.freeze([
@@ -103,23 +113,49 @@ export const SELF_TEST_HOOK_DEPENDENCIES = Object.freeze([
   'prek.toml',
 ])
 
+/** The `always_run` hook that runs `main()` (not `--self-test`) on every commit. */
+export const MAIN_HOOK_ID = 'cache-poisoning-suppressions'
+
+/**
+ * Slices out one `[[repos.hooks]]` block from `prek.toml`'s text, keyed by
+ * `id`. Shared by `findHookFilesPattern` and `hookIsAlwaysRun` below — both
+ * need "this hook's block and nothing past the next `[[`", and duplicating
+ * the slice would risk the two readers disagreeing about where a hook ends.
+ * Throws when the id is absent — a rename must fail loud rather than let a
+ * coverage assertion built on either reader pass vacuously.
+ */
+function hookBlock(prekTomlText, hookId) {
+  const idIdx = prekTomlText.indexOf(`id = "${hookId}"`)
+  if (idIdx === -1) throw new Error(`no prek hook \`${hookId}\` found in prek.toml`)
+  const rest = prekTomlText.slice(idIdx)
+  const endIdx = rest.indexOf('\n[[')
+  return endIdx === -1 ? rest : rest.slice(0, endIdx)
+}
+
 /**
  * A prek hook's `files` pattern, as a live RegExp, read out of `prek.toml`.
  * Throws when the hook or its pattern is absent — a rename must fail loud
  * rather than let the coverage assertion pass vacuously.
  */
 export function findHookFilesPattern(prekTomlText, hookId) {
-  const idIdx = prekTomlText.indexOf(`id = "${hookId}"`)
-  if (idIdx === -1) throw new Error(`no prek hook \`${hookId}\` found in prek.toml`)
-  const rest = prekTomlText.slice(idIdx)
-  const endIdx = rest.indexOf('\n[[')
-  const block = endIdx === -1 ? rest : rest.slice(0, endIdx)
+  const block = hookBlock(prekTomlText, hookId)
   const m = block.match(/^files = (['"])(.*)\1\s*$/m)
   if (!m) throw new Error(`prek hook \`${hookId}\` has no \`files\` pattern`)
   // TOML basic strings ("…") escape each backslash; literal strings ('…') do
   // not. Getting this wrong turns `\\.` into a wildcard and the assertion
   // into a weaker one that still passes.
   return new RegExp(m[1] === "'" ? m[2] : m[2].replace(/\\\\/g, '\\'))
+}
+
+/**
+ * True when a prek hook's block carries a literal `always_run = true` line —
+ * the property `main()`'s exact-count check (#3987) leans on to be reachable
+ * regardless of which files a commit touches. Does NOT throw on a hook with
+ * no `always_run` line at all (that is simply "not always-run", the common
+ * case); it throws only when the hook id itself is absent, via `hookBlock`.
+ */
+export function hookIsAlwaysRun(prekTomlText, hookId) {
+  return /^always_run = true\s*$/m.test(hookBlock(prekTomlText, hookId))
 }
 
 // ---------------------------------------------------------------------------
@@ -254,8 +290,18 @@ export function findInlineCachePoisoningSuppressions(dir = WORKFLOWS_DIR) {
 // Consistency check
 // ---------------------------------------------------------------------------
 
-/** Returns an array of human-readable problem strings — empty means healthy. */
-export function checkHygiene({ lineAnchors, inlineHits }) {
+/**
+ * Returns an array of human-readable problem strings — empty means healthy.
+ *
+ * `expectedInlineSuppressions` is OPTIONAL and undefined by default: the
+ * count check only runs when a caller supplies it, so the unit tests below
+ * that construct small `inlineHits` fixtures (one hit, two hits) are not
+ * accidentally asserting against the real repo's count of four. The one
+ * caller that DOES supply it is `assertCachePoisoningSuppressionHygiene`
+ * (via `main()`) — see its comment for why that is where an exact-count
+ * check must live to actually be reachable (#3987).
+ */
+export function checkHygiene({ lineAnchors, inlineHits, expectedInlineSuppressions }) {
   const problems = []
   if (lineAnchors.length > 0) {
     problems.push(
@@ -272,18 +318,49 @@ export function checkHygiene({ lineAnchors, inlineHits }) {
         'or every cache-poisoning finding was fixed outright and the suppressions were rightly ' +
         'deleted (delete this guard too), or a suppression was deleted by accident (restore it)',
     )
+  } else if (
+    expectedInlineSuppressions !== undefined &&
+    inlineHits.length !== expectedInlineSuppressions
+  ) {
+    problems.push(
+      `.github/workflows/** carries ${inlineHits.length} inline ` +
+        `\`# zizmor: ignore[cache-poisoning]\` suppression(s) ` +
+        `(${inlineHits.map((h) => h.location).join(', ')}), not the expected ` +
+        `${expectedInlineSuppressions} — if you ADDED one on purpose, bump ` +
+        `EXPECTED_INLINE_SUPPRESSIONS in scripts/check-cache-poisoning-suppressions.mjs ` +
+        `(and say in the commit which step it covers); if you did not, a suppression appeared ` +
+        `or vanished without review. Checked on every commit — this guard's OTHER prek hook is ` +
+        `\`always_run\`, so this fires even when the change is nowhere near this guard's own ` +
+        `four dependency files.`,
+    )
   }
   return problems
 }
 
-/** Throws with every problem spelled out, or returns silently. */
+/**
+ * Throws with every problem spelled out, or returns silently.
+ *
+ * #3987 — `expectedInlineSuppressions` defaults to `EXPECTED_INLINE_SUPPRESSIONS`
+ * HERE, not just in `--self-test`. This function is what `main()` calls, and
+ * `main()` is what the `cache-poisoning-suppressions` prek hook runs on
+ * EVERY commit (`always_run = true`, verified by `selfTestMainHookAlwaysRun`
+ * below) — unlike this guard's own `--self-test` hook, which only re-runs
+ * when one of four specific paths changes. Before this, the exact-count
+ * assertion existed only inside `--self-test`, so a fifth suppression added
+ * to a workflow outside those four paths (e.g. `release.yml`) tripped
+ * neither hook: the self-test hook never re-ran, and the always-run hook's
+ * `checkHygiene` only ever noticed zero. Checking the count here closes that
+ * gap — it runs whether or not the touched file is one this guard already
+ * watches.
+ */
 export function assertCachePoisoningSuppressionHygiene({
   zizmorConfigPath = ZIZMOR_CONFIG_PATH,
   workflowsDir = WORKFLOWS_DIR,
+  expectedInlineSuppressions = EXPECTED_INLINE_SUPPRESSIONS,
 } = {}) {
   const lineAnchors = findLineAnchoredCachePoisoningIgnores(readFileSync(zizmorConfigPath, 'utf8'))
   const inlineHits = findInlineCachePoisoningSuppressions(workflowsDir)
-  const problems = checkHygiene({ lineAnchors, inlineHits })
+  const problems = checkHygiene({ lineAnchors, inlineHits, expectedInlineSuppressions })
   if (problems.length > 0) {
     throw new Error(
       `scripts/check-cache-poisoning-suppressions.mjs found a problem (#3737):\n  - ${problems.join('\n  - ')}`,
@@ -581,6 +658,13 @@ function selfTestInlineScan({ check }) {
   )
 
   // ...and the real repo, right now, must have the four this fix introduced.
+  // #3987 — this is now the SECONDARY check: the primary one runs from
+  // `main()` on every commit (`assertCachePoisoningSuppressionHygiene`,
+  // gated only by the `always_run` `cache-poisoning-suppressions` hook — see
+  // `selfTestExactCountReachableFromAnyFixture` and `selfTestMainHookAlwaysRun`).
+  // This one only re-runs when one of this hook's own four dependency paths
+  // changes, which is exactly the reachability gap #3987 filed — kept here
+  // too because it is still correct, just no longer the only guard.
   const realHits = findInlineCachePoisoningSuppressions()
   check(
     realHits.length === EXPECTED_INLINE_SUPPRESSIONS,
@@ -660,6 +744,171 @@ function selfTestHygiene({ check }) {
   check(
     checkHygiene({ lineAnchors: [], inlineHits: [] }).length === 1,
     'zero inline suppressions found at all is a FAILURE (wiring guard), not a vacuous pass',
+    '',
+  )
+
+  // #3987 — the exact-count check, folded into `checkHygiene` itself behind
+  // an explicit `expectedInlineSuppressions` (undefined by default, so the
+  // three fixtures above — one and zero inline hits — stay agnostic to the
+  // real repo's count of four and do not start failing here).
+  check(
+    checkHygiene({
+      lineAnchors: [],
+      inlineHits: [{ location: 'a.yml:1' }, { location: 'b.yml:2' }],
+      expectedInlineSuppressions: 2,
+    }).length === 0,
+    'inline count matching the expected count → healthy',
+    '',
+  )
+  check(
+    checkHygiene({
+      lineAnchors: [],
+      inlineHits: [{ location: 'a.yml:1' }, { location: 'b.yml:2' }, { location: 'release.yml:9' }],
+      expectedInlineSuppressions: 2,
+    }).length === 1,
+    'a suppression count ABOVE the expected count is caught, even though it is not zero (the case `inlineHits.length === 0` alone cannot see)',
+    '',
+  )
+}
+
+/**
+ * #3987 — the CALL SITE for the exact-count check: `assertCachePoisoningSuppressionHygiene`
+ * (what `main()` calls) must actually throw when the real count diverges,
+ * using a fixture that names none of the self-test hook's four dependency
+ * paths — proving the enforcement no longer depends on which file a commit
+ * happened to touch, which is the gap #3987 filed.
+ */
+function selfTestExactCountReachableFromAnyFixture({ check }) {
+  const dir = mkdtempSync(join(tmpdir(), 'cache-poisoning-count-'))
+  const zizmorCopy = join(dir, 'zizmor.yml')
+  writeFileSync(zizmorCopy, 'rules: {}\n', 'utf8')
+  const workflowsCopy = join(dir, 'workflows')
+  mkdirSync(workflowsCopy)
+  writeFileSync(
+    join(workflowsCopy, 'release.yml'),
+    [
+      'jobs:',
+      '  a:',
+      '    steps:',
+      '      - name: one',
+      '        # zizmor: ignore[cache-poisoning]',
+      '      - name: two',
+      '        # zizmor: ignore[cache-poisoning]',
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+
+  let threwOnMismatch = null
+  try {
+    assertCachePoisoningSuppressionHygiene({
+      zizmorConfigPath: zizmorCopy,
+      workflowsDir: workflowsCopy,
+      expectedInlineSuppressions: 1,
+    })
+  } catch (err) {
+    threwOnMismatch = err
+  }
+  check(
+    threwOnMismatch !== null &&
+      /carries 2 inline/.test(threwOnMismatch.message) &&
+      /expected 1/.test(threwOnMismatch.message),
+    'assertCachePoisoningSuppressionHygiene throws when the real inline count diverges from the expected one — from a fixture unrelated to any of the four self-test-hook dependency paths',
+    threwOnMismatch ? threwOnMismatch.message : '(did not throw)',
+  )
+
+  let threwOnMatch = null
+  try {
+    assertCachePoisoningSuppressionHygiene({
+      zizmorConfigPath: zizmorCopy,
+      workflowsDir: workflowsCopy,
+      expectedInlineSuppressions: 2,
+    })
+  } catch (err) {
+    threwOnMatch = err
+  }
+  check(
+    threwOnMatch === null,
+    'and stays healthy when the count matches the fixture',
+    threwOnMatch ? threwOnMatch.message : '',
+  )
+
+  // The two calls above always pass `expectedInlineSuppressions` explicitly,
+  // so neither can catch a deleted `= EXPECTED_INLINE_SUPPRESSIONS` default —
+  // the count check would silently stop firing and both calls would keep
+  // passing. `main()` calls this function with NO `expectedInlineSuppressions`
+  // at all, relying entirely on the parameter default. Reproduce that here:
+  // pass `zizmorConfigPath`/`workflowsDir` to point at the fixture (2 real
+  // suppressions), but omit `expectedInlineSuppressions` so the DEFAULT
+  // (`EXPECTED_INLINE_SUPPRESSIONS`, 4 in the real repo) is what has to catch
+  // the mismatch.
+  let threwOnDefaultExpectedCount = null
+  try {
+    assertCachePoisoningSuppressionHygiene({
+      zizmorConfigPath: zizmorCopy,
+      workflowsDir: workflowsCopy,
+    })
+  } catch (err) {
+    threwOnDefaultExpectedCount = err
+  }
+  check(
+    threwOnDefaultExpectedCount !== null &&
+      /carries 2 inline/.test(threwOnDefaultExpectedCount.message) &&
+      new RegExp(`expected ${EXPECTED_INLINE_SUPPRESSIONS}`).test(
+        threwOnDefaultExpectedCount.message,
+      ),
+    "assertCachePoisoningSuppressionHygiene throws on the fixture's 2 suppressions using its " +
+      "DEFAULT `expectedInlineSuppressions` (no value passed at all, exactly like `main()`'s " +
+      'call site) — proves the `= EXPECTED_INLINE_SUPPRESSIONS` default itself is what enforces ' +
+      'the count, not merely a value every other self-test caller happens to pass explicitly (#3987)',
+    threwOnDefaultExpectedCount ? threwOnDefaultExpectedCount.message : '(did not throw)',
+  )
+}
+
+/**
+ * #3987 — the exact-count check is reachable only if the hook running
+ * `main()` (which now carries it, via `assertCachePoisoningSuppressionHygiene`'s
+ * default `expectedInlineSuppressions`) fires on every commit regardless of
+ * which files changed. `hookIsAlwaysRun` is exercised on a fixture first, so
+ * the assertion against the real hook below is known to be able to fail.
+ */
+function selfTestMainHookAlwaysRun({ check }) {
+  const fixture = [
+    '[[repos.hooks]]',
+    'id = "some-hook"',
+    'always_run = true',
+    'stages = ["pre-commit"]',
+    '',
+    '[[repos.hooks]]',
+    'id = "other-hook"',
+    'files = "^never\\\\.txt$"',
+    'stages = ["pre-commit"]',
+  ].join('\n')
+  check(
+    hookIsAlwaysRun(fixture, 'some-hook') === true,
+    'hookIsAlwaysRun reads a real `always_run = true` line back as true',
+    '',
+  )
+  check(
+    hookIsAlwaysRun(fixture, 'other-hook') === false,
+    'hookIsAlwaysRun reads a hook with no `always_run` line back as false, not throwing',
+    '',
+  )
+  let threw = null
+  try {
+    hookIsAlwaysRun(fixture, 'no-such-hook')
+  } catch (err) {
+    threw = err
+  }
+  check(
+    threw !== null,
+    'hookIsAlwaysRun throws on an unknown hook id instead of passing vacuously',
+    '',
+  )
+
+  check(
+    hookIsAlwaysRun(readFileSync(PREK_CONFIG_PATH, 'utf8'), MAIN_HOOK_ID),
+    `the \`${MAIN_HOOK_ID}\` prek hook — which runs \`main()\`, and so carries the exact-suppression-count check — is \`always_run\`, so it fires on every commit and not only when one of the self-test hook's four dependency files changes`,
     '',
   )
 }
@@ -918,7 +1167,9 @@ function runSelfTest() {
   selfTestLineAnchorDetection({ check })
   selfTestInlineScan({ check })
   selfTestHygiene({ check })
+  selfTestExactCountReachableFromAnyFixture({ check })
   selfTestSelfTestHookCoverage({ check })
+  selfTestMainHookAlwaysRun({ check })
   selfTestFindingLineHarvest({ check })
   selfTestZizmorSurvivesLineDrift({ check, fail })
 

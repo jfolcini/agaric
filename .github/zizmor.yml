@@ -131,9 +131,9 @@
 # job list, or this file.
 
 rules: {}
-  # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
-  # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
-  # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot
-  # (.github/dependabot.yml) opens weekly PRs to bump SHAs when new
-  # release tags land. Any *new* unpinned reference will now fire, as
-  # intended for a baseline-then-tighten workflow.
+# unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
+# `uses: org/action@vX` reference across _validate.yml, ci.yml, and
+# release.yml to a 40-char commit SHA + `# vX` comment. Dependabot
+# (.github/dependabot.yml) opens weekly PRs to bump SHAs when new
+# release tags land. Any *new* unpinned reference will now fire, as
+# intended for a baseline-then-tighten workflow.

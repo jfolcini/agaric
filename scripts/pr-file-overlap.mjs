@@ -85,13 +85,25 @@
 // never "nothing diverged".
 //
 // Output: the analysis as JSON on stdout, the comment as Markdown to
-// `--comment-body`, and `overlaps=`/`ratchets=`/`diverged=` appended to
-// `$GITHUB_OUTPUT`.
+// `--comment-body`, and `overlaps=`/`ratchets=`/`diverged=`/`basechanged=`
+// appended to `$GITHUB_OUTPUT`. `basechanged` (#3979) is the gate that
+// actually covers the merged tree: every path the base has changed since
+// this branch's merge base, unfiltered by whether this branch touches any of
+// them — see `baseChangedCount` below for why `diverged` alone is not enough.
 //
 // Exit: 0 always when the arguments parse — this lane reports, it never
 // gates. 2 for bad usage / self-test failure.
 
-import { appendFileSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import process from 'node:process'
 
 export const COMMENT_MARKER = '<!-- pr-file-overlap -->'
@@ -164,6 +176,19 @@ export function computeOverlap({ pr, prs = [], divergedPaths = null }) {
   const divergedFiles =
     divergedPaths === null ? null : divergedPaths.filter((p) => mine.has(p)).toSorted()
 
+  // #3979: `divergedFiles` above is filtered to paths THIS PR ALSO touches,
+  // which is exactly the wrong set for deciding whether the merge-result gate
+  // has anything to do. A ratchet is a whole-tree invariant — a `.rs` file the
+  // base adds under a crate root can break `check-dynamic-sql` (say) without
+  // this branch sharing a single path with it, so `divergedFiles` is empty,
+  // `overlaps` is empty, and a gate keyed on either NEVER RUNS for the exact
+  // case it exists for. `baseChangedCount` is deliberately unfiltered — every
+  // path `main` has changed since this branch's merge base, independent of
+  // what this branch touches — because the hazard is a property of the
+  // MERGED TREE, not of the intersection of two changed-path sets. `null`
+  // means "not computed", same distinction as `divergedFiles`.
+  const baseChangedCount = divergedPaths === null ? null : divergedPaths.length
+
   return {
     pr: Number(pr),
     // `null` when this PR is not in the payload at all — which is NOT the same
@@ -174,6 +199,7 @@ export function computeOverlap({ pr, prs = [], divergedPaths = null }) {
     ratchetCount: overlaps.reduce((n, o) => n + o.ratchets.length, 0),
     divergedFiles,
     divergedRatchets: divergedFiles === null ? null : divergedFiles.filter(isRatchetFile),
+    baseChangedCount,
   }
 }
 
@@ -366,14 +392,29 @@ function main(argv) {
   if (args.commentBody) writeFileSync(args.commentBody, `${renderComment(result)}\n`, 'utf8')
 
   const out = process.env.GITHUB_OUTPUT
-  if (out) {
-    appendFileSync(
-      out,
-      `overlaps=${result.overlaps.length}\nratchets=${result.ratchetCount}\n` +
-        `diverged=${result.divergedFiles === null ? 'unknown' : result.divergedFiles.length}\n`,
-      'utf8',
-    )
-  }
+  if (out) appendFileSync(out, renderGithubOutput(result), 'utf8')
+}
+
+/**
+ * The `$GITHUB_OUTPUT` lines for one result. Pulled out of `main` so the
+ * self-test can pin the exact keys `merge-result`'s `if:` reads, rather than
+ * only the `computeOverlap` fields those keys are derived from — the #3979
+ * gap was in exactly this translation (a field existed, `main` never
+ * exported it), and a test that stops at `computeOverlap` cannot see that
+ * shape of bug.
+ *
+ * @param {ReturnType<typeof computeOverlap>} result
+ */
+export function renderGithubOutput(result) {
+  return (
+    `overlaps=${result.overlaps.length}\n` +
+    `ratchets=${result.ratchetCount}\n` +
+    `diverged=${result.divergedFiles === null ? 'unknown' : result.divergedFiles.length}\n` +
+    // #3979: unfiltered — see `baseChangedCount`'s own comment in
+    // `computeOverlap`. This is the key `merge-result`'s `if:` now gates on
+    // instead of (well, in addition to) `diverged`.
+    `basechanged=${result.baseChangedCount === null ? 'unknown' : result.baseChangedCount}\n`
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -628,13 +669,110 @@ function runSelfTest() {
         /None of the files this PR changes/.test(renderComment(unrelated)),
       JSON.stringify(unrelated.divergedFiles),
     )
-    // …and an unresolvable merge base says so rather than saying "none".
-    const unknown = renderComment(computeOverlap({ pr: 3724, prs: LIVE_PRS }))
+    // #3979: THE FALSIFICATION DEMO ITSELF. `unrelated` above is already the
+    // exact shape the issue describes — the base changed two files this PR
+    // shares no path with — and `divergedFiles` (rightly, for the human-facing
+    // table) reports zero of them. If `baseChangedCount` collapsed to that
+    // same filtered view, the merge-result gate would have nothing left to key
+    // on for the case it exists for: a base-only ratchet-relevant change with
+    // no shared path at all.
+    expect(
+      "#3979: baseChangedCount counts what main changed even when this PR shares none of it — the case 'diverged' alone cannot see",
+      unrelated.baseChangedCount === 2 && unrelated.divergedFiles.length === 0,
+      JSON.stringify({
+        baseChangedCount: unrelated.baseChangedCount,
+        diverged: unrelated.divergedFiles,
+      }),
+    )
+    // …and the sibling: when the base changes MORE than this branch touches,
+    // baseChangedCount counts all of it, not just the overlapping subset —
+    // pinning the "unfiltered" half, not just the "nonzero on a disjoint set"
+    // half above.
+    expect(
+      'baseChangedCount is the FULL base-changed set, not the mine-filtered subset (withBase touches 1 of 2)',
+      withBase.baseChangedCount === 2 && withBase.divergedFiles.length === 1,
+      JSON.stringify({
+        baseChangedCount: withBase.baseChangedCount,
+        diverged: withBase.divergedFiles,
+      }),
+    )
+    // …and an unresolvable merge base says so rather than saying "none",
+    // for baseChangedCount too — "not computed" must not collapse to 0.
+    const notComputed = computeOverlap({ pr: 3724, prs: LIVE_PRS })
+    expect(
+      'an uncomputed divergence leaves baseChangedCount null, never 0',
+      notComputed.baseChangedCount === null,
+      JSON.stringify(notComputed.baseChangedCount),
+    )
+    const unknown = renderComment(notComputed)
     expect(
       'an uncomputed divergence renders as "not computed", never as "none"',
       /Not computed/.test(unknown) && !/None of the files/.test(unknown),
       unknown,
     )
+  }
+
+  // 6b. #3979: the `$GITHUB_OUTPUT` translation itself — the exact spot the
+  //     original gap lived in. A `computeOverlap` field existing is not the
+  //     same fact as `main` exporting it; the gate reads the exported key.
+  //     Recomputed rather than reusing 5b's locals, which are out of scope
+  //     across the block boundary.
+  {
+    const disjoint = computeOverlap({
+      pr: 3724,
+      prs: LIVE_PRS,
+      divergedPaths: ['src/lib/search.ts', 'README.md'],
+    })
+    const disjointOut = renderGithubOutput(disjoint)
+    expect(
+      'basechanged is exported nonzero for a PR sharing NO path with what the base changed',
+      /^basechanged=2$/m.test(disjointOut) && /^diverged=0$/m.test(disjointOut),
+      disjointOut,
+    )
+    const uncomputedOut = renderGithubOutput(computeOverlap({ pr: 3724, prs: LIVE_PRS }))
+    expect(
+      'an uncomputed divergence exports basechanged=unknown, matching diverged=unknown',
+      /^basechanged=unknown$/m.test(uncomputedOut) && /^diverged=unknown$/m.test(uncomputedOut),
+      uncomputedOut,
+    )
+  }
+
+  // 6c. #3979: `main` itself, end to end, through a REAL `$GITHUB_OUTPUT`
+  //     file — not `renderGithubOutput` called directly. 6b pins that the
+  //     translation function is correct; this pins that `main` still calls
+  //     it. Those are different facts: `renderGithubOutput` existing and
+  //     being right does not mean `main`'s `if (out) appendFileSync(...)`
+  //     line still passes it a `result` and still uses it at all, and a
+  //     regression right there (reverting to an inline literal that drops
+  //     `basechanged`, say) is invisible to every assertion above it.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-file-overlap-selftest-'))
+    const prsPath = join(dir, 'prs.json')
+    const divergedPath = join(dir, 'diverged.txt')
+    const outputPath = join(dir, 'github_output')
+    writeFileSync(prsPath, JSON.stringify(LIVE_PRS), 'utf8')
+    writeFileSync(divergedPath, 'src/lib/search.ts\nREADME.md\n', 'utf8')
+    writeFileSync(outputPath, '', 'utf8')
+    const prevOutput = process.env.GITHUB_OUTPUT
+    const prevLog = console.log
+    console.log = () => {} // silence main's own JSON dump for this block only
+    try {
+      process.env.GITHUB_OUTPUT = outputPath
+      main(['--pr', '3724', '--prs', prsPath, '--diverged-from', divergedPath])
+    } finally {
+      console.log = prevLog
+      if (prevOutput === undefined) delete process.env.GITHUB_OUTPUT
+      else process.env.GITHUB_OUTPUT = prevOutput
+    }
+    const written = readFileSync(outputPath, 'utf8')
+    expect(
+      "main's actual $GITHUB_OUTPUT write includes basechanged, not just renderGithubOutput's return value",
+      /^basechanged=2$/m.test(written) &&
+        /^diverged=0$/m.test(written) &&
+        /^ratchets=\d+$/m.test(written),
+      written,
+    )
+    rmSync(dir, { recursive: true, force: true })
   }
 
   // 6. The sticky marker is in every rendering, or the comment step posts a

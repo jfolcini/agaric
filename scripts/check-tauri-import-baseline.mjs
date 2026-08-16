@@ -131,9 +131,12 @@
 //        2 = repo layout / self-test failure.
 // ─────────────────────────────────────────────────────────────────────
 
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+
+import { ScanError, stripComments } from './lib/js-scanner.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const SRC_DIR = path.join(ROOT, 'src')
@@ -219,17 +222,6 @@ function listSourceFiles(srcDir = SRC_DIR) {
   return out
 }
 
-/**
- * Replace block comments (`/* … *\/`, incl. JSDoc) and line comments
- * (`// …`) with spaces so a documented/commented-out import of the
- * wrapper layer is not counted.
- */
-function stripComments(src) {
-  let out = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-  out = out.replace(/\/\/[^\n]*/g, (m) => ' '.repeat(m.length))
-  return out
-}
-
 /** Does `stripped` source depend on the wrapper layer at all (barrel or submodule, static, dynamic, or side-effect-only)? */
 function touchesTauriWrapper(stripped) {
   return STATIC_RE.test(stripped) || DYNAMIC_RE.test(stripped) || SIDE_EFFECT_RE.test(stripped)
@@ -285,25 +277,38 @@ function isFullySanctioned(stripped, sanctioned) {
  * wrapper layer if it touches `@/lib/tauri`(/…) AND is not fully sanctioned
  * (see isFullySanctioned). Pure over the filesystem so the self-test can
  * drive it against a synthetic tree. `sanctioned` is a `Set` as produced by
- * readSanctioned(). Returns `{ importers, newImporters, staleBaseline, scanned }`.
+ * readSanctioned(). Returns
+ * `{ importers, newImporters, staleBaseline, scanned, scanErrors }`, where
+ * `scanErrors` is `{ file, message }` for files the shared scanner could not
+ * lex unambiguously — a FAILURE, not a skip: a file this guard cannot parse
+ * is a file whose `@/lib/tauri` dependency nobody verified (#3993).
  */
 function analyze({ root, srcDir, baseline, sanctioned = new Set() }) {
   const baselineSet = new Set(baseline)
   const importers = []
+  const scanErrors = []
   let scanned = 0
   for (const file of listSourceFiles(srcDir)) {
     scanned += 1
+    const rel = toPosix(path.relative(root, file))
     const src = fs.readFileSync(file, 'utf8')
-    const stripped = stripComments(src)
+    let stripped
+    try {
+      stripped = stripComments(src)
+    } catch (err) {
+      if (!(err instanceof ScanError)) throw err
+      scanErrors.push({ file: rel, message: err.message })
+      continue
+    }
     if (touchesTauriWrapper(stripped) && !isFullySanctioned(stripped, sanctioned)) {
-      importers.push(toPosix(path.relative(root, file)))
+      importers.push(rel)
     }
   }
   importers.sort()
   const importerSet = new Set(importers)
   const newImporters = importers.filter((f) => !baselineSet.has(f))
   const staleBaseline = [...baselineSet].filter((f) => !importerSet.has(f)).toSorted()
-  return { importers, newImporters, staleBaseline, scanned }
+  return { importers, newImporters, staleBaseline, scanned, scanErrors }
 }
 
 function readBaseline() {
@@ -356,7 +361,22 @@ function updateBaseline() {
     process.exit(2)
   }
   const sanctioned = readSanctioned()
-  const { importers } = analyze({ root: ROOT, srcDir: SRC_DIR, baseline: [], sanctioned })
+  const { importers, scanErrors } = analyze({
+    root: ROOT,
+    srcDir: SRC_DIR,
+    baseline: [],
+    sanctioned,
+  })
+  if (scanErrors.length > 0) {
+    console.error('ERROR: file(s) could not be scanned unambiguously; refusing to write a baseline')
+    console.error('computed from an incomplete scan:')
+    console.error('')
+    for (const e of scanErrors) console.error(`  ${e.file} — ${e.message}`)
+    console.error('')
+    console.error('The shared scanner (scripts/lib/js-scanner.mjs) fails closed rather than')
+    console.error('guessing. Fix the construct it names, or extend the scanner.')
+    process.exit(2)
+  }
   writeBaseline(importers)
   console.log(
     `OK: wrote baseline with ${importers.length} importer(s) of @/lib/tauri to ${path.relative(ROOT, BASELINE_FILE)}`,
@@ -376,7 +396,7 @@ function runGuard() {
 
   const baseline = readBaseline()
   const sanctioned = readSanctioned()
-  const { importers, newImporters, staleBaseline } = analyze({
+  const { importers, newImporters, staleBaseline, scanErrors } = analyze({
     root: ROOT,
     srcDir: SRC_DIR,
     baseline,
@@ -384,6 +404,18 @@ function runGuard() {
   })
 
   let failed = false
+
+  if (scanErrors.length > 0) {
+    failed = true
+    console.error('ERROR: file(s) could not be scanned unambiguously, so their @/lib/tauri')
+    console.error('dependency was NOT verified:')
+    console.error('')
+    for (const e of scanErrors) console.error(`  ${e.file} — ${e.message}`)
+    console.error('')
+    console.error('The shared scanner (scripts/lib/js-scanner.mjs) fails closed rather than')
+    console.error('guessing. Fix the construct it names, or extend the scanner.')
+    console.error('')
+  }
 
   if (newImporters.length > 0) {
     failed = true
@@ -590,6 +622,28 @@ function runSelfTest() {
     )
     fs.writeFileSync(path.join(libDir, 'tauri.ts'), "export * from '@/lib/tauri/core'\n")
 
+    // #3993: a string literal containing `/*` (`'/* fixtures'`) sits above a
+    // real `@/lib/tauri` import, and a real JSDoc block comment closes later
+    // in the file. The byte-identical private `stripComments` this guard
+    // used to carry is not string-aware: it reads the `/*` inside the
+    // string as a comment opener and blanks everything up to the JSDoc's
+    // `*/`, hiding the import entirely and reporting the file clean. The
+    // shared scanner's `stripComments` is string-aware, so this must still
+    // be flagged as a new importer. (Demonstrated verbatim in #3993.)
+    fs.writeFileSync(
+      path.join(compDir, 'FakeCommentOpener.tsx'),
+      "const GLOB = '/* fixtures'\nimport { createBlock } from '@/lib/tauri'\nexport const T = () => createBlock()\n/** trailing doc */\n",
+    )
+    // #3993: a file with an unterminated string literal cannot be lexed
+    // unambiguously. The shared scanner fails CLOSED (throws `ScanError`),
+    // and this guard must surface that as a scanError — a FAILURE the human
+    // sees — not silently drop the file from both `importers` and the
+    // scanned count.
+    fs.writeFileSync(
+      path.join(compDir, 'Unterminated.tsx'),
+      "export const bad = 'unterminated string literal, never closes\n",
+    )
+
     const sanctioned = new Set([
       '@/lib/tauri/attachments#readAttachment',
       '@/lib/tauri/sync#startSync',
@@ -600,7 +654,7 @@ function runSelfTest() {
       'src/components/Migrated.tsx', // stale: file no longer imports the wrapper
       'src/components/GraduatedToSanctioned.tsx', // stale: now sanctioned-only
     ]
-    const { importers, newImporters, staleBaseline } = analyze({
+    const { importers, newImporters, staleBaseline, scanErrors } = analyze({
       root: tmp,
       srcDir,
       baseline,
@@ -703,8 +757,116 @@ function runSelfTest() {
     if (staleBaseline.includes('src/components/GraduatedToSanctioned.tsx'))
       ok('baselined file that graduates to sanctioned-only is flagged stale')
     else fail('graduated-to-sanctioned file is flagged stale', JSON.stringify(staleBaseline))
+
+    if (newImporters.includes('src/components/FakeCommentOpener.tsx'))
+      ok('a string containing `/*` above a real @/lib/tauri import is still flagged (#3993)')
+    else
+      fail(
+        'a string containing `/*` above a real @/lib/tauri import is still flagged',
+        JSON.stringify(newImporters),
+      )
+
+    if (
+      scanErrors.some((e) => e.file === 'src/components/Unterminated.tsx') &&
+      !newImporters.includes('src/components/Unterminated.tsx') &&
+      !staleBaseline.includes('src/components/Unterminated.tsx')
+    )
+      ok('an unlexable file is reported as a scanError (failure), not silently skipped')
+    else
+      fail(
+        'an unlexable file is reported as a scanError, not silently skipped',
+        JSON.stringify({ scanErrors, newImporters, staleBaseline }),
+      )
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
+  }
+
+  // ─── CLI-level self-test: real subprocess, real exit code ───────────
+  //
+  // Everything above drives analyze()/updateBaseline()'s inner logic only
+  // through the in-process `analyze()` RETURN VALUE — it never reaches
+  // process.exit(). A regression that dropped the `failed = true` in
+  // runGuard()'s scanErrors branch (falling through past the
+  // newImporters/staleBaseline checks — both empty here — to the
+  // `console.log('OK: ...')` success branch) would print the ERROR block to
+  // stderr but still exit 0, and every assertion above would stay green
+  // through it. Likewise a regression that dropped the early
+  // `process.exit(2)` in updateBaseline()'s scanErrors branch would let it
+  // fall through to `writeBaseline(importers)` and silently commit a
+  // baseline computed from a scan that never saw the unlexable file — a
+  // shipped-bug class distinct from (worse than) a test gap. Spawn the real
+  // CLI (copied into a scaffold tree with its own
+  // `scripts/lib/js-scanner.mjs`, since both entry points resolve SRC_DIR /
+  // BASELINE_FILE from the script's own location, not `cwd`) against a tree
+  // containing ONE already-migrated file (no wrapper import) plus ONE
+  // unlexable file with NO `@/lib/tauri` import at all (so neither a new
+  // importer nor a stale baseline entry could paper over a missing exit)
+  // and assert non-zero exit codes for both `runGuard()` and
+  // `--update-baseline`, and that the baseline file was left untouched.
+  const scanErrTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tauri-baseline-scanerror-'))
+  try {
+    const seScripts = path.join(scanErrTmp, 'scripts')
+    const seLib = path.join(seScripts, 'lib')
+    const seSrc = path.join(scanErrTmp, 'src', 'components')
+    fs.mkdirSync(seLib, { recursive: true })
+    fs.mkdirSync(seSrc, { recursive: true })
+    fs.writeFileSync(
+      path.join(seSrc, 'Clean.tsx'),
+      "import { commands } from '@/lib/bindings'\nexport const C = () => commands.createBlock()\n",
+    )
+    fs.writeFileSync(
+      path.join(seSrc, 'Broken.tsx'),
+      "const bad = 'unterminated string literal, never closes\n",
+    )
+    const seBaselineFile = path.join(seScripts, 'tauri-import-baseline.json')
+    const SEED_BASELINE = '[]\n'
+    fs.writeFileSync(seBaselineFile, SEED_BASELINE)
+    const seScript = path.join(seScripts, 'check-tauri-import-baseline.mjs')
+    fs.copyFileSync(import.meta.filename, seScript)
+    fs.copyFileSync(
+      path.join(import.meta.dirname, 'lib', 'js-scanner.mjs'),
+      path.join(seLib, 'js-scanner.mjs'),
+    )
+    // No scripts/tauri-sanctioned-symbols.json is written — readSanctioned()
+    // treats a missing file as an empty (no-op) sanctioned set, which is
+    // fine here since Clean.tsx doesn't touch the wrapper layer at all.
+
+    const resGuard = spawnSync(process.execPath, [seScript], { encoding: 'utf8' })
+    if (
+      resGuard.status === 1 &&
+      /could not be scanned unambiguously/.test(resGuard.stderr) &&
+      !resGuard.stdout.includes('OK:')
+    ) {
+      ok(
+        'CLI exits 1 (not OK) when a file cannot be scanned, even with no other importer/baseline drift',
+      )
+    } else {
+      fail(
+        'CLI exits 1 when a file cannot be scanned (scanErrors branch), even with no other drift',
+        `status=${resGuard.status} stdout=${resGuard.stdout} stderr=${resGuard.stderr}`,
+      )
+    }
+
+    const resUpdate = spawnSync(process.execPath, [seScript, '--update-baseline'], {
+      encoding: 'utf8',
+    })
+    const baselineAfter = fs.readFileSync(seBaselineFile, 'utf8')
+    if (
+      resUpdate.status === 2 &&
+      /refusing to write a baseline/.test(resUpdate.stderr) &&
+      baselineAfter === SEED_BASELINE
+    ) {
+      ok(
+        '--update-baseline refuses (exit 2) to write a baseline computed from an incomplete scan, and leaves the baseline file untouched',
+      )
+    } else {
+      fail(
+        '--update-baseline refuses to write a baseline computed from an incomplete scan',
+        `status=${resUpdate.status} stdout=${resUpdate.stdout} stderr=${resUpdate.stderr} baselineAfter=${JSON.stringify(baselineAfter)}`,
+      )
+    }
+  } finally {
+    fs.rmSync(scanErrTmp, { recursive: true, force: true })
   }
 
   if (failures.length > 0) {
