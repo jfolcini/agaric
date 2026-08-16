@@ -138,8 +138,22 @@ resolve_base_tip() {
 }
 
 mr_cleanup() {
-  git worktree remove --force "$1" >/dev/null 2>&1 || true
-  rm -rf "$2"
+  local workdir="$1" parent="$2"
+  # Same hardening as the worktree-add-failure path below: `remove --force
+  # --force` (double force overrides a lock — plain `git worktree prune`
+  # will not touch a locked entry, so it alone cannot close that case)
+  # first; then remove the physical files; then `prune` as a backstop for
+  # anything else left stale. Without this, a `remove` failure here still
+  # `rm -rf`s the working files and leaves exactly the stale
+  # .git/worktrees registration the worktree-add-failure path was hardened
+  # to prevent — this function is called on every path through
+  # run_merge_check that reaches a successfully-created worktree (the
+  # conflict-abort branch and the ordinary success/failure-after-guards
+  # branches), so it is the more heavily used of the two cleanup sites, not
+  # the less.
+  git worktree remove --force --force "$workdir" >/dev/null 2>&1 || true
+  rm -rf "$parent"
+  git worktree prune >/dev/null 2>&1 || true
 }
 
 # Build a fresh merge of base-tip + head in a disposable worktree, run the
@@ -255,7 +269,7 @@ run_merge_check() {
     [ -d "$workdir/$root" ] || continue
     while IFS= read -r -d '' f; do
       targets+=("$f")
-    done < <(find "$workdir/$root" -name '*.rs' -print0 2>/dev/null)
+    done < <(find "$workdir/$root" -type f -name '*.rs' -print0 2>/dev/null)
   done
 
   # Nothing to scan is NOT a pass. If the layout moved (a crate root renamed,
@@ -498,6 +512,15 @@ run_self_test() {
   ( cd "$clean" && bash "$SELF" main deadbeefdeadbeefdeadbeefdeadbeefdeadbeef ) >/dev/null 2>&1; rc2=$?
   st_expect 'an unresolvable head sha is also exit 3 (verified nothing), NOT exit 2' '3' "$rc2"
 
+  # A call site that forgot the head-sha argument entirely (not merely an
+  # unresolvable one) is `main()`'s own arg-count check, not
+  # `run_merge_check` — a different code path, but the same "verified
+  # nothing, so it must be 3, not the advisory 2" rule applies. Kept here
+  # with the other argument-shaped exit-3 cases rather than beside the
+  # python3-missing fixture below, which it has nothing to do with.
+  ( cd "$nearmiss" && bash "$SELF" main ) >/dev/null 2>&1; rc2=$?
+  st_expect 'a call site that forgot an argument is exit 3, not an advisory exit 2' '3' "$rc2"
+
   # ── 3. A REAL TEXTUAL CONFLICT is still exit 2, never exit 3 or a pass ──
   # Both branches edit the SAME LINE of the SAME file to different values —
   # GitHub's own merge check already refuses this; this script must say so
@@ -526,6 +549,20 @@ run_self_test() {
   git -C "$conflict" commit --quiet -m 'pr edits the same line differently'
   git -C "$conflict" checkout --quiet main
 
+  # Note 6: `mr_cleanup` (called on the conflict-abort path this fixture is
+  # about to take) must carry the SAME worktree-registration hardening as
+  # the worktree-add-failure path, not just remove ITS OWN worktree. Plant
+  # an unrelated, orphaned worktree entry in this same repo first — same
+  # technique as the worktree-add-failure/prune fixture above — so a
+  # `git worktree prune` inside `mr_cleanup` has something to actually
+  # clean, rather than the assertion below passing merely because there
+  # was nothing to prune in the first place.
+  local conflict_stale_wt="$tmp/conflict-stale-wt"
+  git -C "$conflict" worktree add --quiet --detach "$conflict_stale_wt" main >/dev/null 2>&1
+  rm -rf "$conflict_stale_wt"
+  st_expect 'fixture sanity: the second orphaned worktree is also registered and stale before any run' \
+    '1' "$(git -C "$conflict" worktree list | grep -c "$conflict_stale_wt" || true)"
+
   ( cd "$conflict" && bash "$SELF" main pr ) >"$tmp/conflict.out" 2>"$tmp/conflict.err"; rc2=$?
   st_expect 'a real textual conflict is STILL exit 2, never exit 3 and never a pass' '2' "$rc2"
   # Note 2: git's own conflict text must reach the log — the step summary
@@ -533,6 +570,8 @@ run_self_test() {
   # job log carried only this script's own three lines.
   st_expect "git's own conflict output (CONFLICT/Automatic merge failed) reaches stderr, not just this script's own lines" \
     '1' "$(grep -q -E 'CONFLICT|Automatic merge failed' "$tmp/conflict.err" && echo 1 || echo 0)"
+  st_expect "mr_cleanup's own worktree-remove failure/absence still lets git worktree prune clean an UNRELATED stale entry in the same repo" \
+    '0' "$(git -C "$conflict" worktree list | grep -c "$conflict_stale_wt" || true)"
 
   # ── 3e. A `git merge` FAILURE that is NOT a content conflict is exit 3,
   #        never exit 2 — the fourth case the exit-2/3 split originally
@@ -667,8 +706,6 @@ STUB
       case "$b" in python3* | python) ;; *) ln -sf "$f" "$nopy/$b" 2>/dev/null || true ;; esac
     done
   done
-  ( cd "$nearmiss" && bash "$SELF" main ) >/dev/null 2>&1; rc2=$?
-  st_expect 'a call site that forgot an argument is exit 3, not an advisory exit 2' '3' "$rc2"
 
   local nopy_out
   nopy_out=$( cd "$nearmiss" && PATH="$nopy" bash "$SELF" main pr 2>&1 ); rc2=$?
@@ -691,6 +728,22 @@ STUB
     "$(grep -c '"\$rc" -eq 3' "$wf" || true)"
   st_expect 'and the merge-result job runs with always(), so a failure in the (non-required) overlap job cannot silently skip it' \
     '1' "$(grep -c 'always() && (' "$wf" || true)"
+
+  # A structural pin, not a behavioural one, and deliberately so: `find`
+  # without `-type f` would let a directory or dangling symlink named
+  # `*.rs` into `targets`, but every guard already filters on `p.is_file()`
+  # (check-dynamic-sql.py:957 and its siblings), so removing `-type f` here
+  # produces NO observable difference in exit code or output through the
+  # CLI this self-test drives — an end-to-end assertion for it would be
+  # exactly the "guard whose branch cannot be taken" shape to reject. This
+  # pins the source text instead, so the property (defence in depth against
+  # a guard that ever stops filtering) cannot silently regress unnoticed.
+  # Searched only in the portion of THIS file before `run_self_test`
+  # itself: the pattern below is the literal source text of the real `find`
+  # call, and grepping the whole file would also match this assertion's own
+  # source line, self-matching regardless of what the real code says.
+  st_expect "the crate-root scan's find(1) is anchored on -type f" '1' \
+    "$(sed -n '/^run_self_test()/q;p' "$SELF" | grep -Fc 'find "$workdir/$root" -type f -name' || true)"
 
   # ── 4. THE REAL REPOSITORY is untouched ──────────────────────────────────
   local repo_root

@@ -214,6 +214,18 @@ jobs:
   # in seconds rather than a rebase plus a ~15-minute re-run, before anyone
   # reaches for `--admin`. Closing the gap itself is a merge-policy decision
   # (don't `--admin`, or narrow `bypass_actors`), not a script — see #3672.
+  #
+  # One more wrinkle in the same spot: this job's own trigger set (`opened`,
+  # `synchronize`, `reopened`, `ready_for_review` — see the top of this
+  # file) means the green "merge result verified" shown on the PR is fresh
+  # only as of the LAST PUSH, not as of the merge click. An ordinary merge
+  # is covered anyway — `strict_required_status_checks_policy` forces a
+  # re-push (and therefore a re-run of this job) if `main` moves in between
+  # — but the `--admin` bypass named above skips that re-push requirement
+  # too, so it is exactly the case this job's verdict can go stale on
+  # without anything re-running it. Not a claim this job cannot support
+  # fixing on its own; a fact about how fresh its green actually is on the
+  # one merge path where it matters most.
   merge-result:
     needs: overlap
     # `diverged` is a count, or the literal `unknown` when
@@ -260,9 +272,21 @@ jobs:
         # The entire point (#3672): not whatever `main` was when THIS
         # workflow run started, but `main` as of this instant — the base a
         # merge click would actually use.
+        #
+        # `|| true`, matching the tolerant equivalent above in `overlap`
+        # (line 113): this runs after `persist-credentials: false`, so it is
+        # an anonymous fetch with no fallback credential if the repo is
+        # ever made private — a bare failure here would turn permanently red
+        # with no diagnostic, on every PR, forever. `fetch-depth: 0` on the
+        # checkout above has already populated `origin/<base>` as of when
+        # THAT step ran; this fetch only buys the last few seconds between
+        # checkout and this step, which is a much smaller gap than the
+        # multi-minute-to-hours one #3672 exists to close. Losing that last
+        # sliver of freshness on a rare fetch failure is a better trade than
+        # this job going red for a reason its own log cannot explain.
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: git fetch --quiet --no-tags origin "$BASE_REF"
+        run: git fetch --quiet --no-tags origin "$BASE_REF" || true
 
       - name: Verify the merge result's ratchet guards
         env:

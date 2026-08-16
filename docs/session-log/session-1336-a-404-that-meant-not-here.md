@@ -185,3 +185,29 @@ also touches, ratchet or not — `pr-file-overlap.mjs` computes the ratchet-only
 (`divergedRatchets`) for its comment body but never exports it. Over-triggering is the safe
 direction, so the code was left as is and the comment corrected to say what the gate actually does,
 cross-referencing #3979 for the broader gap rather than re-describing it here.
+
+### The false warning the PR itself was about to ship
+
+A PR whose whole subject is CI reports that mislead was, at this head, about to ship one: `cargo-
+audit-guard.sh`'s `run_self_test` called `run_guard` against a database-load-failure STUB while
+inheriting whatever `GITHUB_STEP_SUMMARY` was already in the environment — and in the one place that
+matters, CI, that is not empty. GitHub Actions sets it before any step runs, `--self-test` is invoked
+the same way every other prek hook is, and the hook's own `files` regex matches
+`.github/workflows/_validate.yml` — so `prek run --all-files` fires it on every `validate / lint` run
+on this repository, meaning `print_db_load_banner` would have appended "### :warning: cargo audit:
+advisory database failed to load (#3688)" to the REAL job summary of every green CI run going
+forward, forever, about a database load that never happened. Nobody would have investigated it —
+it's a warning, not a failure, and it names a documented, self-resolving upstream cause — which is
+exactly what makes a permanent false one worse than a loud, immediate wrong answer: it teaches
+everyone reading that summary to stop reading it. The fix is a single `local GITHUB_STEP_SUMMARY=` at
+the top of the function; verifying it meant simulating CI's own shape (an ambient value already set
+before the script starts) with a nested, sentinel-guarded `--self-test` invocation, not just calling
+`run_guard` directly — the bug lived in what gets inherited before any of this function's own logic
+runs, which a direct call bypasses entirely.
+
+Two of the seven notes this round (the anonymous `git fetch` in `merge-result` having no `|| true`,
+and `mr_cleanup` lacking the same worktree-prune hardening already applied to the sibling
+worktree-add-failure path two edits ago) are the same shape again, smaller: a tolerance or a cleanup
+step that exists in one place but was never carried to its sibling when the sibling was written.
+Grepping for a change's OTHER occurrences, not just fixing the one a reviewer named, would have
+caught both before they needed a seventh round to surface.

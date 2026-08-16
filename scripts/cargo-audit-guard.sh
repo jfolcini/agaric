@@ -264,6 +264,39 @@ run_self_test() {
   # shellcheck disable=SC2064 # expand $tmp now, not at trap time
   trap "rm -rf '$tmp'" EXIT
 
+  # In CI, GitHub Actions sets GITHUB_STEP_SUMMARY in the job's environment
+  # BEFORE this script (or any prek hook) ever runs, and `--self-test` is
+  # invoked the same way every other hook is — so without this line, it
+  # inherits that ambient value. Section 1 below drives `run_guard` against
+  # a db-load-failure STUB; `print_db_load_banner` would append the false
+  # "advisory database failed to load" warning straight into the REAL job
+  # summary, on every green `validate / lint` run — the exact
+  # misleading-report class this whole PR exists to close, produced by its
+  # own self-test. Cleared here; section 5 is the ONLY place that sets it
+  # again, explicitly and only for the one call under test.
+  local GITHUB_STEP_SUMMARY=
+
+  # ── 0. THE REAL (INHERITED) JOB SUMMARY IS NEVER TOUCHED ─────────────────
+  # Proven at the ACTUAL entry point — a full `bash $SELF --self-test`
+  # invocation, exactly how prek/CI runs this — not just by calling
+  # run_guard directly, because the bug lived in what `--self-test` inherits
+  # BEFORE the `local` line above ever runs. MRTEST_NESTED_GSS_CHECK guards
+  # against this same block re-entering itself inside the nested run, which
+  # would otherwise recurse without bound.
+  if [ -z "${MRTEST_NESTED_GSS_CHECK:-}" ]; then
+    local real_summary="$tmp/real-ambient-job-summary.md"
+    printf 'pre-existing content from an unrelated CI step\n' > "$real_summary"
+    MRTEST_NESTED_GSS_CHECK=1 GITHUB_STEP_SUMMARY="$real_summary" bash "$SELF" --self-test \
+      >"$tmp/nested-self-test.out" 2>&1
+    local nested_rc=$?
+    st_expect 'a nested --self-test run (simulating an inherited ambient GITHUB_STEP_SUMMARY, as CI sets it) itself still passes' \
+      '0' "$nested_rc"
+    st_expect 'and it never appends the false advisory-database-failed banner into that inherited (real) summary file' \
+      '0' "$(grep -c 'advisory database failed to load' "$real_summary" || true)"
+    st_expect 'and the summary file keeps its ORIGINAL content untouched — not just "no banner", no write at all' \
+      '1' "$(grep -c 'pre-existing content from an unrelated CI step' "$real_summary" || true)"
+  fi
+
   # ── 1. A DATABASE-LOAD FAILURE is classified as exit 2, with the banner ──
   local dbfail_bin="$tmp/bin-dbfail"
   st_make_stub_cargo "$dbfail_bin" "$STUB_DB_LOAD_TEXT" 1
@@ -398,13 +431,23 @@ Scanning Cargo.lock for vulnerabilities (962 crate dependencies)' 0
     "$DB_LOAD_ERROR_RE" "$STUB_DB_LOAD_TEXT"
 
   # ── 5. GITHUB_STEP_SUMMARY gets the same distinction, when set ───────────
+  # `run_guard` is a shell FUNCTION, not an external binary — an
+  # assignment-prefixed call to a function is documented as visible only
+  # for that call, but that guarantee is the kind of thing worth not
+  # depending on structurally: get it wrong once (reorder these two calls,
+  # or add a case that assumes an unmodified PATH/GITHUB_STEP_SUMMARY
+  # afterward) and it fails silently rather than loudly, resolving the
+  # wrong stub `cargo` or leaking into a later assertion. Every other call
+  # in this file is already wrapped in `$(...)`, whose subshell makes the
+  # scoping unconditional instead of relying on prefix-assignment
+  # semantics; these two carry no output to capture, so `( ... )` alone.
   local summary="$tmp/summary.md"
   : > "$summary"
-  GITHUB_STEP_SUMMARY="$summary" PATH="$dbfail_bin:$PATH" run_guard "$tmp" >/dev/null 2>&1
+  ( GITHUB_STEP_SUMMARY="$summary" PATH="$dbfail_bin:$PATH" run_guard "$tmp" >/dev/null 2>&1 )
   st_expect 'a database-load failure is also flagged in GITHUB_STEP_SUMMARY' \
     '1' "$(grep -c 'advisory database failed to load' "$summary" || true)"
   : > "$summary"
-  GITHUB_STEP_SUMMARY="$summary" PATH="$vuln_bin:$PATH" run_guard "$tmp" >/dev/null 2>&1
+  ( GITHUB_STEP_SUMMARY="$summary" PATH="$vuln_bin:$PATH" run_guard "$tmp" >/dev/null 2>&1 )
   st_expect 'a real vulnerability does NOT write to GITHUB_STEP_SUMMARY (unchanged CI behaviour)' \
     '0' "$(wc -l < "$summary" | tr -d ' ')"
 
