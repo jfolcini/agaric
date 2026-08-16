@@ -31,6 +31,7 @@ import {
   buildSnapshot,
   canonicalLabelMap,
   type MockState,
+  type NormalizedSnapshot,
 } from '@/lib/tauri-mock/__tests__/conformance-snapshot'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
@@ -346,6 +347,188 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
       },
     )
   }
+})
+
+// ---------------------------------------------------------------------------
+// #3966 — the SNAPSHOT leg's vacuity guard
+// ---------------------------------------------------------------------------
+
+/**
+ * The QUERY leg has had a vacuity guard since #3347: a step that records zero
+ * rows must SAY so (`"expect_empty": true`), because `[] == []` passes having
+ * compared nothing. The SNAPSHOT leg — every fixture, and the only assertion
+ * the op-only fixtures carry — had no analogue. Nothing required a fixture's
+ * `expected` to DIFFER from the state its seed alone produces, so a fixture
+ * whose ops coincidentally leave the projection unchanged could be recorded by
+ * `CONFORMANCE_UPDATE=1` and replayed forever, comparing two copies of the
+ * seed and reading as coverage.
+ *
+ * The guard replays the seed ALONE and requires the recorded `expected` to
+ * differ from it.
+ *
+ * ## Why `op_log_digest` is excluded, and why that is the whole point
+ *
+ * A naive "the snapshot changed" check compares the WHOLE snapshot, and every
+ * fixture with at least one op passes it trivially: the op log grew, so
+ * `op_log_digest.count` went from 0 to N. That check cannot fail for any
+ * fixture the guard is meant to catch — it would be a second decorative unit
+ * shipped by the batch that exists to delete decorative units. What must move
+ * is the PROJECTED DOMAIN STATE (`blocks` / `properties` / `block_tags` /
+ * `page_links`), which is what the mock and the backend are being differenced
+ * on. So the comparison drops `op_log_digest` deliberately.
+ *
+ * ## Scope
+ *
+ * Applies to every fixture, not only the op-only ones. A fixture that carries
+ * query steps is not exempt: its snapshot leg is a separate `it` asserting the
+ * same thing, and an inert op list makes THAT assertion vacuous regardless of
+ * how much its read leg proves.
+ */
+const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>([
+  // Fixtures whose ops legitimately leave the projected domain state
+  // untouched, each with the reason.
+  //
+  // Empty today, but NOT because the sweep found nothing. The #3966 sweep over
+  // all 40 fixtures found TWO offenders — `restore_block` (delete S2, restore
+  // S2) and `delete_property_reserved_key_clears_column` (set `todo_state`,
+  // delete `todo_state`) — both pure round trips whose recorded `expected`
+  // equalled their seed-only snapshot, and both reproducible by a mock with
+  // the handlers no-op'd. This map is empty because those two were REPAIRED
+  // (each gained a second block the ops treat differently), not because the
+  // tree was clean. Waiving them here would have been the cheaper option and
+  // would have left two fixtures that pass without testing anything.
+])
+
+/**
+ * Deep-compare two snapshot sections independently of key order. The mock
+ * builds row objects in insertion order; the fixture JSON carries whatever
+ * order `serde_json` wrote, so a plain `JSON.stringify` comparison would
+ * report a difference that is not one.
+ */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, val: unknown) =>
+    val !== null && typeof val === 'object' && !Array.isArray(val)
+      ? Object.fromEntries(
+          Object.entries(val as Record<string, unknown>).toSorted(([a], [b]) => a.localeCompare(b)),
+        )
+      : val,
+  )
+}
+
+/** Every snapshot section EXCEPT `op_log_digest` — see the note above. */
+function snapshotDomainOnly(
+  snapshot: NormalizedSnapshot | Record<string, unknown>,
+): Record<string, unknown> {
+  const { op_log_digest: _opLogDigest, ...domain } = snapshot as Record<string, unknown>
+  return domain
+}
+
+describe("#3966 every fixture's ops move the projected domain state", () => {
+  beforeEach(() => {
+    clearMock()
+  })
+
+  it('no fixture records an `expected` its seed alone already produces', () => {
+    const inert: string[] = []
+    const noOps: string[] = []
+    for (const { fixture } of fixtures) {
+      if (fixture.expected == null) continue // the per-fixture `it` above fails first
+      if (SNAPSHOT_OPS_INERT.has(fixture.name)) continue
+      if (fixture.ops.length === 0) {
+        // A zero-op fixture is NOT inert, and saying so precisely matters more
+        // than reddening on it. Its snapshot leg still differences the two SEED
+        // LOADERS — `page_id` root resolution, position defaults, the reserved
+        // columns — which is a real (if narrow) claim, and #1775 was exactly a
+        // seed-loader divergence. What it cannot do is carry evidence about an
+        // OP, so its evidence has to live in its query steps. A fixture with
+        // neither ops nor queries asserts only that two seed loaders agree
+        // about a state nothing then reads, which no `conformance/fixtures`
+        // entry should be.
+        if ((fixture.queries?.length ?? 0) === 0) noOps.push(fixture.name)
+        continue
+      }
+      clearMock()
+      loadSeed(fixture)
+      // `canonicalOrder` reads created ids out of the op log, which is empty
+      // here — so this is exactly the seed's own label vocabulary, and any
+      // block the ops CREATE is missing from this snapshot, which is itself a
+      // difference (correctly: a fixture that creates a block is not inert).
+      const seedOnly = buildSnapshot(
+        { blocks, properties, blockTags, opLog },
+        canonicalOrder(fixture),
+      )
+      if (
+        canonicalJson(snapshotDomainOnly(seedOnly)) ===
+        canonicalJson(snapshotDomainOnly(fixture.expected))
+      ) {
+        inert.push(fixture.name)
+      }
+    }
+
+    expect(
+      inert,
+      `These fixtures record an \`expected\` identical to the snapshot their SEED ` +
+        `alone produces ${JSON.stringify(inert)} — every op in them left ` +
+        `blocks/properties/block_tags/page_links exactly as seeded, so the ` +
+        `mock-vs-backend assertion compares two copies of the seed and passes ` +
+        `having exercised nothing. \`CONFORMANCE_UPDATE=1\` will happily record ` +
+        `such a snapshot and the replay will confirm it forever. FIX by giving ` +
+        `the fixture ops that actually change state, or — if the no-op IS the ` +
+        `behaviour under test — declare it in SNAPSHOT_OPS_INERT with the ` +
+        `reason.`,
+    ).toEqual([])
+
+    expect(
+      noOps,
+      `These fixtures declare neither ops nor query steps ${JSON.stringify(noOps)}. ` +
+        `All they assert is that the two SEED LOADERS agree about a state nothing ` +
+        `then mutates or reads. Give them ops, give them query steps, or delete them.`,
+    ).toEqual([])
+  })
+
+  // The guard's own falsification, kept in-tree so its reach is not a claim.
+  // `op_log_digest` is what a whole-snapshot comparison would key on, and it
+  // moves for EVERY fixture with an op — so a guard that failed to drop it
+  // could not fail at all. These pin that it is dropped, in both directions.
+  it('ignores `op_log_digest` and consults every other section', () => {
+    const seedOnly = { blocks: [{ id: 'B1' }], op_log_digest: { count: 0, ops: [] } }
+    const recorded = { blocks: [{ id: 'B1' }], op_log_digest: { count: 3, ops: [{ x: 1 }] } }
+    // A grown op log alone does NOT make a fixture non-inert.
+    expect(canonicalJson(snapshotDomainOnly(seedOnly))).toBe(
+      canonicalJson(snapshotDomainOnly(recorded)),
+    )
+    // A moved domain row DOES.
+    const moved = {
+      blocks: [{ id: 'B1', content: 'edited' }],
+      op_log_digest: { count: 0, ops: [] },
+    }
+    expect(canonicalJson(snapshotDomainOnly(seedOnly))).not.toBe(
+      canonicalJson(snapshotDomainOnly(moved)),
+    )
+    // Key order is not a difference (the fixture JSON and the mock disagree
+    // about it routinely).
+    expect(canonicalJson({ a: 1, b: 2 })).toBe(canonicalJson({ b: 2, a: 1 }))
+  })
+
+  // Every entry in the escape hatch must name a fixture that exists, and must
+  // carry a reason — the same two-way staleness contract the query-leg
+  // allowlists carry. Without this an entry survives the fixture it waives.
+  it('SNAPSHOT_OPS_INERT names only live fixtures, each with a reason', () => {
+    const names = new Set(fixtures.map(({ fixture }) => fixture.name))
+    const stale = [...SNAPSHOT_OPS_INERT.keys()].filter((n) => !names.has(n))
+    expect(
+      stale,
+      `SNAPSHOT_OPS_INERT names fixtures that no longer exist ${JSON.stringify(stale)}.`,
+    ).toEqual([])
+    const unreasoned = [...SNAPSHOT_OPS_INERT.entries()]
+      .filter(([, reason]) => !reason.trim())
+      .map(([name]) => name)
+    expect(
+      unreasoned,
+      `SNAPSHOT_OPS_INERT entries with a blank reason ${JSON.stringify(unreasoned)}. ` +
+        `An escape hatch from a vacuity guard must cost a sentence.`,
+    ).toEqual([])
+  })
 })
 
 // #3833 items 7/12 — the duplicate-step-name guard's own test. `runQuerySteps`
