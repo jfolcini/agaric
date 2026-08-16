@@ -37,17 +37,31 @@ use super::*;
 ///
 /// The engine path falls back to a SQL-only path
 /// (`apply_*_sql_only` below) when:
-/// - Loro state isn't initialised (test scaffolding without
-///   `install_for_test`).
 /// - Space cannot be resolved (orphan block, no `space` ancestor,
-///   Pre- row, fresh page-create with no SetProperty(space)
-///   yet).
+///   pre-spaces row, fresh page-create with no `SetProperty(space)`
+///   yet) — `SqlOnlyFallbackReason::SpaceUnresolved`.
+/// - The resolved space's engine tree is missing the block (or a
+///   `MoveBlock`'s target parent) — `SqlOnlyFallbackReason::EngineMissingTarget`.
 ///
-/// In production both arms are unreachable — `init` runs at boot and
-/// space resolution succeeds on every well-formed op. The SQL-only
-/// fallback exists so that materializer / recovery / sync_daemon
-/// tests can thread synthetic bare-block ops through `apply_op`
-/// without a registered space.
+/// There is no "engine uninitialised" arm: `state: &LoroState` is a
+/// required parameter on every `apply_*_via_loro` fn (#2249), built once
+/// in production at the top of `crate::run` and threaded down explicitly
+/// — not an optional process-global that test scaffolding could forget
+/// to install. See [`super::sql_only_fallback`] for the full accounting.
+///
+/// In production both arms are unreachable on a well-formed, FULLY
+/// RECONCILED op log: space resolution succeeds on every well-formed op,
+/// and once boot-replay has reconciled the engine with SQL every target
+/// block is present in its space's tree. `EngineMissingTarget` is not
+/// dead code, though — its real triggers are the #1257 reconciliation
+/// window (SQL has the row, the engine tree has not caught up yet) and
+/// cross-space moves, which a single-space engine mutation cannot
+/// represent; see [`super::sql_only_fallback`]'s module docs. Both stay
+/// soft: SQL is authoritative and boot-replay reconciles the engine.
+///
+/// The SQL-only fallback also exists so that
+/// materializer / recovery / sync_daemon tests can thread synthetic
+/// bare-block ops through `apply_op` without a registered space.
 /// `chunk`: #2200 Item 1. When `Some`, the caller is importing an N-block
 /// chunk and wants the whole-sibling-group `reproject_dense_positions` DEFERRED
 /// to a single end-of-chunk flush. Instead of reprojecting here, we record the
@@ -1366,13 +1380,19 @@ pub async fn apply_delete_property_via_loro(
 //
 // Used by the `apply_*_via_loro` helpers when:
 //
-// - Loro state is uninitialised (test scaffolding that doesn't call
-//   `crate::loro::shared::install_for_test`). Production always
-//   initialises via `crate::loro::shared::init` at boot.
-// - Space resolution fails (orphan block, no `space` ancestor, pre-
-// Row). These rows write SQL but skip the engine apply; a
+// - Space resolution fails (orphan block, no `space` ancestor,
+//   pre-spaces row, fresh page-create with no `SetProperty(space)`
+//   yet). These rows write SQL but skip the engine apply; a
 //   later op-log replay will reconcile engine state if the row gets a
 //   space.
+// - The resolved space's engine tree is missing the block (or a
+//   `MoveBlock`'s target parent).
+//
+// There is no "engine uninitialised" arm: `state: &LoroState` is a
+// required parameter (#2249), constructed once in production at the
+// top of `crate::run` and threaded down explicitly — not a
+// process-global `OnceLock` that test scaffolding could forget to
+// install.
 //
 // In production both arms are unreachable. The fallback exists so
 // that ~55 materializer / recovery / sync_daemon tests can thread

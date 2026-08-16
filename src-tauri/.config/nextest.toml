@@ -138,6 +138,45 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 # serialising just this DB-heavy subset costs little wall-clock. (The slow
 # `apply_reproject_proptest` cases also carry the longer slow-timeout above —
 # override settings from both entries layer.)
+#
+# ------------------------------------------------------------------------
+# OPEN QUESTION (#3959) — the paragraph above cannot be the whole story.
+#
+# Its mechanism is stated in same-process terms ("no *other* test in the same
+# process", "a sibling test in this set could corrupt a peer's delta"). That
+# cannot happen under nextest: nextest "executes each individual test in a
+# separate process" (nexte.st, *How nextest works*) for every test, grouped or
+# not, so each test sees its own copy of a process-global static and no
+# sibling can move it between the two reads. `max-threads = 1` is a
+# concurrency semaphore over the group's members — it serialises them; it does
+# not grant process isolation that nextest already provides. The corrected
+# statement of the mechanism now lives in the module docs of the delta-
+# asserting files themselves (e.g.
+# `src/materializer/handlers/tag_convergence_tests.rs`) and in
+# `agaric-engine/src/loro/shared.rs`; those files cite THIS file only for the
+# fact of the pin, never for the reason.
+#
+# What is NOT explained, and is deliberately not guessed at here: the symptom
+# was measured, not theorised. The group was introduced in b51d1ddb0
+# (#2857 / #2621, "serialize spy-counter tests"), reporting "~1-2 spurious
+# 'flaky' per full-suite run, passing on retry and in isolation" — with
+# `retries = 1` (default) / `retries = 2` (ci) above, "flaky" means a TRY 1
+# failure that passed on retry. Something real was producing those retries;
+# under the corrected mechanism, cross-test counter pollution is not it, and
+# no replacement cause has been established. One adjacent data point, offered
+# as a fact rather than an answer: the slow-timeout override note ~30 lines
+# above documents a DIFFERENT, verified cause of spurious FLAKY for one member
+# of this very set (`apply_reproject_proptest` — TRY 1 terminated by the
+# slow-timeout under load, TRY 2 passing at 36.5s). Whether that generalises
+# to the rest of the set is unverified.
+#
+# The entry is therefore left in place: it is cheap, it is not wrong as
+# configuration, and removing it would discard a measured mitigation on the
+# strength of a corrected explanation alone. Resolving this needs a run that
+# reproduces the flakiness with the group removed and identifies the actual
+# cause. Until then, treat this comment's original rationale as superseded and
+# the underlying flakiness as unexplained.
+# ------------------------------------------------------------------------
 [test-groups.spy-counter-serial]
 max-threads = 1
 

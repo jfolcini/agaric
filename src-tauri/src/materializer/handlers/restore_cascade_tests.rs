@@ -99,9 +99,26 @@ async fn seed_deleted_subtree(pool: &SqlitePool) {
         .unwrap();
 }
 
-/// Returns a fresh LoroState — install_for_test pattern.  Unlike
-/// `loro::shared::install_for_test` the global is process-local and
-/// per-nextest-process, so tests don't conflict.
+/// Returns a fresh, per-test `LoroState`. #2249: an ordinary value, not a
+/// process-global — the ENGINE STATE itself is per-instance and cannot
+/// leak between tests. HOWEVER, `dispatch_restore_descendants_parse_failure_bumps_divergence_metric`
+/// below asserts an exact delta on `descendant_fanout_dropped`, a
+/// process-global counter that `apply.rs` bumps from several sites
+/// reachable by the other tests in this binary — so that test is NOT
+/// safe under concurrent plain `cargo test`, which runs the whole binary
+/// in ONE process with the tests on threads. Under `cargo nextest run`
+/// it is safe, because nextest "executes each individual test in a
+/// separate process" (nexte.st, "How nextest works").
+///
+/// This file is NOT listed in `.config/nextest.toml`'s
+/// `spy-counter-serial` test-group, unlike the sibling
+/// `*_convergence_tests` files — but that makes no difference to counter
+/// pollution either way. A test group is a concurrency semaphore over its
+/// members: `max-threads = 1` serialises the group, it does not put a test
+/// in its own process (nextest already does that for every test, grouped
+/// or not). So this file's exposure is the SAME as those siblings', not
+/// worse: safe under `cargo nextest run`, unsafe under concurrent plain
+/// `cargo test`, for all of them alike.
 fn fresh_loro_state() -> LoroState {
     // #2249: per-test isolated state (no process global).
     LoroState::new()
@@ -266,18 +283,19 @@ async fn dispatch_restore_descendants_empty_list_is_noop() {
 /// skip so the divergence is observable instead of healing only on boot
 /// replay.
 ///
-/// Drives the parse-failure skip path: the engine IS installed (so the
-/// `agaric_engine::loro::shared::get()` early-return is not the one taken), and
-/// the cohort is non-empty (so the empty-list fast path is not taken),
-/// but the root record's payload is not valid JSON — so the
+/// Drives the parse-failure skip path: a real `&LoroState` is passed (#2249
+/// — `dispatch_restore_descendants` takes it as a required parameter, so
+/// there is no "engine not installed" early-return to avoid), and the
+/// cohort is non-empty (so the empty-list fast path is not taken), but the
+/// root record's payload is not valid JSON — so the
 /// `serde_json::from_str::<RestoreBlockPayload>` parse fails and the
 /// helper bumps the counter and returns.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_restore_descendants_parse_failure_bumps_divergence_metric() {
     let (pool, _dir) = fresh_pool().await;
     seed_deleted_subtree(&pool).await;
-    // Engine MUST be installed so the `get()` early-return is not the
-    // path exercised — we want to reach the payload parse.
+    // A real `&LoroState` is always passed (#2249: required parameter,
+    // not an optional process-global) — we want to reach the payload parse.
     let state = fresh_loro_state();
 
     // Root record with an UNPARSEABLE payload (not valid JSON, and in
@@ -296,8 +314,12 @@ async fn dispatch_restore_descendants_parse_failure_bumps_divergence_metric() {
     // Non-empty cohort so the empty-list fast path is not taken.
     let cohort = [PAGE_ID.to_string(), CHILD_1.to_string()];
 
-    // Sample the process-global counter as a delta — it is monotonic and
-    // other tests in this nextest process may have bumped it concurrently.
+    // Sample the process-global counter as a delta rather than an absolute:
+    // it is monotonic, and under plain `cargo test` (one process, tests on
+    // threads) other tests bump it from `apply.rs`. Under `cargo nextest
+    // run` this test owns its process, so nothing else can move the counter
+    // between the two reads — see the note on `fresh_loro_state` above for
+    // why the `spy-counter-serial` group is not what provides that.
     let before = super::descendant_fanout_dropped::count();
     super::dispatch_restore_descendants(&pool, &root, &cohort, &state).await;
     let after = super::descendant_fanout_dropped::count();

@@ -223,10 +223,11 @@ async fn apply_op_purge() {
 // #2275: `apply_purge_block_via_loro` was the sole engine-routed apply helper
 // that did NOT record a SQL-only fallback on its two early-return arms, so a
 // purge that fell back was invisible to the #1057 instrumentation every sibling
-// (create/edit/delete/…) surfaces. This test drives a purge without
-// `install_for_test` (the EngineUninit fallback arm) and asserts the counter
-// moves. The counter is process-global + monotonic, so `>` is robust under
-// nextest parallelism.
+// (create/edit/delete/…) surfaces. `insert_block_direct` below writes the
+// block straight to SQL with no `space_id`, so `resolve_block_space` misses
+// and the purge takes the `SpaceUnresolved` fallback arm; this test asserts
+// the counter moves. The counter is process-global + monotonic, so `>` is
+// robust under nextest parallelism.
 #[tokio::test]
 async fn apply_op_purge_records_sql_only_fallback() {
     use crate::materializer::handlers::sql_only_fallback;
@@ -256,7 +257,7 @@ async fn apply_op_purge_records_sql_only_fallback() {
     // ...and the fallback is now observed by the #1057 instrumentation.
     assert!(
         sql_only_fallback::count() > before,
-        "apply_op purge without install_for_test must record a SQL-only fallback"
+        "apply_op purge on a block with no resolvable space must record a SQL-only fallback"
     );
 }
 #[tokio::test]

@@ -1054,8 +1054,9 @@ impl SyncOrchestrator {
     }
 
     /// Build and queue outgoing [`SyncMessage::LoroSync`] messages,
-    /// one per [`SpaceId`] currently held in
-    /// [`agaric_engine::loro::shared::get`]'s registry.
+    /// one per [`SpaceId`] currently held in the caller-supplied
+    /// `LoroState`'s registry (#2249: engine state is threaded in
+    /// explicitly; there is no process-global accessor anymore).
     ///
     /// Strategy:
     /// * Build one message per registered space via

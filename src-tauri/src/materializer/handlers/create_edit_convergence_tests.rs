@@ -4,7 +4,8 @@
 //! foreground `apply_op_tx` pipeline with the Loro engine installed) AND the
 //! sql_only fallback arm (`apply_create_block_sql_only` /
 //! `apply_edit_block_sql_only`, called directly — exactly the fns the routing
-//! dispatches to when `agaric_engine::loro::shared::get()` is `None`), then asserts the
+//! dispatches to when space resolution fails or the engine tree is missing the
+//! block, the two surviving `SqlOnlyFallbackReason` arms), then asserts the
 //! resulting `blocks` rows are IDENTICAL between the two arms on the columns the
 //! INSERT/UPDATE *shape* governs: `id`, `block_type`, `content`, `parent_id`,
 //! `page_id`.
@@ -358,8 +359,8 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
 
 /// Fallback arm: NO engine. Seed the identical page/parent/first-child directly
 /// in SQL, then drive the `apply_create_block_sql_only` / `apply_edit_block_sql_only`
-/// fns directly (the exact code the via_loro routing dispatches to on
-/// `shared::get() == None`).
+/// fns directly (the exact code the via_loro routing dispatches to when space
+/// resolution fails or the engine tree is missing the block).
 async fn run_fallback_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i64>, String) {
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("fallback_arm.db"))

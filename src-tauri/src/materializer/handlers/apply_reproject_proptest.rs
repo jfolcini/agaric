@@ -11,15 +11,17 @@
 //!
 //! ## Why the engine path is guaranteed (the #891 false-green trap)
 //!
-//! A test that applies ops WITHOUT `agaric_engine::loro::shared::install_for_test()`
-//! silently runs the `apply_*_sql_only` FALLBACK, whose provisional positions
-//! differ from production — so it would never see a reprojection bug. Every
-//! test here therefore:
+//! A test that never confirms the engine path ran can silently pass on the
+//! `apply_*_sql_only` FALLBACK, whose provisional positions differ from
+//! production — so it would never see a reprojection bug. Every test here
+//! therefore:
 //!
-//! * `install_for_test()`s the process-global Loro engine and `registry.clear()`s
-//!   it per case (the shared-registry isolation contract — run under
-//!   `cargo nextest`, one process per test, never plain `cargo test`; see
-//!   `loro::shared::install_for_test` and #1079);
+//! * constructs its own fresh `LoroState` per case (#2249: an ordinary
+//!   per-instance value, not a process-global — no install step, and the
+//!   retired `OnceLock`-backed registry race that made engine-path tests
+//!   nextest-only, #1079, is gone); a case that needs multiple
+//!   sequential "boots" clears that same instance's registry between them
+//!   via `state.registry.clear()`;
 //! * seeds a real page (with `space_id`) into BOTH SQL and the engine tree, and
 //!   re-anchors every harness ROOT `CreateBlock` under that page, so
 //!   `resolve_block_space` always resolves and ops route through
@@ -29,6 +31,26 @@
 //!   waiting on the deferred `SetBlockPageId` background task; and
 //! * asserts `sql_only_fallback::count()` did NOT advance across the whole chain
 //!   — a hard, per-case guard that the production engine path actually ran.
+//!
+//! HOWEVER, that last guard reads the process-global
+//! `sql_only_fallback::count()` counter, a monotonic `AtomicU64` shared by every
+//! test running in the SAME process: two count-measuring tests interleaving in
+//! one process corrupt each other's delta. Run these under `cargo nextest run`
+//! (as CI and the pre-push hook do), NOT concurrent plain `cargo test` —
+//! nextest "executes each individual test in a separate process" (nexte.st,
+//! "How nextest works"), so each test gets a fresh counter and no sibling can
+//! land between its two reads, whereas plain `cargo test` runs the whole binary
+//! in ONE process with the tests on threads. (`cargo test -- --test-threads=1`
+//! is sound for the same reason serialisation is; it just costs the binary's
+//! parallelism.)
+//!
+//! Note what does NOT supply that isolation: `src-tauri/.config/nextest.toml`
+//! pins this file (and its delta-asserting peers) into
+//! `[test-groups.spy-counter-serial]` `max-threads = 1`, but a test group is a
+//! concurrency semaphore over its members — one permit serialises the group, it
+//! does not put a test in its own process, because nextest already does that
+//! for every test, grouped or not. Group membership is not what makes this
+//! delta valid.
 //!
 //! ## Properties
 //!

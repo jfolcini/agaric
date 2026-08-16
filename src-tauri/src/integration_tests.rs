@@ -139,8 +139,15 @@ async fn settle_bg_tasks(mat: &Materializer) {
 // [`dispatch_via_engine`] instead exercises the PRODUCTION engine path
 // (`append_local_op` + `dispatch_op` → `apply_*_via_loro`), which reprojects.
 //
-// #891 lesson: a conformance/integration test that applies ops WITHOUT
-// `install_for_test` silently validates the fallback, not production.
+// #891 lesson: a conformance/integration test that applies ops through the
+// `*_inner` command helpers (bypassing `dispatch_via_engine`) silently
+// validates the SQL-only fallback, not production. The engine-path tests in
+// THIS file guard against that by asserting engine-tree presence
+// ([`assert_blocks_in_engine`] below), which proves the ops genuinely ran the
+// production `apply_*_via_loro` path rather than assuming it from
+// construction. (The sibling `*_convergence_tests` files use a different
+// guard: asserting `sql_only_fallback::count()` did NOT advance across the
+// ops under test — delta == 0 — which this file does not use.)
 
 /// Seed one pre-existing ROOT page into BOTH the SQL `blocks` table and the
 /// per-space Loro engine tree, then register it in [`TEST_SPACE_ID`].
@@ -219,7 +226,8 @@ async fn create_child_via_engine(
 /// so this proves the ops genuinely ran the production `apply_*_via_loro` path
 /// (dense reproject) — not the fallback whose provisional `index + 1`
 /// positions would only COINCIDENTALLY match dense ranks. A future regression
-/// that drops `install_for_test` / the space assignment fails here loudly.
+/// that drops the real per-instance `LoroState` (or the space assignment)
+/// fails here loudly.
 fn assert_blocks_in_engine(state: &agaric_engine::loro::shared::LoroState, ids: &[&str]) {
     let space = SpaceId::from_trusted(TEST_SPACE_ID);
     let mut guard = state.registry.for_space(&space, DEV).expect("for_space");

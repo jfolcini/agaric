@@ -1,9 +1,10 @@
 //! #1323 (Step 4, move): conformance test that drives the SAME
 //! `MoveBlock(child → new parent)` op through BOTH the engine arm
 //! (`apply_move_block_via_loro`, via the real foreground `apply_op_tx`
-//! pipeline with the Loro engine installed) AND the sql_only fallback arm
-//! (`apply_move_block_sql_only`, called directly — exactly the fn the routing
-//! dispatches to when `agaric_engine::loro::shared::get()` is `None`), then asserts the
+//! pipeline with a real `&LoroState`) AND the sql_only fallback arm
+//! (`apply_move_block_sql_only`, called directly — the same fn the engine
+//! arm's own routing falls back to when space resolution fails or the
+//! engine tree is missing the block), then asserts the
 //! resulting `blocks.parent_id` is IDENTICAL between the two arms.
 //!
 //! The fixture seeds TWO parents (P1, P2) each with multiple children, so a
@@ -49,15 +50,35 @@
 //!   asserts the fallback's no-op-skip agrees with the command path's reject on
 //!   the SAME cycle input (the probe is the single source of truth).
 //!
-//! #891 lesson: a test without `install_for_test` silently runs the FALLBACK,
-//! not production. The engine arm asserts `sql_only_fallback::count()` did NOT
-//! increment across its move (delta == 0), proving the engine path ran.
+//! #891 lesson: a test that never checks whether the engine path actually ran
+//! can silently pass on the FALLBACK instead of production. The engine arm
+//! asserts `sql_only_fallback::count()` did NOT increment across its move
+//! (delta == 0), proving the engine path ran.
 //!
-//! Process isolation: the `GLOBAL` Loro `OnceLock` is process-wide and
-//! first-write-wins, so a single process cannot toggle the engine off after
-//! installing it. The fallback arm drives `apply_move_block_sql_only` directly
-//! (the established pattern). Run under `cargo nextest run` (one process per
-//! test), never plain `cargo test`.
+//! #2249: `LoroState` is an ordinary per-instance value, not a process
+//! global, so the two arms' engine states (where the engine arm has one at
+//! all) cannot interfere with each other. The fallback arm drives
+//! `apply_move_block_sql_only` directly (the established pattern).
+//!
+//! HOWEVER, the `count() == delta` guard above reads the process-global
+//! `sql_only_fallback::count()` counter, a monotonic `AtomicU64` shared by
+//! every test running in the SAME process: two count-measuring tests
+//! interleaving in one process corrupt each other's delta. Run these under
+//! `cargo nextest run` (as CI and the pre-push hook do), NOT concurrent
+//! plain `cargo test` — nextest "executes each individual test in a
+//! separate process" (nexte.st, "How nextest works"), so each test gets a
+//! fresh counter and no sibling can land between its two reads, whereas
+//! plain `cargo test` runs the whole binary in ONE process with the tests
+//! on threads. (`cargo test -- --test-threads=1` is sound for the same
+//! reason serialisation is; it just costs the binary's parallelism.)
+//!
+//! Note what does NOT supply that isolation: `src-tauri/.config/nextest.toml`
+//! pins this file (and its delta-asserting peers) into
+//! `[test-groups.spy-counter-serial]` `max-threads = 1`, but a test group is
+//! a concurrency semaphore over its members — one permit serialises the
+//! group, it does not put a test in its own process, because nextest already
+//! does that for every test, grouped or not. Group membership is not what
+//! makes this delta valid.
 
 use super::*;
 use crate::db::init_pool;
@@ -252,8 +273,8 @@ async fn run_engine_arm() -> (Option<String>, i64) {
 
 /// Fallback arm: NO engine. Seed the identical hierarchy directly in SQL, drive
 /// `apply_move_block_sql_only(C1A → P2, index 2)` directly (the exact code the
-/// via_loro routing dispatches to on `shared::get() == None`). Returns
-/// `(c1a_parent, c1a_position)`.
+/// via_loro routing falls back to when space resolution fails or the engine
+/// tree is missing the block). Returns `(c1a_parent, c1a_position)`.
 async fn run_fallback_arm() -> (Option<String>, i64) {
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("fallback_arm.db"))

@@ -64,8 +64,8 @@ async fn fresh_pool_with_page() -> (SqlitePool, TempDir) {
 #[tokio::test]
 async fn apply_op_tx_create_block_engine_path() {
     let (pool, _dir) = fresh_pool_with_page().await;
-    // The engine path reads the Loro state global; install it for
-    // the test.
+    // #2249: engine state is an ordinary per-test value, threaded into
+    // `apply_op_tx` as `&state` below — there is no global to install.
     let state = agaric_engine::loro::shared::LoroState::new();
     // Phase 3: the parent page must exist in the engine tree.
     seed_page_via_loro(&pool, &state).await;
@@ -120,15 +120,19 @@ async fn apply_op_tx_create_block_engine_path() {
     // the fractional sibling order; sole child of PAGE_ID ⇒ rank 1.
     assert_eq!(engine_snap.position, 1);
 
-    // Reset the flag for any other tests in this binary.  The
-    // OnceLock-installed flag is process-global; tests that rely on
-    // default-off must explicitly install `false` themselves.
+    // Nothing to tear down for the benefit of other tests in this binary:
+    // `state` is this test's own `LoroState`, dropped here with the rest of
+    // the scope, and `apply_op_tx` took it by reference (`&state`, above).
+    // #2249 deleted the process-global registry, and with it the routing
+    // flag this comment used to reset.
 }
 
-/// EditBlock loro path: pre-existing block, run an EditBlock op
-/// with the flag on, verify the SQL `content` column matches the
-/// engine's post-edit content (which is also the payload's
-/// `to_text` for a single-author op).
+/// EditBlock loro path: seed the page and the block into this test's own
+/// `LoroState` (so the edit genuinely resolves in the engine tree rather
+/// than falling back), run an EditBlock op through `apply_op_tx` with that
+/// `&state`, and verify the SQL `content` column matches the engine's
+/// post-edit content (which is also the payload's `to_text` for a
+/// single-author op).
 #[tokio::test]
 async fn apply_op_tx_edit_block_engine_path() {
     let (pool, _dir) = fresh_pool_with_page().await;

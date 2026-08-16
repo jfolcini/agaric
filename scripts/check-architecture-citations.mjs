@@ -48,9 +48,20 @@ const EXCLUDE_PATH_RE = /^docs\/session-log\//
 const SECTION_MARK = String.fromCharCode(0xa7)
 const CITATION_RE = new RegExp(`ARCHITECTURE\\.md\\s*${SECTION_MARK}`)
 
+// Raised from Node's 1 MB default: `git ls-files` emits ~278 KB over 4,572
+// tracked paths today, and the bare `catch` below would turn an ENOBUFS
+// overflow into a silent "not a git repo; skipping" — the guard disabled with
+// no signal at all. Kept in step with the same constant in
+// `scripts/check-dead-symbol-citations.mjs`.
+const GIT_LS_FILES_MAX_BUFFER = 64 * 1024 * 1024
+
 function trackedFiles() {
   try {
-    return execFileSync('git', ['ls-files'], { cwd: REPO_ROOT, encoding: 'utf8' })
+    return execFileSync('git', ['ls-files'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      maxBuffer: GIT_LS_FILES_MAX_BUFFER,
+    })
       .trim()
       .split('\n')
       .filter(Boolean)

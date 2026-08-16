@@ -468,6 +468,78 @@ fn from_trusted_and_deserialize_still_accept_synthetic_ids_1558() {
     );
 }
 
+// --- #3794: SENTINEL_ID cross-language safety depends on this normalization ---
+
+/// #3794 — The frontend's drag-and-drop sentinel (`SENTINEL_ID` in
+/// `src/lib/tree-utils.ts`, literal string `"__drop-after-last__"`) is safe
+/// against collision with a peer-supplied block id ONLY because every
+/// untrusted ingest path (`from_trusted`, used by `restore.rs` /
+/// `projection.rs`, and the `Deserialize` impl above) ASCII-uppercases
+/// non-ULID strings. That uppercasing exists for #1558 blake3 hash
+/// canonicalization — NOT for sentinel safety — so a peer-supplied block
+/// whose id is literally `"__drop-after-last__"` only fails to collide with
+/// the frontend sentinel because it lands as `"__DROP-AFTER-LAST__"`.
+///
+/// This pins that coupling from the Rust side twice over: if either
+/// normalization is ever relaxed to preserve peer bytes verbatim, this test
+/// reddens — and because it also pins the exact normalised form
+/// (`__DROP-AFTER-LAST__`), swapping ASCII-uppercasing for some other
+/// mangling reddens it too, rather than sliding through on "not verbatim".
+/// See
+/// `SENTINEL_ID preconditions (#3794)` in
+/// `src/lib/__tests__/tree-utils.mutants-drop.test.ts` for the other half
+/// of the same precondition (SENTINEL_ID itself must stay lowercase, which
+/// is pinned on the TypeScript side).
+///
+/// The sentinel string is duplicated here rather than imported — there is
+/// no cross-language import between this crate and `src/lib/tree-utils.ts`,
+/// so a change to either side is invisible to the compiler. Keep this
+/// literal in sync with `SENTINEL_ID` by hand.
+#[test]
+fn sentinel_id_does_not_survive_untrusted_ingest_verbatim_3794() {
+    const FRONTEND_SENTINEL_ID: &str = "__drop-after-last__";
+
+    // Trusted path: `restore.rs` / `projection.rs` (per #3794's issue body)
+    // insert peer-supplied ids via `BlockId::from_trusted`, with no ULID
+    // validation.
+    let trusted = BlockId::from_trusted(FRONTEND_SENTINEL_ID);
+    assert_ne!(
+        trusted.as_str(),
+        FRONTEND_SENTINEL_ID,
+        "BlockId::from_trusted must NOT round-trip the sentinel's bytes verbatim — \
+         if it ever does, a peer-supplied block whose id is the sentinel string \
+         would silently collide with the frontend's drop-after-last sentinel (#3794)"
+    );
+    // "not verbatim" alone would also be satisfied by a normalisation that
+    // mangles the id some entirely different way. Pin the actual output, which
+    // is the property the frontend fold relies on: ASCII-uppercased, hence
+    // case-distinct from the lowercase `SENTINEL_ID`.
+    assert_eq!(
+        trusted.as_str(),
+        "__DROP-AFTER-LAST__",
+        "from_trusted must ASCII-uppercase the sentinel string (agaric-core/src/ulid.rs \
+         `to_ascii_uppercase`); any other normalisation is a change to the cross-language \
+         precondition SENTINEL_ID depends on (#3794)"
+    );
+
+    // Untrusted path: the genuinely-untrusted `Deserialize` entry point that
+    // remote op-log payloads / sync messages / IPC parameters reach.
+    let json = format!("\"{FRONTEND_SENTINEL_ID}\"");
+    let de: BlockId = serde_json::from_str(&json).unwrap();
+    assert_ne!(
+        de.as_str(),
+        FRONTEND_SENTINEL_ID,
+        "Deserialize must NOT round-trip the sentinel's bytes verbatim either — \
+         same #3794 hazard on the untrusted sync/IPC ingest path"
+    );
+    assert_eq!(
+        de.as_str(),
+        "__DROP-AFTER-LAST__",
+        "Deserialize must ASCII-uppercase the sentinel string, byte-identically to \
+         from_trusted (AGENTS.md invariant #8 — the two paths must agree)"
+    );
+}
+
 #[test]
 fn deserialize_roundtrip_preserves_normalization() {
     let lower_json = format!("\"{FIXTURE_ULID_LOWER}\"");

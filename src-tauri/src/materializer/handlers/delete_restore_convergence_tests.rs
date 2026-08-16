@@ -1,12 +1,12 @@
 //! #1323 (Step 2, delete/restore): conformance test that drives the SAME
 //! `DeleteBlock(parent)` then `RestoreBlock(parent)` ops through BOTH the
 //! engine arm (`apply_delete_block_via_loro` / `apply_restore_block_via_loro`,
-//! via the real foreground `apply_op_tx` pipeline with the Loro engine
-//! installed) AND the sql_only fallback arm (`apply_delete_block_sql_only` /
-//! `apply_restore_block_sql_only`, called directly — exactly the fns the
-//! routing dispatches to when `agaric_engine::loro::shared::get()` is `None`), then
-//! asserts the resulting `blocks` soft-delete state is IDENTICAL between the
-//! two arms after each settle.
+//! via the real foreground `apply_op_tx` pipeline with a real `&LoroState`)
+//! AND the sql_only fallback arm (`apply_delete_block_sql_only` /
+//! `apply_restore_block_sql_only`, called directly — the same fns the engine
+//! arm's own routing falls back to when space resolution fails or the engine
+//! tree is missing the block), then asserts the resulting `blocks` soft-delete
+//! state is IDENTICAL between the two arms after each settle.
 //!
 //! The fixture uses a multi-level parent → child → grandchild subtree so the
 //! descendant cohort cascade is actually exercised: deleting the PARENT must
@@ -24,18 +24,37 @@
 //! its cohort shares ONE uniform non-null `deleted_at` after delete (cohort
 //! identity) and ALL-null after restore.
 //!
-//! #891 lesson: a test without `install_for_test` silently runs the
-//! FALLBACK, not production. The engine arm therefore asserts that
-//! `sql_only_fallback::count()` did NOT increment across its ops
-//! (delta == 0), proving the engine path actually ran.
+//! #891 lesson: a test that never checks whether the engine path actually
+//! ran can silently pass on the FALLBACK instead of production. The engine
+//! arm therefore asserts that `sql_only_fallback::count()` did NOT increment
+//! across its ops (delta == 0), proving the engine path actually ran.
 //!
-//! Process isolation: the `GLOBAL` Loro `OnceLock` is process-wide and
-//! first-write-wins (see `loro::shared::install_for_test`), so a single
-//! process cannot toggle the engine off after installing it. The fallback
-//! arm therefore drives the `apply_*_sql_only` fns directly (the established
-//! pattern — see `tag_convergence_tests`), which is the identical code the
-//! via-loro routing calls on `get() == None`. Run under `cargo nextest run`
-//! (one process per test), never plain `cargo test`.
+//! #2249: `LoroState` is an ordinary per-instance value, not a process
+//! global, so the two arms' engine states cannot interfere with each other.
+//! The fallback arm therefore drives the `apply_*_sql_only` fns directly
+//! (the established pattern — see `tag_convergence_tests`), which is the
+//! identical code the via-loro routing falls back to when space resolution
+//! fails or the engine tree is missing the block.
+//!
+//! HOWEVER, the `count() == delta` guard above reads the process-global
+//! `sql_only_fallback::count()` counter, a monotonic `AtomicU64` shared by
+//! every test running in the SAME process: two count-measuring tests
+//! interleaving in one process corrupt each other's delta. Run these under
+//! `cargo nextest run` (as CI and the pre-push hook do), NOT concurrent
+//! plain `cargo test` — nextest "executes each individual test in a
+//! separate process" (nexte.st, "How nextest works"), so each test gets a
+//! fresh counter and no sibling can land between its two reads, whereas
+//! plain `cargo test` runs the whole binary in ONE process with the tests
+//! on threads. (`cargo test -- --test-threads=1` is sound for the same
+//! reason serialisation is; it just costs the binary's parallelism.)
+//!
+//! Note what does NOT supply that isolation: `src-tauri/.config/nextest.toml`
+//! pins this file (and its delta-asserting peers) into
+//! `[test-groups.spy-counter-serial]` `max-threads = 1`, but a test group is
+//! a concurrency semaphore over its members — one permit serialises the
+//! group, it does not put a test in its own process, because nextest already
+//! does that for every test, grouped or not. Group membership is not what
+//! makes this delta valid.
 
 use super::*;
 use crate::db::init_pool;
@@ -361,8 +380,9 @@ async fn run_engine_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>
 
 /// Fallback arm: NO engine. Seed the identical subtree directly in SQL, drive
 /// the `apply_delete_block_sql_only` then `apply_restore_block_sql_only` fns
-/// directly (the exact code the via_loro routing dispatches to on
-/// `shared::get() == None`), snapshot after each.
+/// directly (the exact code the via_loro routing falls back to when space
+/// resolution fails or the engine tree is missing the block), snapshot
+/// after each.
 async fn run_fallback_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>, Vec<i64>) {
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("fallback_arm.db"))
