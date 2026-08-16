@@ -386,9 +386,17 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
  */
 const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>([
   // Fixtures whose ops legitimately leave the projected domain state
-  // untouched, each with the reason. Empty today: the sweep #3966 asked for
-  // ran over all 40 fixtures and found zero offenders, so the guard lands as
-  // a ratchet on a clean tree rather than with a grandfathered backlog.
+  // untouched, each with the reason.
+  //
+  // Empty today, but NOT because the sweep found nothing. The #3966 sweep over
+  // all 40 fixtures found TWO offenders — `restore_block` (delete S2, restore
+  // S2) and `delete_property_reserved_key_clears_column` (set `todo_state`,
+  // delete `todo_state`) — both pure round trips whose recorded `expected`
+  // equalled their seed-only snapshot, and both reproducible by a mock with
+  // the handlers no-op'd. This map is empty because those two were REPAIRED
+  // (each gained a second block the ops treat differently), not because the
+  // tree was clean. Waiving them here would have been the cheaper option and
+  // would have left two fixtures that pass without testing anything.
 ])
 
 /**
