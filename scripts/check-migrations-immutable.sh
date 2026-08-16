@@ -141,11 +141,47 @@ if [ "$SELF_TEST" -eq 1 ]; then
   set +e; bash "$SELF" >/dev/null 2>&1; rc=$?; set -e
   assert "staged modification -> fail" 1 "$rc"
 
-  # (7) usage errors.
+  # (7) run from a SUBDIRECTORY with a real violation staged (#3949).
+  #     The pathspec is relative to the invocation directory, so from
+  #     src-tauri/ it became 'src-tauri/src-tauri/migrations/*.sql',
+  #     matched nothing, and the guard reported success. Both modes are
+  #     covered: a guard that answers "fine" from the wrong directory is
+  #     worse than one that errors, and the range mode resolves its
+  #     revspec from the same cwd.
+  git checkout -q -b subdir "$base"
+  echo "CREATE TABLE a(x, v);" > src-tauri/migrations/0001_a.sql
+  git add -A
+  cd "$tmp/src-tauri"
+  set +e; bash "$SELF" >/dev/null 2>&1; rc=$?; set -e
+  assert "staged modification, run from a subdirectory -> fail" 1 "$rc"
+  git commit -qm "edit shipped from subdir"
+  set +e; bash "$SELF" --range "main...HEAD" >/dev/null 2>&1; rc=$?; set -e
+  assert "range mode, run from a subdirectory -> fail" 1 "$rc"
+  # …and the legitimate shape must still pass from there, so the fix is
+  # not "make the guard fail from subdirectories".
+  cd "$tmp"
+  git checkout -q -b subdir-adds "$base"
+  echo "CREATE TABLE d(x);" > src-tauri/migrations/0004_d.sql
+  git add -A
+  cd "$tmp/src-tauri"
+  set +e; bash "$SELF" >/dev/null 2>&1; rc=$?; set -e
+  assert "staged ADDITION, run from a subdirectory -> pass" 0 "$rc"
+  cd "$tmp"
+
+  # (8) usage errors.
   set +e; bash "$SELF" --bogus >/dev/null 2>&1; rc=$?; set -e
   assert "unknown arg -> exit 2" 2 "$rc"
   set +e; bash "$SELF" --range >/dev/null 2>&1; rc=$?; set -e
   assert "--range with no revspec -> exit 2" 2 "$rc"
+
+  # (9) outside a git repository the toplevel cannot be resolved. Without the
+  #     emptiness check this exits 129 from git's own arg parser with a page of
+  #     usage text — an undocumented code and a message that never mentions
+  #     migrations. Pinned to the documented exit 2.
+  outside="$(mktemp -d)"
+  set +e; (cd "$outside" && bash "$SELF") >/dev/null 2>&1; rc=$?; set -e
+  rm -rf "$outside"
+  assert "run outside any git repository -> documented exit 2, not git's opaque 129" 2 "$rc"
 
   if [ "$fails" -ne 0 ]; then
     echo "self-test: $fails assertion(s) failed" >&2
@@ -154,6 +190,31 @@ if [ "$SELF_TEST" -eq 1 ]; then
   echo "self-test: all assertions passed"
   exit 0
 fi
+
+# Pathspecs below are repo-relative, and `git diff` resolves them against the
+# CWD, not the toplevel. Run from src-tauri/ and 'src-tauri/migrations/*.sql'
+# becomes 'src-tauri/src-tauri/migrations/*.sql', matches nothing, and the
+# guard reports success with a real migration edit staged (#3949). Automation
+# is unaffected — prek and verify-ci-equivalent.sh both run from the toplevel —
+# but manual invocation is exactly what someone does to check whether their
+# change is safe before pushing, and a guard that answers "fine" from the wrong
+# directory is worse than one that errors. This must stay BELOW the --self-test
+# block, which cd's into its own fixture and must not be redirected here.
+#
+# Resolved into a variable and checked rather than `cd "$(git rev-parse …)"`.
+# Measured, not assumed: on failure that substitution is empty, and `cd ""`
+# SUCCEEDS while changing nothing — so the naive form carries on into the scan
+# from wherever it started. It does not then pass silently; `git diff --cached`
+# outside a repository reinterprets itself as `--no-index`, rejects `--cached`,
+# and exits 129 with a page of git usage text. That is a code this script does
+# not document (0/1/2) and a message that names nothing about migrations. The
+# explicit check turns it into the documented exit 2 and one clear line.
+TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$TOPLEVEL" ]; then
+  echo "ERROR: not inside a git repository — cannot scope the migration scan." >&2
+  exit 2
+fi
+cd "$TOPLEVEL"
 
 # git diff status letters:
 #   A = added,     M = modified, D = deleted,

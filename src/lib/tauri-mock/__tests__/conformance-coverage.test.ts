@@ -48,6 +48,24 @@ function extractBindingsCommandNames(): string[] {
   return [...names].toSorted()
 }
 
+/**
+ * `bindings.ts` is generated, so its command set is fixed for the whole run —
+ * read and scanned ONCE (#3992 item 5). `relevanceNeedles` used to call
+ * `extractBindingsCommandNames()` per JSON citation, re-reading and re-regexing
+ * the file ~11 times per run for an answer that cannot change between calls.
+ */
+const BINDINGS_COMMANDS: readonly string[] = extractBindingsCommandNames()
+
+/**
+ * One compiled `\b<command>\b` per command, built once alongside
+ * [`BINDINGS_COMMANDS`]. Word-anchored, NOT substring: `undo_op` must not be
+ * found inside `undo_ops` (#3992 item 2 — the same anchoring the citation
+ * relevance check applies).
+ */
+const BINDINGS_COMMAND_WORD_RE: ReadonlyMap<string, RegExp> = new Map(
+  BINDINGS_COMMANDS.map((c) => [c, new RegExp(`\\b${c}\\b`)]),
+)
+
 const RUST_COMMANDS_DIR = path.resolve(
   import.meta.dirname,
   '..',
@@ -238,13 +256,24 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'NOT cross-checked; regression-guarded by revert-cohort.test.ts / undo-move.test.ts',
   // Was "regression-guarded by undo-op-refs.test.ts" — that file's own doc
   // scopes it to `undo_op` / `undo_ops` and it never mentions this command.
-  // The only test that names `undo_page_group` drives the FE store against a
-  // MOCKED `invoke`, so it never reaches this handler: the mock's
-  // `undo_page_group` has no mock-level regression test at all.
+  // The tests that DO name `undo_page_group` drive the FE against a mocked IPC
+  // layer, so none of them reaches this handler: the mock's `undo_page_group`
+  // has no mock-level regression test at all.
+  //
+  // #3992 item 3 — this reason used to say PageHeader.test.tsx was "the only
+  // test naming undo_page_group". It is not: `stores/__tests__/undo.test.ts`
+  // names it too, in a `'undo_page_group failed'` log assertion. The waiver's
+  // CONCLUSION survived (that test mocks `@/lib/tauri`, so it reaches the
+  // handler no more than the other does) but the claim itself was an unchecked
+  // universal — "no OTHER test exists" is not something a citation can carry,
+  // and nothing in this guard could have contradicted it. Both files are named
+  // instead, which is a claim the citation check above actually verifies: each
+  // must exist and must mention `undo_page_group` as a whole word.
   undo_page_group:
-    'NOT cross-checked, and not mock-level guarded either: the only test naming ' +
-    'undo_page_group is components/pages/__tests__/PageHeader.test.tsx, which asserts ' +
-    'the FE issues the IPC against a MOCKED invoke and never reaches this handler (#3964)',
+    'NOT cross-checked, and not mock-level guarded either: the tests naming ' +
+    'undo_page_group — components/pages/__tests__/PageHeader.test.tsx (mocked invoke) and ' +
+    'stores/__tests__/undo.test.ts (mocked @/lib/tauri bindings) — assert the FE issues ' +
+    'the IPC and neither reaches this handler (#3964, #3992)',
   redo_page_op: 'NOT cross-checked; regression-guarded by undo-move.test.ts',
   revert_ops:
     'NOT cross-checked; regression-guarded by revert-cohort.test.ts and, for the ' +
@@ -448,7 +477,7 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   // both sides. The text they diff is indeed snapshot-pinned; the ARG that
   // picks it is not.
   compute_edit_diff:
-    'selected by an `op_log` `(device_id, seq)` point (history.rs) — an op identity ' +
+    'selected by an `op_log` `(device_id, seq)` point (commands/history.rs) — an op identity ' +
     'each stack generates independently, so no fixture can spell the same input twice',
   compute_block_vs_current_diff:
     'selected by an `op_log` `(historical_created_at, historical_seq)` point — an op ' +
@@ -1604,7 +1633,30 @@ interface LoadedFixture {
   /** `'S2'` → `'B2'`. Canonical labels are assigned in SEED ORDER by both
    *  runners (`canonicalOrder` / `build_snapshot_with_order`), so the map is
    *  positional — NOT a numeric coincidence between the two naming schemes,
-   *  which a fixture is free to break. */
+   *  which a fixture is free to break.
+   *
+   *  SEED IDS ONLY (#3992 item 4). Both runners then append the OP-CREATED
+   *  blocks to the same canonical order, so a created block does have a label
+   *  (`B<seedCount + nth create_block>`) — this map does not carry it, because
+   *  nothing can ASK for it: an op arg names a block by an id the fixture
+   *  author writes, and a created block's id is minted at replay time by each
+   *  stack independently. There is no placeholder for one in either runner
+   *  (both map `blockId` / `parentId` / `newParentId` / `tagId` and the nested
+   *  `value.value_ref` through `seed_label_to_id`, which only pads), so an op
+   *  cannot target a created block at all today.
+   *
+   *  That is why this returning `null` was a fail-open rather than a
+   *  limitation: `argLabel` answers `null` for BOTH "the arg is absent" and
+   *  "the arg names something I cannot resolve", and every `holds` predicate
+   *  reads `null` as "this scenario is not exhibited". A fixture rewritten to
+   *  target an unresolvable block therefore stops being counted SILENTLY —
+   *  loudly only in the total case the `neverTrue` meta-guard catches, and not
+   *  at all when a sibling op or a sibling fixture keeps the predicate true.
+   *  `it('every fixture op arg that names a block resolves to a SEED label')`
+   *  is what makes that case red instead: it fails on any unresolvable id-arg
+   *  anywhere in the corpus, so the day a created-ref convention is introduced
+   *  it forces this map (and `argLabel`) to learn it rather than quietly
+   *  answering "no". */
   label: (seedId: string) => string | null
 }
 
@@ -1696,6 +1748,17 @@ function rawIdHits(token: string): string[] {
   return [...heads, ...values].filter((seg) => RAW_ID_SEGMENT.test(seg))
 }
 
+/**
+ * A seed label (`S2`) expanded to the 26-char id both runners insert — IDENTICAL
+ * to `conformance.test.ts`'s `seedLabelToId` and the Rust `seed_label_to_id`.
+ * Applied on BOTH sides of the label lookup so a fixture that spells an op arg
+ * in the already-expanded form (`properties_typed.json`'s `value_ref` does)
+ * resolves the same as one spelling the short label.
+ */
+function seedLabelToId(label: string): string {
+  return label.length >= 26 ? label : label.padStart(26, '0')
+}
+
 function loadFixtures(): LoadedFixture[] {
   return readdirSync(FIXTURES_DIR)
     .filter((f) => f.endsWith('.json'))
@@ -1704,7 +1767,7 @@ function loadFixtures(): LoadedFixture[] {
       const raw = JSON.parse(readFileSync(path.join(FIXTURES_DIR, f), 'utf8')) as FixtureShape
       const seedBlocks = raw.seed?.blocks ?? []
       const labels = new Map<string, string>(
-        seedBlocks.map((b, i) => [b['id'] as string, `B${i + 1}`]),
+        seedBlocks.map((b, i) => [seedLabelToId(b['id'] as string), `B${i + 1}`]),
       )
       return {
         name: raw.name,
@@ -1716,7 +1779,7 @@ function loadFixtures(): LoadedFixture[] {
         ops: raw.ops.map((o) => ({ command: o.command, args: o.args ?? {} })),
         seedBlocks,
         expected: raw.expected ?? null,
-        label: (seedId: string) => labels.get(seedId) ?? null,
+        label: (seedId: string) => labels.get(seedLabelToId(seedId)) ?? null,
       }
     })
 }
@@ -1750,11 +1813,28 @@ interface Citation {
 }
 
 /**
- * `<path>.test.ts[x]` or `<name>.json`, each optionally followed by
- * `(via <symbol>)`. Both shapes are already the conventions in use — this
+ * A cited artifact: a `.ts` / `.tsx` file (test OR source), a `.rs` backend
+ * source file, or a `<name>.json` fixture, each optionally followed by
+ * `(via <symbol>)`. All of these shapes are already conventions in use — this
  * makes them load-bearing rather than decorative.
+ *
+ * #3992 item 1 — this used to recognise ONLY `*.test.ts[x]` and `*.json`, so a
+ * waiver citing a SOURCE file was invisible to the guard while reading exactly
+ * like a checked citation. `restore_page_to_op`'s reason (rewritten by #3964 to
+ * cite `handlers/history.ts`, the file holding the constant stub it waives) was
+ * outside the very guard it was rewritten to satisfy, as was
+ * `run_advanced_query::grouped`'s `handlers/search.ts` and `compute_edit_diff`'s
+ * Rust citation. A source citation is now resolved and relevance-checked like
+ * any other; the ONE thing still unverifiable is prose that names a symbol
+ * rather than a file, which is what the `(via <symbol>)` form exists to make
+ * checkable.
+ *
+ * The trailing `(?![\w-])` is what keeps the widening from over-reaching: with
+ * no boundary after the extension, `foo.json5` matched as `foo.json` and
+ * `notes.rst` as `notes.rs` — a token that is not a citation, reported as a
+ * citation to a file that does not exist.
  */
-const CITATION_RE = /([\w./-]*[\w-]+\.(?:test\.tsx?|json))(?:\s*\(via\s+([\w.]+)\))?/g
+const CITATION_RE = /([\w./-]*[\w-]+\.(?:tsx?|rs|json))(?![\w-])(?:\s*\(via\s+([\w.]+)\))?/g
 
 function citationsIn(reason: string): Citation[] {
   return [...reason.matchAll(CITATION_RE)].map((m) => ({
@@ -1765,13 +1845,66 @@ function citationsIn(reason: string): Citation[] {
 
 const CONFORMANCE_FIXTURES_DIR = FIXTURES_DIR
 const MOCK_TESTS_DIR = import.meta.dirname
+/** The mock package root — `handlers/history.ts` and friends are cited relative
+ *  to it, since that is how a reader of `tauri-mock/` names them. */
+const MOCK_DIR = path.resolve(import.meta.dirname, '..')
 const SRC_DIR = path.resolve(import.meta.dirname, '..', '..', '..')
+
+/** Every `.rs` file under `src-tauri`, indexed once on first use.
+ *
+ *  The WHOLE cargo workspace, not just `src-tauri/src` + `agaric-store/src`:
+ *  uniqueness computed over a subset is not uniqueness. 25 `.rs` basenames
+ *  (`apply.rs`, `restore.rs`, `projection.rs`, `spaces.rs`, `lib.rs`, …) exist
+ *  in BOTH the two former roots and one of the sibling crates
+ *  (`agaric-core` / `agaric-engine` / `agaric-observability` / `agaric-sync`),
+ *  so a narrower index would have declared those citations unambiguous and
+ *  credited the wrong file — the exact coin flip `resolveRustCitation` exists
+ *  to refuse — and would have rejected a legitimate citation into any of those
+ *  crates as nonexistent. */
+let rustSourceIndex: string[] | null = null
+function rustSourcePaths(): string[] {
+  if (rustSourceIndex !== null) return rustSourceIndex
+  const out: string[] = []
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        // `target` is build output (a vendored copy of every dependency's
+        // sources); `node_modules` cannot hold a first-party `.rs`.
+        if (entry.name !== 'target' && entry.name !== 'node_modules') walk(full)
+      } else if (entry.name.endsWith('.rs')) {
+        out.push(full)
+      }
+    }
+  }
+  walk(path.resolve(RUST_COMMANDS_DIR, '..'))
+  rustSourceIndex = out
+  return out
+}
+
+/**
+ * A `.rs` citation resolves by UNIQUE path-suffix match against the Rust tree —
+ * a bare `history.rs` hits both `commands/history.rs` and
+ * `agaric-store/src/pagination/history.rs`, and crediting either would be a
+ * coin flip, so an ambiguous citation is treated as unresolved and must be
+ * qualified (`commands/history.rs`) until it names exactly one file.
+ */
+function resolveRustCitation(file: string): string | null {
+  const suffix = path.sep + file.split('/').join(path.sep)
+  const hits = rustSourcePaths().filter((p) => p.endsWith(suffix))
+  return hits.length === 1 ? (hits[0] as string) : null
+}
 
 /** Absolute path of a cited artifact, or `null` when nothing resolves. */
 function resolveCitation(cite: Citation): string | null {
+  if (cite.file.endsWith('.rs')) return resolveRustCitation(cite.file)
   const candidates = cite.file.endsWith('.json')
     ? [path.resolve(CONFORMANCE_FIXTURES_DIR, cite.file)]
-    : [path.resolve(MOCK_TESTS_DIR, cite.file), path.resolve(SRC_DIR, cite.file)]
+    : [
+        path.resolve(MOCK_TESTS_DIR, cite.file),
+        path.resolve(MOCK_DIR, cite.file),
+        path.resolve(SRC_DIR, cite.file),
+      ]
   return candidates.find((p) => existsSync(p)) ?? null
 }
 
@@ -1799,16 +1932,33 @@ function resolveCitation(cite: Citation): string | null {
  * fixture) and getting a green, which is the whole argument for demonstrating
  * a guard red rather than observing that it passes.
  */
-function relevanceNeedles(cite: Citation, command: string, reason: string): string[] {
-  if (!cite.file.endsWith('.json')) return [command]
+function relevanceNeedles(cite: Citation, command: string, reason: string): RegExp[] {
+  if (!cite.file.endsWith('.json')) return [wordNeedle(command)]
   const prose = reason.replaceAll(CITATION_RE, ' ')
-  const named = extractBindingsCommandNames().filter(
-    (c) => c !== command && new RegExp(`\\b${c}\\b`).test(prose),
+  const named = BINDINGS_COMMANDS.filter(
+    (c) => c !== command && BINDINGS_COMMAND_WORD_RE.get(c)?.test(prose) === true,
   )
-  // `"command": "<name>"` is how a fixture's ops spell the command, so a bare
-  // `includes` on the quoted form cannot be satisfied by a description that
-  // merely talks about it.
-  return named.map((c) => `"command": "${c}"`)
+  // `"command": "<name>"` is how a fixture's ops spell the command, so a match
+  // on the quoted form cannot be satisfied by a description that merely talks
+  // about it.
+  return named.map((c) => new RegExp(`"command":\\s*"${c}"`))
+}
+
+/**
+ * A `\b`-anchored matcher for one identifier — a command name, or the symbol a
+ * `(via …)` redirect points at (which may be dotted, hence the escape).
+ *
+ * #3992 item 2 — the file branch of the relevance check used to be a plain
+ * `body.includes(command)`, so a waiver on `undo_op` would have been satisfied
+ * by a file that only ever writes `undo_ops` or `undo_op_refs`, and a waiver on
+ * `list_attachments` by one that only ever writes `list_attachments_batch`
+ * (both real files in this tree). That is a substring match standing in for a
+ * word match — the same defect shape #3964 was filed for — inside the guard
+ * written to close it. The JSON branch was already `\b`-anchored; the two
+ * halves now agree.
+ */
+function wordNeedle(symbol: string): RegExp {
+  return new RegExp(`\\b${symbol.replaceAll('.', '\\.')}\\b`)
 }
 
 // ---------------------------------------------------------------------------
@@ -1826,10 +1976,48 @@ function argStr(args: Record<string, unknown>, key: string): string | null {
   return typeof args[key] === 'string' ? (args[key] as string) : null
 }
 
-/** The canonical label of the seed block an op arg names, or `null`. */
+/**
+ * The canonical label of the seed block an op arg names, or `null` — which
+ * conflates "no such arg" with "an arg I cannot resolve". See the note on
+ * [`LoadedFixture.label`]: the second case is kept out of the corpus by the
+ * `resolves to a SEED label` guard below rather than distinguished here, so
+ * every `null` a predicate sees means the arg is genuinely absent.
+ */
 function argLabel(fx: LoadedFixture, args: Record<string, unknown>, key: string): string | null {
   const seedId = argStr(args, key)
   return seedId === null ? null : fx.label(seedId)
+}
+
+/**
+ * The TOP-LEVEL op-arg keys that name a BLOCK — the keys both replay runners
+ * map through `seed_label_to_id` (`expandOpArgs` in `conformance.test.ts`, the
+ * `arg_label_id` closure in `conformance.rs`), so this list is the runners' own
+ * definition of "this arg is a block reference", not a guess.
+ */
+const ID_ARG_KEYS: readonly string[] = ['blockId', 'parentId', 'newParentId', 'tagId']
+
+/**
+ * Every block-naming value in one op's args, as `path → id`.
+ *
+ * [`ID_ARG_KEYS`] is not the whole set: a `set_property` bundle's `value_ref`
+ * is a block id too, and BOTH runners expand it through the same seed-label map
+ * (`expandOpArgs`'s `value_ref` branch; `BlockId::from(seed_label_to_id(s))` in
+ * `conformance.rs`'s `set_property` arm). It is nested one level down, which is
+ * the only reason it is not in the key list — not a reason for the guard below
+ * to be blind to it.
+ */
+function blockRefArgs(args: Record<string, unknown>): ReadonlyArray<readonly [string, string]> {
+  const out: Array<readonly [string, string]> = []
+  for (const key of ID_ARG_KEYS) {
+    const value = argStr(args, key)
+    if (value !== null) out.push([key, value])
+  }
+  const bundle = args['value']
+  if (bundle !== null && typeof bundle === 'object') {
+    const ref = argStr(bundle as Record<string, unknown>, 'value_ref')
+    if (ref !== null) out.push(['value.value_ref', ref])
+  }
+  return out
 }
 
 function blockRow(fx: LoadedFixture, label: string): Record<string, unknown> | undefined {
@@ -2218,7 +2406,7 @@ const REQUIRED_SCENARIOS: ReadonlyArray<ScenarioRequirement> = [
 // ---------------------------------------------------------------------------
 
 describe('#3083 conformance-coverage ratchet', () => {
-  const bindingsCommands = extractBindingsCommandNames()
+  const bindingsCommands = BINDINGS_COMMANDS
   const mutatingCommands = bindingsCommands.filter((c) => !isReadOnly(c))
   const readOnlyCommands = bindingsCommands.filter((c) => isReadOnly(c))
   const fixtures = loadFixtures()
@@ -2915,11 +3103,13 @@ describe('#3083 conformance-coverage ratchet', () => {
             missing.push(`${listName}.${key} → ${cite.file}`)
             continue
           }
-          const needles = cite.via !== null ? [cite.via] : relevanceNeedles(cite, command, reason)
+          const needles =
+            cite.via !== null ? [wordNeedle(cite.via)] : relevanceNeedles(cite, command, reason)
           const body = readFileSync(resolved, 'utf8')
-          if (!needles.some((n) => body.includes(n))) {
+          if (!needles.some((n) => n.test(body))) {
             irrelevant.push(
-              `${listName}.${key} → ${cite.file} (mentions none of ${JSON.stringify(needles)})`,
+              `${listName}.${key} → ${cite.file} (mentions none of ` +
+                `${JSON.stringify(needles.map((n) => n.source))})`,
             )
           }
         }
@@ -2933,7 +3123,9 @@ describe('#3083 conformance-coverage ratchet', () => {
         `"elsewhere" is worth, and the staleness cross-checks above cannot help: they ` +
         `verify the command's relationship to bindings.ts and to the fixture set, never ` +
         `to the file its reason names. Fix the path, or rewrite the reason to state what ` +
-        `is actually true now.`,
+        `is actually true now. A \`.rs\` citation must also be UNIQUE by path suffix ` +
+        `across src-tauri — a bare \`history.rs\` names two files, so qualify it ` +
+        `(\`commands/history.rs\`).`,
     ).toEqual([])
 
     expect(
@@ -3270,6 +3462,56 @@ describe('#3083 conformance-coverage ratchet', () => {
         `fixture instead. FIX by giving the fixture the seed/ops the scenario describes ` +
         `— not by loosening the predicate, which is the one repair that puts the manifest ` +
         `back to comparing a label to a label.`,
+    ).toEqual([])
+  })
+
+  // #3992 item 4 — the predicates' INPUT, not the predicates. Every `holds`
+  // reaches its target through `argLabel`/`fx.label`, which resolve SEED ids
+  // and nothing else. An op arg naming anything else (a block created by an
+  // earlier op, a stale label left behind when a seed row was deleted, a
+  // hand-written id) resolves to `null`, and `null` is indistinguishable from
+  // "that arg is absent" — so the predicate reports FALSE and the fixture just
+  // stops being counted. The `neverTrue` guard below catches only the total
+  // case: a scenario whose predicate no fixture satisfies. It cannot see a
+  // PARTIAL one — a second declaring fixture, or a sibling op in the same
+  // fixture, keeps the predicate true and the corpus stays green while the
+  // rewritten target has silently left the evidence.
+  //
+  // Demonstrated before it was written: repointing `tag_add_remove.json`'s
+  // third `add_tag` at `"tagId": "C1"` (the spelling a created-block reference
+  // would take) left all 21 checks green — the two tag predicates kept
+  // counting off the ops either side of it.
+  //
+  // This is the fail-CLOSED half. It cannot RESOLVE a created target — neither
+  // runner has a placeholder for one, so no fixture can express it (see
+  // `LoadedFixture.label`) — but it makes the attempt loud instead of silent:
+  // the day a `blockId` stops naming a seed row, this reddens and whoever
+  // introduced the new reference shape has to teach `label` about it.
+  it('every fixture op arg that names a block resolves to a SEED label (#3992)', () => {
+    const unresolvable: string[] = []
+    for (const fx of fixtures) {
+      for (const [i, op] of fx.ops.entries()) {
+        for (const [key, value] of blockRefArgs(op.args)) {
+          if (fx.label(value) === null) {
+            unresolvable.push(
+              `${fx.name}/ops[${i}] ${op.command}.${key} = ${JSON.stringify(value)}`,
+            )
+          }
+        }
+      }
+    }
+    expect(
+      unresolvable,
+      `These fixture op args name a block that is NOT in the fixture's seed ` +
+        `${JSON.stringify(unresolvable)}. Both replay runners resolve a block reference ` +
+        `by padding it (\`seed_label_to_id\`), so an id that is not a seed label names ` +
+        `nothing on either stack — and every REQUIRED_SCENARIOS predicate reads the ` +
+        `resulting unresolved label as "this scenario is not exhibited", which is a ` +
+        `SILENT loss of coverage wherever another op or another fixture keeps the ` +
+        `predicate true. FIX by pointing the arg at a seeded block; if the intent is to ` +
+        `target a block an OP created, that needs a created-reference convention in BOTH ` +
+        `runners plus resolution here (canonical labels continue past the seed as ` +
+        `\`B<seedCount + nth create_block>\`) — it is not expressible today.`,
     ).toEqual([])
   })
 

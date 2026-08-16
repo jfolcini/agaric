@@ -11,6 +11,14 @@
 // Heuristic:
 //   - Scan every tracked `*.md`, `*.rs`, `*.ts`, `*.tsx` file, discovered
 //     via `git ls-files` so untracked/build files can't hide a violation.
+//   - Read each file from the copy the caller is actually judging — the
+//     STAGED INDEX during a commit, the WORKING TREE otherwise (#3962).
+//     `--cached` / `--worktree` force it; with neither, `GIT_INDEX_FILE`
+//     (git naming the index it is about to commit) decides. Reading the
+//     working tree unconditionally, as this guard used to, let a staged
+//     violation pass whenever the author fixed it on disk without
+//     `git add`. Rationale, the measurements behind the auto rule, and the
+//     deletion/unmerged/symlink decisions: scripts/lib/guard-file-source.mjs.
 //   - Flag any line containing `ARCHITECTURE.md` followed (optionally
 //     whitespace-separated) by the section-mark character. The mark is
 //     built at runtime via `String.fromCharCode(0xA7)` rather than typed
@@ -29,11 +37,31 @@
 //     from PATH and asserts that. Mirrors
 //     scripts/check-dead-symbol-citations.mjs's equivalent guard exactly.
 //
+// Usage:
+//   node scripts/check-architecture-citations.mjs              # auto source
+//   node scripts/check-architecture-citations.mjs --cached     # staged index
+//   node scripts/check-architecture-citations.mjs --worktree   # working tree
+//   node scripts/check-architecture-citations.mjs --print-source
+//   node scripts/check-architecture-citations.mjs --self-test
+//
+// Any OTHER argument is a usage error, not a silently ignored one: a
+// mistyped `--cache` that resolved to AUTO would judge a copy the caller did
+// not ask for, and say nothing about it.
+//
 // Exit codes: 0 clean / 1 matches found / 2 invocation error.
 
-import { execFileSync, execSync, spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { execSync, spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+import { runSourceScenarios } from './lib/git-scratch-guard.mjs'
+import {
+  describeSource,
+  listTrackedEntries,
+  readContents,
+  resolveSource,
+} from './lib/guard-file-source.mjs'
 
 const REPO_ROOT = (() => {
   try {
@@ -56,37 +84,12 @@ const EXCLUDE_PATH_RE = /^docs\/session-log\//
 const SECTION_MARK = String.fromCharCode(0xa7)
 const CITATION_RE = new RegExp(`ARCHITECTURE\\.md\\s*${SECTION_MARK}`)
 
-// Raised from Node's 1 MB default: `git ls-files` emits ~278 KB over 4,572
-// tracked paths today, and an ENOBUFS overflow does not match
-// /not a git repository/i, so the catch below rethrows it and the guard
-// exits 2 with the cause named, rather than silently disabling itself.
-// Kept in step with the same constant in
-// `scripts/check-dead-symbol-citations.mjs`.
-const GIT_LS_FILES_MAX_BUFFER = 64 * 1024 * 1024
-
-function trackedFiles() {
-  try {
-    return execFileSync('git', ['ls-files'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      maxBuffer: GIT_LS_FILES_MAX_BUFFER,
-    })
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-  } catch (err) {
-    // "not a git repository" is the deliberate fail-open case (e.g. running
-    // from an extracted tarball) — skip quietly, exit 0. Anything else (git
-    // not installed, permission denied, etc.) is a genuine invocation error
-    // and must be reported loudly, not swallowed as if it were "clean".
-    // Mirrors scripts/check-dead-symbol-citations.mjs.
-    const stderr = String(err?.stderr ?? '')
-    if (/not a git repository/i.test(stderr)) {
-      return null
-    }
-    throw err
-  }
-}
+// Enumeration, the `git ls-files` maxBuffer ceiling and the
+// "not a git repository" fail-open all moved to
+// `scripts/lib/guard-file-source.mjs` in #3962, so this guard and
+// `scripts/check-dead-symbol-citations.mjs` cannot drift apart on any of
+// them — they used to hold hand-kept copies annotated "kept in step with"
+// each other, which is the arrangement that lets them stop being in step.
 
 function scanTargets(tracked) {
   return tracked.filter((f) => {
@@ -96,16 +99,11 @@ function scanTargets(tracked) {
   })
 }
 
-function findHits(files) {
+function findHits(files, bodies) {
   const hits = []
   for (const file of files) {
-    const abs = join(REPO_ROOT, file)
-    let body
-    try {
-      body = readFileSync(abs, 'utf8')
-    } catch {
-      continue
-    }
+    const body = bodies.get(file)
+    if (body === undefined) continue
     const lines = body.split('\n')
     lines.forEach((line, idx) => {
       if (CITATION_RE.test(line)) {
@@ -117,18 +115,44 @@ function findHits(files) {
 }
 
 function check() {
-  let tracked
+  let chosen
   try {
-    tracked = trackedFiles()
+    chosen = resolveSource(process.argv, process.env, {
+      // This guard's own flags, declared so an argument that is neither
+      // these nor a source flag is a usage error rather than a silent AUTO.
+      extraFlags: ['--print-source', '--self-test'],
+    })
   } catch (err) {
     process.stderr.write(`check-architecture-citations: invocation error: ${err.message}\n`)
     return 2
   }
-  if (tracked === null) {
+  // Diagnostic: answer "which copy would you judge right now?" without
+  // scanning anything, so the mechanism can be inspected from a shell as
+  // easily as from this file's header.
+  if (process.argv.includes('--print-source')) {
+    console.log(`check-architecture-citations: ${describeSource(chosen.source)} (${chosen.why})`)
+    return 0
+  }
+  let entries
+  try {
+    entries = listTrackedEntries(REPO_ROOT)
+  } catch (err) {
+    process.stderr.write(`check-architecture-citations: invocation error: ${err.message}\n`)
+    return 2
+  }
+  if (entries === null) {
     console.warn('check-architecture-citations: not a git repo; skipping.')
     return 0
   }
-  const hits = findHits(scanTargets(tracked))
+  const targets = scanTargets(entries.paths)
+  let bodies
+  try {
+    bodies = readContents(targets, { repoRoot: REPO_ROOT, source: chosen.source, entries })
+  } catch (err) {
+    process.stderr.write(`check-architecture-citations: invocation error: ${err.message}\n`)
+    return 2
+  }
+  const hits = findHits(targets, bodies)
   if (hits.length === 0) {
     return 0
   }
@@ -137,6 +161,9 @@ function check() {
       'numbered sections anymore (it was split into docs/architecture/*.md; see its own "Map" ' +
       'section):\n',
   )
+  // Name the source with the verdict. A red the author cannot reproduce by
+  // opening the file is otherwise indistinguishable from a broken guard.
+  process.stderr.write(`  (judged the ${describeSource(chosen.source)} — ${chosen.why})\n`)
   for (const hit of hits) {
     process.stderr.write(`  ${hit.file}:${hit.lineNo}: ${hit.text}\n`)
   }
@@ -153,7 +180,7 @@ function check() {
 // no "not a git repository" stderr), distinct from the deliberate fail-open
 // case. Asserts the child exits 2. Mirrors
 // scripts/check-dead-symbol-citations.mjs's self-test.
-function selfTest() {
+function invocationErrorTest() {
   const result = spawnSync(process.execPath, [import.meta.filename], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
@@ -172,7 +199,51 @@ function selfTest() {
     )
     return 1
   }
-  console.log('self-test OK: git missing from PATH is a genuine invocation error and exits 2.')
+  console.log('  ok   - git missing from PATH is a genuine invocation error and exits 2')
+  return 0
+}
+
+// #3962 — index vs working tree, in throwaway repositories built through the
+// shared scratch guard. Every assertion is a PAIR: the source that must go
+// red and the source that must stay green on the same fixture. A one-sided
+// "the fixed guard fails" would pass just as well against a guard that fails
+// on everything.
+//
+// The fixture citation is assembled from `SECTION_MARK` at runtime, exactly
+// as `CITATION_RE` is, so this file's own source text still cannot contain
+// the sequence it searches for.
+function sourceTest() {
+  const root = mkdtempSync(join(tmpdir(), 'architecture-citations-selftest-'))
+  try {
+    const results = runSourceScenarios({
+      scriptPath: import.meta.filename,
+      file: 'notes.md',
+      badLine: `See docs/ARCHITECTURE.md ${SECTION_MARK}7 for the block model.`,
+      goodLine: 'See docs/architecture/blocks.md — Block model.',
+      root,
+    })
+    let failures = 0
+    for (const result of results) {
+      if (result.ok) {
+        console.log(`  ok   - ${result.name}`)
+      } else {
+        failures += 1
+        console.error(`  FAIL - ${result.name}: ${result.detail}`)
+      }
+    }
+    return failures === 0 ? 0 : 1
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+function selfTest() {
+  const failed = invocationErrorTest() + sourceTest()
+  if (failed > 0) {
+    console.error('\nself-test FAILED')
+    return 1
+  }
+  console.log('self-test OK')
   return 0
 }
 
