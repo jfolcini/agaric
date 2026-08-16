@@ -243,11 +243,28 @@ export function BlockTree({
   // falls outside the current zoom pane (crossing a zoom boundary is a
   // separate, not-yet-addressed case — same scope note as
   // `mountCapExcludedIds` above).
+  //
+  // #4002 — `expandAncestors` is deliberately called BEFORE the "already
+  // mounted" bail: its reveal is transient and exclusive, so re-asserting the
+  // CURRENT target on every focus move is also what releases the previous
+  // one. Bailing early for a mounted target would strand the last reveal
+  // open (harmlessly on disk, but visibly on screen) until the next jump into
+  // a collapsed subtree. It is a no-op — reference-stable, and without even
+  // the parent-chain walk — when nothing on the page is collapsed.
+  //
+  // Load-bearing consequence of that move: this effect also re-runs when
+  // `mountedVisible` changes, i.e. when the user COLLAPSES something. Their
+  // collapse of an ancestor of the focused block only sticks because the
+  // `beforeCollapse` handler below clears `focusedBlockId` (the collapsing
+  // subtree contains it), so this effect bails at the guard above instead of
+  // recomputing the overlay from the persisted set and re-revealing what they
+  // just closed. If that focus rescue ever stops clearing focus, re-check
+  // this call — an ancestor of the focused block would become uncollapsable.
   useEffect(() => {
     if (!focusedBlockId) return
     if (!blocksById.has(focusedBlockId)) return
-    if (mountedVisible.some((b) => b.id === focusedBlockId)) return
     expandAncestors(focusedBlockId)
+    if (mountedVisible.some((b) => b.id === focusedBlockId)) return
     const idx = uncappedZoomedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx >= 0) revealIndex(idx)
   }, [

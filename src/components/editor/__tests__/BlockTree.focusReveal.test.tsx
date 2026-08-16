@@ -21,7 +21,7 @@ import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { INITIAL_MOUNT_LIMIT } from '@/components/block-tree/use-block-mount-limit'
-import { PREFERENCES, writePreference } from '@/lib/preferences'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
@@ -150,5 +150,46 @@ describe('BlockTree reveals a focused target hidden by collapse + the mount cap 
       expect(screen.getByTestId('sortable-block-TARGET')).toBeInTheDocument()
     })
     expect(screen.getByTestId('sortable-block-ROOT')).toBeInTheDocument()
+
+    // #4002 — the reveal is EPHEMERAL: the row above is mounted, but the
+    // user's saved layout still has ROOT collapsed. Before the fix this read
+    // back `[]` — one backlink click silently deleted the arrangement, with no
+    // undo and across reloads.
+    expect(readPreference(PREFERENCES.blockCollapse, 'PAGE_1')).toEqual(['ROOT'])
+  })
+
+  // #4002 — the reveal is released by the next focus move, which is why the
+  // wiring effect calls `expandAncestors` BEFORE its "already mounted" bail.
+  // Keeping the call behind that bail would leave the previous target's
+  // ancestors expanded on screen indefinitely.
+  it('re-collapses the revealed ancestor once focus moves out of the subtree', async () => {
+    const filler = makeFlatBlocks(INITIAL_MOUNT_LIMIT)
+    const root = makeBlock({ id: 'ROOT', content: 'root', depth: 0 })
+    const target = makeBlock({ id: 'TARGET', content: 'target', parent_id: 'ROOT', depth: 1 })
+    writePreference(PREFERENCES.blockCollapse, ['ROOT'], 'PAGE_1')
+    pageStore.setState({ blocks: [...filler, root, target], loading: false })
+
+    renderBlockTree()
+    await screen.findByTestId('block-tree-mount-boundary')
+
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'TARGET' })
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-TARGET')).toBeInTheDocument()
+    })
+
+    // Focus leaves for a block outside the revealed subtree (already mounted,
+    // so nothing else about the projection has to change).
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'BLK_0' })
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('sortable-block-TARGET')).not.toBeInTheDocument()
+    })
+    // ROOT itself stays mounted — it is collapsed again, not hidden.
+    expect(screen.getByTestId('sortable-block-ROOT')).toBeInTheDocument()
+    expect(readPreference(PREFERENCES.blockCollapse, 'PAGE_1')).toEqual(['ROOT'])
   })
 })
