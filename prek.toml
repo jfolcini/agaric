@@ -2154,6 +2154,55 @@ pass_filenames = false
 files = "^scripts/check-prek-version-pin\\.mjs$"
 stages = ["pre-commit"]
 
+# cache-poisoning-suppressions: `.github/zizmor.yml` used to suppress
+# zizmor's cache-poisoning finding on four ci.yml steps by LINE NUMBER — a
+# key for "whatever is on this line today", not for the step. An unrelated
+# comment added anywhere above those anchors shifted every line below it,
+# turning four suppressed findings into four `high` failures four times in
+# one day (#3737). Fixed by moving the suppression onto each step itself
+# (`# zizmor: ignore[cache-poisoning]`, zizmor's own inline mechanism), so
+# it travels with the step instead of a position. This guard fails if
+# `.github/zizmor.yml` regains a line-anchored `cache-poisoning` ignore
+# list, or if the inline mechanism vanishes from every workflow file (the
+# wiring guard — see the script header for why zero is a failure, not a
+# vacuous pass).
+#
+# `always_run = true`: the failure mode this guard's wiring check cares
+# about most is every inline suppression disappearing at once (e.g. ci.yml
+# itself deleted outright) — a `git rm`, which prek's changed-file set
+# EXCLUDES from a `files` filter match. Same reasoning as
+# `migrations-immutable` above (#806). The script is a ~10ms static scan, so
+# running it unconditionally costs nothing.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "cache-poisoning-suppressions"
+name = "zizmor: cache-poisoning suppressions stay anchored to steps, not lines (#3737)"
+entry = "node scripts/check-cache-poisoning-suppressions.mjs"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
+# This self-test is also the ONLY hook that re-runs zizmor when
+# `.github/zizmor.yml` itself changes (#3960): the `zizmor` hook below is
+# keyed to `.github/workflows/**` + `.github/actions/**` and cannot be widened
+# to the config, because it forwards its matched filenames to the binary as
+# AUDIT TARGETS — zizmor would be asked to audit its own config as a workflow.
+# So the dependency is recorded here instead, and asserted rather than merely
+# written down: the guard reads this `files` pattern back out of prek.toml and
+# fails if it stops naming any of the four paths it depends on
+# (`SELF_TEST_HOOK_DEPENDENCIES`). `prek.toml` is one of them for that reason —
+# the guard now reads this file, so an edit to it must re-run the guard.
+[[repos.hooks]]
+id = "cache-poisoning-suppressions-self-test"
+name = "zizmor: cache-poisoning suppressions guard self-test"
+entry = "node scripts/check-cache-poisoning-suppressions.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^(scripts/check-cache-poisoning-suppressions\\.mjs|\\.github/zizmor\\.yml|\\.github/workflows/ci\\.yml|prek\\.toml)$"
+stages = ["pre-commit"]
+
 # pairing-rejection-contract: the responder's rejection messages are declared
 # independently in Rust (`PAIRING_PROOF_REQUIRED_MESSAGE` and — since #3504 —
 # `PEER_NOT_PAIRED_MESSAGE` in src-tauri/agaric-sync/src/sync_daemon/server.rs,
@@ -2676,6 +2725,20 @@ stages = ["pre-commit"]
 # workflow file too — every lane in `scheduled-deep-checks.yml` must appear in
 # the reporting job's `needs:`, so a newly added lane cannot go red into the
 # void again.
+#
+# Also keyed to the workflow file (#3716/#3960), for the rule about WHICH runs
+# of that job may write to the repo-wide tracking issue. It is not "never pass
+# `--dry-run`" — an earlier version of this note said that, describing a
+# token-search guard that has since been replaced, and it stopped being true
+# two passes before this sentence was rewritten. The rule is that the job is
+# authoritative for exactly the runs that reproduce the cron: the `schedule`
+# event, and a `workflow_dispatch` on `refs/heads/main` with every declared
+# input at its declared default. Every other ref, and every non-default input,
+# passes `--dry-run` — because a dispatch that discards its findings leaves the
+# issue advertising a stale (once, inverted) set, while a dispatch on a branch,
+# or with a shortened budget, publishes something that is not the repository's
+# answer at all. `checkReporterAuthority` pins every arm by executing the
+# step's own bash rather than searching it for a flag.
 [[repos]]
 repo = "local"
 [[repos.hooks]]

@@ -77,9 +77,12 @@
 //   node scripts/file-scheduled-failures.mjs \
 //     --needs-json-file <path to a file holding `${{ toJSON(needs) }}`> \
 //     [--profile deep-checks|workflow-watchdog]   (default: deep-checks)
-//     [--skipped-ok]                (treat `skipped` as OK; only correct off
-//                                    the `schedule` event, where the two
-//                                    scheduled-only filers really are skipped)
+//     [--skipped-ok]                (a `skipped` lane is neither failing NOR
+//                                    recovered: it is carried over from the
+//                                    tracked set untouched. Only correct off
+//                                    the `schedule` event, where the
+//                                    schedule-only filer really is skipped.
+//                                    See `carriedOverJobs` — #3960)
 //     [--repo owner/repo]           (default: $GITHUB_REPOSITORY)
 //     [--run-url <url>]             (default: derived from $GITHUB_SERVER_URL
 //                                    /$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
@@ -245,6 +248,36 @@ export function failingJobs(lanes, options) {
   return lanes.filter((l) => isFailing(l.result, options)).map((l) => l.job)
 }
 
+/**
+ * #3960 — the lanes a `--skipped-ok` run must CARRY OVER rather than judge.
+ *
+ * `--skipped-ok` answers "did this lane fail?" with "it never ran, so no".
+ * The identical fact answers "did this lane recover?" with "it never ran, so
+ * no" — and only the first half used to be encoded. `isFailing` dropped an
+ * exempted-`skipped` lane out of `current`, `diffLanes` then read its absence
+ * from `current` as a RECOVERY, and `decideAction` closed the issue. So a
+ * `workflow_dispatch` reported `file-fuzz-findings` (the one reporter
+ * dependency still gated `github.event_name == 'schedule'`, hence `skipped`
+ * off the cron) recovered ON THE STRENGTH OF IT NOT HAVING BEEN EXECUTED,
+ * and cleared it from the tracked set — reading green until the next Monday.
+ *
+ * That was harmless only while the dispatch ALSO passed `--dry-run` and wrote
+ * nothing; #3716 removed the `--dry-run` and left `--skipped-ok` standing,
+ * which is what made the latent half live.
+ *
+ * So: an exempted-`skipped` lane is neither failing nor recovered. It is
+ * carried over from the tracked set unchanged — but only if it was ALREADY
+ * tracked (see `diffLanes`): "it did not run" is no more evidence that a lane
+ * is broken than that it is fixed, so this must never ADD a lane to the set.
+ *
+ * Mirrors `isFailing`'s exemption exactly — one result, `skipped`, and only
+ * under `skippedOk`. If that exemption ever grows, both must grow together.
+ */
+export function carriedOverJobs(lanes, { skippedOk = false } = {}) {
+  if (!skippedOk) return []
+  return lanes.filter((l) => l.result === 'skipped').map((l) => l.job)
+}
+
 // ---------------------------------------------------------------------------
 // Diffing against the tracking issue's known state
 // ---------------------------------------------------------------------------
@@ -264,11 +297,26 @@ export function parseKnownLanes(body) {
   )
 }
 
-export function diffLanes(current, known) {
+/**
+ * Diffs the currently-failing set against the tracked one.
+ *
+ * `carryOver` (from `carriedOverJobs`) names lanes whose result says nothing
+ * either way — they did not run. They are subtracted from `resolvedOnes` and
+ * added back into `all`, so the tracked set survives a run that could not
+ * observe them. Only lanes ALREADY in `known` are carried: a skipped lane
+ * nobody was tracking stays untracked.
+ */
+export function diffLanes(current, known, { carryOver = [] } = {}) {
   const currentSet = new Set(current)
+  const carried = new Set(carryOver.filter((j) => known.has(j) && !currentSet.has(j)))
   const newOnes = [...currentSet].filter((j) => !known.has(j)).toSorted()
-  const resolvedOnes = [...known].filter((j) => !currentSet.has(j)).toSorted()
-  return { newOnes, resolvedOnes, all: [...currentSet].toSorted() }
+  const resolvedOnes = [...known].filter((j) => !currentSet.has(j) && !carried.has(j)).toSorted()
+  return {
+    newOnes,
+    resolvedOnes,
+    all: [...new Set([...currentSet, ...carried])].toSorted(),
+    carriedOver: [...carried].toSorted(),
+  }
 }
 
 /**
@@ -318,7 +366,26 @@ export function buildStatusTable(lanes, profile = PROFILES[DEFAULT_PROFILE]) {
   return lines
 }
 
-export function buildIssueBody({ all, lanes, runUrl, profile = PROFILES[DEFAULT_PROFILE] }) {
+/**
+ * `carriedOver` (#3960) — the tracked ${units} this run could NOT observe.
+ *
+ * They belong in the marker block (they are still tracked; "it never ran" is
+ * not evidence of recovery) but NOT in a sentence that calls them failing:
+ * the status table two lines below reports them `skipped`, so a body that
+ * listed them under "currently failing" contradicted itself on one screen and
+ * asserted a failure nobody observed. The tracked set is unchanged by this —
+ * only the prose around it.
+ */
+export function buildIssueBody({
+  all,
+  carriedOver = [],
+  lanes,
+  runUrl,
+  profile = PROFILES[DEFAULT_PROFILE],
+}) {
+  const carried = all.filter((j) => carriedOver.includes(j))
+  const observedFailing = all.filter((j) => !carriedOver.includes(j))
+  const list = (jobs) => jobs.map((j) => `\`${j}\``).join(', ')
   const out = []
   out.push(
     `${profile.what} It is filed, updated and closed automatically by \`scripts/file-scheduled-failures.mjs\` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.`,
@@ -332,7 +399,18 @@ export function buildIssueBody({ all, lanes, runUrl, profile = PROFILES[DEFAULT_
     `A ${profile.unit} that stays red across runs is NOT re-commented — only a newly-failing ${profile.unit} produces a comment, so a persistent failure never spams this thread.`,
   )
   out.push('')
-  out.push(`### Currently-failing ${profile.units} (${all.length})`)
+  out.push(`### Tracked failing ${profile.units} (${all.length})`)
+  if (carried.length > 0) {
+    out.push('')
+    out.push(
+      `Failing as of this run: ${observedFailing.length > 0 ? list(observedFailing) : `_none_`}.`,
+    )
+    out.push('')
+    out.push(
+      `Carried over — did NOT run this run (${list(carried)}), so neither failing nor recovered. A ${profile.unit} that never executed stays tracked until a run can actually observe it; the status table below shows what it really did.`,
+    )
+  }
+  out.push('')
   out.push(
     `_Machine-readable — do not hand-edit the marker lines below. Removing a ${profile.unit} here just means the next run will report it as new again._`,
   )
@@ -352,6 +430,26 @@ export function buildIssueBody({ all, lanes, runUrl, profile = PROFILES[DEFAULT_
     out.push(`_Last updated by [this run](${runUrl})._`)
   }
   return out.join('\n')
+}
+
+/**
+ * The line a no-op run prints — the run log's version of the issue body.
+ *
+ * `all` includes the carried-over lanes, which is right for the TRACKED set
+ * and wrong for the word "failing": those lanes only skipped. The body stopped
+ * claiming that (see `buildIssueBody`); this is the same claim in the summary,
+ * and it gets the same split rather than leaving the `carried over (…)` line
+ * printed above to soften a sentence that is still wrong.
+ */
+export function buildNoopSummary({ all, carriedOver = [], profile = PROFILES[DEFAULT_PROFILE] }) {
+  if (all.length === 0) {
+    return `all ${profile.headline}s healthy — no-op (nothing open that tracks a failing ${profile.unit})`
+  }
+  const observedFailing = all.filter((j) => !carriedOver.includes(j))
+  const stillFailing = observedFailing.length > 0 ? observedFailing.join(', ') : 'none'
+  const carriedNote =
+    carriedOver.length > 0 ? `; carried over, did not run: ${carriedOver.join(', ')}` : ''
+  return `no newly-failing ${profile.unit} — no-op (still failing: ${stillFailing}${carriedNote}; tracking issue left untouched)`
 }
 
 export function buildFailureComment({
@@ -429,6 +527,427 @@ export function findUncoveredLanes(workflowText, reporterJob = 'report-scheduled
   }
 
   return jobs.filter((j) => j !== reporterJob && !needs.includes(j))
+}
+
+// The step whose `run:` block decides — per event AND per ref — whether this
+// script's answer is authoritative. Matched by name, so a rename fails loud.
+export const REPORTER_STEP_NAME =
+  'File, update or close the single scheduled-failure tracking issue'
+
+// The ref the cron itself runs on: GitHub schedules a workflow against the
+// default branch's HEAD. A dispatch on any OTHER ref is a branch's answer to
+// a repo-wide question, which is the case #3960 exists to keep out of the
+// issue. Note that ref equality is NECESSARY for a dispatch to be
+// cron-equivalent and NOT sufficient — see `findDispatchInputDefaults`.
+export const CRON_REF = 'refs/heads/main'
+
+/**
+ * The `workflow_dispatch` inputs and their declared defaults, read from the
+ * workflow's own `on:` block.
+ *
+ * The fourth iteration of this PR's one defect (review pass four): the ref
+ * guard treated "same ref as the cron" as "same run as the cron", but this
+ * workflow's dispatch inputs CHANGE WHAT THE LANES TEST. `fuzz_seconds=10` on
+ * `refs/heads/main` passes the ref test and writes authoritatively, while a
+ * still-broken `fuzz` lane reports `success` at a budget it was never meant
+ * to pass at — so the lane lands in `resolvedOnes` and, if it was the last
+ * tracked one, closes the issue over a lane never tested at its real budget.
+ *
+ * Read from the `on:` block rather than hardcoded so that ADDING an input
+ * cannot silently escape the gate: `checkReporterAuthority` flips each
+ * declared input in turn and requires the run to stop being authoritative.
+ *
+ * Returns EVERY declared input, mapped to its declared default or to `null`
+ * when it declares none. A `required: true` string, or a `choice` leaning on
+ * `options[0]`, is a legal input with no `default:`, and it changes what the
+ * lanes test exactly like the ones that have one — but recording only the
+ * inputs with a `default:` silently dropped it from the gate, which made the
+ * generality claim above false. An input this cannot compare is reported to
+ * the caller as a problem, never skipped.
+ *
+ * Throws when the block cannot be found, when it is empty, or when the two
+ * scans below disagree. The scans terminate on DIFFERENT rules — one at the
+ * `on:` mapping's indent, one at the `inputs:` mapping's — so a stray line
+ * that ends one but not the other is a partial parse, and a partial parse
+ * gating a write must be loud: reading half the input list and gating on it
+ * is the same fail-open as reading none and calling it healthy.
+ */
+export function findDispatchInputDefaults(workflowText) {
+  const lines = workflowText.split('\n')
+  const dispatchIdx = lines.findIndex((l) => /^ {2}workflow_dispatch:\s*$/.test(l))
+  if (dispatchIdx === -1) throw new Error('no `workflow_dispatch:` trigger found in the workflow')
+  const inputsIdx = lines.findIndex(
+    (l, i) => i > dispatchIdx && /^ {4}inputs:\s*$/.test(l) && i < dispatchIdx + 4,
+  )
+  if (inputsIdx === -1) throw new Error('`workflow_dispatch:` declares no `inputs:` block')
+  // Neither blank lines nor comments carry structure, so neither ends a
+  // block. A `#` at column 0 used to end both scans below.
+  const isStructural = (line) => line.trim() !== '' && !line.trim().startsWith('#')
+  const inputKeyOf = (line) => /^ {6}([A-Za-z0-9_-]+):\s*$/.exec(line)?.[1]
+
+  // (a) The permissive scan: every input key anywhere in the `on:` block's
+  //     `workflow_dispatch:` span. Ends only at the trigger level.
+  const declared = []
+  for (let i = inputsIdx + 1; i < lines.length; i++) {
+    if (!isStructural(lines[i])) continue
+    if (lines[i].match(/^(\s*)/)[1].length <= 2) break
+    const key = inputKeyOf(lines[i])
+    if (key) declared.push(key)
+  }
+
+  // (b) The scan that reads the defaults, ending at the `inputs:` level.
+  const defaults = {}
+  let current = null
+  for (let i = inputsIdx + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (!isStructural(line)) continue
+    if (line.match(/^(\s*)/)[1].length <= 4) break
+    const key = inputKeyOf(line)
+    if (key) {
+      current = key
+      // Declared first, defaulted only if a `default:` shows up below it —
+      // so an input with none is present and `null`, not absent.
+      defaults[key] = null
+      continue
+    }
+    const def = /^ {8}default:\s*(.+?)\s*$/.exec(line)
+    if (def && current) defaults[current] = def[1].replace(/^['"]|['"]$/g, '')
+  }
+
+  if (declared.length === 0) {
+    throw new Error('no `workflow_dispatch` inputs found — the input gate would be vacuous')
+  }
+  const missed = declared.filter((name) => !(name in defaults))
+  if (missed.length > 0) {
+    throw new Error(
+      `the \`workflow_dispatch\` inputs block parsed only ${Object.keys(defaults).length} of ${declared.length} declared inputs (missed: ${missed.join(', ')}) — a partial input list must not be gated on as if it were the whole one`,
+    )
+  }
+  return defaults
+}
+
+/**
+ * Which env var of the reporting step carries which dispatch input, read out
+ * of the step's own `env:` block (`FOO_INPUT: ${{ github.event.inputs.foo …`).
+ *
+ * Read rather than assumed, so the naming convention is not a second thing
+ * that can drift: an input the step never maps into its environment is one
+ * the step cannot possibly gate on, and `checkReporterAuthority` says so.
+ */
+export function findDispatchInputEnvMapping(workflowText, stepName = REPORTER_STEP_NAME) {
+  const lines = workflowText.split('\n')
+  const nameRe = new RegExp(
+    `^\\s*-\\s*name:\\s*${stepName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
+  )
+  const stepIdx = lines.findIndex((l) => nameRe.test(l))
+  if (stepIdx === -1) throw new Error(`no \`${stepName}\` step found — renamed or deleted?`)
+  const mapping = {}
+  for (let i = stepIdx + 1; i < lines.length; i++) {
+    if (/^\s*-\s*name:\s/.test(lines[i])) break
+    const m = /^\s*([A-Z0-9_]+):\s*\$\{\{\s*(?:github\.event\.)?inputs\.([A-Za-z0-9_-]+)/.exec(
+      lines[i],
+    )
+    if (m) mapping[m[2]] = m[1]
+  }
+  return mapping
+}
+
+/**
+ * The reporting step's `run:` script, dedented, exactly as the runner would
+ * execute it. Throws when the step or its block scalar cannot be found: a
+ * rename must fail loud, not pass vacuously (same rule as
+ * `findLastResortNoticeCondition`).
+ */
+export function findReporterRunScript(workflowText, stepName = REPORTER_STEP_NAME) {
+  const lines = workflowText.split('\n')
+  const nameRe = new RegExp(
+    `^\\s*-\\s*name:\\s*${stepName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
+  )
+  const stepIdx = lines.findIndex((l) => nameRe.test(l))
+  if (stepIdx === -1) {
+    throw new Error(`no \`${stepName}\` step found — did it get renamed or deleted?`)
+  }
+  let runIdx = -1
+  for (let i = stepIdx + 1; i < lines.length; i++) {
+    if (/^\s*-\s*name:\s/.test(lines[i])) break
+    if (/^\s*run:\s*\|\s*$/.test(lines[i])) {
+      runIdx = i
+      break
+    }
+  }
+  if (runIdx === -1) throw new Error(`the \`${stepName}\` step has no block-scalar \`run: |\``)
+  const runIndent = lines[runIdx].match(/^(\s*)/)[1].length
+  const body = []
+  for (let i = runIdx + 1; i < lines.length; i++) {
+    if (lines[i].trim() === '') {
+      body.push('')
+      continue
+    }
+    if (lines[i].match(/^(\s*)/)[1].length <= runIndent) break
+    body.push(lines[i])
+  }
+  const populated = body.filter((l) => l.trim() !== '')
+  if (populated.length === 0) throw new Error(`the \`${stepName}\` step's \`run:\` block is empty`)
+  const dedent = Math.min(...populated.map((l) => l.match(/^(\s*)/)[1].length))
+  return body.map((l) => l.slice(dedent)).join('\n')
+}
+
+/**
+ * #3716/#3960 — what the reporting step ACTUALLY hands this script for a
+ * given event and ref, obtained by running the step's own bash against a
+ * stub `node` first on `$PATH`.
+ *
+ * This replaces a text guard that searched the job block for the `--dry-run`
+ * token. That guard pinned the wrong invariant twice over. It could not tell
+ * a conditional `--dry-run` (the fix) from an unconditional one (the bug),
+ * so it rejected the fix; and it read prose, so a trailing comment merely
+ * MENTIONING the flag tripped it while the actual semantics — under which
+ * event, on which ref, does this job write to a repo-wide issue — were never
+ * examined at all. Executing the block answers the real question and is
+ * immune to comments by construction: bash already knows what a `#` means.
+ *
+ * The step is this repo's own file and runs with a stubbed `node`, so nothing
+ * it can do reaches GitHub.
+ */
+export function resolveReporterInvocation(
+  workflowText,
+  { eventName = 'schedule', ref = CRON_REF, inputs = {}, stepName = REPORTER_STEP_NAME } = {},
+) {
+  const script = findReporterRunScript(workflowText, stepName)
+  const dir = mkdtempSync(join(tmpdir(), 'scheduled-failures-step-'))
+  const log = join(dir, 'argv.log')
+  const stub = join(dir, 'node')
+  // Shebang is the ABSOLUTE path of the real node, never `/usr/bin/env node`:
+  // this stub IS named `node` and sits first on `$PATH`, so `env node` would
+  // re-exec the stub forever.
+  writeFileSync(
+    stub,
+    [
+      `#!${process.execPath}`,
+      "const fs = require('node:fs')",
+      `fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n')`,
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+  chmodSync(stub, 0o755)
+  writeFileSync(log, '', 'utf8')
+  const stepFile = join(dir, 'step.sh')
+  writeFileSync(stepFile, script, 'utf8')
+  // The dispatch inputs, as the runner would present them: every input the
+  // step maps into its `env:` is set, defaulted from the workflow's own `on:`
+  // block and overridden by `inputs`. The step's `${{ … || 'default' }}` idiom
+  // means the env var is never empty, on any event, so `set -u` is safe.
+  const declaredDefaults = findDispatchInputDefaults(workflowText)
+  const envMapping = findDispatchInputEnvMapping(workflowText, stepName)
+  const inputEnv = {}
+  for (const [name, envVar] of Object.entries(envMapping)) {
+    inputEnv[envVar] = String(inputs[name] ?? declaredDefaults[name] ?? '')
+  }
+  execFileSync('bash', [stepFile], {
+    cwd: dir,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      ...inputEnv,
+      PATH: `${dir}:${process.env.PATH ?? ''}`,
+      EVENT_NAME: eventName,
+      GITHUB_REF: ref,
+      GITHUB_REF_NAME: ref.replace(/^refs\/(?:heads|tags)\//, ''),
+      NEEDS_JSON: '{"some-lane":{"result":"success"}}',
+      GH_TOKEN: 'stub-token',
+    },
+  })
+  const calls = readFileSync(log, 'utf8')
+    .split('\n')
+    .filter((l) => l.length > 0)
+    .map((l) => JSON.parse(l))
+  if (calls.length !== 1) {
+    throw new Error(
+      `the reporting step invoked \`node\` ${calls.length} time(s); expected exactly one call to the reporter`,
+    )
+  }
+  const [entry, ...args] = calls[0]
+  if (!String(entry).endsWith('file-scheduled-failures.mjs')) {
+    throw new Error(`the reporting step ran \`node ${entry}\`, not the reporter script`)
+  }
+  return { entry, args }
+}
+
+/**
+ * A value that is definitely NOT a dispatch input's declared default, in the
+ * same shape as the default (so the step's own `[ "$X" != "120" ]` test sees
+ * a realistic value rather than a type it would never receive).
+ */
+export function flipDispatchInputDefault(value) {
+  // An input with no declared default has nothing to differ FROM; any value
+  // at all is "not the cron's". The caller reports that as a problem in its
+  // own right — this only keeps the flip total.
+  if (value === null || value === undefined) return 'any-value-at-all'
+  if (value === 'false') return 'true'
+  if (value === 'true') return 'false'
+  if (/^\d+$/.test(value)) return value === '10' ? '11' : '10'
+  return `${value}-changed`
+}
+
+/**
+ * Bash arrays declared EMPTY and then expanded as `"${name[@]}"`.
+ *
+ * On bash < 4.4 — stock `/bin/bash` on macOS, a platform this repo supports
+ * (`scripts/setup-hooks.sh` keeps its own tables bash-3.2-compatible on
+ * purpose) — expanding an empty array under `set -u` is an UNBOUND VARIABLE
+ * error, not an empty expansion. In the workflow that aborts the step; in
+ * this file's self-test, which executes the step for real, it aborted the
+ * pre-commit hook with a raw shell error for those developers only, because
+ * CI and this dev box both run bash 5.
+ *
+ * The invariant is "the array is never empty at the point of expansion", so
+ * either seeding the array (what the workflow now does — the arguments that
+ * are always passed live in it from the start) or the `${a[@]+"${a[@]}"}`
+ * guard satisfies it. Returns the offending array names; `[]` is healthy.
+ */
+export function findUnportableEmptyArrayExpansions(script) {
+  const declaredEmpty = [...script.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)=\(\s*\)\s*$/gm)].map(
+    (m) => m[1],
+  )
+  return [...new Set(declaredEmpty)].filter((name) => {
+    const guarded = new RegExp(`\\$\\{${name}\\[@\\]\\+"\\$\\{${name}\\[@\\]\\}"\\}`, 'g')
+    return script.replace(guarded, '').includes(`\${${name}[@]}`)
+  })
+}
+
+/**
+ * The invariant the guard above exists for, in every direction:
+ *
+ *   * the cron run, and a dispatch that reproduces it, are AUTHORITATIVE —
+ *     no `--dry-run`, or an off-cycle answer is computed and thrown away and
+ *     the issue keeps advertising a stale, sometimes inverted, set for up to
+ *     a week (#3716);
+ *   * a dispatch on ANY other ref is not — the tracking issue is repo-wide,
+ *     so writing there publishes one branch's lane results as the
+ *     repository's health (#3960, third pass);
+ *   * and neither is a dispatch that CHANGED WHAT THE LANES TEST. Ref
+ *     equality was mistaken for cron-equivalence: `fuzz_seconds=10` on the
+ *     cron ref makes a still-broken lane report `success`, which the diff
+ *     reads as a recovery and can close the issue over (#3960, fourth pass).
+ *     Every declared input is flipped in turn, so an input added later
+ *     without being gated reddens this guard rather than shipping.
+ *
+ * Pinning only one direction is how this defect has already been shipped
+ * three times, so all of them are asserted here, plus the `--skipped-ok`
+ * pairing that only makes sense off the schedule.
+ *
+ * Returns `{ problems, cases }`; an empty `problems` means healthy.
+ */
+export function checkReporterAuthority(
+  workflowText,
+  { cronRef = CRON_REF, otherRef = 'refs/heads/fix/mutants', stepName = REPORTER_STEP_NAME } = {},
+) {
+  const tagRef = `refs/tags/${cronRef.replace(/^refs\/heads\//, '')}`
+  const at = (eventName, ref, inputs = {}) =>
+    resolveReporterInvocation(workflowText, { eventName, ref, inputs, stepName }).args
+  const cases = {
+    schedule: at('schedule', cronRef),
+    dispatchOnCronRef: at('workflow_dispatch', cronRef),
+    dispatchOnOtherRef: at('workflow_dispatch', otherRef),
+    dispatchOnTagOfCronRef: at('workflow_dispatch', tagRef),
+  }
+  const problems = []
+
+  // The input dimension, one input at a time.
+  const declaredDefaults = findDispatchInputDefaults(workflowText)
+  const envMapping = findDispatchInputEnvMapping(workflowText, stepName)
+  for (const [name, declaredDefault] of Object.entries(declaredDefaults)) {
+    if (declaredDefault === null) {
+      problems.push(
+        `the dispatch input \`${name}\` declares no \`default:\`, so there is no value the step can compare against to recognise a cron-equivalent run — give it a default, or gate on its presence explicitly (#3960)`,
+      )
+      continue
+    }
+    if (!envMapping[name]) {
+      problems.push(
+        `the dispatch input \`${name}\` is not mapped into the deciding step's \`env:\`, so the step cannot tell a run that changed it from a cron-equivalent one (#3960)`,
+      )
+      continue
+    }
+    const changed = flipDispatchInputDefault(declaredDefault)
+    const args = at('workflow_dispatch', cronRef, { [name]: changed })
+    cases[`dispatchWith_${name}`] = args
+    if (!args.includes('--dry-run')) {
+      problems.push(
+        `a workflow_dispatch on ${cronRef} with \`${name}=${changed}\` (declared default \`${declaredDefault}\`) still WRITES — a non-default input changes what the lanes TEST, so a lane that only "passed" at a shortened budget would be published as recovered and could close the issue (#3960)`,
+      )
+    }
+  }
+
+  const unportable = findUnportableEmptyArrayExpansions(
+    findReporterRunScript(workflowText, stepName),
+  )
+  if (unportable.length > 0) {
+    problems.push(
+      `the step expands the possibly-empty array(s) ${unportable.map((n) => `\`${n}\``).join(', ')} under \`set -u\` — an unbound-variable abort on bash < 4.4 (stock /bin/bash on macOS). Seed the array, or expand it as \`\${name[@]+"\${name[@]}"}\``,
+    )
+  }
+  if (cases.schedule.includes('--dry-run')) {
+    problems.push('the scheduled run passes `--dry-run` — the weekly report writes nothing at all')
+  }
+  if (cases.schedule.includes('--skipped-ok')) {
+    problems.push(
+      'the scheduled run passes `--skipped-ok` — on the cron every lane runs, so a `skipped` lane is a real failure and must read as one',
+    )
+  }
+  if (cases.dispatchOnCronRef.includes('--dry-run')) {
+    problems.push(
+      `a workflow_dispatch on ${cronRef} passes \`--dry-run\` — the one way to get an off-cycle answer computes it and discards it, leaving the issue advertising a stale set for up to a week (#3716)`,
+    )
+  }
+  if (!cases.dispatchOnCronRef.includes('--skipped-ok')) {
+    problems.push(
+      'a workflow_dispatch does not pass `--skipped-ok` — the schedule-only filer lane reports `skipped` off the cron, which would read as a lane failure',
+    )
+  }
+  if (!cases.dispatchOnOtherRef.includes('--dry-run')) {
+    problems.push(
+      `a workflow_dispatch on ${otherRef} WRITES for real — that branch's lane results would be published as the repo-wide tracking issue's answer, closing an issue whose subject (${cronRef}) is still red (#3960)`,
+    )
+  }
+  if (!cases.dispatchOnTagOfCronRef.includes('--dry-run')) {
+    problems.push(
+      `a workflow_dispatch on ${tagRef} writes for real — a TAG is not the branch the cron runs, so the ref test must compare the full ref, not the short name`,
+    )
+  }
+  return { problems, cases }
+}
+
+/**
+ * #3960 — the `if:` expression of the last-resort "the reporter itself broke"
+ * bash step, as written in the workflow.
+ *
+ * That step is the only thing that reports a crash of THIS script, and it was
+ * gated on `github.event_name == 'schedule'` back when a dispatch ran the
+ * reporter with `--dry-run` and therefore could not damage anything by
+ * crashing. #3716 removed the `--dry-run`; a dispatch now issues real
+ * `gh issue edit`/`comment`/`close` calls, so a crash between them leaves the
+ * tracking issue half-rewritten — exactly the state that most needs
+ * announcing. Re-adding an event gate here would restore that silence, so
+ * the condition is pinned by the self-test.
+ *
+ * Throws rather than returning a default when the step (or its `if:`) cannot
+ * be found: a rename must fail loud, not pass vacuously.
+ */
+export function findLastResortNoticeCondition(workflowText) {
+  const lines = workflowText.split('\n')
+  const idx = lines.findIndex((l) => /^\s*-\s*name:\s*Last-resort notice/.test(l))
+  if (idx === -1) {
+    throw new Error('no `Last-resort notice` step found — did it get renamed or deleted?')
+  }
+  for (let i = idx + 1; i < lines.length; i++) {
+    if (/^\s*-\s*name:\s/.test(lines[i])) break
+    const m = /^\s*if:\s*(.+?)\s*$/.exec(lines[i])
+    if (m) return m[1]
+  }
+  throw new Error('the `Last-resort notice` step has no `if:` condition at all')
 }
 
 // ---------------------------------------------------------------------------
@@ -545,6 +1064,7 @@ export function main(argv = process.argv.slice(2)) {
   }
   const lanes = parseNeeds(readFileSync(args.needsJsonFile, 'utf8'))
   const current = failingJobs(lanes, { skippedOk: args.skippedOk })
+  const carryOver = carriedOverJobs(lanes, { skippedOk: args.skippedOk })
 
   console.log(
     `${profile.headline}s: ${lanes.length} total, ${current.length} failing${
@@ -568,19 +1088,21 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   const known = parseKnownLanes(existingIssue?.body)
-  const { newOnes, resolvedOnes, all } = diffLanes(current, known)
+  const { newOnes, resolvedOnes, all, carriedOver } = diffLanes(current, known, { carryOver })
   const action = decideAction({ newOnes, resolvedOnes, all, existingIssue })
 
-  if (action === 'noop') {
+  if (carriedOver.length > 0) {
     console.log(
-      all.length === 0
-        ? `all ${profile.headline}s healthy — no-op (nothing open that tracks a failing ${profile.unit})`
-        : `no newly-failing ${profile.unit} — no-op (still failing: ${all.join(', ')}; tracking issue left untouched)`,
+      `carried over (${profile.unit}s that only SKIPPED — neither failing nor recovered, so they stay tracked): ${carriedOver.join(', ')}`,
     )
+  }
+
+  if (action === 'noop') {
+    console.log(buildNoopSummary({ all, carriedOver, profile }))
     return
   }
 
-  const body = buildIssueBody({ all, lanes, runUrl, profile })
+  const body = buildIssueBody({ all, carriedOver, lanes, runUrl, profile })
   const comment =
     action === 'close'
       ? buildRecoveryComment({ resolvedOnes, runUrl, profile })
@@ -725,6 +1247,10 @@ function selfTestGhCallSequence({ check }) {
 
   // An EMPTY `--known-body-file` is how `main()` spells "no existing issue",
   // so no file removal is needed between drives.
+  // What `main()` printed during the last `drive()` — the run summary is a
+  // claim about lane health like any other, so it is asserted rather than
+  // discarded with the rest of the noise.
+  let lastLogs = []
   const drive = (needs, knownBody, knownState, profileArgs = []) => {
     writeFileSync(needsFile, JSON.stringify(needs), 'utf8')
     writeFileSync(bodyFile, knownBody, 'utf8')
@@ -732,7 +1258,8 @@ function selfTestGhCallSequence({ check }) {
     const prevPath = process.env.PATH
     const prevLog = console.log
     process.env.PATH = `${dir}:${prevPath}`
-    console.log = () => {}
+    lastLogs = []
+    console.log = (...parts) => lastLogs.push(parts.join(' '))
     let threw = null
     try {
       main([
@@ -814,6 +1341,56 @@ function selfTestGhCallSequence({ check }) {
     `gh sequence was: ${noopSeq.join(',')}`,
   )
 
+  // #3716: a dispatched run must report the CURRENT failing set, not
+  // discard it and leave a stale (here, disjoint — the sharpest form of
+  // "inverted") one standing. Same fixture driven twice: once the OLD way
+  // (this script's own `--dry-run` flag, still legitimate on its own — see
+  // the checks above — but never meant to reach here from a dispatch) to
+  // reproduce the bug as RED, then the FIXED way (no `--dry-run`) as GREEN.
+  // The workflow-level guard (§12 in `runSelfTest`, `checkReporterAuthority`)
+  // is what decides WHICH runs reach this path with the flag and which reach
+  // it without; this pins what happens on either side of that decision.
+  {
+    const staleBody = buildIssueBody({
+      all: ['full-suite'],
+      lanes: [
+        { job: 'full-suite', result: 'failure' },
+        { job: 'prek-all-files', result: 'success' },
+      ],
+      runUrl: undefined,
+    })
+    // The dispatch's TRUE current state: `full-suite` recovered,
+    // `prek-all-files` is the one actually failing now — disjoint from what
+    // the stale issue body above still advertises.
+    const nowFailing = {
+      'full-suite': { result: 'success' },
+      'prek-all-files': { result: 'failure' },
+    }
+
+    const redCalls = drive(nowFailing, staleBody, 'OPEN', ['--dry-run', '--skipped-ok'])
+    const redSeq = redCalls.map((c) => c.sub).join(',')
+    check(
+      redSeq === '',
+      '#3716 RED (pre-fix dispatch shape): `--dry-run` computes the true set and writes NOTHING — the stale/inverted issue body stands unchanged',
+      `gh sequence was: ${redSeq || '(no gh calls — reproduces the bug: nothing was written)'}`,
+    )
+
+    const greenCalls = drive(nowFailing, staleBody, 'OPEN', ['--skipped-ok'])
+    const greenSeq = greenCalls.map((c) => c.sub).join(',')
+    const written = greenCalls.find((c) => c.sub === 'edit')?.body ?? ''
+    const trackedAfter = parseKnownLanes(written)
+    check(
+      greenSeq !== '' && trackedAfter.has('prek-all-files') && !trackedAfter.has('full-suite'),
+      '#3716 GREEN (fixed dispatch shape): the identical fixture, without `--dry-run`, writes the CURRENT set (prek-all-files) and drops the stale one (full-suite) — not its inverse',
+      `gh sequence was: ${greenSeq || '(no gh calls)'}; tracked after=[${[...trackedAfter].join(',')}]`,
+    )
+  }
+
+  // #3960 — the call site for the carry-over rule above, split out to keep
+  // this function under the repo's cyclomatic-complexity budget (same reason
+  // `selfTestGhCallSequence` itself was split out of `runSelfTest`).
+  selfTestSkippedCarryOverGhCalls({ check, drive, logs: () => lastLogs })
+
   // …and `--profile workflow-watchdog` really files under the WATCHDOG title.
   // Asserting `PROFILES` holds two distinct titles proves nothing about which
   // one `gh issue create` is handed: a `main()` that still passed
@@ -836,6 +1413,650 @@ function selfTestGhCallSequence({ check }) {
       `tracked=[${create ? [...parseKnownLanes(create.body)].join(',') : ''}]`,
     )
   }
+}
+
+/**
+ * #3960 — the CALL SITE for the `--skipped-ok` carry-over rule. #3716 removed
+ * `--dry-run` from the dispatch branch but left `--skipped-ok`, and those two
+ * were only safe TOGETHER: with real writes turned on, a lane that was tracked
+ * and then merely `skipped` (which is what the schedule-only
+ * `file-fuzz-findings` does on every dispatch) diffed as recovered. The
+ * pure-function half is § 2b in `runSelfTest`; this is what `main()` actually
+ * hands `gh`, which is the half that reaches production — plus what it PRINTS,
+ * since the run summary made the same claim the issue body did.
+ */
+function selfTestSkippedCarryOverGhCalls({ check, drive, logs }) {
+  const fuzzFilerTracked = buildIssueBody({
+    all: ['file-fuzz-findings'],
+    lanes: [
+      { job: 'file-fuzz-findings', result: 'failure' },
+      { job: 'fuzz', result: 'success' },
+    ],
+    runUrl: undefined,
+  })
+  // A dispatch: `file-fuzz-findings` is `if: github.event_name ==
+  // 'schedule'`, so GitHub reports it `skipped`.
+  const dispatchLanes = {
+    fuzz: { result: 'success' },
+    'file-fuzz-findings': { result: 'skipped' },
+  }
+  const skippedCalls = drive(dispatchLanes, fuzzFilerTracked, 'OPEN', ['--skipped-ok'])
+  const skippedSeq = skippedCalls.map((c) => c.sub).join(',')
+  check(
+    skippedSeq === '',
+    'a dispatch does NOT close the issue over a tracked lane that merely skipped — no edit, no "recovered" comment, no close',
+    `gh sequence was: ${skippedSeq || '(none)'}${
+      skippedSeq.includes('close')
+        ? ' — the lane was reported recovered on the strength of never having run'
+        : ''
+    }`,
+  )
+  // That run is the `noop` path, and its SUMMARY made the same claim the
+  // issue body used to: `all` includes the carried lane, so the log said
+  // "still failing: file-fuzz-findings" about a lane that only skipped.
+  const noopSummary = logs().find((l) => l.includes('no-op')) ?? ''
+  check(
+    /still failing: none/.test(noopSummary) &&
+      /carried over, did not run: file-fuzz-findings/.test(noopSummary),
+    'the no-op run summary separates lanes that FAILED from lanes that never ran (the body’s distinction, in the run log)',
+    noopSummary || `(no no-op line printed; logs were: ${logs().join(' / ')})`,
+  )
+
+  // The quieter variant of the same bug: with another lane genuinely red
+  // the action is `notify`, which DOES rewrite the body — so the skipped
+  // lane has to survive that rewrite rather than being dropped in silence.
+  const mixedCalls = drive(
+    { mutants: { result: 'failure' }, 'file-fuzz-findings': { result: 'skipped' } },
+    fuzzFilerTracked,
+    'OPEN',
+    ['--skipped-ok'],
+  )
+  const mixedSeq = mixedCalls.map((c) => c.sub).join(',')
+  const mixedBody = mixedCalls.find((c) => c.sub === 'edit')?.body ?? ''
+  const mixedTracked = parseKnownLanes(mixedBody)
+  check(
+    mixedSeq === 'edit,comment' &&
+      mixedTracked.has('file-fuzz-findings') &&
+      mixedTracked.has('mutants'),
+    'the body rewritten alongside a NEW failure still tracks the skipped lane (it is not silently dropped)',
+    `gh sequence was: ${mixedSeq || '(none)'}; tracked after=[${[...mixedTracked].join(',')}]`,
+  )
+  // …and `main()` really hands the renderer the carry-over set, so the
+  // body GitHub receives distinguishes "failing" from "did not run".
+  // Asserting the pure renderer proves nothing about the write path: the
+  // pre-fix `main()` rendered the identical `all` with no carry-over
+  // argument at all, and the body then called a `skipped` lane failing
+  // three lines above a table reporting it `skipped`.
+  check(
+    /Failing as of this run: `mutants`\./.test(mixedBody) &&
+      /Carried over — did NOT run this run \(`file-fuzz-findings`\)/.test(mixedBody),
+    'the body main() writes names the carried lane as carried, not as failing this run',
+    mixedBody,
+  )
+
+  // The close path must still work when the lane REALLY recovered — i.e.
+  // the fix suppresses the recovery reading only for lanes that did not
+  // run, not for green ones. Without this pair, carrying everything over
+  // forever would pass the two checks above.
+  const reallyGreen = drive(
+    { fuzz: { result: 'success' }, 'file-fuzz-findings': { result: 'success' } },
+    fuzzFilerTracked,
+    'OPEN',
+    ['--skipped-ok'],
+  )
+  const greenSeq = reallyGreen.map((c) => c.sub).join(',')
+  check(
+    greenSeq === 'edit,comment,close',
+    'a lane that actually RAN and passed still closes the issue under --skipped-ok',
+    `gh sequence was: ${greenSeq || '(none)'}`,
+  )
+}
+
+/**
+ * #3960 — `--skipped-ok` is a statement about what the run could OBSERVE, so
+ * it must suppress the RECOVERY reading exactly as it suppresses the failure
+ * reading. The pure-function half; `selfTestGhCallSequence` covers the call
+ * site, which is where the false close actually reached GitHub.
+ */
+function selfTestSkippedCarryOver({ check, lanesOf }) {
+  const lanes = lanesOf({ 'file-fuzz-findings': 'skipped', fuzz: 'success' })
+  const opts = { skippedOk: true }
+  const current = failingJobs(lanes, opts)
+  const carryOver = carriedOverJobs(lanes, opts)
+
+  // Tracked, then skipped: carried, not resolved — and the state machine
+  // must therefore do NOTHING rather than close.
+  const tracked = diffLanes(current, new Set(['file-fuzz-findings']), { carryOver })
+  check(
+    tracked.resolvedOnes.length === 0 &&
+      tracked.all.join(',') === 'file-fuzz-findings' &&
+      tracked.carriedOver.join(',') === 'file-fuzz-findings' &&
+      decideAction({ ...tracked, existingIssue: { number: 1, state: 'OPEN' } }) === 'noop',
+    'a TRACKED lane that only skipped is carried over, not reported recovered (no close)',
+    `resolved=${JSON.stringify(tracked.resolvedOnes)} all=${JSON.stringify(tracked.all)} action=${decideAction({ ...tracked, existingIssue: { number: 1, state: 'OPEN' } })}`,
+  )
+
+  // …and the converse, which is what stops the carry-over from becoming a
+  // second false-positive: a lane nobody was tracking must not become
+  // tracked just because it did not run.
+  const untracked = diffLanes(current, new Set(), { carryOver })
+  check(
+    untracked.all.length === 0 && untracked.carriedOver.length === 0,
+    'an UNTRACKED lane that skipped is not added to the tracked set (skipping is not evidence of breakage either)',
+    `all=${JSON.stringify(untracked.all)} carried=${JSON.stringify(untracked.carriedOver)}`,
+  )
+
+  // Without `--skipped-ok` (the schedule shape) nothing is carried: a
+  // skipped lane there is a genuine failure and must read as one.
+  check(
+    carriedOverJobs(lanes, { skippedOk: false }).length === 0 &&
+      failingJobs(lanes).includes('file-fuzz-findings'),
+    'without --skipped-ok a skipped lane is failing, and nothing is carried over',
+    JSON.stringify(carriedOverJobs(lanes, { skippedOk: false })),
+  )
+
+  // …and the RENDERING half (#3960, second review pass). A carried lane
+  // belongs in the marker block — it is still tracked — but must not be
+  // prose-asserted as failing: the status table directly below reports it
+  // `skipped`, so the body used to contradict itself on one screen.
+  {
+    const rendered = buildIssueBody({
+      all: ['file-fuzz-findings', 'mutants'],
+      carriedOver: ['file-fuzz-findings'],
+      lanes: lanesOf({ 'file-fuzz-findings': 'skipped', mutants: 'failure' }),
+      runUrl: undefined,
+    })
+    check(
+      /Failing as of this run: `mutants`\./.test(rendered) &&
+        /Carried over — did NOT run this run \(`file-fuzz-findings`\)/.test(rendered) &&
+        !/Currently-failing/.test(rendered) &&
+        parseKnownLanes(rendered).has('file-fuzz-findings'),
+      'a carried-over lane renders as carried, never as "currently failing", and stays in the tracked set',
+      rendered,
+    )
+    // The converse: a body with nothing carried must not grow carry-over
+    // prose either — that would be the same unobserved claim, inverted.
+    const plain = buildIssueBody({
+      all: ['mutants'],
+      lanes: lanesOf({ mutants: 'failure' }),
+      runUrl: undefined,
+    })
+    check(
+      !/[Cc]arried over/.test(plain) && parseKnownLanes(plain).has('mutants'),
+      'a body with nothing carried over says nothing about carry-over',
+      plain,
+    )
+  }
+
+  // A lane that is genuinely failing NOW is not "carried" past the diff —
+  // carry-over must never mask a real red into a silent no-op.
+  const stillRed = lanesOf({ 'file-fuzz-findings': 'failure' })
+  const redDiff = diffLanes(failingJobs(stillRed, opts), new Set(), {
+    carryOver: carriedOverJobs(stillRed, opts),
+  })
+  check(
+    redDiff.newOnes.join(',') === 'file-fuzz-findings' && redDiff.carriedOver.length === 0,
+    'a lane that actually FAILED is still newly-failing under --skipped-ok (carry-over does not swallow reds)',
+    JSON.stringify(redDiff),
+  )
+}
+
+/**
+ * #3960 — the wiring half of the last-resort notice. That step is the only
+ * thing that reports a crash of THIS script, and re-gating it on an event
+ * would silently un-cover the dispatch path, which now writes for real.
+ */
+function selfTestLastResortNoticeCondition({ check, fail }) {
+  const stepFixture = (ifLine) =>
+    ['    steps:', '      - name: Last-resort notice (the reporter itself broke)', ifLine].join(
+      '\n',
+    )
+  check(
+    findLastResortNoticeCondition(stepFixture('        if: failure()')) === 'failure()',
+    'the last-resort-notice condition is read back verbatim',
+    '',
+  )
+  check(
+    findLastResortNoticeCondition(
+      stepFixture("        if: failure() && github.event_name == 'schedule'"),
+    ).includes('github.event_name'),
+    'the guard can SEE an event gate on the last-resort notice (it is able to fail)',
+    '',
+  )
+  for (const [label, text] of [
+    ['a renamed step', '    steps:\n      - name: Something else\n        if: failure()'],
+    ['a step with no `if:`', stepFixture('        run: echo hi')],
+  ]) {
+    let threw = null
+    try {
+      findLastResortNoticeCondition(text)
+    } catch (err) {
+      threw = err
+    }
+    check(threw !== null, `the guard throws on ${label} instead of passing vacuously`, '')
+  }
+
+  const workflowPath = new URL('../.github/workflows/scheduled-deep-checks.yml', import.meta.url)
+    .pathname
+  if (existsSync(workflowPath)) {
+    const condition = findLastResortNoticeCondition(readFileSync(workflowPath, 'utf8'))
+    // Every run that CAN write, and no run that cannot. The un-gate was
+    // justified by "a dispatch writes for real" — true of every dispatch
+    // when it was written, true of a cron-ref dispatch only once #3960's
+    // third pass restored `--dry-run` elsewhere. So the condition tracks the
+    // ref too, or it reopens the repo-wide "the reporter is broken" issue for
+    // a branch run that could not have left anything half-written.
+    //
+    // It deliberately does NOT also track the dispatch inputs: a cron-ref
+    // dispatch with a shortened budget writes nothing, and this notice still
+    // firing for it is an over-approximation in the LOUD direction — the only
+    // direction a last-resort notice may err in. Over-firing costs a comment
+    // on an issue; under-firing is the silence this whole job exists to end.
+    const expected = `failure() && (github.event_name == 'schedule' || github.ref == '${CRON_REF}')`
+    check(
+      condition === expected,
+      'the real last-resort notice fires for exactly the runs that can write: the cron, and a dispatch on the cron ref (#3960)',
+      `if: ${condition}\nwant: ${expected}`,
+    )
+    check(
+      condition.includes(CRON_REF),
+      `the notice's condition names the same cron ref (${CRON_REF}) the authority gate compares against — one place changing without the other is the drift this pins`,
+      `if: ${condition}`,
+    )
+  } else {
+    fail('the real workflow file is readable', `not found at ${workflowPath}`)
+  }
+}
+
+/**
+ * #3716 + #3960 — which runs of the reporting job are AUTHORITATIVE.
+ *
+ * The two halves are one property and must be pinned as a pair:
+ *   * a dispatch on the ref the cron uses must WRITE (else the only
+ *     off-cycle answer is computed and thrown away — #3716), and
+ *   * a dispatch on any other ref must NOT (else a branch's lane results are
+ *     published as the repo-wide issue's answer — #3960).
+ *
+ * Pinning one and leaving the other open is exactly how this defect shipped
+ * twice. Every fixture drives the real bash through
+ * `resolveReporterInvocation`, so a shape that only LOOKS right (a ref test
+ * on `GITHUB_REF_NAME`, say, which cannot tell the branch `main` from a tag
+ * named `main`) fails here rather than in production.
+ */
+function selfTestReporterAuthority({ check, fail }) {
+  // A miniature of the real workflow: two dispatch inputs with declared
+  // defaults, both mapped into the deciding step's `env:` the way the real
+  // step maps them, and a seeded `extra` array (bash 3.2 cannot expand an
+  // empty one under `set -u`).
+  const fixture = (branchBody, { mapInputs = true, extraInputWithoutDefault = null } = {}) =>
+    [
+      'on:',
+      '  schedule:',
+      "    - cron: '17 4 * * 1'",
+      '  workflow_dispatch:',
+      '    inputs:',
+      '      fuzz_seconds:',
+      "        description: 'Per-target fuzz time budget (seconds)'",
+      '        required: false',
+      "        default: '120'",
+      '      slo_include_problem:',
+      "        description: 'Also run the probes'",
+      '        required: false',
+      '        type: boolean',
+      '        default: false',
+      // A `required: true` input with no `default:` — legal, and equally
+      // capable of changing what the lanes test.
+      ...(extraInputWithoutDefault
+        ? [
+            `      ${extraInputWithoutDefault}:`,
+            "        description: 'Something with no default at all'",
+            '        required: true',
+          ]
+        : []),
+      '',
+      'jobs:',
+      '  alpha:',
+      '    runs-on: ubuntu-24.04',
+      '  report-scheduled-failures:',
+      '    steps:',
+      `      - name: ${REPORTER_STEP_NAME}`,
+      '        env:',
+      '          EVENT_NAME: ${{ github.event_name }}',
+      ...(mapInputs
+        ? [
+            "          FUZZ_SECONDS_INPUT: ${{ github.event.inputs.fuzz_seconds || '120' }}",
+            "          SLO_INCLUDE_PROBLEM_INPUT: ${{ github.event.inputs.slo_include_problem || 'false' }}",
+          ]
+        : []),
+      '        run: |',
+      '          set -euo pipefail',
+      `          printf '%s' "$NEEDS_JSON" > needs.json`,
+      '          extra=(--needs-json-file needs.json)',
+      '          if [ "$EVENT_NAME" != "schedule" ]; then',
+      ...branchBody.map((l) => `            ${l}`),
+      '          fi',
+      '          node scripts/file-scheduled-failures.mjs "${extra[@]}"',
+      '  another-job:',
+      '    runs-on: ubuntu-24.04',
+    ].join('\n')
+
+  // The ref half only — what the third pass shipped, and what the fourth
+  // review found insufficient.
+  const REF_GUARDED = [
+    'extra+=(--skipped-ok)',
+    'if [ "$GITHUB_REF" != "refs/heads/main" ]; then',
+    '  extra+=(--dry-run)',
+    'fi',
+  ]
+  // The ref half AND the input half: a dispatch is cron-EQUIVALENT only when
+  // it ran the same lanes, on the same ref, with the same budgets.
+  const REF_AND_INPUTS_GUARDED = [
+    'extra+=(--skipped-ok)',
+    'if [ "$GITHUB_REF" != "refs/heads/main" ] ||',
+    '   [ "$FUZZ_SECONDS_INPUT" != "120" ] ||',
+    '   [ "$SLO_INCLUDE_PROBLEM_INPUT" != "false" ]; then',
+    '  extra+=(--dry-run)',
+    'fi',
+  ]
+
+  {
+    const { problems } = checkReporterAuthority(fixture(REF_AND_INPUTS_GUARDED))
+    check(
+      problems.length === 0,
+      'authority guard passes the fixed shape: the cron and a DEFAULT-INPUT dispatch on the cron ref write; every other ref, and every changed input, dry-runs',
+      JSON.stringify(problems),
+    )
+  }
+
+  // …and the arm that makes the pass above mean something: with the inputs
+  // at their defaults the cron-ref dispatch must still WRITE. A gate that
+  // dry-ran every dispatch would satisfy the input arm and re-break #3716.
+  {
+    const args = resolveReporterInvocation(fixture(REF_AND_INPUTS_GUARDED), {
+      eventName: 'workflow_dispatch',
+      ref: CRON_REF,
+    }).args
+    check(
+      !args.includes('--dry-run') && args.includes('--skipped-ok'),
+      'the fixed shape still WRITES for a default-input dispatch on the cron ref (the input gate did not swallow #3716)',
+      JSON.stringify(args),
+    )
+  }
+
+  // v3 of this defect (#3960, review pass four): the ref is guarded, the
+  // inputs are not. `fuzz_seconds=10` on the cron ref writes authoritatively
+  // over lanes that were never tested at their real budget.
+  {
+    const { problems } = checkReporterAuthority(fixture(REF_GUARDED))
+    check(
+      problems.some((p) => p.includes('fuzz_seconds=10') && p.includes('still WRITES')),
+      'authority guard catches a REF-ONLY gate: a non-default input on the cron ref still writing (#3960, fourth pass)',
+      JSON.stringify(problems),
+    )
+  }
+
+  // An input the deciding step never sees cannot be gated on, whatever the
+  // bash says — so a new input added to `on:` without an `env:` mapping is a
+  // problem in its own right.
+  {
+    const { problems } = checkReporterAuthority(fixture(REF_GUARDED, { mapInputs: false }))
+    check(
+      problems.some((p) => p.includes('is not mapped into the deciding step')),
+      'authority guard catches a dispatch input the deciding step never receives',
+      JSON.stringify(problems),
+    )
+  }
+
+  // v1 of this defect (#3716): every off-schedule run discarded. The
+  // cron-ref dispatch arm is the one that must catch it.
+  {
+    const { problems } = checkReporterAuthority(fixture(['extra+=(--dry-run --skipped-ok)']))
+    check(
+      problems.some((p) => p.includes('#3716')),
+      'authority guard catches an UNCONDITIONAL `--dry-run` restored on the dispatch branch (a cron-equivalent dispatch silently discarded)',
+      JSON.stringify(problems),
+    )
+  }
+
+  // v2 of this defect (#3960, this review): every off-schedule run
+  // authoritative, on whatever ref it was dispatched from. The other-ref arm
+  // is the one that must catch it — and it is the arm the old token guard
+  // did not have.
+  {
+    const { problems } = checkReporterAuthority(fixture(['extra+=(--skipped-ok)']))
+    check(
+      problems.some((p) => p.includes('refs/heads/fix/mutants') && p.includes('WRITES for real')),
+      'authority guard catches an UNGUARDED write (a dispatch on a feature branch publishing that branch as the repo’s health)',
+      JSON.stringify(problems),
+    )
+  }
+
+  // The ref test must compare the FULL ref. `GITHUB_REF_NAME` is `main` both
+  // for the branch and for a tag named `main`, and a tag is a legal dispatch
+  // target — so this near-miss shape has to be red, not green.
+  {
+    const { problems } = checkReporterAuthority(
+      fixture([
+        'extra+=(--skipped-ok)',
+        'if [ "$GITHUB_REF_NAME" != "main" ]; then',
+        '  extra+=(--dry-run)',
+        'fi',
+      ]),
+    )
+    check(
+      problems.some((p) => p.includes('refs/tags/main')),
+      'authority guard catches a short-name ref test, which cannot tell the branch `main` from a TAG named `main`',
+      JSON.stringify(problems),
+    )
+  }
+
+  // Prose is inert: the guard executes the block, so bash decides what a `#`
+  // means. The old token guard tripped over a trailing comment that merely
+  // MENTIONED the flag, and this job documents `--dry-run` at length.
+  {
+    const { problems } = checkReporterAuthority(
+      fixture([
+        '# deliberately NOT --dry-run on the cron ref (#3716)',
+        'extra+=(--skipped-ok)  # not --dry-run',
+        'if [ "$GITHUB_REF" != "refs/heads/main" ] ||',
+        '   [ "$FUZZ_SECONDS_INPUT" != "120" ] ||',
+        '   [ "$SLO_INCLUDE_PROBLEM_INPUT" != "false" ]; then',
+        '  extra+=(--dry-run)',
+        'fi',
+      ]),
+    )
+    check(
+      problems.length === 0,
+      'authority guard is not fooled by comments discussing `--dry-run`, on their own line or trailing (bash already knows what `#` means)',
+      JSON.stringify(problems),
+    )
+  }
+
+  // An input the guard CANNOT compare must fail the guard, not be skipped.
+  // Every input does not have to declare a `default:` — a `required: true`
+  // string, or a `choice` leaning on `options[0]`, is legal — and such an
+  // input changes what the lanes test exactly like the three that do. Reading
+  // only the ones with a `default:` made the generality claim above false: an
+  // input added without one escaped the gate entirely.
+  {
+    const { problems } = checkReporterAuthority(
+      fixture(REF_AND_INPUTS_GUARDED, { extraInputWithoutDefault: 'target_crate' }),
+    )
+    check(
+      problems.some((p) => p.includes('target_crate') && p.includes('no `default:`')),
+      'authority guard catches a dispatch input declared WITHOUT a `default:` (it cannot be compared, so it must not be skipped)',
+      JSON.stringify(problems),
+    )
+  }
+
+  // …and the parse behind that claim must be all-or-loud. A comment or a
+  // stray line inside `inputs:` used to end the scan early, and a PARTIAL
+  // result was indistinguishable from a complete one — the same fail-open
+  // this batch has now fixed three times in two files.
+  {
+    const withComment = fixture(REF_AND_INPUTS_GUARDED).replace(
+      '      slo_include_problem:',
+      '# a banner comment at column 0, e.g. a commented-out input above it\n      slo_include_problem:',
+    )
+    const parsed = findDispatchInputDefaults(withComment)
+    check(
+      Object.keys(parsed).join(',') === 'fuzz_seconds,slo_include_problem',
+      'a column-0 comment inside the `inputs:` block does not truncate the input scan',
+      JSON.stringify(parsed),
+    )
+    // A stray line at the `inputs:` block's own indent DOES end the inner
+    // scan — and the second, differently-terminated scan notices that the two
+    // disagree and throws instead of returning the half it managed to read.
+    let threw = null
+    try {
+      findDispatchInputDefaults(
+        fixture(REF_AND_INPUTS_GUARDED).replace(
+          '      slo_include_problem:',
+          '    unexpected_key: value\n      slo_include_problem:',
+        ),
+      )
+    } catch (err) {
+      threw = err
+    }
+    check(
+      threw !== null && /parsed only/.test(threw.message),
+      'a PARTIAL parse of the `inputs:` block throws instead of silently gating on the half it read',
+      threw ? threw.message : 'no throw — a partial input list read as the whole list',
+    )
+  }
+
+  // The bash-3.2 portability rule, on synthetic scripts first.
+  {
+    const tail = 'node scripts/file-scheduled-failures.mjs "${extra[@]}"'
+    check(
+      findUnportableEmptyArrayExpansions(['extra=()', tail].join('\n')).join(',') === 'extra',
+      'the portability guard catches an EMPTY array declaration expanded plainly (the bash < 4.4 unbound-variable abort)',
+      '',
+    )
+    check(
+      findUnportableEmptyArrayExpansions(
+        ['extra=()', 'node scripts/x.mjs ${extra[@]+"${extra[@]}"}'].join('\n'),
+      ).length === 0,
+      'the portability guard accepts the `${a[@]+"${a[@]}"}` guard on an empty array',
+      '',
+    )
+    check(
+      findUnportableEmptyArrayExpansions(['extra=(--needs-json-file needs.json)', tail].join('\n'))
+        .length === 0,
+      'the portability guard accepts a SEEDED array — it is never empty at the point of expansion',
+      '',
+    )
+  }
+
+  // Extraction failures must be loud, not vacuous passes.
+  for (const [label, text] of [
+    [
+      'a renamed step',
+      ['    steps:', '      - name: Something else', '        run: |', '          echo hi'].join(
+        '\n',
+      ),
+    ],
+    [
+      'a step with no block-scalar `run:`',
+      ['    steps:', `      - name: ${REPORTER_STEP_NAME}`, '        uses: some/action@abc'].join(
+        '\n',
+      ),
+    ],
+  ]) {
+    let threw = null
+    try {
+      findReporterRunScript(text)
+    } catch (err) {
+      threw = err
+    }
+    check(threw !== null, `the run-script extractor throws on ${label}`, '')
+  }
+
+  // …then the real workflow, both arms named individually so a failure says
+  // which direction broke.
+  const workflowPath = new URL('../.github/workflows/scheduled-deep-checks.yml', import.meta.url)
+    .pathname
+  if (!existsSync(workflowPath)) {
+    fail('the real workflow file is readable', `not found at ${workflowPath}`)
+    return
+  }
+  const workflowText = readFileSync(workflowPath, 'utf8')
+  const scheduled = resolveReporterInvocation(workflowText, {
+    eventName: 'schedule',
+    ref: CRON_REF,
+  }).args
+  check(
+    !scheduled.includes('--dry-run') && !scheduled.includes('--skipped-ok'),
+    'the real workflow: the weekly cron run is authoritative and treats a skipped lane as a failure',
+    JSON.stringify(scheduled),
+  )
+  const onCronRef = resolveReporterInvocation(workflowText, {
+    eventName: 'workflow_dispatch',
+    ref: CRON_REF,
+  }).args
+  check(
+    !onCronRef.includes('--dry-run') && onCronRef.includes('--skipped-ok'),
+    `the real workflow: a dispatch on ${CRON_REF} WRITES — the off-cycle answer is not silently discarded (#3716)`,
+    JSON.stringify(onCronRef),
+  )
+  const onOtherRef = resolveReporterInvocation(workflowText, {
+    eventName: 'workflow_dispatch',
+    ref: 'refs/heads/fix/mutants',
+  }).args
+  check(
+    onOtherRef.includes('--dry-run'),
+    'the real workflow: a dispatch on a NON-default ref dry-runs — one branch’s lanes never become the repo-wide issue’s answer (#3960)',
+    JSON.stringify(onOtherRef),
+  )
+  // The fourth dimension, on the real file, input by input.
+  const realDefaults = findDispatchInputDefaults(workflowText)
+  for (const [name, declaredDefault] of Object.entries(realDefaults)) {
+    const changed = flipDispatchInputDefault(declaredDefault)
+    const args = resolveReporterInvocation(workflowText, {
+      eventName: 'workflow_dispatch',
+      ref: CRON_REF,
+      inputs: { [name]: changed },
+    }).args
+    check(
+      args.includes('--dry-run'),
+      `the real workflow: a dispatch on ${CRON_REF} with \`${name}=${changed}\` (default \`${declaredDefault}\`) dry-runs — it changed what the lanes TEST, so it is not the cron's answer (#3960)`,
+      JSON.stringify(args),
+    )
+  }
+  // …and the portability of the block this guard executes for real. On bash
+  // < 4.4 an empty array under `set -u` is an unbound-variable abort, so this
+  // is both a real bug in the shipped workflow and the reason the pre-commit
+  // hook died on macOS.
+  for (const [label, path] of [
+    ['the reporter step', workflowPath],
+    [
+      'the watchdog step',
+      new URL('../.github/workflows/workflow-watchdog.yml', import.meta.url).pathname,
+    ],
+  ]) {
+    if (!existsSync(path)) {
+      fail(`${label}'s workflow file is readable`, `not found at ${path}`)
+      continue
+    }
+    const stepName =
+      path === workflowPath
+        ? REPORTER_STEP_NAME
+        : 'File, update or close the watchdog tracking issue'
+    const offenders = findUnportableEmptyArrayExpansions(
+      findReporterRunScript(readFileSync(path, 'utf8'), stepName),
+    )
+    check(
+      offenders.length === 0,
+      `${label} never expands a possibly-empty array under \`set -u\` (bash 3.2 / stock macOS /bin/bash aborts on that)`,
+      `unportable arrays: ${offenders.join(', ')}`,
+    )
+  }
+  const { problems } = checkReporterAuthority(workflowText)
+  check(
+    problems.length === 0,
+    'the real workflow satisfies every authority rule at once',
+    problems.join(' | '),
+  )
 }
 
 function runSelfTest() {
@@ -897,9 +2118,16 @@ function runSelfTest() {
   check(isFailing('skipped'), 'skipped is a failure on the schedule event', '')
   check(
     !isFailing('skipped', { skippedOk: true }),
-    '--skipped-ok exempts skipped (dispatch dry-run only)',
+    '--skipped-ok stops `skipped` reading as a lane FAILURE (the off-schedule shape, where the schedule-only filer really is skipped)',
     '',
   )
+
+  // 2b. #3960 — the other half of that same fact. `--skipped-ok` is a
+  //     statement about what the run could OBSERVE, so it must suppress the
+  //     recovery reading exactly as it suppresses the failure reading. When
+  //     only the failure half existed, a dispatch closed the tracking issue
+  //     because a lane it never executed was "no longer in `current`".
+  selfTestSkippedCarryOver({ check, lanesOf })
 
   // 3. Dedup keys on the job id, so a lane that stays broken but changes
   //    HOW it breaks (failure -> cancelled) does not re-notify as new.
@@ -1186,6 +2414,23 @@ function runSelfTest() {
     )
   }
 
+  // 12. #3716 + #3960 — WHICH runs of the reporting job are authoritative.
+  //     Both arms, because this defect has now shipped twice with one arm
+  //     pinned and the other open: v2 kept a dispatch from being discarded
+  //     and said nothing about the ref it ran on. Driven by executing the
+  //     step's own bash (`resolveReporterInvocation`), so what is asserted is
+  //     the argv the runner would really produce, not a token search.
+  selfTestReporterAuthority({ check, fail })
+
+  // 13. #3960 — the wiring half of the watchdog decision. The last-resort
+  //     bash notice is the ONLY thing that reports a crash of this script,
+  //     and it must fire on every event now that a dispatch writes for real:
+  //     a crash between `gh issue edit` and `gh issue close` leaves the
+  //     tracking issue half-rewritten, and an event gate would keep that
+  //     quiet. This is the same class of stale justification that produced
+  //     the `--skipped-ok` bug, so it gets a guard rather than a comment.
+  selfTestLastResortNoticeCondition({ check, fail })
+
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
     process.exit(2)
@@ -1203,7 +2448,19 @@ const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
   if (process.argv.slice(2).includes('--self-test')) {
-    runSelfTest()
+    // Wrapped exactly like `main()` below. Several assertions now execute a
+    // workflow's own bash and parse a workflow's own YAML, so a renamed step
+    // — or a shell that cannot run the block at all — throws mid-suite. An
+    // uncaught throw exits 1 with a raw stack trace, which reads as "the tool
+    // is broken" rather than "an assertion did not hold"; exit 2 with one
+    // legible line is what the hook and its reader expect.
+    try {
+      runSelfTest()
+    } catch (err) {
+      console.error(`  FAIL - the self-test could not run to completion: ${err.message}`)
+      console.error('\nself-test: aborted before every assertion was evaluated')
+      process.exit(2)
+    }
   } else {
     try {
       main()
