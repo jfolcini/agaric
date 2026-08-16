@@ -49,7 +49,12 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 })
 
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
-import { notifyPageRemoved, notifyTagRemoved, notifyTagRenamed } from '@/lib/name-change-bus'
+import {
+  invalidateNameCaches,
+  notifyPageRemoved,
+  notifyTagRemoved,
+  notifyTagRenamed,
+} from '@/lib/name-change-bus'
 import { renamePage } from '@/stores/page-rename'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -3030,6 +3035,101 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
     expect(pageItems.map((i) => i.label)).toContain('Cached Page')
     expect(tagItems.map((i) => i.label)).toContain('cachedtag')
+  })
+
+  // #4008 review note 1 — the `onCreatePage` empty-cache latch. An EMPTY
+  // `pagesListRef` means "not fetched for this space yet", so appending the
+  // one page just created flips it to "filled" with a single row and
+  // `searchPagesViaCache` never re-fetches again: the `[[` picker offers
+  // exactly that one page for the rest of the session.
+  //
+  // The sequence below is the one that makes it reachable in normal use, and
+  // it is why this test does NOT prime the cache before creating — a primed
+  // cache passes with or without the guard. Before #4007 the cache emptied
+  // only on a space switch (which unmounts nothing but does re-fill on the
+  // next keystroke); now `invalidateNameCaches()` empties it on every sync,
+  // every MCP write, every restore, and any delete that drops the last row,
+  // and a >2-char query runs the FTS path, which never fills it back.
+  it('a page created while the cache is empty does not latch a one-row space', async () => {
+    mockedListAllPagesInSpace
+      .mockResolvedValueOnce([pageRow('P_1', 'Alpha'), pageRow('P_2', 'Beta')])
+      .mockResolvedValueOnce([
+        pageRow('P_1', 'Alpha'),
+        pageRow('P_2', 'Beta'),
+        pageRow('P_NEW', 'myprojectnotes'),
+      ])
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    mockedCreatePageInSpace.mockResolvedValueOnce('P_NEW')
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // (a) the picker has been used once this session, so the cache is filled.
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+
+    // (b) a sync lands — `reloadChangedPageStores` drops both caches.
+    act(() => {
+      invalidateNameCaches()
+    })
+    expect(result.current.pagesListRef.current).toEqual([])
+
+    // (c) the user types `[[myprojectnotes`. Over 2 chars, so this is the FTS
+    //     path: it reads the cache but never fills it.
+    await act(async () => {
+      await result.current.searchPages('myprojectnotes')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+    expect(result.current.pagesListRef.current).toEqual([])
+
+    // (d) nothing matched, so they pick "Create new page".
+    await act(async () => {
+      await result.current.onCreatePage('myprojectnotes')
+    })
+
+    // (e) the very next short query must still re-fetch the whole space —
+    //     the empty cache still means "not fetched yet".
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_1', 'P_2', 'P_NEW'])
+  })
+
+  // The other arm: skipping the append must not cost the append when the
+  // cache IS filled — `onCreatePage`'s original purpose (a page created in
+  // this picker session is findable by the same session's picker) still holds,
+  // and still without a re-fetch.
+  it('a page created while the cache is filled is appended without a re-fetch', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([pageRow('P_1', 'Alpha')])
+    mockedCreatePageInSpace.mockResolvedValueOnce('P_NEW2')
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await result.current.onCreatePage('Bravo')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_1', 'P_NEW2'])
   })
 
   it('a change to an entity this cache never saw leaves the cache intact', async () => {

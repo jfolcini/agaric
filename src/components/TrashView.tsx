@@ -439,11 +439,11 @@ export function TrashView(): React.ReactElement {
       reload()
       clearSelection()
       setConfirmRestoreAll(false)
-      // #4007 — "restore all" can bring back any number of pages/tags and
-      // reports only a count, so the picker caches cannot be patched; drop
-      // them and let the next picker read re-fetch.
-      if (result.affected_count > 0) invalidateNameCaches()
       if (result.affected_count > 0) {
+        // #4007 — "restore all" can bring back any number of pages/tags and
+        // reports only a count, so the picker caches cannot be patched; drop
+        // them and let the next picker read re-fetch.
+        invalidateNameCaches()
         notify.success(t('trash.allRestored', { count: result.affected_count }))
         announce(t('announce.allRestored', { count: result.affected_count }))
       }

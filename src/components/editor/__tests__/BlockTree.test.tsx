@@ -2515,6 +2515,19 @@ describe('BlockTree searchPages caching', () => {
   it('onCreatePage adds new page to search results', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'load_page_subtree') return { blocks: [], truncated: false, total: 0 }
+      if (cmd === 'list_all_pages_in_space') {
+        return [
+          {
+            id: 'P1',
+            content: 'Alpha Page',
+            todo_state: null,
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+          },
+        ]
+      }
+      if (cmd === 'resolve_page_by_alias') return null
       return emptyPage
     })
 
@@ -2523,6 +2536,15 @@ describe('BlockTree searchPages caching', () => {
     await waitFor(() => {
       expect(capturedOnCreatePage).toBeDefined()
     })
+
+    // #4008 review note 1 — prime the cache first. `onCreatePage` appends
+    // only into an ALREADY-FILLED `pagesListRef`: an empty one means "not
+    // fetched for this space yet", and appending there would latch the one
+    // created page as the whole space (the picker would then offer nothing
+    // else for the rest of the session). This test asserts the intent that
+    // survives the guard — a page created during a picker session that HAS a
+    // filled cache is findable by that same session, without a re-fetch.
+    await capturedSearchPages?.('al')
 
     // Phase 2 — onCreatePage routes through create_page_in_space,
     // which returns the new page's ULID (a plain string).

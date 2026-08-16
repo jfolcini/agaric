@@ -686,7 +686,26 @@ export function useBlockResolve(): UseBlockResolveReturn {
       const newId = unwrap(await commands.createPageInSpace(null, label, currentSpaceId))
       // Populate resolve cache so the link chip shows the title immediately
       useResolveStore.getState().set(newId, label, false)
-      pagesListRef.current = [...pagesListRef.current, { id: newId, title: label }]
+      // #4008 review note 1 — append ONLY into an already-filled cache, the
+      // same guard `onCreateTag` carries below. An EMPTY `pagesListRef` is not
+      // "a space with no pages", it is the "not fetched for this space yet"
+      // state that makes `searchPagesViaCache` re-fetch; appending there flips
+      // it to "filled" with a single row and latches that one page as the
+      // whole space for the rest of the session.
+      //
+      // #4007 widened the window this needs: before, the cache emptied only on
+      // a space switch, and the switch is immediately followed by a fill.
+      // Now it also empties on every sync / MCP invalidation, every restore,
+      // and any delete that drops the last row — and a >2-char query takes the
+      // FTS path, which reads the cache but never fills it. So "invalidation,
+      // then type a long name, then Create new page" is an ordinary sequence
+      // that reaches an empty cache at create time.
+      //
+      // Skipping the append costs nothing: the next short query re-fetches
+      // from the backend, which has already committed this page (awaited above).
+      if (pagesListRef.current.length > 0) {
+        pagesListRef.current = [...pagesListRef.current, { id: newId, title: label }]
+      }
       return newId
     } catch (err) {
       logger.error('useBlockResolve', 'onCreatePage failed', { label }, err)
