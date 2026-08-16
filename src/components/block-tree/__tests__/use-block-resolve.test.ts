@@ -49,6 +49,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 })
 
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
+import { notifyPageRemoved, notifyTagRemoved, notifyTagRenamed } from '@/lib/name-change-bus'
+import { renamePage } from '@/stores/page-rename'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -2775,5 +2777,281 @@ describe('searchPages — fuzzy matching', () => {
     // matchSorter with 'qn' should match 'Quick Notes' (q + n)
     const pageIds = items.filter((i) => !i.isCreate).map((i) => i.id)
     expect(pageIds).toContain('PF1')
+  })
+})
+
+// ── Rename / delete invalidation of the picker name caches (#4007) ──────
+//
+// `pagesListRef` and `tagsListRef` are filled once per space and filtered
+// locally thereafter, and until #4007 a SPACE SWITCH was their only
+// invalidation. A page or tag renamed or deleted from any other surface kept
+// being offered under its old name for the rest of the session.
+//
+// Each case below is shaped to be falsifying rather than vacuous: it (a)
+// primes the cache with a first picker read, (b) mutates the entity from
+// elsewhere, and (c) asserts the SECOND read — the one served from the cache
+// — reflects the mutation. The IPC-call-count assertion in every case is the
+// other half of the vice: it pins that the cache is still doing its job, so
+// "fix" the bug by disabling caching and these tests fail too.
+
+describe('picker name caches — rename & delete invalidation (#4007)', () => {
+  function pageRow(id: string, content: string) {
+    return {
+      id,
+      content,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+    }
+  }
+
+  function tagRow(id: string, name: string) {
+    return { tag_id: id, name, usage_count: 1, updated_at: '2024-01-01' }
+  }
+
+  afterEach(() => {
+    mockedListAllPagesInSpace.mockReset()
+    mockedListAllTagsInSpace.mockReset()
+  })
+
+  it('a page renamed elsewhere is offered under its NEW title on the next read', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_REN', 'Old Name'),
+      pageRow('P_KEEP', 'Untouched'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // (a) prime the cache.
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+
+    // (b) rename through `@/stores/page-rename` — the documented fan-out
+    // entry point every rename surface (PageHeader, undo/redo) goes through.
+    act(() => {
+      renamePage('P_REN', 'New Name')
+    })
+
+    // (c) the SECOND read, served from the primed cache.
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    const labels = items.filter((i) => !i.isCreate).map((i) => i.label)
+    expect(labels).toContain('New Name')
+    expect(labels).not.toContain('Old Name')
+    expect(labels).toContain('Untouched')
+    // Still exactly ONE IPC: the rename was folded into the cache, not
+    // "fixed" by throwing the cache away.
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  // The cache is served in LIST ORDER — `searchPages('')` slices the first 20
+  // rows straight off `pagesListRef`, and the fetch that filled it came back
+  // `ORDER BY content COLLATE NOCASE` (see `pages/listing.rs`). A rename
+  // patched in place without re-sorting leaves the row parked in its OLD
+  // alphabetical slot, which past 20 pages means it is not offered at all.
+  it('a renamed page is re-sorted into its new alphabetical slot', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_A', 'Alpha'),
+      pageRow('P_B', 'Beta'),
+      pageRow('P_Z', 'Zulu'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+
+    act(() => {
+      renamePage('P_Z', 'Aardvark')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    expect(items.filter((i) => !i.isCreate).map((i) => i.label)).toEqual([
+      'Aardvark',
+      'Alpha',
+      'Beta',
+    ])
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  it('a renamed tag is re-sorted into its new alphabetical slot', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('T_A', 'alpha'),
+      tagRow('T_B', 'beta'),
+      tagRow('T_Z', 'zulu'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('')
+    })
+
+    act(() => {
+      notifyTagRenamed('T_Z', 'aardvark')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    expect(items.filter((i) => !i.isCreate).map((i) => i.label)).toEqual([
+      'aardvark',
+      'alpha',
+      'beta',
+    ])
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  it('a page deleted elsewhere stops being offered on the next read', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_DEL', 'Doomed Page'),
+      pageRow('P_KEEP2', 'Survivor Page'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+
+    // The shared page-delete flow (`usePageDeleteAction`) emits this after
+    // its `deleteBlock` commits.
+    act(() => {
+      notifyPageRemoved('P_DEL')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    const ids = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(ids).not.toContain('P_DEL')
+    expect(ids).toContain('P_KEEP2')
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  it('a tag renamed elsewhere is offered under its NEW name on the next read', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('T_REN', 'oldtag'),
+      tagRow('T_KEEP', 'othertag'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+
+    // The Tags view's rename flow emits this after `editBlock` commits.
+    act(() => {
+      notifyTagRenamed('T_REN', 'newtag')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    const labels = items.filter((i) => !i.isCreate).map((i) => i.label)
+    expect(labels).toContain('newtag')
+    expect(labels).not.toContain('oldtag')
+    expect(labels).toContain('othertag')
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  it('a tag deleted elsewhere stops being offered on the next read', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('T_DEL', 'doomedtag'),
+      tagRow('T_KEEP2', 'survivortag'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+
+    // The Tags view's delete flow emits this after `deleteBlock` + `purgeBlock`.
+    act(() => {
+      notifyTagRemoved('T_DEL')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    const ids = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(ids).not.toContain('T_DEL')
+    expect(ids).toContain('T_KEEP2')
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  it('with nothing changed, both caches still serve the second read without an IPC', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([pageRow('P_C', 'Cached Page')])
+    mockedListAllTagsInSpace.mockResolvedValueOnce([tagRow('T_C', 'cachedtag')])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+      await result.current.searchTags('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+
+    let pageItems: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    let tagItems: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      pageItems = await result.current.searchPages('')
+      tagItems = await result.current.searchTags('')
+    })
+
+    // This is why the caches exist — an unrelated event must not cost a
+    // round trip, and neither must a quiet second keystroke.
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+    expect(pageItems.map((i) => i.label)).toContain('Cached Page')
+    expect(tagItems.map((i) => i.label)).toContain('cachedtag')
+  })
+
+  it('a change to an entity this cache never saw leaves the cache intact', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([pageRow('P_ONLY', 'Only Page')])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+
+    act(() => {
+      renamePage('P_SOMEWHERE_ELSE', 'Irrelevant')
+      notifyPageRemoved('P_ALSO_UNKNOWN')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_ONLY'])
   })
 })

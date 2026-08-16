@@ -51,6 +51,7 @@ import { useStarredPages } from '@/hooks/useStarredPages'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { invalidateNameCaches, notifyPageRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import type { TagCacheRow } from '@/lib/tauri'
 import {
@@ -217,6 +218,9 @@ export function PageBrowserBatchToolbar({
         .then(unwrap)
         .then(() => {
           onMutated()
+          // #4007 — the restored pages must become offerable again in the
+          // `[[` picker, whose cache dropped them on the trash below.
+          invalidateNameCaches()
           notify.success(t('pageBrowser.batch.trashUndone', { count: ids.length }))
         })
         .catch((err: unknown) => {
@@ -233,6 +237,9 @@ export function PageBrowserBatchToolbar({
     setBusy(true)
     try {
       const count = await deleteBlocksByIds(ids)
+      // #4007 — drop every trashed page from the `[[` picker's name cache;
+      // it is filled once per space and has no other delete signal.
+      for (const id of ids) notifyPageRemoved(id)
       onClearSelection()
       onMutated()
       notify.success(t('pageBrowser.batch.trashed', { count }), {

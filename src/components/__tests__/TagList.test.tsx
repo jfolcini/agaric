@@ -30,6 +30,8 @@ import { axe } from 'vitest-axe'
 
 import { TagList } from '@/components/TagList'
 import { t } from '@/lib/i18n'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -981,5 +983,69 @@ describe('TagList', () => {
     render(<TagList />)
 
     expect(await screen.findByPlaceholderText(t('tagList.newTagPlaceholder'))).toBeInTheDocument()
+  })
+
+  // #4007 — the `#` picker caches the tag list once per space in a React ref
+  // (`tagsListRef` in `useBlockResolve`), so the Tags view can only reach it
+  // through the name-change bus. Without these emissions the picker keeps
+  // offering a tag under its old name — or offering a purged tag at all —
+  // until the next space switch.
+  describe('name-change broadcast (#4007)', () => {
+    it('broadcasts a rename to the picker name caches', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'before-rename')])
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+      try {
+        render(<TagList />)
+
+        const tag = await screen.findByText('before-rename')
+        await user.click(findRenameButton(tag.closest('li') as HTMLElement))
+
+        const input = await screen.findByDisplayValue('before-rename')
+        await user.clear(input)
+        await user.type(input, 'after-rename')
+
+        mockedInvoke.mockResolvedValueOnce({
+          id: 'T1',
+          block_type: 'tag',
+          content: 'after-rename',
+        })
+        await user.click(screen.getByRole('button', { name: /Save/i }))
+
+        await waitFor(() =>
+          expect(changes).toEqual([
+            { kind: 'renamed', entity: 'tag', id: 'T1', name: 'after-rename' },
+          ]),
+        )
+      } finally {
+        unsubscribe()
+      }
+    })
+
+    it('broadcasts a delete to the picker name caches', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'to-purge')])
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+      try {
+        render(<TagList />)
+
+        const tag = await screen.findByText('to-purge')
+        mockedInvoke.mockResolvedValueOnce({
+          block_id: 'T1',
+          deleted_at: '2025-01-15T00:00:00Z',
+          descendants_affected: 0,
+        })
+        mockedInvoke.mockResolvedValueOnce({ block_id: 'T1', purged_count: 1 })
+
+        await user.click(findTrashButton(tag.closest('li') as HTMLElement))
+        await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+
+        await waitFor(() => expect(changes).toEqual([{ kind: 'removed', entity: 'tag', id: 'T1' }]))
+      } finally {
+        unsubscribe()
+      }
+    })
   })
 })

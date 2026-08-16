@@ -5,6 +5,8 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { mapBackendState, useSyncEvents } from '@/hooks/useSyncEvents'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 
@@ -532,6 +534,61 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
+    // #4007 — a peer's rename/delete arrives here, not through any local
+    // surface, so without this the `[[` / `#` pickers keep offering the old
+    // name for the rest of the session.
+    it('invalidates the picker name caches when ops_received > 0 (#4007)', async () => {
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 5,
+          ops_sent: 0,
+          changed_page_ids: ['PAGE_1'],
+        },
+      })
+
+      expect(changes).toEqual([{ kind: 'invalidated' }])
+
+      unsubscribe()
+      unmount()
+    })
+
+    it('does NOT invalidate the picker name caches when ops_received === 0 (#4007)', async () => {
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      getListenerCallback('sync:complete')({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 0,
+          ops_sent: 3,
+        },
+      })
+
+      // Nothing changed on this device or the peer's — dropping the caches
+      // would cost a refetch for no reason.
+      expect(changes).toEqual([])
+
+      unsubscribe()
+      unmount()
+    })
+
     it('does NOT preload resolve cache when ops_received === 0', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
@@ -735,6 +792,25 @@ describe('useSyncEvents', () => {
       expect(mockLoad).toHaveBeenCalledTimes(1)
       expect(mockLoad2).toHaveBeenCalledTimes(1)
 
+      unmount()
+    })
+
+    // #4007 — an MCP write is out-of-band exactly like an inbound sync: no
+    // local surface announces its renames/deletes on the name-change bus.
+    it('invalidates the picker name caches (#4007)', async () => {
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      getListenerCallback('blocks:changed')({ payload: { changed_page_ids: ['PAGE_1'] } })
+
+      expect(changes).toEqual([{ kind: 'invalidated' }])
+
+      unsubscribe()
       unmount()
     })
 
