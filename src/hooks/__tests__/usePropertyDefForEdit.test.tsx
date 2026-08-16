@@ -258,6 +258,50 @@ describe('usePropertyDefForEdit', () => {
       })
     })
 
+    // #4008 review note 5 — the same staleness class as the key switch above,
+    // across SPACES instead of keys. Property definitions are space-scoped
+    // (that is why `currentSpaceId` is in the effect's deps), but the resolved
+    // type was tagged with the key only, so a space switch with a chip editor
+    // open left the PREVIOUS space's type readable for the same key until the
+    // refetch landed — the identical "commit against a foreign type" window.
+    it('reports valueType null while the NEW SPACE’s definition for the SAME key is in flight', async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+      mockGetPropertyDef.mockResolvedValueOnce(defFor('estimate', 'number'))
+      let resolveSpaceB!: (def: unknown) => void
+      const spaceBPending = new Promise((resolve) => {
+        resolveSpaceB = resolve
+      })
+      mockGetPropertyDef.mockReturnValueOnce(spaceBPending)
+
+      // Stable identity — the hook re-renders on the space-store update, and a
+      // fresh object literal per render would re-fire the effect forever.
+      const prop = { key: 'estimate', value: '5' }
+      const { result } = renderHook(() => usePropertyDefForEdit(prop))
+
+      await waitFor(() => {
+        expect(result.current.valueType).toBe('number')
+      })
+
+      // User switches space while the chip editor is still open on 'estimate'.
+      act(() => {
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+      })
+
+      // Space A's 'number' must NOT still be visible here: in space B the same
+      // key may well be a date or text property.
+      expect(result.current.valueType).not.toBe('number')
+      expect(result.current.valueType).toBeNull()
+
+      await act(async () => {
+        resolveSpaceB(defFor('estimate', 'text'))
+        await spaceBPending
+      })
+
+      await waitFor(() => {
+        expect(result.current.valueType).toBe('text')
+      })
+    })
+
     it('resets valueType to null when editingProp goes back to null', async () => {
       mockGetPropertyDef.mockResolvedValue(defFor('estimate', 'number'))
       const { result, rerender } = renderHook(

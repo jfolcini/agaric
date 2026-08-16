@@ -125,27 +125,65 @@ function PageEditorInner({
     // fixed.
     //
     // Bound STALL instead of TIME. BlockTree's own comment documents that
-    // its reveal effect "converges over a couple of renders" — each
-    // cascading `expandAncestors`/`revealIndex` state update mounts at
-    // least one more `[data-block-id]` row. So keep polling as long as the
-    // number of mounted block rows in the document keeps growing (real work
-    // is happening); only give up once it stops growing for STALL_LIMIT
+    // its reveal effect "converges over a couple of renders". So keep
+    // polling as long as the mounted block rows keep CHANGING (real work is
+    // happening); only give up once they stop changing for STALL_LIMIT
     // consecutive frames — i.e. the mechanism has genuinely stalled (e.g.
     // the target sits outside the active zoom pane, a known
     // not-yet-addressed case per BlockTree.tsx), not merely running slow.
-    // STALL_LIMIT is a small multiple of BlockTree's documented "couple of
-    // renders" convergence window, not a retuned timing guess — and because
-    // it only measures ABSENCE of progress (not elapsed time), a reveal
-    // that is still progressing cannot trip it, however long it takes.
     //
-    // Counts `[data-block-id]` rows document-wide (the same scope as the
+    // #4008 note 1 — "changing", NOT "growing". Row-count growth is the
+    // wrong progress proxy on a page sitting AT the mount cap:
+    // `useBlockMountLimit` returns `visibleBlocks.slice(0, mountLimit)`, so
+    // the `expandAncestors` half of BlockTree's reveal effect — a real
+    // convergence step, the one that puts the target into the visible list
+    // at all — changes WHICH rows are mounted while the count stays pinned
+    // at exactly `mountLimit`. Counting only growth booked that as a stall.
+    // The fingerprint below is order-sensitive over the mounted ids, so a
+    // reshuffle at a fixed row count reads as the progress it is.
+    //
+    // Reads `[data-block-id]` rows document-wide (the same scope as the
     // lookup below) rather than scoping to this page's own container, so
     // unrelated DOM churn elsewhere can in principle also reset the stall
     // counter — that only delays giving up, it can never cause a false
     // `notify.error()`, so it's an acceptable tradeoff for not depending on
     // BlockTree's internals from here.
-    const STALL_LIMIT = 6
-    let lastMountedCount = document.querySelectorAll('[data-block-id]').length
+    const mountedSignature = (): string => {
+      const rows = document.querySelectorAll('[data-block-id]')
+      let hash = 0
+      for (const row of rows) {
+        const id = row.getAttribute('data-block-id') ?? ''
+        for (let i = 0; i < id.length; i++) {
+          hash = (Math.imul(hash, 31) + id.charCodeAt(i)) | 0
+        }
+      }
+      return `${rows.length}:${hash}`
+    }
+
+    // The bound is derived from BlockTree's pipeline, not picked:
+    //
+    //  * The reveal is three steps — (1) `expandAncestors(target)`,
+    //    (2) `revealIndex(idx)`, (3) the commit that mounts the target row.
+    //  * Exactly ONE of them can be invisible to this observer: step (1),
+    //    when the collapsed ancestor chain lies entirely PAST the mount cap.
+    //    The rows it un-hides are then inserted after the cap boundary, so
+    //    the mounted prefix — and hence the signature — is unchanged. Step
+    //    (2) always changes the signature (`revealIndex` is a no-op unless
+    //    `idx + 1 > mountLimit`, so when it fires the prefix strictly grows),
+    //    and step (3) ends the poll instead of being observed.
+    //  * A step is one React commit, whose passive effect flushes in a task
+    //    after paint — so it can be observed one frame late.
+    //
+    // => (one unobservable step + one frame in which demonstrably nothing
+    //    happened) x two frames per commit. This is a smaller number than the
+    //    growth-only version it replaces and still strictly safer: a
+    //    signature-stable frame is much stronger evidence of a stall than a
+    //    growth-free one, because every observable form of progress now
+    //    resets the counter.
+    const UNOBSERVABLE_REVEAL_STEPS = 1
+    const FRAMES_PER_COMMIT = 2
+    const STALL_LIMIT = (UNOBSERVABLE_REVEAL_STEPS + 1) * FRAMES_PER_COMMIT
+    let lastSignature = mountedSignature()
     let stallFrames = 0
 
     const tryReveal = (): void => {
@@ -156,9 +194,9 @@ function PageEditorInner({
         clearSelection()
         return
       }
-      const mountedCount = document.querySelectorAll('[data-block-id]').length
-      if (mountedCount > lastMountedCount) {
-        lastMountedCount = mountedCount
+      const signature = mountedSignature()
+      if (signature !== lastSignature) {
+        lastSignature = signature
         stallFrames = 0
       } else {
         stallFrames += 1

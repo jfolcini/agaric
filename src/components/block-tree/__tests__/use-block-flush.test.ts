@@ -22,7 +22,6 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
-import type { TFunction } from 'i18next'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
@@ -88,7 +87,6 @@ function makeParams(
     splitBlock: pageStore.getState().splitBlock,
     rootParentId: null,
     pageStore,
-    t: vi.fn((key: string) => key) as unknown as TFunction,
     ...overrides,
   }
 }

@@ -507,6 +507,21 @@ export function BlockPropertyEditor({
                 setEditingProp(null)
                 return
               }
+              // #4008 review note 4 — the inline chip renders a PLAIN TEXT
+              // input for every non-select/non-ref type, so a `boolean`
+              // property reaches `buildPropertyParams` as free text. Its
+              // boolean branch is written for the drawer's checkbox, which
+              // only ever supplies 'true' / 'false' / '': anything else maps
+              // to `value_bool: false`, silently discarding what the user
+              // typed AND overwriting the stored value. Refuse instead —
+              // exactly what the number branch already does for unparseable
+              // input, and the reason `date` (which stores the typed string
+              // verbatim, destroying nothing) is deliberately left alone.
+              if (valueType === 'boolean' && !['', 'true', 'false'].includes(newValue)) {
+                notify.error(t('property.invalidBoolean'))
+                setEditingProp(null)
+                return
+              }
               // #3275 — route through the SAME `buildPropertyParams` the
               // drawer path uses (`property-save-utils.ts` →
               // `handleSaveProperty`) instead of hard-coding

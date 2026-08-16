@@ -310,7 +310,12 @@ export function parseHeading(
   return { blocks: [block], consumed: next - i }
 }
 
-/** Table: consecutive lines starting with `|`. First non-separator row is the header. */
+/**
+ * Table: consecutive lines starting with `|`. Row 0 is the header and row 1 is
+ * the GFM delimiter row — both POSITIONAL, per `buildTableRows` (#3274): the
+ * run is collected from `i`, so index 0 is always the header, and index 1 is
+ * the only position GFM allows a delimiter row in.
+ */
 export function parseTable(
   lines: readonly string[],
   i: number,

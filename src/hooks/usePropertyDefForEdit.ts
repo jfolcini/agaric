@@ -49,8 +49,10 @@ export interface UsePropertyDefForEditReturn {
    * `editingProp` change, so a `?? 'text'` here would be indistinguishable
    * from "still loading" — and, worse, a plain `valueType` state would keep
    * showing the PREVIOUS key's type until the new fetch landed. The resolved
-   * type is therefore stored together with the key it belongs to and read
-   * back only for a matching key.
+   * type is therefore stored together with the key AND the space it belongs
+   * to, and read back only for a matching (key, space) pair (#4008 note 5:
+   * definitions are space-scoped, so a space switch has the same staleness
+   * window as a key switch).
    */
   valueType: string | null
 }
@@ -67,7 +69,17 @@ export function usePropertyDefForEdit(
   // resolved for. Storing a bare `valueType` string let a key switch expose the
   // previous property's type for the whole duration of the new lookup, and a
   // commit landing in that window wrote the value into the wrong typed column.
-  const [resolvedType, setResolvedType] = useState<{ key: string; valueType: string } | null>(null)
+  //
+  // #4008 review note 5 — and WITH the space it was resolved in, for exactly
+  // the same reason. Property definitions are space-scoped (hence
+  // `currentSpaceId` in the effect's deps), so a space switch with a chip
+  // editor open re-fetches the same key — and until that lands, a key-only tag
+  // still matched and handed out the PREVIOUS space's type.
+  const [resolvedType, setResolvedType] = useState<{
+    key: string
+    spaceId: string | null
+    valueType: string
+  } | null>(null)
 
   useEffect(() => {
     if (!editingProp) {
@@ -79,6 +91,10 @@ export function usePropertyDefForEdit(
       return
     }
     const key = editingProp.key
+    // The space this lookup belongs to, captured at issue time (the effect
+    // re-runs on every `currentSpaceId` change, so this is always the space
+    // the response describes).
+    const spaceId = currentSpaceId
     let stale = false
     // Single-key PK lookup instead of paginating the
     // entire property-definition vocabulary every time the user opens
@@ -91,8 +107,8 @@ export function usePropertyDefForEdit(
         // A lookup MISS (unknown key / no definition row) is a real answer:
         // 'text', the same fallback `BlockPropertyDrawer.getType` applies to
         // its already-loaded `definitions` array. It is tagged with `key` so
-        // it is only ever read back for the key it was resolved for.
-        setResolvedType({ key, valueType: def?.value_type ?? 'text' })
+        // it is only ever read back for the key AND space it was resolved for.
+        setResolvedType({ key, spaceId, valueType: def?.value_type ?? 'text' })
         if (def?.value_type === 'select' && def.options) {
           try {
             setSelectOptions(JSON.parse(def.options) as string[])
@@ -154,18 +170,22 @@ export function usePropertyDefForEdit(
         setIsRefProp(false)
         // A failed lookup degrades to the plain text input, so the commit path
         // gets the matching 'text' type rather than being blocked forever.
-        setResolvedType({ key, valueType: 'text' })
+        setResolvedType({ key, spaceId, valueType: 'text' })
       })
     return () => {
       stale = true
     }
   }, [editingProp, currentSpaceId])
 
-  // Derived during RENDER, not stored: a key switch cannot expose the previous
-  // key's type for even a single render, no matter how the effect/promise
-  // ordering falls out.
+  // Derived during RENDER, not stored: neither a key switch nor a space switch
+  // can expose the previous type for even a single render, no matter how the
+  // effect/promise ordering falls out.
   const valueType =
-    editingProp !== null && resolvedType?.key === editingProp.key ? resolvedType.valueType : null
+    editingProp !== null &&
+    resolvedType?.key === editingProp.key &&
+    resolvedType.spaceId === currentSpaceId
+      ? resolvedType.valueType
+      : null
 
   return { selectOptions, isRefProp, refPages, refSearch, setRefSearch, valueType }
 }

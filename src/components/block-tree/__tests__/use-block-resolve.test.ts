@@ -662,6 +662,41 @@ describe('onCreateTag — tagsListRef cache staleness (#3277 finding 1)', () => 
     expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
     expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('T9')
   })
+
+  // #4008 review note 6 — the "empty ⇔ not yet fetched" invariant the test
+  // above pins is destroyed by `onCreateTag`'s append when the space has ZERO
+  // tags: the append flips the ref from empty (re-fetch every call) to
+  // "filled" with a single entry, permanently suppressing the re-fetch for
+  // the rest of the session. Every tag created elsewhere (another window, a
+  // sync) then stays invisible to this picker until a space switch.
+  it('an empty-space create must not latch the cache: searchTags still re-fetches', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([])
+    mockedCreateBlock.mockResolvedValueOnce(tagBlock('T_FIRST', 'first'))
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('any')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await result.current.onCreateTag('first')
+    })
+
+    // A tag that appeared from somewhere else must still be reachable: the
+    // cache was never filled from the server, so the next query must re-fetch.
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('T_FIRST', 'first'),
+      tagRow('T_ELSEWHERE', 'elsewhere'),
+    ])
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('elsewhere')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('T_ELSEWHERE')
+  })
 })
 
 // ── searchPages ─────────────────────────────────────────────────────────

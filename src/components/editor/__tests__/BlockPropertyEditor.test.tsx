@@ -357,6 +357,119 @@ describe('BlockPropertyEditor', () => {
       expect(setEditingProp).toHaveBeenCalledWith(null)
     })
 
+    // #4008 review note 4 — routing the inline chip through
+    // `buildPropertyParams` also brought `boolean` and `date` under it, and
+    // both still render the PLAIN TEXT input. The two cases are deliberately
+    // NOT treated alike, and these pin the difference:
+    //
+    //  * `date` passes the raw string through into `value_date` unvalidated.
+    //    Kept: it is what #3275 asked for, it matches the drawer, and nothing
+    //    is destroyed — whatever the user typed is what gets stored.
+    //  * `boolean` used to COERCE anything that isn't the literal 'true' to
+    //    `value_bool: false`, discarding the user's text. That is
+    //    data-loss-shaped, so the inline path now refuses the commit and says
+    //    so, exactly as it already does for an unparseable number.
+    it('passes a date-typed inline edit through to value_date verbatim, unvalidated', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'deadline', value: '2026-08-01' },
+            valueType: 'date',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: 'next tuesday' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'deadline', {
+          value_text: null,
+          value_num: null,
+          value_date: 'next tuesday',
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+    })
+
+    it('commits a boolean-typed inline edit through value_bool for the literal true/false', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'archived', value: 'false' },
+            valueType: 'boolean',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: 'true' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'archived', {
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: true,
+        })
+      })
+    })
+
+    it('clears a boolean-typed property when the inline field is emptied', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'archived', value: 'true' },
+            valueType: 'boolean',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'archived', {
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+    })
+
+    it('refuses to coerce arbitrary text in a boolean chip to false', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'archived', value: 'true' },
+            valueType: 'boolean',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: 'maybe' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('Invalid boolean value — use true or false')
+      })
+      // The stored `value_bool: true` must survive: no write at all, rather
+      // than a silent overwrite with `false`.
+      expect(mockSetProperty).not.toHaveBeenCalled()
+    })
+
     it('does not toast when an unresolved-type popup closes without an edit', async () => {
       const setEditingProp = vi.fn()
       render(

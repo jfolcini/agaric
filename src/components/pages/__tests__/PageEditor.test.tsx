@@ -759,6 +759,121 @@ describe('PageEditor navigation to a block that mounts late, but legitimately (#
       el.remove()
     }
   })
+
+  // #4008 review note 1 — the stall proxy that replaced `MAX_REVEAL_ATTEMPTS`
+  // counted GROWTH of the mounted-row count only. On a page sitting AT the
+  // mount cap that is the wrong signal: `useBlockMountLimit` returns
+  // `visibleBlocks.slice(0, mountLimit)`, so the `expandAncestors` half of
+  // BlockTree's reveal effect — a real convergence step, it is what puts the
+  // target into the visible list at all — swaps WHICH rows are mounted while
+  // the count stays pinned at exactly `mountLimit`. Genuine progress was
+  // therefore counted as a stall, and a page that needs more than
+  // `STALL_LIMIT` such commits got the same false `error.blockNotFound` the
+  // fix was supposed to remove.
+  it('does not report blockNotFound while the mounted set is CHANGING at a fixed row count', async () => {
+    let rafCallbacks: FrameRequestCallback[] = []
+    let nextRafId = 1
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      rafCallbacks.push(cb)
+      return nextRafId++
+    })
+    vi.stubGlobal('cancelAnimationFrame', (_id: number) => {})
+
+    function flushOneFrame(): void {
+      const cbs = rafCallbacks
+      rafCallbacks = []
+      for (const cb of cbs) {
+        act(() => {
+          cb(performance.now())
+        })
+      }
+    }
+
+    // The page is AT the mount cap: `CAP` rows are mounted and the count
+    // cannot grow until `revealIndex` raises the ceiling.
+    const CAP = 8
+    for (let i = 0; i < CAP; i++) {
+      const row = document.createElement('div')
+      row.setAttribute('data-block-id', `CAPPED_${i}`)
+      document.body.append(row)
+    }
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    act(() => {
+      getPageStore('PAGE_1')?.setState({
+        blocks: [
+          makeBlock({ id: 'B1', content: 'Target block', parent_id: 'PAGE_1', position: 0 }),
+        ],
+      })
+    })
+    act(() => {
+      useNavigationStore.setState({ selectedBlockId: 'B1' })
+    })
+
+    // Every frame the capped window slides by one row: the composition of the
+    // mounted set changes (real work), the COUNT never does. Run this well
+    // past any stall budget.
+    for (let frame = 0; frame < 20; frame++) {
+      flushOneFrame()
+      document.querySelector('[data-block-id]')?.remove()
+      const row = document.createElement('div')
+      row.setAttribute('data-block-id', `SLID_${frame}`)
+      document.body.append(row)
+      expect(document.querySelectorAll('[data-block-id]').length).toBe(CAP)
+    }
+
+    // The reveal finally lands.
+    const target = document.createElement('div')
+    target.setAttribute('data-block-id', 'B1')
+    document.body.append(target)
+    flushOneFrame()
+    flushOneFrame()
+
+    expect(mockedToastError).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+    })
+
+    vi.unstubAllGlobals()
+    for (const el of document.querySelectorAll('[data-block-id]')) {
+      el.remove()
+    }
+  })
+
+  // The other half of the same contract: a genuinely stalled reveal (nothing
+  // mounts, nothing changes) must still give up and surface the notice, so the
+  // composition-aware proxy above cannot be satisfied by simply never giving
+  // up.
+  it('still reports blockNotFound when the mounted set is frozen', async () => {
+    const CAP = 4
+    for (let i = 0; i < CAP; i++) {
+      const row = document.createElement('div')
+      row.setAttribute('data-block-id', `FROZEN_${i}`)
+      document.body.append(row)
+    }
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    act(() => {
+      getPageStore('PAGE_1')?.setState({
+        blocks: [
+          makeBlock({ id: 'B1', content: 'Target block', parent_id: 'PAGE_1', position: 0 }),
+        ],
+      })
+    })
+    act(() => {
+      useNavigationStore.setState({ selectedBlockId: 'B1' })
+    })
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('error.blockNotFound'))
+    })
+
+    for (const el of document.querySelectorAll('[data-block-id]')) {
+      el.remove()
+    }
+  })
 })
 
 describe(' responsive layout', () => {

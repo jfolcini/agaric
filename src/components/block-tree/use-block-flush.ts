@@ -30,15 +30,12 @@
  *   flush logic.
  */
 
-import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { runUnmountFlush } from '@/lib/unmount-flush'
 import type { usePageBlockStoreApi } from '@/stores/page-blocks'
-
-type TFn = TFunction
 
 // #2914 — cross-callback handoff of an in-flight multi-block split.
 //
@@ -101,19 +98,15 @@ export interface UseBlockFlushParams {
   rootParentId: string | null
   /** Page store API (used to write the optimistic `todo_state` update). */
   pageStore: ReturnType<typeof usePageBlockStoreApi>
-  /**
-   * i18n translator.
-   *
-   * @deprecated Unused since #3278. The checkbox-fold error toast moved into
-   * the shared `commitCheckboxState` (inline-property-commit.ts), which — like
-   * its sibling `commitInlineProperties` — reaches for the `i18n` singleton
-   * rather than an injected translator, because the shared chain is called
-   * from non-React code paths too. Production text is unchanged: BlockTree's
-   * `t` comes from a default-namespace `useTranslation()` on the same `i18n`
-   * instance. Kept (optional) only so BlockTree's call site does not have to
-   * change in this refactor; drop both together in a follow-up.
-   */
-  t?: TFn
+  // #3278 dropped the `t` translator param: the checkbox-fold error toast
+  // moved into the shared `commitCheckboxState` (inline-property-commit.ts),
+  // which — like its sibling `commitInlineProperties` — reaches for the `i18n`
+  // singleton rather than an injected translator, because the shared chain is
+  // called from non-React code paths too. Production text is unchanged:
+  // BlockTree's `t` came from a default-namespace `useTranslation()` on the
+  // same `i18n` instance. #4008 note 9 — it was left behind as a deprecated,
+  // unused optional param pending a follow-up that had no issue number, so it
+  // is removed here instead, together with BlockTree's call-site argument.
 }
 
 /**

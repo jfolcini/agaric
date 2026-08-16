@@ -72,8 +72,14 @@ const htmlPastePluginKey = new PluginKey('htmlPaste')
  * async conversion) that DOM-parsed the identical clipboard string twice —
  * the blocking half (the gate) on the main thread before `handlePaste` could
  * even return.
+ *
+ * A `null` return IS `handlePaste`'s "not usable" answer — the handler returns
+ * false and the paste falls through to the plain-text path — so the usability
+ * assertions belong here and nowhere else (#4008 note 2).
+ *
+ * @internal Exported for testing.
  */
-function parseUsableHtmlBody(html: string): ParentNode | null {
+export function parseUsableHtmlBody(html: string): ParentNode | null {
   if (typeof DOMParser === 'undefined') return null
   let body: HTMLElement | null
   try {
@@ -85,26 +91,6 @@ function parseUsableHtmlBody(html: string): ParentNode | null {
   if (!body || body.querySelector('*') === null) return null
   if ((body.textContent ?? '').trim().length === 0) return null
   return body
-}
-
-/**
- * Decide whether a clipboard `text/html` payload is worth converting. Rejects
- * the absent / empty / wrapper-only cases so the handler can fall through to the
- * existing handlers + plain-text paste. Exported for testing.
- *
- * Standalone-callable boolean form of {@link parseUsableHtmlBody} — used by
- * callers (tests) that only need the yes/no answer, not the parsed body.
- * `handlePaste` itself calls `parseUsableHtmlBody` directly rather than this
- * wrapper, so it performs exactly one parse (see that function's doc).
- */
-export function isUsableHtml(html: string | undefined | null): html is string {
-  if (!html) return false
-  // Use the DOM to decide emptiness rather than regex tag-stripping: regex
-  // sanitization of HTML is bypassable (CodeQL js/incomplete-multi-character-
-  // sanitization), and the browser parser drops tags/comments correctly. Fall
-  // back to a presence *test* (not a replace) where DOMParser is unavailable.
-  if (typeof DOMParser === 'undefined') return /<[a-zA-Z][\s\S]*>/.test(html)
-  return parseUsableHtmlBody(html) !== null
 }
 
 /**

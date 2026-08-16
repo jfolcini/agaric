@@ -581,7 +581,6 @@ export function BlockTree({
     splitBlock,
     rootParentId,
     pageStore,
-    t,
   })
 
   // (`handleFlush` — read lazily by `useBlockNavigateToLink` via

@@ -626,10 +626,23 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // newly created tag never surfaced until a space switch cleared the
       // cache (the #732 subscriber above). `usage_count: 0` is correct —
       // the tag isn't yet applied to any block.
-      tagsListRef.current = [
-        ...tagsListRef.current,
-        { tag_id: block.id, name, usage_count: 0, updated_at: new Date().toISOString() },
-      ]
+      //
+      // #4008 review note 6 — append ONLY into an already-filled cache. An
+      // EMPTY `tagsListRef` is not "a space with no tags", it is the
+      // "not fetched for this space yet" state that makes `searchTags`
+      // re-fetch on every call (deliberately, so a zero-tag space is never
+      // latched). Appending there would flip it to "filled" with a single
+      // entry and permanently suppress that re-fetch, hiding every tag
+      // created elsewhere — another window, a sync — for the rest of the
+      // session. Skipping the append costs nothing: the very next
+      // `searchTags` re-fetches from the backend, which has already
+      // committed this tag (the create above is awaited).
+      if (tagsListRef.current.length > 0) {
+        tagsListRef.current = [
+          ...tagsListRef.current,
+          { tag_id: block.id, name, usage_count: 0, updated_at: new Date().toISOString() },
+        ]
+      }
       return block.id
     } catch (err) {
       logger.error('useBlockResolve', 'onCreateTag failed', { name }, err)
