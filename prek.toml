@@ -1060,7 +1060,14 @@ name = "Entry-point detection guard self-test"
 entry = "node scripts/check-main-module-detection.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-main-module-detection\\.mjs$"
+# #3788 — `file-mutation-survivors.mjs` is in this pattern because the self-test
+# READS AND EXECUTES it: two of the #3373 assertions run
+# `file-mutation-survivors.mjs --self-test` for real, once through a symlinked
+# `scripts/` dir and once from a copy in a path containing a space, and assert
+# "self-test: all assertions passed" in its stdout. Keyed on this guard's own
+# file alone, a commit touching only the filer — exactly the commit that can
+# break those two assertions — never ran the hook that checks them.
+files = "^scripts/(check-main-module-detection|file-mutation-survivors)\\.mjs$"
 stages = ["pre-commit"]
 
 # persist-hooks (#3352, split out of #3323): `pageBrowserFilters.ts` shipped
@@ -2521,6 +2528,22 @@ stages = ["pre-commit"]
 # notifications a week and the end of anyone reading them. The last group is
 # driven end to end against a stub `gh` on `$PATH`, so it fails if the writing
 # path stops doing what the pure renderers say it does.
+#
+# #3788 adds the outcome fixtures, and they exist because this script's failure
+# mode is SILENCE: for a year it kept only Stryker's `Survived` and dropped
+# `NoCoverage`, so four exported `date-utils` functions with no test anywhere in
+# `src` were reported nowhere while the weakly-tested lines beside them were —
+# and nothing ever went red, because a report that omits a finding is
+# indistinguishable from a report that had none. The fixtures drive a real
+# `mutation.json` (Survived + NoCoverage + Killed + Timeout, and two survivors
+# differing only by column) through the parser, the parent body, the child body
+# and `main()` itself, asserting both that the no-coverage entry is PRESENT and
+# that it is SEPARATED from the survivors — merging the two buckets would still
+# "surface" it while telling every reader the wrong story. They also pin the
+# empty case (a lane that ran and found nothing stays a no-op rather than
+# claiming an all-clear it never verified) and the one-off id reshape that added
+# the mutant's column, which without its migration would report the entire
+# standing frontend backlog as resolved AND as new in the same run.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
