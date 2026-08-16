@@ -14,10 +14,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockedInvoke = vi.mocked(invoke)
 
+import type { PropertyRow } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
 import {
   buildInitParams,
   buildPropertyParams,
+  carriedRenameDefinition,
   handleDeleteProperty,
   handleSaveProperty,
   NON_DELETABLE_PROPERTIES,
@@ -292,5 +294,127 @@ describe('handleDeleteProperty', () => {
 
     await expect(handleDeleteProperty('B1', 'key', onRefresh)).rejects.toThrow('delete failed')
     expect(onRefresh).not.toHaveBeenCalled()
+  })
+})
+
+// #4010 — a renamed key had no `property_definitions` row of its own, so the
+// next inline chip edit resolved it to the `'text'` fallback and re-flattened
+// the typed column the rename had just carried over. `carriedRenameDefinition`
+// decides what the rename may copy: a declaration the user already made, never
+// an invented one, and never one that contradicts the row being carried (that
+// would make the engine reject the rename's own write).
+describe('carriedRenameDefinition', () => {
+  const row = (over: Partial<PropertyRow> = {}): PropertyRow => ({
+    key: 'k',
+    value_text: null,
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+    value_bool: null,
+    ...over,
+  })
+
+  it('carries a declaration that agrees with the carried column', () => {
+    expect(
+      carriedRenameDefinition({ value_type: 'number', options: null }, row({ value_num: 5 })),
+    ).toEqual({ valueType: 'number', options: null })
+    expect(
+      carriedRenameDefinition(
+        { value_type: 'date', options: null },
+        row({ value_date: '2026-09-15' }),
+      ),
+    ).toEqual({ valueType: 'date', options: null })
+    expect(
+      carriedRenameDefinition({ value_type: 'boolean', options: null }, row({ value_bool: 0 })),
+    ).toEqual({ valueType: 'boolean', options: null })
+    expect(
+      carriedRenameDefinition({ value_type: 'ref', options: null }, row({ value_ref: 'B2' })),
+    ).toEqual({ valueType: 'ref', options: null })
+    expect(
+      carriedRenameDefinition({ value_type: 'text', options: null }, row({ value_text: 'hi' })),
+    ).toEqual({ valueType: 'text', options: null })
+  })
+
+  it('carries select options, which the definition is not creatable without', () => {
+    expect(
+      carriedRenameDefinition(
+        { value_type: 'select', options: '["a","b"]' },
+        row({ value_text: 'a' }),
+      ),
+    ).toEqual({ valueType: 'select', options: '["a","b"]' })
+    // `create_property_def_inner` rejects a select with no options array.
+    expect(
+      carriedRenameDefinition({ value_type: 'select', options: null }, row({ value_text: 'a' })),
+    ).toBeNull()
+  })
+
+  it('mirrors the engine in letting a text/select declaration hold a ref', () => {
+    expect(
+      carriedRenameDefinition({ value_type: 'text', options: null }, row({ value_ref: 'B2' })),
+    ).toEqual({ valueType: 'text', options: null })
+  })
+
+  it('invents nothing for a key that was never declared', () => {
+    expect(carriedRenameDefinition(null, row({ value_num: 5 }))).toBeNull()
+    expect(carriedRenameDefinition(undefined, row({ value_text: 'hi' }))).toBeNull()
+  })
+
+  it('skips a declaration that contradicts the carried column', () => {
+    // `number` over a `value_text` row: copying it makes the engine reject
+    // the rename's own write ("Property 'x' expects type 'number', got 'text'").
+    expect(
+      carriedRenameDefinition({ value_type: 'number', options: null }, row({ value_text: 'five' })),
+    ).toBeNull()
+    expect(
+      carriedRenameDefinition({ value_type: 'date', options: null }, row({ value_num: 5 })),
+    ).toBeNull()
+    expect(
+      carriedRenameDefinition({ value_type: 'ref', options: null }, row({ value_text: 'hi' })),
+    ).toBeNull()
+  })
+
+  it('skips a value_type create_property_def would reject outright', () => {
+    expect(
+      carriedRenameDefinition({ value_type: 'timestamp', options: null }, row({ value_text: 'x' })),
+    ).toBeNull()
+  })
+
+  // Adversarial review — step 4 is not the only declaration check the engine
+  // runs. `validate_property_value` step 5 also requires a `select`'s
+  // `value_text` to be IN its options array, and errors outright on options
+  // JSON it cannot parse. A declaration failing either of those rejects the
+  // rename's own write exactly like a type mismatch does, so it must not be
+  // copied. The drift is reachable: the Properties tab edits an options list
+  // in place, long after values were stored against it.
+  it('skips a select declaration whose options no longer contain the carried value', () => {
+    expect(
+      carriedRenameDefinition(
+        { value_type: 'select', options: '["a","b"]' },
+        row({ value_text: 'c' }),
+      ),
+    ).toBeNull()
+  })
+
+  it('skips a select declaration with unusable options JSON', () => {
+    // Malformed: engine step 5 fails with "has malformed options JSON".
+    expect(
+      carriedRenameDefinition({ value_type: 'select', options: '{oops' }, row({ value_text: 'a' })),
+    ).toBeNull()
+    // Not a JSON array of strings: `serde_json::from_str::<Vec<String>>` fails.
+    expect(
+      carriedRenameDefinition({ value_type: 'select', options: '[1,2]' }, row({ value_text: 'a' })),
+    ).toBeNull()
+    // Empty array: `create_property_def_inner` rejects it up front.
+    expect(
+      carriedRenameDefinition({ value_type: 'select', options: '[]' }, row({ value_text: 'a' })),
+    ).toBeNull()
+  })
+
+  it('still carries a select whose ref-valued row escapes the options check', () => {
+    // Engine step 5 only constrains `value_text`; a select-declared key
+    // holding a ref passes it, so the copy stays safe.
+    expect(
+      carriedRenameDefinition({ value_type: 'select', options: '["a"]' }, row({ value_ref: 'B2' })),
+    ).toEqual({ valueType: 'select', options: '["a"]' })
   })
 })

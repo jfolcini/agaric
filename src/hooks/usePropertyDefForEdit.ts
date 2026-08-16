@@ -36,10 +36,13 @@ export interface UsePropertyDefForEditReturn {
    * through `buildPropertyParams` instead of hard-coding `value_text` and
    * nulling every other typed column.
    *
-   * `null` is a hard "do not commit" signal for consumers: writing against a
-   * guessed type is a data-loss bug (a `date` string pushed through
-   * `Number(...)` lands as garbage in `value_num`), so `BlockPropertyEditor`
-   * aborts the commit and toasts instead of assuming `'text'`.
+   * `null` is a hard "do not commit against THIS" signal for consumers:
+   * writing against a guessed type is a data-loss bug (a `date` string pushed
+   * through `Number(...)` lands as garbage in `value_num`), so no consumer may
+   * substitute `'text'` for it. #4009 — `BlockPropertyEditor` handles the
+   * signal by resolving the definition for its own key at commit time rather
+   * than by discarding what the user typed; the ban is on guessing, not on
+   * committing.
    *
    * NOTE: unlike `BlockPropertyDrawer`, this hook cannot fall back to a
    * synchronous default. The drawer holds a `definitions` ARRAY that is

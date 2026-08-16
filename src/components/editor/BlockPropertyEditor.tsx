@@ -23,7 +23,12 @@ import { applySafePosition } from '@/lib/floating-position'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { buildPropertyParams } from '@/lib/property-save-utils'
+import {
+  buildPropertyParams,
+  carriedRenameDefinition,
+  COLUMN_BACKED_PROPERTY_KEYS,
+  NON_DELETABLE_PROPERTIES,
+} from '@/lib/property-save-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 
@@ -47,9 +52,12 @@ export interface BlockPropertyEditorProps {
    * user-defined `number`/`date` property keeps its typed column instead of
    * being flattened into `value_text` with every other column nulled.
    *
-   * `null` blocks the commit outright (see the text input's `onBlur`): the
-   * lookup is per-key and asynchronous, so writing against an assumed type
-   * would mean writing against a type resolved for a DIFFERENT key.
+   * `null` never means "commit against whatever type is lying around": the
+   * lookup is per-key and asynchronous, so an assumed type would be a type
+   * resolved for a DIFFERENT key. #4009 — instead of discarding the edit,
+   * the text input's `onBlur` resolves the definition for its OWN key before
+   * committing, so a definition that lands late costs a moment rather than
+   * the text the user just typed. Only a lookup that actually FAILS aborts.
    */
   valueType: string | null
 }
@@ -490,22 +498,73 @@ export function BlockPropertyEditor({
           onBlur={async (e) => {
             const newValue = e.target.value.trim()
             if (newValue !== editingProp.value) {
-              if (valueType === null) {
-                // #3275 (review finding 1) — the property definition for this
-                // key has not resolved yet. `usePropertyDefForEdit` re-fetches
-                // per key, so the only type available here would be the one
-                // resolved for a DIFFERENT key: committing against it routes
-                // the value into the wrong typed column (a date string through
-                // `Number(...)` → garbage in `value_num`) and nulls the real
-                // one. Abort and tell the user; the stored value is untouched,
-                // and a retry a moment later finds the type resolved.
-                logger.warn('BlockPropertyEditor', 'commit skipped: value type unresolved', {
-                  blockId,
-                  key: editingProp.key,
-                })
-                notify.error(t('property.saveFailed'))
+              // #4010 (clear half) — an emptied chip means "remove this
+              // value", and for a user-defined key that is only expressible
+              // as a delete. `buildPropertyParams` would send `value_text:
+              // ''` (rejected by `set_property.value_text.empty`) or an
+              // all-null payload (rejected by the exactly-one-value rule for
+              // non-reserved keys), so clearing could never succeed — the
+              // user got `property.saveFailed` whatever they typed. No type is
+              // needed to clear, so this runs before the definition is
+              // resolved.
+              //
+              // `NON_DELETABLE_PROPERTIES` (= `is_builtin_property_key`) keeps
+              // its two halves on the pre-existing `set_property` path below.
+              // For the four RESERVED keys the all-null payload IS the clear
+              // (`validate_set_property` accepts count==0 only for them),
+              // though they are filtered out of the chip row upstream by
+              // `useExtraBlockProperties` and do not reach here in practice.
+              // For the LIFECYCLE keys (`created_at` / `completed_at` /
+              // `repeat-*`) neither route works — `delete_property` refuses
+              // them by name and the all-null write is rejected as
+              // non-reserved — so they keep failing exactly as before rather
+              // than gaining a new, equally-rejected code path.
+              if (newValue === '' && !NON_DELETABLE_PROPERTIES.has(editingProp.key)) {
+                try {
+                  unwrap(await commands.deleteProperty(blockId, editingProp.key))
+                } catch (err) {
+                  reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+                    blockId,
+                    key: editingProp.key,
+                  })
+                }
                 setEditingProp(null)
                 return
+              }
+              // #4009 — the definition for THIS key may not have resolved
+              // yet (`valueType === null`). The chip autofocuses and is meant
+              // to be typed into straight away, so the user routinely
+              // finishes before the per-key lookup lands. #3275 refused to
+              // commit in that window for a good reason — the only type in
+              // hand belonged to a DIFFERENT key, and writing against it
+              // routes a date string through `Number(...)` into `value_num`
+              // — but it also threw the freshly typed text away. Resolving
+              // the definition for `editingProp.key` right here removes the
+              // wrong-key hazard entirely, so a late definition costs a
+              // moment instead of the user's input.
+              let resolvedValueType = valueType
+              if (resolvedValueType === null) {
+                try {
+                  const def = unwrap(await commands.getPropertyDef(editingProp.key))
+                  // A MISS is a real answer ('text'), matching
+                  // `usePropertyDefForEdit` and `BlockPropertyDrawer.getType`.
+                  resolvedValueType = def?.value_type ?? 'text'
+                } catch (err) {
+                  // The lookup itself failed, so there is still no type for
+                  // this key — and #3275's rule stands: never write against a
+                  // guess. This is now the ONLY path that discards the edit,
+                  // and it takes a real IPC failure to reach.
+                  logger.warn('BlockPropertyEditor', 'commit skipped: value type unresolved', {
+                    blockId,
+                    key: editingProp.key,
+                  })
+                  reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+                    blockId,
+                    key: editingProp.key,
+                  })
+                  setEditingProp(null)
+                  return
+                }
               }
               // #4008 review note 4 — the inline chip renders a PLAIN TEXT
               // input for every non-select/non-ref type, so a `boolean`
@@ -517,7 +576,7 @@ export function BlockPropertyEditor({
               // exactly what the number branch already does for unparseable
               // input, and the reason `date` (which stores the typed string
               // verbatim, destroying nothing) is deliberately left alone.
-              if (valueType === 'boolean' && !['', 'true', 'false'].includes(newValue)) {
+              if (resolvedValueType === 'boolean' && !['', 'true', 'false'].includes(newValue)) {
                 notify.error(t('property.invalidBoolean'))
                 setEditingProp(null)
                 return
@@ -530,7 +589,12 @@ export function BlockPropertyEditor({
               // column intact when edited from the inline chip, and
               // surfaces the same `property.invalidNumber` toast the
               // drawer shows for an unparseable number.
-              const result = buildPropertyParams(blockId, editingProp.key, newValue, valueType)
+              const result = buildPropertyParams(
+                blockId,
+                editingProp.key,
+                newValue,
+                resolvedValueType,
+              )
               if (!result.ok) {
                 notify.error(t('property.invalidNumber'))
               } else {
@@ -604,6 +668,48 @@ export function BlockPropertyEditor({
                   `rename aborted: no property row for key "${editingKey.oldKey}" on block ${blockId}`,
                 )
               }
+              // #4010 — carry the property DEFINITION to the new key as well.
+              // `set_property` never inserts a `property_definitions` row, so
+              // without this the renamed key is undeclared: the next chip
+              // edit's `getPropertyDef` misses, `valueType` falls back to
+              // `'text'`, and the `value_num`/`value_date` the block below
+              // carefully carries over is re-flattened into `value_text` —
+              // the exact bug #3275 fixed, reappearing one edit later.
+              //
+              // Deliberately BEST-EFFORT and ahead of the value write:
+              // ahead, because the engine validates the payload shape against
+              // the declaration; best-effort, because the value carry is the
+              // part that must not be lost, and it worked before definitions
+              // were carried at all. `create_property_def` is INSERT OR
+              // IGNORE, so renaming onto an already-declared key is a no-op.
+              try {
+                const carried = COLUMN_BACKED_PROPERTY_KEYS.has(newKey)
+                  ? // A column-backed target (`due_date` & co., `space`) is not a
+                    // `block_properties` row at all, and `create_property_def`
+                    // has no reserved-key guard of its own: declaring one would
+                    // persist a bogus type for a key whose shape is fixed by the
+                    // `blocks` column (and mis-render it in the drawer /
+                    // Properties tab). The value write below rejects such a
+                    // rename anyway — a FAILED rename must not leave a
+                    // declaration behind.
+                    null
+                  : carriedRenameDefinition(
+                      unwrap(await commands.getPropertyDef(editingKey.oldKey)),
+                      oldRow,
+                    )
+                if (carried) {
+                  unwrap(
+                    await commands.createPropertyDef(newKey, carried.valueType, carried.options),
+                  )
+                }
+              } catch (err) {
+                logger.warn(
+                  'BlockPropertyEditor',
+                  'could not carry property definition to renamed key',
+                  { blockId, oldKey: editingKey.oldKey, newKey },
+                  err,
+                )
+              }
               unwrap(
                 await commands.setProperty(blockId, newKey, {
                   // Non-optional access on purpose: `oldRow` is guaranteed
@@ -616,15 +722,38 @@ export function BlockPropertyEditor({
                   value_bool: oldRow.value_bool != null ? oldRow.value_bool !== 0 : null,
                 }),
               )
-              unwrap(
-                await commands.setProperty(blockId, editingKey.oldKey, {
-                  value_text: null,
-                  value_num: null,
-                  value_date: null,
-                  value_ref: null,
-                  value_bool: null,
-                }),
-              )
+              // Remove the OLD key, now that the new one holds the value.
+              //
+              // This used to be an all-null `set_property`, which
+              // `validate_set_property` accepts for the four RESERVED keys
+              // only ("Reserved keys allow all-null values (= clear the
+              // column)"); for any ordinary user key it is rejected with
+              // "SetProperty must have exactly 1 non-null value field, found
+              // 0". So `unwrap` threw and every rename of a user-defined
+              // property — the ordinary case — ended in `property.renameFailed`
+              // with the old chip still on the block, even though the new key
+              // had already been written. Same defect as the emptied-chip clear
+              // above, one branch over, and invisible here for as long as the
+              // test fixture answered `{status:'ok'}` to every payload.
+              //
+              // The split matches that clear exactly: `delete_property` is the
+              // removal a user key supports, and the system-managed keys keep
+              // the all-null payload (right for the reserved four, and no worse
+              // than before for the lifecycle keys, which neither route
+              // accepts).
+              if (NON_DELETABLE_PROPERTIES.has(editingKey.oldKey)) {
+                unwrap(
+                  await commands.setProperty(blockId, editingKey.oldKey, {
+                    value_text: null,
+                    value_num: null,
+                    value_date: null,
+                    value_ref: null,
+                    value_bool: null,
+                  }),
+                )
+              } else {
+                unwrap(await commands.deleteProperty(blockId, editingKey.oldKey))
+              }
             } catch (err) {
               reportIpcError('BlockPropertyEditor', 'property.renameFailed', err, t, {
                 blockId,

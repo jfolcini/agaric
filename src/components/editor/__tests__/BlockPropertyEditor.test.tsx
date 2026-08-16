@@ -3,13 +3,69 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+/**
+ * The four keys `validate_set_property` accepts an all-null ("clear") payload
+ * for — `RESERVED_PROPERTY_KEYS` in `src-tauri/agaric-store/src/op.rs`.
+ */
+const RESERVED_KEYS = new Set(['todo_state', 'priority', 'due_date', 'scheduled_date'])
+
+/**
+ * Payload-shape rules of `validate_set_property`
+ * (`src-tauri/agaric-store/src/op.rs:531`), returning the backend's error
+ * string or `null` when the payload is accepted.
+ *
+ * Adversarial review — the fixture below USED to resolve `{status:'ok'}` for
+ * every call, which made this suite structurally unable to see a rejected
+ * write. It hid a live bug: the rename path's old-key clear sends an all-null
+ * `set_property`, which the engine accepts only for the four reserved keys, so
+ * every rename of an ordinary user key failed in production while every test
+ * here passed. A fixture that cannot say "no" cannot falsify anything.
+ */
+function validateSetPropertyPayload(
+  key: string,
+  values: Record<string, unknown> | undefined,
+): string | null {
+  const fields = ['value_text', 'value_num', 'value_date', 'value_ref', 'value_bool'] as const
+  const present = fields.filter((f) => values?.[f] != null)
+  if (present.length === 0) {
+    // count == 0 is legal for reserved keys ONLY (op.rs — "Reserved keys allow
+    // all-null values (= clear the column)").
+    return RESERVED_KEYS.has(key)
+      ? null
+      : 'SetProperty must have exactly 1 non-null value field, found 0'
+  }
+  if (present.length > 1) {
+    return `SetProperty must have exactly 1 non-null value field, found ${present.length}`
+  }
+  // Empty / whitespace-only string fields are rejected by name.
+  for (const f of ['value_text', 'value_date', 'value_ref'] as const) {
+    const v = values?.[f]
+    if (typeof v === 'string' && v.trim() === '') return `set_property.${f}.empty`
+  }
+  return null
+}
+
+/** Engine-faithful `set_property` fixture: rejects what `op.rs` rejects. */
+function defaultSetProperty(...args: unknown[]): Promise<unknown> {
+  const [, key, values] = args as [string, string, Record<string, unknown> | undefined]
+  const error = validateSetPropertyPayload(key, values)
+  return Promise.resolve(error ? { status: 'error', error } : { status: 'ok', data: {} })
+}
+
 // #2927 phase 4 — `BlockPropertyEditor` now calls `commands.setProperty`
 // from `@/lib/bindings` directly instead of the `@/lib/tauri` wrapper.
-const mockSetProperty = vi.fn().mockResolvedValue({ status: 'ok', data: {} })
+const mockSetProperty = vi.fn(defaultSetProperty)
 // #3275 — the key-rename path now reads the OLD key's raw typed row via
 // `getProperties` (instead of re-writing the flattened display string) so it
 // can carry `value_num`/`value_date`/etc. over to the new key unmolested.
 const mockGetProperties = vi.fn().mockResolvedValue({ status: 'ok', data: [] })
+// #4009 — the value commit now resolves the definition for THIS key itself
+// when the prop-level `valueType` has not landed yet, instead of discarding
+// what the user typed. #4010 — the key rename carries the old key's
+// definition over, and an emptied chip clears via `deleteProperty`.
+const mockGetPropertyDef = vi.fn().mockResolvedValue({ status: 'ok', data: null })
+const mockCreatePropertyDef = vi.fn().mockResolvedValue({ status: 'ok', data: null })
+const mockDeleteProperty = vi.fn().mockResolvedValue({ status: 'ok', data: {} })
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -18,6 +74,9 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       setProperty: (...args: unknown[]) => mockSetProperty(...args),
       getProperties: (...args: unknown[]) => mockGetProperties(...args),
+      getPropertyDef: (...args: unknown[]) => mockGetPropertyDef(...args),
+      createPropertyDef: (...args: unknown[]) => mockCreatePropertyDef(...args),
+      deleteProperty: (...args: unknown[]) => mockDeleteProperty(...args),
     },
   }
 })
@@ -82,7 +141,14 @@ function makeProps(overrides: Partial<BlockPropertyEditorProps> = {}): BlockProp
 describe('BlockPropertyEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // `clearAllMocks` clears CALLS, not implementations, so every mock whose
+    // implementation a test replaces has to be re-seeded here or it leaks into
+    // the next test (see the `mockReturnValueOnce` note in the review).
+    mockSetProperty.mockImplementation(defaultSetProperty)
     mockGetProperties.mockResolvedValue({ status: 'ok', data: [] })
+    mockGetPropertyDef.mockResolvedValue({ status: 'ok', data: null })
+    mockCreatePropertyDef.mockResolvedValue({ status: 'ok', data: null })
+    mockDeleteProperty.mockResolvedValue({ status: 'ok', data: {} })
   })
 
   it('renders nothing when editingProp and editingKey are null', () => {
@@ -318,14 +384,14 @@ describe('BlockPropertyEditor', () => {
           value_bool: null,
         })
       })
+      // The old key is then removed. This assertion used to pin an all-null
+      // `set_property`, a payload `validate_set_property` rejects for any
+      // non-reserved key — the test pinned a call that could only ever fail in
+      // production. The invariant it means to hold ("the old key does not
+      // survive the rename") is unchanged; the mechanism is the one the
+      // backend actually accepts.
       await waitFor(() => {
-        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'estimate', {
-          value_text: null,
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-          value_bool: null,
-        })
+        expect(mockDeleteProperty).toHaveBeenCalledWith('BLOCK_1', 'estimate')
       })
       expect(setEditingKey).toHaveBeenCalledWith(null)
     })
@@ -334,8 +400,14 @@ describe('BlockPropertyEditor', () => {
     // definition for THIS key has resolved. Committing in that window used to
     // run against whatever type the PREVIOUS key resolved to (e.g.
     // `Number('2026-09-15')` → NaN/garbage in `value_num`), so the commit path
-    // must refuse to write and tell the user instead of guessing.
-    it('refuses to write while the property definition is still resolving', async () => {
+    // must never write against a guessed type.
+    //
+    // #4009 narrowed WHEN that refusal fires: the commit now resolves the
+    // definition for THIS key before deciding (see the `#4009` describe), so
+    // the only remaining "no type in hand" case is a lookup that actually
+    // failed. That case still refuses, for exactly #3275's reason.
+    it('refuses to write when the targeted definition lookup fails', async () => {
+      mockGetPropertyDef.mockRejectedValueOnce(new Error('ipc down'))
       const setEditingProp = vi.fn()
       render(
         <BlockPropertyEditor
@@ -421,7 +493,12 @@ describe('BlockPropertyEditor', () => {
       })
     })
 
-    it('clears a boolean-typed property when the inline field is emptied', async () => {
+    // #4010 (clear half) — an emptied chip on a USER-DEFINED key used to go
+    // out as an all-null `set_property`, which `op.rs` rejects for a
+    // non-reserved key (`SetProperty must have exactly 1 non-null value
+    // field, found 0`), so the clear could never actually succeed. Clearing a
+    // user-defined key is expressed as `delete_property` instead.
+    it('clears a boolean-typed property by deleting it when the inline field is emptied', async () => {
       const setEditingProp = vi.fn()
       render(
         <BlockPropertyEditor
@@ -437,14 +514,10 @@ describe('BlockPropertyEditor', () => {
       fireEvent.blur(input)
 
       await waitFor(() => {
-        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'archived', {
-          value_text: null,
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-          value_bool: null,
-        })
+        expect(mockDeleteProperty).toHaveBeenCalledWith('BLOCK_1', 'archived')
       })
+      expect(mockSetProperty).not.toHaveBeenCalled()
+      expect(mockToastError).not.toHaveBeenCalled()
     })
 
     it('refuses to coerce arbitrary text in a boolean chip to false', async () => {
@@ -600,6 +673,630 @@ describe('BlockPropertyEditor', () => {
         })
       })
       expect(setEditingKey).toHaveBeenCalledWith(null)
+    })
+  })
+
+  // #4009 — the chip editor autofocuses and is designed to be typed into
+  // immediately, so the user routinely finishes typing BEFORE the per-key
+  // `getPropertyDef` lookup lands. #3275's abort was right not to write
+  // against a type resolved for a different key, but it also threw the typed
+  // text away. The commit now resolves the definition for THIS key itself,
+  // so a late-arriving definition costs a moment, not the user's input.
+  //
+  // These tests are written around the ORDERING: the definition resolves only
+  // after the blur. A test that awaited the lookup before typing would pass
+  // against the broken code, because the race would already be over.
+  describe('#4009 — late-resolving property definition', () => {
+    it('commits the typed text once a late-resolving definition arrives', async () => {
+      let resolveDef: (value: unknown) => void = () => {}
+      mockGetPropertyDef.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveDef = resolve
+        }),
+      )
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'estimate', value: '5' },
+            // The lookup for `estimate` is still in flight — exactly the state
+            // `usePropertyDefForEdit` is in for the first ~frame of the popup.
+            valueType: null,
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '8' } })
+      fireEvent.blur(input)
+
+      // Still pending: nothing written yet, and — the point of the issue —
+      // nothing thrown away either.
+      expect(mockSetProperty).not.toHaveBeenCalled()
+
+      // The definition lands only NOW, after the user has typed and blurred.
+      await act(async () => {
+        resolveDef({
+          status: 'ok',
+          data: { key: 'estimate', value_type: 'number', options: null, created_at: 'T' },
+        })
+      })
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'estimate', {
+          value_text: null,
+          value_num: 8,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+      expect(mockToastError).not.toHaveBeenCalled()
+      expect(setEditingProp).toHaveBeenCalledWith(null)
+    })
+
+    it('falls back to text when the late lookup MISSES, rather than discarding', async () => {
+      let resolveDef: (value: unknown) => void = () => {}
+      mockGetPropertyDef.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveDef = resolve
+        }),
+      )
+      render(
+        <BlockPropertyEditor
+          {...makeProps({ editingProp: { key: 'effort', value: '2h' }, valueType: null })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '4h' } })
+      fireEvent.blur(input)
+      await act(async () => {
+        resolveDef({ status: 'ok', data: null })
+      })
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'effort', {
+          value_text: '4h',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+      expect(mockToastError).not.toHaveBeenCalled()
+    })
+
+    // The other arm: a definition that resolved NORMALLY must still apply its
+    // own type, straight from the prop and without a second lookup. Without
+    // this, "tolerate a late definition" could be satisfied by ignoring the
+    // resolved one and flattening everything into `value_text`.
+    it('uses an already-resolved definition as-is, with no extra lookup', async () => {
+      render(
+        <BlockPropertyEditor
+          {...makeProps({ editingProp: { key: 'estimate', value: '5' }, valueType: 'number' })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '8' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'estimate', {
+          value_text: null,
+          value_num: 8,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+      expect(mockGetPropertyDef).not.toHaveBeenCalled()
+    })
+
+    // A late-resolving `boolean` definition must still get the #4008 note-4
+    // refusal, not a coerced `false`: deferring the type decision must not
+    // skip the validation that hangs off it.
+    it('still refuses arbitrary text on a boolean definition that resolves late', async () => {
+      let resolveDef: (value: unknown) => void = () => {}
+      mockGetPropertyDef.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveDef = resolve
+        }),
+      )
+      render(
+        <BlockPropertyEditor
+          {...makeProps({ editingProp: { key: 'archived', value: 'true' }, valueType: null })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: 'maybe' } })
+      fireEvent.blur(input)
+      await act(async () => {
+        resolveDef({
+          status: 'ok',
+          data: { key: 'archived', value_type: 'boolean', options: null, created_at: 'T' },
+        })
+      })
+
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('Invalid boolean value — use true or false')
+      })
+      expect(mockSetProperty).not.toHaveBeenCalled()
+    })
+  })
+
+  // #4010 — `set_property` never inserts a `property_definitions` row, so a
+  // renamed key had no definition of its own: `getPropertyDef(newKey)` missed,
+  // `valueType` fell back to `'text'`, and the NEXT inline edit re-flattened
+  // the typed column that the rename had just carried over. The rename now
+  // carries the DEFINITION alongside the value.
+  //
+  // The falsification is about the SECOND edit, and the definitions registry
+  // below is stateful for exactly that reason: the second edit reads back
+  // whatever the rename did (or did not) write.
+  describe('#4010 — rename carries the property definition', () => {
+    /** Stand-in `property_definitions` table, mutated by `createPropertyDef`. */
+    function installDefinitionRegistry(
+      seed: Array<{ key: string; value_type: string; options: string | null }>,
+    ): Map<
+      string,
+      { key: string; value_type: string; options: string | null; created_at: string }
+    > {
+      const defs = new Map(seed.map((d) => [d.key, { ...d, created_at: 'T' }]))
+      mockGetPropertyDef.mockImplementation((key: string) =>
+        Promise.resolve({ status: 'ok', data: defs.get(key) ?? null }),
+      )
+      mockCreatePropertyDef.mockImplementation(
+        (key: string, valueType: string, options: string | null) => {
+          if (!defs.has(key))
+            defs.set(key, { key, value_type: valueType, options, created_at: 'T' })
+          return Promise.resolve({ status: 'ok', data: defs.get(key) })
+        },
+      )
+      return defs
+    }
+
+    it('keeps value_num on the SECOND edit of a renamed number property', async () => {
+      installDefinitionRegistry([{ key: 'estimate', value_type: 'number', options: null }])
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'estimate',
+            value_text: null,
+            value_num: 5,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
+
+      // 1. Rename `estimate` → `effortPoints`.
+      const { rerender } = render(
+        <BlockPropertyEditor {...makeProps({ editingKey: { oldKey: 'estimate', value: '5' } })} />,
+      )
+      const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'effortPoints' } })
+      await act(async () => {
+        fireEvent.blur(keyInput)
+      })
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith(
+          'BLOCK_1',
+          'effortPoints',
+          expect.objectContaining({ value_num: 5 }),
+        )
+      })
+      mockSetProperty.mockClear()
+
+      // 2. Open the renamed chip and edit it again. `valueType` is null
+      //    because the popup's own per-key lookup has not landed yet — the
+      //    commit resolves `effortPoints` against the registry, which is
+      //    where the missing definition row bites.
+      rerender(
+        <BlockPropertyEditor
+          {...makeProps({ editingProp: { key: 'effortPoints', value: '5' }, valueType: null })}
+        />,
+      )
+      const valueInput = screen.getByRole('textbox')
+      fireEvent.change(valueInput, { target: { value: '8' } })
+      await act(async () => {
+        fireEvent.blur(valueInput)
+      })
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'effortPoints', {
+          value_text: null,
+          value_num: 8,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+    })
+
+    it('creates the new key definition BEFORE writing the carried value', async () => {
+      installDefinitionRegistry([{ key: 'deadline', value_type: 'date', options: null }])
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'deadline',
+            value_text: null,
+            value_num: null,
+            value_date: '2026-09-15',
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
+      const order: string[] = []
+      mockCreatePropertyDef.mockImplementation(() => {
+        order.push('createPropertyDef')
+        return Promise.resolve({ status: 'ok', data: null })
+      })
+      mockSetProperty.mockImplementation((...args: unknown[]) => {
+        order.push('setProperty')
+        // Delegate, so ordering instrumentation does not quietly re-open the
+        // permissive fixture this suite used to rely on.
+        return defaultSetProperty(...args)
+      })
+
+      render(
+        <BlockPropertyEditor
+          {...makeProps({ editingKey: { oldKey: 'deadline', value: '2026-09-15' } })}
+        />,
+      )
+      const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'dueBy' } })
+      await act(async () => {
+        fireEvent.blur(keyInput)
+      })
+
+      await waitFor(() => {
+        expect(mockCreatePropertyDef).toHaveBeenCalledWith('dueBy', 'date', null)
+      })
+      // The engine validates the payload shape against the definition row, so
+      // the definition has to exist before the typed write lands.
+      expect(order[0]).toBe('createPropertyDef')
+    })
+
+    // The other arm: a property with NO definition of its own is genuinely
+    // untyped, and must stay that way. The rename may carry a definition, not
+    // invent one — otherwise "keeps its type" would be satisfied by declaring
+    // a type for every key that ever gets renamed.
+    it('invents no definition for an untyped property, which still flattens to value_text', async () => {
+      installDefinitionRegistry([])
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'note',
+            value_text: 'hi',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
+
+      const { rerender } = render(
+        <BlockPropertyEditor {...makeProps({ editingKey: { oldKey: 'note', value: 'hi' } })} />,
+      )
+      const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'remark' } })
+      await act(async () => {
+        fireEvent.blur(keyInput)
+      })
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith(
+          'BLOCK_1',
+          'remark',
+          expect.objectContaining({ value_text: 'hi' }),
+        )
+      })
+      expect(mockCreatePropertyDef).not.toHaveBeenCalled()
+      mockSetProperty.mockClear()
+
+      rerender(
+        <BlockPropertyEditor
+          {...makeProps({ editingProp: { key: 'remark', value: 'hi' }, valueType: null })}
+        />,
+      )
+      const valueInput = screen.getByRole('textbox')
+      fireEvent.change(valueInput, { target: { value: 'bye' } })
+      await act(async () => {
+        fireEvent.blur(valueInput)
+      })
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'remark', {
+          value_text: 'bye',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+    })
+
+    // Drift guard: if the old key's declared type disagrees with the column
+    // actually being carried, copying the declaration would make the engine
+    // reject the very write the rename is trying to perform. Skip the copy
+    // and let the rename succeed exactly as it does today.
+    it('skips the definition copy when the declared type contradicts the carried column', async () => {
+      installDefinitionRegistry([{ key: 'estimate', value_type: 'number', options: null }])
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'estimate',
+            value_text: 'about five',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
+      render(
+        <BlockPropertyEditor
+          {...makeProps({ editingKey: { oldKey: 'estimate', value: 'about five' } })}
+        />,
+      )
+      const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'effortPoints' } })
+      await act(async () => {
+        fireEvent.blur(keyInput)
+      })
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith(
+          'BLOCK_1',
+          'effortPoints',
+          expect.objectContaining({ value_text: 'about five' }),
+        )
+      })
+      expect(mockCreatePropertyDef).not.toHaveBeenCalled()
+    })
+
+    // Adversarial review — the END-TO-END rename, against a `set_property`
+    // fixture that enforces `validate_set_property`'s payload rules.
+    //
+    // The rename writes the new key and then CLEARS the old one, and that
+    // clear went out as an all-null `set_property` — a payload the engine
+    // accepts only for the four reserved keys. For an ordinary user key it is
+    // rejected ("found 0"), `unwrap` throws, and the whole rename ends in
+    // `property.renameFailed` with the old chip still on the block. Every test
+    // here passed anyway, because the fixture said yes to everything.
+    it('renames a user-defined key end to end, with no failure toast', async () => {
+      installDefinitionRegistry([{ key: 'estimate', value_type: 'number', options: null }])
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'estimate',
+            value_text: null,
+            value_num: 5,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
+
+      render(
+        <BlockPropertyEditor {...makeProps({ editingKey: { oldKey: 'estimate', value: '5' } })} />,
+      )
+      const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'effortPoints' } })
+      await act(async () => {
+        fireEvent.blur(keyInput)
+      })
+
+      // The value lands on the new key...
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith(
+          'BLOCK_1',
+          'effortPoints',
+          expect.objectContaining({ value_num: 5 }),
+        )
+      })
+      // ...the old key is removed the only way a user key CAN be removed...
+      expect(mockDeleteProperty).toHaveBeenCalledWith('BLOCK_1', 'estimate')
+      // ...never through the all-null payload the engine refuses for it...
+      expect(mockSetProperty).not.toHaveBeenCalledWith('BLOCK_1', 'estimate', expect.anything())
+      // ...and the user sees no failure.
+      expect(mockToastError).not.toHaveBeenCalled()
+    })
+
+    // The other arm: the fixture must still be able to FAIL a rename, or the
+    // test above would pass against a mock that simply says yes again.
+    it('surfaces the failure toast when the carried write is genuinely rejected', async () => {
+      installDefinitionRegistry([])
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            // Whitespace-only `value_text` — rejected by name
+            // (`set_property.value_text.empty`), exactly as the backend does.
+            key: 'note',
+            value_text: '   ',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
+
+      render(<BlockPropertyEditor {...makeProps({ editingKey: { oldKey: 'note', value: ' ' } })} />)
+      const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'remark' } })
+      await act(async () => {
+        fireEvent.blur(keyInput)
+      })
+
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('Failed to rename property')
+      })
+      // The carried write failed, so the old key must SURVIVE — a rename that
+      // could not write the new key must not delete the original.
+      expect(mockDeleteProperty).not.toHaveBeenCalled()
+    })
+
+    // Adversarial review — renaming ONTO a column-backed key (`due_date` &
+    // co., `space`) cannot succeed: those live in a `blocks` column and the
+    // engine rejects the carried payload's shape. `create_property_def` has no
+    // reserved-key guard of its own, so without an explicit skip the failed
+    // rename would still persist a bogus global declaration ("due_date is a
+    // number"), which the drawer and Properties tab then render against.
+    it('declares nothing when the rename target is a column-backed key', async () => {
+      installDefinitionRegistry([{ key: 'estimate', value_type: 'number', options: null }])
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'estimate',
+            value_text: null,
+            value_num: 5,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
+      render(
+        <BlockPropertyEditor {...makeProps({ editingKey: { oldKey: 'estimate', value: '5' } })} />,
+      )
+      const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'due_date' } })
+      await act(async () => {
+        fireEvent.blur(keyInput)
+      })
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith(
+          'BLOCK_1',
+          'due_date',
+          expect.objectContaining({ value_num: 5 }),
+        )
+      })
+      expect(mockCreatePropertyDef).not.toHaveBeenCalled()
+    })
+
+    // A failed definition copy must not fail the rename: the value carry is
+    // the part that matters, and it worked before definitions were carried
+    // at all.
+    it('completes the rename even when the definition copy fails', async () => {
+      installDefinitionRegistry([{ key: 'estimate', value_type: 'number', options: null }])
+      mockCreatePropertyDef.mockRejectedValue(new Error('def write failed'))
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'estimate',
+            value_text: null,
+            value_num: 5,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
+      render(
+        <BlockPropertyEditor {...makeProps({ editingKey: { oldKey: 'estimate', value: '5' } })} />,
+      )
+      const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'effortPoints' } })
+      await act(async () => {
+        fireEvent.blur(keyInput)
+      })
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith(
+          'BLOCK_1',
+          'effortPoints',
+          expect.objectContaining({ value_num: 5 }),
+        )
+      })
+      expect(mockToastError).not.toHaveBeenCalled()
+    })
+  })
+
+  // #4010 (clear half) — `buildPropertyParams` sends `''` through for a text
+  // property and `null` for every other type, and `op.rs` rejects both for a
+  // non-reserved key (`set_property.value_text.empty` / "found 0"). So an
+  // inline chip on a user-defined key could not be cleared AT ALL: the user
+  // got `property.saveFailed` whatever they did.
+  describe('#4010 — clearing an inline chip', () => {
+    it('deletes the property when a user-defined text chip is emptied', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'effort', value: '2h' },
+            valueType: 'text',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockDeleteProperty).toHaveBeenCalledWith('BLOCK_1', 'effort')
+      })
+      // The rejected empty-string write must be gone, not merely tolerated.
+      expect(mockSetProperty).not.toHaveBeenCalled()
+      expect(mockToastError).not.toHaveBeenCalled()
+      expect(setEditingProp).toHaveBeenCalledWith(null)
+    })
+
+    it('clears a RESERVED key through the all-null set_property it accepts', async () => {
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'due_date', value: '2026-09-15' },
+            valueType: 'date',
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'due_date', {
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+      // The all-null payload is the ONLY clear `validate_set_property` accepts
+      // for a reserved key (count==0 is legal for those four alone), so the
+      // clear must not be re-routed through `delete_property`.
+      expect(mockDeleteProperty).not.toHaveBeenCalled()
+    })
+
+    it('surfaces a failed clear instead of silently closing', async () => {
+      mockDeleteProperty.mockRejectedValueOnce(new Error('nope'))
+      render(
+        <BlockPropertyEditor
+          {...makeProps({ editingProp: { key: 'effort', value: '2h' }, valueType: 'text' })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('Failed to save property')
+      })
     })
   })
 
@@ -1223,14 +1920,10 @@ describe('BlockPropertyEditor', () => {
           value_bool: null,
         })
       })
+      // Old key removed via `delete_property` — the all-null `set_property`
+      // this used to assert is rejected by the engine for a non-reserved key.
       await waitFor(() => {
-        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'effort', {
-          value_text: null,
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-          value_bool: null,
-        })
+        expect(mockDeleteProperty).toHaveBeenCalledWith('BLOCK_1', 'effort')
       })
       expect(setEditingKey).toHaveBeenCalledWith(null)
     })

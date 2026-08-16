@@ -66,6 +66,112 @@ export const NON_DELETABLE_PROPERTIES = new Set([
 export const LOCKED_PROPERTY_OPTIONS = new Set(['todo_state'])
 
 /**
+ * Keys that live in a dedicated column on `blocks` and can therefore never be
+ * a `block_properties` row. Mirrors `COLUMN_BACKED_PROPERTY_KEYS` in
+ * `src-tauri/agaric-store/src/op.rs` (the four reserved keys plus `space`).
+ *
+ * Distinct from {@link NON_DELETABLE_PROPERTIES}, which mirrors
+ * `is_builtin_property_key` (the reserved keys plus the `created_at` /
+ * `completed_at` / `repeat-*` lifecycle keys) — the two sets overlap but mean
+ * different things, and `delete_property` explicitly ALLOWS the reserved keys
+ * while refusing the lifecycle ones.
+ */
+export const COLUMN_BACKED_PROPERTY_KEYS = new Set([
+  'todo_state',
+  'priority',
+  'due_date',
+  'scheduled_date',
+  'space',
+])
+
+/** The six `value_type`s `create_property_def_inner` accepts. */
+const DEFINABLE_VALUE_TYPES = new Set(['text', 'number', 'date', 'select', 'ref', 'boolean'])
+
+/**
+ * The `property_definitions` row a KEY RENAME should carry over to the new
+ * key, or `null` when there is nothing safe to carry (#4010).
+ *
+ * `set_property` never inserts a definition row, so renaming `estimate` →
+ * `effortPoints` left the new key undeclared: `getPropertyDef` missed, the
+ * chip editor's `valueType` fell back to `'text'`, and the NEXT inline edit
+ * re-flattened the `value_num` the rename had just carried across. The
+ * rename therefore carries the DEFINITION alongside the value — it copies a
+ * declaration the user already made, rather than inventing one, so a key that
+ * was genuinely untyped stays untyped (`null` here).
+ *
+ * The declared type is only copied when it AGREES with the column actually
+ * being carried, mirroring `validate_property_value`'s step-4 matrix in
+ * `agaric-engine/src/block_ops.rs`. On drift (a `number` declaration over a
+ * row holding `value_text`) copying the declaration would make the engine
+ * reject the rename's own write, turning a working rename into a failure; the
+ * copy is skipped instead and the rename proceeds exactly as before.
+ *
+ * `options` are copied for `select` only — `create_property_def_inner`
+ * rejects them for every other type, and rejects a `select` without them (or
+ * with an empty one). A `select` declaration is additionally checked against
+ * step 5 of the same engine function: an options array that no longer contains
+ * the value being carried (or that will not parse) would make the engine reject
+ * the rename's write just as surely as a type mismatch, so it is not copied.
+ */
+export function carriedRenameDefinition(
+  oldDef: { value_type: string; options: string | null } | null | undefined,
+  oldRow: PropertyRow,
+): { valueType: string; options: string | null } | null {
+  if (!oldDef || !DEFINABLE_VALUE_TYPES.has(oldDef.value_type)) return null
+  const hasText = oldRow.value_text != null
+  const hasRef = oldRow.value_ref != null
+  // Same shape as the engine's `type_matches`: `text`/`select` accept a ref
+  // too (a text-declared key may legitimately hold a block reference).
+  const agrees = ((): boolean => {
+    switch (oldDef.value_type) {
+      case 'text':
+      case 'select': {
+        return hasText || hasRef
+      }
+      case 'ref': {
+        return hasRef
+      }
+      case 'number': {
+        return oldRow.value_num != null
+      }
+      case 'date': {
+        return oldRow.value_date != null
+      }
+      case 'boolean': {
+        return oldRow.value_bool != null
+      }
+      default: {
+        return false
+      }
+    }
+  })()
+  if (!agrees) return null
+  if (oldDef.value_type === 'select') {
+    // A select definition without an options array is not creatable.
+    if (oldDef.options == null) return null
+    // Step 5 of `validate_property_value`, not just step 4: a `select`
+    // declaration with an options array ALSO constrains `value_text` to be one
+    // of the listed options, and malformed options JSON is itself a rejection
+    // ("has malformed options JSON"). The options list can drift away from a
+    // stored value after the fact (the Properties tab edits options in place,
+    // and import/MCP writes can predate the declaration), so copying such a
+    // declaration would make the engine reject the rename's own write — the
+    // exact failure the step-4 check above exists to avoid. Skip the copy.
+    let allowed: unknown
+    try {
+      allowed = JSON.parse(oldDef.options)
+    } catch {
+      return null
+    }
+    if (!Array.isArray(allowed) || allowed.length === 0) return null
+    if (!allowed.every((o) => typeof o === 'string')) return null
+    if (oldRow.value_text != null && !allowed.includes(oldRow.value_text)) return null
+    return { valueType: 'select', options: oldDef.options }
+  }
+  return { valueType: oldDef.value_type, options: null }
+}
+
+/**
  * Build the type-appropriate `setProperty` params for initializing a
  * newly-added property.  Ref properties are initialized with a null
  * ref — the UI shows the page picker immediately so the user can

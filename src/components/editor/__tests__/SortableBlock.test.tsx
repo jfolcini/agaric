@@ -197,6 +197,11 @@ const mockListBlocks = vi
 // flattened display string, so it can carry `value_num`/`value_date`/etc.
 // to the new key.
 const mockGetProperties = vi.fn().mockResolvedValue([])
+// The rename's old-key removal and the emptied-chip clear both go out as
+// `delete_property`: an all-null `set_property` is only a legal "clear" for the
+// four reserved keys (`validate_set_property`, agaric-store/src/op.rs), so a
+// user-defined key has to be deleted.
+const mockDeleteProperty = vi.fn().mockResolvedValue({})
 // #2901 — the swipe-delete toast's Undo op-log probing (depth computation,
 // reversed-ref verification, mis-undo rollback) moved into the undo store's
 // `undoDeleteOf` action (see `src/stores/__tests__/undo.test.ts`); SortableBlock
@@ -229,6 +234,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockSetProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
       getProperties: (...args: unknown[]) =>
         mockGetProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
+      deleteProperty: (...args: unknown[]) =>
+        mockDeleteProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
       getPropertyDef: (...args: unknown[]) =>
         mockGetPropertyDef(...args).then((data: unknown) => ({ status: 'ok', data })),
       listBlocks: (...args: unknown[]) =>
@@ -3295,13 +3302,21 @@ describe('SortableBlock inline chip typed-column wiring (#3275)', () => {
   // Review finding 1 — the live race. Edit a `date` property, then open a
   // `number` property whose definition lookup has not landed yet: the stale
   // 'date' type wrote the number straight into `value_date`.
+  //
+  // #4009 extends the same scenario past the abort: while the lookup is in
+  // flight NOTHING may be written (the original invariant), and when it
+  // finally lands the value must go to the column that key's OWN definition
+  // names — the typed text is held, not discarded with a toast.
   it('never commits against the previous chip’s type while the new key’s definition is in flight', async () => {
     const user = userEvent.setup()
+    // One shared deferred for `estimate`, so the hook's lookup and the
+    // commit's own lookup both hang on the SAME pending definition.
+    let resolveEstimate: (def: unknown) => void = () => {}
+    const estimatePending = new Promise((resolve) => {
+      resolveEstimate = resolve
+    })
     mockGetPropertyDef.mockImplementation((key: string) =>
-      key === 'deadline'
-        ? Promise.resolve(dateDef)
-        : // 'estimate' lookup stays pending for the whole test
-          new Promise(() => {}),
+      key === 'deadline' ? Promise.resolve(dateDef) : estimatePending,
     )
 
     render(
@@ -3337,9 +3352,25 @@ describe('SortableBlock inline chip typed-column wiring (#3275)', () => {
     // Nothing may be written: not `value_date: '8'` (the stale-type
     // corruption), not `value_text: '8'` either.
     expect(mockSetProperty).not.toHaveBeenCalled()
-    await waitFor(() => {
-      expect(mockNotify.error).toHaveBeenCalledWith('Failed to save property')
+    // ...and nothing may be LOST either (#4009): no failure toast for what is
+    // only a lookup that has not come back yet.
+    expect(mockNotify.error).not.toHaveBeenCalled()
+
+    // 3. The definition finally lands — and the value the user typed goes to
+    //    `estimate`'s own column, not the previous chip's.
+    await act(async () => {
+      resolveEstimate(numberDef)
     })
+    await waitFor(() => {
+      expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_42', 'estimate', {
+        value_text: null,
+        value_num: 8,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      })
+    })
+    expect(mockNotify.error).not.toHaveBeenCalled()
   })
 })
 
@@ -3685,9 +3716,13 @@ describe('SortableBlock property key rename', () => {
       fireEvent.blur(input)
     })
 
-    // Should call setProperty twice: once to create new key, once to delete old key
+    // One `setProperty` to create the new key, one `deleteProperty` to remove
+    // the old one. This used to expect TWO `setProperty` calls, the second an
+    // all-null payload — which `validate_set_property` rejects for any
+    // non-reserved key ("found 0"), so the second call could only ever fail in
+    // production while this assertion passed against an always-ok mock.
     await waitFor(() => {
-      expect(mockSetProperty).toHaveBeenCalledTimes(2)
+      expect(mockSetProperty).toHaveBeenCalledTimes(1)
     })
     expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_42', 'duration', {
       value_text: '2h',
@@ -3696,13 +3731,8 @@ describe('SortableBlock property key rename', () => {
       value_ref: null,
       value_bool: null,
     })
-    expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_42', 'effort', {
-      value_text: null,
-      value_num: null,
-      value_date: null,
-      value_ref: null,
-      value_bool: null,
-    })
+    expect(mockDeleteProperty).toHaveBeenCalledWith('BLOCK_42', 'effort')
+    expect(mockToastError).not.toHaveBeenCalled()
   })
 })
 
