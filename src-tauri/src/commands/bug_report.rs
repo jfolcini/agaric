@@ -1000,27 +1000,41 @@ fn redact_line_with_redactor(line: &str, redactor: &Redactor, format: LineFormat
 /// Same spelling as the JSON path so a reader of the bundle sees one marker.
 const REDACTED: &str = "[REDACTED]";
 
-/// Keys owned by the OTel line FORMATS themselves rather than by an
-/// instrumentation site — the fixed leading skeleton of a signal record.
+/// The exact ORDERED key sequences the OTel line FORMATS themselves write —
+/// the fixed leading skeleton of a signal record — rather than a key an
+/// instrumentation site chose.
 ///
 /// Sources (all in `agaric-observability`): `exporter::format_span`
 /// (`end name trace span parent dur_ms status`), `exporter::format_log_record`
 /// (`end level trace span target body`), `ingest::write_frontend_span`
 /// (`end service name trace span parent dur_ms status`), and
 /// `metrics_exporter`'s sum/histogram writers (`end metric sum` /
-/// `end metric count sum min max`).
+/// `end metric count sum min max` — mutually exclusive per data point, so
+/// two sequences, not one). Adding a new field to a line format requires a
+/// deliberate edit HERE, which is the review point: everything not listed is
+/// treated as an instrumentation-site attribute and is deny-by-default.
 ///
 /// A skeleton key gets ONE extra, narrowly-shaped allowance beyond
 /// [`is_safe_token`] (see [`skeleton_value_is_allowed`]) because these values
 /// are structural — a dotted span name or a fractional `dur_ms` is not a
 /// "safe token" by shape, and redacting them would leave a bundle of
-/// `[REDACTED]` skeletons with no diagnostic value at all. Adding a new field
-/// to a line format therefore requires a deliberate edit HERE, which is the
-/// review point: everything not listed is treated as an instrumentation-site
-/// attribute and is deny-by-default.
-const SKELETON_KEYS: &[&str] = &[
-    "end", "level", "trace", "span", "parent", "target", "body", "name", "service", "status",
-    "dur_ms", "metric", "sum", "count", "min", "max",
+/// `[REDACTED]` skeletons with no diagnostic value at all.
+///
+/// This must be the EXACT ordered sequence per format, not the flattened
+/// union of every format's keys: `name` is written by `format_span` and
+/// `write_frontend_span` but not by `format_log_record`, so a
+/// `format_log_record` line's 7th field happening to be named `name` is an
+/// instrumentation-site attribute, not the format's own `name`.
+/// [`redact_kv_line`] walks this table position-by-position so that
+/// collision cannot borrow the allowance (#3712).
+const SKELETON_SEQUENCES: &[&[&str]] = &[
+    &["end", "name", "trace", "span", "parent", "dur_ms", "status"],
+    &["end", "level", "trace", "span", "target", "body"],
+    &[
+        "end", "service", "name", "trace", "span", "parent", "dur_ms", "status",
+    ],
+    &["end", "metric", "sum"],
+    &["end", "metric", "count", "sum", "min", "max"],
 ];
 
 /// `true` for the `-` every OTel format writes for an absent field.
@@ -1099,25 +1113,36 @@ fn is_structural_key(key: &str) -> bool {
 /// [`is_safe_token`] for any value, plus [`skeleton_value_is_allowed`] for the
 /// format-owned leading fields.
 ///
-/// The skeleton allowance is POSITIONAL, not just key-based: it applies only
-/// to the unbroken run of [`SKELETON_KEYS`] at the head of the line. Once a
-/// non-skeleton key appears, every later segment is an instrumentation-site
-/// attribute and gets the plain deny-by-default test — so an attribute that
-/// happens to be named `name` or `body` cannot borrow the skeleton's
-/// allowance by colliding with a format key.
+/// The skeleton allowance is POSITIONAL, bound to one of the EXACT ordered
+/// sequences in [`SKELETON_SEQUENCES`] — not merely to the flattened union of
+/// their keys. A key extends the skeleton only while at least one candidate
+/// sequence still expects exactly that key at exactly this position; once no
+/// sequence does, every later segment (including one whose key happens to
+/// collide with a DIFFERENT format's skeleton key, e.g. a `format_log_record`
+/// line's 7th field named `name`) is an instrumentation-site attribute and
+/// gets the plain deny-by-default test.
 ///
 /// A segment with no `=` is not a key/value pair at all; it is treated
-/// wholesale as a value (deny-by-default) rather than echoed.
+/// wholesale as a value (deny-by-default) rather than echoed. The one
+/// exception is the whole-line truncation marker (see
+/// [`is_truncation_marker_line`]), which is not a `key=value` record at all.
 fn redact_kv_line(line: &str) -> String {
+    if is_truncation_marker_line(line) {
+        return line.to_owned();
+    }
+
     let mut out = String::with_capacity(line.len());
-    let mut in_skeleton = true;
+    // Indices into `SKELETON_SEQUENCES` still consistent with every key seen
+    // so far, at the position it was seen.
+    let mut candidates: Vec<usize> = (0..SKELETON_SEQUENCES.len()).collect();
+    let mut position = 0_usize;
 
     for (i, segment) in line.split('\t').enumerate() {
         if i > 0 {
             out.push('\t');
         }
         let Some((key, value)) = segment.split_once('=') else {
-            in_skeleton = false;
+            candidates.clear();
             out.push_str(if is_safe_token(segment) {
                 segment
             } else {
@@ -1126,8 +1151,15 @@ fn redact_kv_line(line: &str) -> String {
             continue;
         };
 
-        let skeleton = in_skeleton && SKELETON_KEYS.contains(&key);
-        in_skeleton = skeleton;
+        let skeleton = candidates
+            .iter()
+            .any(|&c| SKELETON_SEQUENCES[c].get(position) == Some(&key));
+        if skeleton {
+            candidates.retain(|&c| SKELETON_SEQUENCES[c].get(position) == Some(&key));
+        } else {
+            candidates.clear();
+        }
+        position += 1;
 
         out.push_str(if is_structural_key(key) {
             key
@@ -1142,6 +1174,37 @@ fn redact_kv_line(line: &str) -> String {
         }
     }
     out
+}
+
+/// `true` for the whole-line truncation marker [`read_capped_file`] prepends
+/// to an oversized file's tail (`…[truncated N bytes of older content]`).
+///
+/// It carries no `=`, so on the `OtelSignal` branch [`redact_kv_line`] would
+/// otherwise deny-by-default it to `[REDACTED]` — the marker exists to tell
+/// the reader content was DROPPED, and collapsing it erases that notice
+/// (#3712). This only brings `OtelSignal` to the `TracingLog` branch's
+/// behaviour, which already round-trips this exact line unchanged (a
+/// non-JSON, non-needle-matching line falls through [`apply_allow_list`]
+/// as-is).
+///
+/// The middle must be ALL ASCII DIGITS and non-empty, not merely "whatever
+/// sits between the two literals". An exemption from a deny-by-default
+/// redactor is a hole the width of whatever it lets through, and
+/// `starts_with(prefix) && ends_with(suffix)` lets through everything in
+/// between — a forged line reading `…[truncated <a page title> bytes of
+/// older content]` would be echoed verbatim. Reaching that needs a `\n` in
+/// a span attribute (`exporter::format_span` does not `sanitize_inline` its
+/// name or attribute values, unlike `format_log_record`), so it is not
+/// reachable today, but the redactor is the layer that is supposed to hold
+/// when the layer above it does not. Constrained to digits, the whole line
+/// is a compile-time literal plus a byte count derived from the file's own
+/// size, and carries no user data by construction.
+fn is_truncation_marker_line(line: &str) -> bool {
+    const PREFIX: &str = "…[truncated ";
+    const SUFFIX: &str = " bytes of older content]";
+    line.strip_prefix(PREFIX)
+        .and_then(|rest| rest.strip_suffix(SUFFIX))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Apply line-by-line redaction to an entire log file's contents.
@@ -1566,6 +1629,107 @@ mod tests {
             "STABLE_MESSAGES entries with no matching tracing call site \
              (each must appear as a string literal in a `tracing::*!` call \
              besides its STABLE_MESSAGES entry): {missing:?}"
+        );
+    }
+
+    // -- SKELETON_SEQUENCES drift guard (#3980 note 3) -------------------
+
+    /// #3980 note 3 drift guard: every [`SKELETON_SEQUENCES`] entry must be
+    /// the ordered key list of a real OTel line-format writer, and every
+    /// writer must have an entry.
+    ///
+    /// The same failure mode `stable_messages_pin_real_call_sites` pins for
+    /// [`STABLE_MESSAGES`], one layer up: the table's doc calls editing it
+    /// "the review point", but until now nothing made an edit to a writer
+    /// REQUIRE one here. Add a field to `exporter::format_span` and the
+    /// positional walk in [`redact_kv_line`] stops matching that sequence at
+    /// the new key, so every field from there on — `dur_ms`, `status`, and
+    /// the whole attribute tail — loses the skeleton allowance and collapses
+    /// to `[REDACTED]` in every bundled trace line. That is fail-SAFE
+    /// (over-redaction, never leakage) and therefore silent: the bundle
+    /// still ships, just with no diagnostic value.
+    ///
+    /// The writers are found by scanning `agaric-observability`'s `src/` for
+    /// a format literal beginning `"end={end}` on a non-comment line, then
+    /// reading the `<key>=` heads of its `\t`-separated segments. Coarse on
+    /// purpose, in the repo's grep-based drift-guard style — it cannot prove
+    /// the literal is a `write!` format string.
+    ///
+    /// Two ways a writer drops out of `found` (#3980 round-three note 6), and
+    /// both are worth naming because the recognition is what the guard rests
+    /// on. It must lead with `end=` — every OTel line format writes the end
+    /// timestamp first, since that is the key the sink is ordered on, so a
+    /// writer breaking that convention would need an edit here anyway. And it
+    /// must stay on ONE source line: this matches per line, so a format
+    /// string rustfmt has wrapped is not seen. Neither residual is silent —
+    /// a dropped writer fails the set equality below rather than passing —
+    /// so both cost a confusing red build, not a missed drift. That is the
+    /// opposite polarity from the scan in `commands::observability`, whose
+    /// equivalent blind spots let a field through unscanned.
+    #[test]
+    fn skeleton_sequences_pin_real_line_format_writers() {
+        let obs_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("agaric-observability")
+            .join("src");
+
+        fn collect_rs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).expect("read_dir").flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_rs(&path, out);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                    out.push(path);
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        collect_rs(&obs_src, &mut files);
+        assert!(!files.is_empty(), "found no .rs files under {obs_src:?}");
+
+        // Every line format opens with the end timestamp; the doc-comment
+        // sketches of the same shapes spell it `end=<rfc3339-ms>` and start
+        // with `//`, so they are excluded twice over.
+        const OPENER: &str = "\"end={end}";
+
+        let mut found: Vec<Vec<String>> = Vec::new();
+        for path in &files {
+            let src = std::fs::read_to_string(path).expect("read source file");
+            for line in src.lines() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                let Some(open_at) = line.find(OPENER) else {
+                    continue;
+                };
+                let body = &line[open_at + 1..];
+                let Some(close_at) = body.find('"') else {
+                    continue;
+                };
+                let keys: Vec<String> = body[..close_at]
+                    .split("\\t")
+                    .filter_map(|seg| seg.split_once('=').map(|(k, _)| k.to_owned()))
+                    .collect();
+                found.push(keys);
+            }
+        }
+
+        let mut found_sorted = found.clone();
+        found_sorted.sort();
+        let mut expected: Vec<Vec<String>> = SKELETON_SEQUENCES
+            .iter()
+            .map(|seq| seq.iter().map(|k| (*k).to_owned()).collect())
+            .collect();
+        expected.sort();
+
+        assert_eq!(
+            found_sorted, expected,
+            "SKELETON_SEQUENCES has drifted from the OTel line-format writers \
+             in agaric-observability. Each entry must be the EXACT ordered key \
+             sequence one writer emits, and each writer must have an entry — \
+             an unlisted or mis-ordered sequence does not lose the bundle, it \
+             silently redacts the rest of every line of that shape down to \
+             [REDACTED]. Writers found: {found:#?}"
         );
     }
 
@@ -3417,6 +3581,102 @@ mod tests {
             2,
             "both trailing attributes are redacted: {out}"
         );
+    }
+
+    /// #3712 — the skeleton allowance must be bound to one format's EXACT
+    /// key sequence, not to `SKELETON_KEYS` set membership. This line is a
+    /// `format_log_record` skeleton (`end level trace span target body`,
+    /// six fields) followed directly by an attribute named `name` — `name`
+    /// is not part of `format_log_record`'s skeleton, but it IS a member of
+    /// the flattened union (it belongs to `format_span` and
+    /// `write_frontend_span`). A membership-only check keeps `in_skeleton`
+    /// true across the boundary and lets `name`'s value borrow the
+    /// `is_signal_label` widening reserved for a real span/log skeleton
+    /// field; the position-bound check must not.
+    ///
+    /// Reverting `redact_kv_line` to the `SKELETON_KEYS`-membership check
+    /// this replaced turns this red: the identifier-shaped project-name
+    /// value slips through unredacted as `name=Q3-Layoffs-Plan`.
+    #[test]
+    fn skeleton_allowance_does_not_cross_a_different_formats_boundary() {
+        let line = "end=2026-08-09T10:23:45.123Z\tlevel=INFO\ttrace=-\tspan=-\t\
+                    target=agaric::commands::projects\t\
+                    body=background queue full, dropping task\t\
+                    name=Q3-Layoffs-Plan";
+        let out = redact_line_with_redactor(
+            line,
+            &Redactor::new(&RedactionContext::default()),
+            LineFormat::OtelSignal,
+        );
+        // The genuine log-record skeleton still survives.
+        assert!(out.contains("level=INFO"), "{out}");
+        assert!(out.contains("target=agaric::commands::projects"), "{out}");
+        assert!(
+            out.contains("body=background queue full, dropping task"),
+            "a STABLE_MESSAGES body inside the real skeleton still survives: {out}"
+        );
+        // The 7th field is past this format's skeleton — its value must be
+        // denied by default, not waved through as if it were a span name.
+        assert!(
+            !out.contains("Q3-Layoffs-Plan"),
+            "an attribute past the log-record skeleton must not borrow the \
+             skeleton's identifier-label allowance: {out}"
+        );
+        assert!(
+            out.contains("name=[REDACTED]"),
+            "the out-of-bounds attribute is redacted: {out}"
+        );
+    }
+
+    /// #3712 — the whole-line truncation marker `read_capped_file` prepends
+    /// to an oversized file's tail carries no `=`, so on the `OtelSignal`
+    /// branch `redact_kv_line`'s deny-by-default fallback used to collapse
+    /// it to `[REDACTED]`, erasing the notice that content was dropped.
+    ///
+    /// Deleting `is_truncation_marker_line`'s early return in `redact_kv_line`
+    /// turns this red: the marker becomes indistinguishable from any other
+    /// unstructured line and is denied by default.
+    #[test]
+    fn otel_truncation_marker_survives_redaction() {
+        let marker = "…[truncated 2048 bytes of older content]";
+        let out = redact_line_with_redactor(
+            marker,
+            &Redactor::new(&RedactionContext::default()),
+            LineFormat::OtelSignal,
+        );
+        assert_eq!(out, marker, "the truncation marker must round-trip: {out}");
+    }
+
+    /// The truncation-marker exemption must be the marker, not its two
+    /// bookends. `starts_with(prefix) && ends_with(suffix)` — the shape the
+    /// exemption shipped as — echoes ANYTHING between them, so a line forged
+    /// to wear the marker's bookends smuggles its middle straight past a
+    /// deny-by-default redactor.
+    ///
+    /// Relaxing `is_truncation_marker_line` back to
+    /// `starts_with(…) && ends_with(…)` turns this red: the page title in
+    /// the middle is echoed verbatim.
+    #[test]
+    fn a_forged_truncation_marker_does_not_smuggle_content_through() {
+        for forged in [
+            "…[truncated Q3-Layoffs-Plan bytes of older content]",
+            "…[truncated 2048 bytes of older content] extra bytes of older content]",
+            "…[truncated  bytes of older content]",
+        ] {
+            let out = redact_line_with_redactor(
+                forged,
+                &Redactor::new(&RedactionContext::default()),
+                LineFormat::OtelSignal,
+            );
+            assert_eq!(
+                out, REDACTED,
+                "only a digits-only byte count is exempt; this must be denied: {forged:?} -> {out}"
+            );
+        }
+        // The real marker is unaffected by the tightening.
+        assert!(is_truncation_marker_line(
+            "…[truncated 2048 bytes of older content]"
+        ));
     }
 
     /// A `body` outside [`STABLE_MESSAGES`] is redacted (a formatted message

@@ -462,7 +462,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> Result<RawR
                 arg_or(args, "propertyFilters"),
                 opt_arg(args, "tagFilters").map(|v| serde_json::from_value(v).expect("tagFilters")),
                 opt_arg(args, "blockType").and_then(|v| v.as_str().map(str::to_owned)),
-                &arg_or::<SpaceScope>(args, "scope"),
+                &arg_req::<SpaceScope>(args, "scope"),
                 opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
                 opt_arg(args, "limit").and_then(|v| v.as_i64()),
             )
@@ -498,7 +498,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> Result<RawR
                 arg_or(args, "todoStates"),
                 opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
                 opt_arg(args, "limit").and_then(|v| v.as_i64()),
-                &arg_or::<SpaceScope>(args, "scope"),
+                &arg_req::<SpaceScope>(args, "scope"),
             )
             .await?;
             page_result(&serde_json::to_value(&resp).expect("serialize PageResponse"))
@@ -508,7 +508,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> Result<RawR
                 pool,
                 opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
                 opt_arg(args, "limit").and_then(|v| v.as_i64()),
-                &arg_or::<SpaceScope>(args, "scope"),
+                &arg_req::<SpaceScope>(args, "scope"),
             )
             .await?;
             page_result(&serde_json::to_value(&resp).expect("serialize PageResponse"))
@@ -518,7 +518,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> Result<RawR
                 opt_arg(args, "tagIds").map(|v| serde_json::from_value(v).expect("tagIds"));
             let resp = list_page_links_inner(
                 pool,
-                &arg_or::<SpaceScope>(args, "scope"),
+                &arg_req::<SpaceScope>(args, "scope"),
                 tag_ids.as_deref(),
             )
             .await?;
@@ -681,7 +681,7 @@ async fn run_step(pool: &SqlitePool, command: &str, args: &Value) -> Result<RawR
             let rows = batch_resolve_inner(
                 pool,
                 arg_req::<Vec<BlockId>>(args, "ids"),
-                &arg_or::<SpaceScope>(args, "scope"),
+                &arg_req::<SpaceScope>(args, "scope"),
             )
             .await?;
             let v = serde_json::to_value(&rows).expect("serialize Vec<ResolvedBlock>");
@@ -1039,6 +1039,71 @@ fn relabel_token(token: &str, labels: &BTreeMap<String, String>) -> String {
     out
 }
 
+/// The `queries[].name` values appearing more than once, each reported ONCE
+/// however many times it repeats — parity with the TS twin's
+/// `assertUniqueStepNames`, which accumulates into a `Set`.
+///
+/// A step whose `name` is absent or non-string is skipped rather than
+/// counted. Its caller [`assert_unique_step_names`] rejects those steps
+/// FIRST, so by the time this runs there are none — see that function for why
+/// the rejection lives there and not here (#3980 note 6).
+fn duplicate_step_names(steps: &[Value]) -> Vec<&str> {
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut dupes: Vec<&str> = Vec::new();
+    for name in steps.iter().filter_map(|s| s["name"].as_str()) {
+        if !seen.insert(name) && !dupes.contains(&name) {
+            dupes.push(name);
+        }
+    }
+    dupes
+}
+
+/// #3833 item 7/12 — every query step must carry a string `name`, and the
+/// names must be unique WITHIN a fixture.
+///
+/// THE canonical statement of this rule; the call site in
+/// [`run_query_steps`] points here rather than restating it.
+///
+/// The coverage test's positional-alignment guard
+/// (`conformance-coverage.test.ts`) compares `recorded.name !== step.name` at
+/// the SAME index, so two steps sharing a name still align correctly by
+/// position — this is not a correctness hole. It is a DIAGNOSTIC one: every
+/// message in this module (`misaligned`, `vacuous`, the branch-coverage
+/// errors) names the step by its `name`, and a duplicate makes a failure
+/// impossible to attribute to the right step.
+///
+/// Checked once, up front, rather than per-step, so the fixture author sees
+/// every offender in one panic rather than only the first.
+///
+/// The name-PRESENCE half is checked here, ahead of the duplicate scan, so
+/// this stays an exact mirror of the TS `assertUniqueStepNames` (#3980 note
+/// 6). Before, the two twins disagreed on a nameless step: this side dropped
+/// it silently via `filter_map`, while TS read `step.name` unconditionally
+/// and reported a duplicate of `[null]`. Neither fixture format validates
+/// itself — both stacks parse the fixture JSON into a shape they merely
+/// ASSERT (`Value` here, an `as Fixture` cast there) — so an absent `name` is
+/// reachable in both, and a mirrored pair may not diverge on it.
+fn assert_unique_step_names(steps: &[Value]) {
+    let unnamed: Vec<usize> = steps
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| step.get("name").and_then(Value::as_str).is_none())
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        unnamed.is_empty(),
+        "fixture has query step(s) at index {unnamed:?} with no string `name` — every \
+         `queries[]` entry must carry one, or the step cannot be named in any diff."
+    );
+
+    let dupes = duplicate_step_names(steps);
+    assert!(
+        dupes.is_empty(),
+        "fixture has duplicate query step name(s) {dupes:?} — every `queries[].name` in a \
+         fixture must be unique, or a failure cannot be attributed to the right step."
+    );
+}
+
 /// Run every query step of a fixture and return the projected `expected_queries`
 /// array. Returns `Value::Null` when the fixture declares no `queries`, so
 /// fixtures that predate the schema keep an absent key.
@@ -1050,6 +1115,14 @@ pub async fn run_query_steps(
     let Some(steps) = fixture.get("queries").and_then(Value::as_array) else {
         return Value::Null;
     };
+
+    // #3833 item 7/12 — see [`assert_unique_step_names`] for why this is
+    // checked once up front and why a duplicate name is a diagnostic rather
+    // than a correctness problem. Stated there ONLY: the rationale used to be
+    // duplicated near-verbatim here, which is one copy too many to keep true
+    // (#3980 note 5).
+    assert_unique_step_names(steps);
+
     let mut out: Vec<Value> = Vec::with_capacity(steps.len());
     let mut cursors: BTreeMap<String, Option<String>> = BTreeMap::new();
     for step in steps {
@@ -1156,9 +1229,15 @@ mod reader_delegation_tests {
     ///   2. `load_page_subtree` types `rootBlockId` as `String`; the command
     ///      takes a `BlockId` and calls `.as_str()`, so the same
     ///      canonicalisation is skipped here too.
-    ///   3. `arg_or` DEFAULTS `scope` / `filter` / `todoStates` when a fixture
-    ///      omits them. The real IPC surface makes those required args, so a
+    ///   3. `arg_or` DEFAULTS `filter` / `todoStates` when a fixture omits
+    ///      them. The real IPC surface makes those required args, so a
     ///      fixture can reach a combination Tauri would have rejected.
+    ///      (`scope` used to be in this list too — #3833 item 4 switched
+    ///      every `arg_or::<SpaceScope>(args, "scope")` call to `arg_req`,
+    ///      since a mistyped `scope` key used to fail OPEN to
+    ///      `SpaceScope::default() == Global`, silently WIDENING the query
+    ///      instead of failing loudly. Every fixture already passes `scope`
+    ///      explicitly, so this cost nothing.)
     ///
     /// Each is a fixture-authoring hazard rather than a live divergence (no
     /// current fixture supplies a non-canonical id or omits a required arg), so
@@ -1501,5 +1580,88 @@ mod attr_value_tests {
             "DELETED"
         );
         assert_eq!(attr_value("deleted_at", None), "null");
+    }
+}
+
+/// #3833 items 7/12 — the duplicate-step-name guard's own tests.
+///
+/// The guard is an assertion over fixture data and no fixture can trip it, so
+/// without these its body never executes on any run: the check would be
+/// decoration, which is the exact failure class #3833 collects. Both halves
+/// are pinned — the predicate, and the fact that [`run_query_steps`] actually
+/// calls it before touching the pool. The TS twin's copy of this property
+/// lives in `conformance.test.ts`.
+#[cfg(test)]
+mod step_name_uniqueness_tests {
+    use super::{assert_unique_step_names, duplicate_step_names, run_query_steps};
+    use serde_json::{Value, json};
+    use std::collections::BTreeMap;
+
+    fn steps(names: &[&str]) -> Vec<Value> {
+        names.iter().map(|n| json!({ "name": n })).collect()
+    }
+
+    #[test]
+    fn distinct_names_have_no_duplicates() {
+        assert!(duplicate_step_names(&steps(&["a", "b", "c"])).is_empty());
+        assert!(duplicate_step_names(&[]).is_empty());
+        assert_unique_step_names(&steps(&["a", "b", "c"]));
+    }
+
+    /// Three copies of one name report it ONCE — the naive
+    /// `filter(|n| !seen.insert(n))` this replaced reported it twice, which
+    /// diverged from the TS twin's `Set`-based message for no reason.
+    #[test]
+    fn a_repeated_name_is_reported_once_and_every_offender_is_reported() {
+        assert_eq!(duplicate_step_names(&steps(&["a", "b", "a"])), vec!["a"]);
+        assert_eq!(duplicate_step_names(&steps(&["a", "a", "a"])), vec!["a"]);
+        assert_eq!(
+            duplicate_step_names(&steps(&["a", "b", "a", "b"])),
+            vec!["a", "b"]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate query step name(s) [\"dup\"]")]
+    fn the_assertion_panics_on_a_duplicate() {
+        assert_unique_step_names(&steps(&["dup", "other", "dup"]));
+    }
+
+    /// #3980 note 6 — the two twins must AGREE on a step with no usable
+    /// `name`, which is reachable in both (neither validates its fixture
+    /// parse). Unchecked, this side dropped the step via `filter_map` and
+    /// said nothing while the TS side reported a duplicate of `[null]`. TWO
+    /// nameless steps, because that is the shape that made TS fabricate one
+    /// (a single nameless step collided with nothing); plus a non-string
+    /// `name`, the other half of what `as_str()` rejects. The TS half of this
+    /// pair runs the same three, in `conformance.test.ts`.
+    #[test]
+    #[should_panic(expected = "query step(s) at index [0, 1, 2] with no string `name`")]
+    fn the_assertion_panics_on_a_step_with_no_name() {
+        assert_unique_step_names(&[
+            json!({ "command": "get_page" }),
+            json!({ "command": "get_page" }),
+            json!({ "name": 7, "command": "get_page" }),
+        ]);
+    }
+
+    /// The CALL SITE, not just the predicate: a guard function that is tested
+    /// in isolation and never wired in is a half-covered pair. The panic must
+    /// come from `run_query_steps` itself, and BEFORE it issues any query —
+    /// the pool here is a bare in-memory database with no schema at all, so
+    /// anything reaching a step would fail differently.
+    #[tokio::test]
+    #[should_panic(expected = "duplicate query step name(s) [\"dup\"]")]
+    async fn run_query_steps_rejects_a_duplicate_before_touching_the_pool() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool");
+        let fixture = json!({
+            "queries": [
+                { "name": "dup", "command": "list_page_links", "args": {} },
+                { "name": "dup", "command": "list_page_links", "args": {} },
+            ]
+        });
+        let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
     }
 }

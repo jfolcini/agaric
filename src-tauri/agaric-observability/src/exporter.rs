@@ -34,10 +34,16 @@
 //! (`import_markdown_with_progress` recorded the user's page title into a
 //! `page_title` attribute, which this exporter duly wrote to `traces/*.log`).
 //! The mechanism now exists: `agaric::commands::observability`'s
-//! `span_fields_stay_on_the_pii_allowlist` test scans every `#[instrument]`
-//! field and `Span::record` key in the workspace against an opaque-only
-//! allowlist. It does NOT cover the bridged log records below, whose
-//! attributes are arbitrary `tracing` event fields.
+//! `span_fields_stay_on_the_pii_allowlist` test scans every
+//! `#[instrument(... fields(...))]` key, every `...span!` inline field (the
+//! generic `tracing::span!` and all five `{info,debug,trace,warn,error}_span!`
+//! shorthands), and every `<receiver>.record("key", ...)` call in the
+//! workspace against an opaque-only allowlist. Both scans are
+//! deny-by-default: the `.record` scan does not care what the receiver is
+//! named, and skips only an explicit list of receivers confirmed not to be
+//! spans. Being a text scan it cannot see a non-literal key or
+//! `.record_all(...)`, and it does NOT cover the bridged log records below,
+//! whose attributes are arbitrary `tracing` event fields.
 //!
 //! # Graceful degradation
 //!
