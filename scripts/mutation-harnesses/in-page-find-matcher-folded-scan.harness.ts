@@ -35,19 +35,17 @@
  * against the current source, then recompute and update the hash. See
  * `scripts/check-mutation-harness-clones.mjs`, wired into prek.toml.
  *
- * KNOWN GAP in the pin coverage (documented, not silently missing): the
- * module-level `WORD_RE` regex constant `isWordCodePoint` reads is NOT
- * itself pinned — the #3907 guard only tracks named `function`
- * declarations, not top-level `const`s. A `WORD_RE`-only edit would not
- * trip this harness's gate (though it would very likely trip the existing
- * unit tests in matcher.test.ts, which assert on whole-word behavior
- * directly). `isWordCodePoint` inlines the same pattern text below so the
- * CLONE stays byte-faithful to what `WORD_RE` currently is; that inlining
- * is itself unpinned.
+ * The module-level `WORD_RE` regex constant `isWordCodePoint` reads is
+ * pinned too (last marker below, #3953). `isWordCodePoint`'s clone here
+ * INLINES that pattern text rather than referencing a constant, so the
+ * clone stays byte-faithful to what `WORD_RE` currently is; a `WORD_RE`-only
+ * edit now fails the gate, which is the signal to re-sync that inlined
+ * literal and update the pin.
  *
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldCodePoint sha256=191d915338117d9bae421defafb4f44a5c6d74c12ad5515d66ef875f18cf87ab
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#scanLiteralFolded sha256=e368c19ed972375248269fbaac7ac3446f23cdffe793eb02cf4349b9c9bc3baa
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#isWordCodePoint sha256=1187f44517fcbf5a2ffd1e10a8518fc0e20e2b458faa3e784a488fb074ebaf7c
+ * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#WORD_RE sha256=a51922e9c0787f4eb305db8a68ebbc7e91f2ebb388fa091a7261e9ff2830ba26
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#codePointBefore sha256=4818b6d6cee92197cc0aee47214a24927fc99b0bb6662bb640bb08d178ff31d5
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#isWholeWord sha256=dbfed2675929f078adb8227a307839684ad55995426ac61d604d4a5141bca1c7
  *
@@ -95,7 +93,8 @@ function mulberry32(seed: number): () => number {
   }
 }
 
-// ── Real (byte-faithful clones of unexported helpers, per KNOWN GAP note) ──
+// ── Real (byte-faithful clones of unexported helpers; `isWordCodePoint`
+//    inlines the pinned `WORD_RE` pattern, see the header) ────────────────
 
 function foldCodePoint(ch: string): string {
   const f = ch.toLowerCase()

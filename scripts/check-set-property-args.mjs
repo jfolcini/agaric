@@ -55,27 +55,46 @@
 // Real call sites are formatted across 6+ lines (one field per line), so
 // a single-line regex would miss nearly every real call — that would be
 // a guard that silently passes everything, which is worse than no guard.
-// Instead this does real (if minimal) lexing:
+// Instead this does real (if minimal) lexing, via the SHARED scanner in
+// `scripts/lib/js-scanner.mjs`:
 //
-//   1. Comments are stripped first, string/template-literal aware (a
-//      `//` or `/* ` inside a string value, e.g. a URL, must not be
+//   1. Comments are stripped first, string/template/regex-literal aware
+//      (a `//` or `/* ` inside a string value, e.g. a URL, must not be
 //      mistaken for a comment start).
+//   1b. Call sites are then DISCOVERED in a second view with string and
+//      template CONTENTS blanked as well, so a `commands.setProperty(`
+//      written inside a string or a template literal — documentation, a
+//      code sample, an error message — is not analysed as a real call.
+//      It used to be, and reported missing keys for a call that does not
+//      exist. Arguments are still read out of the comments-only-stripped
+//      text, whose offsets are identical (both transforms preserve length
+//      and newline positions).
 //   2. `commands.setProperty(` call sites are located, then their
 //      argument list is isolated with a bracket-depth scanner (tracks
-//      `()[]{}` nesting and skips over string/template contents,
+//      `()[]{}` nesting and skips over string/template/regex contents,
 //      including `${...}` interpolation) that finds the TRUE matching
 //      close-paren regardless of newlines or nested calls.
-//   3. The argument list is split on top-level commas (same
-//      string/bracket-aware scanner) to get the three positional args.
+//   3. The argument list is split on top-level commas (same scanner) to
+//      get the three positional args.
 //   4. If the third argument is a bare `{ ... }` object literal (after
 //      unwrapping redundant wrapping parens), its body is split on
 //      top-level commas and each entry's key is extracted.
 //
+// The scanner used to live here, hand-rolled, and was copy-pasted into
+// `check-mutation-harness-clones.mjs`. Neither copy knew about REGEX
+// LITERALS, so a regex containing a bare `}` closed a bracket scan early
+// and a regex containing a quote (`/['"]/`) was read as a string opener,
+// desyncing everything after it (#3950 — one root cause, two symptoms).
+// Both guards now share one implementation that resolves the
+// division-vs-regex ambiguity by previous-significant-token tracking; see
+// that module's header for its decision table, its fail-closed policy,
+// and its stated limits.
+//
 // This correctly handles arbitrary formatting/whitespace/nesting; it is
-// still a lexer, not a full parser, so pathological non-standard syntax
-// could in principle confuse it, but the codebase's actual call sites
-// (per --self-test and the real files this was verified against) parse
-// correctly.
+// still a lexer, not a full parser. Where it cannot decide, it raises
+// `ScanError` and this guard reports the file as un-scannable — a
+// FAILURE, never a silent skip, because a skipped file is a file whose
+// missing keys nobody checked.
 //
 // ─── Scope ──────────────────────────────────────────────────────────
 //
@@ -97,13 +116,21 @@
 // Usage: node scripts/check-set-property-args.mjs
 //        node scripts/check-set-property-args.mjs --self-test
 // Exit:  0 = clean, 1 = a call site's object-literal third argument is
-//        missing one or more of the five value keys, 2 = repo layout /
-//        self-test failure.
+//        missing one or more of the five value keys (or a file could not
+//        be scanned unambiguously), 2 = repo layout / self-test failure.
 // ─────────────────────────────────────────────────────────────────────
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+
+import {
+  ScanError,
+  blankStringsAndTemplates,
+  findMatchingBracket,
+  splitTopLevelCommas,
+  stripComments,
+} from './lib/js-scanner.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const SRC_DIR = path.join(ROOT, 'src')
@@ -144,166 +171,6 @@ function listSourceFiles(srcDir = SRC_DIR) {
   }
   visit(srcDir)
   return out
-}
-
-/**
- * Advance past a string/template literal starting at `src[i]` (which
- * must be `'`, `"`, or `` ` ``). Returns the index just past the closing
- * quote. Handles backslash escapes and, for template literals, nested
- * `${...}` interpolation (which may itself contain strings/braces).
- */
-function skipString(src, i) {
-  const quote = src[i]
-  const n = src.length
-  let j = i + 1
-  while (j < n) {
-    const c = src[j]
-    if (c === '\\') {
-      j += 2
-      continue
-    }
-    if (quote === '`' && c === '$' && src[j + 1] === '{') {
-      j = skipTemplateExpr(src, j + 2)
-      continue
-    }
-    if (c === quote) return j + 1
-    j++
-  }
-  return n
-}
-
-/** Advance past a `${ ... }` template interpolation body; `i` points just after `${`. */
-function skipTemplateExpr(src, i) {
-  const n = src.length
-  let depth = 1
-  let j = i
-  while (j < n && depth > 0) {
-    const c = src[j]
-    if (c === "'" || c === '"' || c === '`') {
-      j = skipString(src, j)
-      continue
-    }
-    if (c === '{') {
-      depth++
-      j++
-      continue
-    }
-    if (c === '}') {
-      depth--
-      j++
-      continue
-    }
-    j++
-  }
-  return j
-}
-
-/**
- * Replace block comments and line comments with equal-length whitespace
- * (preserving newlines, so line numbers stay accurate), skipping over
- * string/template literal contents so a `//` or `/*` inside a string
- * value is not mistaken for a comment.
- */
-function stripComments(src) {
-  const n = src.length
-  let out = ''
-  let i = 0
-  while (i < n) {
-    const c = src[i]
-    const c2 = src[i + 1]
-    if (c === "'" || c === '"' || c === '`') {
-      const j = skipString(src, i)
-      out += src.slice(i, j)
-      i = j
-      continue
-    }
-    if (c === '/' && c2 === '/') {
-      let j = i
-      while (j < n && src[j] !== '\n') j++
-      out += ' '.repeat(j - i)
-      i = j
-      continue
-    }
-    if (c === '/' && c2 === '*') {
-      let j = i + 2
-      while (j < n && !(src[j] === '*' && src[j + 1] === '/')) j++
-      j = Math.min(j + 2, n)
-      out += src.slice(i, j).replace(/[^\n]/g, ' ')
-      i = j
-      continue
-    }
-    out += c
-    i++
-  }
-  return out
-}
-
-/**
- * Find the index of the bracket matching `src[openIdx]` (one of
- * `([{`), scanning forward and skipping over string/template literal
- * contents. Returns -1 if unmatched (malformed/truncated input).
- */
-function findMatchingBracket(src, openIdx) {
-  const pairs = { '(': ')', '[': ']', '{': '}' }
-  const openCh = src[openIdx]
-  const closeCh = pairs[openCh]
-  const n = src.length
-  let depth = 0
-  let i = openIdx
-  while (i < n) {
-    const c = src[i]
-    if (c === "'" || c === '"' || c === '`') {
-      i = skipString(src, i)
-      continue
-    }
-    if (c === openCh) {
-      depth++
-    } else if (c === closeCh) {
-      depth--
-      if (depth === 0) return i
-    }
-    i++
-  }
-  return -1
-}
-
-/**
- * Split `src` on top-level commas (depth 0 relative to `src`'s own
- * `()[]{}` nesting), skipping over string/template literal contents.
- * Returns trimmed, non-empty segments.
- */
-function splitTopLevelCommas(src) {
-  const n = src.length
-  const parts = []
-  let depth = 0
-  let start = 0
-  let i = 0
-  while (i < n) {
-    const c = src[i]
-    if (c === "'" || c === '"' || c === '`') {
-      i = skipString(src, i)
-      continue
-    }
-    if (c === '(' || c === '[' || c === '{') {
-      depth++
-      i++
-      continue
-    }
-    if (c === ')' || c === ']' || c === '}') {
-      depth--
-      i++
-      continue
-    }
-    if (c === ',' && depth === 0) {
-      parts.push(src.slice(start, i))
-      i++
-      start = i
-      continue
-    }
-    i++
-  }
-  parts.push(src.slice(start, n))
-  return parts.map((s) => s.trim()).filter((s) => s.length > 0)
 }
 
 /** Strip redundant wrapping parens: `((x))` → `x`. Non-recursive-unsafe input tolerant. */
@@ -366,48 +233,90 @@ function parseObjectLiteral(expr) {
  *     verified (non-literal, or a literal with a spread/computed key).
  */
 function analyzeSource(rawSrc) {
-  const src = stripComments(rawSrc)
   const violations = []
   let literalCount = 0
   let skippedCount = 0
 
-  CALL_RE.lastIndex = 0
-  let m
-  while ((m = CALL_RE.exec(src))) {
-    const openParenIdx = m.index + m[0].length - 1
-    const closeParenIdx = findMatchingBracket(src, openParenIdx)
-    if (closeParenIdx === -1) continue // malformed/truncated — skip defensively
+  try {
+    const src = stripComments(rawSrc)
+    // Call sites are DISCOVERED in a view with string/template contents
+    // blanked, so a `commands.setProperty(` written inside a string or a
+    // template literal (documentation, a code sample) is not analysed as a
+    // real call. Arguments are then read out of `src`, whose offsets are
+    // identical because both transforms preserve length and newlines.
+    const search = blankStringsAndTemplates(src)
 
-    const argsInner = src.slice(openParenIdx + 1, closeParenIdx)
-    const args = splitTopLevelCommas(argsInner)
-    if (args.length < 3) continue // not a 3-arg call — not our shape, skip defensively
+    CALL_RE.lastIndex = 0
+    let m
+    while ((m = CALL_RE.exec(search))) {
+      const openParenIdx = m.index + m[0].length - 1
+      const closeParenIdx = findMatchingBracket(src, openParenIdx)
+      if (closeParenIdx === -1) {
+        // Counted, not dropped: a call site this guard could not parse must
+        // show up in the summary's skipped tally. Falling through silently
+        // made it invisible, which is precisely what this file's header
+        // says an undecidable construct must never be.
+        skippedCount++
+        continue
+      }
 
-    const line = src.slice(0, m.index).split('\n').length
-    const literal = parseObjectLiteral(args[2])
+      const argsInner = src.slice(openParenIdx + 1, closeParenIdx)
+      const line = src.slice(0, m.index).split('\n').length
+      // A `ScanError` raised while lexing this call's own argument text
+      // carries an index relative to that SUBSTRING, which would resolve to
+      // a line near the top of the file. Re-base it onto the call site so
+      // the reported location is the call, not line 1.
+      let args
+      let literal
+      try {
+        args = splitTopLevelCommas(argsInner)
+        if (args.length < 3) {
+          // Also counted: "not the three-argument shape" is still a call
+          // site whose keys nobody verified.
+          skippedCount++
+          continue
+        }
+        literal = parseObjectLiteral(args[2])
+      } catch (err) {
+        if (!(err instanceof ScanError)) throw err
+        throw new ScanError(err.message, m.index)
+      }
 
-    if (literal === null || literal.hasUnverifiable) {
-      skippedCount++
-      continue
+      if (literal === null || literal.hasUnverifiable) {
+        skippedCount++
+        continue
+      }
+
+      literalCount++
+      const missing = REQUIRED_KEYS.filter((k) => !literal.keys.includes(k))
+      if (missing.length > 0) {
+        violations.push({ line, missingKeys: missing })
+      }
     }
-
-    literalCount++
-    const missing = REQUIRED_KEYS.filter((k) => !literal.keys.includes(k))
-    if (missing.length > 0) {
-      violations.push({ line, missingKeys: missing })
-    }
+  } catch (err) {
+    // The shared scanner refuses to guess at input it cannot decide. A
+    // file we could not lex is a file whose `setProperty` calls nobody
+    // checked, so it is reported as a FAILURE — counting it as "skipped"
+    // would be the fail-open this guard exists to avoid.
+    if (!(err instanceof ScanError)) throw err
+    return { violations: [], literalCount: 0, skippedCount: 0, scanError: err }
   }
 
-  return { violations, literalCount, skippedCount }
+  return { violations, literalCount, skippedCount, scanError: null }
 }
 
 /**
  * Walk `srcDir` and aggregate `analyzeSource` over every source file.
  * Pure over the filesystem so the self-test can drive it against a
- * synthetic tree. Returns `{ fileViolations, literalCount, skippedCount, scanned }`
- * where `fileViolations` is `[{ file, line, missingKeys }]` sorted by file/line.
+ * synthetic tree. Returns
+ * `{ fileViolations, scanErrors, literalCount, skippedCount, scanned }`
+ * where `fileViolations` is `[{ file, line, missingKeys }]` sorted by
+ * file/line and `scanErrors` is `[{ file, line, message }]` for files the
+ * shared scanner could not lex unambiguously (a failure, not a skip).
  */
 function analyzeTree({ root, srcDir }) {
   const fileViolations = []
+  const scanErrors = []
   let literalCount = 0
   let skippedCount = 0
   let scanned = 0
@@ -416,25 +325,55 @@ function analyzeTree({ root, srcDir }) {
     scanned += 1
     const rawSrc = fs.readFileSync(file, 'utf8')
     const result = analyzeSource(rawSrc)
+    const relFile = toPosix(path.relative(root, file))
+    if (result.scanError) {
+      scanErrors.push({
+        file: relFile,
+        line: rawSrc.slice(0, result.scanError.index ?? 0).split('\n').length,
+        message: result.scanError.message,
+      })
+      continue
+    }
     literalCount += result.literalCount
     skippedCount += result.skippedCount
-    const relFile = toPosix(path.relative(root, file))
     for (const v of result.violations) {
       fileViolations.push({ file: relFile, line: v.line, missingKeys: v.missingKeys })
     }
   }
 
   fileViolations.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
-  return { fileViolations, literalCount, skippedCount, scanned }
+  scanErrors.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
+  return { fileViolations, scanErrors, literalCount, skippedCount, scanned }
 }
 
 // ─── main ───────────────────────────────────────────────────────────
 
-if (process.argv.includes('--self-test')) {
-  runSelfTest()
-} else {
-  runGuard()
+// Only run as a CLI when this file IS the entry point. Imported (by an
+// ad-hoc comparison script, say), it is a library and must not scan the
+// tree or exit the process.
+// Guarded — see the same note in scripts/lib/js-scanner.mjs: this runs at
+// module evaluation, so an unresolvable `process.argv[1]` would throw before
+// any export exists and break every importer.
+const isMainModule = (() => {
+  try {
+    return (
+      !!process.argv[1] &&
+      fs.realpathSync(import.meta.filename) === fs.realpathSync(process.argv[1])
+    )
+  } catch {
+    return false
+  }
+})()
+
+if (isMainModule) {
+  if (process.argv.includes('--self-test')) {
+    runSelfTest()
+  } else {
+    runGuard()
+  }
 }
+
+export { analyzeSource, analyzeTree }
 
 function runGuard() {
   if (!fs.existsSync(SRC_DIR)) {
@@ -442,10 +381,23 @@ function runGuard() {
     process.exit(2)
   }
 
-  const { fileViolations, literalCount, skippedCount } = analyzeTree({
+  const { fileViolations, scanErrors, literalCount, skippedCount } = analyzeTree({
     root: ROOT,
     srcDir: SRC_DIR,
   })
+
+  if (scanErrors.length > 0) {
+    console.error('ERROR: file(s) could not be scanned unambiguously, so their')
+    console.error('`commands.setProperty(...)` call sites were NOT verified:')
+    console.error('')
+    for (const e of scanErrors) {
+      console.error(`  ${e.file}:${e.line} — ${e.message}`)
+    }
+    console.error('')
+    console.error('The shared scanner (scripts/lib/js-scanner.mjs) fails closed rather than')
+    console.error('guessing. Fix the construct it names, or extend the scanner.')
+    process.exit(1)
+  }
 
   if (fileViolations.length > 0) {
     console.error('ERROR: `commands.setProperty(...)` call(s) missing required value key(s):')
@@ -617,6 +569,212 @@ function runSelfTest() {
     )
   }
 
+  // ── #3950: regex literals in and around the call site ──────────────
+  //
+  // Each of these reddens if regex-literal awareness is removed from the
+  // shared scanner: the bare `}` inside the regex decrements bracket
+  // depth, so the commas after it stop looking top-level and the keys
+  // that follow are never seen — the guard then reports keys "missing"
+  // that are right there (case 1), or, worse, cannot see that one really
+  // IS missing (case 2).
+
+  const braceRegexValue = analyzeSource(`commands.setProperty(blockId, key, {
+      value_text: raw.replace(/\\}/g, ''),
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    })`)
+  if (braceRegexValue.violations.length === 0 && braceRegexValue.literalCount === 1) {
+    ok('a value expression containing a regex with a bare `}` still parses all five keys')
+  } else {
+    fail(
+      'a value expression containing a regex with a bare `}` still parses all five keys',
+      JSON.stringify(braceRegexValue),
+    )
+  }
+
+  const braceRegexMissingKey = analyzeSource(`commands.setProperty(blockId, key, {
+      value_text: raw.replace(/\\}/g, ''),
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+    })`)
+  if (
+    braceRegexMissingKey.violations.length === 1 &&
+    braceRegexMissingKey.violations[0].missingKeys.join() === 'value_bool'
+  ) {
+    ok('a genuinely missing key is still caught when the literal contains a brace-bearing regex')
+  } else {
+    fail(
+      'a genuinely missing key is still caught when the literal contains a brace-bearing regex',
+      JSON.stringify(braceRegexMissingKey),
+    )
+  }
+
+  const quoteRegexBefore = analyzeSource(`const QUOTE_RE = /['"]/
+    commands.setProperty(blockId, key, {
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    })`)
+  if (quoteRegexBefore.violations.length === 0 && quoteRegexBefore.literalCount === 1) {
+    ok('a regex containing quotes earlier in the file does not desync the call-site scan')
+  } else {
+    fail(
+      'a regex containing quotes earlier in the file does not desync the call-site scan',
+      JSON.stringify(quoteRegexBefore),
+    )
+  }
+
+  const divisionBefore = analyzeSource(`const ratio = a / b / c
+    commands.setProperty(blockId, key, {
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    })`)
+  if (divisionBefore.violations.length === 0 && divisionBefore.literalCount === 1) {
+    ok('a division expression is not misread as a regex, so the following call is still verified')
+  } else {
+    fail(
+      'a division expression is not misread as a regex, so the following call is still verified',
+      JSON.stringify(divisionBefore),
+    )
+  }
+
+  // A `commands.setProperty(` living inside a STRING or template literal is
+  // data, not a call site. `CALL_RE` used to run over text with comments
+  // blanked but strings intact, so it matched there and reported missing
+  // keys for a call that does not exist. Over-reporting rather than
+  // under-reporting, but a false failure blocks commits just as hard.
+  const callInString = analyzeSource(
+    `const doc = 'commands.setProperty(id, k, { value_text: null })'\nconst x = 1\n`,
+  )
+  if (
+    callInString.violations.length === 0 &&
+    callInString.literalCount === 0 &&
+    callInString.skippedCount === 0
+  ) {
+    ok('a setProperty call inside a string literal is not analysed as a real call site')
+  } else {
+    fail(
+      'a setProperty call inside a string literal is not analysed as a real call site',
+      JSON.stringify(callInString),
+    )
+  }
+
+  const callInTemplate = analyzeSource(
+    'const doc = `\ncommands.setProperty(id, k, { value_text: null })\n`\nconst x = 1\n',
+  )
+  if (callInTemplate.violations.length === 0 && callInTemplate.literalCount === 0) {
+    ok('a setProperty call inside a template literal is not analysed as a real call site')
+  } else {
+    fail(
+      'a setProperty call inside a template literal is not analysed as a real call site',
+      JSON.stringify(callInTemplate),
+    )
+  }
+
+  // Positive control: blanking strings for call-site DISCOVERY must not stop
+  // the real call's arguments from being read out of the unblanked source.
+  const realCallWithStringValue = analyzeSource(
+    `commands.setProperty(id, k, {\n  value_text: 'commands.setProperty(nope)',\n  value_num: null,\n  value_date: null,\n  value_ref: null,\n  value_bool: null,\n})\n`,
+  )
+  if (
+    realCallWithStringValue.violations.length === 0 &&
+    realCallWithStringValue.literalCount === 1
+  ) {
+    ok('a real call whose string VALUE mentions setProperty is still verified exactly once')
+  } else {
+    fail(
+      'a real call whose string VALUE mentions setProperty is still verified exactly once',
+      JSON.stringify(realCallWithStringValue),
+    )
+  }
+
+  // The fail-open an unterminated `/*` used to produce at THIS guard: the
+  // scanner consumed it to EOF as a comment, `stripComments` blanked the
+  // tail, and the deficient call below it was never seen — zero call sites,
+  // exit 0, a file reported clean that nobody checked.
+  const afterUnterminatedComment = analyzeSource(
+    `const a = 1\n/* never closed\ncommands.setProperty(id, k, {\n  value_text: null,\n  value_num: null,\n  value_date: null,\n  value_ref: null,\n})\n`,
+  )
+  if (
+    afterUnterminatedComment.violations.length === 1 &&
+    afterUnterminatedComment.violations[0].missingKeys.join() === 'value_bool'
+  ) {
+    ok('a deficient call AFTER an unterminated block comment is still caught, not blanked away')
+  } else {
+    fail(
+      'a deficient call AFTER an unterminated block comment is still caught, not blanked away',
+      JSON.stringify(afterUnterminatedComment),
+    )
+  }
+
+  // A real call written inside a template-literal `${…}` interpolation. The
+  // interpolation holds CODE, so this is a genuine call site — it used to be
+  // blanked away with the surrounding literal text and was therefore neither
+  // checked nor counted as skipped. Invisible, in the one guard whose thesis
+  // is that a call nobody checked must never read as clean.
+  const callInInterpolation = analyzeSource(
+    'const msg = `before${ commands.setProperty(id, k, {\n  value_text: null,\n  value_num: null,\n  value_date: null,\n  value_ref: null,\n}) }after`\n',
+  )
+  if (
+    callInInterpolation.violations.length === 1 &&
+    callInInterpolation.violations[0].missingKeys.join() === 'value_bool'
+  ) {
+    ok('a call inside a template-literal interpolation is checked, not blanked away')
+  } else {
+    fail(
+      'a call inside a template-literal interpolation is checked, not blanked away',
+      JSON.stringify(callInInterpolation),
+    )
+  }
+
+  // Two skip paths used to `continue` WITHOUT incrementing `skippedCount`,
+  // so a call site the guard could not parse never appeared in the
+  // `OK: N … (M skipped)` summary at all — invisible, which is exactly what
+  // this file's header says an undecidable construct must never be.
+  const unclosedCall = analyzeSource('commands.setProperty(id, k, {\n  value_text: null,\n')
+  if (unclosedCall.violations.length === 0 && unclosedCall.skippedCount === 1) {
+    ok('a call whose parens never close is COUNTED as skipped, not silently dropped')
+  } else {
+    fail(
+      'a call whose parens never close is COUNTED as skipped, not silently dropped',
+      JSON.stringify(unclosedCall),
+    )
+  }
+
+  const twoArgCall = analyzeSource('commands.setProperty(id, k)\n')
+  if (twoArgCall.violations.length === 0 && twoArgCall.skippedCount === 1) {
+    ok('a call with fewer than three arguments is COUNTED as skipped, not silently dropped')
+  } else {
+    fail(
+      'a call with fewer than three arguments is COUNTED as skipped, not silently dropped',
+      JSON.stringify(twoArgCall),
+    )
+  }
+
+  const unscannable = analyzeSource(
+    "const s = 'never closed\ncommands.setProperty(blockId, key, { value_text: null })\n",
+  )
+  if (
+    unscannable.scanError instanceof ScanError &&
+    unscannable.violations.length === 0 &&
+    unscannable.skippedCount === 0
+  ) {
+    ok('input the scanner cannot lex is returned as a scanError, not as a silent clean result')
+  } else {
+    fail(
+      'input the scanner cannot lex is returned as a scanError, not as a silent clean result',
+      JSON.stringify(unscannable),
+    )
+  }
+
   // ── analyzeTree() — scope (test files ignored) ─────────────────────
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'set-property-args-selftest-'))
@@ -683,6 +841,30 @@ function runSelfTest() {
       ok('scan walked exactly the 2 non-test files')
     } else {
       fail('scan walked exactly the 2 non-test files', `scanned=${scanned}`)
+    }
+
+    // The scanError path at its CALL SITE, not just in `analyzeSource`:
+    // a file the scanner cannot lex must arrive in `scanErrors` (which
+    // `runGuard` exits 1 on), never be dropped into the clean set.
+    fs.writeFileSync(
+      path.join(libDir, 'unscannable.ts'),
+      "export const s = 'never closed\nexport const t = 1\n",
+    )
+    const withUnscannable = analyzeTree({ root: tmp, srcDir })
+    if (
+      withUnscannable.scanErrors.length === 1 &&
+      withUnscannable.scanErrors[0].file === 'src/lib/unscannable.ts' &&
+      withUnscannable.scanErrors[0].line === 1 &&
+      withUnscannable.fileViolations.some((v) => v.file === 'src/lib/bad.ts')
+    ) {
+      ok(
+        'a file the scanner cannot lex is reported in scanErrors, and the rest of the tree is still checked',
+      )
+    } else {
+      fail(
+        'a file the scanner cannot lex is reported in scanErrors, and the rest of the tree is still checked',
+        JSON.stringify(withUnscannable),
+      )
     }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
