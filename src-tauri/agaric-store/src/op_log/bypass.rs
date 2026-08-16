@@ -47,6 +47,21 @@ async fn disable_op_log_mutation_bypass_conn(
 /// dangling. This raw pair remains for callers (and tests) that need to
 /// drive their own multi-statement bypass window.
 ///
+/// # A raw DELETE must ALSO capture the seq high-water (#3310 / #3998)
+/// The bracket is not the only obligation a wholesale `op_log` delete
+/// carries. [`truncate`] / [`prune`] additionally record the pre-delete
+/// per-device `MAX(seq)` into [`super::high_water`] so the local-append
+/// allocator cannot restart at `seq = 1` over an emptied log and re-mint
+/// `(device_id, seq)` addresses a paired peer still holds. This raw pair
+/// does NOT do that — nothing in the trigger, the type system, or the
+/// hooks would catch its absence, and the symptom (a peer silently
+/// swallowing this device's post-wipe history via `INSERT OR IGNORE`) is
+/// invisible locally. Every call site of this pair today is `#[cfg(test)]`;
+/// any future PRODUCTION site that deletes `op_log` rows through it must
+/// call [`super::high_water::capture_device_frontier`] /
+/// [`super::high_water::capture_all_frontiers`] first, in the same
+/// transaction — or, preferably, use [`truncate`] / [`prune`] instead.
+///
 /// # Errors
 /// Returns [`AppError`] if the INSERT fails (e.g. the underlying connection
 /// has been closed).
@@ -88,8 +103,9 @@ pub async fn disable_op_log_mutation_bypass(
 /// enable → `DELETE FROM op_log` → disable on `conn`, leaving the bypass
 /// DISABLED on return.
 ///
-/// Opens NO transaction: the three statements run on the caller's
-/// connection/transaction in order, so the wipe and its bypass bracket are
+/// Opens NO transaction: the high-water capture and the three bypass/delete
+/// statements run on the caller's connection/transaction in order, so the
+/// wipe, its high-water capture, and its bypass bracket are
 /// atomic with whatever surrounding write the caller commits (e.g. the
 /// snapshot RESET). On any error the caller's transaction rolls back, which
 /// discards the sentinel INSERT as well — the bypass never escapes.
@@ -97,9 +113,22 @@ pub async fn disable_op_log_mutation_bypass(
 /// This is the RESET-path counterpart to [`prune`] (compaction). Used by the
 /// snapshot RESET (`agaric-sync`'s `apply_snapshot`).
 ///
+/// # Seq high-water (#3998)
+/// Before the DELETE this captures every device's `MAX(seq)` into the durable
+/// [`super::high_water`] marks, so the local-append allocator does not restart
+/// at `seq = 1` over the emptied log and re-issue `(device_id, seq)` addresses
+/// a paired peer still holds. See that module for why the mark lives in
+/// `app_settings` (the RESET does not wipe it) rather than in `op_log`.
+///
 /// # Errors
-/// Returns [`AppError`] if any of the three statements fail.
+/// Returns [`AppError`] if the high-water capture or any of the three
+/// bypass / delete statements fail.
 pub async fn truncate(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
+    // #3998: record every device's frontier BEFORE the wipe, so the local
+    // allocator does not restart at seq 1 and re-mint op addresses a paired
+    // peer still holds as audit rows. Deliberately inside the caller's
+    // transaction: the mark and the wipe commit — or roll back — together.
+    super::high_water::capture_all_frontiers(&mut *conn).await?;
     enable_op_log_mutation_bypass_conn(&mut *conn).await?;
     sqlx::query!("DELETE FROM op_log")
         .execute(&mut *conn)
@@ -122,6 +151,14 @@ pub async fn truncate(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError>
 /// after the snapshot read (seq > `max_seq`) are never deleted even if their
 /// `created_at` predates the cutoff. Returns the number of rows deleted.
 ///
+/// # Seq high-water (#3310)
+/// Neither bound stops the DELETE from emptying the device: on a vault whose
+/// newest op predates the retention window, the cutoff is newer than every row
+/// and the frontier covers all of them. Before the DELETE this therefore
+/// captures the device's `MAX(seq)` into the durable [`super::high_water`]
+/// mark, so the allocator keeps counting from the pre-compaction frontier
+/// instead of falling back to `seq = 1`.
+///
 /// Like [`truncate`], this self-brackets the H-13 bypass (enable → delete →
 /// disable) around its own DELETE, so a compaction loop that calls `prune`
 /// per device can't forget the bracket and each DELETE runs with the sentinel
@@ -132,13 +169,20 @@ pub async fn truncate(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError>
 /// transaction rolls back, discarding the sentinel INSERT.
 ///
 /// # Errors
-/// Returns [`AppError`] if any of the three statements fail.
+/// Returns [`AppError`] if the high-water capture or any of the three
+/// bypass / delete statements fail.
 pub async fn prune(
     conn: &mut sqlx::SqliteConnection,
     created_before: i64,
     device_id: &str,
     max_seq: i64,
 ) -> Result<u64, AppError> {
+    // #3310: record this device's frontier BEFORE the DELETE. A cutoff newer
+    // than every op purges the device to zero rows, after which a `MAX(seq)`
+    // allocator would restart it at seq 1. Recording the frontier rather than
+    // refusing to delete the newest row keeps compaction's contract intact
+    // (it may reclaim every eligible row) while giving the counter a floor.
+    super::high_water::capture_device_frontier(&mut *conn, device_id).await?;
     enable_op_log_mutation_bypass_conn(&mut *conn).await?;
     let res = sqlx::query!(
         "DELETE FROM op_log WHERE created_at < ?1 AND device_id = ?2 AND seq <= ?3",

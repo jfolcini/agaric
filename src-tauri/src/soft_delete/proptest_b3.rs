@@ -1,9 +1,58 @@
 //! B3 property tests for soft-delete cascade / restore (TEST-PROPTEST-B, #150).
 //!
-//! Three property families over **random valid block trees**, exercising
-//! the cascade soft-delete and restore CTEs (`soft_delete::trash` /
-//! `soft_delete::restore`) directly against the materialised `blocks`
+//! Three property families over **random valid block trees**, driven
+//! through the PRODUCTION delete/restore command path
+//! (`commands::blocks::crud::delete_block_inner` /
+//! `restore_block_inner`, plus — for the replay-idempotence half of
+//! Property 1 — the production SQL projection
+//! `agaric_engine::loro::projection::project_delete_block_to_sql` those
+//! commands themselves dispatch through) against the materialised `blocks`
 //! table:
+//!
+//! ## #3312 finding 1 — repointed at production (not the retired primitives)
+//!
+//! This file used to drive `soft_delete::trash::cascade_soft_delete` /
+//! `soft_delete::restore::restore_block` — both explicitly documented as
+//! **test/bench-only primitives with no production callers**, backed by a
+//! single-shot, depth-100-capped CTE. Production moved on: the single-block
+//! delete/restore commands now walk the subtree depth-UNBOUNDED in batches
+//! (`agaric_store::block_descendants::collect_subtree_ids_unbounded`, R27)
+//! and restore additionally walks UPWARD to reconnect a block restored
+//! under a still-tombstoned parent (`restore_deleted_ancestor_chain`,
+//! #1884) — neither of which the retired primitives ever did. So the old
+//! B3 properties never guarded the code path real deletes/restores take.
+//!
+//! Repointed here at `delete_block_inner` / `restore_block_inner`
+//! (`src/commands/blocks/crud.rs`) — the exact command entry points the
+//! `delete_block` / `restore_block` Tauri commands call, proven safe to
+//! drive against a directly-`INSERT`ed tree (no prior `CreateBlock` op
+//! needed) by the pre-existing `delete_block_inner_cascades_past_depth_cap_r27`
+//! / `restore_block_inner_restores_past_depth_cap_r27` unit tests in that
+//! same file, which this file's `seed_tree` helper mirrors. The retired
+//! primitives stay in place (still used by `soft_delete/mod.rs` unit tests,
+//! `reverse/tests.rs`, and the `soft_delete_bench` harness) but are no
+//! longer this file's production-fidelity guard.
+//!
+//! **Engine-arm caveat — what "production path" does and does not mean
+//! here.** `seed_tree` INSERTs rows carrying no `space_id` and registers no
+//! `spaces` row, so `resolve_block_space` returns `None` and
+//! `delete_block_inner`'s in-tx engine apply takes the
+//! `SqlOnlyFallbackReason::SpaceUnresolved` branch into
+//! `apply_delete_block_sql_only`. That fallback runs the IDENTICAL
+//! `project_delete_block_to_sql` cascade, so every `blocks.deleted_at`
+//! assertion below IS made against the production SQL projection — but the
+//! per-space Loro `apply_delete_block` engine arm is NOT exercised. These
+//! are SQL-projection properties, not engine-convergence ones; engine
+//! convergence lives in `materializer::handlers::engine_path_tests` and
+//! `delete_restore_convergence_tests`. (The same is true of the `_r27`
+//! unit tests this file mirrors.)
+//!
+//! **Scope note.** TREE_LEN stays capped at 20 (unchanged) — the R27
+//! batched-walk re-anchoring at the depth-100 boundary is NOT separately
+//! exercised here (it would require trees far deeper than the #333
+//! SLOW-test budget this file already fought to stay under). That reach is
+//! covered instead by the two `_r27` unit tests named above, which build a
+//! 130-node linear chain specifically to cross the cap.
 //!
 //! 1. **Cascade idempotence** — cascading a soft-delete over an
 //!    already-cascaded subtree is a no-op: the `deleted_at` of every block
@@ -77,7 +126,7 @@
 //! restore-by-timestamp cohort selection. Bump via `PROPTEST_CASES` for a
 //! deeper local search.
 
-use super::*;
+use crate::commands::blocks::crud::{delete_block_inner, restore_block_inner};
 use crate::db::init_pool;
 use crate::materializer::Materializer;
 use agaric_core::ulid::BlockId;
@@ -246,6 +295,28 @@ impl Tree {
         }
         out
     }
+
+    /// Whether `id` has a strict ancestor (parent, grandparent, …) that was
+    /// independently soft-deleted before any cascade. Production
+    /// `restore_block_inner` restores such a contiguous tombstoned ancestor
+    /// chain too (#1884's `restore_deleted_ancestor_chain`) — behaviour the
+    /// retired `restore_block` test primitive never had. Property 2's root
+    /// selection uses this to stay inside the domain where "restore ∘
+    /// cascade == identity" actually holds under production semantics: a
+    /// root whose ancestor chain contains a pre-deleted block would have
+    /// that ancestor ALSO restored, which is a real (and separately
+    /// desirable) production behaviour but breaks the identity this
+    /// property asserts.
+    fn has_pre_deleted_ancestor(&self, id: &str) -> bool {
+        let mut cursor = id;
+        while let Some(parent) = self.parent.get(cursor) {
+            if self.pre_deleted.contains(parent) {
+                return true;
+            }
+            cursor = parent;
+        }
+        false
+    }
 }
 
 /// Snapshot every block's `deleted_at` — the full observable soft-delete
@@ -266,10 +337,23 @@ async fn snapshot_deleted_at(pool: &SqlitePool, ids: &[String]) -> BTreeMap<Stri
 proptest! {
     #![proptest_config(ProptestConfig { cases: B3_CASES, .. ProptestConfig::default() })]
 
-    /// Property 1 — cascade idempotence. Cascading an already-cascaded
-    /// subtree is a no-op: every block's `deleted_at` is identical after
-    /// one cascade vs. after a second, and the second cascade marks zero
-    /// rows.
+    /// Property 1 — cascade idempotence. The FIRST cascade goes through the
+    /// production single-block delete command (`delete_block_inner`), which
+    /// itself refuses to double-delete (an already-deleted root would be a
+    /// hard `Err`, not a no-op — that guard lives at the command layer, not
+    /// in the projection). So the "re-apply" half instead calls the
+    /// production SQL projection `project_delete_block_to_sql` directly
+    /// with a FRESH, strictly-later timestamp — the same RE-PROJECTION boot
+    /// replay performs for a locally-authored delete op (the local command
+    /// path deliberately does not advance the apply cursor, so the op
+    /// re-projects at the next boot — #1257). Note boot replay re-projects
+    /// with the op's ORIGINAL `created_at`, not a new value, so with a fresh
+    /// timestamp this is strictly the SHAPE of that re-projection and
+    /// literally an independent concurrent delete racing in from another
+    /// device. A FRESH timestamp (rather than reusing the first) is
+    /// required to make this falsifiable: re-applying with the SAME value
+    /// the row already carries can't distinguish a guarded projection from
+    /// an unguarded one that happens to write back an unchanged value.
     #[test]
     fn cascade_soft_delete_is_idempotent(sketches in tree_strategy(TREE_LEN)) {
         let rt = Runtime::new().unwrap();
@@ -286,36 +370,68 @@ proptest! {
                 None => return Ok(()), // every block pre-deleted: nothing live to cascade.
             };
 
-            let (_ts1, count1) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, &root)
+            let resp = delete_block_inner(&pool, TEST_DEVICE, &mat, BlockId::from_trusted(&root))
                 .await
                 .unwrap();
             prop_assert!(
-                count1 > 0,
+                resp.descendants_affected > 0,
                 "first cascade must mark at least one row (root is not pre-deleted)"
             );
             let after_first = snapshot_deleted_at(&pool, &tree.ids).await;
 
-            let (_ts2, count2) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, &root)
-                .await
-                .unwrap();
-            let after_second = snapshot_deleted_at(&pool, &tree.ids).await;
-
-            prop_assert_eq!(
-                count2, 0,
-                "second cascade over an already-cascaded subtree must mark zero rows"
+            // Re-project the SAME logical delete a second time, with a NEW
+            // strictly-later timestamp, through the exact production
+            // projection `delete_block_inner` itself dispatches through
+            // (`apply_op_projected` → `apply_delete_block_tx` →
+            // `project_delete_block_to_sql`).
+            let ts2 = crate::db::next_delete_ms();
+            prop_assert!(
+                ts2 > resp.deleted_at,
+                "the per-process delete clock must be strictly increasing"
             );
+            let cohort2 = {
+                let mut conn = pool.acquire().await.unwrap();
+                agaric_engine::loro::projection::project_delete_block_to_sql(&mut conn, &root, ts2)
+                    .await
+                    .unwrap()
+            };
+            // The walk's BASE member has no `deleted_at` filter (it always
+            // includes the seed), so `cohort2` alone is not "rows actually
+            // restamped" — the UPDATE's `AND deleted_at IS NULL` guard is
+            // what must have kept it a no-op. Assert the OBSERVABLE DB state
+            // instead: nothing may carry `ts2`, and the full snapshot must
+            // be byte-identical to right after the first cascade.
+            prop_assert!(
+                !cohort2.is_empty(),
+                "the walk must still reach the seed (it has no deleted_at filter on the base member)"
+            );
+            let after_second = snapshot_deleted_at(&pool, &tree.ids).await;
             prop_assert_eq!(
                 after_first, after_second,
-                "cascade must be idempotent: deleted_at unchanged by a second cascade"
+                "cascade must be idempotent: re-projecting an already-deleted \
+                 cohort with a NEW timestamp must not restamp any row"
+            );
+            let restamped_with_new_ts: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at = ?")
+                    .bind(ts2)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            prop_assert_eq!(
+                restamped_with_new_ts, 0,
+                "no row may carry the second projection's timestamp — the \
+                 cohort was already fully deleted at the first timestamp \
+                 (the `deleted_at IS NULL` UPDATE guard must have held)"
             );
             Ok::<(), TestCaseError>(())
         })?;
     }
 
     /// Property 2 — `restore ∘ cascade == identity` for a subtree with NO
-    /// independently-deleted descendants. Cascade the chosen root, then
-    /// restore it with the cascade timestamp; every block's `deleted_at`
-    /// must return to its exact pre-delete value.
+    /// independently-deleted descendants OR ancestors. Cascade the chosen
+    /// root via `delete_block_inner`, then restore it via
+    /// `restore_block_inner` with the cascade timestamp; every block's
+    /// `deleted_at` must return to its exact pre-delete value.
     #[test]
     fn restore_after_cascade_is_identity(sketches in tree_strategy(TREE_LEN)) {
         let rt = Runtime::new().unwrap();
@@ -324,50 +440,81 @@ proptest! {
             let tree = seed_tree(&pool, &sketches).await;
 
             // Choose a root whose ACTIVE subtree contains no pre-deleted
-            // block — the contract domain where the round-trip is the
-            // identity. Such a root always exists: any leaf that is not
-            // itself pre-deleted qualifies (its active subtree is just
-            // itself). Fall back to skipping the case if every block is
-            // pre-deleted (then there is nothing to round-trip).
+            // block, AND whose ancestor chain contains no pre-deleted block
+            // either — the contract domain where the round-trip is the
+            // identity under PRODUCTION restore semantics. The ancestor
+            // exclusion is required because `restore_block_inner` also
+            // restores any contiguous soft-deleted ANCESTOR chain (#1884);
+            // without it, restoring `root` could ALSO clear an
+            // independently pre-deleted parent's `deleted_at`, which is
+            // correct production behaviour but breaks this identity. Such a
+            // root always exists: any leaf that is not itself pre-deleted
+            // and whose parent chain is all-live qualifies (its active
+            // subtree is just itself). Fall back to skipping the case if no
+            // such root exists.
+            //
+            // Honesty note on the THIRD clause below: it is vacuous as
+            // written. `active_subtree` already `continue`s past every
+            // pre-deleted child, so its result can only ever contain
+            // pre-deleted ids via the root itself — which the FIRST clause
+            // already excludes. (Checked: 0 non-vacuous hits over 200k
+            // simulated forests.) It is kept as a guard-in-depth against a
+            // future change to `active_subtree`, but the ONLY clause that
+            // actually narrows root selection here is
+            // `has_pre_deleted_ancestor`.
             let root = tree.ids.iter().find(|id| {
                 !tree.pre_deleted.contains(*id)
+                    && !tree.has_pre_deleted_ancestor(id)
                     && tree
                         .active_subtree(id)
                         .iter()
                         .all(|b| !tree.pre_deleted.contains(b))
             });
             let Some(root) = root.cloned() else {
-                // Degenerate forest: every block pre-deleted. Nothing to
-                // assert for this property; not a failure.
+                // No qualifying root in this forest. Nothing to assert for
+                // this property; not a failure.
                 return Ok(());
             };
 
             let pre = snapshot_deleted_at(&pool, &tree.ids).await;
 
-            let (ts, count) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, &root)
+            let resp = delete_block_inner(&pool, TEST_DEVICE, &mat, BlockId::from_trusted(&root))
                 .await
                 .unwrap();
             // Sanity: the cascade marked exactly the oracle's active subtree
             // (all of which were active pre-delete, so all get stamped).
             let expected_marked = tree.active_subtree(&root);
             prop_assert_eq!(
-                usize::try_from(count).unwrap(),
+                usize::try_from(resp.descendants_affected).unwrap(),
                 expected_marked.len(),
                 "cascade count must equal the active-subtree size from the independent oracle"
             );
 
-            let restored = restore_block(&pool, &mat, &root, ts).await.unwrap();
+            let restore_resp = restore_block_inner(
+                &pool,
+                TEST_DEVICE,
+                &mat,
+                BlockId::from_trusted(&root),
+                resp.deleted_at,
+            )
+            .await
+            .unwrap();
             prop_assert_eq!(
-                usize::try_from(restored).unwrap(),
+                usize::try_from(restore_resp.restored_count).unwrap(),
                 expected_marked.len(),
-                "restore must clear exactly the cohort the cascade stamped"
+                "restore must clear exactly the cohort the cascade stamped. \
+                 NOTE: `restored_count` is the COHORT UPDATE's row count only \
+                 (`write_cohort_deleted_at_json`); the upward #1884 \
+                 `restore_deleted_ancestor_chain` UPDATE is NOT added into it, \
+                 so this assertion cannot observe a stray ancestor restore — \
+                 the `pre == post` snapshot below is what catches that"
             );
 
             let post = snapshot_deleted_at(&pool, &tree.ids).await;
             prop_assert_eq!(
                 pre, post,
                 "restore ∘ cascade must be the identity on a subtree with no \
-                 independently-deleted descendants"
+                 independently-deleted descendants or ancestors"
             );
             Ok::<(), TestCaseError>(())
         })?;
@@ -398,9 +545,10 @@ proptest! {
             let pre = snapshot_deleted_at(&pool, &tree.ids).await;
             let active = tree.active_subtree(&root);
 
-            let (ts, _count) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, &root)
+            let resp = delete_block_inner(&pool, TEST_DEVICE, &mat, BlockId::from_trusted(&root))
                 .await
                 .unwrap();
+            let ts = resp.deleted_at;
             let post = snapshot_deleted_at(&pool, &tree.ids).await;
 
             for id in &tree.ids {

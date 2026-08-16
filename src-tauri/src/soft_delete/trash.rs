@@ -16,10 +16,17 @@ use agaric_store::op_log::OpRecord;
 ///
 /// **Test/bench-only primitive — not a production path.** As of #386/#1656
 /// this function has no production callers: the live delete path is
-/// `commands::blocks::crud::delete_block_inner` (which uses the
-/// `descendants_cte_active!()` macro directly). The only consumers are
-/// `#[cfg(test)]` modules and the `soft_delete_bench` perf harness. It
-/// exists to exercise — and let those tests assert — the materializer
+/// `commands::blocks::crud::delete_block_inner`, which (as of R27) routes
+/// through `loro::projection::project_delete_block_to_sql`'s
+/// depth-UNBOUNDED batched walk
+/// (`agaric_store::block_descendants::collect_subtree_ids_unbounded`), NOT
+/// the single-shot `depth < 100` CTE this primitive still uses. The only
+/// consumers are `#[cfg(test)]` modules (including the `soft_delete_bench`
+/// perf harness) — `soft_delete::proptest_b3`'s B3 property tests were
+/// repointed at `delete_block_inner` directly (#3312 finding 1; see that
+/// file's module doc) precisely because this primitive's single-shot,
+/// depth-capped walk no longer matches production's reach. It
+/// exists to exercise — and let its own unit tests assert — the materializer
 /// cache-rebuild fan-out for a `delete_block` op end-to-end; the
 /// `&Materializer` parameter and op-dispatch wiring below are there to make
 /// that fan-out observable in tests, not as guidance for a production caller.

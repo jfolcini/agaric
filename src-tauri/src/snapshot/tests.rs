@@ -6712,3 +6712,265 @@ async fn measure_apply_snapshot_write_lock_hold_2470() {
 
     mat.shutdown();
 }
+
+// ===========================================================================
+// #3310 — compaction must clamp the apply cursor, the way the RESET does
+// ===========================================================================
+//
+// `apply_snapshot` truncates `op_log` and zeroes `materializer_apply_cursor`
+// in one transaction. `compact_op_log` used to reset only the log, so a vault
+// whose newest op predated the retention window was purged to zero rows while
+// the cursor still held the pre-purge frontier — the H-4 impossible state,
+// reported by `recovery::replay::read_apply_cursor` at the NEXT boot as
+// "impossible-state corruption" on a perfectly healthy vault.
+//
+// These tests drive the REAL boot path (`replay_unmaterialized_ops`, whose
+// first act is `read_apply_cursor`) and assert on the warn line it actually
+// emits, captured in-process. The pair is deliberately symmetric: the clamp
+// must silence the FALSE report without silencing the TRUE one.
+
+/// Thread-safe buffered writer for in-process log capture. Mirrors the helper
+/// in `db::tests` / `op_log::tests::origin` (see AGENTS.md "Test helper
+/// duplication is intentional").
+#[derive(Clone, Default)]
+struct WarnCapture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for WarnCapture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for WarnCapture {
+    type Writer = WarnCapture;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+impl WarnCapture {
+    fn contents(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+/// Read the single-row apply cursor.
+async fn read_cursor(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar!(
+        r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Build a healthy, fully-materialised vault whose every op is older than any
+/// retention window: three local ops, replayed through the real boot path so
+/// the cursor reaches the frontier the way production reaches it.
+///
+/// Returns the cursor value after replay (which must equal the op frontier).
+async fn seed_healthy_ancient_vault(pool: &SqlitePool, device_id: &str) -> i64 {
+    use crate::recovery::replay::replay_unmaterialized_ops;
+
+    // 2024-01-01 — older than every retention window the app allows.
+    const ANCIENT_TS: i64 = 1_704_067_200_000;
+    for (n, block) in ["BLOCK-A1", "BLOCK-A2", "BLOCK-A3"].iter().enumerate() {
+        let offset = i64::try_from(n).expect("fixture index fits in i64");
+        insert_op_at(pool, device_id, block, ANCIENT_TS + offset).await;
+    }
+
+    let mat = test_materializer(pool);
+    let report = replay_unmaterialized_ops(pool, &mat).await.unwrap();
+    mat.shutdown();
+    assert_eq!(
+        report.ops_replayed, 3,
+        "fixture precondition: all three seeded ops must materialise"
+    );
+    assert!(
+        report.replay_errors.is_empty(),
+        "fixture precondition: the vault must be healthy, got {:?}",
+        report.replay_errors
+    );
+
+    let cursor = read_cursor(pool).await;
+    assert_eq!(
+        cursor, 3,
+        "fixture precondition: a fully-materialised vault's cursor sits at the op frontier"
+    );
+    cursor
+}
+
+/// #3310 (the reported symptom): compact a healthy vault whose whole op_log
+/// predates the retention window, then boot. Pre-fix the purge left
+/// `cursor = 3` over an EMPTY log and `read_apply_cursor` logged
+/// "impossible-state corruption" about a vault that had never been corrupt.
+/// Post-fix the purge tx clamps the cursor to the surviving `MAX(seq)` (0),
+/// and the boot is silent.
+#[tokio::test]
+async fn compaction_clamps_apply_cursor_so_boot_reports_no_corruption_3310() {
+    use crate::recovery::replay::replay_unmaterialized_ops;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-3310";
+
+    seed_healthy_ancient_vault(&pool, device_id).await;
+
+    // The maintenance tick: every op is older than the retention window.
+    let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
+        .await
+        .unwrap();
+    assert!(result.is_some(), "compaction must have run");
+
+    let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        op_count, 0,
+        "scenario precondition: the purge empties the log (this is #3310's setup, \
+         not the thing under test)"
+    );
+
+    // The reported symptom, on the real boot path.
+    let writer = WarnCapture::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("warn"))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false),
+        );
+    let mat = test_materializer(&pool);
+    {
+        let _guard = tracing::subscriber::set_default(subscriber);
+        replay_unmaterialized_ops(&pool, &mat)
+            .await
+            .expect("boot replay over the compacted vault must succeed");
+    }
+    mat.shutdown();
+
+    let logs = writer.contents();
+    assert!(
+        !logs.contains("impossible-state corruption"),
+        "#3310: a compacted-to-empty HEALTHY vault must not be reported as \
+         impossible-state corruption at boot; captured log output: {logs:?}"
+    );
+
+    // ...and the mechanism that removes it, observed directly on the column.
+    // Read AFTER the boot: `read_apply_cursor` heals what it warns about, so
+    // a post-boot 0 alone would prove nothing — this asserts the compaction
+    // tx, not the boot clamp, is what put it there. The boot above was a
+    // no-op, which is the whole point.
+    assert_eq!(
+        read_cursor(&pool).await,
+        0,
+        "#3310: compaction must clamp materializer_apply_cursor down to the \
+         surviving MAX(seq) — 0 over an emptied log — in the purge tx, the way \
+         apply_snapshot already zeroes it over its own emptied log"
+    );
+}
+
+/// The other half of the pair: the clamp must not blunt the check. Corrupt
+/// the cursor by hand AFTER compaction (a value no code path could have
+/// produced) and confirm `read_apply_cursor` still names it and still heals
+/// it. Without this, the test above would pass just as well if the warn had
+/// been deleted outright.
+#[tokio::test]
+async fn boot_still_reports_genuine_cursor_corruption_after_the_3310_clamp() {
+    use crate::recovery::replay::replay_unmaterialized_ops;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-3310";
+
+    seed_healthy_ancient_vault(&pool, device_id).await;
+    compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
+        .await
+        .unwrap();
+
+    // Genuine corruption: a cursor of 999 over an op_log whose MAX(seq) is 0.
+    // Deliberately independent of whether the clamp ran, so this test holds
+    // on BOTH sides of the fix — it is the anti-vacuity guard for the test
+    // above, not a second regression test.
+    sqlx::query("UPDATE materializer_apply_cursor SET materialized_through_seq = 999 WHERE id = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let writer = WarnCapture::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("warn"))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false),
+        );
+    let mat = test_materializer(&pool);
+    {
+        let _guard = tracing::subscriber::set_default(subscriber);
+        replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+    }
+    mat.shutdown();
+
+    let logs = writer.contents();
+    assert!(
+        logs.contains("impossible-state corruption"),
+        "the #3310 clamp must not blunt the boot check — a cursor genuinely past \
+         the end of the log must still be reported; captured log output: {logs:?}"
+    );
+    assert_eq!(
+        read_cursor(&pool).await,
+        0,
+        "the boot clamp must still heal the corrupt cursor down to MAX(seq)"
+    );
+}
+
+/// The clamp may only ever LOWER the cursor. A compaction that purges the old
+/// tail but leaves recent ops above the cursor must not touch it — otherwise
+/// the "fix" would itself be the data-loss bug (a cursor raised over ops that
+/// were never materialised means boot replay skips them).
+#[tokio::test]
+async fn compaction_never_raises_the_apply_cursor_3310() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-3310";
+
+    // Two ancient ops (purged) and two recent ones (retained).
+    insert_op_at(&pool, device_id, "BLOCK-OLD1", 1_704_067_200_000).await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD2", 1_704_067_200_001).await;
+    let recent = chrono::Utc::now().timestamp_millis();
+    insert_op_at(&pool, device_id, "BLOCK-NEW1", recent).await;
+    insert_op_at(&pool, device_id, "BLOCK-NEW2", recent).await;
+
+    // Cursor sits mid-log: seqs 1-2 materialised, 3-4 not yet.
+    sqlx::query("UPDATE materializer_apply_cursor SET materialized_through_seq = 2 WHERE id = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
+        .await
+        .unwrap()
+        .expect("the two ancient ops make compaction run");
+
+    let surviving_max: i64 =
+        sqlx::query_scalar!(r#"SELECT COALESCE(MAX(seq), 0) as "m!: i64" FROM op_log"#)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        surviving_max, 4,
+        "scenario precondition: the recent ops survive, so MAX(seq) is still above the cursor"
+    );
+    assert_eq!(
+        read_cursor(&pool).await,
+        2,
+        "#3310: the clamp is `WHERE materialized_through_seq > <surviving max>` — \
+         it must be a strict no-op when the cursor is already below the frontier, \
+         never raising it over the two unmaterialised ops"
+    );
+}

@@ -54,8 +54,10 @@ pub async fn append_local_op(
 /// [`crate::db::begin_immediate_logged`]), not the sqlx default
 /// `pool.begin()` (which uses `BEGIN DEFERRED`).
 ///
-/// The reason: the function reads `MAX(seq)` from `op_log` and then
-/// `INSERT`s a row keyed on `seq + 1`. Under a deferred transaction, a
+/// The reason: the function reads the device's next `seq` (`MAX(seq)` over
+/// `op_log`, floored by the durable high-water mark — see
+/// [`super::high_water::next_seq_for_device`]) and then `INSERT`s a row keyed
+/// on it. Under a deferred transaction, a
 /// concurrent writer can commit a higher `seq` for the same `device_id`
 /// between the read and the write, producing `SQLITE_BUSY_SNAPSHOT`.
 /// `BEGIN IMMEDIATE` eagerly acquires the write lock at the start of
@@ -218,16 +220,16 @@ async fn append_local_op_in_tx_with_provenance(
     // partial index `idx_op_log_attachment_id`).
     let attachment_id: Option<&str> = op_payload.attachment_id();
 
-    // NOTE: `COALESCE(MAX(seq), 0) + 1` is efficient here because the
-    // PRIMARY KEY (device_id, seq) gives SQLite a B-tree index that makes
-    // `MAX(seq) WHERE device_id = ?` an O(log n) seek, not a table scan.
-    let row = sqlx::query!(
-        r#"SELECT COALESCE(MAX(seq), 0) + 1 as "next_seq!: i64" FROM op_log WHERE device_id = ?"#,
-        device_id,
-    )
-    .fetch_one(&mut **tx)
-    .await?;
-    let seq = row.next_seq;
+    // #3310 / #3998: allocate from `MAX(surviving MAX(seq), durable
+    // high-water) + 1`, NOT from the surviving rows alone. Both wholesale
+    // op_log wipes — compaction's `prune` and the snapshot RESET's
+    // `truncate` — can empty this device's rows, and a `MAX(seq)`-only
+    // allocator then restarts the device at seq 1, re-minting op addresses
+    // the device has already issued and a paired peer still holds (their
+    // ingest is `INSERT OR IGNORE` on `(device_id, seq)`, so the re-minted
+    // op is silently swallowed). Both wipe helpers record the pre-wipe
+    // frontier in `app_settings` first; see `super::high_water`.
+    let seq = super::high_water::next_seq_for_device(tx, device_id).await?;
 
     // Phase 1: linear chain — parent is the previous op from this device,
     // or null for the genesis op.

@@ -38,6 +38,31 @@ async fn recover_at_boot_test(
     result
 }
 
+/// #3312 finding 3: variant of [`recover_at_boot_test`] that also wires an
+/// app-data directory onto the `Materializer` via `set_app_data_dir` BEFORE
+/// calling `recover_at_boot` — the one thing every other caller in this
+/// suite (and `integration_tests.rs`) skips. Production sets it in `lib.rs`
+/// once `app.path().app_data_dir()` resolves, so `recover_at_boot`'s Step 3
+/// attachment-backfill `match materializer.app_data_dir()` takes the
+/// `Some(dir)` arm in real boots; every OTHER test wrapper here leaves it
+/// permanently `None`, so that arm (and both backfill calls inside it) is
+/// otherwise dead under test. `set_app_data_dir` warns and ignores a second
+/// call, so it must run before the Materializer is handed to
+/// `recover_at_boot` — same ordering constraint as production `lib.rs`.
+async fn recover_at_boot_test_with_app_data_dir(
+    pool: &SqlitePool,
+    device_id: &str,
+    app_data_dir: &std::path::Path,
+) -> Result<RecoveryReport, AppError> {
+    super::boot::reset_recovery_guard();
+    let materializer = Materializer::new(pool.clone());
+    materializer.set_app_data_dir(app_data_dir.to_path_buf());
+    let registry = agaric_engine::loro::registry::LoroEngineRegistry::new();
+    let result = recover_at_boot(pool, device_id, &materializer, &registry).await;
+    materializer.shutdown();
+    result
+}
+
 // -- Test fixture constants --
 //
 // All timestamps use `Z` (not `+00:00`) to match `now_rfc3339()` output.
@@ -71,6 +96,103 @@ async fn insert_test_block(pool: &SqlitePool, block_id: &str, content: &str) {
     .execute(pool)
     .await
     .unwrap();
+}
+
+/// #3312 finding 3: `recover_at_boot`'s Step 3 attachment-backfill block
+/// (`boot.rs`) is dead under every OTHER test in this suite because none of
+/// them call `set_app_data_dir` — `materializer.app_data_dir()` always
+/// returns `None`, so the block always takes the `None` arm and neither
+/// `backfill_attachment_content_hashes` nor `backfill_attachment_blobs` (nor
+/// the ordering between them, documented at `boot.rs` as load-bearing: the
+/// blob pass "Runs AFTER the hash backfill above so as many rows as
+/// possible carry a `content_hash` to group on") is ever exercised via
+/// `recover_at_boot`.
+///
+/// This test drives the `Some(dir)` arm via
+/// [`recover_at_boot_test_with_app_data_dir`] and seeds ONE hashless
+/// attachment row backed by a real file, then asserts BOTH halves of the
+/// contract with one seeded row:
+///
+/// - `content_hash` is populated — fails if either backfill call (or the
+///   whole match arm) is deleted.
+/// - An `attachment_blobs` row exists for the resulting hash and the row's
+///   `fs_path` already equals the canonical blob path — fails independently
+///   if the two calls are swapped: `backfill_attachment_blobs` only groups
+///   rows that ALREADY carry a `content_hash` (see its module doc and the
+///   `by_hash` grouping loop, which skips `content_hash IS NULL` rows
+///   entirely), so a blob pass that runs BEFORE the hash pass sees this row
+///   as unhashable and permanently excludes it from this boot's grouping —
+///   there is no second pass within one `recover_at_boot` call to catch it
+///   up.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boot_attachment_backfill_runs_hash_then_blob_3312() {
+    let (pool, dir) = test_pool().await;
+    let app_data_dir = dir.path();
+
+    insert_test_block(&pool, "BLK-BOOT-ATT", "x").await;
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    let bytes: Vec<u8> = (0u8..=200).cycle().take(1500).collect();
+    let fs_path = "attachments/boot-backfill.bin";
+    std::fs::write(app_data_dir.join(fs_path), &bytes).unwrap();
+    let size = i64::try_from(bytes.len()).unwrap();
+    let expected_hash = blake3::hash(&bytes).to_hex().to_string();
+
+    // Hashless attachment row (mirrors a pre-0093 / remote-op row) — no
+    // `content_hash` column bound, so it starts NULL.
+    sqlx::query(
+        "INSERT INTO attachments \
+         (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES ('ATT-BOOT-1', 'BLK-BOOT-ATT', 'application/zip', 'f.bin', ?, ?, 1735689600000)",
+    )
+    .bind(size)
+    .bind(fs_path)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    recover_at_boot_test_with_app_data_dir(&pool, "dev-boot-att", app_data_dir)
+        .await
+        .unwrap();
+
+    // Half 1 — invocation: the hash backfill ran.
+    let stored_hash: Option<String> =
+        sqlx::query_scalar("SELECT content_hash FROM attachments WHERE id = 'ATT-BOOT-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored_hash.as_deref(),
+        Some(expected_hash.as_str()),
+        "recover_at_boot must backfill content_hash for a pre-existing \
+         hashless attachment when app_data_dir is set"
+    );
+
+    // Half 2 — invocation AND ordering: the blob backfill ran, and it ran
+    // AFTER the hash backfill in this SAME pass (only then would it see a
+    // non-NULL content_hash to group this row under).
+    let blob_path: Option<String> =
+        sqlx::query_scalar("SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?")
+            .bind(&expected_hash)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        blob_path.as_deref(),
+        Some(fs_path),
+        "recover_at_boot must populate attachment_blobs from the \
+         just-hashed row — only possible if the hash backfill ran BEFORE \
+         the blob backfill within this same boot pass"
+    );
+
+    let row_fs_path: String =
+        sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = 'ATT-BOOT-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        row_fs_path, fs_path,
+        "sole row for its hash: fs_path already equals the canonical blob path"
+    );
 }
 
 // === 1. Snapshot tests ===

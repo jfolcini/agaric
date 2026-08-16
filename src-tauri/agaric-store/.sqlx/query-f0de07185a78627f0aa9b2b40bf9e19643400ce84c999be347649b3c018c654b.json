@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT device_id AS \"device_id!: String\", MAX(seq) AS \"frontier!: i64\"\n           FROM op_log GROUP BY device_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "name": "frontier!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "f0de07185a78627f0aa9b2b40bf9e19643400ce84c999be347649b3c018c654b"
+}

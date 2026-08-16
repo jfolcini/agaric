@@ -11,6 +11,161 @@ use super::reserved_key_blocks_column;
 // Recovery helpers for corrupted databases (missing blocks table)
 // ======================================================================
 
+/// #3269: the HEAD shape of `blocks`, mirroring the rebuild in
+/// `migrations/0089_spaces_registry.sql` (`_new_blocks`, renamed to `blocks` by
+/// that migration). 0089 is the last migration that touches this table: nothing
+/// in 0090..head `ALTER`s `blocks` or adds/removes a `blocks` index, so 0089's
+/// output IS the head schema.
+///
+/// WHY A RUST COPY RATHER THAN A DERIVATION. The authoritative object is the
+/// `blocks` table itself, and this constant is only ever used when that table is
+/// GONE — there is nothing left on the damaged vault to derive from. The two
+/// derivations that would work both trade a pinned copy for a worse failure
+/// mode:
+///
+///   * Re-running 0089 is impossible. It is a *rebuild* (it copies out of an
+///     existing `blocks`), it is already recorded in `_sqlx_migrations` on the
+///     at-head vault this branch targets so `sqlx::migrate!` will never re-run
+///     it, and migrations are immutable.
+///   * Materialising a scratch database, migrating it to head, and reading the
+///     DDL back out of its `sqlite_master` would derive the shape exactly — at
+///     the cost of a second, unsupervised ~110-migration run (temp-file
+///     placement, disk, its own failure modes) on the one code path that
+///     already means "this vault is damaged". Adding a new boot-time failure
+///     mode to a disaster path is a bad trade.
+///
+/// So the copy stays and DRIFT IS MADE LOUD INSTEAD OF SILENT:
+/// `recovered_blocks_schema_matches_migrated_head_3269` boots a normally
+/// migrated database, reads `blocks` and every `blocks` index straight out of
+/// `sqlite_master`, then drops the table, runs this recovery, and asserts the
+/// two schemas are normalisation-identical. Any future migration that changes
+/// the table or its index set turns that test red instead of letting recovered
+/// vaults quietly diverge from healthy ones.
+const HEAD_BLOCKS_TABLE_DDL: &str = "CREATE TABLE blocks (
+    id             TEXT NOT NULL PRIMARY KEY,
+    block_type     TEXT NOT NULL DEFAULT 'content',
+    content        TEXT,
+    parent_id      TEXT REFERENCES blocks(id),
+    position       INTEGER,
+    deleted_at     INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0),
+    todo_state     TEXT,
+    priority       TEXT,
+    due_date       TEXT,
+    scheduled_date TEXT,
+    page_id        TEXT REFERENCES blocks(id),
+    space_id       TEXT REFERENCES spaces(id) ON DELETE SET NULL,
+    CONSTRAINT page_id_self_for_pages CHECK (
+        block_type != 'page' OR page_id = id
+    ),
+    CONSTRAINT block_type_valid CHECK (
+        block_type IN ('content', 'tag', 'page')
+    )
+) STRICT";
+
+/// #3269: the head index set for `blocks`, verbatim from
+/// `migrations/0089_spaces_registry.sql`. Same single-source-of-truth argument
+/// (and the same drift-detecting test) as [`HEAD_BLOCKS_TABLE_DDL`].
+///
+/// `IF NOT EXISTS` throughout: these are re-issued on a table that may already
+/// carry them (a later rebuild migration re-creates them too), so the statements
+/// must be idempotent.
+const HEAD_BLOCKS_INDEXES: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS idx_blocks_deleted
+    ON blocks(deleted_at, id) WHERE deleted_at IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_blocks_todo
+    ON blocks(todo_state) WHERE todo_state IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_blocks_due
+    ON blocks(due_date) WHERE due_date IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_blocks_scheduled
+    ON blocks(scheduled_date) WHERE scheduled_date IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_blocks_page_alive
+    ON blocks(id) WHERE block_type = 'page' AND deleted_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_blocks_parent_covering
+    ON blocks(parent_id, deleted_at, position, id)",
+    "CREATE INDEX IF NOT EXISTS idx_blocks_page_id
+    ON blocks(page_id)",
+    "CREATE INDEX IF NOT EXISTS idx_blocks_journal_date
+    ON blocks(content) WHERE block_type = 'page' AND content LIKE '____-__-__'",
+    "CREATE INDEX IF NOT EXISTS idx_blocks_type
+    ON blocks(block_type, deleted_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_blocks_space_type
+    ON blocks(space_id, block_type, deleted_at, id)",
+];
+
+/// #3269: the lowest `_sqlx_migrations` stamp for which [`HEAD_BLOCKS_TABLE_DDL`]
+/// is the correct table to create.
+///
+/// 0089 is the migration that produced the head shape, and it is also the LAST
+/// migration that does any DDL on `blocks` — nothing in 0090..head `CREATE`s,
+/// `DROP`s or `ALTER`s the table, and nothing adds or drops a `blocks` index.
+/// (Only 0096 and 0110 mention `blocks` at all, both as read-only subqueries /
+/// joins.) Two consequences, and the whole predicate rests on them:
+///
+///  * At or above this stamp the head DDL IS the era-correct shape, so creating
+///    it is not "getting ahead of the migrations" — it is reproducing exactly
+///    what the vault should already have had.
+///  * No pending migration will rebuild `blocks` afterwards, so whatever this
+///    recovery creates is PERMANENT for the rest of the vault's life. That is
+///    why a constraint-free scaffold must not be left behind here: it is not
+///    temporary, it is forever.
+///
+/// Below this stamp the scaffold is both correct and necessary — a pre-0080 era
+/// cannot express `STRICT` + INTEGER `deleted_at`, `space_id` does not exist
+/// before 0086, the `spaces` FK target does not exist before 0089, and a
+/// pending rebuild migration WILL re-create the table with the era's real
+/// constraints.
+///
+/// **If a future migration touches `blocks`, revisit this constant.** The moment
+/// migration N does DDL on the table, stamps in `[89, N)` stop being at-head
+/// shapes and this bound must move to N.
+/// `recovered_blocks_schema_matches_migrated_head_3269` is the tripwire: it
+/// compares the recovered table against the freshly-migrated one, so a changed
+/// head shape fails there rather than silently shipping the wrong DDL to
+/// mid-range vaults.
+const HEAD_BLOCKS_SHAPE_MIN_MIGRATION: i64 = 89;
+
+/// #3269: which shape [`rebuild_blocks_table`] should give the replacement
+/// `blocks` table's columns and constraints.
+#[derive(Clone, Copy)]
+enum BlocksTableShape {
+    /// The real head shape: [`HEAD_BLOCKS_TABLE_DDL`] verbatim (STRICT + FKs +
+    /// CHECK constraints). Carries no era switches: it is only ever chosen at a stamp
+    /// ≥ [`HEAD_BLOCKS_SHAPE_MIN_MIGRATION`], which already implies
+    /// `deleted_at` is INTEGER epoch-ms (0080) and `space_id` exists (0086).
+    Head,
+    /// The era-correct constraint-free scaffold — used below
+    /// [`HEAD_BLOCKS_SHAPE_MIN_MIGRATION`], and as the fallback when the head
+    /// shape refuses the recovered data.
+    Scaffold {
+        /// `deleted_at` is INTEGER epoch-ms (post-0080) rather than rfc3339 TEXT.
+        deleted_at_is_ms: bool,
+        /// The era's `blocks` carries `space_id` (post-0086).
+        has_space_id_column: bool,
+    },
+}
+
+impl BlocksTableShape {
+    /// The `deleted_at` encoding the op-log replay must write. Head implies
+    /// epoch-ms (its stamp floor is above 0080), so the era switch only ever
+    /// varies on the scaffold.
+    fn deleted_at_is_ms(self) -> bool {
+        match self {
+            Self::Head => true,
+            Self::Scaffold {
+                deleted_at_is_ms, ..
+            } => deleted_at_is_ms,
+        }
+    }
+}
+
+/// #3269: the full instruction for one [`rebuild_blocks_table`] attempt.
+#[derive(Clone, Copy)]
+struct RecoveredBlocksShape {
+    table: BlocksTableShape,
+    /// Issue [`HEAD_BLOCKS_INDEXES`] after the replay.
+    head_indexes: bool,
+}
+
 /// If the `blocks` table is missing (e.g. from a partial migration-73
 /// DROP TABLE that was not rolled back), create a temporary table and
 /// replay block-level ops from `op_log` to reconstruct it.
@@ -77,8 +232,9 @@ pub(crate) async fn ensure_blocks_table_exists(
     //
     // * `deleted_at` flipped TEXT rfc3339 → INTEGER epoch-ms in 0080. Only
     //   0080 julianday()-converts; the later rebuilds (0085, 0089) copy the
-    //   column RAW into a `STRICT` INTEGER column, and an at-head DB keeps
-    //   this temp table as the live `blocks` where every reader decodes i64.
+    //   column RAW into a `STRICT` INTEGER column, and a DB with no pending
+    //   `blocks` rebuild keeps the table created here as the live `blocks`,
+    //   where every reader decodes i64.
     //   Writing rfc3339 TEXT on a ≥0080 DB therefore wedges boot permanently:
     //   this recovery tx commits before migrations run, so the next boot
     //   finds `blocks` present, skips recovery, and fails the same rebuild
@@ -92,25 +248,181 @@ pub(crate) async fn ensure_blocks_table_exists(
     let deleted_at_is_ms = max_applied_migration >= 80;
     let has_space_id_column = max_applied_migration >= 86;
 
+    // #3269: will any PENDING migration rebuild `blocks` after this recovery?
+    // That, not "is this vault exactly at head", is what decides whether the
+    // table created here is temporary or permanent.
+    //
+    // The predicate is a RANGE, `[HEAD_BLOCKS_SHAPE_MIN_MIGRATION, embedded
+    // head]`:
+    //
+    //  * Lower bound (0089 — see `HEAD_BLOCKS_SHAPE_MIN_MIGRATION`): 0089 is
+    //    both the migration that produced the head shape and the last one that
+    //    does DDL on `blocks`. So from 0089 upward the head DDL is already the
+    //    era-correct shape AND nothing pending will rebuild the table — the
+    //    scaffold would be permanent. A strict `== head` here was the #3269 bug
+    //    in its most likely form: a vault damaged while running an older app
+    //    and upgraded afterwards is stamped somewhere in 0090..head, and got a
+    //    constraint-free, zero-index table that nothing ever repairs.
+    //  * Upper bound (`<=`): a vault stamped by a NEWER app version may have a
+    //    `blocks` shape this binary does not know, and this binary's head DDL
+    //    would be wrong for it. Fall back to the scaffold, which claims nothing
+    //    about the schema. (This half of the old `==` predicate was right, and
+    //    is kept.)
+    let embedded_head_version = sqlx::migrate!("./migrations")
+        .iter()
+        .filter(|m| !m.migration_type.is_down_migration())
+        .map(|m| m.version)
+        .max()
+        .unwrap_or(0);
+    let head_shape_applies = max_applied_migration >= HEAD_BLOCKS_SHAPE_MIN_MIGRATION
+        && max_applied_migration <= embedded_head_version;
+
     tracing::warn!(
         max_applied_migration,
+        embedded_head_version,
+        head_shape_applies,
         "blocks table missing — likely from a partial blocks-rebuild migration run. \
-         Creating temporary table and recovering from op_log."
+         Creating replacement table and recovering from op_log."
     );
 
+    // #3269: when the head shape applies, TRY it first — but only try. This
+    // table is fed straight from raw op-log payloads, and the pre-fix behaviour
+    // (a constraint-free table) is guaranteed to accept them; the constrained
+    // one is not (a STRICT type mismatch, or a deferred FK whose target table
+    // was destroyed by the same external damage that took `blocks`, aborts at
+    // COMMIT). Wedging boot on the disaster path would be strictly worse than
+    // today's degraded-but-live table, so any failure logs loudly and falls back
+    // to exactly the pre-#3269 scaffold. The head index set is issued on BOTH
+    // paths: it is pure DDL that cannot reject data, so a fallback vault is
+    // still index-complete even when it is constraint-incomplete.
+    if head_shape_applies {
+        // Pre-flight the one FK target the head DDL names outside `blocks`
+        // itself. The known-reachable failure mode is external damage broad
+        // enough to have taken `spaces` too; SQLite resolves FK targets at DML
+        // time, not DDL time, so the `CREATE TABLE` succeeds and the whole
+        // replay then aborts on the first insert with "no such table:
+        // main.spaces". Checking first turns that case into ONE replay instead
+        // of two (see the retry note below) — the attempt is only worth making
+        // when it can plausibly succeed.
+        let spaces_exists: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'spaces'"
+        )
+        .fetch_one(pool)
+        .await?;
+        if spaces_exists > 0 {
+            let head_shape = RecoveredBlocksShape {
+                table: BlocksTableShape::Head,
+                head_indexes: true,
+            };
+            match rebuild_blocks_table(pool, head_shape).await {
+                Ok(diagnostics) => {
+                    // #3269 R5: emitted HERE, by the attempt that actually
+                    // committed. The replay used to log from inside itself, so
+                    // the retry below double-reported the `DISASTER RECOVERY
+                    // DATA LOSS (#2504)` error and every per-op warning — a
+                    // post-mortem reading the log would double-count the damage.
+                    diagnostics.emit();
+                    return Ok(true);
+                }
+                Err(err) => {
+                    tracing::error!(
+                        error = %err,
+                        "constrained `blocks` rebuild failed — falling back to the constraint-free \
+                         recovery scaffold (#3269). The recovered table gets the head indexes but \
+                         NOT the STRICT / FK / CHECK constraints; run a rebuild or re-sync to \
+                         restore the full schema."
+                    );
+                }
+            }
+        } else {
+            tracing::error!(
+                "the `spaces` table is missing too — skipping the constrained `blocks` rebuild \
+                 (its `space_id REFERENCES spaces(id)` could not be created) and recovering into \
+                 the constraint-free scaffold instead (#3269)."
+            );
+        }
+    }
+
+    // #3269 R5 (residual, documented rather than fixed): reaching here after a
+    // FAILED constrained attempt replays the op_log a second time. It is not
+    // avoidable without giving up the attempt itself — whether the head shape
+    // accepts this vault's rows is only knowable by inserting them, and the
+    // failed attempt's transaction (data included) is gone by the time we find
+    // out. The cost is bounded: it is one extra O(op_count) pass on a path that
+    // has already established the vault is damaged AND that the preferred
+    // rebuild failed, and the pre-flight above removes the one failure mode
+    // known to be reachable. The DIAGNOSTICS, which is what a post-mortem
+    // reads, are no longer duplicated: the replay reports rather than logs, and
+    // only the attempt that commits emits.
+    let diagnostics = rebuild_blocks_table(
+        pool,
+        RecoveredBlocksShape {
+            table: BlocksTableShape::Scaffold {
+                deleted_at_is_ms,
+                has_space_id_column,
+            },
+            head_indexes: head_shape_applies,
+        },
+    )
+    .await?;
+    diagnostics.emit();
+    Ok(true)
+}
+
+/// #3269: create the replacement `blocks` table in the requested shape, replay
+/// the op_log into it, and (at head) issue the head index set — all in ONE
+/// transaction, so a failed attempt leaves no half-built table behind and the
+/// caller can retry with a laxer shape.
+///
+/// Returns the replay's [`ReplayDiagnostics`] rather than logging them: this
+/// function may run TWICE (constrained attempt, then scaffold fallback) and only
+/// the attempt that commits should be reported. The caller emits.
+async fn rebuild_blocks_table(
+    pool: &SqlitePool,
+    shape: RecoveredBlocksShape,
+) -> Result<ReplayDiagnostics, agaric_core::error::AppError> {
     let mut tx = pool.begin().await?;
 
-    // Temporary blocks table: no STRICT, no FK constraints, no CHECK. The
-    // pending re-run of the rebuild migration that lost the table restores
-    // the proper constraints (or, at head, this table serves as-is).
-    let deleted_at_type = if deleted_at_is_ms { "INTEGER" } else { "TEXT" };
-    let space_id_column = if has_space_id_column {
-        ",\n            space_id       TEXT"
+    if matches!(shape.table, BlocksTableShape::Head) {
+        // The head table self-references (`parent_id` / `page_id REFERENCES
+        // blocks(id)`) and the replay below cannot satisfy those row by row: it
+        // NULLs dangling cross-device parents and derives `page_id` only AFTER
+        // the replay loop, and it replays in `created_at` order, which is not a
+        // topological order. Defer FK *checks* to COMMIT — the same mechanism
+        // migration 0089 itself uses for its rebuild — so the intermediate
+        // states are legal and only the final one is validated. The pragma
+        // auto-resets at COMMIT/ROLLBACK.
+        // dynamic-sql: a PRAGMA, which the `query!` macros cannot describe —
+        // it returns no rows and is not a preparable statement they can check.
+        sqlx::query("PRAGMA defer_foreign_keys = ON")
+            .execute(&mut *tx)
+            .await?;
+        // dynamic-sql: DDL. `query!` validates a statement against the CURRENT
+        // schema; this one CREATES the table being validated against, and it is
+        // deliberately a `const` shared with the drift test
+        // (`recovered_blocks_schema_matches_migrated_head_3269`) rather than a
+        // literal at the call site.
+        sqlx::query(HEAD_BLOCKS_TABLE_DDL).execute(&mut *tx).await?;
     } else {
-        ""
-    };
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "CREATE TABLE blocks (
+        // Pre-#3269 scaffold: no STRICT, no FK constraints, no CHECK. Below
+        // `HEAD_BLOCKS_SHAPE_MIN_MIGRATION` the pending re-run of the rebuild
+        // migration that lost the table restores the proper constraints; at or
+        // above it this is the fallback the constrained attempt degrades to.
+        let BlocksTableShape::Scaffold {
+            deleted_at_is_ms,
+            has_space_id_column,
+        } = shape.table
+        else {
+            unreachable!("the Head arm is handled above")
+        };
+        let deleted_at_type = if deleted_at_is_ms { "INTEGER" } else { "TEXT" };
+        let space_id_column = if has_space_id_column {
+            ",\n            space_id       TEXT"
+        } else {
+            ""
+        };
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TABLE blocks (
             id             TEXT NOT NULL PRIMARY KEY,
             block_type     TEXT NOT NULL DEFAULT 'content',
             content        TEXT,
@@ -123,12 +435,30 @@ pub(crate) async fn ensure_blocks_table_exists(
             scheduled_date TEXT,
             page_id        TEXT{space_id_column}
         )"
-    )))
-    .execute(&mut *tx)
-    .await?;
+        )))
+        .execute(&mut *tx)
+        .await?;
+    }
 
     // Replay create / edit / move / delete / restore / purge ops into blocks.
-    recover_blocks_from_op_log(&mut tx, deleted_at_is_ms).await?;
+    let diagnostics = recover_blocks_from_op_log(&mut tx, shape.table.deleted_at_is_ms()).await?;
+
+    // #3269: restore the head index set. Without this a recovered vault whose
+    // stamp is at or above `HEAD_BLOCKS_SHAPE_MIN_MIGRATION` — i.e. one no
+    // pending migration will rebuild — full-scans `blocks` on every paginated
+    // read (`page_id`, `parent_id`, date ranges, the journal-date lookup) for
+    // the rest of its life, with no diagnostic. Issued AFTER the replay so the
+    // bulk insert is not paying index maintenance per row.
+    if shape.head_indexes {
+        for stmt in HEAD_BLOCKS_INDEXES {
+            // dynamic-sql: DDL iterated from the `HEAD_BLOCKS_INDEXES` table of
+            // index statements. The macro forms take a string LITERAL and
+            // cannot be driven from a slice; splitting ten `CREATE INDEX`
+            // macros out of the shared constant would break the single source
+            // of truth the drift test compares against `sqlite_master`.
+            sqlx::query(*stmt).execute(&mut *tx).await?;
+        }
+    }
 
     // #616: persist the "derived recovery still pending" marker in the SAME
     // tx, so a crash between this commit and the post-migration derived-state
@@ -155,7 +485,7 @@ pub(crate) async fn ensure_blocks_table_exists(
     }
 
     tx.commit().await?;
-    Ok(true)
+    Ok(diagnostics)
 }
 
 /// #616: `app_settings` key marking that block-table recovery fired and the
@@ -751,6 +1081,107 @@ pub(crate) async fn reproject_blocks_from_engine(
     Ok(true)
 }
 
+/// #3269 R5 / #3268: what one [`recover_blocks_from_op_log`] pass observed.
+///
+/// The replay accumulates rather than logs, because
+/// [`ensure_blocks_table_exists`] may run it twice (constrained head table,
+/// then the scaffold fallback) and only the attempt that COMMITS describes what
+/// the vault actually ended up with. [`ReplayDiagnostics::emit`] is called once,
+/// by that attempt.
+#[derive(Default, Debug)]
+struct ReplayDiagnostics {
+    /// `op_log` itself is absent (ancient database) — nothing could be replayed.
+    op_log_missing: bool,
+    /// Persisted per-space Loro snapshots in `loro_doc_state`. Non-zero means
+    /// this device has synced and the op-log-only rebuild is dropping every
+    /// remote-authored block (#2504).
+    engine_snapshots: i64,
+    /// Ops actually read and replayed.
+    ops_replayed: usize,
+    /// `create_block` ops whose `INSERT OR IGNORE` matched an id ALREADY in the
+    /// table — the op_log carried two creates for one id, i.e. log corruption.
+    duplicate_creates: Vec<String>,
+    /// #3269 R4: `create_block` ops whose `INSERT OR IGNORE` inserted nothing
+    /// and whose id is NOT in the table — the row was refused by a table
+    /// CONSTRAINT (the head shape's `block_type_valid` / `page_id_self_for_pages`
+    /// CHECK constraints, or STRICT typing), not by an id collision. A DIFFERENT event from
+    /// a duplicate create, and the pre-#3269 code could not tell them apart:
+    /// both landed in the duplicate warning, which would have told a
+    /// post-mortem reader that a perfectly healthy op_log was corrupt — on the
+    /// one path where the op_log is the only forensic artefact left.
+    constraint_rejected_creates: Vec<String>,
+}
+
+impl ReplayDiagnostics {
+    /// Emit everything this pass observed, exactly once.
+    fn emit(&self) {
+        if self.op_log_missing {
+            tracing::warn!("op_log table missing — cannot recover blocks data");
+            return;
+        }
+
+        // #2504: loudly surface the device-local-only limitation of this
+        // rebuild. The op-log replay reconstructs only locally-authored content
+        // (and, post-#3268, only ops this device authored). If the device has
+        // synced, the per-space Loro engine snapshots in `loro_doc_state` hold
+        // the complete convergent state — including remote-authored content
+        // this replay cannot see — and it is about to be dropped. This is a
+        // disaster-path last resort; it must not fail silently.
+        if self.engine_snapshots > 0 {
+            tracing::error!(
+                engine_snapshots = self.engine_snapshots,
+                "DISASTER RECOVERY DATA LOSS (#2504): rebuilding `blocks` from the device-local \
+                 op_log only. This device has synced ({} Loro engine snapshot(s) in \
+                 `loro_doc_state`), but the op_log holds only locally-authored ops — every \
+                 remote-authored block, property, and tag WILL BE MISSING from the rebuilt table. \
+                 The complete convergent state survives in `loro_doc_state`; recover it via an \
+                 engine-first reprojection or a fresh re-sync from a peer.",
+                self.engine_snapshots
+            );
+        } else {
+            tracing::warn!(
+                "Recovering `blocks` from the device-local op_log (#2504). No synced Loro engine \
+                 state present, so local content is complete; note this replay would omit any \
+                 remote-authored content if the device had synced."
+            );
+        }
+
+        if self.ops_replayed == 0 {
+            return;
+        }
+        tracing::info!(
+            "Replayed {} ops into the recovered blocks table",
+            self.ops_replayed
+        );
+
+        for block_id in &self.duplicate_creates {
+            tracing::warn!(
+                block_id,
+                "duplicate create_block skipped during recovery — \
+                 op_log carries two create ops for the same id \
+                 (first wins); possible op_log corruption"
+            );
+        }
+
+        // #3269 R4: report the CHECK-rejected cohort as its own event, and as an
+        // aggregate. Silently skipping these rows is defensible — a healthy
+        // vault's `blocks` could not hold them either — but misattributing them
+        // to op_log corruption is not.
+        if !self.constraint_rejected_creates.is_empty() {
+            tracing::warn!(
+                dropped = self.constraint_rejected_creates.len(),
+                block_ids = %self.constraint_rejected_creates.join(","),
+                "{} create_block op(s) were REJECTED by the recovered `blocks` table's \
+                 constraints and dropped (#3269). These are not duplicate creates: the payloads \
+                 describe rows a healthy at-head vault could not hold either (an unknown \
+                 `block_type`, a page whose `page_id` is not itself, a STRICT type mismatch). \
+                 The surrounding ops still replayed.",
+                self.constraint_rejected_creates.len()
+            );
+        }
+    }
+}
+
 /// Replay block-level ops from `op_log` into an existing (temporary)
 /// `blocks` table.  Called by [`ensure_blocks_table_exists`] inside a
 /// transaction so the rebuild is atomic.
@@ -762,20 +1193,31 @@ pub(crate) async fn reproject_blocks_from_engine(
 /// julianday() backfill is the designated converter).
 ///
 /// **Device-local recovery caveat (#2504).** This rebuild replays the op_log,
-/// which is strictly device-local (remote ops never land in it post-#490-M1).
-/// On a device that has ever synced, it therefore reconstructs **only
-/// locally-authored content** and silently omits every remote-authored block,
-/// property, and tag. The complete convergent state lives in the per-space Loro
-/// engine snapshots (`loro_doc_state`); when those are present this function
-/// logs loudly that remote content is being dropped. The complete content is
+/// and replays only the LOCALLY-AUTHORED rows in it (#3268: post-#2481-phase-1
+/// the log is no longer strictly device-local — the sync puller lands foreign
+/// audit records stamped `is_replicated = 1`, which migration 0099 defines as
+/// inert for state). On a device that has ever synced it therefore reconstructs
+/// **only locally-authored content** and silently omits every remote-authored
+/// block, property, and tag. The complete convergent state lives in the
+/// per-space Loro engine snapshots (`loro_doc_state`); when those are present
+/// the returned diagnostics say loudly that remote content is being dropped
+/// (see [`ReplayDiagnostics::emit`]). The complete content is
 /// restored by [`reproject_blocks_from_engine`] (the engine-first rebuild, #2504),
 /// which the caller runs after migrations; this op-log replay remains the
 /// device-local scaffold that gives migration 73's rebuild a target table and
 /// the last-resort fallback when the engine snapshots are themselves unreadable.
+///
+/// **Reports, does not log (#3269 R5).** `ensure_blocks_table_exists` may run
+/// this replay twice — once into the constrained head table, once into the
+/// scaffold fallback — so logging from in here double-reported the
+/// `DISASTER RECOVERY DATA LOSS (#2504)` error and every per-op warning to a
+/// post-mortem reader. Everything worth saying is accumulated into
+/// [`ReplayDiagnostics`] and emitted by the caller, for the attempt that
+/// actually committed.
 async fn recover_blocks_from_op_log(
     executor: &mut sqlx::SqliteConnection,
     deleted_at_is_ms: bool,
-) -> Result<(), agaric_core::error::AppError> {
+) -> Result<ReplayDiagnostics, agaric_core::error::AppError> {
     // Guard: op_log might not exist on ancient databases.
     // R4 (#347): propagate with `?` — a transient probe failure must not
     // silently skip block recovery.
@@ -786,37 +1228,18 @@ async fn recover_blocks_from_op_log(
     .await?
         > 0;
 
+    let mut diagnostics = ReplayDiagnostics::default();
+
     if !op_log_exists {
-        tracing::warn!("op_log table missing — cannot recover blocks data");
-        return Ok(());
+        diagnostics.op_log_missing = true;
+        return Ok(diagnostics);
     }
 
-    // #2504: loudly surface the device-local-only limitation of this rebuild.
-    // The op_log holds ONLY locally-authored ops (#490-M1), so replaying it
-    // reconstructs only local content. If the device has synced, the per-space
-    // Loro engine snapshots in `loro_doc_state` hold the complete convergent
-    // state — including remote-authored content this replay cannot see — and it
-    // is about to be dropped. This is a disaster-path last resort; it must not
-    // fail silently. (Engine-first reprojection that would recover that content
+    // #2504: the device-local-only limitation of this rebuild. Recorded here,
+    // reported by `ReplayDiagnostics::emit` on the attempt that commits.
+    // (Engine-first reprojection that would recover the missing remote content
     // is a separate rework: #2503 / #2504.)
-    let engine_snapshots = persisted_engine_snapshot_count(&mut *executor).await?;
-    if engine_snapshots > 0 {
-        tracing::error!(
-            engine_snapshots,
-            "DISASTER RECOVERY DATA LOSS (#2504): rebuilding `blocks` from the device-local \
-             op_log only. This device has synced ({engine_snapshots} Loro engine snapshot(s) in \
-             `loro_doc_state`), but the op_log holds only locally-authored ops — every \
-             remote-authored block, property, and tag WILL BE MISSING from the rebuilt table. \
-             The complete convergent state survives in `loro_doc_state`; recover it via an \
-             engine-first reprojection or a fresh re-sync from a peer."
-        );
-    } else {
-        tracing::warn!(
-            "Recovering `blocks` from the device-local op_log (#2504). No synced Loro engine \
-             state present, so local content is complete; note this replay would omit any \
-             remote-authored content if the device had synced."
-        );
-    }
+    diagnostics.engine_snapshots = persisted_engine_snapshot_count(&mut *executor).await?;
 
     // C8 (#345): replay in materializer LWW order. The live materializer
     // resolves cross-device same-block edits by `created_at DESC` (last
@@ -826,17 +1249,50 @@ async fn recover_blocks_from_op_log(
     // log. `created_at` is an indexed INTEGER-ms column post-migration
     // 0079/0080; `(device_id, seq)` is the deterministic tiebreaker for
     // ops sharing a millisecond.
-    let ops = sqlx::query(
-        "SELECT op_type, payload, created_at FROM op_log ORDER BY created_at, device_id, seq",
+    // #3268: replay LOCALLY-AUTHORED ops only. Post-#2481-phase-1 the op_log is
+    // no longer strictly device-local: the sync puller lands foreign audit
+    // records through `dag::insert_replicated_op`, stamped `is_replicated = 1`.
+    // Migration 0099 makes the filter the isolation boundary — "Boot replay and
+    // the apply-cursor bookkeeping filter on `is_replicated = 0` so a replicated
+    // audit row can never be enqueued onto the materializer … that filter is
+    // what keeps replicated records provably inert for state" — and every other
+    // consumer honours it (`recovery::replay`, all of `reverse::*`). This read
+    // did not, so a rebuild replayed a PEER's create/edit/move/delete ops into
+    // this device's `blocks`.
+    //
+    // The column-existence probe is required, not defensive: unlike the derived
+    // pass below, this function runs BEFORE `sqlx::migrate!`, at whatever era
+    // `max_applied_migration` names. On a pre-0099 vault the column does not
+    // exist yet and the filtered statement would fail to prepare ("no such
+    // column: is_replicated"), turning a recoverable vault into a boot failure.
+    // Filtering is also unnecessary there: 0099's own note records that before
+    // phase 1 "no op_log ever held a foreign device's ops".
+    // dynamic-sql: a `pragma_table_info` probe. This function runs BEFORE
+    // `sqlx::migrate!`, so it must ask the LIVE database what era it is in; the
+    // macro form would check the query against head's schema, which is exactly
+    // the assumption the probe exists to avoid making.
+    let has_is_replicated: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('op_log') WHERE name = 'is_replicated'",
     )
-    .fetch_all(&mut *executor)
+    .fetch_one(&mut *executor)
     .await?;
+    let ops_sql: &'static str = if has_is_replicated > 0 {
+        "SELECT op_type, payload, created_at FROM op_log WHERE is_replicated = 0 \
+         ORDER BY created_at, device_id, seq"
+    } else {
+        "SELECT op_type, payload, created_at FROM op_log ORDER BY created_at, device_id, seq"
+    };
+    // dynamic-sql: `ops_sql` is genuinely selected at runtime — the filtered
+    // form is only legal on a vault whose `op_log` already carries 0099's
+    // `is_replicated` column, and this pass runs before migrations. A macro
+    // would have to pick one of the two at build time.
+    let ops = sqlx::query(ops_sql).fetch_all(&mut *executor).await?;
 
     if ops.is_empty() {
-        return Ok(());
+        return Ok(diagnostics);
     }
 
-    tracing::info!("Replaying {} ops into temporary blocks table", ops.len());
+    diagnostics.ops_replayed = ops.len();
 
     // #429: fallbacks only — used when an op's own `created_at` cannot be
     // read/converted (it never should). The delete arm stamps the op's OWN
@@ -891,6 +1347,13 @@ async fn recover_blocks_from_op_log(
                 // i.e. corruption. The first create wins and is preserved
                 // (success behaviour unchanged); we only surface the drop so a
                 // corrupted log is observable rather than silently flattened.
+                // #3269: `page_id` stays NULL here even under the head-shaped
+                // recovery table (`CONSTRAINT page_id_self_for_pages CHECK
+                // (block_type != 'page' OR page_id = id)`). A SQLite CHECK
+                // rejects only a FALSE result, and for a page row the
+                // expression evaluates to `false OR (NULL = id)` = NULL, which
+                // passes; the post-loop `UPDATE ... SET page_id = id WHERE
+                // block_type = 'page'` then makes it TRUE before COMMIT.
                 let result = sqlx::query(
                     "INSERT OR IGNORE INTO blocks \
                      (id, block_type, content, parent_id, position, deleted_at, \
@@ -905,12 +1368,38 @@ async fn recover_blocks_from_op_log(
                 .execute(&mut *executor)
                 .await?;
                 if result.rows_affected() == 0 {
-                    tracing::warn!(
-                        block_id,
-                        "duplicate create_block skipped during recovery — \
-                         op_log carries two create ops for the same id \
-                         (first wins); possible op_log corruption"
-                    );
+                    // #3269 R4: `rows_affected() == 0` now has TWO causes, and
+                    // reporting the wrong one is worse than reporting nothing.
+                    //
+                    //  * The id is already in the table → the op_log really did
+                    //    carry two creates for one id (ULIDs make a genuine
+                    //    collision impossible), i.e. log corruption. The
+                    //    pre-existing diagnostic.
+                    //  * The id is NOT in the table → the head-shaped table
+                    //    REFUSED the row (`block_type_valid` /
+                    //    `page_id_self_for_pages` CHECK, STRICT typing) and
+                    //    `OR IGNORE` swallowed the violation. Before the head
+                    //    CHECK constraints existed this was unreachable; with them live it
+                    //    is routine, and calling it "possible op_log corruption"
+                    //    would slander a healthy log on the one path where that
+                    //    log is the only forensic artefact left.
+                    //
+                    // One extra probe, only on the (rare) zero-row branch.
+                    // The compile-checked macro: `blocks.id` is the one column
+                    // every era of this table has, so checking the probe against
+                    // head's schema is sound even though the table it runs on may
+                    // be the scaffold.
+                    let already_present: i64 =
+                        sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", block_id)
+                            .fetch_one(&mut *executor)
+                            .await?;
+                    if already_present > 0 {
+                        diagnostics.duplicate_creates.push(block_id.to_owned());
+                    } else {
+                        diagnostics
+                            .constraint_rejected_creates
+                            .push(block_id.to_owned());
+                    }
                 }
             }
             "edit_block" => {
@@ -923,9 +1412,13 @@ async fn recover_blocks_from_op_log(
                     // `deleted_at IS NULL` guard is inert here: recovery replays
                     // in `created_at` order, so an `edit_block` always precedes
                     // its block's later `delete_block` — the target row is never
-                    // yet soft-deleted when the edit lands. The temp `blocks`
-                    // table's `content` column is plain TEXT (constraint-free),
-                    // so the macro-checked query runs unchanged against it. We
+                    // yet soft-deleted when the edit lands. The recovered
+                    // `blocks` table's `content` column is `TEXT` under BOTH
+                    // shapes — plain TEXT in the scaffold, `TEXT` in a STRICT
+                    // table under the head shape (#3269) — and the projection
+                    // binds a Rust `String`, which is exactly what STRICT `TEXT`
+                    // accepts, so the macro-checked query runs unchanged against
+                    // either. We
                     // synthesize the `BlockSnapshot` the projection expects from
                     // the op payload; only `content` + `block_id` are read (the
                     // other fields are inert placeholders), exactly as
@@ -1203,7 +1696,7 @@ async fn recover_blocks_from_op_log(
         }
     }
 
-    Ok(())
+    Ok(diagnostics)
 }
 
 /// After migrations run, recover dependent tables (block_properties,
@@ -1213,6 +1706,13 @@ async fn recover_blocks_from_op_log(
 /// tables are empty. Reserved-key properties (todo_state, priority,
 /// due_date, scheduled_date, space) are replayed directly onto their
 /// denormalised `blocks` columns (#534), not into `block_properties`.
+///
+/// #3268: the STATE arms replay locally-authored ops only; the ATTACHMENT arms
+/// also replay replicated ops, with `add_attachment` gated on this device
+/// actually holding the blob the op names. See the long note above the replay
+/// loop — `attachments` is the one table `reproject_blocks_from_engine` cannot
+/// correct, so both replaying a foreign row and dropping a legitimately-held one
+/// are permanent.
 pub(crate) async fn recover_derived_state_from_op_log(
     pool: &SqlitePool,
     blocks_recovered_this_boot: bool,
@@ -1222,9 +1722,32 @@ pub(crate) async fn recover_derived_state_from_op_log(
     // R4 (#347): propagate probe errors with `?` rather than masking them
     // as `0` (which would wrongly skip recovery against an already-populated
     // DB, or silently swallow a transient query failure at boot).
-    let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
-        .fetch_one(pool)
-        .await?;
+    //
+    // #3268: count exactly the population the replay below reads, no more. This
+    // guard must AGREE with the replay it gates — an unfiltered count sent a
+    // vault whose op_log holds nothing this pass would act on into the full
+    // replay, the call-site half of the same defect. The predicate is repeated
+    // verbatim in the two chunk queries; see the long note above the replay loop
+    // for why the attachment ops are exempt from the provenance filter.
+    //
+    // This pass runs AFTER `sqlx::migrate!`, so migration 0099's
+    // `is_replicated` column is always present here (unlike
+    // `recover_blocks_from_op_log`, which runs before migrations and has to
+    // probe for it) — which is what makes the compile-checked MACRO usable, and
+    // this is the one place in this file where it is. `query_scalar!` resolves
+    // `is_replicated` against the real schema at build time, so a migration that
+    // renamed or dropped the column would fail the build here instead of at
+    // boot on a damaged vault. Its sibling in `recover_blocks_from_op_log` has
+    // to probe for that very column at runtime and can never have that; giving
+    // up the one checkable site to avoid a `.sqlx` cache entry would be trading
+    // the guarantee for nothing.
+    let op_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log \
+         WHERE is_replicated = 0 \
+            OR op_type IN ('add_attachment', 'delete_attachment', 'rename_attachment')"
+    )
+    .fetch_one(pool)
+    .await?;
 
     if op_count == 0 {
         return Ok(());
@@ -1310,25 +1833,74 @@ pub(crate) async fn recover_derived_state_from_op_log(
     // `(created_at, device_id, seq) > (?, ?, ?)` continues exactly where the
     // previous chunk ended under the same total order; the surrounding tx
     // gives a stable snapshot, so the iteration is consistent.
+    //
+    // #3268: `is_replicated = 0` — replay LOCALLY-AUTHORED ops, for the STATE
+    // arms. Migration 0099 makes that filter the isolation boundary that keeps
+    // replicated audit rows "provably inert for state"; without it this pass
+    // replayed a PEER's `set_property` / `add_tag` ops onto this device.
+    //
+    // THE ATTACHMENT OPS ARE EXEMPT FROM THE FILTER, and deliberately so. 0099's
+    // boundary is about STATE: `block_properties`, `block_tags` and the
+    // reserved-key `blocks` columns are all Loro-modelled, so a replicated row
+    // replayed onto them is both wrong and repairable — `reproject_blocks_from_engine`
+    // (pool.rs:375) overwrites it from the engine snapshot moments later.
+    // `attachments` is NOT Loro-modelled. It is the one table that pass
+    // explicitly cannot correct (pool.rs:369), which is the whole reason this
+    // replay exists.
+    //
+    // And the loss runs in BOTH directions. `attachments.block_id REFERENCES
+    // blocks(id) ON DELETE CASCADE` (0081:20) with `foreign_keys=ON` on every
+    // connection (pool.rs:326) means the `DROP TABLE blocks` that triggers this
+    // recovery cascade-deletes EVERY attachment row — including peer-authored
+    // ones this device legitimately received via snapshot restore
+    // (agaric-sync/src/snapshot/restore.rs). `attachment_blobs` carries no FK
+    // (0094:54-65), so the BYTES survive on disk. A blanket provenance filter
+    // therefore orphans those bytes permanently: the file is there, the row
+    // naming it is gone, and nothing downstream can rebuild it.
+    //
+    // The discriminator is POSSESSION, not authorship: `add_attachment` is
+    // replayed for a replicated op iff this device's content-addressed blob
+    // store still holds the file that op names (see the arm below). A peer op
+    // for bytes we never received restores nothing (#3268's original concern —
+    // its `WHERE EXISTS (SELECT 1 FROM blocks …)` guard cannot discriminate,
+    // because the replay itself satisfies it); a peer op for bytes we DO hold
+    // restores the metadata that describes them. Replicated `delete_attachment`
+    // / `rename_attachment` replay unconditionally: they are keyed, idempotent,
+    // and in LWW order they are what stops a restored peer row from resurrecting
+    // an attachment the peer removed or reverting one it renamed.
     const DERIVED_REPLAY_CHUNK: i64 = 500;
+    /// #3268: the provenance predicate, shared by both chunk queries and
+    /// mirrored by the `op_count` guard above. Kept as one constant so the
+    /// paginated and non-paginated forms cannot drift apart.
+    const REPLAYABLE: &str = "(is_replicated = 0 \
+         OR op_type IN ('add_attachment', 'delete_attachment', 'rename_attachment'))";
     let mut cursor: Option<(i64, String, i64)> = None;
     loop {
         let chunk = match &cursor {
             None => {
-                sqlx::query(
-                    "SELECT op_type, payload, created_at, device_id, seq FROM op_log \
-                     ORDER BY created_at, device_id, seq LIMIT ?",
-                )
+                // dynamic-sql: the SELECT list and ORDER BY are fixed; the only
+                // interpolation is `REPLAYABLE`, an internal `const &'static str`
+                // shared with the keyset form below so the two cannot drift.
+                // The macro forms cannot express that sharing.
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "SELECT op_type, payload, created_at, device_id, seq, is_replicated \
+                     FROM op_log WHERE {REPLAYABLE} \
+                     ORDER BY created_at, device_id, seq LIMIT ?"
+                )))
                 .bind(DERIVED_REPLAY_CHUNK)
                 .fetch_all(&mut *tx)
                 .await?
             }
             Some((ca, dev, seq)) => {
-                sqlx::query(
-                    "SELECT op_type, payload, created_at, device_id, seq FROM op_log \
-                     WHERE (created_at, device_id, seq) > (?, ?, ?) \
-                     ORDER BY created_at, device_id, seq LIMIT ?",
-                )
+                // dynamic-sql: see the first-chunk query above — same fixed
+                // shape, same shared `REPLAYABLE` predicate, plus the keyset
+                // continuation. All values are bound.
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "SELECT op_type, payload, created_at, device_id, seq, is_replicated \
+                     FROM op_log WHERE {REPLAYABLE} \
+                       AND (created_at, device_id, seq) > (?, ?, ?) \
+                     ORDER BY created_at, device_id, seq LIMIT ?"
+                )))
                 .bind(ca)
                 .bind(dev)
                 .bind(seq)
@@ -1661,6 +2233,64 @@ pub(crate) async fn recover_derived_state_from_op_log(
                         );
                     }
                     let created_at: i64 = row.try_get("created_at")?;
+
+                    // #3268: a REPLICATED `add_attachment` is restored only when
+                    // this device actually holds the bytes it names. The
+                    // `attachment_blobs` row is written by
+                    // `register_received_blob` after a hash-verified receive
+                    // (agaric-sync/src/sync_files.rs) and keyed by the canonical
+                    // `on_disk_path` — the same value the received file was
+                    // written to and the same value the op's coerced `fs_path`
+                    // resolves to. `attachment_blobs` has no FK to `blocks`, so
+                    // it survived the `DROP TABLE blocks` cascade that destroyed
+                    // the `attachments` row this op describes.
+                    //
+                    // Present ⇒ the row was a legitimate, locally-held peer
+                    // attachment and dropping it would orphan real bytes forever.
+                    // Absent ⇒ the op names a file this device never received,
+                    // so materialising a row for it would invent the foreign
+                    // metadata #3268 is about. Locally-authored ops are never
+                    // gated on this: their blob row may not exist yet (a
+                    // pre-0094 vault, or before the boot-time blob backfill has
+                    // run), and their provenance is not in question.
+                    //
+                    // Known conservative case, and it errs the safe way. #1993
+                    // dedup (`maybe_link_local_blob`) can repoint an
+                    // `attachments` row at ANOTHER blob's canonical file, after
+                    // which the originating op's own `fs_path` is no longer a
+                    // registered `on_disk_path` and this gate declines — even
+                    // though byte-identical content is present under the other
+                    // path. Declining costs one unrestored metadata row on the
+                    // disaster path; the opposite error would be inventing the
+                    // foreign row #3268 was filed about. The tighter key would
+                    // be `content_hash`, which `attachment_blobs` is actually
+                    // keyed by — but `AddAttachmentPayload`
+                    // (agaric-store/src/op.rs) does not carry it, so the op
+                    // cannot name its own blob and `fs_path` is the only link
+                    // the wire format gives us.
+                    let is_replicated: i64 = row.try_get("is_replicated")?;
+                    if is_replicated != 0 {
+                        // The compile-checked macro: this pass runs AFTER
+                        // `sqlx::migrate!`, so `attachment_blobs` (0094) is
+                        // always present, and its shape is the guarantee the
+                        // gate rests on.
+                        let blob_held: i64 = sqlx::query_scalar!(
+                            "SELECT COUNT(*) FROM attachment_blobs WHERE on_disk_path = ?",
+                            fs_path
+                        )
+                        .fetch_one(&mut *tx)
+                        .await?;
+                        if blob_held == 0 {
+                            tracing::warn!(
+                                attachment_id,
+                                fs_path,
+                                "skipped a replicated add_attachment on recovery replay: this \
+                                 device holds no blob for its fs_path, so the row would describe \
+                                 bytes that are not here (#3268)"
+                            );
+                            continue;
+                        }
+                    }
 
                     // Guard the `block_id` FK (→ blocks(id)): an attachment whose
                     // owning block was purged (or never reached this device) must
@@ -2880,6 +3510,911 @@ mod tests {
             marker_count(&pool).await,
             1,
             "an all-decode-failure must still arm the retry marker (no silent permanent loss)"
+        );
+    }
+
+    // ==================================================================
+    // #3268 — op-log recovery must replay LOCALLY-AUTHORED ops only
+    // ==================================================================
+
+    /// Seed one `op_log` row with an explicit `is_replicated` provenance flag.
+    /// `is_replicated = 1` is exactly what `dag::insert_replicated_op` stamps on
+    /// every foreign audit record the sync puller lands.
+    async fn seed_op(
+        pool: &SqlitePool,
+        seq: i64,
+        op_type: &str,
+        payload: &serde_json::Value,
+        is_replicated: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at, is_replicated) \
+             VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+        )
+        .bind(if is_replicated == 1 {
+            "peer-device"
+        } else {
+            "this-device"
+        })
+        .bind(seq)
+        .bind(format!("h{seq}"))
+        .bind(op_type)
+        .bind(payload.to_string())
+        .bind(1_767_225_600_000_i64 + seq)
+        .bind(is_replicated)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// #3268: [`recover_blocks_from_op_log`] must skip replicated (foreign)
+    /// audit rows. Device B holds device A's `create_block` audit record
+    /// (`is_replicated = 1`); rebuilding B's `blocks` from the op_log must
+    /// reconstruct B's own block and NOT materialise A's — state flows only
+    /// through Loro, and migration 0099 makes `is_replicated = 0` the isolation
+    /// boundary that keeps replicated rows inert for state.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_blocks_skips_replicated_ops_3268() {
+        let (pool, _dir) = test_pool().await;
+
+        seed_op(
+            &pool,
+            1,
+            "create_block",
+            &serde_json::json!({
+                "block_id": "local-a", "block_type": "content", "index": 0,
+                "content": "authored here",
+            }),
+            0,
+        )
+        .await;
+        seed_op(
+            &pool,
+            2,
+            "create_block",
+            &serde_json::json!({
+                "block_id": "foreign-b", "block_type": "content", "index": 1,
+                "content": "authored on the peer",
+            }),
+            1,
+        )
+        .await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM blocks ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            ids,
+            vec!["local-a".to_owned()],
+            "#3268: only the locally-authored op may materialise — a replicated \
+             audit row must never be replayed into `blocks`"
+        );
+    }
+
+    /// #3268 (the pre-0099 era guard): [`recover_blocks_from_op_log`] runs
+    /// BEFORE `sqlx::migrate!`, so on a vault whose highest applied migration
+    /// predates 0099 the `is_replicated` column does not exist yet. The filter
+    /// must be probed for, not assumed: an unconditional `WHERE is_replicated =
+    /// 0` fails to prepare there ("no such column"), converting a recoverable
+    /// vault into a permanent boot failure. Filtering is also unnecessary in
+    /// that era — 0099 records that before it "no op_log ever held a foreign
+    /// device's ops".
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_blocks_tolerates_pre_0099_op_log_without_is_replicated_3268() {
+        let (pool, _dir) = test_pool().await;
+
+        // Reproduce a pre-0099 `op_log`: same columns the replay reads, minus
+        // the provenance flag 0099 added.
+        sqlx::query("DROP TABLE op_log")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE op_log (
+                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                 device_id   TEXT NOT NULL,
+                 seq         INTEGER NOT NULL,
+                 parent_seqs TEXT,
+                 hash        TEXT NOT NULL,
+                 op_type     TEXT NOT NULL,
+                 payload     TEXT NOT NULL,
+                 created_at  INTEGER NOT NULL
+             )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let has_column: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('op_log') WHERE name = 'is_replicated'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(has_column, 0, "fixture precondition: pre-0099 op_log shape");
+
+        let payload = serde_json::json!({
+            "block_id": "legacy-a", "block_type": "content", "index": 0, "content": "old",
+        })
+        .to_string();
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES ('dev', 1, NULL, 'h1', 'create_block', ?, 1767225600001)",
+        )
+        .bind(&payload)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .expect(
+                "a pre-0099 op_log must still be replayable — the filter is probed, not assumed",
+            );
+        drop(conn);
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'legacy-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "the pre-0099 op must still replay");
+    }
+
+    /// #3268 (the durable half): [`recover_derived_state_from_op_log`] must not
+    /// invent an `attachments` row for a PEER's `add_attachment` naming bytes
+    /// this device does not hold. `attachments` is engine-independent, so the
+    /// `reproject_blocks_from_engine` pass that follows cannot correct a foreign
+    /// row — and the arm's only structural guard
+    /// (`WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)`) is satisfied by the
+    /// replay itself, so it cannot discriminate.
+    ///
+    /// No `attachment_blobs` row is seeded here, so neither peer op has bytes
+    /// behind it. See `replicated_attachment_restored_only_when_blob_is_held_3268`
+    /// for the other half: a peer op whose blob IS held must come back.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_derived_state_skips_replicated_attachment_3268() {
+        let (pool, _dir) = test_pool().await;
+
+        // Both owning blocks exist (the peer's block reached this device via
+        // Loro sync, which is exactly why the attachment arm's EXISTS guard
+        // cannot discriminate).
+        for id in ["local-a", "foreign-b"] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', '', 1)",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        seed_op(
+            &pool,
+            1,
+            "add_attachment",
+            &serde_json::json!({
+                "attachment_id": "att-local", "block_id": "local-a",
+                "mime_type": "image/png", "filename": "mine.png",
+                "size_bytes": 10, "fs_path": "attachments/att-local",
+            }),
+            0,
+        )
+        .await;
+        seed_op(
+            &pool,
+            2,
+            "add_attachment",
+            &serde_json::json!({
+                "attachment_id": "att-foreign", "block_id": "foreign-b",
+                "mime_type": "image/png", "filename": "theirs.png",
+                "size_bytes": 20, "fs_path": "attachments/att-foreign",
+            }),
+            1,
+        )
+        .await;
+
+        recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ true)
+            .await
+            .unwrap();
+
+        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM attachments ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            ids,
+            vec!["att-local".to_owned()],
+            "#3268: a replicated `add_attachment` must not materialise an \
+             `attachments` row — nothing downstream can undo it"
+        );
+    }
+
+    /// #3268 (the call site of the same filter): the `op_count == 0` early
+    /// return that GATES the replay must be computed from the same
+    /// locally-authored population the replay reads. A vault whose op_log holds
+    /// nothing but foreign audit rows has nothing to replay and must return
+    /// before opening the write transaction.
+    ///
+    /// Observable via the [`DERIVED_RECOVERY_PENDING_KEY`] marker: the early
+    /// return leaves it in place (as it does for a genuinely empty op_log),
+    /// whereas entering the replay deletes it in the replay transaction.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn derived_replay_op_count_guard_ignores_replicated_ops_3268() {
+        let (pool, _dir) = test_pool().await;
+
+        seed_op(
+            &pool,
+            1,
+            "add_tag",
+            &serde_json::json!({"block_id": "foreign-b", "tag_id": "t1"}),
+            1,
+        )
+        .await;
+
+        sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES (?, '1', 0)")
+            .bind(DERIVED_RECOVERY_PENDING_KEY)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ false)
+            .await
+            .unwrap();
+
+        let marker: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_settings WHERE key = ?")
+            .bind(DERIVED_RECOVERY_PENDING_KEY)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            marker, 1,
+            "#3268: an op_log holding ONLY replicated rows must take the \
+             `op_count == 0` early return (marker untouched), not enter the full replay"
+        );
+    }
+
+    // ==================================================================
+    // #3269 — a recovered `blocks` must be schema-identical to a healthy one
+    // ==================================================================
+
+    /// The `blocks` table DDL plus every `blocks` index DDL, straight out of
+    /// `sqlite_master`. The auto-index behind the TEXT PRIMARY KEY has
+    /// `sql IS NULL` and is excluded.
+    async fn blocks_schema_objects(pool: &SqlitePool) -> (String, Vec<String>) {
+        let table: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'blocks'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let indexes: Vec<String> = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master \
+             WHERE type = 'index' AND tbl_name = 'blocks' AND sql IS NOT NULL \
+             ORDER BY name",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        (table, indexes)
+    }
+
+    /// Compare DDL modulo formatting: `ALTER TABLE ... RENAME` rewrites the
+    /// stored text (identifiers become quoted), and the migration carries inline
+    /// `--` comments the Rust constant does not. Strip line comments, quotes and
+    /// all whitespace; what is left is the schema itself.
+    fn normalize_ddl(sql: &str) -> String {
+        sql.lines()
+            .map(|line| match line.find("--") {
+                Some(i) => &line[..i],
+                None => line,
+            })
+            .collect::<String>()
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '"')
+            .collect()
+    }
+
+    /// #3269 (acceptance + the anti-drift guard for [`HEAD_BLOCKS_TABLE_DDL`]):
+    /// when `blocks` goes missing on an at-head vault (external corruption, a
+    /// `.recover` pass, a tool-issued DROP) `sqlx::migrate!` is a no-op, so
+    /// whatever recovery creates is the live table forever. It must therefore be
+    /// schema-identical to the table a healthy vault carries — STRICT, both
+    /// named CHECK constraints, the parent/page self-FKs, the `spaces` FK, and all ten
+    /// indexes.
+    ///
+    /// The expectation is READ FROM the migrated database rather than restated
+    /// here, so a future migration that changes `blocks` fails this test instead
+    /// of silently desynchronising the Rust copy.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recovered_blocks_schema_matches_migrated_head_3269() {
+        let (pool, _dir) = test_pool().await;
+        let (expected_table, expected_indexes) = blocks_schema_objects(&pool).await;
+        assert_eq!(
+            expected_indexes.len(),
+            HEAD_BLOCKS_INDEXES.len(),
+            "fixture precondition: the migrated head carries the index set this \
+             recovery re-issues (a mismatch means a migration changed the set)"
+        );
+
+        // External damage: the table simply disappears on an at-head vault.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let recovered = ensure_blocks_table_exists(&pool).await.unwrap();
+        assert!(recovered, "recovery must fire when `blocks` is missing");
+
+        let (actual_table, actual_indexes) = blocks_schema_objects(&pool).await;
+        assert_eq!(
+            normalize_ddl(&actual_table),
+            normalize_ddl(&expected_table),
+            "#3269: the recovered `blocks` must carry the head shape (STRICT, FKs, \
+             CHECK constraints), not a bare scaffold.\nrecovered: {actual_table}\nmigrated:  {expected_table}"
+        );
+        assert_eq!(
+            actual_indexes
+                .iter()
+                .map(|s| normalize_ddl(s))
+                .collect::<Vec<_>>(),
+            expected_indexes
+                .iter()
+                .map(|s| normalize_ddl(s))
+                .collect::<Vec<_>>(),
+            "#3269: the recovered `blocks` must carry the full head index set — \
+             without it every paginated read full-scans the table forever"
+        );
+    }
+
+    /// #3269 (the mid-range era a strict `== head` predicate leaves UNFIXED):
+    /// the LIKELY real-world path is a vault damaged while running an OLDER app
+    /// and then upgraded — its `_sqlx_migrations` is stamped somewhere in
+    /// 0090..head, not exactly at head. Nothing in 0090..head does DDL on
+    /// `blocks` (0089 is the last migration that touches the table), so
+    /// `sqlx::migrate!` will never rebuild it and the scaffold created here is
+    /// just as permanent as it is at head — same constraint-free, zero-index,
+    /// full-scan-forever outcome, in the more common scenario.
+    ///
+    /// Stamps a mid-range version (100), drops `blocks`, and demands the head
+    /// shape plus the full index set.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recovered_blocks_gets_head_shape_below_head_3269() {
+        let (pool, _dir) = test_pool().await;
+        let (expected_table, expected_indexes) = blocks_schema_objects(&pool).await;
+
+        // Rewind the stamp to migration 100: past 0089 (the last migration that
+        // touches `blocks`) but below this binary's embedded head.
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version > 100")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let stamped: i64 =
+            sqlx::query_scalar("SELECT IFNULL(MAX(version), 0) FROM _sqlx_migrations")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stamped, 100, "fixture precondition: a mid-range era vault");
+
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(ensure_blocks_table_exists(&pool).await.unwrap());
+
+        let (actual_table, actual_indexes) = blocks_schema_objects(&pool).await;
+        assert_eq!(
+            normalize_ddl(&actual_table),
+            normalize_ddl(&expected_table),
+            "#3269: a vault stamped between 0089 and head must ALSO get the head \
+             shape — no pending migration rebuilds `blocks`, so this table is \
+             permanent.\nrecovered: {actual_table}\nmigrated:  {expected_table}"
+        );
+        assert_eq!(
+            actual_indexes
+                .iter()
+                .map(|s| normalize_ddl(s))
+                .collect::<Vec<_>>(),
+            expected_indexes
+                .iter()
+                .map(|s| normalize_ddl(s))
+                .collect::<Vec<_>>(),
+            "#3269: …and the full head index set, for the same reason"
+        );
+    }
+
+    /// #3268 (the OTHER data-loss direction): `attachments.block_id REFERENCES
+    /// blocks(id) ON DELETE CASCADE` + `foreign_keys=ON` means the `DROP TABLE
+    /// blocks` that triggers this recovery cascade-deletes EVERY attachment
+    /// row, peer-authored ones included. `attachment_blobs` has no FK, so the
+    /// BYTES survive on disk. A blanket `is_replicated = 0` filter therefore
+    /// destroys the metadata of a legitimately-held peer attachment forever —
+    /// `reproject_blocks_from_engine` cannot repair `attachments`.
+    ///
+    /// The discriminator is possession of the bytes: restore a replicated
+    /// `add_attachment` iff this device's blob store still holds the file it
+    /// names, and drop it otherwise.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replicated_attachment_restored_only_when_blob_is_held_3268() {
+        let (pool, _dir) = test_pool().await;
+
+        for id in ["local-a", "peer-held", "peer-unheld"] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', '', 1)",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // The peer attachment this device DID receive: its bytes are registered
+        // in the content-addressed blob store (`register_received_blob`, and the
+        // `attachments` row itself was restored by snapshot restore before the
+        // cascade wiped it).
+        let held_path = agaric_core::attachment_path::AttachmentFsPath::coerce_from_peer(
+            "attachments/att-peer-held",
+            "att-peer-held",
+        );
+        sqlx::query(
+            "INSERT INTO attachment_blobs (content_hash, on_disk_path, size_bytes, created_at) \
+             VALUES ('hash-held', ?, 20, 0)",
+        )
+        .bind(held_path.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        seed_op(
+            &pool,
+            1,
+            "add_attachment",
+            &serde_json::json!({
+                "attachment_id": "att-local", "block_id": "local-a",
+                "mime_type": "image/png", "filename": "mine.png",
+                "size_bytes": 10, "fs_path": "attachments/att-local",
+            }),
+            0,
+        )
+        .await;
+        seed_op(
+            &pool,
+            2,
+            "add_attachment",
+            &serde_json::json!({
+                "attachment_id": "att-peer-held", "block_id": "peer-held",
+                "mime_type": "image/png", "filename": "theirs-held.png",
+                "size_bytes": 20, "fs_path": "attachments/att-peer-held",
+            }),
+            1,
+        )
+        .await;
+        seed_op(
+            &pool,
+            3,
+            "add_attachment",
+            &serde_json::json!({
+                "attachment_id": "att-peer-unheld", "block_id": "peer-unheld",
+                "mime_type": "image/png", "filename": "theirs-unheld.png",
+                "size_bytes": 30, "fs_path": "attachments/att-peer-unheld",
+            }),
+            1,
+        )
+        .await;
+
+        recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ true)
+            .await
+            .unwrap();
+
+        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM attachments ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            ids,
+            vec!["att-local".to_owned(), "att-peer-held".to_owned()],
+            "#3268: the locally-authored row and the peer row whose bytes this \
+             device still holds must both come back; the peer row with no blob \
+             must not be invented"
+        );
+    }
+
+    /// #3268: a peer's LATER `delete_attachment` must still win over its own
+    /// earlier `add_attachment`, or restoring held peer metadata would resurrect
+    /// an attachment the peer removed. The replicated delete/rename arms are
+    /// replayed for the same reason the add arm is: `attachments` is the one
+    /// table no downstream pass can correct.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replicated_attachment_delete_wins_over_replicated_add_3268() {
+        let (pool, _dir) = test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES ('peer-b', 'content', '', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let held_path = agaric_core::attachment_path::AttachmentFsPath::coerce_from_peer(
+            "attachments/att-peer",
+            "att-peer",
+        );
+        sqlx::query(
+            "INSERT INTO attachment_blobs (content_hash, on_disk_path, size_bytes, created_at) \
+             VALUES ('hash-peer', ?, 20, 0)",
+        )
+        .bind(held_path.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        seed_op(
+            &pool,
+            1,
+            "add_attachment",
+            &serde_json::json!({
+                "attachment_id": "att-peer", "block_id": "peer-b",
+                "mime_type": "image/png", "filename": "theirs.png",
+                "size_bytes": 20, "fs_path": "attachments/att-peer",
+            }),
+            1,
+        )
+        .await;
+        seed_op(
+            &pool,
+            2,
+            "delete_attachment",
+            &serde_json::json!({"attachment_id": "att-peer", "fs_path": "attachments/att-peer"}),
+            1,
+        )
+        .await;
+
+        recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ true)
+            .await
+            .unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "#3268: the peer's later delete must win — a held blob is a reason to \
+             restore metadata, never a reason to resurrect a removed attachment"
+        );
+    }
+
+    /// #3269: the constrained rebuild is an ATTEMPT, and this pins that its
+    /// failure branch is real and reachable. External damage that also took the
+    /// `spaces` table makes the head DDL's `space_id REFERENCES spaces(id)`
+    /// unsatisfiable, so the constrained attempt aborts; recovery must degrade
+    /// to the pre-#3269 constraint-free scaffold (still replaying the op_log,
+    /// still creating the indexes) instead of wedging boot — a boot failure
+    /// would be strictly worse than a degraded-but-live table.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn constrained_rebuild_failure_falls_back_to_scaffold_3269() {
+        let (pool, _dir) = test_pool().await;
+
+        seed_op(
+            &pool,
+            1,
+            "create_block",
+            &serde_json::json!({
+                "block_id": "local-a", "block_type": "content", "index": 0, "content": "kept",
+            }),
+            0,
+        )
+        .await;
+
+        // Broader external damage: `blocks` AND its `spaces` FK target are gone.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE spaces")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let recovered = ensure_blocks_table_exists(&pool)
+            .await
+            .expect("a failed constrained rebuild must degrade, never wedge boot");
+        assert!(recovered, "recovery still fires");
+
+        let (table, indexes) = blocks_schema_objects(&pool).await;
+        assert!(
+            !normalize_ddl(&table).contains("STRICT"),
+            "the fallback is the constraint-free scaffold: {table}"
+        );
+        assert_eq!(
+            indexes.len(),
+            HEAD_BLOCKS_INDEXES.len(),
+            "the fallback still gets the head index set — index DDL cannot reject data"
+        );
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'local-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "the op-log replay still lands on the fallback table"
+        );
+    }
+
+    /// #3269: a page block must satisfy `page_id_self_for_pages` the moment it
+    /// is inserted — the constraint is a CHECK, and CHECK constraints are never deferred,
+    /// so deriving `page_id` only after the replay loop would abort the whole
+    /// constrained rebuild on the first page. Drives a real page + nested
+    /// content through `ensure_blocks_table_exists` on an at-head vault and
+    /// asserts both the head shape and the reconstructed `page_id` values.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn constrained_rebuild_replays_pages_and_nesting_3269() {
+        let (pool, _dir) = test_pool().await;
+
+        seed_op(
+            &pool,
+            1,
+            "create_block",
+            &serde_json::json!({
+                "block_id": "pg", "block_type": "page", "index": 0, "content": "Page",
+            }),
+            0,
+        )
+        .await;
+        seed_op(
+            &pool,
+            2,
+            "create_block",
+            &serde_json::json!({
+                "block_id": "kid", "block_type": "content", "index": 0,
+                "content": "child", "parent_id": "pg",
+            }),
+            0,
+        )
+        .await;
+
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        ensure_blocks_table_exists(&pool).await.unwrap();
+
+        let (table, _) = blocks_schema_objects(&pool).await;
+        assert!(
+            normalize_ddl(&table).contains("STRICT"),
+            "the constrained rebuild must have SUCCEEDED (not fallen back) for a \
+             page-bearing op_log: {table}"
+        );
+
+        let page_ids: Vec<(String, Option<String>)> =
+            sqlx::query_as("SELECT id, page_id FROM blocks ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            page_ids,
+            vec![
+                ("kid".to_owned(), Some("pg".to_owned())),
+                ("pg".to_owned(), Some("pg".to_owned())),
+            ],
+            "the page self-references and its child inherits, inside the head-shaped table"
+        );
+    }
+
+    /// #3269 R4: `rows_affected() == 0` on the replay's `INSERT OR IGNORE` has
+    /// TWO causes once the head CHECK constraints are live, and the pre-existing diagnostic
+    /// claimed only one of them ("op_log carries two create ops for the same id
+    /// … possible op_log corruption"). Told about a CHECK rejection, that
+    /// sentence is simply false — on the one path where the op_log is the last
+    /// forensic artefact left. The replay must therefore tell them apart.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replay_distinguishes_check_rejection_from_duplicate_create_3269() {
+        let (pool, _dir) = test_pool().await;
+
+        // Two creates for ONE id: real op_log corruption (ULIDs cannot collide).
+        for seq in [1, 2] {
+            seed_op(
+                &pool,
+                seq,
+                "create_block",
+                &serde_json::json!({
+                    "block_id": "dup", "block_type": "content", "index": 0, "content": "x",
+                }),
+                0,
+            )
+            .await;
+        }
+        // A payload the head `block_type_valid` CHECK refuses: NOT corruption,
+        // just a row a healthy at-head vault could not hold either.
+        seed_op(
+            &pool,
+            3,
+            "create_block",
+            &serde_json::json!({
+                "block_id": "bogus", "block_type": "not-a-block-type", "index": 1,
+                "content": "invalid",
+            }),
+            0,
+        )
+        .await;
+
+        // Replay straight into a head-shaped table so both branches are live.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(HEAD_BLOCKS_TABLE_DDL)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            diagnostics.duplicate_creates,
+            vec!["dup".to_owned()],
+            "#3269 R4: only the id that was ALREADY in the table is a duplicate create"
+        );
+        assert_eq!(
+            diagnostics.constraint_rejected_creates,
+            vec!["bogus".to_owned()],
+            "#3269 R4: a row the table's CHECK refused must be reported as a \
+             constraint rejection with its own aggregate, never mislabelled as \
+             op_log corruption"
+        );
+        assert_eq!(
+            diagnostics.ops_replayed, 3,
+            "all three ops were read; two of the three creates simply did not land"
+        );
+    }
+
+    /// #3269 R5: the `DISASTER RECOVERY DATA LOSS (#2504)` banner and the
+    /// per-op warnings must be emitted ONCE per boot. They used to be logged
+    /// from inside the replay, which `ensure_blocks_table_exists` may run twice
+    /// (constrained attempt, then scaffold fallback) — so on exactly the path a
+    /// post-mortem cares about, every number in the log was doubled.
+    ///
+    /// Drives the fallback path (external damage that also took `spaces`, so the
+    /// head shape's `space_id REFERENCES spaces(id)` is unbuildable) and counts
+    /// the banner.
+    ///
+    /// Current-thread runtime on purpose: `set_default` installs a THREAD-local
+    /// subscriber, and a multi-thread runtime could poll the future on a worker
+    /// that never saw it.
+    #[tokio::test]
+    async fn recovery_diagnostics_are_emitted_once_per_boot_3269() {
+        #[derive(Clone, Default)]
+        struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for LogBuf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
+            type Writer = LogBuf;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let (pool, _dir) = test_pool().await;
+        seed_op(
+            &pool,
+            1,
+            "create_block",
+            &serde_json::json!({
+                "block_id": "local-a", "block_type": "content", "index": 0, "content": "kept",
+            }),
+            0,
+        )
+        .await;
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE spaces")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let buf = LogBuf::default();
+        {
+            use tracing_subscriber::layer::SubscriberExt;
+            let subscriber = tracing_subscriber::registry()
+                .with(tracing_subscriber::EnvFilter::new("warn"))
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(buf.clone())
+                        .with_ansi(false),
+                );
+            let _guard = tracing::subscriber::set_default(subscriber);
+            ensure_blocks_table_exists(&pool).await.unwrap();
+        }
+
+        let logged = String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned();
+        let banners = logged
+            .matches("Recovering `blocks` from the device-local op_log (#2504)")
+            .count();
+        assert_eq!(
+            banners, 1,
+            "#3269 R5: the op-log-replay banner must appear exactly once per \
+             boot — a doubled banner makes a post-mortem double-count the \
+             damage.\n--- captured ---\n{logged}"
+        );
+    }
+
+    /// #3269 (the behaviour change the constrained shape buys, and the reason
+    /// it is safe to attempt): a `create_block` payload whose `block_type` the
+    /// head `block_type_valid` CHECK rejects is DROPPED by the rebuild instead
+    /// of materialising a row a healthy vault could never hold. It does not
+    /// wedge the rebuild — the replay's `INSERT OR IGNORE` turns a constraint
+    /// violation into a skipped row — so the constrained attempt still commits
+    /// and the well-formed ops around it survive.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn constrained_rebuild_drops_ops_the_head_check_rejects_3269() {
+        let (pool, _dir) = test_pool().await;
+
+        seed_op(
+            &pool,
+            1,
+            "create_block",
+            &serde_json::json!({
+                "block_id": "bogus", "block_type": "not-a-block-type", "index": 0,
+                "content": "invalid",
+            }),
+            0,
+        )
+        .await;
+        seed_op(
+            &pool,
+            2,
+            "create_block",
+            &serde_json::json!({
+                "block_id": "good", "block_type": "content", "index": 1, "content": "fine",
+            }),
+            0,
+        )
+        .await;
+
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        ensure_blocks_table_exists(&pool).await.unwrap();
+
+        let (table, _) = blocks_schema_objects(&pool).await;
+        assert!(
+            normalize_ddl(&table).contains("STRICT"),
+            "a CHECK-violating op must not force the fallback — `INSERT OR IGNORE` \
+             skips the row and the constrained rebuild still commits: {table}"
+        );
+
+        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM blocks ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            ids,
+            vec!["good".to_owned()],
+            "the CHECK-violating row is dropped (a healthy vault could not hold it), \
+             the well-formed op still recovers"
         );
     }
 }

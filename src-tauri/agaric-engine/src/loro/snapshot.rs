@@ -303,6 +303,11 @@ pub async fn reload_registry_from_db(
 /// so one bad space never blocks the rest.
 ///
 /// Returns the number of spaces successfully snapshotted.
+///
+/// #3309 — the pass ALSO advances the `applied_through_seq` watermark of
+/// every space it did not re-encode (see `advance_clean_space_watermarks`
+/// below), so a quiescent space's row cannot pin the boot heal's
+/// `MIN(applied_through_seq)` rewind target forever.
 pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) -> usize {
     // Issue #153 / #2205 / #2201 — `snapshot_dirty_engines` collects the
     // per-space engine `Arc`s of ONLY the dirty spaces under the registry's
@@ -319,6 +324,8 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // re-encoded; a clean space keeps its existing `loro_doc_state` row
     // (still accurate for its unchanged engine, and backfilled by op-log /
     // sync-inbox replay on boot regardless).
+    // #3309 — but its `applied_through_seq` watermark is NOT left frozen:
+    // see `advance_clean_space_watermarks` at the end of this function.
     // /C2: read the watermark BEFORE acquiring the engine lock,
     // so it is a safe lower bound for every engine exported in this pass —
     // the lock-time cursor can only be >= this value, and each engine
@@ -332,9 +339,19 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // prevent. Re-checked before every write below.
     let generation = registry.generation();
     let pairs = registry.snapshot_dirty_engines();
+    // #3309 — the space set this process holds an ENGINE for, cut alongside
+    // the dirty set (not re-read at the end): a space that is lazily created
+    // mid-pass has an engine whose relationship to its persisted row this
+    // pass never observed, so it must not be advanced either.
+    let installed = registry.space_ids();
 
     let mut ok = 0usize;
+    // #3309 — every space this pass TOUCHED (persisted or failed). Spaces
+    // outside this set were clean at the dirty-set cut and are the ones
+    // whose watermark the tail of this function is allowed to advance.
+    let mut attempted: Vec<SpaceId> = Vec::with_capacity(pairs.len());
     for (space_id, mark_stamp, bytes_result) in pairs {
+        attempted.push(space_id.clone());
         if registry.generation() != generation {
             tracing::warn!(
                 space_id = %space_id,
@@ -392,7 +409,150 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
             }
         }
     }
+
+    // #3309 — the watermark refresh for the spaces this pass did NOT
+    // re-encode. Runs only on the normal exit path: the generation-guard
+    // `return ok` above skips it, because after a snapshot RESET the rows
+    // this would touch are exactly the ones that must not be trusted.
+    advance_clean_space_watermarks(pool, applied_through_seq, &attempted, &installed).await;
+
     ok
+}
+
+/// #3309 — advance `applied_through_seq` for every `loro_doc_state` row
+/// belonging to a space that was NOT touched by the enclosing
+/// [`save_all_engines`] pass.
+///
+/// ## Why this is needed
+///
+/// Before #2201 every pass re-encoded every space, so every row's
+/// watermark tracked the apply cursor. Since #2201 only DIRTY spaces are
+/// re-encoded, and a space that was edited once and then went quiescent
+/// keeps its original row — including its original watermark — forever.
+/// `recovery::replay::heal_orphaned_apply_cursor` rewinds the global apply
+/// cursor to `MIN(applied_through_seq)` across all rows, so that one frozen
+/// watermark makes every subsequent boot re-drive the whole op-log tail
+/// through the foreground materializer before the UI comes up (and, once
+/// compaction has purged the head, fires the #619 under-rebuild `error!` on
+/// every healthy boot). Advancing the watermark here decouples the rewind
+/// target from the dirty-snapshot cadence at its source, without touching
+/// the (correct, conservative) `MIN` in the heal.
+///
+/// ## Why it is sound
+///
+/// `applied_through_seq` claims only "this blob reflects every op with
+/// `seq <= watermark`". A row is advanced only when BOTH hold:
+///
+/// * its space has an engine INSTALLED in `registry` — so there really is
+///   an in-memory engine whose state the blob is being compared against
+///   (see the "engine absent" exclusion below), and
+/// * that space is absent from `attempted` — so it was clean at the
+///   dirty-set cut, i.e. its persisted blob equals its in-memory engine.
+///
+/// The engine in turn reflects every op `<= cursor - 1 =
+/// applied_through_seq` (see [`snapshot_watermark`] — the per-space engine
+/// dispatch happens inside the apply tx, before the cursor advance
+/// commits). This last premise holds for a rehydrated engine only AFTER
+/// `recovery::boot::recover_at_boot` has run: between rehydration and the
+/// heal+replay, an engine reflects only its own row's watermark while the
+/// cursor may be far ahead. Production ordering guarantees it —
+/// `lib.rs::run` calls `recover_and_bootstrap` BEFORE
+/// `spawn_background_tasks` starts the periodic pass, and the exit-time
+/// save runs later still — so no pass can observe that window. A future
+/// change that starts a snapshot pass before boot recovery would break
+/// this function's premise, not just its optimisation.
+///
+/// Spaces in `attempted` are excluded because a dirty space whose export
+/// or INSERT FAILED still holds unpersisted mutations at seqs at or below
+/// the watermark — advancing its row would be a false claim, and would
+/// suppress exactly the boot rewind that heals it. (A dirty space that
+/// persisted successfully already had the current watermark written by the
+/// `INSERT OR REPLACE` above, so excluding it costs nothing.)
+///
+/// Spaces with NO engine in the registry are excluded because "not
+/// attempted" is NOT the same as "clean" for them: `rehydrate_registry`
+/// SKIPS a space whose blob fails to import (and one whose peer-id mint
+/// fails), leaving the row in place with no engine behind it. Such a row
+/// is unverified, not clean — advancing it would assert that an
+/// unreadable blob reflects the whole log and would suppress the rebuild
+/// the boot heal exists to drive. `snapshot_dirty_engines` phase 2 also
+/// skips a dirty space that is absent from the map, which this exclusion
+/// covers as well.
+///
+/// `updated_at` is deliberately left alone: it records when the BLOB was
+/// written, and no blob is rewritten here.
+///
+/// Errors are logged and swallowed — this is a best-effort optimisation of
+/// the next boot's rewind target, never a correctness requirement, and it
+/// must not turn into a reason for the surrounding snapshot pass to fail.
+/// Returns the number of rows advanced.
+async fn advance_clean_space_watermarks(
+    pool: &SqlitePool,
+    applied_through_seq: i64,
+    attempted: &[SpaceId],
+    installed: &[SpaceId],
+) -> usize {
+    if applied_through_seq <= 0 {
+        // Nothing can sit below 0 (`applied_through_seq` is
+        // `INTEGER NOT NULL DEFAULT 0`), so skip the read entirely.
+        return 0;
+    }
+    let stale: Vec<(String,)> =
+        match sqlx::query_as("SELECT space_id FROM loro_doc_state WHERE applied_through_seq < ?")
+            .bind(applied_through_seq)
+            .fetch_all(pool)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "loro:save_all_engines: could not read stale snapshot watermarks (#3309)",
+                );
+                return 0;
+            }
+        };
+
+    let mut advanced = 0usize;
+    for (space_id,) in stale {
+        if attempted.iter().any(|s| s.as_str() == space_id) {
+            continue;
+        }
+        // A row whose space is absent from `installed` never had its blob
+        // verified against an engine in this pass (a failed rehydrate import
+        // is the live case), so it is left pinning `MIN` — which is precisely
+        // the full-rebuild signal it needs.
+        if !installed.iter().any(|s| s.as_str() == space_id) {
+            continue;
+        }
+        // Re-assert `applied_through_seq <` in the UPDATE so a concurrent
+        // persist that already wrote a HIGHER watermark is never walked back.
+        let res = sqlx::query(
+            "UPDATE loro_doc_state SET applied_through_seq = ? \
+             WHERE space_id = ? AND applied_through_seq < ?",
+        )
+        .bind(applied_through_seq)
+        .bind(&space_id)
+        .bind(applied_through_seq)
+        .execute(pool)
+        .await;
+        match res {
+            Ok(r) => advanced += usize::try_from(r.rows_affected()).unwrap_or(0),
+            Err(e) => tracing::warn!(
+                space_id = %space_id,
+                error = %e,
+                "loro:save_all_engines: watermark advance failed for a clean space (#3309)",
+            ),
+        }
+    }
+    if advanced > 0 {
+        tracing::debug!(
+            advanced,
+            applied_through_seq,
+            "loro:save_all_engines: refreshed the watermark of clean spaces (#3309)"
+        );
+    }
+    advanced
 }
 
 /// Default cadence for the periodic snapshot task (5 minutes).
@@ -851,6 +1011,307 @@ mod tests {
         assert!(
             probe.read_block("BLOCK_A2").expect("read").is_some(),
             "A's re-encoded snapshot must contain the block mutated this tick"
+        );
+    }
+
+    /// Seed a `loro_doc_state` row directly, as if it had been persisted by
+    /// an earlier session, and park the apply cursor at `cursor`.
+    async fn seed_row(pool: &SqlitePool, space_id: &str, applied_through_seq: i64) {
+        sqlx::query(
+            "INSERT OR REPLACE INTO loro_doc_state \
+             (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+             VALUES (?, X'00', 1767225600000, 0, ?)",
+        )
+        .bind(space_id)
+        .bind(applied_through_seq)
+        .execute(pool)
+        .await
+        .expect("seed loro_doc_state row");
+    }
+
+    async fn set_apply_cursor(pool: &SqlitePool, cursor: i64) {
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = ?, updated_at = 1767225600000 WHERE id = 1",
+        )
+        .bind(cursor)
+        .execute(pool)
+        .await
+        .expect("park apply cursor");
+    }
+
+    /// Install a CLEAN engine for `space_id`, as boot rehydration does for
+    /// every persisted space. `install_engine` does not mark the space
+    /// dirty, so the registry state matches "persisted earlier, untouched
+    /// since" — the shape `advance_clean_space_watermarks` is allowed to
+    /// advance.
+    fn install_clean_engine(registry: &LoroEngineRegistry, space_id: &str) {
+        registry.install_engine(
+            SpaceId::from_trusted(space_id),
+            LoroEngine::with_peer_id("device-1").expect("engine"),
+        );
+        assert_eq!(
+            registry.dirty_count(),
+            0,
+            "install_engine must not mark the space dirty"
+        );
+    }
+
+    async fn watermark_of(pool: &SqlitePool, space_id: &str) -> i64 {
+        sqlx::query_scalar("SELECT applied_through_seq FROM loro_doc_state WHERE space_id = ?")
+            .bind(space_id)
+            .fetch_one(pool)
+            .await
+            .expect("watermark")
+    }
+
+    /// #3309 — a space that was persisted once and then went QUIESCENT must
+    /// not pin `MIN(applied_through_seq)` forever.
+    ///
+    /// Since #2201 only dirty spaces are re-encoded, so B's row (written by
+    /// a long-past session at watermark 1) used to keep that watermark for
+    /// the lifetime of the vault. `heal_orphaned_apply_cursor` rewinds the
+    /// global apply cursor to `MIN(applied_through_seq)`, so every boot
+    /// re-drove the whole op-log tail through the foreground materializer.
+    /// The pass must therefore advance the watermark of the spaces it did
+    /// NOT re-encode — while still not re-encoding them (#2201).
+    #[tokio::test]
+    async fn save_all_engines_advances_watermark_of_quiescent_space_3309() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+
+        // B: edited once long ago (watermark 1), never touched since — it is
+        // absent from the registry's dirty set for good, but (as in
+        // production) boot rehydration DID install its engine.
+        seed_row(&pool, SPACE_B, 1).await;
+        install_clean_engine(&registry, SPACE_B);
+        let b_blob_before: Vec<u8> =
+            sqlx::query_scalar("SELECT snapshot FROM loro_doc_state WHERE space_id = ?")
+                .bind(SPACE_B)
+                .fetch_one(&pool)
+                .await
+                .expect("b blob before");
+        let b_updated_before: i64 =
+            sqlx::query_scalar("SELECT updated_at FROM loro_doc_state WHERE space_id = ?")
+                .bind(SPACE_B)
+                .fetch_one(&pool)
+                .await
+                .expect("b updated_at before");
+
+        // A is the space the user actually works in; the cursor has run far
+        // ahead of B's frozen watermark.
+        set_apply_cursor(&pool, 500).await;
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A", "content", "in A", None, 0)
+                .expect("create");
+        }
+
+        let n = save_all_engines(&pool, &registry).await;
+        assert_eq!(n, 1, "only the dirty space A is re-encoded");
+
+        assert_eq!(
+            watermark_of(&pool, SPACE_A).await,
+            499,
+            "the re-encoded space records the pass watermark (cursor - 1)"
+        );
+        assert_eq!(
+            watermark_of(&pool, SPACE_B).await,
+            499,
+            "the quiescent space's watermark must be advanced too — otherwise it \
+             pins MIN(applied_through_seq) and every boot rewinds to it (#3309)"
+        );
+
+        // ...but #2201 still holds: B's BLOB is not re-encoded and its
+        // blob-write timestamp is untouched.
+        let b_blob_after: Vec<u8> =
+            sqlx::query_scalar("SELECT snapshot FROM loro_doc_state WHERE space_id = ?")
+                .bind(SPACE_B)
+                .fetch_one(&pool)
+                .await
+                .expect("b blob after");
+        assert_eq!(
+            b_blob_before, b_blob_after,
+            "advancing the watermark must not re-encode a clean space (#2201)"
+        );
+        let b_updated_after: i64 =
+            sqlx::query_scalar("SELECT updated_at FROM loro_doc_state WHERE space_id = ?")
+                .bind(SPACE_B)
+                .fetch_one(&pool)
+                .await
+                .expect("b updated_at after");
+        assert_eq!(
+            b_updated_before, b_updated_after,
+            "updated_at records when the BLOB was written; no blob was written for B"
+        );
+    }
+
+    /// #3309 — "not attempted this pass" is NOT the same as "clean". A row
+    /// whose space has NO engine in the registry was never verified against
+    /// anything: `rehydrate_registry` SKIPS a space whose blob fails to
+    /// import, leaving exactly this shape. Advancing such a row would claim
+    /// an unreadable blob reflects the whole op-log and would suppress the
+    /// boot rebuild that is the only thing that can repair it.
+    #[tokio::test]
+    async fn save_all_engines_does_not_advance_watermark_of_unrehydrated_space_3309() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+
+        // B has a row but NO engine — the failed-rehydrate shape.
+        seed_row(&pool, SPACE_B, 1).await;
+        set_apply_cursor(&pool, 500).await;
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A", "content", "in A", None, 0)
+                .expect("create");
+        }
+
+        let n = save_all_engines(&pool, &registry).await;
+        assert_eq!(n, 1, "only the dirty space A is re-encoded");
+
+        assert_eq!(
+            watermark_of(&pool, SPACE_A).await,
+            499,
+            "the re-encoded space records the pass watermark"
+        );
+        assert_eq!(
+            watermark_of(&pool, SPACE_B).await,
+            1,
+            "a row with no engine behind it must keep pinning MIN so the next \
+             boot rebuilds it — 'not attempted' is not 'clean' (#3309)"
+        );
+    }
+
+    /// #3309 — the other arm: a DIRTY space whose persist FAILED still holds
+    /// unpersisted mutations at seqs below the pass watermark, so its row
+    /// must NOT be advanced (advancing it would be a false claim and would
+    /// suppress the very boot rewind that heals it). The clean space in the
+    /// same pass is still advanced.
+    #[tokio::test]
+    async fn save_all_engines_does_not_advance_watermark_of_failed_dirty_space_3309() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+
+        seed_row(&pool, SPACE_A, 1).await;
+        seed_row(&pool, SPACE_B, 1).await;
+        install_clean_engine(&registry, SPACE_B);
+        set_apply_cursor(&pool, 500).await;
+
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A", "content", "in A", None, 0)
+                .expect("create");
+        }
+        assert_eq!(registry.dirty_count(), 1, "A dirty after mutation");
+
+        // Force A's INSERT OR REPLACE to fail. Only the dirty space is
+        // INSERTed by the pass, so a blanket BEFORE INSERT abort poisons
+        // exactly A's write while leaving the clean-space UPDATE path alone.
+        sqlx::query(
+            "CREATE TRIGGER poison_loro_doc_state_insert \
+             BEFORE INSERT ON loro_doc_state \
+             BEGIN SELECT RAISE(ABORT, 'simulated persist failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("create poison trigger");
+
+        let n = save_all_engines(&pool, &registry).await;
+        assert_eq!(n, 0, "A's persist failed, so no space is counted persisted");
+        assert_eq!(
+            registry.dirty_count(),
+            1,
+            "a failed persist leaves the space dirty (#2201)"
+        );
+
+        assert_eq!(
+            watermark_of(&pool, SPACE_A).await,
+            1,
+            "a dirty space whose persist FAILED must keep its old watermark — its \
+             engine holds mutations the blob does not reflect (#3309)"
+        );
+        assert_eq!(
+            watermark_of(&pool, SPACE_B).await,
+            499,
+            "the clean space is still advanced in the same pass (#3309)"
+        );
+    }
+
+    /// #3309 — the same exclusion, but with MORE THAN ONE space attempted in
+    /// the pass. This is the case the single-attempt test above cannot
+    /// distinguish: with exactly one entry in `attempted`,
+    /// `attempted.iter().any(eq)` and `attempted.iter().all(eq)` agree, so a
+    /// membership test degraded to `all` survives it — and `all` advances the
+    /// watermark of a dirty space whose persist FAILED, which is exactly the
+    /// silent-data-loss claim (`the blob reflects every op <= watermark`) the
+    /// exclusion exists to prevent.
+    ///
+    /// Two dirty spaces (A fails, B succeeds) plus one quiescent space (C).
+    /// The poison trigger is keyed on A's `space_id` so B's write still lands.
+    #[tokio::test]
+    async fn failed_dirty_space_keeps_watermark_when_several_spaces_attempted_3309() {
+        const SPACE_C: &str = "01D0Z9Z0Z9Z0Z9Z0Z9Z0Z9Z0Z9";
+
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+        let space_b = SpaceId::from_trusted(SPACE_B);
+
+        seed_row(&pool, SPACE_A, 1).await;
+        seed_row(&pool, SPACE_B, 1).await;
+        seed_row(&pool, SPACE_C, 1).await;
+        install_clean_engine(&registry, SPACE_C);
+        set_apply_cursor(&pool, 500).await;
+
+        for (space, block) in [(&space_a, "BLOCK_A0"), (&space_b, "BLOCK_B0")] {
+            let mut g = registry.for_space(space, "device-1").expect("for_space");
+            g.engine_mut()
+                .apply_create_block(block, "content", "mutation", None, 0)
+                .expect("create");
+        }
+        assert_eq!(registry.dirty_count(), 2, "A and B are both dirty");
+
+        // Poison ONLY A's write, so the pass attempts two spaces and persists
+        // exactly one of them.
+        // NOTE: `CREATE TRIGGER` is DDL — SQLite does not accept bind
+        // parameters inside it, so A's id is spelled out in the literal. The
+        // assert keeps it in lockstep with `SPACE_A`.
+        assert_eq!(SPACE_A, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        sqlx::query(
+            "CREATE TRIGGER poison_loro_doc_state_insert_a \
+             BEFORE INSERT ON loro_doc_state \
+             WHEN NEW.space_id = '01ARZ3NDEKTSV4RRFFQ69G5FAV' \
+             BEGIN SELECT RAISE(ABORT, 'simulated persist failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("create poison trigger");
+
+        let n = save_all_engines(&pool, &registry).await;
+        assert_eq!(n, 1, "only B persisted; A's INSERT was aborted");
+
+        assert_eq!(
+            watermark_of(&pool, SPACE_A).await,
+            1,
+            "the FAILED dirty space must keep its old watermark even when other \
+             spaces were attempted in the same pass — advancing it would claim \
+             its stale blob reflects ops it does not hold (#3309)"
+        );
+        assert_eq!(
+            watermark_of(&pool, SPACE_B).await,
+            499,
+            "the successfully persisted space records the pass watermark"
+        );
+        assert_eq!(
+            watermark_of(&pool, SPACE_C).await,
+            499,
+            "the quiescent space is still advanced (#3309)"
         );
     }
 

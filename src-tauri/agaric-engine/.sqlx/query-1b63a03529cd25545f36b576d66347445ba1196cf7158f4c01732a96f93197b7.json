@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(MAX(seq), 0) AS \"frontier!: i64\" FROM op_log WHERE device_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "frontier!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1b63a03529cd25545f36b576d66347445ba1196cf7158f4c01732a96f93197b7"
+}
