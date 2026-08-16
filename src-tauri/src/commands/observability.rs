@@ -988,9 +988,9 @@ mod tests {
                 .is_empty()
         );
         for raw in [
-            r##"span.record(r"page_title", t);"##,
+            r#"span.record(r"page_title", t);"#,
             r##"span.record(r#"page_title"#, t);"##,
-            r##"span.record(b"page_title", t);"##,
+            r#"span.record(b"page_title", t);"#,
             r##"span.record(br#"page_title"#, t);"##,
         ] {
             assert!(
