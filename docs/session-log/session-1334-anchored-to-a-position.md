@@ -139,9 +139,9 @@ Worth stating plainly, since this is the third time in this batch: the PR whose 
 must not depend on something incidental to its position* shipped a guard that depended on something
 incidental to its environment.
 
-### The same defect, three times, each fix silent about the dimension it introduced
+### The same defect, four times, each fix silent about the dimension it introduced
 
-Review round three of this PR found the third iteration of one defect. Laid out in order:
+Review rounds three and four of this PR each found the next iteration of one defect. In order:
 
 - **v1** (before #3716) threw away a correct result: every off-schedule run passed `--dry-run`, so a
   `workflow_dispatch` computed the true failing set and discarded it, and the rolling issue kept
@@ -153,17 +153,34 @@ Review round three of this PR found the third iteration of one defect. Laid out 
   repository's: a dispatch runs on a user-selected ref, the tracking issue is repo-wide, and nothing
   compared the two. Dispatch on `fix/mutants`, find every lane green there, close an issue whose
   subject — `main` — is still red, for up to seven days.
+- **v4** (the ref guard, also this PR) would have published a *shortened run's* result as the week's:
+  ref equality was taken for cron-equivalence, but `workflow_dispatch` carries `fuzz_seconds`,
+  `mutants_timeout` and `slo_include_problem`, and those change **what the lanes test**. A dispatch on
+  `refs/heads/main` with `fuzz_seconds=10` passes the ref check and writes; a still-broken `fuzz` lane
+  reports `success` at a budget it was never meant to pass at, diffs as *recovered*, and — if it was
+  the last tracked lane — closes the issue with a "recovered" comment.
 
 Each fix was correct about the failure it was aimed at and silent about the dimension it had just
 introduced. v1→v2 fixed *whether* the answer is kept and said nothing about *which lanes it covers*;
-v2→v3 fixed *which lanes* and said nothing about *whose lanes*. The PR body's idempotency argument is
-sound and answers none of this: idempotence is about churn, provenance is about whose truth is being
-written. Both reviews landed on the same sentence — the justification for writing was still accurate,
-and had stopped being sufficient.
+v2→v3 fixed *which lanes* and said nothing about *whose lanes*; v3→v4 fixed *whose* and said nothing
+about *under what conditions they ran*. We guarded the **event**, then the **ref**, and each time the
+next-widest dimension was left open, because each fix was reasoned about from the bug it had just
+seen rather than from the property being claimed. The property is one sentence — *this run reproduces
+the cron* — and the event, the ref and the inputs are all just terms in it. The PR body's idempotency
+argument is sound and answers none of this: idempotence is about churn, provenance is about whose
+truth is being written, and the inputs are about whether the answer means what the issue says it
+means. Every round landed on the same sentence: the justification for writing was still accurate, and
+had stopped being sufficient.
 
-The fix keeps the off-cycle answer authoritative only for the ref the cron itself uses
-(`refs/heads/main`, on the full `GITHUB_REF` — `GITHUB_REF_NAME` is `main` for a *tag* named `main`
-too, and a tag is a legal dispatch target), and dry-runs everywhere else.
+So the workflow now writes only when the run reproduces the cron on every axis — the `schedule`
+event, or a dispatch on `refs/heads/main` (the full `GITHUB_REF`, since `GITHUB_REF_NAME` is `main`
+for a *tag* named `main` too, and a tag is a legal dispatch target) with every declared input at its
+declared default. Everything else `--dry-run`s, which still performs every read and prints the whole
+answer; it just does not get to speak for the repository. And the input list is not hardcoded:
+`findDispatchInputDefaults` reads `on.workflow_dispatch.inputs` and `checkReporterAuthority` flips
+each declared input in turn, so an input added later without a comparison in the step fails the guard
+instead of quietly escaping it. That is the difference between fixing the fourth instance and
+declining to ship a fifth.
 
 ### A guard that accepts both the fix and the bug pins nothing
 
@@ -211,3 +228,47 @@ And note 5's dependency is now asserted rather than noted: the `zizmor` prek hoo
 be asked to audit its own config), so the only thing re-running zizmor on a config edit is this
 guard's self-test hook. The guard reads that hook's `files` pattern back out of `prek.toml` and fails
 if it stops naming any path it depends on.
+
+### Round four: two more premises that outlived their sentence
+
+The input gate was the headline, but the same shape turned up twice more in the same diff.
+
+**The last-resort notice.** Its comment read "#3716 removed that `--dry-run`, so a dispatch writes for
+real" — a sentence that was true when written and false three commits later, because round three
+restored `--dry-run` for every ref but the cron's. So a crash on a branch dispatch would have
+reopened and commented on the repo-wide "the failure reporter is broken" issue for a run that could
+not possibly have left the tracking issue half-written. Narrowed to `failure() && (github.event_name
+== 'schedule' || github.ref == 'refs/heads/main')`.
+
+It deliberately does *not* also track the inputs. A cron-ref dispatch with a shortened budget writes
+nothing either, so the condition over-fires for it — in the **loud** direction, which is the only
+direction a last-resort notice may err in. Over-firing costs one comment on an idempotent issue;
+under-firing is the silence the job exists to end. `findLastResortNoticeCondition` pins the expression
+verbatim and now also cross-checks that its ref is the same `CRON_REF` the authority gate compares
+against, so the two cannot drift apart in the way the comment just did.
+
+**`extra=()` on bash 3.2.** The behavioural guard executes the step's real bash, which is what made it
+worth having — and it is also how a genuine portability bug in the *shipped workflow* surfaced. On
+bash < 4.4, stock `/bin/bash` on macOS (a platform `scripts/setup-hooks.sh` keeps its own tables
+compatible with, on purpose), expanding an empty array under `set -u` is an unbound-variable **error**,
+not an empty expansion. On the `schedule` path `extra` was empty, so:
+
+```
+$ docker run --rm bash:3.2 …  bash step-before.sh
+step-before.sh: line 39: extra[@]: unbound variable
+exit=1
+```
+
+CI runs bash 5, so the workflow itself would never have shown this; the self-test executing the block
+is what turned a latent workflow bug into a hard-failing pre-commit hook for macOS developers. Fixed
+where the bug is — the array is seeded with the arguments that are always passed, so it is never empty
+at the point of expansion — in the reporter *and* in `workflow-watchdog.yml`, which carried the
+identical construct. `findUnportableEmptyArrayExpansions` pins both steps, and the whole matrix was
+re-run under real bash 3.2 afterwards: every arm produces the same argv the JS guard asserts.
+
+Also from this round: the `noop` run summary still printed `still failing: <carried lane>` — the same
+"asserting a failure nobody observed" contradiction just fixed in the issue body, left standing one
+output stream over. And a throw out of the workflow-executing helper escaped `runSelfTest` uncaught,
+so the hook died with a raw stack trace and exit 1, which reads as *the tool is broken* rather than
+*an assertion did not hold*; both self-tests now wrap their entry point the way `main()` is wrapped
+and exit 2 with one legible `FAIL -` line.

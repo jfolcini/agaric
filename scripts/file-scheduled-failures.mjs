@@ -432,6 +432,26 @@ export function buildIssueBody({
   return out.join('\n')
 }
 
+/**
+ * The line a no-op run prints — the run log's version of the issue body.
+ *
+ * `all` includes the carried-over lanes, which is right for the TRACKED set
+ * and wrong for the word "failing": those lanes only skipped. The body stopped
+ * claiming that (see `buildIssueBody`); this is the same claim in the summary,
+ * and it gets the same split rather than leaving the `carried over (…)` line
+ * printed above to soften a sentence that is still wrong.
+ */
+export function buildNoopSummary({ all, carriedOver = [], profile = PROFILES[DEFAULT_PROFILE] }) {
+  if (all.length === 0) {
+    return `all ${profile.headline}s healthy — no-op (nothing open that tracks a failing ${profile.unit})`
+  }
+  const observedFailing = all.filter((j) => !carriedOver.includes(j))
+  const stillFailing = observedFailing.length > 0 ? observedFailing.join(', ') : 'none'
+  const carriedNote =
+    carriedOver.length > 0 ? `; carried over, did not run: ${carriedOver.join(', ')}` : ''
+  return `no newly-failing ${profile.unit} — no-op (still failing: ${stillFailing}${carriedNote}; tracking issue left untouched)`
+}
+
 export function buildFailureComment({
   newOnes,
   lanes,
@@ -515,11 +535,85 @@ export const REPORTER_STEP_NAME =
   'File, update or close the single scheduled-failure tracking issue'
 
 // The ref the cron itself runs on: GitHub schedules a workflow against the
-// default branch's HEAD. A `workflow_dispatch` on this exact ref is
-// cron-equivalent — that is the case #3716 exists to keep authoritative —
-// and a dispatch on anything else is a BRANCH's answer to a repo-wide
-// question, which is the case #3960 exists to keep out of the issue.
+// default branch's HEAD. A dispatch on any OTHER ref is a branch's answer to
+// a repo-wide question, which is the case #3960 exists to keep out of the
+// issue. Note that ref equality is NECESSARY for a dispatch to be
+// cron-equivalent and NOT sufficient — see `findDispatchInputDefaults`.
 export const CRON_REF = 'refs/heads/main'
+
+/**
+ * The `workflow_dispatch` inputs and their declared defaults, read from the
+ * workflow's own `on:` block.
+ *
+ * The fourth iteration of this PR's one defect (review pass four): the ref
+ * guard treated "same ref as the cron" as "same run as the cron", but this
+ * workflow's dispatch inputs CHANGE WHAT THE LANES TEST. `fuzz_seconds=10` on
+ * `refs/heads/main` passes the ref test and writes authoritatively, while a
+ * still-broken `fuzz` lane reports `success` at a budget it was never meant
+ * to pass at — so the lane lands in `resolvedOnes` and, if it was the last
+ * tracked one, closes the issue over a lane never tested at its real budget.
+ *
+ * Read from the `on:` block rather than hardcoded so that ADDING an input
+ * cannot silently escape the gate: `checkReporterAuthority` flips each
+ * declared input in turn and requires the run to stop being authoritative.
+ *
+ * Throws when the block cannot be found or is empty — a dispatch-input list
+ * that reads as `{}` would make every input assertion vacuous.
+ */
+export function findDispatchInputDefaults(workflowText) {
+  const lines = workflowText.split('\n')
+  const dispatchIdx = lines.findIndex((l) => /^ {2}workflow_dispatch:\s*$/.test(l))
+  if (dispatchIdx === -1) throw new Error('no `workflow_dispatch:` trigger found in the workflow')
+  const inputsIdx = lines.findIndex(
+    (l, i) => i > dispatchIdx && /^ {4}inputs:\s*$/.test(l) && i < dispatchIdx + 4,
+  )
+  if (inputsIdx === -1) throw new Error('`workflow_dispatch:` declares no `inputs:` block')
+  const defaults = {}
+  let current = null
+  for (let i = inputsIdx + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim() === '') continue
+    const indent = line.match(/^(\s*)/)[1].length
+    if (indent <= 4) break
+    const name = /^ {6}([A-Za-z0-9_-]+):\s*$/.exec(line)
+    if (name) {
+      current = name[1]
+      continue
+    }
+    const def = /^ {8}default:\s*(.+?)\s*$/.exec(line)
+    if (def && current) defaults[current] = def[1].replace(/^['"]|['"]$/g, '')
+  }
+  if (Object.keys(defaults).length === 0) {
+    throw new Error('no `workflow_dispatch` input defaults found — the input gate would be vacuous')
+  }
+  return defaults
+}
+
+/**
+ * Which env var of the reporting step carries which dispatch input, read out
+ * of the step's own `env:` block (`FOO_INPUT: ${{ github.event.inputs.foo …`).
+ *
+ * Read rather than assumed, so the naming convention is not a second thing
+ * that can drift: an input the step never maps into its environment is one
+ * the step cannot possibly gate on, and `checkReporterAuthority` says so.
+ */
+export function findDispatchInputEnvMapping(workflowText, stepName = REPORTER_STEP_NAME) {
+  const lines = workflowText.split('\n')
+  const nameRe = new RegExp(
+    `^\\s*-\\s*name:\\s*${stepName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`,
+  )
+  const stepIdx = lines.findIndex((l) => nameRe.test(l))
+  if (stepIdx === -1) throw new Error(`no \`${stepName}\` step found — renamed or deleted?`)
+  const mapping = {}
+  for (let i = stepIdx + 1; i < lines.length; i++) {
+    if (/^\s*-\s*name:\s/.test(lines[i])) break
+    const m = /^\s*([A-Z0-9_]+):\s*\$\{\{\s*(?:github\.event\.)?inputs\.([A-Za-z0-9_-]+)/.exec(
+      lines[i],
+    )
+    if (m) mapping[m[2]] = m[1]
+  }
+  return mapping
+}
 
 /**
  * The reporting step's `run:` script, dedented, exactly as the runner would
@@ -580,7 +674,7 @@ export function findReporterRunScript(workflowText, stepName = REPORTER_STEP_NAM
  */
 export function resolveReporterInvocation(
   workflowText,
-  { eventName = 'schedule', ref = CRON_REF, stepName = REPORTER_STEP_NAME } = {},
+  { eventName = 'schedule', ref = CRON_REF, inputs = {}, stepName = REPORTER_STEP_NAME } = {},
 ) {
   const script = findReporterRunScript(workflowText, stepName)
   const dir = mkdtempSync(join(tmpdir(), 'scheduled-failures-step-'))
@@ -603,12 +697,23 @@ export function resolveReporterInvocation(
   writeFileSync(log, '', 'utf8')
   const stepFile = join(dir, 'step.sh')
   writeFileSync(stepFile, script, 'utf8')
+  // The dispatch inputs, as the runner would present them: every input the
+  // step maps into its `env:` is set, defaulted from the workflow's own `on:`
+  // block and overridden by `inputs`. The step's `${{ … || 'default' }}` idiom
+  // means the env var is never empty, on any event, so `set -u` is safe.
+  const declaredDefaults = findDispatchInputDefaults(workflowText)
+  const envMapping = findDispatchInputEnvMapping(workflowText, stepName)
+  const inputEnv = {}
+  for (const [name, envVar] of Object.entries(envMapping)) {
+    inputEnv[envVar] = String(inputs[name] ?? declaredDefaults[name] ?? '')
+  }
   execFileSync('bash', [stepFile], {
     cwd: dir,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
+      ...inputEnv,
       PATH: `${dir}:${process.env.PATH ?? ''}`,
       EVENT_NAME: eventName,
       GITHUB_REF: ref,
@@ -634,20 +739,63 @@ export function resolveReporterInvocation(
 }
 
 /**
- * The invariant the guard above exists for, in both directions:
+ * A value that is definitely NOT a dispatch input's declared default, in the
+ * same shape as the default (so the step's own `[ "$X" != "120" ]` test sees
+ * a realistic value rather than a type it would never receive).
+ */
+export function flipDispatchInputDefault(value) {
+  if (value === 'false') return 'true'
+  if (value === 'true') return 'false'
+  if (/^\d+$/.test(value)) return value === '10' ? '11' : '10'
+  return `${value}-changed`
+}
+
+/**
+ * Bash arrays declared EMPTY and then expanded as `"${name[@]}"`.
  *
- *   * the cron run, and a dispatch on the ref the cron uses, are
- *     AUTHORITATIVE — no `--dry-run`, or an off-cycle answer is computed and
- *     thrown away and the issue keeps advertising a stale, sometimes
- *     inverted, set for up to a week (#3716);
+ * On bash < 4.4 — stock `/bin/bash` on macOS, a platform this repo supports
+ * (`scripts/setup-hooks.sh` keeps its own tables bash-3.2-compatible on
+ * purpose) — expanding an empty array under `set -u` is an UNBOUND VARIABLE
+ * error, not an empty expansion. In the workflow that aborts the step; in
+ * this file's self-test, which executes the step for real, it aborted the
+ * pre-commit hook with a raw shell error for those developers only, because
+ * CI and this dev box both run bash 5.
+ *
+ * The invariant is "the array is never empty at the point of expansion", so
+ * either seeding the array (what the workflow now does — the arguments that
+ * are always passed live in it from the start) or the `${a[@]+"${a[@]}"}`
+ * guard satisfies it. Returns the offending array names; `[]` is healthy.
+ */
+export function findUnportableEmptyArrayExpansions(script) {
+  const declaredEmpty = [...script.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)=\(\s*\)\s*$/gm)].map(
+    (m) => m[1],
+  )
+  return [...new Set(declaredEmpty)].filter((name) => {
+    const guarded = new RegExp(`\\$\\{${name}\\[@\\]\\+"\\$\\{${name}\\[@\\]\\}"\\}`, 'g')
+    return script.replace(guarded, '').includes(`\${${name}[@]}`)
+  })
+}
+
+/**
+ * The invariant the guard above exists for, in every direction:
+ *
+ *   * the cron run, and a dispatch that reproduces it, are AUTHORITATIVE —
+ *     no `--dry-run`, or an off-cycle answer is computed and thrown away and
+ *     the issue keeps advertising a stale, sometimes inverted, set for up to
+ *     a week (#3716);
  *   * a dispatch on ANY other ref is not — the tracking issue is repo-wide,
  *     so writing there publishes one branch's lane results as the
- *     repository's health, which is the same false green one dimension over
- *     (#3960).
+ *     repository's health (#3960, third pass);
+ *   * and neither is a dispatch that CHANGED WHAT THE LANES TEST. Ref
+ *     equality was mistaken for cron-equivalence: `fuzz_seconds=10` on the
+ *     cron ref makes a still-broken lane report `success`, which the diff
+ *     reads as a recovery and can close the issue over (#3960, fourth pass).
+ *     Every declared input is flipped in turn, so an input added later
+ *     without being gated reddens this guard rather than shipping.
  *
- * Pinning only one of those is how this defect has already been shipped
- * twice, so both are asserted here, plus the `--skipped-ok` pairing that
- * only makes sense off the schedule.
+ * Pinning only one direction is how this defect has already been shipped
+ * three times, so all of them are asserted here, plus the `--skipped-ok`
+ * pairing that only makes sense off the schedule.
  *
  * Returns `{ problems, cases }`; an empty `problems` means healthy.
  */
@@ -656,8 +804,8 @@ export function checkReporterAuthority(
   { cronRef = CRON_REF, otherRef = 'refs/heads/fix/mutants', stepName = REPORTER_STEP_NAME } = {},
 ) {
   const tagRef = `refs/tags/${cronRef.replace(/^refs\/heads\//, '')}`
-  const at = (eventName, ref) =>
-    resolveReporterInvocation(workflowText, { eventName, ref, stepName }).args
+  const at = (eventName, ref, inputs = {}) =>
+    resolveReporterInvocation(workflowText, { eventName, ref, inputs, stepName }).args
   const cases = {
     schedule: at('schedule', cronRef),
     dispatchOnCronRef: at('workflow_dispatch', cronRef),
@@ -665,6 +813,35 @@ export function checkReporterAuthority(
     dispatchOnTagOfCronRef: at('workflow_dispatch', tagRef),
   }
   const problems = []
+
+  // The input dimension, one input at a time.
+  const declaredDefaults = findDispatchInputDefaults(workflowText)
+  const envMapping = findDispatchInputEnvMapping(workflowText, stepName)
+  for (const [name, declaredDefault] of Object.entries(declaredDefaults)) {
+    if (!envMapping[name]) {
+      problems.push(
+        `the dispatch input \`${name}\` is not mapped into the deciding step's \`env:\`, so the step cannot tell a run that changed it from a cron-equivalent one (#3960)`,
+      )
+      continue
+    }
+    const changed = flipDispatchInputDefault(declaredDefault)
+    const args = at('workflow_dispatch', cronRef, { [name]: changed })
+    cases[`dispatchWith_${name}`] = args
+    if (!args.includes('--dry-run')) {
+      problems.push(
+        `a workflow_dispatch on ${cronRef} with \`${name}=${changed}\` (declared default \`${declaredDefault}\`) still WRITES — a non-default input changes what the lanes TEST, so a lane that only "passed" at a shortened budget would be published as recovered and could close the issue (#3960)`,
+      )
+    }
+  }
+
+  const unportable = findUnportableEmptyArrayExpansions(
+    findReporterRunScript(workflowText, stepName),
+  )
+  if (unportable.length > 0) {
+    problems.push(
+      `the step expands the possibly-empty array(s) ${unportable.map((n) => `\`${n}\``).join(', ')} under \`set -u\` — an unbound-variable abort on bash < 4.4 (stock /bin/bash on macOS). Seed the array, or expand it as \`\${name[@]+"\${name[@]}"}\``,
+    )
+  }
   if (cases.schedule.includes('--dry-run')) {
     problems.push('the scheduled run passes `--dry-run` — the weekly report writes nothing at all')
   }
@@ -874,11 +1051,7 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   if (action === 'noop') {
-    console.log(
-      all.length === 0
-        ? `all ${profile.headline}s healthy — no-op (nothing open that tracks a failing ${profile.unit})`
-        : `no newly-failing ${profile.unit} — no-op (still failing: ${all.join(', ')}; tracking issue left untouched)`,
-    )
+    console.log(buildNoopSummary({ all, carriedOver, profile }))
     return
   }
 
@@ -1027,6 +1200,10 @@ function selfTestGhCallSequence({ check }) {
 
   // An EMPTY `--known-body-file` is how `main()` spells "no existing issue",
   // so no file removal is needed between drives.
+  // What `main()` printed during the last `drive()` — the run summary is a
+  // claim about lane health like any other, so it is asserted rather than
+  // discarded with the rest of the noise.
+  let lastLogs = []
   const drive = (needs, knownBody, knownState, profileArgs = []) => {
     writeFileSync(needsFile, JSON.stringify(needs), 'utf8')
     writeFileSync(bodyFile, knownBody, 'utf8')
@@ -1034,7 +1211,8 @@ function selfTestGhCallSequence({ check }) {
     const prevPath = process.env.PATH
     const prevLog = console.log
     process.env.PATH = `${dir}:${prevPath}`
-    console.log = () => {}
+    lastLogs = []
+    console.log = (...parts) => lastLogs.push(parts.join(' '))
     let threw = null
     try {
       main([
@@ -1161,89 +1339,10 @@ function selfTestGhCallSequence({ check }) {
     )
   }
 
-  // #3960 — the call site for the carry-over rule above. #3716 removed
-  // `--dry-run` from the dispatch branch but left `--skipped-ok`, and those
-  // two were only safe TOGETHER: with real writes turned on, a lane that was
-  // tracked and then merely `skipped` (which is what the schedule-only
-  // `file-fuzz-findings` does on every dispatch) diffed as recovered. The
-  // pure-function half is § 2b in `runSelfTest`; this is what `main()`
-  // actually hands `gh`, which is the half that reaches production.
-  {
-    const fuzzFilerTracked = buildIssueBody({
-      all: ['file-fuzz-findings'],
-      lanes: [
-        { job: 'file-fuzz-findings', result: 'failure' },
-        { job: 'fuzz', result: 'success' },
-      ],
-      runUrl: undefined,
-    })
-    // A dispatch: `file-fuzz-findings` is `if: github.event_name ==
-    // 'schedule'`, so GitHub reports it `skipped`.
-    const dispatchLanes = {
-      fuzz: { result: 'success' },
-      'file-fuzz-findings': { result: 'skipped' },
-    }
-    const skippedCalls = drive(dispatchLanes, fuzzFilerTracked, 'OPEN', ['--skipped-ok'])
-    const skippedSeq = skippedCalls.map((c) => c.sub).join(',')
-    check(
-      skippedSeq === '',
-      'a dispatch does NOT close the issue over a tracked lane that merely skipped — no edit, no "recovered" comment, no close',
-      `gh sequence was: ${skippedSeq || '(none)'}${
-        skippedSeq.includes('close')
-          ? ' — the lane was reported recovered on the strength of never having run'
-          : ''
-      }`,
-    )
-
-    // The quieter variant of the same bug: with another lane genuinely red
-    // the action is `notify`, which DOES rewrite the body — so the skipped
-    // lane has to survive that rewrite rather than being dropped in silence.
-    const mixedCalls = drive(
-      { mutants: { result: 'failure' }, 'file-fuzz-findings': { result: 'skipped' } },
-      fuzzFilerTracked,
-      'OPEN',
-      ['--skipped-ok'],
-    )
-    const mixedSeq = mixedCalls.map((c) => c.sub).join(',')
-    const mixedBody = mixedCalls.find((c) => c.sub === 'edit')?.body ?? ''
-    const mixedTracked = parseKnownLanes(mixedBody)
-    check(
-      mixedSeq === 'edit,comment' &&
-        mixedTracked.has('file-fuzz-findings') &&
-        mixedTracked.has('mutants'),
-      'the body rewritten alongside a NEW failure still tracks the skipped lane (it is not silently dropped)',
-      `gh sequence was: ${mixedSeq || '(none)'}; tracked after=[${[...mixedTracked].join(',')}]`,
-    )
-    // …and `main()` really hands the renderer the carry-over set, so the
-    // body GitHub receives distinguishes "failing" from "did not run".
-    // Asserting the pure renderer proves nothing about the write path: the
-    // pre-fix `main()` rendered the identical `all` with no carry-over
-    // argument at all, and the body then called a `skipped` lane failing
-    // three lines above a table reporting it `skipped`.
-    check(
-      /Failing as of this run: `mutants`\./.test(mixedBody) &&
-        /Carried over — did NOT run this run \(`file-fuzz-findings`\)/.test(mixedBody),
-      'the body main() writes names the carried lane as carried, not as failing this run',
-      mixedBody,
-    )
-
-    // The close path must still work when the lane REALLY recovered — i.e.
-    // the fix suppresses the recovery reading only for lanes that did not
-    // run, not for green ones. Without this pair, carrying everything over
-    // forever would pass the two checks above.
-    const reallyGreen = drive(
-      { fuzz: { result: 'success' }, 'file-fuzz-findings': { result: 'success' } },
-      fuzzFilerTracked,
-      'OPEN',
-      ['--skipped-ok'],
-    )
-    const greenSeq = reallyGreen.map((c) => c.sub).join(',')
-    check(
-      greenSeq === 'edit,comment,close',
-      'a lane that actually RAN and passed still closes the issue under --skipped-ok',
-      `gh sequence was: ${greenSeq || '(none)'}`,
-    )
-  }
+  // #3960 — the call site for the carry-over rule above, split out to keep
+  // this function under the repo's cyclomatic-complexity budget (same reason
+  // `selfTestGhCallSequence` itself was split out of `runSelfTest`).
+  selfTestSkippedCarryOverGhCalls({ check, drive, logs: () => lastLogs })
 
   // …and `--profile workflow-watchdog` really files under the WATCHDOG title.
   // Asserting `PROFILES` holds two distinct titles proves nothing about which
@@ -1267,6 +1366,103 @@ function selfTestGhCallSequence({ check }) {
       `tracked=[${create ? [...parseKnownLanes(create.body)].join(',') : ''}]`,
     )
   }
+}
+
+/**
+ * #3960 — the CALL SITE for the `--skipped-ok` carry-over rule. #3716 removed
+ * `--dry-run` from the dispatch branch but left `--skipped-ok`, and those two
+ * were only safe TOGETHER: with real writes turned on, a lane that was tracked
+ * and then merely `skipped` (which is what the schedule-only
+ * `file-fuzz-findings` does on every dispatch) diffed as recovered. The
+ * pure-function half is § 2b in `runSelfTest`; this is what `main()` actually
+ * hands `gh`, which is the half that reaches production — plus what it PRINTS,
+ * since the run summary made the same claim the issue body did.
+ */
+function selfTestSkippedCarryOverGhCalls({ check, drive, logs }) {
+  const fuzzFilerTracked = buildIssueBody({
+    all: ['file-fuzz-findings'],
+    lanes: [
+      { job: 'file-fuzz-findings', result: 'failure' },
+      { job: 'fuzz', result: 'success' },
+    ],
+    runUrl: undefined,
+  })
+  // A dispatch: `file-fuzz-findings` is `if: github.event_name ==
+  // 'schedule'`, so GitHub reports it `skipped`.
+  const dispatchLanes = {
+    fuzz: { result: 'success' },
+    'file-fuzz-findings': { result: 'skipped' },
+  }
+  const skippedCalls = drive(dispatchLanes, fuzzFilerTracked, 'OPEN', ['--skipped-ok'])
+  const skippedSeq = skippedCalls.map((c) => c.sub).join(',')
+  check(
+    skippedSeq === '',
+    'a dispatch does NOT close the issue over a tracked lane that merely skipped — no edit, no "recovered" comment, no close',
+    `gh sequence was: ${skippedSeq || '(none)'}${
+      skippedSeq.includes('close')
+        ? ' — the lane was reported recovered on the strength of never having run'
+        : ''
+    }`,
+  )
+  // That run is the `noop` path, and its SUMMARY made the same claim the
+  // issue body used to: `all` includes the carried lane, so the log said
+  // "still failing: file-fuzz-findings" about a lane that only skipped.
+  const noopSummary = logs().find((l) => l.includes('no-op')) ?? ''
+  check(
+    /still failing: none/.test(noopSummary) &&
+      /carried over, did not run: file-fuzz-findings/.test(noopSummary),
+    'the no-op run summary separates lanes that FAILED from lanes that never ran (the body’s distinction, in the run log)',
+    noopSummary || `(no no-op line printed; logs were: ${logs().join(' / ')})`,
+  )
+
+  // The quieter variant of the same bug: with another lane genuinely red
+  // the action is `notify`, which DOES rewrite the body — so the skipped
+  // lane has to survive that rewrite rather than being dropped in silence.
+  const mixedCalls = drive(
+    { mutants: { result: 'failure' }, 'file-fuzz-findings': { result: 'skipped' } },
+    fuzzFilerTracked,
+    'OPEN',
+    ['--skipped-ok'],
+  )
+  const mixedSeq = mixedCalls.map((c) => c.sub).join(',')
+  const mixedBody = mixedCalls.find((c) => c.sub === 'edit')?.body ?? ''
+  const mixedTracked = parseKnownLanes(mixedBody)
+  check(
+    mixedSeq === 'edit,comment' &&
+      mixedTracked.has('file-fuzz-findings') &&
+      mixedTracked.has('mutants'),
+    'the body rewritten alongside a NEW failure still tracks the skipped lane (it is not silently dropped)',
+    `gh sequence was: ${mixedSeq || '(none)'}; tracked after=[${[...mixedTracked].join(',')}]`,
+  )
+  // …and `main()` really hands the renderer the carry-over set, so the
+  // body GitHub receives distinguishes "failing" from "did not run".
+  // Asserting the pure renderer proves nothing about the write path: the
+  // pre-fix `main()` rendered the identical `all` with no carry-over
+  // argument at all, and the body then called a `skipped` lane failing
+  // three lines above a table reporting it `skipped`.
+  check(
+    /Failing as of this run: `mutants`\./.test(mixedBody) &&
+      /Carried over — did NOT run this run \(`file-fuzz-findings`\)/.test(mixedBody),
+    'the body main() writes names the carried lane as carried, not as failing this run',
+    mixedBody,
+  )
+
+  // The close path must still work when the lane REALLY recovered — i.e.
+  // the fix suppresses the recovery reading only for lanes that did not
+  // run, not for green ones. Without this pair, carrying everything over
+  // forever would pass the two checks above.
+  const reallyGreen = drive(
+    { fuzz: { result: 'success' }, 'file-fuzz-findings': { result: 'success' } },
+    fuzzFilerTracked,
+    'OPEN',
+    ['--skipped-ok'],
+  )
+  const greenSeq = reallyGreen.map((c) => c.sub).join(',')
+  check(
+    greenSeq === 'edit,comment,close',
+    'a lane that actually RAN and passed still closes the issue under --skipped-ok',
+    `gh sequence was: ${greenSeq || '(none)'}`,
+  )
 }
 
 /**
@@ -1397,9 +1593,27 @@ function selfTestLastResortNoticeCondition({ check, fail }) {
     .pathname
   if (existsSync(workflowPath)) {
     const condition = findLastResortNoticeCondition(readFileSync(workflowPath, 'utf8'))
+    // Every run that CAN write, and no run that cannot. The un-gate was
+    // justified by "a dispatch writes for real" — true of every dispatch
+    // when it was written, true of a cron-ref dispatch only once #3960's
+    // third pass restored `--dry-run` elsewhere. So the condition tracks the
+    // ref too, or it reopens the repo-wide "the reporter is broken" issue for
+    // a branch run that could not have left anything half-written.
+    //
+    // It deliberately does NOT also track the dispatch inputs: a cron-ref
+    // dispatch with a shortened budget writes nothing, and this notice still
+    // firing for it is an over-approximation in the LOUD direction — the only
+    // direction a last-resort notice may err in. Over-firing costs a comment
+    // on an issue; under-firing is the silence this whole job exists to end.
+    const expected = `failure() && (github.event_name == 'schedule' || github.ref == '${CRON_REF}')`
     check(
-      condition === 'failure()',
-      'the real last-resort notice fires on EVERY event — a dispatch writes for real, so its reporter crash must be reported too (#3960)',
+      condition === expected,
+      'the real last-resort notice fires for exactly the runs that can write: the cron, and a dispatch on the cron ref (#3960)',
+      `if: ${condition}\nwant: ${expected}`,
+    )
+    check(
+      condition.includes(CRON_REF),
+      `the notice's condition names the same cron ref (${CRON_REF}) the authority gate compares against — one place changing without the other is the drift this pins`,
       `if: ${condition}`,
     )
   } else {
@@ -1423,8 +1637,27 @@ function selfTestLastResortNoticeCondition({ check, fail }) {
  * named `main`) fails here rather than in production.
  */
 function selfTestReporterAuthority({ check, fail }) {
-  const fixture = (branchBody) =>
+  // A miniature of the real workflow: two dispatch inputs with declared
+  // defaults, both mapped into the deciding step's `env:` the way the real
+  // step maps them, and a seeded `extra` array (bash 3.2 cannot expand an
+  // empty one under `set -u`).
+  const fixture = (branchBody, { mapInputs = true } = {}) =>
     [
+      'on:',
+      '  schedule:',
+      "    - cron: '17 4 * * 1'",
+      '  workflow_dispatch:',
+      '    inputs:',
+      '      fuzz_seconds:',
+      "        description: 'Per-target fuzz time budget (seconds)'",
+      '        required: false',
+      "        default: '120'",
+      '      slo_include_problem:',
+      "        description: 'Also run the probes'",
+      '        required: false',
+      '        type: boolean',
+      '        default: false',
+      '',
       'jobs:',
       '  alpha:',
       '    runs-on: ubuntu-24.04',
@@ -1433,35 +1666,95 @@ function selfTestReporterAuthority({ check, fail }) {
       `      - name: ${REPORTER_STEP_NAME}`,
       '        env:',
       '          EVENT_NAME: ${{ github.event_name }}',
+      ...(mapInputs
+        ? [
+            "          FUZZ_SECONDS_INPUT: ${{ github.event.inputs.fuzz_seconds || '120' }}",
+            "          SLO_INCLUDE_PROBLEM_INPUT: ${{ github.event.inputs.slo_include_problem || 'false' }}",
+          ]
+        : []),
       '        run: |',
       '          set -euo pipefail',
       `          printf '%s' "$NEEDS_JSON" > needs.json`,
-      '          extra=()',
+      '          extra=(--needs-json-file needs.json)',
       '          if [ "$EVENT_NAME" != "schedule" ]; then',
       ...branchBody.map((l) => `            ${l}`),
       '          fi',
-      '          node scripts/file-scheduled-failures.mjs --needs-json-file needs.json "${extra[@]}"',
+      '          node scripts/file-scheduled-failures.mjs "${extra[@]}"',
       '  another-job:',
       '    runs-on: ubuntu-24.04',
     ].join('\n')
 
+  // The ref half only — what the third pass shipped, and what the fourth
+  // review found insufficient.
   const REF_GUARDED = [
-    'extra=(--skipped-ok)',
+    'extra+=(--skipped-ok)',
     'if [ "$GITHUB_REF" != "refs/heads/main" ]; then',
     '  extra+=(--dry-run)',
     'fi',
   ]
+  // The ref half AND the input half: a dispatch is cron-EQUIVALENT only when
+  // it ran the same lanes, on the same ref, with the same budgets.
+  const REF_AND_INPUTS_GUARDED = [
+    'extra+=(--skipped-ok)',
+    'if [ "$GITHUB_REF" != "refs/heads/main" ] ||',
+    '   [ "$FUZZ_SECONDS_INPUT" != "120" ] ||',
+    '   [ "$SLO_INCLUDE_PROBLEM_INPUT" != "false" ]; then',
+    '  extra+=(--dry-run)',
+    'fi',
+  ]
 
-  check(
-    checkReporterAuthority(fixture(REF_GUARDED)).problems.length === 0,
-    'authority guard passes the shipped shape: cron and a cron-ref dispatch write, every other ref dry-runs',
-    JSON.stringify(checkReporterAuthority(fixture(REF_GUARDED)).problems),
-  )
+  {
+    const { problems } = checkReporterAuthority(fixture(REF_AND_INPUTS_GUARDED))
+    check(
+      problems.length === 0,
+      'authority guard passes the fixed shape: the cron and a DEFAULT-INPUT dispatch on the cron ref write; every other ref, and every changed input, dry-runs',
+      JSON.stringify(problems),
+    )
+  }
+
+  // …and the arm that makes the pass above mean something: with the inputs
+  // at their defaults the cron-ref dispatch must still WRITE. A gate that
+  // dry-ran every dispatch would satisfy the input arm and re-break #3716.
+  {
+    const args = resolveReporterInvocation(fixture(REF_AND_INPUTS_GUARDED), {
+      eventName: 'workflow_dispatch',
+      ref: CRON_REF,
+    }).args
+    check(
+      !args.includes('--dry-run') && args.includes('--skipped-ok'),
+      'the fixed shape still WRITES for a default-input dispatch on the cron ref (the input gate did not swallow #3716)',
+      JSON.stringify(args),
+    )
+  }
+
+  // v3 of this defect (#3960, review pass four): the ref is guarded, the
+  // inputs are not. `fuzz_seconds=10` on the cron ref writes authoritatively
+  // over lanes that were never tested at their real budget.
+  {
+    const { problems } = checkReporterAuthority(fixture(REF_GUARDED))
+    check(
+      problems.some((p) => p.includes('fuzz_seconds=10') && p.includes('still WRITES')),
+      'authority guard catches a REF-ONLY gate: a non-default input on the cron ref still writing (#3960, fourth pass)',
+      JSON.stringify(problems),
+    )
+  }
+
+  // An input the deciding step never sees cannot be gated on, whatever the
+  // bash says — so a new input added to `on:` without an `env:` mapping is a
+  // problem in its own right.
+  {
+    const { problems } = checkReporterAuthority(fixture(REF_GUARDED, { mapInputs: false }))
+    check(
+      problems.some((p) => p.includes('is not mapped into the deciding step')),
+      'authority guard catches a dispatch input the deciding step never receives',
+      JSON.stringify(problems),
+    )
+  }
 
   // v1 of this defect (#3716): every off-schedule run discarded. The
   // cron-ref dispatch arm is the one that must catch it.
   {
-    const { problems } = checkReporterAuthority(fixture(['extra=(--dry-run --skipped-ok)']))
+    const { problems } = checkReporterAuthority(fixture(['extra+=(--dry-run --skipped-ok)']))
     check(
       problems.some((p) => p.includes('#3716')),
       'authority guard catches an UNCONDITIONAL `--dry-run` restored on the dispatch branch (a cron-equivalent dispatch silently discarded)',
@@ -1474,9 +1767,9 @@ function selfTestReporterAuthority({ check, fail }) {
   // is the one that must catch it — and it is the arm the old token guard
   // did not have.
   {
-    const { problems } = checkReporterAuthority(fixture(['extra=(--skipped-ok)']))
+    const { problems } = checkReporterAuthority(fixture(['extra+=(--skipped-ok)']))
     check(
-      problems.some((p) => p.includes('#3960')),
+      problems.some((p) => p.includes('refs/heads/fix/mutants') && p.includes('WRITES for real')),
       'authority guard catches an UNGUARDED write (a dispatch on a feature branch publishing that branch as the repo’s health)',
       JSON.stringify(problems),
     )
@@ -1488,7 +1781,7 @@ function selfTestReporterAuthority({ check, fail }) {
   {
     const { problems } = checkReporterAuthority(
       fixture([
-        'extra=(--skipped-ok)',
+        'extra+=(--skipped-ok)',
         'if [ "$GITHUB_REF_NAME" != "main" ]; then',
         '  extra+=(--dry-run)',
         'fi',
@@ -1508,8 +1801,10 @@ function selfTestReporterAuthority({ check, fail }) {
     const { problems } = checkReporterAuthority(
       fixture([
         '# deliberately NOT --dry-run on the cron ref (#3716)',
-        'extra=(--skipped-ok)  # not --dry-run',
-        'if [ "$GITHUB_REF" != "refs/heads/main" ]; then',
+        'extra+=(--skipped-ok)  # not --dry-run',
+        'if [ "$GITHUB_REF" != "refs/heads/main" ] ||',
+        '   [ "$FUZZ_SECONDS_INPUT" != "120" ] ||',
+        '   [ "$SLO_INCLUDE_PROBLEM_INPUT" != "false" ]; then',
         '  extra+=(--dry-run)',
         'fi',
       ]),
@@ -1518,6 +1813,29 @@ function selfTestReporterAuthority({ check, fail }) {
       problems.length === 0,
       'authority guard is not fooled by comments discussing `--dry-run`, on their own line or trailing (bash already knows what `#` means)',
       JSON.stringify(problems),
+    )
+  }
+
+  // The bash-3.2 portability rule, on synthetic scripts first.
+  {
+    const tail = 'node scripts/file-scheduled-failures.mjs "${extra[@]}"'
+    check(
+      findUnportableEmptyArrayExpansions(['extra=()', tail].join('\n')).join(',') === 'extra',
+      'the portability guard catches an EMPTY array declaration expanded plainly (the bash < 4.4 unbound-variable abort)',
+      '',
+    )
+    check(
+      findUnportableEmptyArrayExpansions(
+        ['extra=()', 'node scripts/x.mjs ${extra[@]+"${extra[@]}"}'].join('\n'),
+      ).length === 0,
+      'the portability guard accepts the `${a[@]+"${a[@]}"}` guard on an empty array',
+      '',
+    )
+    check(
+      findUnportableEmptyArrayExpansions(['extra=(--needs-json-file needs.json)', tail].join('\n'))
+        .length === 0,
+      'the portability guard accepts a SEEDED array — it is never empty at the point of expansion',
+      '',
     )
   }
 
@@ -1581,6 +1899,49 @@ function selfTestReporterAuthority({ check, fail }) {
     'the real workflow: a dispatch on a NON-default ref dry-runs — one branch’s lanes never become the repo-wide issue’s answer (#3960)',
     JSON.stringify(onOtherRef),
   )
+  // The fourth dimension, on the real file, input by input.
+  const realDefaults = findDispatchInputDefaults(workflowText)
+  for (const [name, declaredDefault] of Object.entries(realDefaults)) {
+    const changed = flipDispatchInputDefault(declaredDefault)
+    const args = resolveReporterInvocation(workflowText, {
+      eventName: 'workflow_dispatch',
+      ref: CRON_REF,
+      inputs: { [name]: changed },
+    }).args
+    check(
+      args.includes('--dry-run'),
+      `the real workflow: a dispatch on ${CRON_REF} with \`${name}=${changed}\` (default \`${declaredDefault}\`) dry-runs — it changed what the lanes TEST, so it is not the cron's answer (#3960)`,
+      JSON.stringify(args),
+    )
+  }
+  // …and the portability of the block this guard executes for real. On bash
+  // < 4.4 an empty array under `set -u` is an unbound-variable abort, so this
+  // is both a real bug in the shipped workflow and the reason the pre-commit
+  // hook died on macOS.
+  for (const [label, path] of [
+    ['the reporter step', workflowPath],
+    [
+      'the watchdog step',
+      new URL('../.github/workflows/workflow-watchdog.yml', import.meta.url).pathname,
+    ],
+  ]) {
+    if (!existsSync(path)) {
+      fail(`${label}'s workflow file is readable`, `not found at ${path}`)
+      continue
+    }
+    const stepName =
+      path === workflowPath
+        ? REPORTER_STEP_NAME
+        : 'File, update or close the watchdog tracking issue'
+    const offenders = findUnportableEmptyArrayExpansions(
+      findReporterRunScript(readFileSync(path, 'utf8'), stepName),
+    )
+    check(
+      offenders.length === 0,
+      `${label} never expands a possibly-empty array under \`set -u\` (bash 3.2 / stock macOS /bin/bash aborts on that)`,
+      `unportable arrays: ${offenders.join(', ')}`,
+    )
+  }
   const { problems } = checkReporterAuthority(workflowText)
   check(
     problems.length === 0,
@@ -1978,7 +2339,19 @@ const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
   if (process.argv.slice(2).includes('--self-test')) {
-    runSelfTest()
+    // Wrapped exactly like `main()` below. Several assertions now execute a
+    // workflow's own bash and parse a workflow's own YAML, so a renamed step
+    // — or a shell that cannot run the block at all — throws mid-suite. An
+    // uncaught throw exits 1 with a raw stack trace, which reads as "the tool
+    // is broken" rather than "an assertion did not hold"; exit 2 with one
+    // legible line is what the hook and its reader expect.
+    try {
+      runSelfTest()
+    } catch (err) {
+      console.error(`  FAIL - the self-test could not run to completion: ${err.message}`)
+      console.error('\nself-test: aborted before every assertion was evaluated')
+      process.exit(2)
+    }
   } else {
     try {
       main()

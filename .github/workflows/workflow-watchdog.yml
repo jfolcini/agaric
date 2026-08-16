@@ -124,15 +124,25 @@ jobs:
         # step above hands it exactly the shape `toJSON(needs)` has.
         run: |
           set -euo pipefail
-          extra=()
+          # SEEDED, never `extra=()` (#3960): on bash < 4.4, stock /bin/bash
+          # on macOS, expanding an EMPTY array under `set -u` is an
+          # unbound-variable abort rather than an empty expansion — and on the
+          # `schedule` path this array was empty, so the step would die before
+          # reaching the filer. GitHub's runners ship bash 5, so this one was
+          # latent here; it was live in the deep-checks reporter, whose block
+          # the reporter self-test executes for real. Same shape, same fix, and
+          # `findUnportableEmptyArrayExpansions` now pins both steps.
+          extra=(--profile workflow-watchdog --needs-json-file watchdog.json)
           if [ "$EVENT_NAME" != "schedule" ]; then
             # Dispatch/manual run: exercise the whole path, write nothing.
-            extra=(--dry-run)
+            # Unlike the deep-checks reporter, this one has no ref/input
+            # dimension to weigh (#3960): `check-workflow-liveness.mjs` asks
+            # GitHub's runs API about the whole repo, so its data is the same
+            # from any ref — but a dispatch is still a smoke test, not the
+            # cycle's answer.
+            extra+=(--dry-run)
           fi
-          node scripts/file-scheduled-failures.mjs \
-            --profile workflow-watchdog \
-            --needs-json-file watchdog.json \
-            "${extra[@]}"
+          node scripts/file-scheduled-failures.mjs "${extra[@]}"
 
       - name: Last-resort notice (the watchdog itself broke)
         # Fires only when a step ABOVE failed — i.e. the watchdog is the thing

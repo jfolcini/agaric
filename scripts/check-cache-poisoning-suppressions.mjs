@@ -878,7 +878,18 @@ const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
   if (process.argv.slice(2).includes('--self-test')) {
-    runSelfTest()
+    // Wrapped like `main()` below, and for the same reason as its sibling in
+    // `file-scheduled-failures.mjs`: this suite reads prek.toml and shells out
+    // to a real `zizmor`, so a rename or a missing binary can throw mid-suite.
+    // A raw stack trace and exit 1 read as "the tool is broken" rather than
+    // "an assertion did not hold".
+    try {
+      runSelfTest()
+    } catch (err) {
+      console.error(`  FAIL - the self-test could not run to completion: ${err.message}`)
+      console.error('\nself-test: aborted before every assertion was evaluated')
+      process.exit(2)
+    }
   } else {
     try {
       main()
