@@ -9,7 +9,10 @@
  * store.
  */
 
-import { matchesSearchFolded } from '@/lib/fold-for-search'
+// #4022 — the `fts_blocks.stripped` stand-in, imported rather than re-spelled:
+// `search.ts` is its single owner (#3938), and a second copy of the strip /
+// fold pair here would be free to drift away from the index it models.
+import { matchesFtsIndex, stripForFts } from '@/lib/tauri-mock/handlers/search'
 import {
   type TypedHandlers,
   contentLinksTo,
@@ -64,9 +67,24 @@ export const linksHandlers = {
         backlinkItems = backlinkItems.filter((b) => b['block_type'] === bt)
       } else if (type === 'Contains') {
         const query = (filter['query'] as string) ?? ''
-        // Unicode-aware fold (mock / backend parity).
+        // #4022 — `BacklinkFilter::Contains` is `sanitize_fts_query` + `WHERE
+        // fts_blocks MATCH ?1` (`agaric-store/src/backlink/filters.rs:381-421`,
+        // SQL at :398-407). It is NOT a `LIKE` scan over `blocks.content`: it
+        // reads the SAME trigram index `search_blocks` does, so it matches
+        // `stripForFts`'s text through the index's case-only fold. This was
+        // `matchesSearchFolded` over raw content, which both over-matched
+        // (folding diacritics the tokenizer does not fold) and under-matched
+        // (blind to markup-hidden terms and to the names `#[ULID]` /
+        // `[[ULID]]` resolve to).
+        //
+        // One query-SIDE divergence is left standing, and is named rather than
+        // modelled: the backend's early returns make a blank or
+        // sanitizes-to-empty query an EMPTY result set
+        // (`filters.rs:382-388` / `:955-962`), where `matchesFtsIndex` admits
+        // every candidate for an empty needle — the pre-#4022 behaviour here,
+        // unchanged by this seam.
         backlinkItems = backlinkItems.filter((b) =>
-          matchesSearchFolded((b['content'] as string) ?? '', query),
+          matchesFtsIndex(stripForFts(b['content'] as string | null), query),
         )
       } else if (type === 'PropertyText') {
         const key = filter['key'] as string
@@ -186,14 +204,30 @@ export const linksHandlers = {
         truncated: false,
       }
     // Find blocks that mention the page title as text but don't have a [[link]].
-    // Unicode-aware fold (mock / backend parity).
+    //
+    // #4022 — `eval_unlinked_references` runs `WHERE fts_blocks MATCH ?1`
+    // (`agaric-store/src/backlink/grouped.rs:682-697`) over the sanitized
+    // title, so the haystack is `fts_blocks.stripped` ({@link stripForFts})
+    // and the fold is the trigram tokenizer's case-only one
+    // ({@link matchesFtsIndex}) — the same index `search_blocks` reads, not a
+    // `LIKE` scan over `blocks.content`. This was `matchesSearchFolded` over
+    // raw content, which surfaced diacritic-folded mentions the backend never
+    // returns and missed mentions hidden behind markup or supplied by a
+    // resolved `[[ULID]]` title.
     const unlinked = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       if (b['id'] === pageId) return false
       if (b['parent_id'] === pageId) return false
+      // `AND b.block_type != 'page'` (grouped.rs:688) — title blocks are
+      // dropped from the base set GLOBALLY, not just for descendants of this
+      // page. The trigram tokenizer is substring-based, so a child page
+      // `Notes/2026` would otherwise surface as an unlinked reference to
+      // `Notes` via the trigrams `Not` / `ote` / `tes`; the refs panel
+      // surfaces body matches, not title matches.
+      if (b['block_type'] === 'page') return false
       if (!inSpaceScope(b, spaceId)) return false
       const content = (b['content'] as string) ?? ''
-      if (!matchesSearchFolded(content, pageTitle)) return false
+      if (!matchesFtsIndex(stripForFts(content), pageTitle)) return false
       // Exclude if it already has a [[link]] to this page.
       return !contentLinksTo(content, pageId)
     })
