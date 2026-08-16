@@ -276,10 +276,25 @@ for r in roots:
 # js-scanner.mjs is not itself in RATCHET_GUARDS — it is a library the mjs
 # guard imports, so it can never appear in the ABSENT-guard note, which is
 # exactly why it needs naming here.
+#
+# scripts/tauri-sanctioned-symbols.json is here for a DIFFERENT reason than
+# the other three: the guard's own readSanctioned() does not hard-error on
+# its absence, it silently degrades to an empty Set (see that function's own
+# comment). Left off this table, a merged tree missing the file does not
+# fail closed the way the other prerequisites do — it runs the guard to
+# completion and gets a WRONG answer: every file whose only @/lib/tauri
+# dependency was a sanctioned symbol now reads as a brand-new importer, so
+# the guard reports "FAILED on the MERGED tree" over infrastructure
+# breakage the PR did not cause. That is worse than the other three, which
+# at least fail LOUDLY (a stack trace or the guard's own ERROR line) — this
+# one fails with a plausible-looking wrong verdict. Listing it here routes
+# that same breakage through check_prereqs' exit-3 "nothing was verified"
+# path instead, before the guard ever runs.
 RATCHET_PREREQS=(
   'check-unsafe-allowlist.sh|src-tauri/unsafe-allowlist.txt|the allowlist it ratchets against'
   'check-tauri-import-baseline.mjs|scripts/lib/js-scanner.mjs|the shared scanner it imports'
   'check-tauri-import-baseline.mjs|scripts/tauri-import-baseline.json|the baseline it ratchets against'
+  'check-tauri-import-baseline.mjs|scripts/tauri-sanctioned-symbols.json|the sanctioned-symbols list a missing copy of which silently turns sanctioned-only importers into false new-importer verdicts'
   'check-tauri-import-baseline.mjs|src/|the frontend tree it scans'
 )
 
@@ -587,7 +602,13 @@ run_merge_check() {
   : > "$roots_errfile"
   if [ -f "$crate_root_script" ]; then
     while IFS= read -r root; do
-      crate_roots+=("$root")
+      # Same guard as count_examined's sibling loop over this same output
+      # (#4005 review): an empty element here would make the `find
+      # "$workdir/$root" -type f -name '*.rs'` below sweep the whole
+      # worktree instead of scanning nothing, which is the wrong failure
+      # mode for a blank line derive_crate_roots should never emit.
+      # Unreachable today; the two loops doing the same job must not diverge.
+      [ -n "$root" ] && crate_roots+=("$root")
     done < <(derive_crate_roots "$crate_root_script" 2>"$roots_errfile")
   fi
 
@@ -778,6 +799,12 @@ mr_seed_guards() {
   # tauri-import-baseline.mjs hard-errors (exit 2) if src/ or the baseline
   # file is absent; an empty array is a legitimate "no importers yet" state.
   printf '[]\n' > "$dir/scripts/tauri-import-baseline.json"
+  # readSanctioned() does NOT hard-error on this file's absence (it degrades
+  # to an empty Set) — but RATCHET_PREREQS now treats it as required for
+  # THIS script's purposes (#3989 note 1), so every fixture needs one too,
+  # same as the two files above. An empty array is a legitimate "nothing
+  # sanctioned yet" state.
+  printf '[]\n' > "$dir/scripts/tauri-sanctioned-symbols.json"
   # git does not track empty directories — without a tracked file inside
   # it, `src/` above would vanish the moment this fixture is committed and
   # re-checked out in a worktree, and the guard's own `fs.existsSync(SRC_DIR)`
@@ -1035,7 +1062,7 @@ export function top() {}
 
 export function bottom() {}
 EOF
-  printf '[\n  "shared.ts"\n]\n' > "$dir/scripts/tauri-import-baseline.json"
+  printf '[\n  "src/shared.ts"\n]\n' > "$dir/scripts/tauri-import-baseline.json"
   git -C "$dir" add -A
   git -C "$dir" commit --quiet -m base
   git -C "$dir" branch pr
@@ -1569,6 +1596,15 @@ STUB
   st_expect 'and it does NOT claim a guard failed on the merged tree' \
     '0' "$(printf '%s' "$nonode_out" | grep -c 'FAILED on the MERGED tree' || true)"
 
+  # ── 3h. THE CLEAN MERGE with all six guards is still exit 0 ──────────────
+  # `mr_seed_guards` now seeds every fixture with the prerequisites the
+  # three newer guards refuse to run without (an allowlist file, a baseline
+  # file, a src/ dir) — this re-runs the ORIGINAL clean fixture end to end
+  # once more, after all of the above, as a guard against the seeding
+  # change itself silently breaking the already-passing case.
+  ( cd "$clean" && bash "$SELF" main pr ) >/dev/null 2>&1; rc2=$?
+  st_expect 'the clean merge is still exit 0 with all six guards wired in' '0' "$rc2"
+
   # ── 3i. A GUARD THAT EXAMINED NOTHING IS NOT A PASS (#3989) ──────────────
   # The residual the reviewer MEASURED: reading CRATE_ROOTS out of the merged
   # tree's check-raw-tx.py closes the bash-vs-Python drift for ONE guard;
@@ -1595,14 +1631,32 @@ STUB
     '0' "$(grep -c 'carries no .rs file under ANY crate' "$tmp/extraroot.err" || true)"
 
   # ── 3j. A MISSING PREREQUISITE IS NOT A GUARD VIOLATION (#3989) ──────────
-  # Measured before this: each of these three exited 1 — which pr-overlap.yml
-  # renders as "a ratchet guard fails on the merge result" and answers with
-  # "merge main and re-run prek" — and the js-scanner case did it with a raw
-  # ERR_MODULE_NOT_FOUND stack trace as the entire explanation. None of them
-  # is a verdict on the PR: the guard could not run at all.
+  # Measured before this: each of the first three exited 1 — which
+  # pr-overlap.yml renders as "a ratchet guard fails on the merge result"
+  # and answers with "merge main and re-run prek" — and the js-scanner case
+  # did it with a raw ERR_MODULE_NOT_FOUND stack trace as the entire
+  # explanation. None of them is a verdict on the PR: the guard could not
+  # run at all. tauri-sanctioned-symbols.json (added by review note #4005/1)
+  # is the fourth and worst of the four: absent it, readSanctioned() does
+  # not error at all, so the OLD behaviour here was not "exit 1 with an
+  # honest ERROR line" like the other three — it was the guard running to
+  # completion and MISreporting sanctioned-only importers as new debt. This
+  # loop only proves the generic exit-3 mechanic (mr_make_clean_repo's src/
+  # carries no importer at all, so removing the file cannot also flip a
+  # verdict); the false-verdict shape itself — a sanctioned-only importer
+  # flipping to a false "new importer" when the file goes missing — was
+  # falsified by hand against a dedicated fixture (a file whose only
+  # `@/lib/tauri` dependency is a sanctioned symbol, with no
+  # tauri-sanctioned-symbols.json committed at all): exit 1 misreporting it
+  # as a new importer before this prereq entry existed, exit 3 correctly
+  # naming the missing prerequisite after. Not wired in here as a fifth
+  # committed fixture because 3j's loop already exists to prove the
+  # PREREQUISITE mechanic once per file, generically; the false-verdict
+  # shape is what motivated adding this entry to the table in the first
+  # place, not a new mechanic this loop needs to reprove per-entry.
   local prereq prereq_dir prereq_rc
   for prereq in scripts/lib/js-scanner.mjs src-tauri/unsafe-allowlist.txt \
-      scripts/tauri-import-baseline.json; do
+      scripts/tauri-import-baseline.json scripts/tauri-sanctioned-symbols.json; do
     prereq_dir="$tmp/prereq-$(printf '%s' "$prereq" | tr '/.' '--')"
     mkdir -p "$prereq_dir"
     mr_make_clean_repo "$prereq_dir"
@@ -1699,15 +1753,6 @@ STUB
     '1' "$(grep -c 'SyntaxError' "$tmp/brokenraw.err" || true)"
   st_expect 'and it is NOT reported as "the layout moved", which is a different fault' \
     '0' "$(grep -c 'carries no .rs file under ANY crate' "$tmp/brokenraw.err" || true)"
-
-  # ── 3h. THE CLEAN MERGE with all six guards is still exit 0 ──────────────
-  # `mr_seed_guards` now seeds every fixture with the prerequisites the
-  # three newer guards refuse to run without (an allowlist file, a baseline
-  # file, a src/ dir) — this re-runs the ORIGINAL clean fixture end to end
-  # once more, after all of the above, as a guard against the seeding
-  # change itself silently breaking the already-passing case.
-  ( cd "$clean" && bash "$SELF" main pr ) >/dev/null 2>&1; rc2=$?
-  st_expect 'the clean merge is still exit 0 with all six guards wired in' '0' "$rc2"
 
   # ── 4. THE REAL REPOSITORY is untouched ──────────────────────────────────
   local repo_root

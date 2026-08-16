@@ -44,17 +44,26 @@ jobs:
     # Generous ceiling on a job whose real cost is seconds; if this ever fires,
     # something is retrying an API call, not computing an overlap.
     timeout-minutes: 10
-    # `ratchets`/`diverged`/`basechanged` are consumed by `merge-result`
-    # below, to decide whether it has anything to do — see that job for why
-    # "any overlap" is the wrong gate and these are the right one. `overlaps`
+    # `ratchets`/`basechanged` are consumed by `merge-result` below, to
+    # decide whether it has anything to do — see that job for why "any
+    # overlap" is the wrong gate and these are the right one. `overlaps`
     # (any shared file, ratchet or not) is NOT consumed by anything — it is
     # informational only, surfaced for a human reading `gh run view`'s
     # output alongside the sticky PR comment this job also posts, not a
     # second gate sitting beside the two that are.
+    #
+    # `diverged` (the mine-FILTERED count) is NOT re-exported as a job
+    # output here (#4005 review): it has no consumer. `merge-result` below
+    # gates on `basechanged`, never `diverged`. The sticky comment does not
+    # read this job output either — it is rendered by `renderComment()`
+    # straight from `pr-file-overlap.mjs`'s own in-process `result` object
+    # and written to `--comment-body overlap.md` in the SAME step, before
+    # this `outputs:` block is even evaluated. `pr-file-overlap.mjs` still
+    # writes `diverged=` to its own `$GITHUB_OUTPUT` (kept for the script's
+    # own CLI contract and self-test), it is just not promoted past this job.
     outputs:
       overlaps: ${{ steps.overlap.outputs.overlaps }}
       ratchets: ${{ steps.overlap.outputs.ratchets }}
-      diverged: ${{ steps.overlap.outputs.diverged }}
       # #3979: every path `main` has changed since this branch's merge base,
       # UNFILTERED by whether this branch touches any of them. See
       # `merge-result`'s own comment for why `diverged` (filtered to shared
@@ -188,19 +197,22 @@ jobs:
   # the same fixture runs the job and it catches a planted ratchet violation
   # in the base-only file. Over-triggering is the safe direction — this job
   # runs on some base movement that turns out not to touch a ratchet file, at
-  # the cost of a checkout and three Python invocations, never the reverse —
-  # so `basechanged` is left as "any base movement" deliberately rather than
+  # the cost of a checkout and six guard invocations (three Python, two bash,
+  # one node — see `merge-result`'s own header), never the reverse — so
+  # `basechanged` is left as "any base movement" deliberately rather than
   # narrowed to a ratchet-only count `pr-file-overlap.mjs` does not compute
   # yet (it would need to scan `main`'s diverged set with `isRatchetFile`,
   # unfiltered by "mine", which is a `pr-file-overlap.mjs` change of its own).
-  # `diverged` itself is left in `pr-file-overlap.mjs`'s output and this job's
-  # `outputs:` block — the sticky PR comment still reads it for the #3724
-  # near-miss wording — but it is redundant IN THIS CONDITION: `divergedFiles`
-  # is by construction a subset of the unfiltered set `basechanged` counts, so
-  # `diverged != '0'` can never be true while `basechanged == '0'`. Dropping it
-  # here removes a class of reasoning about which gate is correct, which given
-  # this job's whole history of gates reasoned wrong is worth something on its
-  # own.
+  # `diverged` itself is left in `pr-file-overlap.mjs`'s own script output —
+  # the sticky PR comment reads it there, in-process, via `renderComment()`,
+  # not through this workflow's job outputs — but it is not re-exported as a
+  # job output of the `overlap` job (#4005 review): `divergedFiles` is by
+  # construction a subset of the unfiltered set `basechanged` counts, so
+  # `diverged != '0'` can never be true while `basechanged == '0'`, and
+  # nothing in this workflow ever read the job output anyway. Not exporting
+  # it here removes a class of reasoning about which gate is correct, which
+  # given this job's whole history of gates reasoned wrong is worth something
+  # on its own.
   #
   # A whole-tree RATCHET file overlapping or diverging is different in kind
   # from an ordinary shared file: both branches can hold a self-consistent
@@ -266,8 +278,8 @@ jobs:
     # and the base-divergence half is the only thing that would fire. Excluding
     # `unknown` meant a failure in the divergence script silently switched the
     # merge-result lane off for exactly the case it exists for. Running it
-    # costs a checkout and three Python invocations; not running it costs the
-    # incident.
+    # costs a checkout and six guard invocations (three Python, two bash, one
+    # node — see below); not running it costs the incident.
     #
     # `!cancelled()` is load-bearing, not decoration: WITHOUT it, `needs:
     # overlap` alone means any FAILURE in `overlap` (it is deliberately
@@ -295,8 +307,9 @@ jobs:
         needs.overlap.outputs.basechanged != '0'
       )
     runs-on: ubuntu-24.04
-    # Real cost is a checkout + one git merge + three short python
-    # invocations — generous ceiling for the same reason as `overlap`'s.
+    # Real cost is a checkout + one git merge + six short guard invocations
+    # (three Python, two bash, one node) — generous ceiling for the same
+    # reason as `overlap`'s.
     timeout-minutes: 10
     permissions:
       contents: read
