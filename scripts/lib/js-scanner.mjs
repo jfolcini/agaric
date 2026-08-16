@@ -2,6 +2,60 @@
 // ─────────────────────────────────────────────────────────────────────
 // Shared JS/TS lexical scanner for the `scripts/` guards (#3950).
 //
+// ─── THE SANCTIONED IMPLEMENTATION — do not hand-roll a fourth (#3991) ──
+//
+// Any JS-side guard that needs to "skip the parts of a file that are not
+// code" MUST use this module. Not a local `stripComments`, not a local
+// `skipString`, not a `source.replace(/\/\*[\s\S]*?\*\//g, …)`.
+//
+// This is a rule with a history. The repo reached THREE independent
+// implementations of that one job, and every one written outside this file
+// was wrong:
+//
+//   `check-mutation-harness-clones.mjs` + `check-set-property-args.mjs`
+//     shipped the SAME copy-pasted trio, both blind to regex literals
+//     (#3950) — which is why this module exists at all;
+//   `check-wdio-driver-gate.mjs`'s `stripTsComments` had no string
+//     awareness whatsoever, so a `/*` inside a string plus any later `*/`
+//     blanked the code between them and the guard reported OK on a config
+//     it had not read (#3990 item 1, fixed by deleting it in favour of
+//     `stripComments` below);
+//   `opaque_prefix_len` in `src-tauri/src/commands/observability.rs` is the
+//     Rust one, off by one on `'\''` (#3988). It cannot share this module,
+//     being Rust; it carries a pointer to #3991 so the next author knows
+//     the class.
+//
+// Every one of them failed OPEN: the guard reported clean on input it had
+// not actually parsed. That is the whole reason for the rule — a guard's
+// scanner is the part nobody re-derives correctly the second time.
+//
+// ─── The count was wrong: it is not three ───────────────────────────
+//
+// #3991 asked whether a FOURTH copy existed, on the grounds that nobody had
+// looked for the third. There are three more, and they are BYTE-IDENTICAL to
+// each other and to the `stripTsComments` this module just replaced — same
+// `/*…*/`-first `String.replace` pair, same absence of string awareness, same
+// fail-open:
+//
+//   scripts/check-raw-invoke.mjs             `stripComments`
+//   scripts/check-tauri-import-baseline.mjs  `stripComments`
+//   scripts/check-persist-hooks.mjs          `stripComments`
+//
+// Demonstrated, not inferred: a `const GLOB = './fixtures/**'` above a real
+// `invoke('listBlocks')` and any JSDoc block below it blanks the call, and
+// `check-raw-invoke` finds zero violations in a file that has one. They are
+// left in place here only because migrating three more guards is a change
+// with its own verification burden, not because they are sound — #3993.
+//
+// `scripts/check-bulk-equivalence.mjs`'s `blank(src, { blankStrings })` is a
+// SEPARATE case: a purpose-built lexer offering a structural-vs-content view
+// this module does not, string-aware in both modes. It is not a copy of the
+// broken shape.
+//
+// If this module cannot express what a new guard needs, EXTEND IT (and its
+// self-test) rather than starting a private copy. A defect fixed here is
+// fixed for every inheritor; a defect fixed in a copy is not.
+//
 // ─── Why this module exists ─────────────────────────────────────────
 //
 // Two guards — `check-mutation-harness-clones.mjs` and
@@ -314,7 +368,7 @@ function scanTemplate(src, i, to) {
       continue
     }
     if (c === '`') return j + 1
-    if (c === '$' && src[j + 1] === '{') {
+    if (c === '$' && j + 1 < to && src[j + 1] === '{') {
       j = scanTemplateExpr(src, j + 2, to)
       continue
     }
@@ -468,12 +522,22 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
   // return-type colon and classified the alternative's object literal as a
   // block — the opposite error from the one `returnTypeContext` fixes.
   const ternaryStack = []
+  // The bracket depth at which `returnTypeContext` was set, so the `}` that
+  // closes the member list holding a BODILESS signature can discard it.
+  let returnTypeDepth = 0
   let bracketDepth = 0
   let i = from
 
   while (i < to) {
     const c = src[i]
-    const c2 = src[i + 1]
+    // Every two-character lookahead in this loop reads through `c2`, which is
+    // clamped to `to`. Reading `src[i + 1]` raw let a sub-range scan lex a
+    // token that ENDS past its own limit (`tokenize(src, { to })` on `a=>b`
+    // with `to = 2` produced a `=>` spanning [1,3)). Today's only sub-range
+    // caller passes a `to` that lands on a `}`, which completes none of these
+    // forms, so it was unreachable — but "unreachable" was a property of the
+    // caller, not of the tokenizer, and nothing pinned it.
+    const c2 = i + 1 < to ? src[i + 1] : undefined
 
     if (isWs(c)) {
       const start = i
@@ -508,8 +572,8 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
     if (c === '/' && c2 === '*') {
       const start = i
       let j = i + 2
-      while (j < to && !(src[j] === '*' && src[j + 1] === '/')) j++
-      if (j < to) {
+      while (j + 1 < to && !(src[j] === '*' && src[j + 1] === '/')) j++
+      if (j + 1 < to) {
         i = j + 2
         yield { kind: 'comment', start, end: i }
         continue
@@ -575,6 +639,7 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
         if (
           !radixPrefixed &&
           (d === 'e' || d === 'E') &&
+          i + 2 < to &&
           (src[i + 1] === '+' || src[i + 1] === '-') &&
           isDigit(src[i + 2])
         ) {
@@ -629,7 +694,7 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
       (c === '+' && c2 === '+') ||
       (c === '-' && c2 === '-') ||
       (c === '?' && c2 === '?') ||
-      (c === '?' && c2 === '.' && !isDigit(src[i + 2]))
+      (c === '?' && c2 === '.' && !(i + 2 < to && isDigit(src[i + 2])))
     ) {
       value = c + c2
       i += 2
@@ -650,6 +715,27 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
     if (value === '(' || value === '[' || value === '{') bracketDepth++
     else if (value === ')' || value === ']' || value === '}') {
       if (bracketDepth > 0) bracketDepth--
+      // A `?` whose enclosing bracket has now CLOSED can never be matched by
+      // a later `:`: a conditional expression cannot span the bracket that
+      // contains its `?`. Without this discard, a bare `?` that never got a
+      // `:` left an entry forever, and the next colon that happened to land
+      // at the same depth — anywhere later in the file — was eaten as that
+      // ternary's closer instead of being read as a return-type colon.
+      //
+      // Live shape, not hypothetical: src/components/help/SearchHelpDialog.tsx
+      // lines 197-200 render `(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)` as bare JSX
+      // TEXT. Each `(` opens a bracket, each `?` pushes, each `)` closes — and
+      // the four entries survived to end of file. This is the third instance
+      // of the "silently disarmed return-type rule" shape, after `??` and the
+      // untyped-`function` fixture, and the first two were both found by an
+      // input shape no assertion supplied.
+      while (ternaryStack.length > 0 && ternaryStack.at(-1) > bracketDepth) ternaryStack.pop()
+      // Same argument for the return-type annotation: a `): T` colon set at
+      // depth D belongs to a signature INSIDE the bracket that just closed
+      // below D, so the annotation cannot still be open. This is what clears
+      // a BODILESS signature — `interface I { f(): void }`, or a TS overload
+      // — whose `{` never arrives to consume the context.
+      if (returnTypeContext && bracketDepth < returnTypeDepth) returnTypeContext = false
     }
 
     if (value === '?') {
@@ -657,6 +743,14 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
       // above. What remains to exclude is the optional parameter/property
       // marker `a?: T`, which is not a ternary and whose `:` therefore must
       // stay available to the return-type rule.
+      //
+      // AUDIT NOTE: this exclusion is now REDUNDANT, and no assertion can
+      // falsify it. Only whitespace may sit between the `?` and the `:`, so
+      // the two are always at the same bracket depth, and a pushed entry
+      // would be popped by that very colon — net zero. It mattered before
+      // the stack was depth-matched. Kept as defence and as documentation of
+      // intent, recorded here so the next audit does not spend a round
+      // hunting for the input that distinguishes it.
       let k = i
       while (k < to && isWs(src[k])) k++
       if (src[k] !== ':') ternaryStack.push(bracketDepth)
@@ -666,6 +760,7 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
       } else if (prev !== null && prev.kind === 'punct' && prev.value === ')') {
         returnTypeContext = true
         returnTypeAngleDepth = 0
+        returnTypeDepth = bracketDepth
       }
     } else if (returnTypeContext) {
       // Angle depth is tracked so a `,`/`(`/`)` INSIDE the type — as in
@@ -914,8 +1009,17 @@ const EXPR_CONTINUATION_KEYWORD = new Set(['instanceof', 'in', 'as', 'satisfies'
  * `throw`, `yield`, `break` and `continue` are RESTRICTED PRODUCTIONS where
  * ASI genuinely does fire across a newline, so treating a trailing keyword
  * as "incomplete" would be wrong in the one place it matters.
+ *
+ * `!` is here for the TS NON-NULL ASSERTION (`const A = cache.get(k)!`), which
+ * is a postfix operator and therefore completes its operand. Omitting it made
+ * `findStatementEnd` read the line as dangling and run past the newline into
+ * the following statement — fail-CLOSED (the hash covers too much, so real
+ * drift still reddens) but a false positive whenever the neighbouring
+ * statement changes. A line ending in a PREFIX `!` is not valid JS, and `!=` /
+ * `!==` lex as `!` followed by `=`, whose trailing token is the non-terminal
+ * `=`, so the two readings do not collide.
  */
-const EXPR_TERMINAL_PUNCT = new Set([')', ']', '}', '++', '--'])
+const EXPR_TERMINAL_PUNCT = new Set([')', ']', '}', '++', '--', '!'])
 
 /** True when `tok` cannot be the last token of a complete expression. */
 function leavesExpressionIncomplete(tok) {
@@ -1402,6 +1506,236 @@ function runSelfTest() {
     )
   }
 
+  {
+    // A BARE `?` IN JSX TEXT. Verbatim from
+    // src/components/help/SearchHelpDialog.tsx:193-203 — the `<Trans>` block
+    // that renders `(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)` as JSX text. Each `(`
+    // opens a bracket, each `?` pushed a ternaryStack entry, each `)` closed
+    // the bracket — and the four entries survived to end of file, because
+    // nothing discarded a ternary whose bracket had closed. The next four
+    // colons at that depth anywhere later in the file were then eaten as
+    // those ternaries' closers, silently disabling the return-type rule.
+    //
+    // No assertion covered a bare `?` in JSX text; the round-four
+    // executable-probe audit did not catch it either. This is the third
+    // "silently disarmed" instance after `??` and the untyped-`function`
+    // fixture, and the first two were also input shapes never supplied.
+    const lookaroundBlock = [
+      '          <Trans',
+      '            i18nKey="search.help.regex.noLookaround"',
+      '            components={{',
+      '              strong: <strong />,',
+      '              m0: <span className="font-mono">(?=…)</span>,',
+      '              m1: <span className="font-mono">(?!…)</span>,',
+      '              m2: <span className="font-mono">(?&lt;=…)</span>,',
+      '              m3: <span className="font-mono">(?&lt;!…)</span>,',
+      '            }}',
+      '          />',
+    ].join('\n')
+    // A second `<Trans components={{…}}>` in the same list — the file's own
+    // idiom, it has four of them — whose component is a named function
+    // expression with an explicit return type. Its `): ReactNode` colon lands
+    // at exactly the bracket depth the `(?…)` parens leaked entries at.
+    const typedMember =
+      '          <Trans\n' +
+      '            components={{\n' +
+      '              m0: <Example render={function item(v: string): ReactNode { return null }} />,\n' +
+      '            }}\n' +
+      '          />'
+    const mk = (block) =>
+      `function RegexSyntaxBody() {\n  return (\n    <ul>\n      <li>\n${block}\n      </li>\n      <li>\n${typedMember}\n      </li>\n    </ul>\n  )\n}\n`
+    const bodyBraceClosesBlock = (src) => {
+      const at = src.indexOf('{ return null }')
+      const closeIdx = src.indexOf('}', at + '{ return null'.length)
+      const tok = [...tokenize(src)].find(
+        (t) => t.kind === 'punct' && t.value === '}' && t.start === closeIdx,
+      )
+      return tok?.blockClose
+    }
+    check(
+      'a bare `?` in JSX text does not eat a later return-type colon at its depth',
+      bodyBraceClosesBlock(mk(lookaroundBlock)) === true,
+      `blockClose=${bodyBraceClosesBlock(mk(lookaroundBlock))}`,
+    )
+    // The other arm of the same property: the SAME file with the four `(?…)`
+    // lines removed always classified that body as a block. Pinning only the
+    // first arm would pass against a scanner that hard-wires `blockClose` on
+    // every `}`.
+    check(
+      'and the same file without the `(?…)` JSX text classifies it the same way',
+      bodyBraceClosesBlock(
+        mk(
+          lookaroundBlock
+            .split('\n')
+            .filter((l) => !l.includes('(?'))
+            .join('\n'),
+        ),
+      ) === true,
+      'see source',
+    )
+  }
+
+  {
+    // The discard must be strict: an entry is dropped only when its bracket
+    // depth is now UNREACHABLE, not when it merely equals the current depth.
+    // A ternary whose consequent contains a bracket group opens at depth D,
+    // sees a `(`/`)` pair return to D, and its `:` is still owed. Weakening
+    // the comparison to `>=` throws that entry away, the `:` then reads as a
+    // return-type colon after `)`, and the ALTERNATIVE's object literal is
+    // classified as a block — the exact error the ternary stack was added to
+    // stop, reintroduced by the fix for the leak.
+    const src = 'const v = c ? (a) : { b: 2 }\n'
+    const close = [...tokenize(src)].find((t) => t.kind === 'punct' && t.value === '}')
+    check(
+      'a ternary whose consequent closes a bracket still consumes its own `:`',
+      close !== undefined && close.blockClose === false,
+      `blockClose=${close?.blockClose}`,
+    )
+  }
+
+  {
+    // A BODILESS SIGNATURE — `interface I { f(): void }`, or a TS overload —
+    // leaves `returnTypeContext` set: it is cleared by `=>`/`=`/`;`, by
+    // `,`/`(`/`)` at angle depth 0, or by the next `{`, and a member list's
+    // closing `}` is none of those. `export default { … }` is the realistic
+    // object literal whose preceding token clears nothing, so the leak turned
+    // it into a BLOCK, whose `}` then permits a following regex.
+    const leaked = 'interface I { f(): void }\nexport default { a: 1 }\n'
+    const leakedClose = [...tokenize(leaked)].findLast((t) => t.kind === 'punct' && t.value === '}')
+    check(
+      'a bodiless signature does not leave the return-type context set past its `}`',
+      leakedClose.blockClose === false,
+      `blockClose=${leakedClose?.blockClose}`,
+    )
+    // The other arm, and the one the audit found nothing pinning: a bracket
+    // CLOSER must never SET the return-type context. The `}`/`)`/`]` branch is
+    // the only place that inspects `returnTypeDepth`, so a comparison written
+    // the wrong way round turns every closer into "annotation open", and the
+    // next `{` reached without an intervening clearing token becomes a BLOCK.
+    // `export default { … }` is the realistic shape whose preceding token
+    // (`default`) clears nothing, which is what makes the error observable at
+    // all — the reason the same mutation survives every `const x = { … }`.
+    // A `)` is absent from this list on purpose: the `returnTypeContext`
+    // branch below already clears on `)` at angle depth 0, so a call
+    // expression cannot distinguish any of these implementations.
+    for (const [lead, label] of [
+      ['const o = a[0]', 'an index expression'],
+      ['const o = { a: 1 }', 'an object literal'],
+      ['function h(): void { g() }', 'a typed function body'],
+    ]) {
+      const src = `${lead}\nexport default { b: 2 }\n`
+      const last = [...tokenize(src)].findLast((t) => t.kind === 'punct' && t.value === '}')
+      check(
+        `a closer ending ${label} does not turn the next \`{\` into a block`,
+        last.blockClose === false,
+        `blockClose=${last?.blockClose}`,
+      )
+    }
+  }
+
+  // ── the executable-probe audit over the CONTEXT-CLEARING paths ─────
+  //
+  // Every assertion below was written because a mutation of one clearing
+  // path SURVIVED the suite. They are grouped here rather than scattered so
+  // the next round can see what the audit reached.
+
+  {
+    // The `{` that opens an annotated function's BODY consumes the
+    // annotation, and the generic angle depth is what tells a type-literal
+    // brace from the body brace. Both were unpinned: the existing typed-body
+    // assertions write `{ g() }`, whose `(` clears the context by itself
+    // through the `,`/`(`/`)` branch, so removing the brace-consume (or the
+    // `>` decrement that lets it fire) changed nothing there. The bodies here
+    // are `{ x }` on purpose — no `(`, `=`, `,`, `;` or `=>` anywhere between
+    // the return type and the object literal that follows.
+    for (const [sig, label] of [
+      ['function h(): void', 'a plain return type'],
+      ['function h(): Promise<void>', 'a generic return type'],
+    ]) {
+      const src = `${sig} { x }\nexport default { a: 1 }\n`
+      const closes = [...tokenize(src)].filter((t) => t.kind === 'punct' && t.value === '}')
+      check(
+        `the body brace of ${label} consumes the annotation (paren-free body)`,
+        closes[0].blockClose === true && closes.at(-1).blockClose === false,
+        JSON.stringify(closes.map((t) => t.blockClose)),
+      )
+    }
+  }
+
+  {
+    // The brace and paren context stacks must POP, not peek. Every existing
+    // assertion uses a FLAT shape — `function f() { g() }`, `if (x) …` —
+    // where the most recent push is also the matching one, so replacing both
+    // `pop()`s with a peek passed the whole suite. Nesting is what separates
+    // them: the outer closer must recover the OUTER entry.
+    check(
+      'a `}` closing a block that CONTAINS an object literal still permits a regex',
+      regexes('function f() { const o = { a: 1 } }\n/re/.test(s)').join() === '/re/',
+      JSON.stringify(regexes('function f() { const o = { a: 1 } }\n/re/.test(s)')),
+    )
+    check(
+      'a `)` closing an `if` clause that CONTAINS a call still permits a regex',
+      regexes('if (f(x)) /re/.test(s)').join() === '/re/',
+      JSON.stringify(regexes('if (f(x)) /re/.test(s)')),
+    )
+  }
+
+  {
+    // Each token that ends a return-type annotation WITHOUT a body. Removing
+    // any one of `;`, `,` and `=>` from the clearing set passed the suite:
+    // no input ever reached the annotation-ends-here path except through the
+    // body brace. `export default { … }` and a type-literal member are the
+    // realistic object literals whose preceding token clears nothing, which
+    // is what makes the leak observable rather than merely present.
+    check(
+      'a `;` ends a bodiless signature, so the next object literal stays one',
+      [...tokenize('declare function f(): void;\nexport default { a: 1 }\n')].findLast(
+        (t) => t.kind === 'punct' && t.value === '}',
+      ).blockClose === false,
+      'see source',
+    )
+    check(
+      'a `,` ends a member signature, so the next type literal stays one',
+      [...tokenize('interface I { a(): void, b: { c: number } }')].find(
+        (t) => t.kind === 'punct' && t.value === '}',
+      ).blockClose === false,
+      'see source',
+    )
+    check(
+      'an `=>` ends an arrow return type, so the next object literal stays one',
+      [...tokenize('const f = (): number => x + 1\nexport default { a: 1 }\n')].findLast(
+        (t) => t.kind === 'punct' && t.value === '}',
+      ).blockClose === false,
+      'see source',
+    )
+    // `(` and `)` are in that set as a PAIR and cannot be pinned apart: any
+    // input containing one contains the other, so dropping either alone is
+    // covered by the survivor. Dropping both is what the assertion below
+    // reaches — a bodiless signature followed by a plain call.
+    check(
+      'a call after a bodiless signature ends the annotation',
+      [...tokenize('declare function f(): void\ng(1)\nexport default { a: 1 }\n')].findLast(
+        (t) => t.kind === 'punct' && t.value === '}',
+      ).blockClose === false,
+      'see source',
+    )
+    // `=` is also in that set and has NO falsifying input: reaching it needs
+    // a `)`-then-`:` annotation followed by an `=` with no `=>`, `;`, `,`,
+    // `(` or `)` in between, which is not a shape TS can produce. It is kept
+    // as defence, and recorded here as unfalsifiable rather than asserted
+    // with an input that only looks like one.
+  }
+
+  check(
+    // `a?.5:b` is the ternary `a ? .5 : b`, not optional chaining — the one
+    // place `?.` must NOT lex as a single token. The rule was written with a
+    // comment and no assertion, so deleting the digit check passed.
+    '`a?.5:b` lexes as a ternary `?`, not as optional chaining',
+    kinds('const v = a?.5:b').join(' ') ===
+      'ident:const ident:v punct:= ident:a punct:? number punct:: ident:b',
+    kinds('const v = a?.5:b').join(' '),
+  )
+
   // NUMBER LEXING. `0xE+1` used to lex as ONE number token, swallowing the
   // `+`, because the exponent-sign special case never checked the radix.
   // `1.5.toFixed(2)` lost `.toFixed` entirely for the same reason in the
@@ -1863,6 +2197,73 @@ function runSelfTest() {
       'an initializer ending on a dangling operator returns null (fails closed)',
       findStatementEnd(src, src.indexOf("'head'")) === null,
       JSON.stringify(findStatementEnd(src, src.indexOf("'head'"))),
+    )
+  }
+
+  {
+    // A TS NON-NULL ASSERTION ends the expression. With `!` missing from
+    // EXPR_TERMINAL_PUNCT the line read as "still dangling on an operator",
+    // so the scan ran past the newline and swallowed the next statement.
+    // Fail-CLOSED (the hash covers too much), but a false positive every time
+    // the neighbouring statement changes.
+    const src = 'const A = cache.get(k)!\nconst B = 2\n'
+    const at = src.indexOf('cache')
+    const end = findStatementEnd(src, at)
+    check(
+      'a trailing TS non-null assertion `!` ends the statement, not the next one too',
+      end !== null && src.slice(at, end) === 'cache.get(k)!',
+      JSON.stringify(end === null ? null : src.slice(at, end)),
+    )
+  }
+
+  {
+    // The other arm: `!=`/`!==` lex as `!` followed by `=`, so a line ending
+    // mid-comparison still ends on the NON-terminal `=` and must keep going.
+    // Without this, "make `!` terminal" could be implemented as "any token
+    // starting with `!` is terminal" and truncate here instead.
+    const src = 'const A = x !==\n  y\nconst B = 2\n'
+    const at = src.indexOf('x !==')
+    const end = findStatementEnd(src, at)
+    check(
+      'a line ending in `!==` is still an incomplete expression',
+      end !== null && src.slice(at, end) === 'x !==\n  y',
+      JSON.stringify(end === null ? null : src.slice(at, end)),
+    )
+  }
+
+  {
+    // A sub-range scan must not lex a token that ENDS past its own `to`. The
+    // two-character punctuators and the `//` / `/*` detection read
+    // `src[i + 1]` with no bound, so `to` landing between the two characters
+    // produced a token reaching outside the range the caller asked about.
+    // Today's only sub-range caller (`blankStringsInRange` from
+    // `blankTemplateKeepingInterpolations`) always passes a `to` sitting on a
+    // `}`, which completes none of these forms — so this was unreachable via
+    // an invariant of the CALLER, with nothing in the tokenizer pinning it.
+    for (const [src, to, label] of [
+      ['a=>b', 2, 'a two-character punctuator straddling `to`'],
+      ['a/*b*/c', 5, 'a block comment whose `*/` straddles `to`'],
+      ['a?.b', 2, 'optional chaining straddling `to`'],
+      // The `//` line-comment path is deliberately absent: it bounds itself
+      // with its own `while (i < to)` loop, so no `to` can make it over-run
+      // and an assertion for it could not fail either way.
+    ]) {
+      const ends = [...tokenize(src, { from: 0, to })].map((t) => t.end)
+      check(
+        `tokenize honours \`to\` for ${label}`,
+        ends.every((e) => e <= to),
+        `ends=${JSON.stringify(ends)} to=${to}`,
+      )
+    }
+    // The other arm: over the FULL range the same inputs still lex as the
+    // multi-character forms they are. A tokenizer that simply never joined
+    // two characters would satisfy the bound above.
+    check(
+      'and over the full range those forms still lex as single tokens',
+      kinds('a=>b').join(' ') === 'ident:a punct:=> ident:b' &&
+        kinds('a?.b').join(' ') === 'ident:a punct:?. ident:b' &&
+        [...tokenize('a/*b*/c')].some((t) => t.kind === 'comment'),
+      `${kinds('a=>b').join(' ')} | ${kinds('a?.b').join(' ')}`,
     )
   }
 
