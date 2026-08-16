@@ -44,7 +44,6 @@
 //! `received_ops` accumulates, when to enter terminal states) are the
 //! protocol layer's concern, not this layer's.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -70,7 +69,9 @@ use agaric_core::error::AppError;
 use agaric_store::peer_refs::{self, PeerRef};
 
 use super::SharedEventSink;
-use super::discovery::{peers_for_change_round, process_discovery_event, resolve_peer_address};
+use super::discovery::{
+    DiscoveredPeers, peers_for_change_round, process_discovery_event, resolve_peer_address,
+};
 use super::server::{Rejection, handle_incoming_sync};
 use super::snapshot_transfer;
 
@@ -130,9 +131,19 @@ pub struct SyncDaemonContext {
 /// re-run the loop body immediately without waiting out the remaining
 /// tick interval. Event-driven branches (mDNS, debounced change) are
 /// NOT gated — they only fire when there is real work to do.
+///
+/// `discovered` is the loop's live view of peers seen on the network. It is
+/// a *parameter* rather than a local (#3533) because Branch A — a real
+/// `mdns_rx.recv()` — is its only writer, and Branch B's pairing-window round
+/// is a reader: with no way to seed the map, the one production call site of
+/// [`peers_for_change_round`] could not be reached from a test at all, so
+/// deleting it turned nothing red. Production always passes an empty map; the
+/// only caller that passes a non-empty one is `SyncDaemon::start_with_lifecycle_seeded`,
+/// which is gated behind the `test-util` feature.
 pub(crate) async fn daemon_loop(
     ctx: SyncDaemonContext,
     shutdown_notify: Arc<Notify>,
+    mut discovered: DiscoveredPeers,
 ) -> Result<(), AppError> {
     let SyncDaemonContext {
         pool,
@@ -362,8 +373,9 @@ pub(crate) async fn daemon_loop(
         });
     }
 
-    // 5. Maintain discovered peers (device_id → (DiscoveredPeer, last_seen))
-    let mut discovered: HashMap<String, (DiscoveredPeer, tokio::time::Instant)> = HashMap::new();
+    // 5. Discovered peers (device_id → (DiscoveredPeer, last_seen)) arrive as a
+    //    parameter; see this function's docs for why. Branch A still owns every
+    //    write to it.
 
     // 6. Periodic resync interval (replaces the former 500ms poll cadence)
     let mut resync_interval = tokio::time::interval(std::time::Duration::from_secs(30));
