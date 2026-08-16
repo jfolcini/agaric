@@ -8,6 +8,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { parse } from '@/editor/markdown-serializer'
 import type { BlockLevelNode } from '@/editor/types'
 import {
   computeIndentedBlocks,
@@ -17,6 +18,19 @@ import {
 } from '@/lib/block-tree-ops'
 import { logger } from '@/lib/logger'
 import type { FlatBlock } from '@/lib/tree-utils'
+
+// Wraps the real `parse` in a spy (delegating by default) so ONE test below
+// can force a content-less `{ type: 'doc' }` return — #3274 fixed the only
+// real-input paths that used to produce that shape (a lone table-separator
+// line, and the already-dead ordered/bullet-list empty-items guards), so it
+// is no longer reachable through any markdown string `planSplit` could be
+// given. The `?? []` fallback in `planSplit` is still type-required (`parse`
+// still types `content` as optional) and worth keeping defensive, so the spy
+// stands in for the input that can no longer produce it for real.
+vi.mock('@/editor/markdown-serializer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/editor/markdown-serializer')>()
+  return { ...actual, parse: vi.fn(actual.parse) }
+})
 
 describe('isNonEmptyBlock', () => {
   it('returns true for a non-paragraph block even without content', () => {
@@ -135,60 +149,42 @@ describe('planSplit', () => {
     }
   })
 
-  it('returns edit-only with empty content for input that parses to zero blocks', () => {
-    // "|---|" matches the table producer's `line.startsWith('|')` guard, but a
-    // lone separator row is dropped by buildTableRows — the parse yields zero
-    // blocks (not one), so `blocks.length === 1` must be false here: the
-    // `: ''` branch of the ternary must run rather than force-calling
-    // serializeSingleBlock(blocks[0]) on an out-of-bounds index.
+  it('returns edit-only for a lone table-separator line (#3274: no longer parses to zero blocks)', () => {
+    // "|---|" matches the table producer's `line.startsWith('|')` guard.
+    // Before #3274, a lone separator-shaped row was dropped by
+    // buildTableRows regardless of position, so the parse yielded zero
+    // blocks. The delimiter row is now recognized POSITIONALLY (only the row
+    // immediately after a header can be one) — with no row above it, "|---|"
+    // is the header itself, so `blocks.length === 1` and `planSplit` edits
+    // the block in place with the reparsed table's canonical markdown.
     const plan = planSplit('|---|')
-    expect(plan).toEqual({ kind: 'edit-only', content: '' })
+    expect(plan).toEqual({ kind: 'edit-only', content: '| \\--- |\n| --- |' })
   })
 
   it('does not synthesize a phantom block when parse() yields no content array', () => {
-    // "|---|" parses to zero blocks, so `parse()` returns `{ type: 'doc' }`
-    // with `content` genuinely `undefined` (see parser.ts) — the `?? []`
-    // fallback on line 52 must produce a real empty array. If it fell back to
-    // any non-empty array instead, `blocks.length === 1` would go true and
-    // route the fallback's first entry into `serializeSingleBlock` as though
-    // it were a real block, which — not being a well-formed BlockLevelNode —
-    // would hit the serializer's "unknown node type" path and log a warning.
+    // #3274 fixed the only real-input path that used to make `parse()`
+    // return `{ type: 'doc' }` with `content` genuinely `undefined` (a lone
+    // table-separator line) — the ordered/bullet-list `items.length === 0`
+    // guards were already unreachable (the outer regex that gates entry into
+    // each production always matches on the FIRST collected item too). No
+    // markdown string can drive `planSplit`'s `doc.content ?? []` fallback on
+    // line 52 through its `undefined` branch anymore, so this test stubs
+    // `parse()` directly to keep that defensive fallback demonstrably covered
+    // (the `content` field is still typed optional) rather than asserting
+    // an inert precondition.
     //
-    // Why the spy is load-bearing, not decoration: the `ArrayDeclaration`
-    // mutant on `?? []` (Stryker's `?? ["Stryker was here"]`) makes
-    // `blocks = ["Stryker was here"]`, so `blocks.length === 1` is true and
-    // `serializeSingleBlock(blocks[0])` runs on that placeholder string. That
-    // placeholder has no `type`, so `serializeBlockNode` falls into its
-    // unknown-node branch, which returns `''` — the SAME `content` the
-    // correct code produces from zero blocks. `content === markdown` is
-    // false either way, so both the real and mutated code return
-    // `{ kind: 'edit-only', content: '' }`: the test above this one (plain
-    // `toEqual`, no spy) passes under the mutant too and does NOT kill it.
-    // Only the `logger.warn` observation below distinguishes them: the
-    // correct code never calls `serializeBlockNode` at all (zero blocks), so
-    // `warn` stays uncalled; the mutant funnels the placeholder through the
-    // unknown-node path, which calls `onUnknownNode` → `logger.warn`.
-    //
-    // What this pins is user-visible behaviour, not plumbing: an unknown node
-    // reaching the serializer raises a toast via `notifyUnknownNodeTypeToast`
-    // (`src/editor/markdown-serialize-toast.ts`), so the invariant is "splitting
-    // an empty parse must not raise a spurious unknown-node toast at the user".
-    // `logger.warn` is only the observation point — that path's toast is fired
-    // from the same call.
-    //
-    // That distinction is why this test survives the bar that removed a test
-    // for `graph-neighborhood:79` in this same batch: that one was observable
-    // ONLY by naming a fixture after Stryker's placeholder string, so it pinned
-    // the mutation tool. This one pins a real effect a user would see.
-    //
-    // The coupling is still real and worth stating: this is a NEGATIVE
-    // assertion on one sink, so if that call site moves to a different level or
-    // sink, the test goes vacuously green rather than red. A serializer-level
-    // `onUnknownNode` injection point would remove that failure mode; until one
-    // exists, re-derive the spy target from that file if it changes.
+    // If the `?? []` fallback fell back to a non-empty placeholder array
+    // instead, `blocks.length === 1` would go true and route the
+    // placeholder's first entry into `serializeSingleBlock` as though it
+    // were a real block, which — not being a well-formed BlockLevelNode —
+    // would hit the serializer's "unknown node type" path and log a warning
+    // (and raise a toast via `notifyUnknownNodeTypeToast`). The correct code
+    // never calls `serializeSingleBlock` at all for zero blocks, so `warn`
+    // stays uncalled; that is the observable difference this test pins.
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    vi.mocked(parse).mockReturnValueOnce({ type: 'doc' })
     try {
-      const plan = planSplit('|---|')
+      const plan = planSplit('irrelevant — parse() is stubbed for this test')
       expect(plan).toEqual({ kind: 'edit-only', content: '' })
       expect(warn).not.toHaveBeenCalled()
     } finally {

@@ -157,11 +157,48 @@ describe('parseTable', () => {
     expect(parseTable(['plain'], 0, 0)).toBeNull()
   })
 
-  it('produces zero blocks when every table line is a separator', () => {
+  it('treats a lone separator-shaped line as a header row, not an empty table (#3274)', () => {
+    // A single `|`-run line has no row above it to BE a separator FOR (GFM's
+    // delimiter row is positional: only the row right after the header can
+    // ever be one) — so it is the header itself, not swallowed to nothing.
+    // This is what keeps a pasted table's separator line, which lands in its
+    // own block (one block per line), from rendering permanently blank.
     const lines = ['|---|---|']
     const result = parseTable(lines, 0, 0)
-    expect(result?.blocks).toHaveLength(0)
+    expect(result?.blocks).toHaveLength(1)
+    const table = result?.blocks[0]
+    const rows = table?.type === 'table' ? table.content : undefined
+    expect(rows).toHaveLength(1)
     expect(result?.consumed).toBe(1)
+  })
+
+  it('keeps a DATA row made entirely of dashes/colons — the separator heuristic is positional (#3274)', () => {
+    const lines = ['| Name | Value |', '| --- | --- |', '| - | - |']
+    const result = parseTable(lines, 0, 0)
+    expect(result?.blocks).toHaveLength(1)
+    const table = result?.blocks[0]
+    const rows = table?.type === 'table' ? table.content : undefined
+    // Header row + the dash-only data row (previously swallowed as if it were
+    // a second separator).
+    expect(rows).toHaveLength(2)
+    expect(result?.consumed).toBe(3)
+  })
+
+  it('keeps a first DATA row of empty cells — the separator check requires a dash/colon too (#3274)', () => {
+    const lines = ['| h |', '|  |', '| x |']
+    const result = parseTable(lines, 0, 0)
+    expect(result?.blocks).toHaveLength(1)
+    const table = result?.blocks[0]
+    const rows = table?.type === 'table' ? table.content : undefined
+    // Header row + the empty-cell data row + the trailing data row (the
+    // empty-cell row has no `-`/`:` in it, so it cannot be the separator).
+    expect(rows).toHaveLength(3)
+    const secondRow = rows?.[1]
+    const secondRowContent = secondRow?.content
+    if (!secondRowContent) throw new Error('secondRow.content was not present')
+    expect(secondRowContent).toHaveLength(1)
+    expect(secondRowContent[0]?.content).toEqual([])
+    expect(result?.consumed).toBe(3)
   })
 })
 

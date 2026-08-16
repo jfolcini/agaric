@@ -34,6 +34,16 @@ import type { FlatBlock, Projection } from '@/lib/tree-utils'
 import { SENTINEL_ID } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
 
+/** True iff two id→ordinal maps have identical entries (mirrors useListStyles.ts's `mapsEqual`). */
+function ordinalsEqual(a: Map<string, number>, b: Map<string, number>): boolean {
+  if (a === b) return true
+  if (a.size !== b.size) return false
+  for (const [id, ordinal] of a) {
+    if (b.get(id) !== ordinal) return false
+  }
+  return true
+}
+
 export interface BlockListRendererProps {
   /** Blocks visible during drag (descendants of active item excluded). */
   visibleItems: readonly FlatBlock[]
@@ -127,11 +137,36 @@ export function BlockListRenderer({
   // decoration read their own block's marker by id — no prop-drilling through
   // the memoized row-wrapper chain. Ordinals are display-only, never stored.
   const listStyles = useListStyles(visibleItems)
-  const listMarkerValue = useMemo<ListMarkerValue>(() => {
+  const ordinals = useMemo(() => {
     const styleOf = (id: string): ListStyle => listStyles.get(id) ?? 'none'
-    const ordinals = computeListOrdinals(visibleItems, styleOf)
-    return { styleOf, ordinalOf: (id) => ordinals.get(id) }
+    return computeListOrdinals(visibleItems, styleOf)
   }, [visibleItems, listStyles])
+
+  // #3277 — keep the published context value referentially stable across a
+  // plain content edit. `visibleItems` gets a new array identity on EVERY
+  // committed edit (the store reallocates `state.blocks` via `.slice()`), but
+  // a content edit cannot change any block's list marker. Re-publishing a new
+  // `listMarkerValue` object on every such edit forced every mounted row's
+  // `useListMarker` consumer to re-render (Context propagation bypasses
+  // ancestor `React.memo`s), even though `listStyles` and `ordinals` were
+  // unchanged in CONTENT. Compare `ordinals` by content (mirroring the
+  // `mapsEqual` pattern in useListStyles.ts) and only mint a new value object
+  // — and thus a new context identity — when a marker actually changed.
+  const prevMarkerRef = useRef<{
+    listStyles: Map<string, ListStyle>
+    ordinals: Map<string, number>
+    value: ListMarkerValue
+  } | null>(null)
+  const listMarkerValue = useMemo<ListMarkerValue>(() => {
+    const prev = prevMarkerRef.current
+    if (prev && prev.listStyles === listStyles && ordinalsEqual(prev.ordinals, ordinals)) {
+      return prev.value
+    }
+    const styleOf = (id: string): ListStyle => listStyles.get(id) ?? 'none'
+    const value: ListMarkerValue = { styleOf, ordinalOf: (id) => ordinals.get(id) }
+    prevMarkerRef.current = { listStyles, ordinals, value }
+    return value
+  }, [listStyles, ordinals])
 
   // #1267 — publish the per-move DnD state to a ref-backed external store with
   // per-id subscription instead of threading `projected`/`overId`/`dropAfter`

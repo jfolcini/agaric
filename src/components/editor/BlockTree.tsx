@@ -181,6 +181,7 @@ export function BlockTree({
     collapsedIds,
     toggleCollapse,
     expandBlock,
+    expandAncestors,
     visibleBlocks: collapseFilteredVisible,
     hasChildrenSet,
   } = useBlockCollapse(blocks, {
@@ -227,7 +228,36 @@ export function BlockTree({
     mounted: mountedVisible,
     hiddenCount: hiddenMountCount,
     expandMountLimit,
+    revealIndex,
   } = useBlockMountLimit(uncappedZoomedVisible, { pageKey: mountScopeKey })
+
+  // ── #3276: reveal a navigation target hidden by collapse or the mount cap ──
+  // PageEditor sets `focusedBlockId` on a link/search-result jump; if the
+  // target sits under a collapsed ancestor or past the mount cap, its row is
+  // never mounted and the intent silently drops (no scroll, no highlight —
+  // indistinguishable from a broken link). Expand any collapsed ancestor
+  // chain first, then raise the mount cap to the target's position in the
+  // (now collapse-corrected) visible list. Converges over a couple of
+  // renders as `collapsedIds`/`mountScope` state updates cascade; a no-op
+  // once the block is actually mounted, doesn't belong to this page, or
+  // falls outside the current zoom pane (crossing a zoom boundary is a
+  // separate, not-yet-addressed case — same scope note as
+  // `mountCapExcludedIds` above).
+  useEffect(() => {
+    if (!focusedBlockId) return
+    if (!blocksById.has(focusedBlockId)) return
+    if (mountedVisible.some((b) => b.id === focusedBlockId)) return
+    expandAncestors(focusedBlockId)
+    const idx = uncappedZoomedVisible.findIndex((b) => b.id === focusedBlockId)
+    if (idx >= 0) revealIndex(idx)
+  }, [
+    focusedBlockId,
+    blocksById,
+    mountedVisible,
+    uncappedZoomedVisible,
+    expandAncestors,
+    revealIndex,
+  ])
 
   // ── Mount-cap exclusion set for the metadata window (#2580) ─────────────
   // `useViewportWindow` (below) conservatively treats any never-measured
@@ -247,15 +277,27 @@ export function BlockTree({
   // before the cap has expanded to reach it): mirrors SortableBlockWrapper's
   // "focused block is never virtualized" rule, so a focused row's metadata
   // is never starved by this exclusion.
+  // #3277 — `focusedBlockId` deliberately does NOT appear in this memo's
+  // deps. It used to (to carve the focused row back out of the excluded
+  // set inline, below), which meant EVERY focus move rebuilt this Set by
+  // rescanning the full `uncappedZoomedVisible` list (page-sized, not
+  // window-sized) — and, because the resulting Set gets a fresh identity,
+  // cascaded an equally page-sized recompute through `useViewportWindow`'s
+  // filter and `useBlockLinkResolve`'s `contentSignature` join. The carve-
+  // out itself is still applied, just downstream on the already
+  // viewport-bounded `windowedBlocks` result (see `windowedBlocksWithFocus`
+  // below) — cheap regardless of page size, and a true no-op in the
+  // overwhelming common case where the focused row is mounted (and thus
+  // was never excluded here to begin with).
   const mountCapExcludedIds = useMemo(() => {
     if (hiddenMountCount === 0) return null
     const mountedIds = new Set(mountedVisible.map((b) => b.id))
     const excluded = new Set<string>()
     for (const b of uncappedZoomedVisible) {
-      if (!mountedIds.has(b.id) && b.id !== focusedBlockId) excluded.add(b.id)
+      if (!mountedIds.has(b.id)) excluded.add(b.id)
     }
     return excluded.size > 0 ? excluded : null
-  }, [uncappedZoomedVisible, mountedVisible, hiddenMountCount, focusedBlockId])
+  }, [uncappedZoomedVisible, mountedVisible, hiddenMountCount])
 
   // ── Capped active projection ────────────────────────────────────────────
   // Keep one name for the capped active projection consumed by DnD,
@@ -410,6 +452,27 @@ export function BlockTree({
   // window forever (never measured ⇒ never flips off-screen).
   const windowedBlocks = useViewportWindow(viewport, blocks, mountCapExcludedIds)
 
+  // #3277/#2580 — re-apply the focused-row carve-out that `mountCapExcludedIds`
+  // no longer encodes (see its definition above): if the focused block was
+  // dropped by the mount cap and is consequently missing from `windowedBlocks`,
+  // add it back so its metadata still resolves — mirrors
+  // SortableBlockWrapper's "focused block is never virtualized" rule. Bounded
+  // by `windowedBlocks.length` (viewport-window-sized), not page size, and
+  // returns the SAME array reference (no-op) whenever no correction is
+  // needed — i.e. every focus move except the rare one landing on a row the
+  // mount cap hasn't caught up to yet.
+  const windowedBlocksWithFocus = useMemo(() => {
+    if (
+      focusedBlockId == null ||
+      !mountCapExcludedIds?.has(focusedBlockId) ||
+      windowedBlocks.some((b) => b.id === focusedBlockId)
+    ) {
+      return windowedBlocks
+    }
+    const focusedBlock = uncappedZoomedVisible.find((b) => b.id === focusedBlockId)
+    return focusedBlock ? [...windowedBlocks, focusedBlock] : windowedBlocks
+  }, [windowedBlocks, focusedBlockId, mountCapExcludedIds, uncappedZoomedVisible])
+
   // ── Date picker hook ───────────────────────────────────────────────
   const {
     datePickerOpen,
@@ -503,7 +566,7 @@ export function BlockTree({
   // And rationale. #1268 — scoped to the viewport window so a
   // single edit on a large page no longer re-scans + re-resolves the whole
   // page; a row scrolled into view enters `windowedBlocks` and resolves then.
-  useBlockLinkResolve(windowedBlocks)
+  useBlockLinkResolve(windowedBlocksWithFocus)
 
   // #2288 — the per-block "extra" properties for the row UI are now derived
   // from the single page-wide `BatchPropertiesProvider` batch (mounted below),
@@ -1052,7 +1115,10 @@ export function BlockTree({
   // than the whole page; a row scrolled into view enters the window and its
   // attachment counts/list resolve then, instead of fetching for all N rows
   // up front on a large page.
-  const windowedBlockIds = useMemo(() => windowedBlocks.map((b) => b.id), [windowedBlocks])
+  const windowedBlockIds = useMemo(
+    () => windowedBlocksWithFocus.map((b) => b.id),
+    [windowedBlocksWithFocus],
+  )
 
   // ── Batch block properties (#2270) ──────────────────────────────────
   // Single `getBatchProperties` IPC published to every StaticBlock descendant

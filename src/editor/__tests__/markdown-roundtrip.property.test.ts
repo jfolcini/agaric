@@ -373,7 +373,8 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
 
 /** Shapes that normalize (string changes once) before becoming stable. */
 const CONVERGENCE_SEEDS: readonly DocNode[] = [
-  // adjacent sibling tables: the absorbed table's separator row drops once
+  // adjacent sibling tables: the absorbed table's header becomes a data row
+  // and its separator becomes a literal (escaped) `---` data row (#3274)
   doc(
     table(tableRow(tableHeader(paragraph(text('a'))))),
     table(tableRow(tableHeader(paragraph(text('b'))))),
@@ -405,7 +406,7 @@ describe('property: serialize→parse→serialize is a strict fixpoint', () => {
 
 describe('property: one parse pass reaches the canonical fixed point', () => {
   // Docs WITH greedy same-type adjacency are allowed here: the sibling merge
-  // may rewrite the string once (table separator drop, ordered renumbering),
+  // may rewrite the string once (absorbed table row escaping, ordered renumbering),
   // after which serialize∘parse must be byte-stable forever.
   it('serialize(parse(·)) converges after at most one normalization pass', () => {
     fc.assert(

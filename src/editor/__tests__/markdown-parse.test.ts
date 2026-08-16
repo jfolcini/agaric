@@ -25,6 +25,9 @@ import {
   listItem,
   orderedList,
   paragraph,
+  table,
+  tableHeader,
+  tableRow,
   task,
   text,
 } from '@/editor/__tests__/builders'
@@ -390,6 +393,26 @@ describe('parse — disallowed link scheme normalization (#2209)', () => {
   it('keeps an allowed https: link mark intact', () => {
     expect(parse('[ok](https://example.com)')).toEqual(
       doc(paragraph(text('ok', [{ type: 'link', attrs: { href: 'https://example.com' } }]))),
+    )
+  })
+})
+
+// -- #3274: a pasted table's separator line must not render as a blank block --
+// pasteBlocks/parseIndentedMarkdown splits pasted markdown one block per LINE,
+// so a pasted GFM table's `| --- | --- |` line lands in its OWN block and is
+// parsed in isolation via this top-level `parse()`. It used to come back as a
+// content-less doc (`{ type: 'doc' }`, no `content` key) — StaticBlock then had
+// nothing to render and the block stayed permanently blank even though the
+// source markdown was intact in storage.
+describe('parse — a lone table-separator line pasted as its own block (#3274)', () => {
+  it('is not blank: it parses as a one-row table (the delimiter row has no header above it to belong to)', () => {
+    const result = parse('| --- | --- |')
+    expect(result.content).toBeDefined()
+    expect(result.content?.length).toBeGreaterThan(0)
+    expect(result).toEqual(
+      doc(
+        table(tableRow(tableHeader(paragraph(text('---'))), tableHeader(paragraph(text('---'))))),
+      ),
     )
   })
 })

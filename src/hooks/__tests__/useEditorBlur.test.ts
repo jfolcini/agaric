@@ -32,14 +32,23 @@ import { deleteDraft, getPropertyDef, saveDraft, setProperty } from '@/lib/tauri
 // The same spies back both the (still-wrapped) `@/lib/tauri` surface and the
 // `commands.*` surface so the `vi.mocked(...)` assertions keep working, and
 // they resolve the `{ status: 'ok', data }` shape.
-const { mockSaveDraft, mockFlushDraft, mockDeleteDraft, mockGetPropertyDef, mockSetProperty } =
-  vi.hoisted(() => ({
-    mockSaveDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
-    mockFlushDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
-    mockDeleteDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
-    mockGetPropertyDef: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
-    mockSetProperty: vi.fn(() => Promise.resolve({ status: 'ok', data: { op_refs: [] } })),
-  }))
+const {
+  mockSaveDraft,
+  mockFlushDraft,
+  mockDeleteDraft,
+  mockGetPropertyDef,
+  mockSetProperty,
+  mockSetTodoState,
+} = vi.hoisted(() => ({
+  mockSaveDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+  mockFlushDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+  mockDeleteDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+  mockGetPropertyDef: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+  mockSetProperty: vi.fn(() => Promise.resolve({ status: 'ok', data: { op_refs: [] } })),
+  // #3278 — the checkbox-fold-on-blur tests drive the real `commitCheckboxState`,
+  // which calls `commands.setTodoState`.
+  mockSetTodoState: vi.fn(() => Promise.resolve({ status: 'ok', data: { todo_state: 'TODO' } })),
+}))
 
 vi.mock('@/lib/tauri', () => ({
   saveDraft: mockSaveDraft,
@@ -60,6 +69,7 @@ vi.mock('@/lib/bindings', async () => {
       deleteDraft: mockDeleteDraft,
       getPropertyDef: mockGetPropertyDef,
       setProperty: mockSetProperty,
+      setTodoState: mockSetTodoState,
     },
   }
 })
@@ -1568,6 +1578,120 @@ describe('useEditorBlur', () => {
       ]
       expect(failedContent).toBe('context:: home')
       await expect(outcome).resolves.toBe(false)
+    })
+  })
+
+  // -- #3278: a leading checkbox marker folds into todo_state on blur -----
+  //
+  // Before the unmount/blur-flush consolidation, ONLY `useBlockFlush`
+  // (imperative flush — Enter, DnD, keyboard boundary nav) folded a leading
+  // GFM task marker (`- [ ] `) into `todo_state`. `useEditorBlur` Step 5 saved
+  // the marker verbatim instead: the SAME pasted-task-marker content could
+  // become a TODO via Enter and a literal `- [ ] …` string via a mouse-click
+  // blur. These tests pin that DOM blur now folds the marker exactly like the
+  // imperative flush does (`runUnmountFlush`, shared with `persistUnmount`).
+
+  describe('#3278 — checkbox marker folds through the blur path', () => {
+    const flushMicrotasks = async () => {
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    }
+
+    /** Minimal StoreApi-shaped fake — only `getState`/`setState` are used by
+     *  `commitCheckboxState`'s optimistic `todo_state` write. */
+    function makePageStore(blocks: Array<{ id: string; todo_state: string | null }>) {
+      let state = { blocks }
+      return {
+        getState: () => state,
+        setState: (updater: (s: typeof state) => Partial<typeof state>) => {
+          state = { ...state, ...updater(state) }
+        },
+      } as unknown as Parameters<typeof useEditorBlur>[0]['pageStore']
+    }
+
+    beforeEach(() => {
+      mockSetTodoState.mockResolvedValue({ status: 'ok', data: { todo_state: 'TODO' } })
+    })
+
+    it('SUCCESS: strips the marker, sets todo_state, and gates the draft discard on it', async () => {
+      const mockEdit = vi.fn(() => Promise.resolve(true))
+      const mockDiscardDraft = vi.fn()
+      const pageStore = makePageStore([{ id: 'B1', todo_state: null }])
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: vi.fn<() => string | null>(() => '- [ ] task'),
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: mockDiscardDraft,
+          pageStore,
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+      await flushMicrotasks()
+
+      expect(mockSetTodoState).toHaveBeenCalledExactlyOnceWith('B1', 'TODO')
+      // The marker is stripped: edit() persists the cleaned content, NOT the
+      // raw `- [ ] task` string a plain (unfolded) blur would have saved.
+      expect(mockEdit).toHaveBeenCalledExactlyOnceWith('B1', 'task')
+      expect(pageStore?.getState().blocks[0]?.todo_state).toBe('TODO')
+      // The draft discard is gated on the checkbox commit's own outcome —
+      // not skipped just because this branch didn't exist before #3278.
+      expect(mockDiscardDraft).toHaveBeenCalledTimes(1)
+      const [outcome, failedContent] = mockDiscardDraft.mock.calls[0] as [
+        Promise<boolean> | undefined,
+        string | undefined,
+      ]
+      expect(failedContent).toBe('- [ ] task')
+      await expect(outcome).resolves.toBe(true)
+    })
+
+    it('FAILURE: keeps the marker literal and writes no optimistic todo_state', async () => {
+      mockSetTodoState.mockRejectedValueOnce(new Error('IPC down'))
+      const mockEdit = vi.fn(() => Promise.resolve(true))
+      const mockDiscardDraft = vi.fn()
+      const pageStore = makePageStore([{ id: 'B1', todo_state: null }])
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: vi.fn<() => string | null>(() => '- [ ] task'),
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: mockDiscardDraft,
+          pageStore,
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+      await flushMicrotasks()
+
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to set task state')
+      // The marker survives: the raw content is persisted so the box stays
+      // re-parseable, NOT the (never-computed) cleaned 'task'.
+      expect(mockEdit).toHaveBeenCalledExactlyOnceWith('B1', '- [ ] task')
+      expect(pageStore?.getState().blocks[0]?.todo_state).toBeNull()
     })
   })
 })

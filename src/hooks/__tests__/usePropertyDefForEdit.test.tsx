@@ -179,6 +179,103 @@ describe('usePropertyDefForEdit', () => {
     expect(message).toBe('property def resolution failed')
   })
 
+  // #3275 (review finding 1) — `valueType` used to be written ONLY inside the
+  // `getPropertyDef().then()`, so switching `editingProp` to a new key left the
+  // PREVIOUS key's type exposed until the new lookup landed. A commit in that
+  // window ran `Number(<date string>)` and wrote garbage into `value_num`.
+  // The type must be scoped to the key it was resolved for: any other key —
+  // including one whose lookup is still in flight — reads back as `null`
+  // ("not resolved yet"), which the commit path refuses to write against.
+  describe('#3275 — valueType is never stale across a key switch', () => {
+    const defFor = (key: string, valueType: string) => ({
+      key,
+      value_type: valueType,
+      options: null,
+      created_at: '2025-01-01T00:00:00Z',
+    })
+
+    it('reports valueType null while the NEW key’s definition is still in flight', async () => {
+      mockGetPropertyDef.mockResolvedValueOnce(defFor('estimate', 'number'))
+      let resolveDeadline!: (def: unknown) => void
+      const deadlinePending = new Promise((resolve) => {
+        resolveDeadline = resolve
+      })
+      mockGetPropertyDef.mockReturnValueOnce(deadlinePending)
+
+      const { result, rerender } = renderHook(
+        ({ prop }: { prop: { key: string; value: string } | null }) => usePropertyDefForEdit(prop),
+        {
+          initialProps: {
+            prop: { key: 'estimate', value: '5' } as { key: string; value: string } | null,
+          },
+        },
+      )
+
+      await waitFor(() => {
+        expect(result.current.valueType).toBe('number')
+      })
+
+      // User closes the number chip and opens a DIFFERENT (date) property.
+      // `getPropertyDef('deadline')` has not resolved yet.
+      rerender({ prop: { key: 'deadline', value: '2026-09-15' } })
+
+      // The previous key's 'number' must NOT still be visible here — that is
+      // the window in which a commit corrupted `value_num`.
+      expect(result.current.valueType).not.toBe('number')
+      expect(result.current.valueType).toBeNull()
+
+      await act(async () => {
+        // Raw def — the `@/lib/bindings` mock above wraps it in the
+        // `{ status: 'ok', data }` envelope `unwrap` expects.
+        resolveDeadline(defFor('deadline', 'date'))
+        await deadlinePending
+      })
+
+      await waitFor(() => {
+        expect(result.current.valueType).toBe('date')
+      })
+    })
+
+    it('reports valueType null while the FIRST definition is still in flight', () => {
+      mockGetPropertyDef.mockReturnValueOnce(new Promise(() => {}))
+      const { result } = renderHook(() => usePropertyDefForEdit({ key: 'estimate', value: '5' }))
+      expect(result.current.valueType).toBeNull()
+    })
+
+    it('falls back to text (not null) once a lookup MISSES, so unknown keys stay committable', async () => {
+      mockGetPropertyDef.mockResolvedValue(null)
+      const { result } = renderHook(() => usePropertyDefForEdit({ key: 'freeform', value: 'hi' }))
+      await waitFor(() => {
+        expect(result.current.valueType).toBe('text')
+      })
+    })
+
+    it('falls back to text when the lookup REJECTS', async () => {
+      mockGetPropertyDef.mockRejectedValueOnce(new Error('network timeout'))
+      const { result } = renderHook(() => usePropertyDefForEdit({ key: 'status', value: 'open' }))
+      await waitFor(() => {
+        expect(result.current.valueType).toBe('text')
+      })
+    })
+
+    it('resets valueType to null when editingProp goes back to null', async () => {
+      mockGetPropertyDef.mockResolvedValue(defFor('estimate', 'number'))
+      const { result, rerender } = renderHook(
+        ({ prop }: { prop: { key: string; value: string } | null }) => usePropertyDefForEdit(prop),
+        {
+          initialProps: {
+            prop: { key: 'estimate', value: '5' } as { key: string; value: string } | null,
+          },
+        },
+      )
+      await waitFor(() => {
+        expect(result.current.valueType).toBe('number')
+      })
+      rerender({ prop: null })
+      expect(result.current.valueType).toBeNull()
+    })
+  })
+
   it('resets state when editingProp transitions back to null', async () => {
     mockGetPropertyDef.mockResolvedValue({
       key: 'severity',

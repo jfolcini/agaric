@@ -78,17 +78,107 @@ function PageEditorInner({
 
   // useLayoutEffect fires synchronously after DOM commit but before paint,
   // eliminating the visible scroll jump that occurred with useEffect + rAF (B-76).
+  //
+  // #3276 — the target row can be hidden under a collapsed ancestor or sit
+  // past BlockTree's mount cap, so it may not exist in the DOM on the first
+  // commit even though `target` (the store row) is truthy. BlockTree reveals
+  // such a target asynchronously (expanding collapsed ancestors / raising the
+  // mount cap), so `clearSelection()` used to fire unconditionally here and
+  // burn the one-shot navigation intent before the reveal could land — no
+  // scroll, no highlight, no message, indistinguishable from a broken link.
+  // Poll across a bounded number of animation frames for the reveal to
+  // commit; only clear the intent once the element is actually found, and
+  // surface a visible notice (rather than silently giving up) if it never
+  // does.
   useLayoutEffect(() => {
     if (!selectedBlockId || blocks.length === 0) return
-    // Focus the target block if it exists in this page's block tree
     const target = blocksById.get(selectedBlockId)
-    if (target) {
-      setFocused(selectedBlockId)
-      const el = document.querySelector(`[data-block-id="${selectedBlockId}"]`)
-      if (el) scrollElementIntoView(el, { behavior: 'smooth', block: 'center' })
+    if (!target) return
+    setFocused(selectedBlockId)
+
+    // Fast path (unchanged from before #3276): the row is already mounted,
+    // so scroll/clear synchronously before paint — no rAF round-trip, no
+    // B-76 flash.
+    const immediateEl = document.querySelector(`[data-block-id="${selectedBlockId}"]`)
+    if (immediateEl) {
+      scrollElementIntoView(immediateEl, { behavior: 'smooth', block: 'center' })
       clearSelection()
+      return
     }
-  }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection])
+
+    // Slow path — the row isn't mounted yet (collapsed ancestor / past the
+    // mount cap). BlockTree reveals it asynchronously; poll across animation
+    // frames instead of giving up on this one commit.
+    let cancelled = false
+
+    // #3881 — bounding this poll by a fixed FRAME COUNT (the previous
+    // `MAX_REVEAL_ATTEMPTS = 40`, an invented number with no derivation, no
+    // comment, and no link to a measured or existing budget) false-negatives
+    // on a slow machine or a large page: BlockTree's reveal effect
+    // (BlockTree.tsx, "#3276: reveal a navigation target…") jumps the mount
+    // cap straight to the target's index via `revealIndex`, which can mean
+    // mounting hundreds of rows in one commit — legitimately slower than 40
+    // frames (~667ms @ 60fps) on a loaded machine or a page near
+    // PAGE_SUBTREE_MAX_BLOCKS. A block that exists and WOULD have mounted
+    // then gets `error.blockNotFound` instead — a false negative shown as
+    // user-facing error text, which is worse than the silent no-op #3276
+    // fixed.
+    //
+    // Bound STALL instead of TIME. BlockTree's own comment documents that
+    // its reveal effect "converges over a couple of renders" — each
+    // cascading `expandAncestors`/`revealIndex` state update mounts at
+    // least one more `[data-block-id]` row. So keep polling as long as the
+    // number of mounted block rows in the document keeps growing (real work
+    // is happening); only give up once it stops growing for STALL_LIMIT
+    // consecutive frames — i.e. the mechanism has genuinely stalled (e.g.
+    // the target sits outside the active zoom pane, a known
+    // not-yet-addressed case per BlockTree.tsx), not merely running slow.
+    // STALL_LIMIT is a small multiple of BlockTree's documented "couple of
+    // renders" convergence window, not a retuned timing guess — and because
+    // it only measures ABSENCE of progress (not elapsed time), a reveal
+    // that is still progressing cannot trip it, however long it takes.
+    //
+    // Counts `[data-block-id]` rows document-wide (the same scope as the
+    // lookup below) rather than scoping to this page's own container, so
+    // unrelated DOM churn elsewhere can in principle also reset the stall
+    // counter — that only delays giving up, it can never cause a false
+    // `notify.error()`, so it's an acceptable tradeoff for not depending on
+    // BlockTree's internals from here.
+    const STALL_LIMIT = 6
+    let lastMountedCount = document.querySelectorAll('[data-block-id]').length
+    let stallFrames = 0
+
+    const tryReveal = (): void => {
+      if (cancelled) return
+      const el = document.querySelector(`[data-block-id="${selectedBlockId}"]`)
+      if (el) {
+        scrollElementIntoView(el, { behavior: 'smooth', block: 'center' })
+        clearSelection()
+        return
+      }
+      const mountedCount = document.querySelectorAll('[data-block-id]').length
+      if (mountedCount > lastMountedCount) {
+        lastMountedCount = mountedCount
+        stallFrames = 0
+      } else {
+        stallFrames += 1
+      }
+      if (stallFrames >= STALL_LIMIT) {
+        // The reveal has genuinely stalled (or the block can't be shown,
+        // e.g. it's outside the active zoom pane) — tell the user instead of
+        // silently dropping the navigation intent.
+        notify.error(t('error.blockNotFound'))
+        clearSelection()
+        return
+      }
+      requestAnimationFrame(tryReveal)
+    }
+    requestAnimationFrame(tryReveal)
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection, t])
 
   // Clear undo state for the previous page when navigating away or unmounting
   useEffect(

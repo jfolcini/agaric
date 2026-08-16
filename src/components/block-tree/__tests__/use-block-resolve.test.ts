@@ -13,7 +13,7 @@
  */
 
 import { act, renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #2927 phase 8 — the hook now calls generated `commands.*` directly, so
 // mocking only the `@/lib/tauri` wrapper no longer intercepts anything. Mock
@@ -548,6 +548,119 @@ describe('onCreateTag', () => {
       { kind: 'global' },
       null,
     )
+  })
+})
+
+// ── onCreateTag — tagsListRef cache staleness (#3277 finding 1) ──────────
+//
+// `searchTags` lazily fills `tagsListRef` once and filters every subsequent
+// keystroke client-side (#3277). `onCreatePage` appends the newly-created
+// page to the mirror-image `pagesListRef` so it is immediately findable
+// through the SAME picker session — `onCreateTag` must do the same for
+// `tagsListRef`, or a tag created via the `@`-picker's "Create new tag"
+// option stays invisible to that same picker (no new IPC is issued once the
+// cache is filled, so nothing ever notices the tag exists) until a space
+// switch clears the cache.
+
+describe('onCreateTag — tagsListRef cache staleness (#3277 finding 1)', () => {
+  function tagRow(id: string, name: string) {
+    return { tag_id: id, name, usage_count: 1, updated_at: '2024-01-01' }
+  }
+
+  function tagBlock(id: string, content: string) {
+    return {
+      id,
+      block_type: 'tag',
+      content,
+      parent_id: null,
+      position: null,
+      deleted_at: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+      page_id: null,
+      op_refs: [],
+    }
+  }
+
+  it('appends the new tag to tagsListRef so it is findable via searchTags without a new IPC call', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([tagRow('T1', 'existing')])
+    mockedCreateBlock.mockResolvedValueOnce(tagBlock('NEW_TAG', 'brandnew'))
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Prime the cache with one searchTags call.
+    await act(async () => {
+      await result.current.searchTags('existing')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+
+    // Create a brand new tag through the picker's create-new-tag flow.
+    await act(async () => {
+      await result.current.onCreateTag('brandnew')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('brandnew')
+    })
+
+    // Still exactly ONE IPC call — served entirely from the (now-updated)
+    // client-side cache — and the new tag IS present in the results.
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+    const ids = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(ids).toContain('NEW_TAG')
+  })
+
+  it('leaves the cache stale-but-recoverable: a space switch clears the stale entries', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([tagRow('T1', 'existing')])
+    mockedCreateBlock.mockResolvedValueOnce(tagBlock('NEW_TAG_2', 'freshtag'))
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('existing')
+    })
+    await act(async () => {
+      await result.current.onCreateTag('freshtag')
+    })
+
+    // Switching spaces invalidates the cache exactly like pagesListRef
+    // (#732) — the failure mode is a stale cache that self-heals on the
+    // next space switch or process restart, never a permanently poisoned
+    // one.
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+
+    mockedListAllTagsInSpace.mockResolvedValueOnce([tagRow('TB', 'other-space-tag')])
+    await act(async () => {
+      await result.current.searchTags('other')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+  })
+
+  it('does NOT poison the cache on an empty first fill — real tags surface once they exist', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('anything')
+    })
+    expect(items.filter((i) => !i.isCreate)).toEqual([])
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+
+    // A later query, now that a real tag exists, must not be starved by an
+    // empty cache latched from the first fill.
+    mockedListAllTagsInSpace.mockResolvedValueOnce([tagRow('T9', 'realtag')])
+    await act(async () => {
+      items = await result.current.searchTags('real')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('T9')
   })
 })
 
@@ -1622,6 +1735,118 @@ describe('pagesListRef — space-switch invalidation (#732)', () => {
     })
 
     expect(result.current.pagesListRef.current).toEqual([{ id: 'P1', title: 'Kept' }])
+  })
+})
+
+// ── searchTags caching (#3277 finding 2) ────────────────────────────────
+//
+// `searchTags` used to call `listAllTagsInSpace` on EVERY keystroke with no
+// client-side cache, unlike the sibling `searchPages` path (which fills
+// `pagesListRef` once and filters subsequent keystrokes client-side via
+// `matchSorter`). The fix mirrors that pattern with a `tagsListRef`: the
+// first call fills the cache (and seeds the resolve store once), subsequent
+// calls filter the cached list client-side without another IPC round trip.
+
+describe('searchTags — client-side cache (#3277)', () => {
+  function tagRow(id: string, name: string) {
+    return { tag_id: id, name, usage_count: 1, updated_at: '2024-01-01' }
+  }
+
+  // `mockResolvedValueOnce` queues survive `vi.clearAllMocks()` (which only
+  // clears call history, not queued implementations) — an unconsumed queued
+  // value here would otherwise leak into a LATER, unrelated test in this
+  // file and corrupt its IPC response. Every test below fully resets the
+  // mock so its queue can never outlive it.
+  afterEach(() => {
+    mockedListAllTagsInSpace.mockReset()
+  })
+
+  it('does not re-fetch listAllTagsInSpace on a second keystroke — filters the cached list client-side', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('T1', 'project'),
+      tagRow('T2', 'projection'),
+      tagRow('T3', 'zzz-unrelated'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('p')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('pro')
+    })
+
+    // Still exactly ONE IPC call across both keystrokes — the second
+    // keystroke was served entirely from the client-side cache.
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+    const tagItems = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(tagItems).toEqual(expect.arrayContaining(['T1', 'T2']))
+    expect(tagItems).not.toContain('T3')
+  })
+
+  it('only calls batchSet once (on the fill), not on every subsequent keystroke', async () => {
+    // Queue a SECOND, genuinely different response too: if the fix were
+    // absent and the hook re-fetched on the second keystroke, that second
+    // response would seed the store with NEW rows and bump the spy to 2 —
+    // a diffing no-op (like identical repeated data) can't hide behind
+    // #753's idempotent-batchSet short-circuit here.
+    mockedListAllTagsInSpace
+      .mockResolvedValueOnce([tagRow('T10', 'urgent')])
+      .mockResolvedValueOnce([tagRow('T10', 'urgent'), tagRow('T11', 'urgent-followup')])
+    // Spy directly on the store action so the assertion isn't a proxy
+    // measurement — it counts the exact call the "move batchSet behind the
+    // fill guard" change targets.
+    const batchSetSpy = vi.spyOn(useResolveStore.getState(), 'batchSet')
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('u')
+    })
+    expect(batchSetSpy).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await result.current.searchTags('ur')
+    })
+
+    // A second keystroke served from the client-side cache must NOT call
+    // batchSet again.
+    expect(batchSetSpy).toHaveBeenCalledTimes(1)
+    batchSetSpy.mockRestore()
+    // Drain the queue in case the fix (correctly) never consumed the
+    // second queued value — the shared `afterEach` above resets regardless,
+    // this just documents why a leftover queued value here is expected.
+  })
+
+  it('refetches from the NEW space on the next query after a space switch', async () => {
+    mockedListAllTagsInSpace
+      .mockResolvedValueOnce([tagRow('TA', 'alpha-a')])
+      .mockResolvedValueOnce([tagRow('TB', 'alpha-b')])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('al')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('al')
+    })
+
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+    const ids = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(ids).toContain('TB')
+    expect(ids).not.toContain('TA')
   })
 })
 

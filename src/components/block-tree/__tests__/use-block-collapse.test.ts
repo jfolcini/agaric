@@ -301,4 +301,62 @@ describe('useBlockCollapse', () => {
     expect(result.current.hasChildrenSet.size).toBe(0)
     expect(result.current.visibleBlocks).toEqual(flatList)
   })
+
+  // #3276 — navigating to a block hidden under a collapsed ancestor was a
+  // silent no-op: the store had the block, but nothing ever expanded the
+  // collapsed chain hiding it from `visibleBlocks`. `expandAncestors` is the
+  // reveal primitive BlockTree wires to focus navigation.
+  describe('expandAncestors (#3276)', () => {
+    it('expands every collapsed ancestor so a deeply-nested target becomes visible', () => {
+      const { result } = renderHook(() => useBlockCollapse(flatBlocks))
+
+      // Collapse both A (grandparent) and B (parent) — C is now doubly hidden.
+      act(() => {
+        result.current.toggleCollapse('A')
+      })
+      act(() => {
+        result.current.toggleCollapse('B')
+      })
+
+      // Precondition: C is genuinely unreachable before the reveal call —
+      // this is the silent no-op the issue describes, not a tautology.
+      expect(result.current.visibleBlocks.some((b) => b.id === 'C')).toBe(false)
+
+      act(() => {
+        result.current.expandAncestors('C')
+      })
+
+      // C must actually be reachable now — both ancestors expanded, not just
+      // "no throw".
+      expect(result.current.collapsedIds.has('A')).toBe(false)
+      expect(result.current.collapsedIds.has('B')).toBe(false)
+      expect(result.current.visibleBlocks.some((b) => b.id === 'C')).toBe(true)
+    })
+
+    it('is a no-op when no ancestor is collapsed', () => {
+      const { result } = renderHook(() => useBlockCollapse(flatBlocks))
+      const before = result.current.collapsedIds
+
+      act(() => {
+        result.current.expandAncestors('C')
+      })
+
+      // Reference-stable — mirrors expandBlock's no-churn-when-unnecessary
+      // discipline (see setCollapsedIds's `next === prev` bail).
+      expect(result.current.collapsedIds).toBe(before)
+    })
+
+    it('does not collapse or otherwise touch the target block itself', () => {
+      const { result } = renderHook(() => useBlockCollapse(flatBlocks))
+      act(() => {
+        result.current.toggleCollapse('A')
+      })
+
+      act(() => {
+        result.current.expandAncestors('C')
+      })
+
+      expect(result.current.collapsedIds.has('C')).toBe(false)
+    })
+  })
 })

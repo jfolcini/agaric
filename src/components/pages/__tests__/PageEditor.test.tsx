@@ -124,6 +124,7 @@ import { toast } from 'sonner'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { PageEditor } from '@/components/pages/PageEditor'
+import { t } from '@/lib/i18n'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { getPageStore } from '@/stores/page-blocks'
@@ -625,6 +626,138 @@ describe('PageEditor date-page panels (B-1)', () => {
 
     expect(screen.queryByTestId('due-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('done-panel')).not.toBeInTheDocument()
+  })
+})
+
+// #3276 — navigating to a block hidden under a collapsed ancestor or past the
+// mount cap used to be a silent no-op: `target` (the store row) is truthy,
+// but `document.querySelector('[data-block-id=...]')` returns null because
+// BlockTree never mounted the row, and `clearSelection()` ran anyway —
+// burning the one-shot navigation intent with no scroll, no highlight, no
+// message. BlockTree is mocked in this file to a plain div (see top of
+// file), so it never renders a `[data-block-id]` row for any block — this
+// stands in for "the target block never mounts" (collapsed / past the mount
+// cap) without needing the real BlockTree wiring.
+describe('PageEditor navigation to a block that never mounts (#3276)', () => {
+  it('does not silently drop the navigation intent — surfaces a visible notice instead', async () => {
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    act(() => {
+      getPageStore('PAGE_1')?.setState({
+        blocks: [
+          makeBlock({ id: 'B1', content: 'Target block', parent_id: 'PAGE_1', position: 0 }),
+        ],
+      })
+    })
+    act(() => {
+      useNavigationStore.setState({ selectedBlockId: 'B1' })
+    })
+
+    // The important assertion: the block is unreachable in the DOM (proven
+    // below) yet the app must not just silently clear the intent — it must
+    // tell the user. A test that only asserted "does not throw" would pass
+    // whether or not this fix exists; this asserts the NEW behavior.
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('error.blockNotFound'))
+    })
+
+    // Confirms the premise: no row for B1 ever appeared (BlockTree is
+    // mocked), so this is genuinely the "never mounts" scenario, not a
+    // race the real DOM would have resolved anyway.
+    expect(document.querySelector('[data-block-id="B1"]')).toBeNull()
+
+    // The one-shot intent is still cleared eventually (after the notice),
+    // so a stale selectedBlockId can't leak into the next navigation.
+    expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+  })
+
+  it('still focuses the block in the store even though the DOM row never mounts', async () => {
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    act(() => {
+      getPageStore('PAGE_1')?.setState({
+        blocks: [
+          makeBlock({ id: 'B1', content: 'Target block', parent_id: 'PAGE_1', position: 0 }),
+        ],
+      })
+    })
+    act(() => {
+      useNavigationStore.setState({ selectedBlockId: 'B1' })
+    })
+
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('B1')
+    })
+  })
+})
+
+// #3881 — adversarial-review finding 1 on #3276: the old fixed
+// `MAX_REVEAL_ATTEMPTS = 40` frame cap could false-negative a reveal that is
+// slow but still legitimately making progress (e.g. a large page whose mount
+// cap has to jump hundreds of rows). This drives the reveal poll with a
+// controllable `requestAnimationFrame` queue so it can prove a mount that
+// lands PAST the old 40-frame cap — but with continuous, uninterrupted
+// progress the whole way — must NOT surface `error.blockNotFound`.
+describe('PageEditor navigation to a block that mounts late, but legitimately (#3276/#3881)', () => {
+  it('does not report blockNotFound for a target that keeps making progress past 40 frames', async () => {
+    let rafCallbacks: FrameRequestCallback[] = []
+    let nextRafId = 1
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      rafCallbacks.push(cb)
+      return nextRafId++
+    })
+    vi.stubGlobal('cancelAnimationFrame', (_id: number) => {})
+
+    function flushOneFrame(): void {
+      const cbs = rafCallbacks
+      rafCallbacks = []
+      for (const cb of cbs) {
+        act(() => {
+          cb(performance.now())
+        })
+      }
+    }
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    act(() => {
+      getPageStore('PAGE_1')?.setState({
+        blocks: [
+          makeBlock({ id: 'B1', content: 'Target block', parent_id: 'PAGE_1', position: 0 }),
+        ],
+      })
+    })
+    act(() => {
+      useNavigationStore.setState({ selectedBlockId: 'B1' })
+    })
+
+    // Simulate BlockTree slowly, but continuously, revealing rows: a dummy
+    // block row mounts every 2 frames — real progress, well inside any
+    // reasonable "still working" budget — and the actual target row only
+    // appears after 44 frames, past the old fixed 40-attempt cap.
+    for (let frame = 1; frame <= 44; frame++) {
+      flushOneFrame()
+      if (frame % 2 === 0) {
+        const dummy = document.createElement('div')
+        dummy.setAttribute('data-block-id', `DUMMY_${frame}`)
+        document.body.append(dummy)
+      }
+    }
+    const target = document.createElement('div')
+    target.setAttribute('data-block-id', 'B1')
+    document.body.append(target)
+    flushOneFrame()
+    flushOneFrame()
+
+    expect(mockedToastError).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+    })
+
+    vi.unstubAllGlobals()
+    for (const el of document.querySelectorAll('[data-block-id]')) {
+      el.remove()
+    }
   })
 })
 

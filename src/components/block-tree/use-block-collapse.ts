@@ -54,6 +54,14 @@ export interface UseBlockCollapseReturn {
   toggleCollapse: (blockId: string) => void
   /** Expand a block if collapsed; leaves already-expanded blocks unchanged. */
   expandBlock: (blockId: string) => void
+  /**
+   * #3276 — expand every collapsed ANCESTOR of `blockId` (not the block
+   * itself) in one update, so a block hidden under a collapsed grandparent
+   * becomes reachable in a single call instead of requiring the caller to
+   * walk the chain and call `expandBlock` per level. No-op (reference-stable)
+   * when `blockId` is unknown or none of its ancestors are collapsed.
+   */
+  expandAncestors: (blockId: string) => void
   /** Blocks visible after collapse filtering. */
   visibleBlocks: FlatBlock[]
   /** Set of block IDs that have children (next block has greater depth). */
@@ -150,6 +158,34 @@ export function useBlockCollapse(
     [setCollapsedIds],
   )
 
+  // ── Reveal (expand collapsed ancestor chain) ─────────────────────────
+  // #3276 — the navigation-intent consumer (PageEditor) only knows the
+  // TARGET block id; it has no way to find and expand whichever ancestors
+  // are hiding it. Walk the parent chain from the ref (event-time reads,
+  // same discipline as `toggleCollapse` above) and drop every collapsed id
+  // found along the way in a single `setCollapsedIds` update.
+  const expandAncestors = useCallback(
+    (blockId: string) => {
+      setCollapsedIds((prev) => {
+        if (prev.size === 0) return prev
+        const byId = new Map(blocksRef.current.map((b) => [b.id, b]))
+        const toExpand: string[] = []
+        let cursor = byId.get(blockId)?.parent_id ?? null
+        const visited = new Set<string>()
+        while (cursor !== null && !visited.has(cursor)) {
+          visited.add(cursor)
+          if (prev.has(cursor)) toExpand.push(cursor)
+          cursor = byId.get(cursor)?.parent_id ?? null
+        }
+        if (toExpand.length === 0) return prev
+        const next = new Set(prev)
+        for (const id of toExpand) next.delete(id)
+        return next
+      })
+    },
+    [setCollapsedIds],
+  )
+
   // ── hasChildren set ────────────────────────────────────────────────
   const hasChildrenSet = useMemo(() => {
     const set = new Set<string>()
@@ -185,5 +221,12 @@ export function useBlockCollapse(
     return result
   }, [blocks, collapsedIds])
 
-  return { collapsedIds, toggleCollapse, expandBlock, visibleBlocks, hasChildrenSet }
+  return {
+    collapsedIds,
+    toggleCollapse,
+    expandBlock,
+    expandAncestors,
+    visibleBlocks,
+    hasChildrenSet,
+  }
 }

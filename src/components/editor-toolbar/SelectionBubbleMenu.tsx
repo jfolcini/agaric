@@ -284,10 +284,25 @@ export function SelectionBubbleMenu({
       // default) still lifts the bubble above the selection only when there is
       // no room below (near the viewport bottom).
       options={{ placement: 'bottom', offset: 8 }}
-      shouldShow={({ state: editorState }) =>
-        // #925 f4 — never float the bubble on touch; it collides with the OS
-        // selection handles. Mobile formatting goes through FormattingToolbar.
-        !isTouch &&
+      shouldShow={({ state: editorState }) => {
+        // #925 f4 — never float the bubble on touch over a LIVE selection;
+        // dragging a selection collides with the OS's native selection
+        // handles. Mobile mark-formatting goes through FormattingToolbar's
+        // Format popover instead.
+        //
+        // #3276 f3 — but an EXISTING link's URL/label had NO touch-reachable
+        // edit path at all: this bubble is the only place `LinkEditPopover`
+        // mounts, and the blanket `!isTouch` above suppressed it
+        // unconditionally. A caret simply resting inside a link (an empty
+        // selection from a tap, not a drag) doesn't fight the OS handles the
+        // way a live selection does, so let exactly that case through —
+        // still never for a live touch selection.
+        if (isTouch) {
+          // #3056/#3061 — `editor` can be transiently null during the same
+          // mount/teardown race guarded elsewhere in this file; treat that
+          // as "not in a link" rather than throwing inside `shouldShow`.
+          return editorState.selection.empty && (editor?.isActive('link') ?? false)
+        }
         // #924 — show over a non-empty selection, EXCEPT a NodeSelection (a
         // selected block-link/block-ref chip or image atom), where the mark
         // toggles (Bold/Italic/…) are meaningless. Duck-type on the NodeSelection
@@ -295,9 +310,11 @@ export function SelectionBubbleMenu({
         // `@tiptap/pm/state` can resolve to a different module copy than the one
         // the running editor uses, so `instanceof` is unreliable across the
         // bundle (it silently hid the bubble for ALL text selections).
-        !editorState.selection.empty &&
-        !('node' in editorState.selection && editorState.selection.node)
-      }
+        return (
+          !editorState.selection.empty &&
+          !('node' in editorState.selection && editorState.selection.node)
+        )
+      }}
       role="toolbar"
       aria-label={t('toolbar.selectionFormatting')}
       aria-controls={blockId ? `editor-${blockId}` : undefined}

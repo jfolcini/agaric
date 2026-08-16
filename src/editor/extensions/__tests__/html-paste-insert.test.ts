@@ -28,7 +28,8 @@ import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
 import Text from '@tiptap/extension-text'
 import { common, createLowlight } from 'lowlight'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { MockInstance } from 'vitest'
 
 import { convertAndInsert, HtmlPaste } from '@/editor/extensions/html-paste'
 import { TaskParagraph } from '@/editor/extensions/task-paragraph'
@@ -195,5 +196,67 @@ describe('handlePaste — code-block context guard', () => {
     const handled = paste(editor, '<p><strong>bold</strong> word</p>', 'bold word')
 
     expect(handled).toBe(true)
+  })
+})
+
+// #3277 finding 4 — the usability check (`handlePaste`'s synchronous
+// `isUsableHtml` gate) and the conversion (`convertAndInsert`'s DOM walk)
+// used to independently `DOMParser().parseFromString()` the SAME clipboard
+// HTML string, so every usable-HTML paste parsed the payload twice. Runs the
+// FULL production path (real `handlePaste` prop → real async
+// `convertAndInsert`), not a unit call, so it actually exercises the
+// double-parse this finding is about.
+//
+// The assertions count only calls whose FIRST argument is the exact pasted
+// HTML string — the real pipeline also runs Turndown (its own internal
+// `DOMParser` call, on a turndown-wrapped fragment string, not the raw
+// pasted HTML) and, per this jsdom/TipTap version, an incidental parse
+// elsewhere in the clipboard machinery. Neither is what this finding is
+// about; filtering by the exact input string isolates the ONE redundant
+// parse `isUsableHtml` + `parseHtmlBody` used to perform on identical input.
+describe('handlePaste — single DOM parse per usable paste (#3277)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function countParsesOf(
+    spy: MockInstance<typeof DOMParser.prototype.parseFromString>,
+    html: string,
+  ): number {
+    return spy.mock.calls.filter((call) => call[0] === html).length
+  }
+
+  it('parses the clipboard HTML exactly once for a usable paste that inserts inline', async () => {
+    editor = build(paragraphDoc('hello world'))
+    editor.commands.setTextSelection(6)
+    const html = '<p><strong>bold</strong> word</p>'
+
+    const parseSpy = vi.spyOn(DOMParser.prototype, 'parseFromString')
+
+    const handled = paste(editor, html, 'bold word')
+    expect(handled).toBe(true)
+
+    // The claim is synchronous; the conversion + insert is async (dynamic
+    // import + DOM walk) — wait for it to land before counting parses.
+    await vi.waitFor(() => {
+      expect(editor?.state.doc.child(0).textContent).toBe('hellobold word world')
+    })
+
+    expect(countParsesOf(parseSpy, html)).toBe(1)
+  })
+
+  it('does not parse the clipboard HTML twice for HTML the usability gate rejects', () => {
+    editor = build(paragraphDoc('hello'))
+    editor.commands.setTextSelection(1)
+    const html = '<html><body><!--StartFragment--><!--EndFragment--></body></html>'
+
+    const parseSpy = vi.spyOn(DOMParser.prototype, 'parseFromString')
+
+    // Wrapper-only HTML (no visible text) — `isUsableHtml` must reject it
+    // WITHOUT the handler falling through to a second parse anywhere.
+    const handled = paste(editor, html, '')
+
+    expect(handled).toBe(false)
+    expect(countParsesOf(parseSpy, html)).toBe(1)
   })
 })

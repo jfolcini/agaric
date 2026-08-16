@@ -17,11 +17,13 @@ import { useTranslation } from 'react-i18next'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { unwrap } from '@/lib/app-error'
-import type { BlockRow } from '@/lib/bindings'
+import type { BlockRow, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { applySafePosition } from '@/lib/floating-position'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
+import { buildPropertyParams } from '@/lib/property-save-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 
@@ -36,6 +38,20 @@ export interface BlockPropertyEditorProps {
   refPages: BlockRow[]
   refSearch: string
   setRefSearch: (search: string) => void
+  /**
+   * The value type of `editingProp`'s property (from
+   * `usePropertyDefForEdit`), e.g. `'text' | 'number' | 'date' | 'boolean'`,
+   * or `null` while the definition for THIS key has not resolved yet.
+   * #3275 — routes the plain-text-input commit through
+   * `buildPropertyParams` (the same function the drawer path uses) so a
+   * user-defined `number`/`date` property keeps its typed column instead of
+   * being flattened into `value_text` with every other column nulled.
+   *
+   * `null` blocks the commit outright (see the text input's `onBlur`): the
+   * lookup is per-key and asynchronous, so writing against an assumed type
+   * would mean writing against a type resolved for a DIFFERENT key.
+   */
+  valueType: string | null
 }
 
 /** Placeholder offsets used while the popup is mounted but before the first
@@ -55,6 +71,7 @@ export function BlockPropertyEditor({
   refPages,
   refSearch,
   setRefSearch,
+  valueType,
 }: BlockPropertyEditorProps): React.ReactElement | null {
   const { t } = useTranslation()
 
@@ -473,21 +490,51 @@ export function BlockPropertyEditor({
           onBlur={async (e) => {
             const newValue = e.target.value.trim()
             if (newValue !== editingProp.value) {
-              try {
-                unwrap(
-                  await commands.setProperty(blockId, editingProp.key, {
-                    value_text: newValue || null,
-                    value_num: null,
-                    value_date: null,
-                    value_ref: null,
-                    value_bool: null,
-                  }),
-                )
-              } catch (err) {
-                reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+              if (valueType === null) {
+                // #3275 (review finding 1) — the property definition for this
+                // key has not resolved yet. `usePropertyDefForEdit` re-fetches
+                // per key, so the only type available here would be the one
+                // resolved for a DIFFERENT key: committing against it routes
+                // the value into the wrong typed column (a date string through
+                // `Number(...)` → garbage in `value_num`) and nulls the real
+                // one. Abort and tell the user; the stored value is untouched,
+                // and a retry a moment later finds the type resolved.
+                logger.warn('BlockPropertyEditor', 'commit skipped: value type unresolved', {
                   blockId,
                   key: editingProp.key,
                 })
+                notify.error(t('property.saveFailed'))
+                setEditingProp(null)
+                return
+              }
+              // #3275 — route through the SAME `buildPropertyParams` the
+              // drawer path uses (`property-save-utils.ts` →
+              // `handleSaveProperty`) instead of hard-coding
+              // `value_text`/nulling every other typed column. This is what
+              // keeps a user-defined `number`/`date` property's typed
+              // column intact when edited from the inline chip, and
+              // surfaces the same `property.invalidNumber` toast the
+              // drawer shows for an unparseable number.
+              const result = buildPropertyParams(blockId, editingProp.key, newValue, valueType)
+              if (!result.ok) {
+                notify.error(t('property.invalidNumber'))
+              } else {
+                try {
+                  unwrap(
+                    await commands.setProperty(result.params.blockId, result.params.key, {
+                      value_text: result.params.valueText ?? null,
+                      value_num: result.params.valueNum ?? null,
+                      value_date: result.params.valueDate ?? null,
+                      value_ref: result.params.valueRef ?? null,
+                      value_bool: result.params.valueBool ?? null,
+                    }),
+                  )
+                } catch (err) {
+                  reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
+                    blockId,
+                    key: editingProp.key,
+                  })
+                }
               }
             }
             setEditingProp(null)
@@ -520,13 +567,38 @@ export function BlockPropertyEditor({
           const newKey = e.target.value.trim()
           if (newKey && newKey !== editingKey.oldKey) {
             try {
+              // #3275 — read the OLD key's raw typed row instead of
+              // re-writing `editingKey.value` (the already-flattened
+              // display string from `useExtraBlockProperties`'s `mapRows`,
+              // which collapses value_text/value_date/value_num into one
+              // string and cannot tell them apart). Re-flattening it back
+              // into `value_text` on rename is exactly what nulled
+              // `value_num`/`value_date` for a renamed number/date property.
+              const rows: PropertyRow[] = unwrap(await commands.getProperties(blockId))
+              const oldRow = rows.find((r) => r.key === editingKey.oldKey)
+              if (!oldRow) {
+                // #3275 (review finding 2) — no row for the old key (empty or
+                // stale result, a concurrent delete, a key mismatch). Every
+                // `oldRow?.value_X ?? null` below would collapse to null and
+                // write an ALL-NULL row under the new key, destroying the
+                // value. There is nothing safe to carry over — the flattened
+                // `editingKey.value` cannot tell value_text from value_date —
+                // so abort with the same `renameFailed` toast the IPC-failure
+                // path uses and leave the original key exactly as it is.
+                throw new Error(
+                  `rename aborted: no property row for key "${editingKey.oldKey}" on block ${blockId}`,
+                )
+              }
               unwrap(
                 await commands.setProperty(blockId, newKey, {
-                  value_text: editingKey.value,
-                  value_num: null,
-                  value_date: null,
-                  value_ref: null,
-                  value_bool: null,
+                  // Non-optional access on purpose: `oldRow` is guaranteed
+                  // present by the guard above, and `?.` here is what let the
+                  // all-null write through in the first place.
+                  value_text: oldRow.value_text ?? null,
+                  value_num: oldRow.value_num ?? null,
+                  value_date: oldRow.value_date ?? null,
+                  value_ref: oldRow.value_ref ?? null,
+                  value_bool: oldRow.value_bool != null ? oldRow.value_bool !== 0 : null,
                 }),
               )
               unwrap(

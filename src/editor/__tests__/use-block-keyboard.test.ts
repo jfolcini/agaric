@@ -1354,10 +1354,10 @@ describe('#725 — node-type guards (code block / table)', () => {
   const lowlight = createLowlight(common)
 
   /** Run a keydown through the editor's ProseMirror keymap plugins. */
-  function dispatchKeydown(ed: Editor, key: string): boolean {
+  function dispatchKeydown(ed: Editor, key: string, opts: { shiftKey?: boolean } = {}): boolean {
     return (
       ed.view.someProp('handleKeyDown', (handler) =>
-        handler(ed.view, new KeyboardEvent('keydown', { key })),
+        handler(ed.view, new KeyboardEvent('keydown', { key, shiftKey: opts.shiftKey ?? false })),
       ) ?? false
     )
   }
@@ -1523,6 +1523,70 @@ describe('#725 — node-type guards (code block / table)', () => {
         // The table itself is intact (single top-level block).
         expect(editor.state.doc.childCount).toBe(1)
         expect(editor.state.doc.firstChild?.type.name).toBe('table')
+      } finally {
+        cleanup()
+      }
+    })
+  })
+
+  // #3276 — Tab / Shift+Tab inside a table must advance/retreat cells via
+  // ProseMirror's own `goToNextCell`/`goToPreviousCell` keymap instead of
+  // indenting/dedenting the whole block, mirroring the Enter-inside-a-table
+  // guard directly above.
+  describe('Tab inside a table (#3276)', () => {
+    it('Tab is NOT intercepted by the block rule and moves the selection to the next cell', () => {
+      const { editor, cleanup } = makeTableEditor()
+      try {
+        const cellOnePos = 5 // doc(0) table(1) row(2) cell(3) para(4) text(5…)
+        editor.commands.setTextSelection(cellOnePos + 'cell one'.length)
+        expect(editor.isActive('table')).toBe(true)
+
+        // 1. Capture-phase wrapper must yield (no flush, no indent, no
+        //    preventDefault) so the event can reach ProseMirror's keymap.
+        const cbs = makeCallbacks()
+        const event = makeEvent('Tab')
+        handleBlockKeyDown(event, editor, cbs)
+        expect(event.preventDefault).not.toHaveBeenCalled()
+        expect(cbs._calls['onFlush']).toBeUndefined()
+        expect(cbs._calls['onIndent']).toBeUndefined()
+
+        // 2. Real keymap: goToNextCell moves the selection into cell two.
+        expect(dispatchKeydown(editor, 'Tab')).toBe(true)
+        const { $from } = editor.state.selection
+        const cellNode = $from.node(-1)
+        expect(cellNode.type.name).toBe('tableCell')
+        expect(cellNode.textContent).toBe('cell two')
+      } finally {
+        cleanup()
+      }
+    })
+
+    it('Shift+Tab is NOT intercepted by the block rule and moves the selection to the previous cell', () => {
+      const { editor, cleanup } = makeTableEditor()
+      try {
+        // Place the caret inside the SECOND cell's text — found by walking the
+        // doc rather than a hardcoded offset, so it doesn't depend on the
+        // exact node-open accounting the first-cell magic number relies on.
+        let cellTwoTextPos = -1
+        editor.state.doc.descendants((node, pos) => {
+          if (node.isText && node.text === 'cell two') cellTwoTextPos = pos
+        })
+        expect(cellTwoTextPos).toBeGreaterThan(-1)
+        editor.commands.setTextSelection(cellTwoTextPos + 'cell two'.length)
+        expect(editor.isActive('table')).toBe(true)
+
+        const cbs = makeCallbacks()
+        const event = makeEvent('Tab', { shiftKey: true })
+        handleBlockKeyDown(event, editor, cbs)
+        expect(event.preventDefault).not.toHaveBeenCalled()
+        expect(cbs._calls['onFlush']).toBeUndefined()
+        expect(cbs._calls['onDedent']).toBeUndefined()
+
+        expect(dispatchKeydown(editor, 'Tab', { shiftKey: true })).toBe(true)
+        const { $from } = editor.state.selection
+        const cellNode = $from.node(-1)
+        expect(cellNode.type.name).toBe('tableCell')
+        expect(cellNode.textContent).toBe('cell one')
       } finally {
         cleanup()
       }

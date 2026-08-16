@@ -52,7 +52,22 @@ import {
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { invalidRepeatRuleMessage } from '@/lib/repeat-utils'
+import type { TodoState } from '@/lib/task-states'
+import type { FlatBlock } from '@/lib/tree-utils'
 import { useUndoStore } from '@/stores/undo'
+
+/**
+ * The minimal structural surface `commitCheckboxState`'s optimistic write
+ * needs from a page block store: a Zustand-style `setState` over an object
+ * carrying `blocks`. Declared here (instead of importing the concrete
+ * `StoreApi<PageBlockState>` from `@/stores/page-blocks`) so this `lib/`
+ * module never imports the `stores/` tier (#3121's lower-tier-never-imports-
+ * higher rule) — the real page-block store's `setState` structurally
+ * satisfies this as-is, so every caller passes it unchanged.
+ */
+export interface PageBlockStoreLike {
+  setState: (updater: (state: { blocks: FlatBlock[] }) => { blocks: FlatBlock[] }) => void
+}
 
 /** Per-block flush sequence tokens — see the module docstring. */
 const flushSeqByBlock = new Map<string, number>()
@@ -162,4 +177,101 @@ export async function commitInlineProperties(opts: {
     return false as const
   })
   return ok !== false
+}
+
+/**
+ * Commit a folded leading checkbox marker (`- [ ] ` / `- [x] ` / `- [/] ` /
+ * `- [-] `) via the typed `set_todo_state` command, then persist the
+ * marker-stripped content — mirroring `commitInlineProperties`'s "commit,
+ * then strip on success" shape (#1074) so all three unmount-save paths
+ * (`useBlockFlush`, `useEditorBlur` Step 5, `persistUnmount`) agree on
+ * checkbox folding instead of only one of them doing it (#3278).
+ *
+ * - AWAITS `set_todo_state` before stripping the marker or writing the
+ *   optimistic `todo_state`: a rejected state write must not silently lose
+ *   the task state (marker stripped, state never committed) nor leave a
+ *   phantom checked box the backend never recorded.
+ * - On SUCCESS: adopts the backend echo for `todo_state` (falls back to the
+ *   sent state), optimistically writes it into `pageStore`, strips the
+ *   marker via `edit(cleanContent)`, and nudges the undo stack.
+ * - On FAILURE (state write rejected): persists the RAW content (marker
+ *   intact) via `edit(content)` so the box stays re-parseable, and writes no
+ *   optimistic state.
+ * - `mySeq` / `readFlushSeq` guard against a newer flush on the same block
+ *   clobbering this stale run — see the module docstring. A superseded run
+ *   (success or failure) bails without calling `edit()` and resolves `true`
+ *   (the newer session owns the block's content + draft lifecycle), mirroring
+ *   `commitInlineProperties`'s supersede handling.
+ * - `pageStore` is optional: callers/tests that never produce checkbox-marker
+ *   content may omit it; when present, only its `blocks` array is touched.
+ *
+ * Resolves `false` ONLY when the final content `edit()` failed (mirroring
+ * `commitInlineProperties`'s draft-gating contract).
+ */
+export async function commitCheckboxState(opts: {
+  blockId: string
+  /** Raw unmounted content, marker intact — persisted verbatim on failure. */
+  content: string
+  /** Marker-stripped content — persisted on success. */
+  cleanContent: string
+  todoState: TodoState
+  mySeq: number
+  edit: (blockId: string, content: string) => Promise<boolean> | void
+  pageStore?: PageBlockStoreLike | undefined
+  rootParentId: string | null
+}): Promise<boolean> {
+  const { blockId, content, cleanContent, todoState, mySeq, edit, pageStore, rootParentId } = opts
+  try {
+    const echo = unwrap(await commands.setTodoState(blockId, todoState))
+    // A newer flush on this block superseded us while the IPC was in
+    // flight — bail without applying so we don't clobber it.
+    if (readFlushSeq(blockId) !== mySeq) return true
+    const settledState = typeof echo?.todo_state === 'string' ? echo.todo_state : todoState
+    pageStore?.setState((s) => ({
+      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: settledState } : b)),
+    }))
+    // Strip the marker only now that the state is committed.
+    const outcome = edit(blockId, cleanContent)
+    if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+    const ok = await Promise.resolve(outcome).catch((err: unknown) => {
+      logger.warn(
+        'BlockTree',
+        'content edit rejected after checkbox state commit',
+        { blockId },
+        err,
+      )
+      return false as const
+    })
+    return ok !== false
+  } catch (err: unknown) {
+    if (readFlushSeq(blockId) !== mySeq) {
+      // A newer flush on this block superseded us — don't clobber it with
+      // this stale run's raw content, but still surface the error.
+      logger.error(
+        'BlockTree',
+        'Failed to set task state from checkbox syntax (superseded)',
+        { blockId },
+        err,
+      )
+      notify.error(i18n.t('blockTree.setTaskStateFailed'))
+      return true
+    }
+    // State write failed — do NOT strip the marker. Persist the raw content
+    // (with the `- [ ] `/`- [x] ` marker intact) so the task state stays
+    // recoverable, and write no optimistic `todo_state` (nothing to roll
+    // back since we deferred it past the await).
+    logger.error('BlockTree', 'Failed to set task state from checkbox syntax', { blockId }, err)
+    notify.error(i18n.t('blockTree.setTaskStateFailed'))
+    const outcome = edit(blockId, content)
+    const ok = await Promise.resolve(outcome).catch((editErr: unknown) => {
+      logger.warn(
+        'BlockTree',
+        'content edit rejected after failed checkbox state commit',
+        { blockId },
+        editErr,
+      )
+      return false as const
+    })
+    return ok !== false
+  }
 }

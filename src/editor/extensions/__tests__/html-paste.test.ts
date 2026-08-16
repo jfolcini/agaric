@@ -273,3 +273,47 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
     })
   })
 })
+
+// #3277 finding 4 — `handlePaste` now parses the clipboard HTML once (via
+// `parseUsableHtmlBody`) and threads the result into `convertAndInsert`
+// instead of letting it re-parse the same string a second time.
+describe('convertAndInsert — precomputed body plumbing (#3277)', () => {
+  it('walks the SAME body object handlePaste already parsed, not a fresh re-parse', async () => {
+    const { convertAndInsert } = await loadModule()
+    const view = makeView(false)
+
+    htmlBodyToOutline.mockReturnValue([{ content: 'hello', depth: 0 }])
+
+    // A marker object standing in for the body `handlePaste` parsed — if the
+    // conversion silently re-parsed `html` instead of using this, the object
+    // identity check below would fail (a fresh `DOMParser` result is a
+    // DIFFERENT object even for identical HTML).
+    const precomputedBody = { marker: 'precomputed-body' } as unknown as ParentNode
+
+    await convertAndInsert(
+      view as unknown as EditorView,
+      '<p>hello</p>',
+      'hello',
+      null,
+      precomputedBody,
+    )
+
+    expect(htmlBodyToOutline).toHaveBeenCalledWith(precomputedBody, expect.any(Function))
+  })
+
+  it('falls back to parsing `html` itself when no precomputed body is given (existing callers unaffected)', async () => {
+    const { convertAndInsert } = await loadModule()
+    const view = makeView(false)
+
+    htmlBodyToOutline.mockReturnValue([{ content: 'hello', depth: 0 }])
+
+    await convertAndInsert(view as unknown as EditorView, '<p>hello</p>', 'hello', null)
+
+    // Called with SOME body (a real parsed DOM node), not the precomputed
+    // marker from the previous test — confirms the 5-arg call above is what
+    // engages the shortcut, not a permanently-cached body.
+    const [bodyArg] = htmlBodyToOutline.mock.calls[0] as [unknown, unknown]
+    expect(bodyArg).not.toEqual({ marker: 'precomputed-body' })
+    expect(bodyArg).toBeTruthy()
+  })
+})
