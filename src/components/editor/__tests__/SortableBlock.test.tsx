@@ -192,6 +192,11 @@ const mockGetPropertyDef = vi.fn().mockResolvedValue(null)
 const mockListBlocks = vi
   .fn()
   .mockResolvedValue({ items: [], next_cursor: null, has_more: false, total_count: null })
+// #3275 — the key-rename path in `BlockPropertyEditor` now reads the OLD
+// key's raw typed row via `getProperties` instead of re-writing the
+// flattened display string, so it can carry `value_num`/`value_date`/etc.
+// to the new key.
+const mockGetProperties = vi.fn().mockResolvedValue([])
 // #2901 — the swipe-delete toast's Undo op-log probing (depth computation,
 // reversed-ref verification, mis-undo rollback) moved into the undo store's
 // `undoDeleteOf` action (see `src/stores/__tests__/undo.test.ts`); SortableBlock
@@ -222,6 +227,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       setProperty: (...args: unknown[]) =>
         mockSetProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+      getProperties: (...args: unknown[]) =>
+        mockGetProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
       getPropertyDef: (...args: unknown[]) =>
         mockGetPropertyDef(...args).then((data: unknown) => ({ status: 'ok', data })),
       listBlocks: (...args: unknown[]) =>
@@ -3166,6 +3173,177 @@ describe('SortableBlock property chip click-to-edit', () => {
 })
 
 // =========================================================================
+// #3275 — inline chip edits must use the REAL property definition
+//
+// The component-level tests in `BlockPropertyEditor.test.tsx` inject
+// `valueType` as a hard-coded prop, so they cannot see whether
+// `usePropertyDefForEdit` actually resolves it (a constant
+// `setValueType('text')` in the hook left every one of them green). These
+// tests drive the real `SortableBlock` → `usePropertyDefForEdit` →
+// `BlockPropertyEditor` wiring end to end, so the hook's type resolution is
+// load-bearing for at least one test.
+// =========================================================================
+
+describe('SortableBlock inline chip typed-column wiring (#3275)', () => {
+  const numberDef = {
+    key: 'estimate',
+    value_type: 'number',
+    options: null,
+    created_at: '2025-01-01T00:00:00Z',
+  }
+  const dateDef = {
+    key: 'deadline',
+    value_type: 'date',
+    options: null,
+    created_at: '2025-01-01T00:00:00Z',
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+    mockSetProperty.mockResolvedValue({})
+  })
+
+  afterEach(() => {
+    // These tests install per-key implementations; restore the file-wide
+    // "no definition for this key" default so later suites are unaffected.
+    mockGetPropertyDef.mockReset()
+    mockGetPropertyDef.mockResolvedValue(null)
+  })
+
+  it('routes a number-typed chip edit into value_num through the real hook', async () => {
+    const user = userEvent.setup()
+    mockGetPropertyDef.mockImplementation(async (key: string) =>
+      key === 'estimate' ? numberDef : null,
+    )
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'estimate', value: '5' }]}
+      />,
+    )
+
+    await user.click(screen.getByTestId('property-chip-estimate'))
+    const input = await screen.findByRole('textbox')
+    await waitFor(() => {
+      expect(mockGetPropertyDef).toHaveBeenCalledWith('estimate')
+    })
+    // Flush the definition lookup so the hook has a type for THIS key.
+    await act(async () => {})
+
+    fireEvent.change(input, { target: { value: '8' } })
+    await act(async () => {
+      fireEvent.blur(input)
+    })
+
+    // `value_num: 8` is only reachable if the hook resolved 'number'; a
+    // hard-coded 'text' would write `value_text: '8'` and null value_num.
+    await waitFor(() => {
+      expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_42', 'estimate', {
+        value_text: null,
+        value_num: 8,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      })
+    })
+  })
+
+  it('routes a date-typed chip edit into value_date through the real hook', async () => {
+    const user = userEvent.setup()
+    mockGetPropertyDef.mockImplementation(async (key: string) =>
+      key === 'deadline' ? dateDef : null,
+    )
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'deadline', value: '2026-08-01' }]}
+      />,
+    )
+
+    await user.click(screen.getByTestId('property-chip-deadline'))
+    const input = await screen.findByRole('textbox')
+    await waitFor(() => {
+      expect(mockGetPropertyDef).toHaveBeenCalledWith('deadline')
+    })
+    await act(async () => {})
+
+    fireEvent.change(input, { target: { value: '2026-09-15' } })
+    await act(async () => {
+      fireEvent.blur(input)
+    })
+
+    await waitFor(() => {
+      expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_42', 'deadline', {
+        value_text: null,
+        value_num: null,
+        value_date: '2026-09-15',
+        value_ref: null,
+        value_bool: null,
+      })
+    })
+  })
+
+  // Review finding 1 — the live race. Edit a `date` property, then open a
+  // `number` property whose definition lookup has not landed yet: the stale
+  // 'date' type wrote the number straight into `value_date`.
+  it('never commits against the previous chip’s type while the new key’s definition is in flight', async () => {
+    const user = userEvent.setup()
+    mockGetPropertyDef.mockImplementation((key: string) =>
+      key === 'deadline'
+        ? Promise.resolve(dateDef)
+        : // 'estimate' lookup stays pending for the whole test
+          new Promise(() => {}),
+    )
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[
+          { key: 'deadline', value: '2026-08-01' },
+          { key: 'estimate', value: '5' },
+        ]}
+      />,
+    )
+
+    // 1. Edit the date property — the hook resolves 'date'.
+    await user.click(screen.getByTestId('property-chip-deadline'))
+    await screen.findByRole('textbox')
+    await waitFor(() => {
+      expect(mockGetPropertyDef).toHaveBeenCalledWith('deadline')
+    })
+    await act(async () => {})
+
+    // 2. Switch to the number property while its definition is still in
+    //    flight, and commit.
+    await user.click(screen.getByTestId('property-chip-estimate'))
+    const input = await screen.findByRole('textbox')
+    fireEvent.change(input, { target: { value: '8' } })
+    await act(async () => {
+      fireEvent.blur(input)
+    })
+
+    // Nothing may be written: not `value_date: '8'` (the stale-type
+    // corruption), not `value_text: '8'` either.
+    expect(mockSetProperty).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(mockNotify.error).toHaveBeenCalledWith('Failed to save property')
+    })
+  })
+})
+
+// =========================================================================
 // Vertical alignment regression tests (#644 task 0b)
 // =========================================================================
 
@@ -3467,6 +3645,18 @@ describe('SortableBlock property key rename', () => {
   it('renaming a property key creates new key and deletes old key', async () => {
     const user = userEvent.setup()
     mockSetProperty.mockResolvedValue({})
+    // #3275 — the rename now reads the OLD key's raw typed row via
+    // `getProperties` instead of re-writing the flattened `p.value` string.
+    mockGetProperties.mockResolvedValue([
+      {
+        key: 'effort',
+        value_text: '2h',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    ])
 
     render(
       <SortableBlock

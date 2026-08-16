@@ -109,7 +109,6 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
         splitBlock: store.getState().splitBlock,
         rootParentId: 'PAGE_1',
         pageStore: store,
-        t,
       })
       return useBlockActionOrchestration({
         focusedBlockId: 'A',

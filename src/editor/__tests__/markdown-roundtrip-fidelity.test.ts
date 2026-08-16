@@ -249,17 +249,60 @@ describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonica
       table(tableRow(tableHeader(paragraph(text('a'))))),
       table(tableRow(tableHeader(paragraph(text('b'))))),
     )
+    // The second table's header becomes an ordinary DATA row of the merged
+    // table (unchanged). Its separator, however, is no longer swallowed
+    // (#3274 — the separator heuristic is positional, only row 1 of the run
+    // qualifies): it survives as a THIRD row whose cell is the literal text
+    // `---`. The pre-existing horizontal-rule guard in serializeParagraph
+    // (`^-{3,}$`) already escapes that cell on the way back out, so it can
+    // never be mistaken for a separator again.
     const merged = doc(
-      table(tableRow(tableHeader(paragraph(text('a')))), tableRow(tableCell(paragraph(text('b'))))),
+      table(
+        tableRow(tableHeader(paragraph(text('a')))),
+        tableRow(tableCell(paragraph(text('b')))),
+        tableRow(tableCell(paragraph(text('---')))),
+      ),
     )
     const reparsed = parse(serialize(d))
     expect(reparsed).toEqual(merged)
-    // The absorbed table's separator row is dropped on the first pass; the
-    // single-table form is the canonical fixed point from there.
+    // The doc shape is already the fixed point after one pass; the STRING
+    // gains the `---` cell's escape on this second serialize, then is stable.
     const md2 = serialize(reparsed)
-    expect(md2).toBe('| a |\n| --- |\n| b |')
+    expect(md2).toBe('| a |\n| --- |\n| b |\n| \\--- |')
     expect(parse(md2)).toEqual(merged)
     expect(serialize(parse(md2))).toBe(md2)
+  })
+})
+
+describe('finding 13: a table DATA row of only dashes/colons is not the separator (#3274)', () => {
+  // parser.ts's separator heuristic used to fire on ANY row of the table run,
+  // not just the one immediately after the header — so a data row a user
+  // filled with `-` as a "no value" placeholder was silently dropped on
+  // reparse, destroying it on the next edit's persist.
+  it('a data row with one dash-only cell round-trips (parse keeps it; stable)', () => {
+    const d = doc(
+      table(
+        tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value')))),
+        tableRow(tableCell(paragraph(text('a'))), tableCell(paragraph(text('-')))),
+      ),
+    )
+    const md = serialize(d)
+    expect(md).toBe('| Name | Value |\n| --- | --- |\n| a | - |')
+    expect(parse(md)).toEqual(d)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('a data row whose EVERY cell is dash-only round-trips (the reported #3274 shape)', () => {
+    const d = doc(
+      table(
+        tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value')))),
+        tableRow(tableCell(paragraph(text('-'))), tableCell(paragraph(text('-')))),
+      ),
+    )
+    const md = serialize(d)
+    expect(md).toBe('| Name | Value |\n| --- | --- |\n| - | - |')
+    expect(parse(md)).toEqual(d)
+    expect(serialize(parse(md))).toBe(md)
   })
 })
 

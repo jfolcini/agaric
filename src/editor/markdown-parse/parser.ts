@@ -310,7 +310,12 @@ export function parseHeading(
   return { blocks: [block], consumed: next - i }
 }
 
-/** Table: consecutive lines starting with `|`. First non-separator row is the header. */
+/**
+ * Table: consecutive lines starting with `|`. Row 0 is the header and row 1 is
+ * the GFM delimiter row — both POSITIONAL, per `buildTableRows` (#3274): the
+ * run is collected from `i`, so index 0 is always the header, and index 1 is
+ * the only position GFM allows a delimiter row in.
+ */
 export function parseTable(
   lines: readonly string[],
   i: number,
@@ -362,10 +367,15 @@ function buildTableRows(tableLines: readonly string[], depth: number): TableRowN
   const rows: TableRowNode[] = []
   for (let r = 0; r < tableLines.length; r++) {
     const tableLine = tableLines[r] as string
-    // Separator rows must contain at least one `-`/`:` — a row of empty
-    // cells (`|  |`, serialized from an empty-cell table row) is data, not
-    // a separator, and used to be silently dropped here.
-    if (/^\|[\s|]*[-:][\s\-:|]*\|$/.test(tableLine)) continue
+    // GFM's delimiter row is POSITIONAL, not content-based: only the row
+    // immediately after the header (r === 1) can ever be a separator. The
+    // previous code applied the dash/colon heuristic to EVERY row, so a
+    // legitimate DATA row made entirely of dashes/colons (`| - | - |`)
+    // anywhere else in the table was silently swallowed on reparse (#3274).
+    // Separator rows must additionally contain at least one `-`/`:` — a row
+    // of empty cells (`|  |`, serialized from an empty-cell table row) is
+    // data, not a separator, and used to be silently dropped here too.
+    if (r === 1 && /^\|[\s|]*[-:][\s\-:|]*\|$/.test(tableLine)) continue
     // Drop the leading/trailing empty segments produced by the row's outer
     // `| … |` delimiters, then trim and unescape each cell. The `\|` → `|`
     // unescape runs BEFORE parseLine so pipes inside inline code spans and

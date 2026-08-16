@@ -181,6 +181,7 @@ export const properties: Record<string, string> = {
   'property.delete': 'Delete property',
   'property.addProperty': 'Add property',
   'property.invalidNumber': 'Invalid number value',
+  'property.invalidBoolean': 'Invalid boolean value — use true or false',
   'property.deleteConfirm': 'Delete this property?',
   'property.deleteConfirmDesc': 'This will remove the property from the block.',
   'property.createDefFailed': 'Failed to create property definition',

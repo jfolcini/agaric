@@ -286,8 +286,13 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // Ctrl/Cmd+Shift+Arrow above is the secondary alias. When a suggestion
   // popup is open the hook defers Tab to the Suggestion plugin (Tab-to-accept)
   // BEFORE this rule is reached, so this fires only for plain block editing.
+  // #3276 — suppressed inside code blocks/tables, mirroring the Enter rule
+  // above: a table's own `Tab: goToNextCell`/`Shift-Tab: goToPreviousCell`
+  // keymap (@tiptap/extension-table) must run instead of indenting the whole
+  // block, and a code block should get browser/keymap focus handling rather
+  // than an outline-depth change.
   {
-    match: (e) => e.key === 'Tab' && !e.shiftKey,
+    match: (e, ctx) => e.key === 'Tab' && !e.shiftKey && !ctx.inCodeBlock && !ctx.inTable,
     handle: (e, cb) => {
       e.preventDefault()
       cb.onFlush()
@@ -295,7 +300,7 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
     },
   },
   {
-    match: (e) => e.key === 'Tab' && e.shiftKey,
+    match: (e, ctx) => e.key === 'Tab' && e.shiftKey && !ctx.inCodeBlock && !ctx.inTable,
     handle: (e, cb) => {
       e.preventDefault()
       cb.onFlush()

@@ -245,7 +245,7 @@ const mockEditorDom = document.createElement('div')
 
 const mockResolve = vi.fn(() => ({}))
 const mockTextBetween = vi.fn(() => '')
-const mockIsActive = vi.fn(() => false)
+const mockIsActive = vi.fn((_name?: string) => false)
 
 function makeEditor() {
   return {
@@ -352,6 +352,49 @@ describe('SelectionBubbleMenu', () => {
       ]) {
         expect(screen.queryByRole('button', { name: label })).toBeNull()
       }
+    })
+  })
+
+  // #3276 f3 — an existing link's URL/label had NO touch-reachable edit path:
+  // this bubble is the only place `LinkEditPopover` mounts, and the blanket
+  // `!isTouch` above suppressed it unconditionally. A caret resting inside a
+  // link (an empty selection from a tap, not a drag) doesn't fight the OS
+  // selection handles the way a live drag-selection does, so `shouldShow`
+  // lets exactly that case through on touch.
+  describe('#3276 f3 — touch-reachable link editing (caret in link)', () => {
+    it('does not render on touch with an empty selection when the caret is NOT in a link', () => {
+      mockIsTouch = true
+      bubbleMenuSelectionEmpty = true
+      mockIsActive.mockReturnValue(false)
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      expect(screen.queryByTestId('selection-bubble-menu')).toBeNull()
+    })
+
+    it('renders on touch with an empty selection when the caret IS inside an existing link', () => {
+      mockIsTouch = true
+      bubbleMenuSelectionEmpty = true
+      mockIsActive.mockImplementation((name: unknown) => name === 'link')
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      expect(screen.getByTestId('selection-bubble-menu')).toBeInTheDocument()
+      // The touch-reachable link affordance itself must be present, not just
+      // the bubble container.
+      expect(screen.getByRole('button', { name: t('toolbar.link') })).toBeInTheDocument()
+    })
+
+    it('still does not render on touch for a LIVE (non-empty) selection, even inside a link', () => {
+      mockIsTouch = true
+      bubbleMenuSelectionEmpty = false
+      mockIsActive.mockImplementation((name: unknown) => name === 'link')
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      expect(screen.queryByTestId('selection-bubble-menu')).toBeNull()
+    })
+
+    it('is unaffected on desktop — non-empty selection still shows regardless of link state', () => {
+      mockIsTouch = false
+      bubbleMenuSelectionEmpty = false
+      mockIsActive.mockReturnValue(false)
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      expect(screen.getByTestId('selection-bubble-menu')).toBeInTheDocument()
     })
   })
 

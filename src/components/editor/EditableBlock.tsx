@@ -13,7 +13,6 @@ import { useTranslation } from 'react-i18next'
 import { EditorSurfaceContext } from '@/components/editor/editor-surface-context'
 import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { StaticBlock } from '@/components/editor/StaticBlock'
-import { shouldSplitOnBlur } from '@/editor/content-delta'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useDebouncedContentCommit } from '@/hooks/useDebouncedContentCommit'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
@@ -22,20 +21,20 @@ import { useScrollCaretAboveKeyboard } from '@/hooks/useScrollCaretAboveKeyboard
 import { retryOnPoolBusy } from '@/lib/app-error'
 import { attachmentRef } from '@/lib/attachment-ref'
 import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
-import { bumpFlushSeq, commitInlineProperties } from '@/lib/inline-property-commit'
-import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { addAttachmentWithBytes, deleteDraft, saveDraft } from '@/lib/tauri'
+import { runUnmountFlush } from '@/lib/unmount-flush'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
 
 /**
  * Unmount the roving editor from the given block and persist its content.
- * Uses `shouldSplitOnBlur` to decide between split and edit.
- * Returns the changed markdown, or null if unchanged.
+ * Runs the shared post-unmount decision chain (`runUnmountFlush`, #3278) to
+ * choose between split / checkbox-marker fold / inline-property commit / plain
+ * edit. Returns the changed markdown, or null if unchanged.
  *
  * #770 gap 1 — drop the previous block's `block_drafts` row here. This
  * function is the programmatic-move path (auto-mount effect + `handleFocus`),
@@ -67,6 +66,7 @@ function persistUnmount(
   editFn: (id: string, content: string) => Promise<boolean> | void,
   splitBlockFn: (id: string, content: string) => Promise<boolean> | void,
   rootParentId: string | null,
+  pageStore: ReturnType<typeof usePageBlockStoreApi>,
 ): string | null {
   const changed = re.unmount()
   // #770 gap 1 — drop the previous block's draft row so it can't resurrect at
@@ -87,32 +87,20 @@ function persistUnmount(
     return changed
   }
   // #2675 — programmatic focus moves (Enter-to-create, auto-mount) are a
-  // first-class save path, so property-bearing content must route through the
-  // shared inline-property commit flow here exactly like the blur and
-  // imperative-flush paths (see inline-property-commit.ts). Every branch
-  // bumps the block's flush sequence token so a stale in-flight async save
-  // cannot clobber this newer one.
-  let outcome: Promise<boolean> | void
-  if (shouldSplitOnBlur(changed)) {
-    bumpFlushSeq(prevId)
-    outcome = splitBlockFn(prevId, changed)
-  } else {
-    const inlineProps = parseInlineProperties(changed)
-    if (inlineProps.length > 0) {
-      const mySeq = bumpFlushSeq(prevId)
-      outcome = commitInlineProperties({
-        blockId: prevId,
-        content: changed,
-        inlineProps,
-        mySeq,
-        edit: editFn,
-        rootParentId,
-      })
-    } else {
-      bumpFlushSeq(prevId)
-      outcome = editFn(prevId, changed)
-    }
-  }
+  // first-class save path, so property-bearing content (and, #3278, a
+  // pasted-then-blurred checkbox marker) must route through the SHARED
+  // post-unmount decision chain here exactly like the blur and
+  // imperative-flush paths (see unmount-flush.ts). Every branch bumps the
+  // block's flush sequence token so a stale in-flight async save cannot
+  // clobber this newer one.
+  const { outcome } = runUnmountFlush({
+    blockId: prevId,
+    changed,
+    edit: editFn,
+    splitBlock: splitBlockFn,
+    rootParentId,
+    pageStore,
+  })
   // #2409 — defer the delete until the appended op resolves. Keep the row on a
   // failed save (`ok === false`) so the typed text survives for boot recovery.
   void Promise.resolve(outcome)
@@ -266,7 +254,10 @@ function EditableBlockInner({
   const setFocused = useBlockStore((s) => s.setFocused)
   // `rootParentId` is immutable for the lifetime of a per-page store (#753),
   // so reading it once alongside the stable store actions is safe.
-  const { edit, splitBlock, rootParentId } = usePageBlockStoreApi().getState()
+  // `persistUnmount`'s checkbox branch needs the store API itself (not just a
+  // `.getState()` snapshot) for its optimistic `todo_state` write.
+  const pageStoreApi = usePageBlockStoreApi()
+  const { edit, splitBlock, rootParentId } = pageStoreApi.getState()
   const prioritySelector = useCallback(
     (s: PageBlockState) => s.blocksById.get(blockId)?.priority ?? null,
     [blockId],
@@ -287,6 +278,11 @@ function EditableBlockInner({
   editRef.current = edit
   const splitBlockRef = useRef(splitBlock)
   splitBlockRef.current = splitBlock
+  // Same "read but don't re-run" reasoning as above — a mocked/wrapped
+  // `usePageBlockStoreApi` may not be referentially stable across renders
+  // (e.g. in tests), so its identity must not gate the auto-mount effect.
+  const pageStoreApiRef = useRef(pageStoreApi)
+  pageStoreApiRef.current = pageStoreApi
 
   // ── Draft autosave + content commit: driven by the editor update signal ──
   // #2938 — both are armed by a change SIGNAL from the editor's `update` event
@@ -351,7 +347,14 @@ function EditableBlockInner({
     if (isFocused && re.activeBlockId !== blockId) {
       // Unmount from previous block if any (mirrors handleFocus logic)
       if (re.activeBlockId) {
-        persistUnmount(re, re.activeBlockId, editRef.current, splitBlockRef.current, rootParentId)
+        persistUnmount(
+          re,
+          re.activeBlockId,
+          editRef.current,
+          splitBlockRef.current,
+          rootParentId,
+          pageStoreApiRef.current,
+        )
       }
       re.mount(blockId, contentRef.current)
     }
@@ -385,6 +388,7 @@ function EditableBlockInner({
           editRef.current,
           splitBlockRef.current,
           rootParentId,
+          pageStoreApiRef.current,
         )
       }
       // Mount into the new block
@@ -403,6 +407,7 @@ function EditableBlockInner({
     setFocused,
     discardDraft,
     rootParentId,
+    pageStore: pageStoreApi,
   })
 
   const { t } = useTranslation()

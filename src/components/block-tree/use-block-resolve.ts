@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import type { TagCacheRow } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { t as translate } from '@/lib/i18n'
@@ -296,6 +297,13 @@ export function useBlockResolve(): UseBlockResolveReturn {
   // call-time) and appended to by `onCreatePage` and the date picker.
   const pagesListRef = useRef<Array<{ id: string; title: string }>>([])
 
+  // #3277 — mirrors `pagesListRef`: `searchTags` used to call
+  // `listAllTagsInSpace` on EVERY keystroke with no client cache, unlike
+  // this sibling. Lazily filled by `searchTags` on the FIRST call, filtered
+  // client-side (via `matchSorter`) on every subsequent keystroke, and
+  // invalidated by the same space-switch subscriber below (#732 pattern).
+  const tagsListRef = useRef<TagCacheRow[]>([])
+
   // #732 — the cache holds space-scoped data in a space-agnostic
   // container, and the hook instance SURVIVES page-editor→page-editor
   // space switches (ViewDispatcher renders PageEditor without a key and
@@ -313,6 +321,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
         (s) => s.currentSpaceId,
         () => {
           pagesListRef.current = []
+          tagsListRef.current = []
         },
       ),
     [],
@@ -370,17 +379,36 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // the space's intrinsic tag count); filtering down to the query
       // happens client-side via the existing `matchSorter` call below,
       // same as `searchPagesViaCache`'s cache-fallback strategy.
+      //
+      // #3277 — mirrors `searchPagesViaCache`: fill `tagsListRef` once (on
+      // the first call, or after a space switch clears it) and filter every
+      // subsequent keystroke against the cached list, instead of issuing a
+      // fresh `listAllTagsInSpace` IPC (and re-running `batchSet`'s diff
+      // over the whole tag list) per character typed.
       const requestSpaceId = useSpaceStore.getState().currentSpaceId
       if (requestSpaceId == null) return []
-      const tags = unwrap(await commands.listAllTagsInSpace(requireActiveScope(requestSpaceId)))
-      // Populate the resolve cache so tag_ref nodes can resolve the name
-      // after the block is saved (serialized as #[ULID]) and reloaded.
-      // #853 — gate behind the captured-space guard: a stale response from
-      // an since-abandoned space must not seed the new space's cache keys.
-      if (tags.length > 0 && isRequestSpaceStillActive(requestSpaceId)) {
-        useResolveStore
-          .getState()
-          .batchSet(tags.map((t) => ({ id: t.tag_id, title: t.name, deleted: false })))
+      let tags = tagsListRef.current
+      if (tags.length === 0) {
+        const fetched = unwrap(
+          await commands.listAllTagsInSpace(requireActiveScope(requestSpaceId)),
+        )
+        tags = fetched
+        // #853 — gate behind the captured-space guard: a stale response
+        // from a since-abandoned space must not seed the new space's
+        // cache (neither the resolve store nor `tagsListRef`).
+        if (isRequestSpaceStillActive(requestSpaceId)) {
+          tagsListRef.current = fetched
+          // Populate the resolve cache so tag_ref nodes can resolve the
+          // name after the block is saved (serialized as #[ULID]) and
+          // reloaded. Only on the FILL — a cache-served keystroke re-seeds
+          // nothing new, so re-running the diff every keystroke bought
+          // nothing (#3277).
+          if (fetched.length > 0) {
+            useResolveStore
+              .getState()
+              .batchSet(fetched.map((t) => ({ id: t.tag_id, title: t.name, deleted: false })))
+          }
+        }
       }
       const sorted = q ? matchSorter(tags, q, { keys: ['name'] }) : tags
       const result: PickerItem[] = sorted.map((tag) => ({
@@ -591,6 +619,30 @@ export function useBlockResolve(): UseBlockResolveReturn {
       )
       // Populate resolve cache so the tag chip shows the name immediately
       useResolveStore.getState().set(block.id, name, false)
+      // #3277 finding 1 — mirror `onCreatePage`'s `pagesListRef` append.
+      // Without this, a tag created through the SAME `@`-picker session
+      // that already lazily filled `tagsListRef` stayed unfindable by that
+      // picker: `searchTags` only re-fetches when the cache is empty, so a
+      // newly created tag never surfaced until a space switch cleared the
+      // cache (the #732 subscriber above). `usage_count: 0` is correct —
+      // the tag isn't yet applied to any block.
+      //
+      // #4008 review note 6 — append ONLY into an already-filled cache. An
+      // EMPTY `tagsListRef` is not "a space with no tags", it is the
+      // "not fetched for this space yet" state that makes `searchTags`
+      // re-fetch on every call (deliberately, so a zero-tag space is never
+      // latched). Appending there would flip it to "filled" with a single
+      // entry and permanently suppress that re-fetch, hiding every tag
+      // created elsewhere — another window, a sync — for the rest of the
+      // session. Skipping the append costs nothing: the very next
+      // `searchTags` re-fetches from the backend, which has already
+      // committed this tag (the create above is awaited).
+      if (tagsListRef.current.length > 0) {
+        tagsListRef.current = [
+          ...tagsListRef.current,
+          { tag_id: block.id, name, usage_count: 0, updated_at: new Date().toISOString() },
+        ]
+      }
       return block.id
     } catch (err) {
       logger.error('useBlockResolve', 'onCreateTag failed', { name }, err)

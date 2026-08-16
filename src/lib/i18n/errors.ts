@@ -18,6 +18,11 @@ export const errors: Record<string, string> = {
   'error.spacesLoadFailed': 'Failed to refresh spaces',
   'error.saveFailed': 'Failed to save',
   'error.createBlockFailed': 'Failed to create block',
+  // #3276 — shown when a navigation jump (link click, search result) targets
+  // a block that never mounts (e.g. still hidden under a collapse/mount-cap
+  // reveal that didn't resolve in time), so the user gets a visible signal
+  // instead of a silent no-op that looks like a broken link.
+  'error.blockNotFound': 'Could not locate that block on the page',
   'error.sectionCrashed': '{{section}} encountered an error',
   'error.unexpected': 'An unexpected error occurred',
   'errorBoundary.dataSafe': 'Your data is safe — Retry reloads this panel.',

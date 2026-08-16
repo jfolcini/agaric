@@ -50,7 +50,7 @@
  *   separate, not-yet-addressed instance of the same over-inclusion.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { FlatBlock } from '@/lib/tree-utils'
 import type { MountedBlocks, ZoomedBlocks } from '@/lib/zoom-scope'
@@ -77,6 +77,15 @@ export interface UseBlockMountLimitReturn {
   hiddenCount: number
   /** Reveal (mount) the next batch of rows. */
   expandMountLimit: () => void
+  /**
+   * #3276 — jump the mount limit straight to (at least) `index + 1`, so the
+   * row at `index` in the (collapse-filtered) visible list is guaranteed to
+   * be mounted. Used to reveal a navigation target that sits past the cap,
+   * instead of requiring `MOUNT_LIMIT_STEP`-sized clicks of "Show more"
+   * until the target happens to fall inside the envelope. No-op when
+   * `index` is already within the current limit.
+   */
+  revealIndex: (index: number) => void
 }
 
 export interface UseBlockMountLimitOptions {
@@ -132,6 +141,18 @@ export function useBlockMountLimit(
     }))
   }, [initialLimit, pageKey, step])
 
+  const revealIndex = useCallback(
+    (index: number) => {
+      setMountScope((previous) => {
+        const currentLimit = previous.pageKey === pageKey ? previous.limit : initialLimit
+        const needed = index + 1
+        if (needed <= currentLimit) return previous
+        return { pageKey, limit: needed }
+      })
+    },
+    [initialLimit, pageKey],
+  )
+
   const hiddenCount = Math.max(0, visibleBlocks.length - mountLimit)
   // Reference-stable when nothing is hidden — keeps identity churn out of
   // the mount-cap-free (common) case, same discipline as
@@ -139,9 +160,22 @@ export function useBlockMountLimit(
   // The truncation is a NARROWING of `visibleBlocks` — every element came from
   // it — which is what makes re-branding it here legitimate rather than a mint
   // out of nothing: the input was already zoom-scoped.
-  const capped: readonly FlatBlock[] =
-    hiddenCount > 0 ? visibleBlocks.slice(0, mountLimit) : visibleBlocks
+  //
+  // #3277 — ALSO reference-stable in the capped (hiddenCount > 0) case: this
+  // used to call `.slice()` unconditionally on every render regardless of
+  // whether `visibleBlocks`/`mountLimit` actually changed, so a BlockTree
+  // re-render triggered for any OTHER reason (e.g. a focus move) still handed
+  // every downstream consumer of `mounted` (`mountCapExcludedIds`,
+  // `useViewportWindow`, …) a fresh array identity on a page past the mount
+  // cap — precisely where that churn is most expensive. Memoizing here is
+  // what makes dropping `focusedBlockId` from `mountCapExcludedIds`'s deps
+  // (BlockTree.tsx) actually stop the cascade, instead of leaving this as
+  // the next unmemoized link in the same chain.
+  const capped: readonly FlatBlock[] = useMemo(
+    () => (hiddenCount > 0 ? visibleBlocks.slice(0, mountLimit) : visibleBlocks),
+    [visibleBlocks, mountLimit, hiddenCount],
+  )
   const mounted = capped as MountedBlocks
 
-  return { mounted, hiddenCount, expandMountLimit }
+  return { mounted, hiddenCount, expandMountLimit, revealIndex }
 }

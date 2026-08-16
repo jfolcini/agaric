@@ -19,12 +19,13 @@
 import type React from 'react'
 import { useCallback, useRef } from 'react'
 import { flushSync } from 'react-dom'
+import type { StoreApi } from 'zustand'
 
 import { shouldSplitOnBlur } from '@/editor/content-delta'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-import { bumpFlushSeq, commitInlineProperties } from '@/lib/inline-property-commit'
-import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
+import { runUnmountFlush } from '@/lib/unmount-flush'
+import type { PageBlockState } from '@/stores/page-blocks'
 
 /**
  * Single-attribute opt-in for transient UI elements (popups, toolbars,
@@ -67,8 +68,21 @@ export function useEditorBlur(params: {
   /** Page root — keys the undo entry seeded for #2675 inline property
    * commits (`useUndoStore.onNewAction`). `null` skips the seed. */
   rootParentId?: string | null
+  /** Page store API — used only by the checkbox branch's optimistic
+   * `todo_state` write (#3278 — folding a leading task marker on blur, the
+   * same way `useBlockFlush` already folds it on imperative flush). Optional:
+   * callers/tests that never produce checkbox-marker content may omit it. */
+  pageStore?: StoreApi<PageBlockState> | undefined
 }): { handleBlur: (e: React.FocusEvent) => void } {
-  const { blockId, edit, splitBlock, setFocused, discardDraft, rootParentId = null } = params
+  const {
+    blockId,
+    edit,
+    splitBlock,
+    setFocused,
+    discardDraft,
+    rootParentId = null,
+    pageStore,
+  } = params
 
   // Store rovingEditor in a ref to avoid stale closures — the handle's
   // object identity changes on every render.
@@ -158,44 +172,34 @@ export function useEditorBlur(params: {
       // false on failure — it never rejects). Pre-fix the draft row was
       // deleted concurrently with the un-awaited IPC, so a failed save lost
       // BOTH copies of the typed text (store rollback + hard row DELETE).
+      //
+      // The classification itself (split → checkbox → inline properties →
+      // plain edit) is the SHARED chain (`runUnmountFlush`, #3278) also used
+      // by `useBlockFlush` and `persistUnmount`, so a block's content is
+      // folded/split/stripped identically regardless of which of the three
+      // unmount triggers fired. `flushSync` wraps only the split/plain-edit
+      // branches — same as before this consolidation, the async
+      // checkbox/property branches are never flushSync-wrapped. `dedupe`
+      // replays the #1062 skip: the plain-edit leaf is skipped when `changed`
+      // is byte-identical to what Step 3 already early-persisted (the
+      // split/checkbox/property branches always re-run regardless, since
+      // their extra processing hasn't happened on the early-persisted copy).
       let saveOutcome: Promise<boolean | void> | undefined
       if (changed !== null) {
-        if (shouldSplitOnBlur(changed)) {
-          bumpFlushSeq(blockId)
-          const outcome = flushSync(() => splitBlock(blockId, changed))
-          if (outcome) saveOutcome = outcome
-        } else {
-          // #2675 — the documented `key:: value` flow commits at SAVE time,
-          // and DOM blur is the dominant save path (clicking another block,
-          // the sidebar, anywhere outside the editor). Route property-bearing
-          // content through the shared commit flow: each parsed line is
-          // written via the typed property API and stripped from the
-          // committed content ONLY after its write succeeds. This runs even
-          // when Step 3 already early-persisted the same literal content —
-          // the flow's final edit() supersedes that crash-safety copy.
-          const inlineProps = parseInlineProperties(changed)
-          if (inlineProps.length > 0) {
-            const mySeq = bumpFlushSeq(blockId)
-            saveOutcome = commitInlineProperties({
-              blockId,
-              content: changed,
-              inlineProps,
-              mySeq,
-              edit,
-              rootParentId,
-            })
-          } else if (changed !== earlyPersisted) {
-            // #1062: skip the duplicate edit() when unmount returned the exact
-            // content Step 3 already persisted (the fresh-block plain-blur case).
-            bumpFlushSeq(blockId)
-            const outcome = flushSync(() => edit(blockId, changed))
-            if (outcome) saveOutcome = outcome
-          } else if (earlyPersistOutcome) {
-            // #1062 skip path — Step 3's edit is the one save of this blur, so
-            // its outcome is what must gate the discard.
-            saveOutcome = earlyPersistOutcome
-          }
-        }
+        const result = runUnmountFlush({
+          blockId,
+          changed,
+          edit,
+          splitBlock,
+          rootParentId,
+          pageStore,
+          invokeSync: flushSync,
+          dedupe:
+            earlyPersisted !== null
+              ? { content: earlyPersisted, outcome: earlyPersistOutcome }
+              : undefined,
+        })
+        if (result.outcome) saveOutcome = result.outcome
       }
       // Always discard draft on blur — even when content is unchanged, a
       // stale draft from a previous autosave cycle may exist in the database.
@@ -205,7 +209,7 @@ export function useEditorBlur(params: {
       logger.debug('editor', 'blur', { blockId })
       setFocused(null)
     },
-    [blockId, edit, splitBlock, setFocused, discardDraft, rootParentId],
+    [blockId, edit, splitBlock, setFocused, discardDraft, rootParentId, pageStore],
   )
 
   return { handleBlur }

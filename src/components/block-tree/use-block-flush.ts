@@ -6,17 +6,15 @@
  *
  *   1. Reads the currently-active editor handle via `rovingEditorRef`.
  *   2. Unmounts it (captures the latest content via `handle.unmount()`).
- *   3. If the content parses to a multi-block document (e.g. pasted markdown
- *      with headings, code blocks, or list items) — splits via `splitBlock`.
- *   4. Otherwise checks for inline checkbox markdown (`[ ]` / `[x]`); when
- *      present, persists the todo state via the thin command and saves the
- *      cleaned content.
- *   5. Otherwise parses inline `key:: value` property lines (#2675 — the
- *      `::` picker's documented "pick a key, type its value, it commits"
- *      flow). Each parsed property is written via the typed property API and
- *      its line is stripped from the committed content ONLY after the write
- *      succeeds; a rejected write leaves the line literal so nothing is lost.
- *   6. Otherwise saves the changed content via `edit`.
+ *   3. Runs the shared post-unmount decision chain (`runUnmountFlush`, #3278):
+ *      split (multi-block content) → checkbox marker fold → inline
+ *      `key:: value` properties → plain edit. This chain is SHARED with
+ *      `useEditorBlur` Step 5 and `persistUnmount` in EditableBlock so a
+ *      block's content is classified identically regardless of which of the
+ *      three unmount triggers fired.
+ *   4. On the split branch, publishes the in-flight split (#2914
+ *      `pendingSplits`) so `handleEnterSave` can await it instead of racing
+ *      a parallel `createBelow`.
  *
  * The hook is intentionally thin (a single `useCallback`) and the returned
  * function preserves the previous `() => string | null` signature so the
@@ -32,23 +30,12 @@
  *   flush logic.
  */
 
-import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback } from 'react'
 
-import { parse } from '@/editor/markdown-serializer'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
-import { processCheckboxSyntax } from '@/lib/block-utils'
-import { bumpFlushSeq, commitInlineProperties, readFlushSeq } from '@/lib/inline-property-commit'
-import { parseInlineProperties } from '@/lib/inline-property-parse'
-import { logger } from '@/lib/logger'
-import { notify } from '@/lib/notify'
+import { runUnmountFlush } from '@/lib/unmount-flush'
 import type { usePageBlockStoreApi } from '@/stores/page-blocks'
-import { useUndoStore } from '@/stores/undo'
-
-type TFn = TFunction
 
 // #2914 — cross-callback handoff of an in-flight multi-block split.
 //
@@ -111,8 +98,15 @@ export interface UseBlockFlushParams {
   rootParentId: string | null
   /** Page store API (used to write the optimistic `todo_state` update). */
   pageStore: ReturnType<typeof usePageBlockStoreApi>
-  /** i18n translator. */
-  t: TFn
+  // #3278 dropped the `t` translator param: the checkbox-fold error toast
+  // moved into the shared `commitCheckboxState` (inline-property-commit.ts),
+  // which — like its sibling `commitInlineProperties` — reaches for the `i18n`
+  // singleton rather than an injected translator, because the shared chain is
+  // called from non-React code paths too. Production text is unchanged:
+  // BlockTree's `t` came from a default-namespace `useTranslation()` on the
+  // same `i18n` instance. #4008 note 9 — it was left behind as a deprecated,
+  // unused optional param pending a follow-up that had no issue number, so it
+  // is removed here instead, together with BlockTree's call-site argument.
 }
 
 /**
@@ -125,7 +119,6 @@ export function useBlockFlush({
   splitBlock,
   rootParentId,
   pageStore,
-  t,
 }: UseBlockFlushParams): () => string | null {
   // Per-block sequence token — `bumpFlushSeq` / `readFlushSeq` from
   // inline-property-commit.ts. Each flush that takes a detached async path
@@ -144,23 +137,28 @@ export function useBlockFlush({
     const blockId = handle.activeBlockId // capture BEFORE unmount nullifies it
     const changed = handle.unmount()
     if (changed !== null) {
-      // Use the parser to detect multi-block content (headings, code blocks, etc.)
-      // A single code block or heading with newlines should NOT split.
-      const doc = parse(changed)
-      const blockCount = doc.content?.length ?? 0
-      if (blockCount > 1) {
-        // Invalidate any in-flight async flush (checkbox/property) on this
-        // block: this sync commit is newer and owns the final content, so a
-        // late-resolving stale run must bail instead of clobbering the split.
-        bumpFlushSeq(blockId)
-        // #2914 — snapshot the pre-split block ids so, once the split resolves,
-        // the trailing blocks it created (the only new ids) are identifiable;
-        // publish the in-flight split + its last-created block for
-        // `handleEnterSave` to await instead of racing a parallel createBelow.
-        const beforeIds = new Set(pageStore.getState().blocks.map((b) => b.id))
+      // #2914 — snapshot the pre-split block ids right before `splitBlock`
+      // lands, so the trailing blocks it creates (the only new ids) are
+      // identifiable once it resolves.
+      let beforeIds = new Set<string>()
+      const result = runUnmountFlush({
+        blockId,
+        changed,
+        edit,
+        splitBlock,
+        rootParentId,
+        pageStore,
+        onWillSplit: () => {
+          beforeIds = new Set(pageStore.getState().blocks.map((b) => b.id))
+        },
+      })
+      if (result.kind === 'split') {
+        // Publish the in-flight split + its last-created block for
+        // `handleEnterSave` (via `consumePendingSplit`) to await instead of
+        // racing a parallel createBelow.
         setPendingSplit(
           blockId,
-          splitBlock(blockId, changed).then((ok) => {
+          Promise.resolve(result.outcome).then((ok) => {
             if (!ok) return null
             let lastNew: string | null = null
             for (const b of pageStore.getState().blocks) {
@@ -169,108 +167,8 @@ export function useBlockFlush({
             return lastNew
           }),
         )
-      } else {
-        // Check for checkbox markdown syntax before saving
-        const { cleanContent, todoState } = processCheckboxSyntax(changed)
-        if (todoState) {
-          // #1074 — coordinate the two effects. Previously this fired
-          // `set_todo_state` and, regardless of its outcome, optimistically
-          // wrote `todo_state` (with no rollback) AND stripped the marker via
-          // `edit(blockId, cleanContent)`. On a rejected state write that left
-          // the task state silently and unrecoverably lost (marker gone, state
-          // never committed). Now we AWAIT the state write and only strip the
-          // marker + apply the optimistic `todo_state` AFTER it resolves; on
-          // rejection we keep the marker (persist `changed`, not `cleanContent`)
-          // so the box stays re-parseable, and write no optimistic state. The
-          // callback stays sync (`() => string | null`) via this fire-and-track
-          // async IIFE — mirroring the store's own async/rollback idioms.
-          // #1591 — guard against a rapid second flush on the same block
-          // clobbering this one. Bump + capture the block's token now; the
-          // post-await re-check bails if a newer flush superseded this run.
-          const mySeq = bumpFlushSeq(blockId)
-          void (async () => {
-            try {
-              const echo = unwrap(await commands.setTodoState(blockId, todoState))
-              // A newer flush on this block superseded us while the IPC was in
-              // flight — bail without applying so we don't clobber it. The
-              // newer run owns the block's final content + todo_state.
-              if (readFlushSeq(blockId) !== mySeq) return
-              // Adopt the backend echo for `todo_state` the way `edit()` adopts
-              // the content echo (#753): the optimistic write below records the
-              // state we SENT; prefer the canonical value the backend returned
-              // to avoid drift. Fall back to the sent state if the echo omits it.
-              const settledState =
-                typeof echo?.todo_state === 'string' ? echo.todo_state : todoState
-              pageStore.setState((s) => ({
-                blocks: s.blocks.map((b) =>
-                  b.id === blockId ? { ...b, todo_state: settledState } : b,
-                ),
-              }))
-              // Strip the marker only now that the state is committed.
-              edit(blockId, cleanContent)
-              if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            } catch (err: unknown) {
-              // A newer flush on this block superseded us — don't clobber it
-              // with this stale run's raw content, but still surface the error.
-              if (readFlushSeq(blockId) !== mySeq) {
-                logger.error(
-                  'BlockTree',
-                  'Failed to set task state from checkbox syntax (superseded)',
-                  { blockId },
-                  err,
-                )
-                notify.error(t('blockTree.setTaskStateFailed'))
-                return
-              }
-              // State write failed — do NOT strip the marker. Persist the raw
-              // content (with the `- [ ] `/`- [x] ` marker intact) so the task
-              // state stays recoverable, and write no optimistic `todo_state`
-              // (nothing to roll back since we deferred it past the await).
-              edit(blockId, changed)
-              logger.error(
-                'BlockTree',
-                'Failed to set task state from checkbox syntax',
-                {
-                  blockId,
-                },
-                err,
-              )
-              notify.error(t('blockTree.setTaskStateFailed'))
-            }
-          })()
-        } else {
-          // #2675 — inline `key:: value` property lines. Parse per the
-          // import.rs rules (valid key alphabet, non-empty value, reserved
-          // keys skipped, code fences ignored — see inline-property-parse.ts)
-          // and commit each parsed property via the typed property API in
-          // `commitInlineProperties` (shared with the blur / programmatic
-          // unmount save paths). A property line is stripped from the
-          // committed content ONLY after its write succeeds; a rejected write
-          // (select-membership, unparseable number, backend error, …) leaves
-          // the line literal so the typed text is never lost. Same
-          // fire-and-track async + sequence-token guard as the checkbox path.
-          const inlineProps = parseInlineProperties(changed)
-          if (inlineProps.length > 0) {
-            const mySeq = bumpFlushSeq(blockId)
-            void commitInlineProperties({
-              blockId,
-              content: changed,
-              inlineProps,
-              mySeq,
-              edit,
-              rootParentId,
-            })
-          } else {
-            // Invalidate any in-flight async flush (checkbox/property) on
-            // this block — same reasoning as the split branch above: without
-            // the bump, a stale run's post-await `edit()` would clobber this
-            // newer sync commit (blur → quick refocus → retype → blur race).
-            bumpFlushSeq(blockId)
-            edit(blockId, changed)
-          }
-        }
       }
     }
     return changed
-  }, [edit, splitBlock, rootParentId, t, pageStore, rovingEditorRef])
+  }, [edit, splitBlock, rootParentId, pageStore, rovingEditorRef])
 }

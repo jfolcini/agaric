@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { isUsableHtml } from '@/editor/extensions/html-paste'
+import { parseUsableHtmlBody } from '@/editor/extensions/html-paste'
 import {
   htmlBodyToOutline,
   type OutlineBlock,
@@ -32,29 +32,50 @@ function convertToMarkdown(html: string): string {
   return outlineToIndentedMarkdown(convert(html))
 }
 
-describe('isUsableHtml', () => {
-  it('rejects absent / empty payloads', () => {
-    expect(isUsableHtml(undefined)).toBe(false)
-    expect(isUsableHtml(null)).toBe(false)
-    expect(isUsableHtml('')).toBe(false)
+// #4008 note 2 — these used to drive `isUsableHtml`, a boolean wrapper that
+// #3277 left with no production caller: `handlePaste` gates on
+// `parseUsableHtmlBody(html)` directly (one parse, and it needs the body it
+// returns). Worse, the wrapper's `typeof DOMParser === 'undefined'` regex
+// fallback answered TRUE where production answers "not usable" and falls
+// through to the plain-text path, so the block asserted a behaviour the app
+// no longer had. Retargeted at the function `handlePaste` actually calls:
+// a `null` return IS the "fall through to plain text" answer.
+describe('parseUsableHtmlBody — handlePaste’s usability gate', () => {
+  it('rejects empty payloads', () => {
+    expect(parseUsableHtmlBody('')).toBeNull()
   })
 
   it('rejects tag-free escaped plain text', () => {
-    expect(isUsableHtml('just some plain text, no tags')).toBe(false)
+    expect(parseUsableHtmlBody('just some plain text, no tags')).toBeNull()
   })
 
   it('rejects a bare wrapper with no visible text', () => {
-    expect(isUsableHtml('<html><body><!--StartFragment--><!--EndFragment--></body></html>')).toBe(
-      false,
-    )
-    expect(isUsableHtml('<div></div>')).toBe(false)
+    expect(
+      parseUsableHtmlBody('<html><body><!--StartFragment--><!--EndFragment--></body></html>'),
+    ).toBeNull()
+    expect(parseUsableHtmlBody('<div></div>')).toBeNull()
   })
 
-  it('accepts a real fragment with visible text', () => {
-    expect(isUsableHtml('<p>hello <b>world</b></p>')).toBe(true)
+  it('accepts a real fragment with visible text, returning the parsed body', () => {
+    const body = parseUsableHtmlBody('<p>hello <b>world</b></p>')
+    expect(body).not.toBeNull()
+    expect((body as ParentNode & { textContent: string }).textContent).toBe('hello world')
     expect(
-      isUsableHtml('<html><body><!--StartFragment--><h1>Hi</h1><!--EndFragment--></body></html>'),
-    ).toBe(true)
+      parseUsableHtmlBody(
+        '<html><body><!--StartFragment--><h1>Hi</h1><!--EndFragment--></body></html>',
+      ),
+    ).not.toBeNull()
+  })
+
+  it('rejects everything when the platform has no DOMParser', () => {
+    const original = globalThis.DOMParser
+    // @ts-expect-error — deliberately removing the global to hit the guard.
+    delete globalThis.DOMParser
+    try {
+      expect(parseUsableHtmlBody('<p>hello</p>')).toBeNull()
+    } finally {
+      globalThis.DOMParser = original
+    }
   })
 })
 

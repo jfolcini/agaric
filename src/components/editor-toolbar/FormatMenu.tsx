@@ -15,6 +15,20 @@
  * and the popover stays open, letting the user stack several marks
  * (bold + italic) in one visit. Active marks get `aria-pressed` + the shared
  * active class, mirroring the bubble menu.
+ *
+ * External Link is deliberately NOT hosted here. #3276 f3 tried mounting the
+ * link button + `LinkEditPopover` in this popover to close a real touch gap
+ * (an existing link's URL/label couldn't be edited on a coarse pointer), but
+ * that placement regressed `FormattingToolbar.test.tsx`'s pre-existing,
+ * deliberate contract — "External Link still lives ONLY in the selection
+ * bubble — not in the Format popover or the toolbar" — established alongside
+ * this popover back in #1958, and still documented on `FormattingToolbar`'s
+ * own module comment ("The mark toggles + External Link live in
+ * `SelectionBubbleMenu`"). The #3276 f3 gap is closed instead in
+ * `SelectionBubbleMenu`'s `shouldShow`: a touch caret resting inside an
+ * existing link (no live drag-selection, so it doesn't fight the OS
+ * selection handles that justify suppressing the bubble on touch generally)
+ * now opens the bubble there, ungated by `useIsTouch`'s blanket exclusion.
  */
 
 import type { Editor } from '@tiptap/react'

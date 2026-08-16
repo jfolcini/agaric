@@ -103,6 +103,8 @@ vi.mock('@/components/editor/StaticBlock', () => ({
 const mockSaveDraft = vi.fn().mockResolvedValue({ status: 'ok', data: null })
 const mockDeleteDraft = vi.fn().mockResolvedValue({ status: 'ok', data: null })
 const mockFlushDraft = vi.fn().mockResolvedValue({ status: 'ok', data: null })
+// #3278 — persistUnmount's checkbox branch calls `commands.setTodoState`.
+const mockSetTodoState = vi.fn().mockResolvedValue({ status: 'ok', data: { todo_state: 'TODO' } })
 const mockAddAttachmentWithBytes = vi.fn().mockResolvedValue({
   id: 'ATT_1',
   block_id: 'BLK_1',
@@ -132,6 +134,7 @@ vi.mock('@/lib/bindings', async () => {
       saveDraft: (...args: unknown[]) => mockSaveDraft(...args),
       deleteDraft: (...args: unknown[]) => mockDeleteDraft(...args),
       flushDraft: (...args: unknown[]) => mockFlushDraft(...args),
+      setTodoState: (...args: unknown[]) => mockSetTodoState(...args),
     },
   }
 })
@@ -161,16 +164,31 @@ vi.mock('@/stores/blocks', () => ({
 const _mockPageStore = {
   edit: mockEdit,
   splitBlock: mockSplitBlock,
-  blocks: [] as Array<{ id: string; priority?: string | null }>,
+  blocks: [] as Array<{ id: string; priority?: string | null; todo_state?: string | null }>,
   // G — `EditableBlock`'s priority selector reads from `blocksById`.
   // Provide an empty Map so `selector(s).priority` is `undefined`, matching
   // the original `blocks.find(...)` behavior on an empty array.
-  blocksById: new Map<string, { id: string; priority?: string | null }>(),
+  blocksById: new Map<
+    string,
+    { id: string; priority?: string | null; todo_state?: string | null }
+  >(),
+}
+// #3278 — `persistUnmount`'s checkbox branch writes the optimistic
+// `todo_state` via `pageStore.setState((s) => ({ blocks: ... }))`, mirroring
+// the real store's shallow-merge `setState` (page-blocks.ts's "G" escape
+// hatch for external callers).
+function applyMockPageStoreUpdate(
+  updater: (s: typeof _mockPageStore) => Partial<typeof _mockPageStore>,
+): void {
+  Object.assign(_mockPageStore, updater(_mockPageStore))
 }
 vi.mock('@/stores/page-blocks', () => ({
   usePageBlockStore: (selector?: (s: typeof _mockPageStore) => unknown) =>
     selector ? selector(_mockPageStore) : _mockPageStore,
-  usePageBlockStoreApi: () => ({ getState: () => _mockPageStore }),
+  usePageBlockStoreApi: () => ({
+    getState: () => _mockPageStore,
+    setState: applyMockPageStoreUpdate,
+  }),
 }))
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -1057,6 +1075,76 @@ describe('EditableBlock', () => {
       expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(codeBlock)
       expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', codeBlock)
       expect(mockSplitBlock).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── #3278: checkbox marker folds through the programmatic-unmount path ──
+  //
+  // Before the unmount/blur-flush consolidation, ONLY `useBlockFlush`
+  // (imperative flush) folded a leading GFM task marker into `todo_state`.
+  // `persistUnmount` (this auto-mount / handleFocus path) saved the marker
+  // verbatim instead. These tests pin that a programmatic focus move now
+  // folds the marker exactly like the imperative flush does (`runUnmountFlush`,
+  // shared with `useBlockFlush` / `useEditorBlur`).
+
+  describe('#3278 — checkbox marker folds on the programmatic-unmount path', () => {
+    beforeEach(() => {
+      mockSetTodoState.mockResolvedValue({ status: 'ok', data: { todo_state: 'TODO' } })
+      _mockPageStore.blocks = [{ id: 'OLD_BLOCK', todo_state: null }]
+    })
+
+    it('SUCCESS: strips the marker and sets todo_state via the auto-mount handoff', async () => {
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => '- [ ] task')
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
+      )
+      rerender(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
+
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(mockSetTodoState).toHaveBeenCalledExactlyOnceWith('OLD_BLOCK', 'TODO')
+      // The marker is stripped: edit() persists the cleaned content, NOT the
+      // raw `- [ ] task` string an unfolded handoff would have saved.
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'task')
+      expect(_mockPageStore.blocks[0]?.todo_state).toBe('TODO')
+      expect(mockMount).toHaveBeenCalledWith('B1', '')
+    })
+
+    it('FAILURE: keeps the marker literal and writes no optimistic todo_state', async () => {
+      mockSetTodoState.mockRejectedValueOnce(new Error('IPC down'))
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => '- [ ] task')
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
+      )
+      rerender(<EditableBlock blockId="B1" content="" isFocused rovingEditor={roving as never} />)
+
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(mockToastError).toHaveBeenCalledWith('Failed to set task state')
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', '- [ ] task')
+      expect(_mockPageStore.blocks[0]?.todo_state).toBeNull()
     })
   })
 

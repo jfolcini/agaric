@@ -80,7 +80,7 @@ Two hooks with similar names; the split matters:
 
 Suggestion-popup passthrough: when a picker is visible, `Enter / Tab / Escape / Backspace` go to the picker, not the block handler. The block handler checks `isSuggestionPopupVisible()` before processing.
 
-`Tab` / `Shift+Tab` are intentionally NOT bound to indent / dedent — they remain browser focus navigation so the app stays keyboard-accessible. Indent / dedent use `Ctrl+Shift+→` / `Ctrl+Shift+←`.
+`Tab` / `Shift+Tab` (#912) ARE bound to indent / dedent the focused block — the universal outliner restructure key (Logseq, Workflowy, Roam, Notion). `Ctrl+Shift+→` / `Ctrl+Shift+←` is the secondary alias. #3276 — suppressed inside a table (falls through to `@tiptap/extension-table`'s own `goToNextCell`/`goToPreviousCell` keymap) and inside a code block (falls through to browser/keymap focus handling), same guard as the Enter rule above.
 
 `flushSync` on blur: when `handleBlur` calls `edit()` or `splitBlock()`, wrap in `flushSync()` so the store update renders before the editor unmounts. Otherwise the editor disappears before the save completes.
 

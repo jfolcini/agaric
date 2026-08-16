@@ -55,29 +55,49 @@ const htmlPastePluginKey = new PluginKey('htmlPaste')
  * `<html><body><!--StartFragment-->…<!--EndFragment--></body></html>`, so the
  * wrapper alone (no inner text) is correctly rejected.
  */
-export function isUsableHtml(html: string | undefined | null): html is string {
-  if (!html) return false
-  // Use the DOM to decide emptiness rather than regex tag-stripping: regex
-  // sanitization of HTML is bypassable (CodeQL js/incomplete-multi-character-
-  // sanitization), and the browser parser drops tags/comments correctly. A
-  // `text/html` payload that is really just escaped plain text parses to a body
-  // with no element children, so it is (correctly) rejected to the plain-text
-  // path. Fall back to a presence *test* (not a replace) where DOMParser is
-  // unavailable.
-  if (typeof DOMParser === 'undefined') return /<[a-zA-Z][\s\S]*>/.test(html)
+/**
+ * Parse a clipboard HTML string and return its `body` iff it is "usable" —
+ * after stripping tags it carries some visible text AND it actually contains
+ * at least one HTML tag (a `text/html` that is really just escaped plain
+ * text has no element children and is better handled by the plain-text
+ * path). Browsers commonly wrap a copied fragment in
+ * `<html><body><!--StartFragment-->…<!--EndFragment--></body></html>`, so the
+ * wrapper alone (no inner text) is correctly rejected. Returns `null` when
+ * unusable, unavailable (no `DOMParser`), or parsing throws.
+ *
+ * #3277 — the single parse point for the whole paste path: `handlePaste`
+ * calls this ONCE to both decide usability and obtain the `body` it threads
+ * into `convertAndInsert`, instead of the old two-parse split (a boolean
+ * `isUsableHtml` gate, then a second, independent `parseHtmlBody` inside the
+ * async conversion) that DOM-parsed the identical clipboard string twice —
+ * the blocking half (the gate) on the main thread before `handlePaste` could
+ * even return.
+ *
+ * A `null` return IS `handlePaste`'s "not usable" answer — the handler returns
+ * false and the paste falls through to the plain-text path — so the usability
+ * assertions belong here and nowhere else (#4008 note 2).
+ *
+ * @internal Exported for testing.
+ */
+export function parseUsableHtmlBody(html: string): ParentNode | null {
+  if (typeof DOMParser === 'undefined') return null
   let body: HTMLElement | null
   try {
     body = new DOMParser().parseFromString(html, 'text/html').body
-  } catch {
-    return false
+  } catch (err) {
+    logger.warn('htmlPaste', 'DOMParser failed', undefined, err)
+    return null
   }
-  if (!body || body.querySelector('*') === null) return false
-  return (body.textContent ?? '').trim().length > 0
+  if (!body || body.querySelector('*') === null) return null
+  if ((body.textContent ?? '').trim().length === 0) return null
+  return body
 }
 
 /**
  * Parse a clipboard HTML string into a `body` ParentNode using the platform
- * `DOMParser`. Returns null when parsing is unavailable or fails.
+ * `DOMParser`. Returns null when parsing is unavailable or fails. Used only
+ * by `convertAndInsert`'s fallback path (no precomputed body was supplied —
+ * i.e. a caller other than `handlePaste`, such as a direct test call).
  */
 function parseHtmlBody(html: string): ParentNode | null {
   if (typeof DOMParser === 'undefined') return null
@@ -107,6 +127,12 @@ function parseHtmlBody(html: string): ParentNode | null {
  * focus has since moved to a different block, rather than routing structured
  * content into whatever block happens to be focused at resolution time (#2033).
  *
+ * `precomputedBody` — #3277: `handlePaste` already parses `html` once (via
+ * `parseUsableHtmlBody`) to decide usability, so it passes that SAME parsed
+ * `body` here to avoid a redundant second `DOMParser` pass over the identical
+ * string. Omitted (the default), this falls back to parsing `html` itself —
+ * every direct test call below relies on that fallback, unchanged.
+ *
  * @internal Exported for testing.
  */
 export async function convertAndInsert(
@@ -114,6 +140,7 @@ export async function convertAndInsert(
   html: string,
   plainText: string,
   targetBlockId: string | null,
+  precomputedBody?: ParentNode | null,
 ): Promise<void> {
   // The view may have been destroyed between claiming the paste and now.
   if (view.isDestroyed) return
@@ -126,7 +153,7 @@ export async function convertAndInsert(
     // The dynamic import is itself a turn, so re-check after it resolves.
     if (view.isDestroyed) return
 
-    const body = parseHtmlBody(html)
+    const body = precomputedBody !== undefined ? precomputedBody : parseHtmlBody(html)
     if (!body) {
       insertPlainText(view, plainText)
       return
@@ -243,7 +270,12 @@ export const HtmlPaste = Extension.create({
             const html = event.clipboardData?.getData('text/html')
             // No usable HTML → fall through to task-paste / external-link /
             // the default plain-text path unchanged (no regressions).
-            if (!isUsableHtml(html)) return false
+            if (!html) return false
+            // #3277 — ONE parse decides usability AND supplies the body
+            // `convertAndInsert` walks; the old `isUsableHtml` gate parsed
+            // the same string again a second time inside the conversion.
+            const body = parseUsableHtmlBody(html)
+            if (!body) return false
 
             const plainText = event.clipboardData?.getData('text/plain') ?? ''
 
@@ -256,7 +288,7 @@ export const HtmlPaste = Extension.create({
             // Claim the paste synchronously (the conversion is async). The
             // async path inserts structured content, or the plain-text payload
             // on any failure, so content is never silently dropped.
-            void convertAndInsert(view, html, plainText, targetBlockId)
+            void convertAndInsert(view, html, plainText, targetBlockId, body)
             return true
           },
         },

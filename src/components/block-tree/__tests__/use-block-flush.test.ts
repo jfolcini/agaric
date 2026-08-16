@@ -22,14 +22,13 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
-import type { TFunction } from 'i18next'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
-import { useBlockFlush } from '@/components/block-tree/use-block-flush'
+import { consumePendingSplit, useBlockFlush } from '@/components/block-tree/use-block-flush'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
@@ -44,6 +43,18 @@ import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 // checkbox branch regardless of how the real serializer tokenizes a task item.
 vi.mock('@/editor/markdown-serializer', () => ({
   parse: () => ({ content: [{ type: 'paragraph' }] }),
+}))
+
+// #3278 — pins that the split decision is delegated to the SHARED
+// `shouldSplitOnBlur` predicate (content-delta.ts, also used by
+// `useEditorBlur` / `persistUnmount`) instead of an open-coded
+// `parse(changed).content.length > 1` check private to this file. Defaults to
+// `false` so every OTHER existing test in this file (which never sets it) is
+// unaffected — only the dedicated split-path test below overrides it.
+const mockShouldSplitOnBlur = vi.fn((_md: string) => false)
+vi.mock('@/editor/content-delta', async (importActual) => ({
+  ...(await importActual<typeof import('@/editor/content-delta')>()),
+  shouldSplitOnBlur: (...args: unknown[]) => mockShouldSplitOnBlur(...(args as [string])),
 }))
 
 const mockedInvoke = vi.mocked(invoke)
@@ -76,7 +87,6 @@ function makeParams(
     splitBlock: pageStore.getState().splitBlock,
     rootParentId: null,
     pageStore,
-    t: vi.fn((key: string) => key) as unknown as TFunction,
     ...overrides,
   }
 }
@@ -155,7 +165,7 @@ describe('useBlockFlush — checkbox markdown', () => {
     })
 
     await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.setTaskStateFailed')
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to set task state')
     })
 
     // The marker survives: the raw content (with `- [ ] `) is persisted so the
@@ -548,5 +558,69 @@ describe('useBlockFlush — inline `key:: value` properties (#2675)', () => {
       )
     })
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+  })
+})
+
+// ===========================================================================
+// #3278 — the split branch delegates to the SHARED `shouldSplitOnBlur`
+// predicate (content-delta.ts) instead of an open-coded
+// `parse(changed).content.length > 1` check, so the split decision has one
+// definition across `useBlockFlush` / `useEditorBlur` / `persistUnmount`.
+// Also pins that the #2914 `pendingSplits` handoff survives the refactor —
+// this file previously had NO split-branch coverage at all.
+// ===========================================================================
+
+describe('useBlockFlush — split path (#3278)', () => {
+  it('delegates to shouldSplitOnBlur and publishes the pending split for #2914', async () => {
+    mockShouldSplitOnBlur.mockReturnValueOnce(true)
+    const block = makeBlock({ id: 'BLK', content: 'old', todo_state: null })
+    // A PRE-EXISTING block that sorts AFTER the split's new sibling. Without it
+    // the `beforeIds` snapshot is untestable: with an empty snapshot the
+    // "last id not in beforeIds" scan still lands on the (last) new block, so
+    // dropping the snapshot entirely would go unnoticed. With `TAIL` present,
+    // an empty snapshot resolves to `TAIL` instead of `BLK_NEW`.
+    const tail = makeBlock({ id: 'TAIL', content: 'pre-existing', todo_state: null })
+    pageStore.setState({ blocks: [block, tail] })
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'edit_block') return Promise.resolve({ ...block, content: 'line1\nline2' })
+      return strictInvokeFallback(cmd)
+    })
+
+    const mockSplitBlockFn = vi.fn(() => {
+      // Simulate the split creating one trailing sibling block, inserted
+      // BETWEEN the split block and the pre-existing `TAIL`.
+      pageStore.setState({
+        blocks: [block, makeBlock({ id: 'BLK_NEW', content: 'line2', todo_state: null }), tail],
+      })
+      return Promise.resolve(true)
+    })
+
+    const handle = makeHandle('BLK', 'line1\nline2')
+    const { result } = renderHook(() =>
+      useBlockFlush(makeParams(handle, { splitBlock: mockSplitBlockFn })),
+    )
+
+    // #2914 — `consumePendingSplit` must be called SYNCHRONOUSLY right after
+    // the flush (mirroring `handleEnterSave`'s real usage), in the SAME tick
+    // as `result.current()` — the split's self-cleaning `.finally()` would
+    // otherwise have a chance to settle-and-delete the entry first once any
+    // `await` is interposed.
+    let pending: Promise<string | null> | null = null
+    act(() => {
+      result.current()
+      pending = consumePendingSplit('BLK')
+    })
+
+    // The split decision came from the SHARED predicate, not an open-coded
+    // parse check private to this file.
+    expect(mockShouldSplitOnBlur).toHaveBeenCalledWith('line1\nline2')
+    expect(mockSplitBlockFn).toHaveBeenCalledWith('BLK', 'line1\nline2')
+    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+
+    // #2914 — the in-flight split is published; `consumePendingSplit`
+    // resolves to the id of the LAST block the split created.
+    expect(pending).not.toBeNull()
+    await expect(pending).resolves.toBe('BLK_NEW')
   })
 })

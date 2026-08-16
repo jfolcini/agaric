@@ -202,4 +202,44 @@ describe('useBlockMountLimit', () => {
     rerender({ b: blocks })
     expect(result.current.expandMountLimit).toBe(initial)
   })
+
+  // #3276 — navigating (e.g. a link jump) to a block past the mount cap was a
+  // silent no-op: nothing raised the limit to the target's actual position.
+  // `revealIndex` lets a caller who knows the target's index in the
+  // (collapse-filtered) visible list jump the cap straight to it, instead of
+  // clicking "Show more" repeatedly in `MOUNT_LIMIT_STEP` increments.
+  describe('revealIndex (#3276)', () => {
+    it('raises the mount limit so the target index is actually mounted', () => {
+      const blocks = makeFlatBlocks(1200)
+      const { result, rerender } = renderHook(
+        ({ b }) => useBlockMountLimit(b, { initialLimit: 500, step: 500 }),
+        { initialProps: { b: blocks } },
+      )
+
+      // Precondition: block 900 is genuinely NOT mounted yet — the silent
+      // no-op this closes, not a tautology.
+      expect(result.current.mounted.some((blk) => blk.id === 'BLK_900')).toBe(false)
+
+      result.current.revealIndex(900)
+      rerender({ b: blocks })
+
+      expect(result.current.mounted.some((blk) => blk.id === 'BLK_900')).toBe(true)
+      expect(result.current.mounted).toHaveLength(901)
+      expect(result.current.hiddenCount).toBe(299)
+    })
+
+    it('is a no-op when the target index is already within the current limit', () => {
+      const blocks = makeFlatBlocks(1200)
+      const { result, rerender } = renderHook(
+        ({ b }) => useBlockMountLimit(b, { initialLimit: 500, step: 500 }),
+        { initialProps: { b: blocks } },
+      )
+
+      result.current.revealIndex(10)
+      rerender({ b: blocks })
+
+      expect(result.current.mounted).toHaveLength(500)
+      expect(result.current.hiddenCount).toBe(700)
+    })
+  })
 })

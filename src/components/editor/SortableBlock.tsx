@@ -213,6 +213,7 @@ type PropertyEditorProps = Pick<
   | 'refPages'
   | 'refSearch'
   | 'setRefSearch'
+  | 'valueType'
 >
 
 interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
@@ -299,6 +300,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
     refPages,
     refSearch,
     setRefSearch,
+    valueType,
   } = props
 
   const isSliding = isTouchDevice && swipeTranslateX !== 0
@@ -381,6 +383,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         refPages={refPages}
         refSearch={refSearch}
         setRefSearch={setRefSearch}
+        valueType={valueType}
       />
 
       {/* ── Block content + below-block metadata row ──────────────── */}
@@ -544,7 +547,7 @@ function SortableBlockInner({
     editingKey,
     setEditingKey,
   } = useBlockContextMenu()
-  const { selectOptions, isRefProp, refPages, refSearch, setRefSearch } =
+  const { selectOptions, isRefProp, refPages, refSearch, setRefSearch, valueType } =
     usePropertyDefForEdit(editingProp)
   const blockRef = useRef<HTMLDivElement>(null)
 
@@ -849,6 +852,7 @@ function SortableBlockInner({
         refPages={refPages}
         refSearch={refSearch}
         setRefSearch={setRefSearch}
+        valueType={valueType}
       />
 
       {/* ── Context menu (long-press / right-click) ───────────────── */}

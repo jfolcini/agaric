@@ -26,11 +26,13 @@
  * unparsed inline `key:: value` property line (deferred to blur's
  * property-aware flush — see `useDebouncedContentCommit`'s doc comment) and
  * does not replicate the checkbox/multi-paragraph-split handling that only
- * runs on blur (`useBlockFlush` / `useEditorBlur`). Those are both rarer at
- * export time than the "typed text, hit the export shortcut without
- * blurring" race this closes, and a full cross-component flush-all covering
- * every save path would be a much larger refactor (there is no shared
- * store/context between `BlockTree` and `PageHeader` today).
+ * runs on unmount (`useBlockFlush`, `useEditorBlur`, and `persistUnmount` in
+ * EditableBlock all share that decision chain — see `unmount-flush.ts`,
+ * #3278). Those are both rarer at export time than the "typed text, hit the
+ * export shortcut without blurring" race this closes, and a full
+ * cross-component flush-all covering every save path would be a much larger
+ * refactor (there is no shared store/context between `BlockTree` and
+ * `PageHeader` today).
  */
 
 interface Registration {

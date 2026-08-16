@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -6,6 +6,10 @@ import { axe } from 'vitest-axe'
 // #2927 phase 4 — `BlockPropertyEditor` now calls `commands.setProperty`
 // from `@/lib/bindings` directly instead of the `@/lib/tauri` wrapper.
 const mockSetProperty = vi.fn().mockResolvedValue({ status: 'ok', data: {} })
+// #3275 — the key-rename path now reads the OLD key's raw typed row via
+// `getProperties` (instead of re-writing the flattened display string) so it
+// can carry `value_num`/`value_date`/etc. over to the new key unmolested.
+const mockGetProperties = vi.fn().mockResolvedValue({ status: 'ok', data: [] })
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -13,6 +17,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     commands: {
       ...actual.commands,
       setProperty: (...args: unknown[]) => mockSetProperty(...args),
+      getProperties: (...args: unknown[]) => mockGetProperties(...args),
     },
   }
 })
@@ -69,6 +74,7 @@ function makeProps(overrides: Partial<BlockPropertyEditorProps> = {}): BlockProp
     refPages: [],
     refSearch: '',
     setRefSearch: vi.fn(),
+    valueType: 'text',
     ...overrides,
   }
 }
@@ -76,6 +82,7 @@ function makeProps(overrides: Partial<BlockPropertyEditorProps> = {}): BlockProp
 describe('BlockPropertyEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockGetProperties.mockResolvedValue({ status: 'ok', data: [] })
   })
 
   it('renders nothing when editingProp and editingKey are null', () => {
@@ -188,6 +195,411 @@ describe('BlockPropertyEditor', () => {
 
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith('Failed to save property')
+    })
+  })
+
+  // #3275 — inline chip edits on a user-defined `number`/`date` property used
+  // to hard-code `value_num: null` / `value_date: null` on every commit,
+  // silently dropping the typed column even though the value type was
+  // already resolvable (`usePropertyDefForEdit` → `valueType`). These pin the
+  // inline path to `buildPropertyParams` — the exact function the drawer path
+  // (`property-save-utils.ts` → `handleSaveProperty`) already uses — so the
+  // two commit paths cannot diverge again without both failing here and in
+  // `property-save-utils.test.ts`.
+  describe('#3275 — typed column routing', () => {
+    it('commits a number-typed inline edit through value_num, not value_text', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'estimate', value: '5' },
+            valueType: 'number',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '8' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'estimate', {
+          value_text: null,
+          value_num: 8,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+      expect(setEditingProp).toHaveBeenCalledWith(null)
+    })
+
+    it('commits a date-typed inline edit through value_date, not value_text', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'deadline', value: '2026-08-01' },
+            valueType: 'date',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '2026-09-15' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'deadline', {
+          value_text: null,
+          value_num: null,
+          value_date: '2026-09-15',
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+      expect(setEditingProp).toHaveBeenCalledWith(null)
+    })
+
+    it('shows the invalidNumber toast and does not write when a number field gets unparseable input', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'estimate', value: '5' },
+            valueType: 'number',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: 'abc' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('Invalid number value')
+      })
+      expect(mockSetProperty).not.toHaveBeenCalled()
+    })
+
+    it('carries the typed value_num column over on key rename instead of nulling it', async () => {
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'estimate',
+            value_text: null,
+            value_num: 5,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
+      const setEditingKey = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingKey: { oldKey: 'estimate', value: '5' },
+            setEditingKey,
+          })}
+        />,
+      )
+      const input = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'effortPoints' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'effortPoints', {
+          value_text: null,
+          value_num: 5,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'estimate', {
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+      expect(setEditingKey).toHaveBeenCalledWith(null)
+    })
+
+    // #3275 (review finding 1) — `valueType` is `null` until the property
+    // definition for THIS key has resolved. Committing in that window used to
+    // run against whatever type the PREVIOUS key resolved to (e.g.
+    // `Number('2026-09-15')` → NaN/garbage in `value_num`), so the commit path
+    // must refuse to write and tell the user instead of guessing.
+    it('refuses to write while the property definition is still resolving', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'deadline', value: '2026-08-01' },
+            valueType: null,
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '2026-09-15' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('Failed to save property')
+      })
+      expect(mockSetProperty).not.toHaveBeenCalled()
+      expect(setEditingProp).toHaveBeenCalledWith(null)
+    })
+
+    // #4008 review note 4 — routing the inline chip through
+    // `buildPropertyParams` also brought `boolean` and `date` under it, and
+    // both still render the PLAIN TEXT input. The two cases are deliberately
+    // NOT treated alike, and these pin the difference:
+    //
+    //  * `date` passes the raw string through into `value_date` unvalidated.
+    //    Kept: it is what #3275 asked for, it matches the drawer, and nothing
+    //    is destroyed — whatever the user typed is what gets stored.
+    //  * `boolean` used to COERCE anything that isn't the literal 'true' to
+    //    `value_bool: false`, discarding the user's text. That is
+    //    data-loss-shaped, so the inline path now refuses the commit and says
+    //    so, exactly as it already does for an unparseable number.
+    it('passes a date-typed inline edit through to value_date verbatim, unvalidated', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'deadline', value: '2026-08-01' },
+            valueType: 'date',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: 'next tuesday' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'deadline', {
+          value_text: null,
+          value_num: null,
+          value_date: 'next tuesday',
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+    })
+
+    it('commits a boolean-typed inline edit through value_bool for the literal true/false', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'archived', value: 'false' },
+            valueType: 'boolean',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: 'true' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'archived', {
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: true,
+        })
+      })
+    })
+
+    it('clears a boolean-typed property when the inline field is emptied', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'archived', value: 'true' },
+            valueType: 'boolean',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'archived', {
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+    })
+
+    it('refuses to coerce arbitrary text in a boolean chip to false', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'archived', value: 'true' },
+            valueType: 'boolean',
+            setEditingProp,
+          })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: 'maybe' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('Invalid boolean value — use true or false')
+      })
+      // The stored `value_bool: true` must survive: no write at all, rather
+      // than a silent overwrite with `false`.
+      expect(mockSetProperty).not.toHaveBeenCalled()
+    })
+
+    it('does not toast when an unresolved-type popup closes without an edit', async () => {
+      const setEditingProp = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingProp: { key: 'deadline', value: '2026-08-01' },
+            valueType: null,
+            setEditingProp,
+          })}
+        />,
+      )
+      fireEvent.blur(screen.getByRole('textbox'))
+
+      await waitFor(() => {
+        expect(setEditingProp).toHaveBeenCalledWith(null)
+      })
+      expect(mockToastError).not.toHaveBeenCalled()
+      expect(mockSetProperty).not.toHaveBeenCalled()
+    })
+
+    // #3275 (review finding 2) — when `getProperties` cannot produce the old
+    // key's row (empty/stale cache, concurrent delete, key mismatch, IPC
+    // failure) every `oldRow?.value_X ?? null` collapsed to null and the
+    // rename wrote an ALL-NULL row under the new key, destroying the value.
+    // The rename must abort and leave the original key untouched.
+    it('aborts the rename when getProperties does not contain the old key', async () => {
+      mockGetProperties.mockResolvedValue({ status: 'ok', data: [] })
+      const setEditingKey = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingKey: { oldKey: 'effort', value: '2h' },
+            setEditingKey,
+          })}
+        />,
+      )
+      const input = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'duration' } })
+      await act(async () => {
+        fireEvent.blur(input)
+      })
+
+      // Neither the new-key write NOR the old-key clear may run: the original
+      // `effort` row survives untouched.
+      expect(mockSetProperty).not.toHaveBeenCalled()
+      expect(mockToastError).toHaveBeenCalledWith('Failed to rename property')
+      expect(setEditingKey).toHaveBeenCalledWith(null)
+    })
+
+    it('aborts the rename when getProperties returns an error result', async () => {
+      mockGetProperties.mockResolvedValue({ status: 'error', error: { kind: 'db' } })
+      const setEditingKey = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingKey: { oldKey: 'effort', value: '2h' },
+            setEditingKey,
+          })}
+        />,
+      )
+      const input = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'duration' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('Failed to rename property')
+      })
+      expect(mockSetProperty).not.toHaveBeenCalled()
+      expect(setEditingKey).toHaveBeenCalledWith(null)
+    })
+
+    it('aborts the rename when getProperties rejects', async () => {
+      mockGetProperties.mockRejectedValueOnce(new Error('ipc down'))
+      const setEditingKey = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingKey: { oldKey: 'effort', value: '2h' },
+            setEditingKey,
+          })}
+        />,
+      )
+      const input = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'duration' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('Failed to rename property')
+      })
+      expect(mockSetProperty).not.toHaveBeenCalled()
+      expect(setEditingKey).toHaveBeenCalledWith(null)
+    })
+
+    it('carries the typed value_date column over on key rename instead of nulling it', async () => {
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'deadline',
+            value_text: null,
+            value_num: null,
+            value_date: '2026-09-15',
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
+      const setEditingKey = vi.fn()
+      render(
+        <BlockPropertyEditor
+          {...makeProps({
+            editingKey: { oldKey: 'deadline', value: '2026-09-15' },
+            setEditingKey,
+          })}
+        />,
+      )
+      const input = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'dueBy' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'dueBy', {
+          value_text: null,
+          value_num: null,
+          value_date: '2026-09-15',
+          value_ref: null,
+          value_bool: null,
+        })
+      })
+      expect(setEditingKey).toHaveBeenCalledWith(null)
     })
   })
 
@@ -772,7 +1184,23 @@ describe('BlockPropertyEditor', () => {
       expect(input).toHaveValue('effort')
     })
 
-    it('renames key on blur with new name', async () => {
+    it('renames key on blur with new name, carrying the raw typed row', async () => {
+      // #3275 — the rename reads the OLD key's raw row via `getProperties`
+      // (not the flattened `editingKey.value` display string) so it can
+      // carry the exact typed columns to the new key.
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'effort',
+            value_text: '2h',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
       const setEditingKey = vi.fn()
       render(
         <BlockPropertyEditor
@@ -827,6 +1255,22 @@ describe('BlockPropertyEditor', () => {
     })
 
     it('shows toast on rename error', async () => {
+      // The old key's row must resolve, otherwise the rename aborts before it
+      // ever reaches `setProperty` (see the getProperties-miss test above) and
+      // this would pass without exercising the write-failure path at all.
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'effort',
+            value_text: '2h',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
       mockSetProperty.mockRejectedValueOnce(new Error('fail'))
       const setEditingKey = vi.fn()
       render(
