@@ -95,6 +95,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import { ScanError, skipString, stripComments } from './lib/js-scanner.mjs'
+
 const ROOT = path.resolve(import.meta.dirname, '..')
 const STORES_DIR = path.join(ROOT, 'src', 'stores')
 
@@ -102,12 +104,6 @@ const STORES_DIR = path.join(ROOT, 'src', 'stores')
 
 function toPosix(p) {
   return p.split(path.sep).join('/')
-}
-
-function stripComments(src) {
-  let out = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-  out = out.replace(/\/\/[^\n]*/g, (m) => ' '.repeat(m.length))
-  return out
 }
 
 function makeLineLookup(src) {
@@ -125,64 +121,6 @@ function makeLineLookup(src) {
   }
 }
 
-/** Index just past the string literal starting at `i` (a quote char). */
-function skipQuoted(src, i) {
-  const q = src[i]
-  let j = i + 1
-  while (j < src.length) {
-    if (src[j] === '\\') {
-      j += 2
-      continue
-    }
-    if (src[j] === q) return j + 1
-    j++
-  }
-  return j
-}
-
-/** Index just past the `${…}` substitution body starting right after `${`. */
-function skipBraceExpr(src, i) {
-  let depth = 1
-  let j = i
-  while (j < src.length && depth > 0) {
-    const c = src[j]
-    if (c === '\\') {
-      j += 2
-      continue
-    }
-    if (c === "'" || c === '"') {
-      j = skipQuoted(src, j)
-      continue
-    }
-    if (c === '`') {
-      j = skipTemplate(src, j)
-      continue
-    }
-    if (c === '{') depth++
-    else if (c === '}') depth--
-    j++
-  }
-  return j
-}
-
-/** Index just past the template literal starting at `i` (a backtick). */
-function skipTemplate(src, i) {
-  let j = i + 1
-  while (j < src.length) {
-    if (src[j] === '\\') {
-      j += 2
-      continue
-    }
-    if (src[j] === '`') return j + 1
-    if (src[j] === '$' && src[j + 1] === '{') {
-      j = skipBraceExpr(src, j + 2)
-      continue
-    }
-    j++
-  }
-  return j
-}
-
 /**
  * Index just past the bracket group opened by `src[openIdx]` (one of
  * `( { [`), tracking a single depth counter across all three bracket
@@ -195,12 +133,8 @@ function findMatchingClose(src, openIdx) {
   let i = openIdx
   while (i < src.length) {
     const c = src[i]
-    if (c === "'" || c === '"') {
-      i = skipQuoted(src, i)
-      continue
-    }
-    if (c === '`') {
-      i = skipTemplate(src, i)
+    if (c === "'" || c === '"' || c === '`') {
+      i = skipString(src, i)
       continue
     }
     if (c === '(' || c === '{' || c === '[') {
@@ -234,12 +168,8 @@ function splitTopLevel(src, openIdx) {
   let i = openIdx
   while (i < endIdx) {
     const c = src[i]
-    if (c === "'" || c === '"') {
-      i = skipQuoted(src, i)
-      continue
-    }
-    if (c === '`') {
-      i = skipTemplate(src, i)
+    if (c === "'" || c === '"' || c === '`') {
+      i = skipString(src, i)
       continue
     }
     if (c === '(' || c === '{' || c === '[') {
@@ -595,17 +525,27 @@ function listStoreFiles(dir) {
 /**
  * Scan `storesDir` for violations. Pure over the filesystem so the
  * self-test can drive it against a synthetic tree. Returns
- * `{ violations, scanned, files }` (`files` are root-relative POSIX).
+ * `{ violations, scanned, files, scanErrors }` (`files` are root-relative
+ * POSIX). `scanErrors` is `{ file, message }` for files the shared scanner
+ * could not lex unambiguously — a FAILURE, not a skip: a file this guard
+ * cannot parse is a file whose `persist()` calls nobody verified (#3993).
  */
 export function analyze({ root, storesDir }) {
   const violations = []
+  const scanErrors = []
   const files = []
   for (const file of listStoreFiles(storesDir)) {
     const rel = toPosix(path.relative(root, file))
     files.push(rel)
-    for (const v of scanSource(fs.readFileSync(file, 'utf8'))) violations.push({ file: rel, ...v })
+    const src = fs.readFileSync(file, 'utf8')
+    try {
+      for (const v of scanSource(src)) violations.push({ file: rel, ...v })
+    } catch (err) {
+      if (!(err instanceof ScanError)) throw err
+      scanErrors.push({ file: rel, message: err.message })
+    }
   }
-  return { violations, scanned: files.length, files }
+  return { violations, scanned: files.length, files, scanErrors }
 }
 
 // ─── entry point ─────────────────────────────────────────────────────
@@ -627,7 +567,20 @@ function runGuard() {
     process.exit(2)
   }
 
-  const { violations, scanned } = analyze({ root: ROOT, storesDir: STORES_DIR })
+  const { violations, scanned, scanErrors } = analyze({ root: ROOT, storesDir: STORES_DIR })
+
+  if (scanErrors.length > 0) {
+    console.error('ERROR: file(s) could not be scanned unambiguously, so their persist() calls')
+    console.error('were NOT verified:')
+    console.error('')
+    for (const e of scanErrors) {
+      console.error(`  ${e.file} — ${e.message}`)
+    }
+    console.error('')
+    console.error('The shared scanner (scripts/lib/js-scanner.mjs) fails closed rather than')
+    console.error('guessing. Fix the construct it names, or extend the scanner.')
+    process.exit(1)
+  }
 
   if (violations.length > 0) {
     console.error('ERROR: persist() of a non-scalar shape without both migrate AND merge:')
@@ -951,7 +904,57 @@ function runSelfTest() {
       ].join('\n'),
     )
 
-    const { violations, files } = analyze({ root: tmp, storesDir })
+    // 16. #3993: a string literal containing `/*` (`'/* pattern'`) sits
+    //     above a real non-scalar `persist()` call missing both hooks, and a
+    //     real JSDoc block comment closes later in the file. The
+    //     byte-identical private `stripComments` this guard used to carry is
+    //     not string-aware: it reads the `/*` inside the string as a comment
+    //     opener and blanks everything up to the JSDoc's `*/`, hiding the
+    //     `persist(` call from `findPersistCalls` entirely and reporting the
+    //     file clean. The shared scanner's `stripComments` is string-aware,
+    //     so this must still be flagged. (Demonstrated verbatim in #3993.)
+    w(
+      'fakeCommentOpener.ts',
+      [
+        "import { create } from 'zustand'",
+        "import { persist } from 'zustand/middleware'",
+        "const GLOB = '/* pattern'",
+        'interface FakeCommentState {',
+        '  items: string[]',
+        '}',
+        'export const useFakeComment = create<FakeCommentState>()(',
+        '  persist(',
+        '    (set) => ({ items: [], setItems: (items) => set({ items }) }),',
+        "    { name: 'fake-comment', version: 1, partialize: (state) => ({ items: state.items }) },",
+        '  ),',
+        ')',
+        '/** trailing doc */',
+      ].join('\n'),
+    )
+
+    // 17. #3993: a file with an unterminated string literal cannot be lexed
+    //     unambiguously. The shared scanner fails CLOSED (throws
+    //     `ScanError`), and this guard must surface that as a scanError — a
+    //     FAILURE the human sees — not silently drop the file (and the real
+    //     violation it also contains) from both `violations` and the
+    //     scanned count.
+    w(
+      'unterminatedString.ts',
+      [
+        "import { create } from 'zustand'",
+        "import { persist } from 'zustand/middleware'",
+        'interface UnterminatedState { items: string[] }',
+        'export const useUnterminated = create<UnterminatedState>()(',
+        '  persist(',
+        '    (_set) => ({ items: [] }),',
+        "    { name: 'unterminated', partialize: (state) => ({ items: state.items }) },",
+        '  ),',
+        ')',
+        "const bad = 'unterminated string literal, never closes",
+      ].join('\n'),
+    )
+
+    const { violations, files, scanErrors } = analyze({ root: tmp, storesDir })
     const hit = (f) => violations.filter((v) => v.file === `src/stores/${f}`)
     const expect = (name, cond, detail) => (cond ? ok(name) : fail(name, detail))
 
@@ -1039,6 +1042,19 @@ function runSelfTest() {
       JSON.stringify({ files, violations }),
     )
 
+    expect(
+      'a string containing `/*` above a real persist() call is still flagged (#3993)',
+      hit('fakeCommentOpener.ts').length === 1,
+      JSON.stringify(hit('fakeCommentOpener.ts')),
+    )
+
+    expect(
+      'an unlexable file is reported as a scanError (failure), not silently skipped',
+      scanErrors.some((e) => e.file === 'src/stores/unterminatedString.ts') &&
+        hit('unterminatedString.ts').length === 0,
+      JSON.stringify({ scanErrors, hit: hit('unterminatedString.ts') }),
+    )
+
     // ─── prove the guard cannot match its own source or its fixtures ────
     //
     // Scope confinement, not exclusion-list confinement: the scan walks
@@ -1065,6 +1081,14 @@ function runSelfTest() {
       fail(
         'the live tree has no non-scalar persist() missing migrate/merge',
         JSON.stringify(live.violations),
+      )
+    }
+    if (live.scanErrors.length === 0) {
+      ok('the live tree has no file the shared scanner cannot lex')
+    } else {
+      fail(
+        'the live tree has no file the shared scanner cannot lex',
+        JSON.stringify(live.scanErrors),
       )
     }
   } finally {
@@ -1098,11 +1122,19 @@ function runSelfTest() {
   const layoutTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'persist-hooks-layout-'))
   try {
     const layoutScripts = path.join(layoutTmp, 'scripts')
-    fs.mkdirSync(layoutScripts, { recursive: true })
+    const layoutLib = path.join(layoutScripts, 'lib')
+    fs.mkdirSync(layoutLib, { recursive: true })
     // Deliberately no `src/stores/` created under layoutTmp — that absence
     // is what this assertion exists to catch.
     const layoutScript = path.join(layoutScripts, 'check-persist-hooks.mjs')
     fs.copyFileSync(import.meta.filename, layoutScript)
+    // The guard now imports the shared scanner, so the scaffold needs it too
+    // or the spawned subprocess fails on ERR_MODULE_NOT_FOUND before it ever
+    // reaches the exit(2) this assertion is checking for.
+    fs.copyFileSync(
+      path.join(import.meta.dirname, 'lib', 'js-scanner.mjs'),
+      path.join(layoutLib, 'js-scanner.mjs'),
+    )
     const res2 = spawnSync(process.execPath, [layoutScript], { encoding: 'utf8' })
     if (res2.status === 2 && /expected directory not found/.test(res2.stderr)) {
       ok('CLI exits 2 when src/stores is missing (repo layout guard)')
@@ -1125,8 +1157,9 @@ function runSelfTest() {
   const violTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'persist-hooks-violation-'))
   try {
     const violScripts = path.join(violTmp, 'scripts')
+    const violLib = path.join(violScripts, 'lib')
     const violStores = path.join(violTmp, 'src', 'stores')
-    fs.mkdirSync(violScripts, { recursive: true })
+    fs.mkdirSync(violLib, { recursive: true })
     fs.mkdirSync(violStores, { recursive: true })
     fs.writeFileSync(
       path.join(violStores, 'bad.ts'),
@@ -1141,6 +1174,12 @@ function runSelfTest() {
     )
     const violScript = path.join(violScripts, 'check-persist-hooks.mjs')
     fs.copyFileSync(import.meta.filename, violScript)
+    // Same as the layout scaffold above: the guard now imports the shared
+    // scanner, so this scaffold needs it too.
+    fs.copyFileSync(
+      path.join(import.meta.dirname, 'lib', 'js-scanner.mjs'),
+      path.join(violLib, 'js-scanner.mjs'),
+    )
     const res1 = spawnSync(process.execPath, [violScript], { encoding: 'utf8' })
     if (
       res1.status === 1 &&
@@ -1156,6 +1195,77 @@ function runSelfTest() {
     }
   } finally {
     fs.rmSync(violTmp, { recursive: true, force: true })
+  }
+
+  // A regression that drops the `process.exit(1)` in the scanErrors branch
+  // of runGuard() (falling through to the violations check and then, when
+  // there happen to be no OTHER violations, all the way to the
+  // `console.log('OK: ...')` success branch) would print the ERROR block to
+  // stderr but still exit 0. Every assertion above — including the
+  // `unterminatedString.ts` fixture — drives analyze()/scanSource()
+  // in-process and only inspects the RETURN VALUE's `scanErrors` array; none
+  // of them ever calls process.exit() and so none would catch that
+  // regression. Spawn the real CLI against a scaffold tree containing ONE
+  // fully-compliant store (migrate + merge both present) plus ONE unlexable
+  // file and NO other violations, so a regression that falls through to the
+  // violations check genuinely finds nothing there and would incorrectly
+  // print OK and exit 0. Assert the real exit code is non-zero.
+  const scanErrTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'persist-hooks-scanerror-'))
+  try {
+    const seScripts = path.join(scanErrTmp, 'scripts')
+    const seLib = path.join(seScripts, 'lib')
+    const seStores = path.join(scanErrTmp, 'src', 'stores')
+    fs.mkdirSync(seLib, { recursive: true })
+    fs.mkdirSync(seStores, { recursive: true })
+    // Fully compliant store — both hooks present, no violation.
+    fs.writeFileSync(
+      path.join(seStores, 'clean.ts'),
+      [
+        "import { create } from 'zustand'",
+        "import { persist } from 'zustand/middleware'",
+        'interface CleanState { items: string[] }',
+        'function coerce(p: unknown) { return p as Partial<CleanState> }',
+        'export const useClean = create<CleanState>()(',
+        '  persist(',
+        '    (_set) => ({ items: [] }),',
+        '    {',
+        "      name: 'clean',",
+        '      version: 1,',
+        '      partialize: (state) => ({ items: state.items }),',
+        '      migrate: (persisted, _version) => coerce(persisted),',
+        '      merge: (persisted, current) => ({ ...current, ...coerce(persisted) }),',
+        '    },',
+        '  ),',
+        ')',
+      ].join('\n'),
+    )
+    // Unlexable file with NO persist() call at all, so it contributes
+    // nothing to `violations` — its only effect is a scanError.
+    fs.writeFileSync(
+      path.join(seStores, 'broken.ts'),
+      "const bad = 'unterminated string literal, never closes\n",
+    )
+    const seScript = path.join(seScripts, 'check-persist-hooks.mjs')
+    fs.copyFileSync(import.meta.filename, seScript)
+    fs.copyFileSync(
+      path.join(import.meta.dirname, 'lib', 'js-scanner.mjs'),
+      path.join(seLib, 'js-scanner.mjs'),
+    )
+    const resSE = spawnSync(process.execPath, [seScript], { encoding: 'utf8' })
+    if (
+      resSE.status === 1 &&
+      /could not be scanned unambiguously/.test(resSE.stderr) &&
+      !resSE.stdout.includes('OK:')
+    ) {
+      ok('CLI exits 1 (not OK) when a file cannot be scanned, even with no other violations')
+    } else {
+      fail(
+        'CLI exits 1 when a file cannot be scanned (scanErrors branch), even with no other violations',
+        `status=${resSE.status} stdout=${resSE.stdout} stderr=${resSE.stderr}`,
+      )
+    }
+  } finally {
+    fs.rmSync(scanErrTmp, { recursive: true, force: true })
   }
 
   if (failures.length > 0) {

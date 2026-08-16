@@ -1090,6 +1090,14 @@ export function main(argv = process.argv.slice(2)) {
   const known = parseKnownLanes(existingIssue?.body)
   const { newOnes, resolvedOnes, all, carriedOver } = diffLanes(current, known, { carryOver })
   const action = decideAction({ newOnes, resolvedOnes, all, existingIssue })
+  // #3987 — `all` is the TRACKED set, which includes lanes that only
+  // SKIPPED and were carried over (see `buildIssueBody`/`buildNoopSummary`
+  // above, #3960). A sentence that calls `all.length` "still failing"
+  // therefore claims a failure nobody observed for those lanes too; the two
+  // run-log streams below made that claim after the issue body itself
+  // stopped making it. `observedFailing` is the same split, used here for
+  // the same reason.
+  const observedFailing = all.filter((j) => !carriedOver.includes(j))
 
   if (carriedOver.length > 0) {
     console.log(
@@ -1118,7 +1126,7 @@ export function main(argv = process.argv.slice(2)) {
         : `issue #${existingIssue.number} (${existingIssue.state})`
     console.log(`[dry-run] action=${action} target=${where}`)
     console.log(
-      `[dry-run] newly failing: ${newOnes.length}, recovered: ${resolvedOnes.length}, still failing: ${all.length}`,
+      `[dry-run] newly failing: ${newOnes.length}, recovered: ${resolvedOnes.length}, still failing: ${observedFailing.length}`,
     )
     console.log('[dry-run] --- issue body ---')
     console.log(body)
@@ -1189,7 +1197,7 @@ export function main(argv = process.argv.slice(2)) {
     )
   } else {
     console.log(
-      `synced tracking issue #${number} body (${resolvedOnes.length} recovered, ${all.length} still failing; no comment — a partial recovery is not news)`,
+      `synced tracking issue #${number} body (${resolvedOnes.length} recovered, ${observedFailing.length} still failing; no comment — a partial recovery is not news)`,
     )
   }
 }
@@ -1492,6 +1500,60 @@ function selfTestSkippedCarryOverGhCalls({ check, drive, logs }) {
       /Carried over — did NOT run this run \(`file-fuzz-findings`\)/.test(mixedBody),
     'the body main() writes names the carried lane as carried, not as failing this run',
     mixedBody,
+  )
+
+  // #3987 — the same mixed fixture, driven with `--dry-run`, exercises the
+  // OTHER stream that made the "carried-over lane counts as failing" claim:
+  // the `[dry-run] … still failing: N` summary printed instead of writing.
+  // Two lanes are tracked (`all.length` === 2) but only `mutants` is
+  // genuinely red — `file-fuzz-findings` only skipped.
+  const dryRunCalls = drive(
+    { mutants: { result: 'failure' }, 'file-fuzz-findings': { result: 'skipped' } },
+    fuzzFilerTracked,
+    'OPEN',
+    ['--skipped-ok', '--dry-run'],
+  )
+  check(
+    dryRunCalls.length === 0,
+    'sanity: --dry-run really calls `gh` zero times, so only the printed summary is under test below',
+    `gh sequence was: ${dryRunCalls.map((c) => c.sub).join(',') || '(none)'}`,
+  )
+  const dryRunSummary = logs().find((l) => l.startsWith('[dry-run] newly failing')) ?? ''
+  check(
+    /still failing: 1\b/.test(dryRunSummary) && !/still failing: 2\b/.test(dryRunSummary),
+    'the dry-run summary counts only the lane ACTUALLY still failing (mutants) — not the carried-over skip (file-fuzz-findings) that only skipped',
+    dryRunSummary || `(no dry-run summary line printed; logs were: ${logs().join(' / ')})`,
+  )
+
+  // …and the SYNC path's log line: a partial recovery (mutants goes green)
+  // alongside a carried-over skip (file-fuzz-findings never ran) must not
+  // count the skip as "still failing" either — nothing observed this run
+  // is actually red.
+  const twoTrackedBody = buildIssueBody({
+    all: ['file-fuzz-findings', 'mutants'],
+    lanes: [
+      { job: 'file-fuzz-findings', result: 'failure' },
+      { job: 'mutants', result: 'failure' },
+    ],
+    runUrl: undefined,
+  })
+  const syncCalls = drive(
+    { mutants: { result: 'success' }, 'file-fuzz-findings': { result: 'skipped' } },
+    twoTrackedBody,
+    'OPEN',
+    ['--skipped-ok'],
+  )
+  const syncSeq = syncCalls.map((c) => c.sub).join(',')
+  check(
+    syncSeq === 'edit',
+    'a partial recovery alongside a carried-over skip takes the sync path (edit only — no comment, no close)',
+    `gh sequence was: ${syncSeq || '(none)'}`,
+  )
+  const syncSummary = logs().find((l) => l.startsWith('synced tracking issue')) ?? ''
+  check(
+    /0 still failing/.test(syncSummary),
+    'the sync summary does not count the carried-over skip (file-fuzz-findings) as "still failing" — only mutants recovered, and nothing observed this run is red',
+    syncSummary || `(no sync summary line printed; logs were: ${logs().join(' / ')})`,
   )
 
   // The close path must still work when the lane REALLY recovered — i.e.

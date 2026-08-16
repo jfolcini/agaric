@@ -701,26 +701,29 @@ stages = ["pre-commit"]
 # `invoke('snake_case')` bypass (which sidesteps arg/return typing and
 # only fails at runtime). Exemptions (bindings.ts, tauri.ts,
 # observability/, tauri-mock) live in the script. pass_filenames=false —
-# the script does its own scoped walk of src/.
+# the script does its own scoped walk of src/. Keyed to the shared scanner
+# the guard delegates its comment-stripping to (#3993) as well as its own
+# script, so an edit to either re-runs the check — not just src/ changes.
 [[repos.hooks]]
 id = "no-raw-invoke"
 name = "No raw Tauri invoke() in app code"
 entry = "node scripts/check-raw-invoke.mjs"
 language = "system"
 pass_filenames = false
-files = "^src/.*\\.(ts|tsx)$"
+files = "^(src/.*\\.(ts|tsx)|scripts/(check-raw-invoke\\.mjs|lib/js-scanner\\.mjs))$"
 stages = ["pre-commit"]
 
 # Self-test the no-raw-invoke guard's own exit behavior (raw invoke
 # FAILS, typed binding / commented / exempt PASS) whenever the guard
-# script itself changes, so a regression that defangs it can't land.
+# script — or the shared scanner it delegates its lexing to (#3993) —
+# changes, so a regression that defangs it can't land.
 [[repos.hooks]]
 id = "no-raw-invoke-selftest"
 name = "No raw invoke guard self-test"
 entry = "node scripts/check-raw-invoke.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-raw-invoke\\.mjs$"
+files = "^scripts/(check-raw-invoke|lib/js-scanner)\\.mjs$"
 stages = ["pre-commit"]
 
 # vault-isolation (#3334): the wdio lane drives the REAL binary against a
@@ -804,7 +807,10 @@ stages = ["pre-commit"]
 # (keyed to scripts/tauri-import-baseline.json) AND fails on a stale
 # baseline entry, so the importer count can only shrink as call sites are
 # migrated. pass_filenames=false — the script does its own scoped walk of
-# src/. Triggers on any src .ts/.tsx change or a baseline edit.
+# src/. Triggers on any src .ts/.tsx change or a baseline edit, and on the
+# guard script itself or the shared scanner it delegates its
+# comment-stripping to (#3993), so neither side can be edited without the
+# check running.
 #
 # (#3218) This is now the ONLY guard governing the wrapper layer. The
 # sibling `tauri-bindings-parity` hook (one wrapper per command) was
@@ -822,20 +828,21 @@ name = "No new @/lib/tauri importers (ratchet)"
 entry = "node scripts/check-tauri-import-baseline.mjs"
 language = "system"
 pass_filenames = false
-files = "^(src/.*\\.(ts|tsx)|scripts/tauri-import-baseline\\.json)$"
+files = "^(src/.*\\.(ts|tsx)|scripts/(tauri-import-baseline\\.json|check-tauri-import-baseline\\.mjs|lib/js-scanner\\.mjs))$"
 stages = ["pre-commit"]
 
 # Self-test the tauri-import ratchet's own exit behavior (new importer
 # FAILS, stale baseline entry FAILS, baselined / dynamic / mock / commented
-# / test-file PASS) whenever the guard script itself changes, so a
-# regression that defangs it can't land.
+# / test-file PASS) whenever the guard script — or the shared scanner it
+# delegates its lexing to (#3993) — changes, so a regression that defangs
+# it can't land.
 [[repos.hooks]]
 id = "tauri-import-baseline-selftest"
 name = "Tauri-import ratchet self-test"
 entry = "node scripts/check-tauri-import-baseline.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-tauri-import-baseline\\.mjs$"
+files = "^scripts/(check-tauri-import-baseline|lib/js-scanner)\\.mjs$"
 stages = ["pre-commit"]
 
 # check-set-property-args (#3127): `commands.setProperty`'s third arg
@@ -1075,16 +1082,20 @@ stages = ["pre-commit"]
 # cannot see through; there is no baseline file because the live tree
 # currently has zero pre-existing violations.
 # pass_filenames=false — the script does its own scoped walk of src/stores/.
+# Keyed to the shared scanner the guard delegates its comment/string
+# scanning to (#3993) as well as its own script, so an edit to either
+# re-runs the check.
 [[repos.hooks]]
 id = "persist-hooks"
 name = "Non-scalar persist() must declare migrate AND merge (#3352)"
 entry = "node scripts/check-persist-hooks.mjs"
 language = "system"
 pass_filenames = false
-files = "^src/stores/.*\\.(ts|tsx)$"
+files = "^(src/stores/.*\\.(ts|tsx)|scripts/(check-persist-hooks\\.mjs|lib/js-scanner\\.mjs))$"
 stages = ["pre-commit"]
 
-# Self-test the persist-hooks guard's own exit behavior whenever it changes:
+# Self-test the persist-hooks guard's own exit behavior whenever it — or the
+# shared scanner it delegates its lexing to (#3993) — changes:
 # a non-scalar persist() missing migrate, missing merge, or missing both all
 # FAIL (including the search-history.ts shape — merge present, migrate
 # absent); two scalar-only stores (mirroring space.ts and useDebugStore.ts)
@@ -1098,7 +1109,7 @@ name = "Persist-hooks guard self-test"
 entry = "node scripts/check-persist-hooks.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-persist-hooks\\.mjs$"
+files = "^scripts/(check-persist-hooks|lib/js-scanner)\\.mjs$"
 # metric-provable (#3349, theme T6 "accounting for conditions that cannot
 # occur, read as health"): every metric must have a test proving it can
 # fire. `[profile.release]` sets `panic = "abort"` — deliberately and with
@@ -2661,11 +2672,17 @@ stages = ["pre-commit"]
 repo = "local"
 [[repos.hooks]]
 id = "pr-merge-result-check-selftest"
-name = "PR merge-result ratchet check self-test (#3672)"
+name = "PR merge-result ratchet check self-test (#3672, #3978)"
 entry = "bash scripts/pr-merge-result-check.sh --self-test"
 language = "system"
 pass_filenames = false
-files = '^(scripts/pr-merge-result-check\.sh|scripts/lib/git-scratch-guard\.sh|scripts/check-raw-tx\.py|scripts/check-dynamic-sql\.py|scripts/check-table-ownership\.py|\.github/workflows/pr-overlap\.yml)$'
+# #3978 widened this from the original 3-guard trio to all six whole-tree
+# ratchets this script now runs against the merge result — the self-test
+# seeds a fixture copy of every one of them (mr_seed_guards), plus the
+# shared scanner check-tauri-import-baseline.mjs imports
+# (scripts/lib/js-scanner.mjs) — so a change to any of them must re-run
+# this self-test too.
+files = '^(scripts/pr-merge-result-check\.sh|scripts/lib/git-scratch-guard\.sh|scripts/check-raw-tx\.py|scripts/check-dynamic-sql\.py|scripts/check-table-ownership\.py|scripts/check-unsafe-allowlist\.sh|scripts/check-migrations-immutable\.sh|scripts/check-tauri-import-baseline\.mjs|scripts/lib/js-scanner\.mjs|\.github/workflows/pr-overlap\.yml)$'
 stages = ["pre-commit"]
 
 # git-scratch-guard-selftest (#3722): the SHARED scrubber that every script
