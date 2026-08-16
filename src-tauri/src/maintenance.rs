@@ -302,7 +302,13 @@ pub async fn tombstone_purge(
     // later batches so the drain loop keeps making progress instead of
     // re-selecting the same poison rows forever. Nothing durable is
     // written: the next run retries them from scratch.
-    let mut poisoned: Vec<String> = Vec::new();
+    //
+    // A SET, not a Vec: this is scanned once per fetched id and `fetch_limit`
+    // grows with it, so in the worst case (every root fails — pool down, a
+    // persistent `SQLITE_BUSY`) the last batch filters ~`batch_limit +
+    // poisoned.len()` ids against ~`poisoned.len()` entries. Linear `contains`
+    // makes that quadratic in the batch ceiling for no reason.
+    let mut poisoned: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     loop {
         // #3311 — widen the read window by the number of known-poison roots
@@ -371,7 +377,7 @@ pub async fn tombstone_purge(
                                 "tombstone_purge: root could not be purged; skipping it for the \
                                  rest of this run (it stays eligible for the next run)"
                             );
-                            poisoned.push(id);
+                            poisoned.insert(id);
                         }
                     }
                 }

@@ -124,6 +124,23 @@ const HEAD_BLOCKS_INDEXES: &[&str] = &[
 /// mid-range vaults.
 const HEAD_BLOCKS_SHAPE_MIN_MIGRATION: i64 = 89;
 
+/// This bound is also load-bearing for the SCAFFOLD FALLBACK, which is not
+/// obvious from either site. `rebuild_blocks_table` issues the fallback with
+/// `head_indexes: head_shape_applies`, and [`HEAD_BLOCKS_INDEXES`] contains
+/// `idx_blocks_space_type ON blocks(space_id, …)` — a column the scaffold only
+/// creates when `has_space_id_column` (stamp >= 86) is true. The fallback is
+/// therefore safe only because `head_shape_applies` implies a stamp at or above
+/// this constant, which implies the 0086 era. Lowering the constant below 86
+/// would silently make the head index set reference a column the fallback table
+/// does not have — a `CREATE INDEX` failure on the recovery path that only
+/// fires for a mid-range vault whose constrained rebuild was also rejected.
+const _: () = assert!(
+    HEAD_BLOCKS_SHAPE_MIN_MIGRATION >= 86,
+    "HEAD_BLOCKS_INDEXES indexes blocks(space_id), which exists only from \
+     migration 0086; the scaffold fallback issues those indexes whenever \
+     head_shape_applies, so this floor must stay at or above 86"
+);
+
 /// #3269: which shape [`rebuild_blocks_table`] should give the replacement
 /// `blocks` table's columns and constraints.
 #[derive(Clone, Copy)]
@@ -491,9 +508,12 @@ async fn rebuild_blocks_table(
 /// #616: `app_settings` key marking that block-table recovery fired and the
 /// post-migration derived-state replay has not yet completed. Written by
 /// [`ensure_blocks_table_exists`] (same tx as the temp-table rebuild),
-/// cleared by [`recover_derived_state_from_op_log`] in the same tx as a
-/// successful replay — so the replay retries on every boot until it lands,
-/// and never runs without a positive corruption signal.
+/// cleared by [`recover_attachments_from_op_log`] — the LAST pass of the
+/// sequence (#3268) — in the same tx as its replay. So the whole recovery
+/// retries on every boot until it lands in full, and never runs without a
+/// positive corruption signal. Deliberately NOT cleared by
+/// [`recover_derived_state_from_op_log`]: a crash between the two passes must
+/// leave the signal armed, or the attachment replay is lost for good.
 pub(crate) const DERIVED_RECOVERY_PENDING_KEY: &str = "recovery.derived_replay_pending";
 
 /// #2920: `app_settings` key marking that the engine-first reprojection
@@ -705,14 +725,19 @@ async fn persisted_engine_snapshot_count(
 /// ([`recover_derived_state_from_op_log`]), gated by the caller on
 /// `blocks_recovered`. Ordering rationale:
 ///
-/// * The op-log derived pass runs first and restores `attachments` (which are
-///   NOT modelled in the Loro engine) plus device-local properties/tags into
-///   the empty derived tables.
+/// * The op-log derived pass runs first and restores device-local
+///   properties/tags into the empty derived tables.
 /// * This engine pass then runs authoritatively: `project_block_full_to_sql`
 ///   upserts every engine block (adding remote-authored blocks the op-log pass
 ///   never saw), and the property/tag reprojections DELETE-then-reinsert per
 ///   block, so the engine's complete set (local + remote) overwrites the op-log
 ///   pass's local-only rows. Attachments are untouched.
+/// * #3268: [`recover_attachments_from_op_log`] runs AFTER this pass, not
+///   before. `attachments` is NOT modelled in the Loro engine, so this pass
+///   cannot restore (or repair) it — but its rows are FK-guarded on the owning
+///   block, and a peer-authored owning block exists only once THIS pass has
+///   reprojected it. Replaying the attachment arms before this pass silently
+///   drops every attachment on a peer-authored block, permanently.
 ///
 /// Returns `Ok(true)` iff at least one engine snapshot was reprojected. Returns
 /// `Ok(false)` when `loro_doc_state` is absent/empty (a device that never
@@ -1699,36 +1724,42 @@ async fn recover_blocks_from_op_log(
     Ok(diagnostics)
 }
 
-/// After migrations run, recover dependent tables (block_properties,
-/// block_tags, attachments) from `op_log` — but only when block-table
+/// After migrations run, recover the dependent tables (`block_properties`,
+/// `block_tags`) from `op_log` — but only when block-table
 /// recovery actually fired (#616: `blocks_recovered_this_boot`, or the
 /// persisted pending marker from a prior crashed attempt) AND the derived
 /// tables are empty. Reserved-key properties (todo_state, priority,
 /// due_date, scheduled_date, space) are replayed directly onto their
 /// denormalised `blocks` columns (#534), not into `block_properties`.
 ///
-/// #3268: the STATE arms replay locally-authored ops only; the ATTACHMENT arms
-/// also replay replicated ops, with `add_attachment` gated on this device
-/// actually holding the blob the op names. See the long note above the replay
-/// loop — `attachments` is the one table `reproject_blocks_from_engine` cannot
-/// correct, so both replaying a foreign row and dropping a legitimately-held one
-/// are permanent.
+/// #3268: this pass replays locally-authored STATE ops only. The ATTACHMENT
+/// arms live in [`recover_attachments_from_op_log`], which the caller must run
+/// AFTER [`reproject_blocks_from_engine`] — see that function for why the
+/// ordering is load-bearing.
+///
+/// Returns `true` when the recovery gate opened, i.e. when the caller still owes
+/// the attachment pass (which is what clears [`DERIVED_RECOVERY_PENDING_KEY`]).
+/// This pass deliberately does NOT clear that marker: a crash between the two
+/// passes must leave the retry signal armed.
 pub(crate) async fn recover_derived_state_from_op_log(
     pool: &SqlitePool,
     blocks_recovered_this_boot: bool,
-) -> Result<(), agaric_core::error::AppError> {
+) -> Result<bool, agaric_core::error::AppError> {
     // Guard: skip if op_log is empty or missing.
     //
     // R4 (#347): propagate probe errors with `?` rather than masking them
     // as `0` (which would wrongly skip recovery against an already-populated
     // DB, or silently swallow a transient query failure at boot).
     //
-    // #3268: count exactly the population the replay below reads, no more. This
+    // #3268: count exactly the population the two replays read, no more. This
     // guard must AGREE with the replay it gates — an unfiltered count sent a
-    // vault whose op_log holds nothing this pass would act on into the full
-    // replay, the call-site half of the same defect. The predicate is repeated
-    // verbatim in the two chunk queries; see the long note above the replay loop
-    // for why the attachment ops are exempt from the provenance filter.
+    // vault whose op_log holds nothing either pass would act on into the full
+    // replay, the call-site half of the same defect. The predicate here is the
+    // UNION of [`STATE_REPLAYABLE`] (this pass) and [`ATTACHMENT_REPLAYABLE`]
+    // (the pass that follows the engine reprojection), which is why it gates
+    // both: `(is_replicated = 0 AND NOT attachment) OR attachment` reduces to
+    // exactly the predicate below. See [`recover_attachments_from_op_log`] for
+    // why the attachment ops are exempt from the provenance filter.
     //
     // This pass runs AFTER `sqlx::migrate!`, so migration 0099's
     // `is_replicated` column is always present here (unlike
@@ -1749,10 +1780,6 @@ pub(crate) async fn recover_derived_state_from_op_log(
     .fetch_one(pool)
     .await?;
 
-    if op_count == 0 {
-        return Ok(());
-    }
-
     // #616: require a POSITIVE corruption signal before replaying anything.
     //
     // The old gate ("recover iff block_properties AND block_tags are both
@@ -1768,15 +1795,32 @@ pub(crate) async fn recover_derived_state_from_op_log(
     // boot (`blocks_recovered_this_boot`, threaded from
     // `ensure_blocks_table_exists`) or a prior boot that crashed before this
     // replay completed (the durable `DERIVED_RECOVERY_PENDING_KEY` marker,
-    // written in the recovery tx and cleared below in the replay tx).
+    // written in the recovery tx and cleared by the attachment pass that
+    // follows the engine reprojection).
     let marker_pending: i64 =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_settings WHERE key = ?")
             .bind(DERIVED_RECOVERY_PENDING_KEY)
             .fetch_one(pool)
             .await?;
 
+    // #3268 (review follow-up): "nothing to replay" must also RETIRE the
+    // marker, not just skip. Read AFTER the marker probe so a healthy vault
+    // with an empty op_log still issues no write. The filtered count reaches 0
+    // on strictly MORE vaults than the old unfiltered one — an op_log holding
+    // only replicated non-attachment rows now counts as empty here — and a
+    // marker nothing will ever clear re-trips this probe on every boot. The
+    // `prop_count > 0 || tag_count > 0` branch below already retires it in the
+    // same "there is nothing left for a retry to do" situation; these two must
+    // agree.
+    if op_count == 0 {
+        if marker_pending > 0 {
+            clear_derived_recovery_marker(pool).await?;
+        }
+        return Ok(false);
+    }
+
     if !blocks_recovered_this_boot && marker_pending == 0 {
-        return Ok(());
+        return Ok(false);
     }
 
     // Secondary duplicate-protection guard: only replay into EMPTY derived
@@ -1797,22 +1841,22 @@ pub(crate) async fn recover_derived_state_from_op_log(
     // The corruption this recovery targets (a rebuild migration's
     // `DROP TABLE blocks` CASCADE) empties both tables *together*, so any
     // rows in EITHER table mean the DB is already populated and replaying
-    // would duplicate. Clear the pending marker too: there is nothing left
-    // for a retry to do, and a stale marker would re-trip this probe (and
-    // the duplicate risk) forever.
+    // would duplicate.
+    //
+    // #3268 (the ordering fix): this returns `true`, so the ATTACHMENT pass
+    // still runs — and it, not this branch, retires the marker. A populated
+    // `block_properties` is exactly what a crash between the two passes leaves
+    // behind, so clearing the marker here would strand the attachment replay
+    // permanently. The attachment arms are idempotent against a populated
+    // `attachments` (`INSERT OR IGNORE` + keyed DELETE/UPDATE in LWW order), so
+    // running them here costs a re-read, never a duplicate.
     if prop_count > 0 || tag_count > 0 {
-        if marker_pending > 0 {
-            sqlx::query("DELETE FROM app_settings WHERE key = ?")
-                .bind(DERIVED_RECOVERY_PENDING_KEY)
-                .execute(pool)
-                .await?;
-        }
-        return Ok(());
+        return Ok(true);
     }
 
     tracing::warn!(
-        "block recovery fired and derived tables are empty (op_log has {} ops) — \
-         recovering properties, tags, and attachments",
+        "block recovery fired and derived tables are empty (op_log has {} replayable ops) — \
+         recovering properties and tags (attachments follow the engine reprojection)",
         op_count
     );
 
@@ -1823,92 +1867,17 @@ pub(crate) async fn recover_derived_state_from_op_log(
     // overwriting earlier values), `(device_id, seq)` as the same-ms
     // tiebreaker. See the matching rationale in `recover_blocks_from_op_log`.
     //
-    // #374: `created_at` is selected so the `add_attachment` arm can restore
-    // `attachments.created_at` (a NOT NULL column) from the originating op's
-    // timestamp — the same value the live `apply_add_attachment_tx` writes.
+    // #616: streamed in keyset-paginated chunks — see [`fetch_derived_replay_chunk`].
     //
-    // #616: stream in keyset-paginated chunks instead of one unbounded
-    // `fetch_all` — at the 100k-op target a whole-log buffer inside a write
-    // tx is a multi-second, multi-MB boot stall. The row-value comparison
-    // `(created_at, device_id, seq) > (?, ?, ?)` continues exactly where the
-    // previous chunk ended under the same total order; the surrounding tx
-    // gives a stable snapshot, so the iteration is consistent.
-    //
-    // #3268: `is_replicated = 0` — replay LOCALLY-AUTHORED ops, for the STATE
-    // arms. Migration 0099 makes that filter the isolation boundary that keeps
-    // replicated audit rows "provably inert for state"; without it this pass
-    // replayed a PEER's `set_property` / `add_tag` ops onto this device.
-    //
-    // THE ATTACHMENT OPS ARE EXEMPT FROM THE FILTER, and deliberately so. 0099's
-    // boundary is about STATE: `block_properties`, `block_tags` and the
-    // reserved-key `blocks` columns are all Loro-modelled, so a replicated row
-    // replayed onto them is both wrong and repairable — `reproject_blocks_from_engine`
-    // (pool.rs:375) overwrites it from the engine snapshot moments later.
-    // `attachments` is NOT Loro-modelled. It is the one table that pass
-    // explicitly cannot correct (pool.rs:369), which is the whole reason this
-    // replay exists.
-    //
-    // And the loss runs in BOTH directions. `attachments.block_id REFERENCES
-    // blocks(id) ON DELETE CASCADE` (0081:20) with `foreign_keys=ON` on every
-    // connection (pool.rs:326) means the `DROP TABLE blocks` that triggers this
-    // recovery cascade-deletes EVERY attachment row — including peer-authored
-    // ones this device legitimately received via snapshot restore
-    // (agaric-sync/src/snapshot/restore.rs). `attachment_blobs` carries no FK
-    // (0094:54-65), so the BYTES survive on disk. A blanket provenance filter
-    // therefore orphans those bytes permanently: the file is there, the row
-    // naming it is gone, and nothing downstream can rebuild it.
-    //
-    // The discriminator is POSSESSION, not authorship: `add_attachment` is
-    // replayed for a replicated op iff this device's content-addressed blob
-    // store still holds the file that op names (see the arm below). A peer op
-    // for bytes we never received restores nothing (#3268's original concern —
-    // its `WHERE EXISTS (SELECT 1 FROM blocks …)` guard cannot discriminate,
-    // because the replay itself satisfies it); a peer op for bytes we DO hold
-    // restores the metadata that describes them. Replicated `delete_attachment`
-    // / `rename_attachment` replay unconditionally: they are keyed, idempotent,
-    // and in LWW order they are what stops a restored peer row from resurrecting
-    // an attachment the peer removed or reverting one it renamed.
-    const DERIVED_REPLAY_CHUNK: i64 = 500;
-    /// #3268: the provenance predicate, shared by both chunk queries and
-    /// mirrored by the `op_count` guard above. Kept as one constant so the
-    /// paginated and non-paginated forms cannot drift apart.
-    const REPLAYABLE: &str = "(is_replicated = 0 \
-         OR op_type IN ('add_attachment', 'delete_attachment', 'rename_attachment'))";
+    // #3268: `is_replicated = 0` — replay LOCALLY-AUTHORED ops. Migration 0099
+    // makes that filter the isolation boundary that keeps replicated audit rows
+    // "provably inert for state"; without it this pass replayed a PEER's
+    // `set_property` / `add_tag` ops onto this device. The attachment ops are
+    // excluded here entirely and handled by [`recover_attachments_from_op_log`]
+    // after the engine reprojection.
     let mut cursor: Option<(i64, String, i64)> = None;
     loop {
-        let chunk = match &cursor {
-            None => {
-                // dynamic-sql: the SELECT list and ORDER BY are fixed; the only
-                // interpolation is `REPLAYABLE`, an internal `const &'static str`
-                // shared with the keyset form below so the two cannot drift.
-                // The macro forms cannot express that sharing.
-                sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "SELECT op_type, payload, created_at, device_id, seq, is_replicated \
-                     FROM op_log WHERE {REPLAYABLE} \
-                     ORDER BY created_at, device_id, seq LIMIT ?"
-                )))
-                .bind(DERIVED_REPLAY_CHUNK)
-                .fetch_all(&mut *tx)
-                .await?
-            }
-            Some((ca, dev, seq)) => {
-                // dynamic-sql: see the first-chunk query above — same fixed
-                // shape, same shared `REPLAYABLE` predicate, plus the keyset
-                // continuation. All values are bound.
-                sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "SELECT op_type, payload, created_at, device_id, seq, is_replicated \
-                     FROM op_log WHERE {REPLAYABLE} \
-                       AND (created_at, device_id, seq) > (?, ?, ?) \
-                     ORDER BY created_at, device_id, seq LIMIT ?"
-                )))
-                .bind(ca)
-                .bind(dev)
-                .bind(seq)
-                .bind(DERIVED_REPLAY_CHUNK)
-                .fetch_all(&mut *tx)
-                .await?
-            }
-        };
+        let chunk = fetch_derived_replay_chunk(&mut tx, STATE_REPLAYABLE, cursor.as_ref()).await?;
         if chunk.is_empty() {
             break;
         }
@@ -2181,6 +2150,175 @@ pub(crate) async fn recover_derived_state_from_op_log(
                     )
                     .await?;
                 }
+                _ => {}
+            }
+        }
+    }
+
+    // #534: the denormalised reserved-key columns (`todo_state` / `priority`
+    // / `due_date` / `scheduled_date` / `space_id`) are written directly in
+    // the replay loop above — they are the single source of truth and no
+    // longer have backing `block_properties` rows (migration-0088 forbids
+    // them), so there is nothing to backfill from `block_properties` here.
+
+    // #3268: the pending marker is NOT cleared here. It is retired by
+    // [`recover_attachments_from_op_log`], the second half of this recovery,
+    // so a crash between the two passes still leaves the retry signal armed.
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// #616 (the marker's retire path): drop [`DERIVED_RECOVERY_PENDING_KEY`].
+/// Standalone (not on the replay tx) for the "nothing left to replay" early
+/// returns; the replay path uses the transaction-bound form inline.
+async fn clear_derived_recovery_marker(
+    pool: &SqlitePool,
+) -> Result<(), agaric_core::error::AppError> {
+    sqlx::query("DELETE FROM app_settings WHERE key = ?")
+        .bind(DERIVED_RECOVERY_PENDING_KEY)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// #3268: the op-log rows [`recover_derived_state_from_op_log`] replays —
+/// LOCALLY-AUTHORED state ops. The attachment op types are excluded because
+/// they are replayed by [`recover_attachments_from_op_log`] in a later pass,
+/// and replaying them twice in one boot would run them out of LWW order
+/// relative to each other.
+const STATE_REPLAYABLE: &str = "is_replicated = 0 \
+     AND op_type NOT IN ('add_attachment', 'delete_attachment', 'rename_attachment')";
+
+/// #3268: the op-log rows [`recover_attachments_from_op_log`] replays — every
+/// attachment op, BOTH provenances (the `add_attachment` arm gates a replicated
+/// op on blob possession instead; see that function).
+const ATTACHMENT_REPLAYABLE: &str =
+    "op_type IN ('add_attachment', 'delete_attachment', 'rename_attachment')";
+
+/// One keyset-paginated chunk of the derived replay, in materializer LWW order.
+///
+/// #616: the replay streams in chunks instead of one unbounded `fetch_all` — at
+/// the 100k-op target a whole-log buffer inside a write tx is a multi-second,
+/// multi-MB boot stall. The row-value comparison
+/// `(created_at, device_id, seq) > (?, ?, ?)` continues exactly where the
+/// previous chunk ended under the same total order; the caller's surrounding tx
+/// gives a stable snapshot, so the iteration is consistent.
+///
+/// #374: `created_at` is selected so the `add_attachment` arm can restore
+/// `attachments.created_at` (a NOT NULL column) from the originating op's
+/// timestamp — the same value the live `apply_add_attachment_tx` writes.
+///
+/// Shared by both passes so the paginated and first-chunk forms — and the two
+/// passes' column lists — cannot drift apart.
+async fn fetch_derived_replay_chunk(
+    conn: &mut sqlx::SqliteConnection,
+    predicate: &'static str,
+    cursor: Option<&(i64, String, i64)>,
+) -> Result<Vec<sqlx::sqlite::SqliteRow>, agaric_core::error::AppError> {
+    const DERIVED_REPLAY_CHUNK: i64 = 500;
+    let rows = match cursor {
+        None => {
+            // dynamic-sql: the SELECT list and ORDER BY are fixed; the only
+            // interpolation is `predicate`, an internal `&'static str` that is
+            // one of the two `*_REPLAYABLE` constants above. The macro forms
+            // cannot express that sharing.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SELECT op_type, payload, created_at, device_id, seq, is_replicated \
+                 FROM op_log WHERE {predicate} \
+                 ORDER BY created_at, device_id, seq LIMIT ?"
+            )))
+            .bind(DERIVED_REPLAY_CHUNK)
+            .fetch_all(&mut *conn)
+            .await?
+        }
+        Some((ca, dev, seq)) => {
+            // dynamic-sql: see the first-chunk query above — same fixed shape,
+            // same caller-supplied internal predicate, plus the keyset
+            // continuation. All values are bound.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SELECT op_type, payload, created_at, device_id, seq, is_replicated \
+                 FROM op_log WHERE {predicate} \
+                   AND (created_at, device_id, seq) > (?, ?, ?) \
+                 ORDER BY created_at, device_id, seq LIMIT ?"
+            )))
+            .bind(ca)
+            .bind(dev)
+            .bind(seq)
+            .bind(DERIVED_REPLAY_CHUNK)
+            .fetch_all(&mut *conn)
+            .await?
+        }
+    };
+    Ok(rows)
+}
+
+/// The second half of the derived recovery: replay the `attachments` ops.
+///
+/// **Run this AFTER [`reproject_blocks_from_engine`]** — the caller
+/// ([`crate::db::pool::init_pools`] / [`crate::db::init_pool`]) does, and the
+/// ordering is the whole point of this function existing separately.
+///
+/// #3268: every arm here writes through `attachments.block_id REFERENCES
+/// blocks(id)`, so the `add_attachment` arm has to guard on the owning block
+/// existing (an FK 787 abort at boot is worse than a missing row). But `blocks`
+/// is rebuilt in TWO stages: [`recover_blocks_from_op_log`] replays only
+/// DEVICE-LOCAL ops (0099's isolation boundary — a peer-authored block's
+/// `create_block` is an inert `is_replicated = 1` audit row), and
+/// [`reproject_blocks_from_engine`] is the pass that restores everything
+/// peer-authored, from the Loro snapshots. Replaying the attachment arms in the
+/// first stage's transaction therefore drops EVERY attachment on a
+/// peer-authored block — the peer's own and this device's alike — because the
+/// owning block does not exist yet. That loss is permanent: `attachments` is
+/// the one table `reproject_blocks_from_engine` explicitly cannot repair
+/// (pool.rs), the bytes stay orphaned on disk, and the pending marker would
+/// have been cleared in the same transaction, so no later boot retries.
+///
+/// The provenance rules, unchanged from the single-pass version:
+///
+/// * `attachments` is NOT Loro-modelled, so unlike `block_properties` /
+///   `block_tags` a wrong row here can never be corrected downstream — and
+///   neither can a dropped one be rebuilt.
+/// * `attachments.block_id ... ON DELETE CASCADE` (0081) with `foreign_keys=ON`
+///   means the `DROP TABLE blocks` that triggers this recovery deletes EVERY
+///   attachment row, including peer-authored ones this device legitimately
+///   received via snapshot restore (agaric-sync/src/snapshot/restore.rs).
+///   `attachment_blobs` carries no FK (0094), so the BYTES survive on disk. A
+///   blanket `is_replicated = 0` filter would orphan them permanently.
+/// * So the discriminator is POSSESSION, not authorship: a replicated
+///   `add_attachment` is replayed iff this device's content-addressed blob store
+///   still holds the file it names. Replicated `delete_attachment` /
+///   `rename_attachment` replay unconditionally: they are keyed, idempotent,
+///   and in LWW order they are what stops a restored peer row from resurrecting
+///   an attachment the peer removed or reverting one it renamed.
+///
+/// Every arm is idempotent (`INSERT OR IGNORE`, keyed DELETE/UPDATE), so a
+/// re-run against an already-populated `attachments` re-reads and changes
+/// nothing — which is what lets the gate be "the recovery fired" alone.
+pub(crate) async fn recover_attachments_from_op_log(
+    pool: &SqlitePool,
+) -> Result<(), agaric_core::error::AppError> {
+    let mut tx = pool.begin().await?;
+
+    let mut cursor: Option<(i64, String, i64)> = None;
+    loop {
+        let chunk =
+            fetch_derived_replay_chunk(&mut tx, ATTACHMENT_REPLAYABLE, cursor.as_ref()).await?;
+        if chunk.is_empty() {
+            break;
+        }
+
+        for row in chunk {
+            let op_type: String = row.try_get("op_type")?;
+            let payload_str: String = row.try_get("payload")?;
+            cursor = Some((
+                row.try_get("created_at")?,
+                row.try_get("device_id")?,
+                row.try_get("seq")?,
+            ));
+            let payload: serde_json::Value =
+                serde_json::from_str(&payload_str).map_err(agaric_core::error::AppError::Json)?;
+
+            match op_type.as_str() {
                 // #374: `attachments` is the one AUTHORITATIVE child of `blocks`
                 // (its rows are the source of truth for fs_path / mime_type /
                 // filename / size_bytes — NOT a derived cache). Migration 0061
@@ -2190,8 +2328,9 @@ pub(crate) async fn recover_derived_state_from_op_log(
                 // `foreign_keys=ON`, silently destroying that metadata and
                 // orphaning the on-disk files. The op-log `add_attachment`
                 // payload carries every column the row needs, so replay it here
-                // to restore the table (this arm runs on the same all-derived-
-                // tables-empty corruption path as the property/tag arms above).
+                // to restore the table (this pass runs on the same corruption
+                // signal as the property/tag pass, one step later — see the
+                // function docs).
                 "add_attachment" => {
                     let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
                     let block_id = payload["block_id"].as_str().unwrap_or("");
@@ -2297,6 +2436,13 @@ pub(crate) async fn recover_derived_state_from_op_log(
                     // stay deleted — restoring it would trip FK 787 and abort
                     // startup. `INSERT OR IGNORE` makes a duplicate `add_attachment`
                     // (same id) a no-op and keeps recovery idempotent across boots.
+                    //
+                    // #3268: this is why the pass runs after the engine
+                    // reprojection. `blocks` must already be COMPLETE here —
+                    // peer-authored rows included — or this guard reads "the
+                    // block is gone" for a block that is merely not restored
+                    // YET, and drops metadata nothing downstream can rebuild.
+                    // The guard is correct; only its position was not.
                     sqlx::query(
                         "INSERT OR IGNORE INTO attachments \
                      (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
@@ -2361,18 +2507,34 @@ pub(crate) async fn recover_derived_state_from_op_log(
         }
     }
 
-    // #534: the denormalised reserved-key columns (`todo_state` / `priority`
-    // / `due_date` / `scheduled_date` / `space_id`) are written directly in
-    // the replay loop above — they are the single source of truth and no
-    // longer have backing `block_properties` rows (migration-0088 forbids
-    // them), so there is nothing to backfill from `block_properties` here.
-
-    // #616: clear the pending marker atomically with the replay — a crash
-    // before this commit leaves the marker for the next boot's retry.
-    sqlx::query("DELETE FROM app_settings WHERE key = ?")
-        .bind(DERIVED_RECOVERY_PENDING_KEY)
-        .execute(&mut *tx)
-        .await?;
+    // #616 / #3268: retire the pending marker only now — this is the LAST pass
+    // of the recovery, so a crash anywhere before this commit leaves the whole
+    // sequence armed for the next boot's retry.
+    //
+    // ...unless the engine reprojection is still incomplete. `attachments` rows
+    // whose owning block lives in a space whose snapshot failed to decode are
+    // still un-restorable this boot (the `EXISTS` guard drops them), and
+    // `ENGINE_REPROJECT_PENDING_KEY` is precisely the "some blocks are still
+    // missing" signal. Clearing the marker while it is armed would be the same
+    // premature retirement this split exists to fix, one layer out. Keeping both
+    // markers costs one idempotent re-replay per boot — the trade
+    // `ENGINE_REPROJECT_PENDING_KEY` already documents for itself — until the
+    // reprojection lands fully, at which point the next boot retires both.
+    let engine_retry_pending: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_settings WHERE key = ?")
+            .bind(ENGINE_REPROJECT_PENDING_KEY)
+            .fetch_one(&mut *tx)
+            .await?;
+    if engine_retry_pending == 0 {
+        // dynamic-sql: a fixed literal with a bound key — no interpolation and
+        // no runtime-assembled fragment. Runtime rather than `query!` only
+        // because it shares this file's pre-migration era, where the macro's
+        // compile-time schema check cannot be relied on.
+        sqlx::query("DELETE FROM app_settings WHERE key = ?")
+            .bind(DERIVED_RECOVERY_PENDING_KEY)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     tx.commit().await?;
     Ok(())
@@ -3517,6 +3679,26 @@ mod tests {
     // #3268 — op-log recovery must replay LOCALLY-AUTHORED ops only
     // ==================================================================
 
+    /// The post-migration half of the boot recovery sequence, in the order
+    /// `init_pool` / `init_pools` run it (db/pool.rs): the derived-state replay,
+    /// then the engine reprojection, then the attachment replay. #3268: the
+    /// attachment arms MUST run after the reprojection — a peer-authored block
+    /// exists in `blocks` only once the engine snapshots have been reprojected,
+    /// and the arms are FK-guarded on the owning block. Tests that drive
+    /// `recover_derived_state_from_op_log` alone cannot see that ordering.
+    async fn boot_recovery(pool: &SqlitePool, blocks_recovered: bool) {
+        let attachments_pending = recover_derived_state_from_op_log(pool, blocks_recovered)
+            .await
+            .unwrap();
+        if blocks_recovered || attachments_pending || engine_reproject_pending(pool).await.unwrap()
+        {
+            reproject_blocks_from_engine(pool).await.unwrap();
+        }
+        if attachments_pending {
+            recover_attachments_from_op_log(pool).await.unwrap();
+        }
+    }
+
     /// Seed one `op_log` row with an explicit `is_replicated` provenance flag.
     /// `is_replicated = 1` is exactly what `dag::insert_replicated_op` stamps on
     /// every foreign audit record the sync puller lands.
@@ -3722,9 +3904,7 @@ mod tests {
         )
         .await;
 
-        recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ true)
-            .await
-            .unwrap();
+        boot_recovery(&pool, /* blocks_recovered */ true).await;
 
         let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM attachments ORDER BY id")
             .fetch_all(&pool)
@@ -3744,9 +3924,14 @@ mod tests {
     /// nothing but foreign audit rows has nothing to replay and must return
     /// before opening the write transaction.
     ///
-    /// Observable via the [`DERIVED_RECOVERY_PENDING_KEY`] marker: the early
-    /// return leaves it in place (as it does for a genuinely empty op_log),
-    /// whereas entering the replay deletes it in the replay transaction.
+    /// It must also RETIRE the pending marker rather than strand it (review
+    /// follow-up on the filter): this early return is now reachable on strictly
+    /// MORE vaults than the old unfiltered count was — an op_log holding only
+    /// replicated non-attachment rows is "empty" for this pass — and nothing
+    /// else ever clears the marker on that path, so it would re-trip the probe
+    /// on every boot forever. The `prop_count > 0 || tag_count > 0` branch
+    /// already retires the marker in the same "nothing left to replay"
+    /// situation; the two must agree.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn derived_replay_op_count_guard_ignores_replicated_ops_3268() {
         let (pool, _dir) = test_pool().await;
@@ -3766,9 +3951,24 @@ mod tests {
             .await
             .unwrap();
 
-        recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ false)
+        let attachments_pending =
+            recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ false)
+                .await
+                .unwrap();
+        assert!(
+            !attachments_pending,
+            "there is nothing for the attachment pass to do either"
+        );
+
+        let replayed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tags")
+            .fetch_one(&pool)
             .await
             .unwrap();
+        assert_eq!(
+            replayed, 0,
+            "#3268: an op_log holding ONLY replicated rows must take the \
+             `op_count == 0` early return, not enter the full replay"
+        );
 
         let marker: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_settings WHERE key = ?")
             .bind(DERIVED_RECOVERY_PENDING_KEY)
@@ -3776,10 +3976,128 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            marker, 1,
-            "#3268: an op_log holding ONLY replicated rows must take the \
-             `op_count == 0` early return (marker untouched), not enter the full replay"
+            marker, 0,
+            "…and it must RETIRE the pending marker on the way out. A marker \
+             nothing will ever clear re-trips this probe on every boot for the \
+             life of the vault"
         );
+    }
+
+    /// #3268 (the marker lifecycle across the split): splitting the replay in
+    /// two creates a window between them, and a crash in that window must not
+    /// lose the attachment restore. So the STATE pass may not retire
+    /// [`DERIVED_RECOVERY_PENDING_KEY`] — the attachment pass does — and the
+    /// next boot must still finish the job even though `block_properties` is
+    /// now non-empty (the branch that used to clear the marker and return).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn attachment_replay_survives_a_crash_between_the_two_passes_3268() {
+        let (pool, _dir) = test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES ('local-a', 'content', '', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES (?, '1', 0)")
+            .bind(DERIVED_RECOVERY_PENDING_KEY)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        seed_op(
+            &pool,
+            1,
+            "set_property",
+            &serde_json::json!({
+                "block_id": "local-a", "key": "flavour", "value_text": "vanilla",
+            }),
+            0,
+        )
+        .await;
+        seed_op(
+            &pool,
+            2,
+            "add_attachment",
+            &serde_json::json!({
+                "attachment_id": "att-local", "block_id": "local-a",
+                "mime_type": "image/png", "filename": "mine.png",
+                "size_bytes": 10, "fs_path": "attachments/att-local",
+            }),
+            0,
+        )
+        .await;
+
+        // Boot 1 crashes right after the state pass commits.
+        let attachments_pending =
+            recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ true)
+                .await
+                .unwrap();
+        assert!(attachments_pending, "the attachment pass is still owed");
+        let props: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_properties")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(props, 1, "the state pass did land");
+        let marker: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_settings WHERE key = ?")
+            .bind(DERIVED_RECOVERY_PENDING_KEY)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            marker, 1,
+            "the STATE pass must not retire the marker — the attachment replay \
+             has not run yet, and clearing it here strands it forever"
+        );
+
+        // Boot 2: no this-boot signal, only the durable marker — and derived
+        // tables are now POPULATED, the branch that used to clear and return.
+        boot_recovery(&pool, /* blocks_recovered */ false).await;
+
+        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM attachments ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            ids,
+            vec!["att-local".to_owned()],
+            "the retry boot must finish the attachment replay the crashed boot owed"
+        );
+        let props: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_properties")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(props, 1, "…without re-replaying (or duplicating) the state");
+        let marker: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_settings WHERE key = ?")
+            .bind(DERIVED_RECOVERY_PENDING_KEY)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(marker, 0, "…and now the marker is retired");
+    }
+
+    /// The same early return, on a vault with NO marker: it must not write.
+    /// (The marker probe is read first precisely so a healthy boot issues no
+    /// `DELETE` on the empty-op_log path.)
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn derived_replay_empty_op_log_without_marker_is_a_noop_3268() {
+        let (pool, _dir) = test_pool().await;
+
+        let attachments_pending =
+            recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ true)
+                .await
+                .unwrap();
+
+        assert!(
+            !attachments_pending,
+            "an empty op_log owes the attachment pass nothing"
+        );
+        let marker: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_settings WHERE key = ?")
+            .bind(DERIVED_RECOVERY_PENDING_KEY)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(marker, 0, "nothing to retire, nothing written");
     }
 
     // ==================================================================
@@ -4010,9 +4328,7 @@ mod tests {
         )
         .await;
 
-        recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ true)
-            .await
-            .unwrap();
+        boot_recovery(&pool, /* blocks_recovered */ true).await;
 
         let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM attachments ORDER BY id")
             .fetch_all(&pool)
@@ -4077,9 +4393,7 @@ mod tests {
         )
         .await;
 
-        recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ true)
-            .await
-            .unwrap();
+        boot_recovery(&pool, /* blocks_recovered */ true).await;
 
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
             .fetch_one(&pool)
@@ -4415,6 +4729,222 @@ mod tests {
             vec!["good".to_owned()],
             "the CHECK-violating row is dropped (a healthy vault could not hold it), \
              the well-formed op still recovers"
+        );
+    }
+
+    /// #3268 (the ORDERING half, through the REAL boot path): an `attachments`
+    /// row whose owning block is PEER-authored must survive a blocks rebuild.
+    ///
+    /// Every other attachment test in this module pre-`INSERT`s the owning
+    /// blocks and calls [`recover_derived_state_from_op_log`] in isolation, so
+    /// the arm's `WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)` guard is
+    /// satisfied by construction and cannot fail. This one boots
+    /// [`crate::db::init_pool`] twice against the same file, so the ordering is
+    /// production's: `ensure_blocks_table_exists` (op-log replay, LOCAL ops
+    /// only) → `recover_derived_state_from_op_log` → `reproject_blocks_from_engine`
+    /// (the ONLY pass that can restore a peer-authored block).
+    ///
+    /// The block therefore does not exist in `blocks` while the op-log replay
+    /// runs, and both attachment rows on it — the peer's (blob held) and this
+    /// device's own — are silently dropped by the `EXISTS` guard, permanently:
+    /// `reproject_blocks_from_engine` restores the BLOCK but explicitly cannot
+    /// repair `attachments`, and the replay clears
+    /// [`DERIVED_RECOVERY_PENDING_KEY`], so no later boot retries.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn attachments_on_a_peer_authored_block_survive_boot_recovery_3268() {
+        // Uppercase so `BlockId::from_trusted`'s `to_ascii_uppercase()`
+        // round-trips them (same convention as the #2504 tests above).
+        const PEER_PAGE: &str = "01HZ0000000000000000000P0G";
+        const PEER_B: &str = "01HZ0000000000000000000P0B";
+        const LOCAL_A: &str = "01HZ0000000000000000000L0A";
+
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        // The peer's block, as this device holds it: convergent state in the
+        // engine snapshot (the only place a peer-authored block lives locally)
+        // plus the `is_replicated = 1` audit row the puller landed.
+        let snapshot = {
+            let mut engine =
+                agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            engine
+                .apply_create_block(PEER_PAGE, "page", "Peer Page", None, 0)
+                .unwrap();
+            engine
+                .apply_create_block(
+                    PEER_B,
+                    "content",
+                    "authored on the peer",
+                    Some(PEER_PAGE),
+                    0,
+                )
+                .unwrap();
+            engine.export_snapshot().unwrap()
+        };
+        sqlx::query(
+            "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count) \
+             VALUES ('space-1', ?, 0, 2)",
+        )
+        .bind(snapshot)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Healthy pre-corruption SQL state: both blocks present, and two
+        // attachments hanging off the PEER-authored one.
+        for (id, block_type) in [
+            (LOCAL_A, "content"),
+            (PEER_PAGE, "page"),
+            (PEER_B, "content"),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, position) VALUES (?, ?, '', 1)",
+            )
+            .bind(id)
+            .bind(block_type)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let peer_blob = agaric_core::attachment_path::AttachmentFsPath::coerce_from_peer(
+            "attachments/att-peer",
+            "att-peer",
+        );
+        sqlx::query(
+            "INSERT INTO attachment_blobs (content_hash, on_disk_path, size_bytes, created_at) \
+             VALUES ('hash-peer', ?, 20, 0)",
+        )
+        .bind(peer_blob.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (att_id, filename, size) in [
+            ("att-peer", "theirs.png", 20_i64),
+            ("att-mine", "mine.png", 10),
+        ] {
+            sqlx::query(
+                "INSERT INTO attachments \
+                 (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+                 VALUES (?, ?, 'image/png', ?, ?, ?, 0)",
+            )
+            .bind(att_id)
+            .bind(PEER_B)
+            .bind(filename)
+            .bind(size)
+            .bind(format!("attachments/{att_id}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // The op_log as it actually looks on this device.
+        seed_op(
+            &pool,
+            1,
+            "create_block",
+            &serde_json::json!({
+                "block_id": LOCAL_A, "block_type": "content", "index": 0,
+                "content": "authored here",
+            }),
+            0,
+        )
+        .await;
+        seed_op(
+            &pool,
+            2,
+            "create_block",
+            &serde_json::json!({
+                "block_id": PEER_B, "block_type": "content", "index": 1,
+                "content": "authored on the peer",
+            }),
+            1,
+        )
+        .await;
+        // The PEER's attachment on the peer's block — bytes received and
+        // registered, so the possession gate passes.
+        seed_op(
+            &pool,
+            3,
+            "add_attachment",
+            &serde_json::json!({
+                "attachment_id": "att-peer", "block_id": PEER_B,
+                "mime_type": "image/png", "filename": "theirs.png",
+                "size_bytes": 20, "fs_path": "attachments/att-peer",
+            }),
+            1,
+        )
+        .await;
+        // THIS DEVICE's own attachment, on the same peer-authored block. Not
+        // replicated, not possession-gated — its only obstacle is the `EXISTS`
+        // guard, i.e. the ordering.
+        seed_op(
+            &pool,
+            4,
+            "add_attachment",
+            &serde_json::json!({
+                "attachment_id": "att-mine", "block_id": PEER_B,
+                "mime_type": "image/png", "filename": "mine.png",
+                "size_bytes": 10, "fs_path": "attachments/att-mine",
+            }),
+            0,
+        )
+        .await;
+
+        // The corruption: a partial blocks rebuild. Under `foreign_keys = ON`
+        // SQLite runs the implicit DELETE first, so `attachments.block_id`'s
+        // ON DELETE CASCADE empties the table — exactly the 0073/0080 damage.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let orphaned: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            orphaned, 0,
+            "fixture precondition: the DROP must cascade the attachment rows away"
+        );
+        pool.close().await;
+
+        // The boot.
+        let pool = init_pool(&db_path).await.unwrap();
+
+        let peer_block: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(PEER_B)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            peer_block, 1,
+            "precondition: the engine reprojection must have restored the \
+             peer-authored block (otherwise this test is not testing the ordering)"
+        );
+
+        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM attachments ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            ids,
+            vec!["att-mine".to_owned(), "att-peer".to_owned()],
+            "#3268: both attachments on a PEER-authored block must be restored. \
+             The op-log replay rebuilds only device-local blocks, so the owning \
+             block is absent until `reproject_blocks_from_engine` runs — the \
+             attachment replay must therefore happen AFTER it, or the `EXISTS` \
+             guard drops metadata that nothing downstream can rebuild"
+        );
+
+        let marker: i64 =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_settings WHERE key = ?")
+                .bind(DERIVED_RECOVERY_PENDING_KEY)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            marker, 0,
+            "a fully-completed recovery must clear the pending marker (#616)"
         );
     }
 }

@@ -191,29 +191,68 @@ pub async fn read_high_water(
         // away — i.e. the silent restart again.
         Ok(seq) if seq > 0 => Ok(Some(seq)),
         Ok(seq) => {
-            tracing::warn!(
-                %device_id,
-                value = %raw,
-                parsed = seq,
-                "op_log: high-water mark for device is not a positive seq; \
-                 ignoring it and allocating from the surviving MAX(seq) \
-                 (#3310). The next op_log wipe overwrites this row with the \
-                 real frontier."
-            );
+            if first_report_for(device_id) {
+                tracing::warn!(
+                    %device_id,
+                    value = %raw,
+                    parsed = seq,
+                    "op_log: high-water mark for device is not a positive seq; \
+                     ignoring it and allocating from the surviving MAX(seq) \
+                     (#3310). The next op_log wipe overwrites this row with the \
+                     real frontier. Reported once per device per process."
+                );
+            }
             Ok(None)
         }
         Err(e) => {
-            tracing::warn!(
-                %device_id,
-                value = %raw,
-                error = %e,
-                "op_log: high-water mark for device is not an i64; ignoring \
-                 it and allocating from the surviving MAX(seq) (#3310). The \
-                 next op_log wipe overwrites this row with the real frontier."
-            );
+            if first_report_for(device_id) {
+                tracing::warn!(
+                    %device_id,
+                    value = %raw,
+                    error = %e,
+                    "op_log: high-water mark for device is not an i64; ignoring \
+                     it and allocating from the surviving MAX(seq) (#3310). The \
+                     next op_log wipe overwrites this row with the real frontier. \
+                     Reported once per device per process."
+                );
+            }
             Ok(None)
         }
     }
+}
+
+/// Devices whose corrupt high-water mark has already been reported in this
+/// process. See [`first_report_for`].
+static CORRUPT_MARK_REPORTED: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashSet<String>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// Is this the first time this process has seen a corrupt mark for
+/// `device_id`?
+///
+/// #3310 (review follow-up): the warn above is emitted from
+/// [`read_high_water`], which [`next_seq_for_device`] calls on **every local
+/// append** — i.e. once per user edit, not once per boot. The cited precedent,
+/// `loro::peer_epoch::load_peer_epoch`, runs once at startup, and the
+/// self-repair argument ("the next wipe overwrites the row") does not bound the
+/// noise either, because wipes are rare by construction. Unbounded repetition
+/// of a warn is how a log stops being read, which would defeat the whole point
+/// of the change: the defect being fixed was SILENCE.
+///
+/// Keyed by device rather than a single global flag so a second device's
+/// corrupt mark is never masked by the first's — the marks are per-device rows,
+/// and in practice only the local device's is ever read (see the module docs),
+/// so this is exactly one line per affected device per boot: the precedent's
+/// frequency. Deliberately in-process only: a restart re-reports, which is what
+/// makes the condition visible again after an upgrade or a support request.
+///
+/// A poisoned mutex is recovered rather than propagated — a panic in another
+/// thread must not turn a cosmetic log-throttle into a failed append.
+fn first_report_for(device_id: &str) -> bool {
+    CORRUPT_MARK_REPORTED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(device_id.to_owned())
 }
 
 /// Raise `device_id`'s durable high-water mark to `seq`.
@@ -384,7 +423,10 @@ mod corrupt_mark_tests {
     async fn corrupt_high_water_mark_warns_instead_of_silently_restarting_seq() {
         for garbage in ["nonsense", "12abc", "-5", ""] {
             let (pool, _dir) = crate::test_support::test_pool().await;
-            let device_id = "dev-3310-corrupt";
+            // A distinct device per case: the report is throttled to once per
+            // device per PROCESS (see `first_report_for`), and every case here
+            // must be able to observe its own first report.
+            let device_id = &format!("dev-3310-corrupt-{}", garbage.len());
             plant_raw_mark(&pool, device_id, garbage).await;
 
             let (next, logs) = alloc_capturing_warns(&pool, device_id).await;
@@ -426,6 +468,51 @@ mod corrupt_mark_tests {
                  invented one"
             );
         }
+    }
+
+    /// #3310 (review follow-up): the report must be ONCE per device, not once
+    /// per append.
+    ///
+    /// `read_high_water` is called from `next_seq_for_device`, which runs inside
+    /// every local op append — so an unthrottled warn is one line per user
+    /// EDIT, indefinitely, for as long as the corrupt row sits in
+    /// `app_settings`. (The cited precedent, `load_peer_epoch`, runs once per
+    /// boot; and "the next wipe repairs the row" does not bound anything,
+    /// because wipes are rare by construction.) A warn that repeats per
+    /// keystroke-batch is a warn nobody reads, which is the same failure mode —
+    /// silence — the warn was added to fix.
+    #[tokio::test]
+    async fn corrupt_high_water_mark_is_reported_once_not_once_per_append() {
+        let (pool, _dir) = crate::test_support::test_pool().await;
+        let device_id = "dev-3310-once";
+        plant_raw_mark(&pool, device_id, "nonsense").await;
+
+        let (_, first) = alloc_capturing_warns(&pool, device_id).await;
+        assert!(
+            first.contains("high-water mark"),
+            "the first append after a corrupt mark must still report it; \
+             captured log output: {first:?}"
+        );
+
+        // Simulate the user carrying on editing: more appends, same corrupt row.
+        for _ in 0..3 {
+            let (_, again) = alloc_capturing_warns(&pool, device_id).await;
+            assert!(
+                again.is_empty(),
+                "#3310: the corrupt mark must be reported once per device, not \
+                 once per local append — every subsequent append must be silent; \
+                 captured log output: {again:?}"
+            );
+        }
+
+        // …and the degraded READ answer is unchanged by the throttle: the row is
+        // still "no usable mark", it is only the logging that is bounded.
+        let mut conn = pool.acquire().await.unwrap();
+        let read = read_high_water(&mut conn, device_id).await.unwrap();
+        assert_eq!(
+            read, None,
+            "throttling the report must not change what the read returns"
+        );
     }
 
     /// The other half of the pair: a well-formed mark must still be honoured,
