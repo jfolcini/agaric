@@ -1394,21 +1394,21 @@ async fn derived_cache_digest(pool: &SqlitePool) -> String {
     sqlx::query_scalar::<_, Option<String>>(
         "SELECT \
            coalesce((SELECT group_concat(r, char(10)) FROM ( \
-             SELECT source_page_id || '|' || target_page_id || '|' || edge_count \
-                    || '|' || src_deleted || '|' || tgt_deleted || '|' || tgt_is_page AS r \
+             SELECT coalesce(source_page_id,'') || '|' || coalesce(target_page_id,'') || '|' || coalesce(edge_count,'') \
+                    || '|' || coalesce(src_deleted,'') || '|' || coalesce(tgt_deleted,'') || '|' || coalesce(tgt_is_page,'') AS r \
              FROM page_link_cache \
              ORDER BY source_page_id, target_page_id \
            )), '') \
            || char(10) || '-- pages_cache --' || char(10) || \
            coalesce((SELECT group_concat(r, char(10)) FROM ( \
-             SELECT page_id || '|' || title || '|' || updated_at \
-                    || '|' || inbound_link_count || '|' || child_block_count AS r \
+             SELECT coalesce(page_id,'') || '|' || coalesce(title,'') || '|' || coalesce(updated_at,'') \
+                    || '|' || coalesce(inbound_link_count,'') || '|' || coalesce(child_block_count,'') AS r \
              FROM pages_cache \
              ORDER BY page_id \
            )), '') \
            || char(10) || '-- fts_blocks --' || char(10) || \
            coalesce((SELECT group_concat(r, char(10)) FROM ( \
-             SELECT block_id || '|' || stripped AS r \
+             SELECT coalesce(block_id,'') || '|' || coalesce(stripped,'') AS r \
              FROM fts_blocks \
              ORDER BY block_id \
            )), '')",
