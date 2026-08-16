@@ -121,21 +121,36 @@ mod tests {
         "window_ms",
     ];
 
-    /// Receiver identifiers whose `.record("literal", …)` is provably NOT a
-    /// `tracing::Span::record` — the only exclusions the `.record(` scan
+    /// `(file, receiver)` pairs whose `.record("literal", …)` is provably NOT
+    /// a `tracing::Span::record` — the only exclusions the `.record(` scan
     /// makes. Everything else is treated as a span and its key must be on
     /// [`ALLOWED_SPAN_FIELDS`]: deny-by-default, because a receiver-NAME
     /// allowlist fails OPEN on exactly the span this guard exists to catch.
     ///
-    /// Keep this list as short as the workspace allows, and only add a name
-    /// after confirming at the call site that its receiver's type is not a
-    /// `Span`. Adding a name here is the review point.
-    const NON_SPAN_RECORD_RECEIVERS: &[&str] = &[
+    /// The FILE is half the key, and that is the point (#3988 note 3). Keyed
+    /// on the bare name alone, the entry below excused every `recorder` in
+    /// the workspace — so a real `Span` bound to `recorder` in any file went
+    /// unscanned, a name-keyed hole in the one guard whose whole thesis is
+    /// that name-keyed matching fails open. Paired with the file that was
+    /// actually reviewed, the exclusion covers the call sites someone looked
+    /// at and nothing else; a `recorder` in a second file is a new review,
+    /// not an inherited pass.
+    ///
+    /// Path, not module path: the scan reads files, and the relative path is
+    /// what it already has (`file!()`-shaped, as used to skip this file).
+    /// Every entry must match a real call site — a stale one is asserted
+    /// against in [`span_fields_stay_on_the_pii_allowlist`], so a moved file
+    /// reddens CI instead of quietly widening back into a name-keyed pass.
+    ///
+    /// Keep this list as short as the workspace allows, and only add a pair
+    /// after confirming at that call site that the receiver's type is not a
+    /// `Span`. Adding a pair here is the review point.
+    const NON_SPAN_RECORD_RECEIVERS: &[(&str, &str)] = &[
         // `agaric_sync::transport::endpoint`'s DNS query recorder (test
         // helper): `recorder.record("before-panic.example")`. Takes a leading
         // string literal exactly like `Span::record`, which is why argument
-        // SHAPE cannot tell the two apart and the receiver name must.
-        "recorder",
+        // SHAPE cannot tell the two apart and the receiver must be named.
+        ("agaric-sync/src/transport/endpoint.rs", "recorder"),
     ];
 
     /// Collect every `.rs` file under a directory tree.
@@ -257,8 +272,18 @@ mod tests {
 
         if b.get(at) == Some(&b'\'') {
             // `'\n'`, `'\''` — an escape is always a char literal.
+            //
+            // The search for the closing quote must start PAST the escaped
+            // char, not past the backslash: on `'\''` the escaped char IS a
+            // quote, and searching from `at + 2` found it, reported 3 bytes
+            // and left the real closing quote in code position (#3988 note
+            // 1). Skipping exactly one char also carries the multi-byte
+            // escape bodies — `'\x41'`, `'\u{1F600}'` — since none of them
+            // can contain a `'`.
             if b.get(at + 1) == Some(&b'\\') {
-                return src[at + 2..].find('\'').map(|rel| at + 2 + rel + 1 - at);
+                let escaped = src[at + 2..].chars().next()?;
+                let body = at + 2 + escaped.len_utf8();
+                return src[body..].find('\'').map(|rel| body + rel + 1 - at);
             }
             // One char then a closing quote is a char literal; anything else
             // (`'a,`, `'static>`) is a lifetime and stays ordinary code.
@@ -377,6 +402,73 @@ mod tests {
         parts
     }
 
+    /// Every `<receiver>.record("key", …)` key in one file, and the
+    /// [`NON_SPAN_RECORD_RECEIVERS`] entries that file actually exercised.
+    ///
+    /// Split out of [`span_fields_stay_on_the_pii_allowlist`] so both of the
+    /// properties #3988 closed can be pinned without a probe left in a
+    /// production file.
+    ///
+    /// The marker is `.record(` and the key literal is located by SKIPPING
+    /// WHITESPACE after it, rather than being required against the paren.
+    /// `.record("` missed a call rustfmt had broken across lines — `span
+    /// .record(` then a newline then `    "key",` — which is what rustfmt
+    /// does to this call as soon as it grows past the width, so a field
+    /// could leave the guard by being renamed longer (#3988 note 2).
+    /// `.record_all(` still does not match the marker, since `(` must follow
+    /// `record` immediately; that under-flag is real and stays on the list.
+    fn record_keys(rel: &str, src: &str) -> (Vec<String>, Vec<&'static str>) {
+        let bytes = src.as_bytes();
+        let marker = ".record(";
+        let mut keys: Vec<String> = Vec::new();
+        let mut used: Vec<&'static str> = Vec::new();
+        let mut from = 0_usize;
+
+        while let Some(rel_idx) = src[from..].find(marker) {
+            let idx = from + rel_idx;
+            from = idx + marker.len();
+
+            // Mentions inside a comment are prose, not a call site.
+            let line_start = src[..idx].rfind('\n').map_or(0, |n| n + 1);
+            if src[line_start..idx].trim_start().starts_with("//") {
+                continue;
+            }
+
+            let mut at = from;
+            while matches!(bytes.get(at), Some(c) if c.is_ascii_whitespace()) {
+                at += 1;
+            }
+            // A non-literal first argument (`span.record(key_var, …)`, and
+            // the raw / byte-string spellings) has no literal key to check.
+            if bytes.get(at) != Some(&b'"') {
+                continue;
+            }
+
+            let ident = &src[ident_start(src, idx)..idx];
+            if let Some((_, name)) = NON_SPAN_RECORD_RECEIVERS
+                .iter()
+                .find(|(file, name)| *file == rel && *name == ident)
+            {
+                used.push(name);
+                continue;
+            }
+
+            // Measure the literal rather than scanning to the next `"`, so an
+            // escaped quote inside the key does not cut it short. A length
+            // that cannot hold two quotes means a truncated read; skip it,
+            // exactly as `balanced` skips an unbalanced group.
+            let Some(len) = opaque_prefix_len(src, at) else {
+                continue;
+            };
+            let Some(key) = src.get(at + 1..at + len - 1) else {
+                continue;
+            };
+            keys.push(key.to_owned());
+        }
+
+        (keys, used)
+    }
+
     /// The key of one field entry: the identifier before `=`, or the whole
     /// entry for a shorthand field like `fields(page_id, limit)`.
     fn entry_key(part: &str) -> Option<String> {
@@ -456,7 +548,8 @@ mod tests {
     /// `spans[0].record(…)`, `holder.sp.record(…)` and a `let s: Span`
     /// binding all evaded it while `page_title` sailed through. So the
     /// polarity is inverted: EVERY `.record("literal", …)` is checked, and
-    /// only receivers named in [`NON_SPAN_RECORD_RECEIVERS`] are skipped.
+    /// only the `(file, receiver)` pairs on [`NON_SPAN_RECORD_RECEIVERS`]
+    /// are skipped.
     /// Argument shape cannot substitute for that list — the DNS query
     /// recorder in `agaric_sync::transport::endpoint` also takes a leading
     /// string literal, so shape alone cannot tell the two apart.
@@ -476,20 +569,28 @@ mod tests {
     /// is left, and it is sorted by direction rather than by topic.
     ///
     /// UNDER-flags — a real field the scan does not see. The known ones are
-    /// all in the `.record("` marker: `.record_all(…)` and a non-literal
+    /// both in the `.record(` marker: `.record_all(…)` and a non-literal
     /// first argument (`span.record(key_var, …)`) have no literal key to
-    /// check; and the marker requires the quote IMMEDIATELY after the paren,
-    /// so a call rustfmt has broken across lines — `span.record(` then a
-    /// newline then `    "key",` — does not match (#3980 round-three note 2).
-    /// All are pre-existing. This sub-list is maintained by review, not
-    /// proved exhaustive — that is precisely the distinction the deleted
+    /// check. Both are pre-existing. This sub-list is maintained by review,
+    /// not proved exhaustive — that is precisely the distinction the deleted
     /// sentence blurred — but it is kept because a residual list that omits
     /// its own under-flags is worse than no list at all.
     ///
+    /// A third entry stood here until #3988: the marker was `.record("` and
+    /// required the quote IMMEDIATELY after the paren, so a call rustfmt had
+    /// broken across lines dropped out of the guard — meaning a field could
+    /// leave the scan by being renamed long enough to wrap. The marker is now
+    /// `.record(` plus a whitespace skip, and it is pinned by
+    /// [`a_record_key_on_the_next_line_is_still_scanned`].
+    ///
     /// SKIPS — deliberate, and only as narrow as their list: a `Span`
-    /// recorded through a receiver whose trailing identifier is on
-    /// [`NON_SPAN_RECORD_RECEIVERS`]. Trailing identifier means the exclusion
-    /// also covers a field access ending in that name
+    /// recorded in a FILE on [`NON_SPAN_RECORD_RECEIVERS`] through a receiver
+    /// whose trailing identifier is that entry's name. Until #3988 the pair
+    /// was a bare name, which excused every `recorder` in the workspace; the
+    /// file is now half the key, so the excuse covers the call sites someone
+    /// reviewed and nothing else, and an entry matching no call site fails
+    /// the test rather than lingering. Trailing identifier still means the
+    /// exclusion covers a field access ending in that name within that file
     /// (`holder.recorder.record(…)`), which is wider than it reads; keep the
     /// list to one entry.
     ///
@@ -510,7 +611,11 @@ mod tests {
     /// unrelated paren group and the real fields went unscanned); whether a
     /// delimiter or comma sits inside a literal or comment (round-three notes
     /// 1 and 5); and whether the byte before an identifier is one byte wide
-    /// ([`ident_start`], round-three note 3).
+    /// ([`ident_start`], round-three note 3). #3988 adds three: whether a
+    /// char literal escapes its own closing quote ([`opaque_prefix_len`],
+    /// note 1); whether rustfmt has wrapped a `.record(` onto the next line
+    /// ([`record_keys`], note 2); and — for every file but the one reviewed —
+    /// what a non-span `.record` receiver happens to be called (note 3).
     ///
     /// Scope note: this covers span ATTRIBUTES. Span EVENTS — the `tracing`
     /// events `tracing-opentelemetry` folds into the enclosing span, including
@@ -528,6 +633,7 @@ mod tests {
         assert!(!files.is_empty(), "found no .rs files to scan");
 
         let mut offenders: Vec<String> = Vec::new();
+        let mut used_skips: Vec<(String, &'static str)> = Vec::new();
 
         for path in &files {
             let src = std::fs::read_to_string(path).expect("read source file");
@@ -636,29 +742,31 @@ mod tests {
             // `Span::current()`) and it failed open on every span held under
             // any other name or reached through any expression — see the
             // test's doc comment for the probe that demonstrated it.
-            let marker = ".record(\"";
-            let mut from = 0_usize;
-            while let Some(rel_idx) = src[from..].find(marker) {
-                let idx = from + rel_idx;
-                from = idx + marker.len();
-
-                // Mentions inside a comment are prose, not a call site.
-                let line_start = src[..idx].rfind('\n').map_or(0, |n| n + 1);
-                if src[line_start..idx].trim_start().starts_with("//") {
-                    continue;
-                }
-
-                let ident = &src[ident_start(&src, idx)..idx];
-                if NON_SPAN_RECORD_RECEIVERS.contains(&ident) {
-                    continue;
-                }
-                let rest = &src[from..];
-                let Some(end) = rest.find('"') else { continue };
-                let key = &rest[..end];
-                if !ALLOWED_SPAN_FIELDS.contains(&key) {
+            let (keys, used) = record_keys(&rel, &src);
+            for key in keys {
+                if !ALLOWED_SPAN_FIELDS.contains(&key.as_str()) {
                     offenders.push(format!("{rel}: .record key `{key}`"));
                 }
             }
+            for name in used {
+                used_skips.push((rel.clone(), name));
+            }
+        }
+
+        // A stale exclusion is a hole with nobody looking at it: if the file
+        // is renamed or the call goes away, the pair matches nothing and the
+        // scan carries an excuse it no longer needs — the quiet drift that
+        // makes a residual list untrustworthy. Every entry must be earning
+        // its place at a real call site.
+        for (file, name) in NON_SPAN_RECORD_RECEIVERS {
+            assert!(
+                used_skips
+                    .iter()
+                    .any(|(u_file, u_name)| u_file == file && u_name == name),
+                "NON_SPAN_RECORD_RECEIVERS entry (`{file}`, `{name}`) matched no \
+                 `.record(\"literal\"` call site. The file moved or the call went \
+                 away: re-point the entry, or delete it."
+            );
         }
 
         assert!(
@@ -732,6 +840,114 @@ mod tests {
         assert_eq!(
             span_macro_field_keys(r#""n", k = f::<'a>(x), j = ')'"#),
             vec!["k".to_owned(), "j".to_owned()]
+        );
+    }
+
+    /// #3988 note 1 — the lexer written not to be fooled by literals, fooled
+    /// by a literal. The escaped-char arm searched for the closing quote from
+    /// just past the backslash, so on `'\''` it found the ESCAPED quote,
+    /// reported 3 bytes, and handed the literal's REAL closing quote back to
+    /// the caller as ordinary code.
+    ///
+    /// A stray `'` in code position re-opens a char literal whenever the
+    /// next-but-one byte is also a quote, and then the arm one layer up —
+    /// "one char, then a close" — swallows whatever sits between them. When
+    /// that swallowed byte is a delimiter, the group truncates at the wrong
+    /// place and every field after it goes UNSCANNED: #3980 round-three note
+    /// 1 again, reached through the fix for it. The shape needs `'\''`
+    /// immediately followed by `,` and then `'`, which rustfmt spaces apart
+    /// in an argument list it formats — but not inside a macro body it
+    /// declines to enter, and not under `#[rustfmt::skip]`, and this scan
+    /// reads the bytes on disk either way.
+    #[test]
+    fn an_escaped_quote_char_literal_consumes_its_real_closing_quote() {
+        assert_eq!(
+            opaque_prefix_len(r"'\''", 0),
+            Some(4),
+            "all four bytes of `'\\''` are the literal"
+        );
+
+        // The other escapes, whose closing quote is not itself a quote: the
+        // arm must not start over-consuming to buy the case above.
+        assert_eq!(opaque_prefix_len(r"'\n'", 0), Some(4));
+        assert_eq!(opaque_prefix_len(r"'\\'", 0), Some(4));
+        assert_eq!(opaque_prefix_len(r"'\x41'", 0), Some(6));
+        assert_eq!(opaque_prefix_len(r"'\u{1F600}'", 0), Some(11));
+
+        // End to end: with the short length, the leftover `'` plus `,` plus
+        // `'` lexed as a char literal, the `)` that followed became ordinary
+        // code, and `balanced` returned a group that ended mid-expression.
+        let src = r#"info_span!("n", k = f('\'',')'), page_title = t)"#;
+        let args = balanced(src, 10).expect("the group must balance");
+        assert!(
+            args.ends_with("page_title = t"),
+            "the group must not truncate at the `)` inside `')'`: {args}"
+        );
+        assert_eq!(
+            span_macro_field_keys(args),
+            vec!["k".to_owned(), "page_title".to_owned()],
+            "the field after the char literals must still be scanned"
+        );
+    }
+
+    /// #3988 note 2 — the `.record("` marker required the key literal to sit
+    /// against the paren, so the guard lost a call the moment rustfmt broke
+    /// it across lines. Demonstrated end-to-end before the fix by a wrapped
+    /// `span.record(` probe carrying a disallowed key in
+    /// `commands/pages/markdown.rs`, which the scan passed over in silence.
+    #[test]
+    fn a_record_key_on_the_next_line_is_still_scanned() {
+        let wrapped = "    span.record(\n        \"page_title\",\n        t,\n    );\n";
+        assert_eq!(
+            record_keys("src/probe.rs", wrapped).0,
+            vec!["page_title".to_owned()]
+        );
+
+        // The under-flags this does NOT close, pinned so the residual list
+        // stays honest: `(` must follow `record` immediately, and a key that
+        // is not a literal has nothing to read.
+        assert!(
+            record_keys("src/probe.rs", "span.record_all(\"page_title\", t);")
+                .0
+                .is_empty()
+        );
+        assert!(
+            record_keys("src/probe.rs", "span.record(key_var, t);")
+                .0
+                .is_empty()
+        );
+
+        // An escaped quote inside the key must not cut it short — the same
+        // literal-awareness as everywhere else in this scan.
+        assert_eq!(
+            record_keys("src/probe.rs", r#"span.record("a\"b", t);"#).0,
+            vec![r#"a\"b"#.to_owned()]
+        );
+    }
+
+    /// #3988 note 3 — the exclusion was keyed on the bare receiver name, so
+    /// a real `Span` bound to `recorder` in ANY file was skipped without
+    /// review: a name-keyed pass inside the guard whose whole argument is
+    /// that name-keyed matching fails open. Keyed on `(file, receiver)`, the
+    /// excuse reaches the reviewed call sites and stops there.
+    #[test]
+    fn a_non_span_receiver_is_excused_only_in_the_file_that_was_reviewed() {
+        let (file, name) = NON_SPAN_RECORD_RECEIVERS[0];
+        let call = format!("    {name}.record(\"page_title\");\n");
+
+        assert_eq!(record_keys(file, &call), (vec![], vec![name]));
+        assert_eq!(
+            record_keys("src/commands/pages/markdown.rs", &call).0,
+            vec!["page_title".to_owned()],
+            "the same receiver name in another file is a new review"
+        );
+
+        // Field access still resolves to the trailing segment, so the pair
+        // covers `holder.recorder.record(…)` in that file too — wider than
+        // it reads, which is why the list stays at one entry.
+        assert_eq!(
+            record_keys(file, &format!("holder.{name}.record(\"page_title\");")),
+            (vec![], vec![name])
         );
     }
 
