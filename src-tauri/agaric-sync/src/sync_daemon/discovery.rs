@@ -5,6 +5,15 @@ use iroh::EndpointId;
 use crate::mdns::{self, DiscoveredPeer, ServiceEventKind};
 use agaric_store::peer_refs::PeerRef;
 
+/// The daemon's live view of peers seen on the network: `device_id` → the last
+/// announcement and when it arrived.
+///
+/// Named because `daemon_loop` now *takes* this map rather than declaring it
+/// (#3533) — a bare local could only ever be filled by a real mDNS resolve,
+/// which left Branch B's pairing-window round unreachable from a test. The
+/// `Instant` is the last-seen stamp Branch C's 5-minute eviction reads.
+pub type DiscoveredPeers = HashMap<String, (DiscoveredPeer, tokio::time::Instant)>;
+
 /// Determine whether a discovered mDNS peer should trigger an immediate
 /// sync attempt.
 ///

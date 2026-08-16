@@ -48,9 +48,9 @@ use iroh::SecretKey;
 
 // Re-export submodule items
 pub use discovery::{
-    build_fallback_peer, format_peer_addresses, get_peer_cert_hash, peers_for_change_round,
-    process_discovery_event, resolve_peer_address, should_attempt_sync_with_discovered_peer,
-    should_store_cert_hash,
+    DiscoveredPeers, build_fallback_peer, format_peer_addresses, get_peer_cert_hash,
+    peers_for_change_round, process_discovery_event, resolve_peer_address,
+    should_attempt_sync_with_discovered_peer, should_store_cert_hash,
 };
 // These helpers are only called from test siblings — guard against unused_imports
 // on non-test builds (same rationale as the orchestrator/server re-exports below).
@@ -185,6 +185,84 @@ impl SyncEventSink for SharedEventSink {
 }
 
 // ---------------------------------------------------------------------------
+// DaemonActivation — the dormant→active observable
+// ---------------------------------------------------------------------------
+
+/// Whether the daemon has entered [`session_supervisor::daemon_loop`].
+///
+/// # Why this exists (#3533, and the vacuity #3852 flagged)
+///
+/// The dormant waiter's transition was, until now, unobservable from outside
+/// the task: `dormant_daemon_wakes_on_pair_notification` inserted a peer,
+/// notified the scheduler, slept, and then asserted only that `shutdown()`
+/// completed. The dormant `select!` has a `shutdown_notify` branch that
+/// returns immediately, so a waiter that **never** transitioned satisfied that
+/// assertion just as well as one that did — the test could not fail for the
+/// reason it named. The same gap made the sleep a gamble rather than a
+/// barrier: nothing in the test was actually waiting for the wake.
+///
+/// A `watch` channel rather than an `AtomicBool` because the interesting
+/// operation is *awaiting* the transition, and `watch` is awaitable without a
+/// polling loop — a poll-and-sleep observer would only move the race it was
+/// added to remove. The sender is `Arc`-shared with the [`SyncDaemon`] handle,
+/// so a late subscriber still sees a transition that already happened (which a
+/// bare `Notify` would have dropped).
+///
+/// It is `false` while the daemon sits in the dormant waiter, and `true` from
+/// the moment it commits to `daemon_loop` — on the dormant→active path *and*
+/// on the paired-at-startup path, which enters `daemon_loop` directly.
+#[derive(Clone)]
+pub struct DaemonActivation(Arc<tokio::sync::watch::Sender<bool>>);
+
+impl Default for DaemonActivation {
+    fn default() -> Self {
+        Self(Arc::new(tokio::sync::watch::channel(false).0))
+    }
+}
+
+impl DaemonActivation {
+    /// Record that the daemon is entering `daemon_loop`.
+    ///
+    /// `pub(crate)` so only the two start paths in this module can flip it: a
+    /// flag a test could set itself would observe nothing about production.
+    pub(crate) fn mark_active(&self) {
+        self.0.send_replace(true);
+    }
+
+    /// Whether the daemon has entered `daemon_loop`.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        *self.0.borrow()
+    }
+
+    /// Resolve once the daemon has entered `daemon_loop`, returning `true`.
+    ///
+    /// Resolves immediately if the transition already happened.
+    ///
+    /// # Callers MUST impose a deadline
+    ///
+    /// Wrap this in [`tokio::time::timeout`]. It does not impose one because
+    /// the deadline that matters is the caller's claim (e.g. "the *notify*
+    /// wake, not the 30 s poll, made this happen") — but the omission is not
+    /// merely untidy: **an unwrapped call against a daemon that dies without
+    /// activating hangs forever rather than returning `false`.** The `false`
+    /// path needs the watch channel to close, and the sender is owned by the
+    /// [`SyncDaemon`] handle, not by the daemon task, so a shut-down-while-
+    /// dormant daemon leaves the channel open with the handle still in scope.
+    /// The `false` return is therefore a defence against a *dropped* handle,
+    /// not against a dead daemon; only the caller's timeout covers that, and a
+    /// test that hangs is worse than one that fails.
+    ///
+    /// Returns `false` only if the watch channel closed without the daemon
+    /// activating — reported rather than swallowed so a closed channel can
+    /// never be mistaken for an activation.
+    pub async fn wait_until_active(&self) -> bool {
+        let mut rx = self.0.subscribe();
+        rx.wait_for(|active| *active).await.is_ok()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SyncDaemon — public handle
 // ---------------------------------------------------------------------------
 
@@ -214,6 +292,9 @@ pub struct SyncDaemon {
     // the join handle across the crate boundary) can read it; also silences the
     // dead_code lint on non-test builds without the `#[cfg_attr]` gymnastics.
     pub handle: Option<JoinHandle<()>>,
+    /// Whether the daemon has entered `daemon_loop` — see [`DaemonActivation`]
+    /// for why the dormant→active transition needs an observable at all.
+    pub activation: DaemonActivation,
 }
 
 impl SyncDaemon {
@@ -363,6 +444,8 @@ impl SyncDaemon {
         // `daemon_loop` below.
         let cancel = ctx.cancel.clone();
         let scheduler = ctx.scheduler.clone();
+        let activation = DaemonActivation::default();
+        let activation_task = activation.clone();
 
         let handle = tokio::spawn(async move {
             let mut poll = tokio::time::interval(Self::DORMANT_POLL_INTERVAL);
@@ -393,8 +476,16 @@ impl SyncDaemon {
             tracing::info!(
                 "SyncDaemon transitioning from dormant to active (paired peer detected)"
             );
+            // Publish the transition before the loop runs, not after: the claim
+            // under test is that the waiter *left* the dormant select!, and
+            // `daemon_loop` only returns at shutdown (or on a bind error), so a
+            // flag set on the far side of the call would never be observed.
+            activation_task.mark_active();
 
-            if let Err(e) = session_supervisor::daemon_loop(ctx, shutdown_notify_task).await {
+            if let Err(e) =
+                session_supervisor::daemon_loop(ctx, shutdown_notify_task, DiscoveredPeers::new())
+                    .await
+            {
                 tracing::error!(error = %e, "SyncDaemon (post-dormant) exited with error");
             }
         });
@@ -404,6 +495,7 @@ impl SyncDaemon {
             cancel,
             scheduler,
             handle: Some(handle),
+            activation,
         })
     }
 
@@ -443,6 +535,40 @@ impl SyncDaemon {
     /// `lifecycle.is_foreground` is `false`, and wakes immediately when
     /// `lifecycle.wake` is notified.
     pub async fn start_with_lifecycle(ctx: SyncDaemonContext) -> Result<Self, AppError> {
+        Self::start_seeded(ctx, DiscoveredPeers::new()).await
+    }
+
+    /// [`Self::start_with_lifecycle`] with `daemon_loop`'s discovered-peer map
+    /// pre-seeded — the #3533 seam.
+    ///
+    /// # Why this exists
+    ///
+    /// `daemon_loop`'s `discovered` map is written by exactly one thing: Branch
+    /// A, on a real `mdns_rx.recv()`. Branch B's pairing-window round
+    /// ([`peers_for_change_round`], #3502 Part 2) is the only *reader*, so with
+    /// no way to put a peer in that map from outside, reverting Branch B's call
+    /// to the helper turned nothing red — the helper's own unit tests pass a map
+    /// they construct themselves and never enter `daemon_loop`, and #3507's
+    /// two-device harness calls `process_discovery_event` and
+    /// `try_sync_with_peer` directly rather than through the loop.
+    ///
+    /// Seeding the map is the smallest thing that makes Branch B reachable
+    /// without a live mDNS responder announcing at the right instant. It is
+    /// gated behind `test-util` so production cannot acquire a second way to
+    /// populate discovery: Branch A remains the only one.
+    #[cfg(any(test, feature = "test-util"))]
+    pub async fn start_with_lifecycle_seeded(
+        ctx: SyncDaemonContext,
+        discovered: DiscoveredPeers,
+    ) -> Result<Self, AppError> {
+        Self::start_seeded(ctx, discovered).await
+    }
+
+    /// Shared body of [`Self::start_with_lifecycle`] and its seeded variant.
+    async fn start_seeded(
+        ctx: SyncDaemonContext,
+        discovered: DiscoveredPeers,
+    ) -> Result<Self, AppError> {
         let shutdown_notify = Arc::new(Notify::new());
         let shutdown_notify_flag = shutdown_notify.clone();
         // Clone the shared cancel flag + scheduler for the returned handle;
@@ -450,9 +576,16 @@ impl SyncDaemon {
         // `daemon_loop` below.
         let cancel = ctx.cancel.clone();
         let scheduler = ctx.scheduler.clone();
+        // This path *is* the active one — there is no dormant waiter to leave,
+        // so the daemon is active from the start rather than at some later
+        // transition.
+        let activation = DaemonActivation::default();
+        activation.mark_active();
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = session_supervisor::daemon_loop(ctx, shutdown_notify_flag).await {
+            if let Err(e) =
+                session_supervisor::daemon_loop(ctx, shutdown_notify_flag, discovered).await
+            {
                 tracing::error!(error = %e, "SyncDaemon exited with error");
             }
         });
@@ -462,6 +595,7 @@ impl SyncDaemon {
             cancel,
             scheduler,
             handle: Some(handle),
+            activation,
         })
     }
 

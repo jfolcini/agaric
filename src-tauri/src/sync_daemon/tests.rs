@@ -256,6 +256,7 @@ fn shutdown_notifies_waiter() {
         cancel: Arc::new(AtomicBool::new(false)),
         scheduler: Arc::new(SyncScheduler::new()),
         handle: None,
+        activation: DaemonActivation::default(),
     };
     daemon.shutdown();
     // A subsequent `notified()` future must complete immediately because
@@ -287,6 +288,7 @@ fn cancel_active_sync_sets_flag_while_session_active() {
         cancel: cancel.clone(),
         scheduler: scheduler.clone(),
         handle: None,
+        activation: DaemonActivation::default(),
     };
     assert!(
         !cancel.load(Ordering::Acquire),
@@ -314,6 +316,7 @@ fn cancel_active_sync_is_noop_without_active_session() {
         cancel: cancel.clone(),
         scheduler: Arc::new(SyncScheduler::new()),
         handle: None,
+        activation: DaemonActivation::default(),
     };
     daemon.cancel_active_sync();
     assert!(
@@ -331,6 +334,7 @@ fn shutdown_and_cancel_are_independent() {
         cancel: cancel.clone(),
         scheduler: scheduler.clone(),
         handle: None,
+        activation: DaemonActivation::default(),
     };
     daemon.shutdown();
     assert!(!cancel.load(Ordering::Acquire), "cancel must remain unset");
@@ -349,6 +353,7 @@ fn cancel_flag_clear_after_session() {
         cancel: cancel.clone(),
         scheduler: scheduler.clone(),
         handle: None,
+        activation: DaemonActivation::default(),
     };
     let _activity = scheduler.begin_session_activity();
     daemon.cancel_active_sync();
@@ -397,6 +402,7 @@ fn cancel_is_idempotent() {
         cancel: cancel.clone(),
         scheduler: scheduler.clone(),
         handle: None,
+        activation: DaemonActivation::default(),
     };
     let _activity = scheduler.begin_session_activity();
     daemon.cancel_active_sync();
@@ -3130,6 +3136,14 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     // (c) sit on the next debounce wait. None of these transitions are
     // exposed to test code, so we still rely on a fixed wait here.
     // Let startup complete and Branch C's first tick pass (no peers → no-op).
+    //
+    // #4025: (b) is the load-bearing part, and it is a workaround — this sleep
+    // is dodging the permit that `wait_for_debounced_change` loses when Branch
+    // C's immediate first tick cancels its debounce window. It is one of the
+    // three things #4025's acceptance criterion 3 says to delete when the
+    // scheduler is fixed (the others are `wait_for_change_round` and
+    // `CHANGE_WAKE_NUDGE`). This is also the suspected cause of this test's
+    // known flakiness.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     // Insert a peer ref with an unreachable last_address (port 1).
@@ -3607,11 +3621,310 @@ async fn change_round_does_not_duplicate_a_paired_and_discovered_peer() {
     );
 }
 
+// ======================================================================
+// #3533 — the same claims, through `daemon_loop` rather than the helper
+// ======================================================================
+//
+// The three tests above call `peers_for_change_round` directly, so they pin
+// what the round *should* contain and nothing about who asks for it. Branch B
+// is the only production caller, and its `discovered` map used to be a bare
+// local written only by Branch A (a real `mdns_rx.recv()`), so no test could
+// put a peer where Branch B would look: deleting the call site turned nothing
+// red, and #3507's two-device harness does not close the gap either — it drives
+// `process_discovery_event` / `try_sync_with_peer` directly and never enters
+// `daemon_loop`.
+//
+// `SyncDaemon::start_with_lifecycle_seeded` hands `daemon_loop` its map, so
+// these two drive the real select! loop. The observable is the "connecting"
+// progress event `try_sync_with_peer` emits immediately before it dials —
+// earlier than the failure it eventually records, and specific to one peer.
+
+/// How often [`wait_for_change_round`] re-arms the local-change wake.
+///
+/// Part of the #4025 workaround; remove it with that fix.
+///
+/// Must exceed the scheduler's debounce window (the #3533 daemon tests use
+/// 100 ms) or every nudge would restart the window and Branch B would never
+/// leave it. 300 ms leaves each wake 200 ms of quiet to complete in.
+const CHANGE_WAKE_NUDGE: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// [`wait_for`], re-arming `notify_change()` on a cadence while it polls.
+///
+/// # This is a WORKAROUND for #4025, not a design
+///
+/// The re-arm exists only because the production wake path loses permits
+/// (#4025). It is not how a test should have to wait for a local change, and
+/// #4025's acceptance criterion 3 names this function and
+/// [`CHANGE_WAKE_NUDGE`] as the things whose removal proves the fix landed: if
+/// the scheduler is repaired and these are still needed, the fix is incomplete.
+/// Delete both, and the 300 ms sleep in
+/// [`daemon_branch_b_local_change_triggers_sync_attempt`], with that fix.
+///
+/// # Why a single `notify_change()` is not enough
+///
+/// `notify_change` stores at most one permit, and `wait_for_debounced_change`
+/// *consumes* that permit and then waits out its debounce window. If another
+/// `select!` branch becomes ready during that window the debounced future is
+/// dropped — and the consumed permit goes with it, because by then it is no
+/// longer held by a `Notified` that could hand it back. At daemon startup
+/// there is always such a branch: Branch C's resync interval fires its first
+/// tick immediately. So a wake fired right after `start` is regularly eaten,
+/// which is what the fixed 300 ms sleep in
+/// `daemon_branch_b_local_change_triggers_sync_attempt` has been avoiding by
+/// luck rather than by construction.
+///
+/// Re-arming is what production does anyway — every local change notifies —
+/// and it removes the race instead of narrowing it. It cannot rescue a Branch B
+/// that composes the wrong round: no number of wakes produces a peer the round
+/// does not contain.
+async fn wait_for_change_round<F>(
+    scheduler: &SyncScheduler,
+    mut predicate: F,
+    timeout: std::time::Duration,
+    label: &'static str,
+) where
+    F: FnMut() -> bool,
+{
+    let start = std::time::Instant::now();
+    loop {
+        scheduler.notify_change();
+        let nudged = std::time::Instant::now();
+        while nudged.elapsed() < CHANGE_WAKE_NUDGE {
+            if predicate() {
+                return;
+            }
+            assert!(
+                start.elapsed() < timeout,
+                "wait_for_change_round({label}) timed out after {timeout:?}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+}
+
+/// Whether the sink shows a dial being *started* against `peer_id`.
+///
+/// `try_sync_with_peer` emits this after the backoff gate, the per-peer lock
+/// and the pinned-key check, and before `Endpoint::connect` — so it is the
+/// first externally visible consequence of a peer being in a round, and it
+/// does not wait out a 10 s connect timeout to appear.
+fn dial_started(sink: &RecordingEventSink, peer_id: &str) -> bool {
+    sink.events().iter().any(|e| {
+        matches!(
+            e,
+            SyncEvent::Progress { state, remote_device_id, .. }
+                if state == "connecting" && remote_device_id == peer_id
+        )
+    })
+}
+
+/// #3533 (the wiring #3502 Part 2 left uncovered): with a pairing window open
+/// and `peer_refs` EMPTY, Branch B must dial a peer that exists only in
+/// `daemon_loop`'s discovered map.
+///
+/// This is the first-ever-pair shape: the paired-only enumeration produces
+/// nothing at all, so the round can only be non-empty if Branch B composes it
+/// with `peers_for_change_round(&refs, &discovered, pairing_pending)`. Reverting
+/// that call site to the paired-only round reds this test — which is the property
+/// #3533 was filed for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn daemon_branch_b_dials_discovered_unpaired_peer_while_pairing_pending_3533() {
+    const SEEDED_PEER: &str = "SEEDED_UNPAIRED_3533";
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // Short debounce so Branch B's round starts ~100 ms after the notify.
+    let scheduler = Arc::new(SyncScheduler::with_intervals(
+        std::time::Duration::from_millis(100),
+        std::time::Duration::from_secs(60),
+    ));
+    let sink = Arc::new(RecordingEventSink::new());
+    let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    // The pairing window is open and NO peer is paired — `confirm_pairing`'s
+    // state at the moment it calls `notify_change()`.
+    peer_refs::set_pending_pairing(&pool, "test-proof")
+        .await
+        .unwrap();
+    let refs = peer_refs::list_peer_refs(&pool).await.unwrap();
+    assert!(
+        refs.is_empty(),
+        "precondition: the paired-only round must be empty, or this test could \
+         pass through the ordinary paired path"
+    );
+
+    let discovered: DiscoveredPeers = [discovered_entry(SEEDED_PEER)].into_iter().collect();
+
+    let daemon = SyncDaemon::start_with_lifecycle_seeded(
+        SyncDaemonContext {
+            pool: pool.clone(),
+            device_id: "DEV_3533_A".into(),
+            materializer: mat.clone().into(),
+            scheduler: scheduler.clone(),
+            endpoint_secret: SecretKey::generate(),
+            event_sink: sink_dyn,
+            cancel,
+            lifecycle: agaric_sync::foreground::LifecycleHooks::new(),
+        },
+        discovered,
+    )
+    .await
+    .expect("the seeded daemon must start");
+
+    // The wake both pairing commands end with. Branch C cannot be the thing
+    // that dials here: its round is `peers_due_for_resync(&refs)` and `refs` is
+    // empty, so Branch B is the only branch that can produce this peer.
+    {
+        let sink = sink.clone();
+        wait_for_change_round(
+            &scheduler,
+            move || dial_started(&sink, SEEDED_PEER),
+            BRANCH_DISPATCH_DEADLINE,
+            "branch_b/#3533: connecting event for the seeded unpaired peer",
+        )
+        .await;
+    }
+
+    daemon.shutdown();
+    wait_for(
+        || {
+            daemon
+                .handle
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+        },
+        BRANCH_SHUTDOWN_DEADLINE,
+        "branch_b/#3533: handle.is_finished()",
+    )
+    .await;
+    mat.shutdown();
+}
+
+/// The other arm: with NO pairing window open, Branch B must NOT dial a
+/// discovered-but-unpaired peer.
+///
+/// This pins the `is_pending_pairing` read at the wiring site, which the
+/// positive test above cannot: a Branch B that passed a hard-coded `true` (or
+/// appended the discovered tail unconditionally) would satisfy it.
+///
+/// The "no dial" is asserted against two barriers rather than a sleep, so it
+/// cannot pass by simply out-running the round:
+///
+/// 1. `PAIRED_MISMATCH` is paired, discovered, and announces a key that is not
+///    the one bound to it — so `try_sync_with_peer` records a failure at the
+///    pinned-key check, before any dial. That failure proves the round *ran*.
+///    The daemon starts backgrounded so that only Branch B could have produced
+///    it: Branch C's body short-circuits on `is_backgrounded`, while the
+///    event-driven branches are documented as ungated. Without that, a failure
+///    recorded by Branch C's immediate first tick would let this test pass with
+///    Branch B never running at all.
+/// 2. Shutdown then completes only once Branch B's `JoinSet` has joined every
+///    task it spawned, so any peer that had been in the round has necessarily
+///    reached (and got past) its "connecting" event by the time we assert.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn daemon_branch_b_ignores_discovered_unpaired_peer_outside_pairing_window_3533() {
+    const SEEDED_PEER: &str = "SEEDED_UNPAIRED_3533_B";
+    const PAIRED_MISMATCH: &str = "PAIRED_MISMATCH_3533";
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::with_intervals(
+        std::time::Duration::from_millis(100),
+        std::time::Duration::from_secs(60),
+    ));
+    let sink = Arc::new(RecordingEventSink::new());
+    let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    // `seed_unreachable_peer` binds a freshly generated key, while
+    // `discovered_entry` announces `test_endpoint_id(peer_id)` — two different
+    // keys for one device, which is exactly the pinned-identity refusal.
+    seed_unreachable_peer(&pool, PAIRED_MISMATCH).await;
+    assert!(
+        !peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "precondition: no pairing window is open"
+    );
+
+    let discovered: DiscoveredPeers = [
+        discovered_entry(PAIRED_MISMATCH),
+        discovered_entry(SEEDED_PEER),
+    ]
+    .into_iter()
+    .collect();
+
+    let lifecycle = agaric_sync::foreground::LifecycleHooks::new();
+    lifecycle.mark_backgrounded();
+
+    let daemon = SyncDaemon::start_with_lifecycle_seeded(
+        SyncDaemonContext {
+            pool: pool.clone(),
+            device_id: "DEV_3533_B".into(),
+            materializer: mat.clone().into(),
+            scheduler: scheduler.clone(),
+            endpoint_secret: SecretKey::generate(),
+            event_sink: sink_dyn,
+            cancel,
+            lifecycle,
+        },
+        discovered,
+    )
+    .await
+    .expect("the seeded daemon must start");
+
+    // Barrier 1 — a Branch B round ran.
+    {
+        let sched = scheduler.clone();
+        wait_for_change_round(
+            &scheduler,
+            move || sched.failure_count(PAIRED_MISMATCH) >= 1,
+            BRANCH_DISPATCH_DEADLINE,
+            "branch_b/#3533: paired peer's pinned-key refusal recorded",
+        )
+        .await;
+    }
+
+    // Barrier 2 — every task the round spawned has been joined.
+    daemon.shutdown();
+    wait_for(
+        || {
+            daemon
+                .handle
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+        },
+        BRANCH_SHUTDOWN_DEADLINE,
+        "branch_b/#3533 (negative): handle.is_finished()",
+    )
+    .await;
+
+    assert!(
+        !dial_started(&sink, SEEDED_PEER),
+        "outside a pairing window Branch B must not dial a discovered-but-unpaired \
+         peer; events were: {:?}",
+        sink.events()
+    );
+    mat.shutdown();
+}
+
 // ── conditional daemon startup ──────────────────────────────
 //
 // `SyncDaemon::start_if_peers_exist` avoids starting mDNS + the QUIC endpoint
 // when no paired peers exist. These tests exercise the peer-count helper,
 // the pending-pairing wake path (#466), and the dormant/active transition.
+
+/// How long the dormant waiter gets to reach `daemon_loop` after a pair
+/// notification.
+///
+/// Bounded on both sides, and both bounds carry meaning. It must be *large*
+/// enough to absorb a loaded runner: the wake itself is a `Notify` permit plus
+/// one `should_start_active` query against a temp-file SQLite DB, observed in
+/// the low milliseconds. It must be *far below* `SyncDaemon::DORMANT_POLL_INTERVAL`
+/// (30 s) or a daemon that only ever transitioned on the periodic poll would
+/// also pass, and the notify path — the one `confirm_pairing` depends on, and
+/// the one #3852 suspected on Android — would go untested. 5 s is ~1000× the
+/// observed cost and 6× under the poll.
+const DORMANT_ACTIVATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn should_start_active_returns_false_with_zero_peers() {
@@ -3744,6 +4057,13 @@ async fn start_if_peers_exist_spawns_dormant_when_empty() {
         daemon.handle.is_some(),
         "dormant daemon must still hold a handle"
     );
+    // The other half of what `activation` means (#3533): a daemon that never
+    // left the dormant waiter reads false. Without this arm, a flag that was
+    // simply always true would satisfy every "wakes on ..." assertion.
+    assert!(
+        !daemon.activation.is_active(),
+        "with an empty peer table the daemon must NOT enter daemon_loop"
+    );
 
     // Cleanly shutting down a dormant daemon must not hang.
     daemon.shutdown();
@@ -3811,6 +4131,12 @@ async fn start_if_peers_exist_clears_orphaned_pending_pairing_at_startup() {
         !SyncDaemon::should_start_active(&pool).await.unwrap(),
         "with the marker cleared and no peers, the daemon must stay dormant"
     );
+    assert!(
+        !daemon.activation.is_active(),
+        "the daemon this boot actually started must be the dormant one — \
+         `should_start_active` above says what a fresh call would decide, not \
+         which path this instance took"
+    );
 
     // A dormant daemon must still shut down cleanly.
     daemon.shutdown();
@@ -3827,11 +4153,12 @@ async fn start_if_peers_exist_clears_orphaned_pending_pairing_at_startup() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_if_peers_exist_starts_actively_when_peers_present() {
     // With at least one paired peer, `start_if_peers_exist` must call the
-    // full `start` path. We verify this indirectly: the returned daemon
-    // runs the regular `daemon_loop`, which on test environments with no
-    // mDNS support emits `SyncEvent::MdnsDisabled` via the event sink.
-    // If the dormant waiter ran instead, no such event would be emitted
-    // because mDNS init is deferred.
+    // full `start` path rather than the dormant waiter. `daemon.activation`
+    // states which one ran (#3533): the active path marks it before spawning,
+    // the dormant path only after leaving its select!, so with a peer already
+    // present it must read `true` the moment `start_if_peers_exist` returns —
+    // no wait, and no inference from a sink the environment may or may not
+    // populate.
 
     let (pool, _dir) = test_pool().await;
     peer_refs::upsert_peer_ref(&pool, "PEER_X").await.unwrap();
@@ -3855,14 +4182,11 @@ async fn start_if_peers_exist_starts_actively_when_peers_present() {
     .await
     .unwrap();
 
-    // No observable predicate available — sleep retained.
-    // We want the daemon task to enter daemon_loop init (so this asserts
-    // the "active" path was taken, not the dormant waiter). The daemon
-    // does not surface the dormant→active transition to test code; the
-    // post-shutdown timeout-await below is the actual liveness assertion
-    // for the active path.
-    // Give the task a moment to make progress through daemon_loop init.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        daemon.activation.is_active(),
+        "with a paired peer present, start_if_peers_exist must take the active \
+         path — a daemon that parked in the dormant waiter reads false here"
+    );
 
     daemon.shutdown();
     let handle = daemon.handle;
@@ -3874,9 +4198,7 @@ async fn start_if_peers_exist_starts_actively_when_peers_present() {
     .await
     .expect("active daemon must shut down within 10s");
     // Note: we don't assert on the sink contents because mDNS may or may
-    // not succeed in the test environment. The important observable is
-    // that `start_if_peers_exist` went into the active `start` path and
-    // did not deadlock.
+    // not succeed in the test environment.
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3886,12 +4208,18 @@ async fn dormant_daemon_wakes_on_pair_notification() {
     // and on a periodic poll; the notify path transitions to active
     // much faster than the 30s poll.
     //
-    // This test simulates the pair event by inserting a peer and then
-    // calling notify_change, then asserts the daemon eventually
-    // transitions off the dormant select branch (observable by the
-    // daemon remaining alive and shutting down cleanly — the dormant
-    // path only hits `peers_appeared` in the DB, and after the peer is
-    // inserted the transition proceeds into `daemon_loop`).
+    // What this used to assert, and why it could not fail (#3852): it slept
+    // 200 ms and then checked only that `shutdown()` completed within 10 s.
+    // The dormant `select!` has a `shutdown_notify` branch that returns
+    // immediately, so a waiter that NEVER left dormant mode satisfied that
+    // just as well as one that transitioned — and the 200 ms sleep was a
+    // gamble against the wake rather than a wait for it.
+    //
+    // It now awaits `daemon.activation` (#3533), which the waiter marks at
+    // the point it commits to `daemon_loop`. The deadline is deliberately far
+    // below `DORMANT_POLL_INTERVAL` (30 s): if the transition could only
+    // happen on the periodic poll, this test would time out, so what passes
+    // here is specifically the notify path the pairing commands rely on.
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
@@ -3913,17 +4241,29 @@ async fn dormant_daemon_wakes_on_pair_notification() {
     .await
     .unwrap();
 
+    assert!(
+        !daemon.activation.is_active(),
+        "with an empty peer table the daemon must start dormant — otherwise the \
+         wake this test is about has nothing left to prove"
+    );
+
     // Simulate a pair event: insert a peer, then wake the dormant waiter.
     peer_refs::upsert_peer_ref(&pool, "PEER_NEW").await.unwrap();
     scheduler.notify_change();
 
-    // No observable predicate available — sleep retained.
-    // The dormant→active transition isn't exposed to test code (it
-    // happens inside the dormant waiter and continues into daemon_loop).
-    // The shutdown-then-timeout pattern below is the actual liveness
-    // assertion: a hung dormant task would surface there.
-    // Give the task a moment to transition.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let activated = tokio::time::timeout(
+        DORMANT_ACTIVATION_DEADLINE,
+        daemon.activation.wait_until_active(),
+    )
+    .await
+    .expect(
+        "the dormant waiter must transition to active on the pair notification, \
+         well inside DORMANT_POLL_INTERVAL",
+    );
+    assert!(
+        activated,
+        "wait_until_active resolved without the daemon becoming active"
+    );
 
     daemon.shutdown();
     let handle = daemon.handle;
@@ -3995,11 +4335,15 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
     .await
     .unwrap();
 
-    // No observable predicate available — sleep retained.
-    // We want the daemon to have transitioned past initial peer-presence
-    // detection into daemon_loop before we delete the peer. That
-    // transition isn't surfaced to test code.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // The peer-presence check has to have already sent this daemon into
+    // `daemon_loop`, or "keeps running after the peer is removed" would be a
+    // claim about a daemon that never started. `activation` states that
+    // directly (#3533) — it replaces a 100 ms sleep that was standing in for an
+    // observable the daemon did not have.
+    assert!(
+        daemon.activation.is_active(),
+        "the daemon must have taken the active path before the peer is deleted"
+    );
 
     // Remove the only peer — daemon must still be alive and shutdown
     // cleanly.
@@ -8608,6 +8952,7 @@ async fn cancel_2537_no_session_cancel_does_not_poison_inbound_session() {
         cancel: cancel.clone(),
         scheduler: scheduler.clone(),
         handle: None,
+        activation: DaemonActivation::default(),
     };
 
     // ── (a) cancel with NO active session ────────────────────────────
