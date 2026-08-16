@@ -138,6 +138,9 @@ mod tests {
     ///
     /// Path, not module path: the scan reads files, and the relative path is
     /// what it already has (`file!()`-shaped, as used to skip this file).
+    /// Spell it with `/` on every platform — the scan normalises the
+    /// separator out of `Path::display` before comparing, so a Windows
+    /// checkout matches the same entries a Linux one does.
     /// Every entry must match a real call site — a stale one is asserted
     /// against in [`span_fields_stay_on_the_pii_allowlist`], so a moved file
     /// reddens CI instead of quietly widening back into a name-keyed pass.
@@ -410,13 +413,20 @@ mod tests {
     /// production file.
     ///
     /// The marker is `.record(` and the key literal is located by SKIPPING
-    /// WHITESPACE after it, rather than being required against the paren.
-    /// `.record("` missed a call rustfmt had broken across lines — `span
-    /// .record(` then a newline then `    "key",` — which is what rustfmt
-    /// does to this call as soon as it grows past the width, so a field
-    /// could leave the guard by being renamed longer (#3988 note 2).
+    /// WHITESPACE AND COMMENTS after it, rather than being required against
+    /// the paren. `.record("` missed a call rustfmt had broken across lines
+    /// — `span .record(` then a newline then `    "key",` — which is what
+    /// rustfmt does to this call as soon as it grows past the width, so a
+    /// field could leave the guard by being renamed longer (#3988 note 2).
+    /// A whitespace-only skip then missed the same call with a `// note`
+    /// between the paren and the key; comments are consumed by the same
+    /// [`opaque_prefix_len`] the rest of this scan lexes with.
+    ///
     /// `.record_all(` still does not match the marker, since `(` must follow
-    /// `record` immediately; that under-flag is real and stays on the list.
+    /// `record` immediately (so does the exotic `.record /* c */ ("k", v)`);
+    /// and a first argument that is not a PLAIN string literal is not read,
+    /// which covers a non-literal expression AND the raw / byte-string key
+    /// spellings. Those under-flags are real and stay on the list.
     fn record_keys(rel: &str, src: &str) -> (Vec<String>, Vec<&'static str>) {
         let bytes = src.as_bytes();
         let marker = ".record(";
@@ -434,22 +444,53 @@ mod tests {
                 continue;
             }
 
+            // Whitespace and comments both sit between the paren and the key,
+            // and both are equally not-the-key. The first spelling of this
+            // skip advanced over whitespace only, so a `// note` line between
+            // the two landed `at` on `/`, failed the `"` check below, and
+            // dropped the call — the wrap fix's own new under-flag, in the
+            // one direction this guard exists to prevent.
+            // [`opaque_prefix_len`] already measures either comment spelling,
+            // so it does the consuming; it is asked only at a comment opener,
+            // because at the key it would happily measure the literal too and
+            // skip straight past what we came to read.
             let mut at = from;
-            while matches!(bytes.get(at), Some(c) if c.is_ascii_whitespace()) {
-                at += 1;
-            }
-            // A non-literal first argument (`span.record(key_var, …)`, and
-            // the raw / byte-string spellings) has no literal key to check.
-            if bytes.get(at) != Some(&b'"') {
-                continue;
+            loop {
+                if matches!(bytes.get(at), Some(c) if c.is_ascii_whitespace()) {
+                    at += 1;
+                    continue;
+                }
+                if !(src[at..].starts_with("//") || src[at..].starts_with("/*")) {
+                    break;
+                }
+                let Some(skip) = opaque_prefix_len(src, at) else {
+                    break;
+                };
+                debug_assert!(skip > 0, "opaque element must consume at least one byte");
+                at += skip;
             }
 
+            // The exclusion is decided by the RECEIVER, so it is decided
+            // before the key is looked at. Checked after, a `.record(` on an
+            // excused receiver whose first argument is not a string literal
+            // left the entry marked unused, and the staleness assertion in
+            // [`span_fields_stay_on_the_pii_allowlist`] fired at a call site
+            // that had not moved at all.
             let ident = &src[ident_start(src, idx)..idx];
             if let Some((_, name)) = NON_SPAN_RECORD_RECEIVERS
                 .iter()
                 .find(|(file, name)| *file == rel && *name == ident)
             {
                 used.push(name);
+                continue;
+            }
+
+            // A first argument that is not a plain string literal has no key
+            // this scan can read: a non-literal expression
+            // (`span.record(key_var, …)`), and the raw / byte-string
+            // spellings (`span.record(r"key", …)`), which ARE literals but
+            // are not read. Both are on the residual under-flag list.
+            if bytes.get(at) != Some(&b'"') {
                 continue;
             }
 
@@ -569,19 +610,28 @@ mod tests {
     /// is left, and it is sorted by direction rather than by topic.
     ///
     /// UNDER-flags — a real field the scan does not see. The known ones are
-    /// both in the `.record(` marker: `.record_all(…)` and a non-literal
-    /// first argument (`span.record(key_var, …)`) have no literal key to
-    /// check. Both are pre-existing. This sub-list is maintained by review,
-    /// not proved exhaustive — that is precisely the distinction the deleted
-    /// sentence blurred — but it is kept because a residual list that omits
-    /// its own under-flags is worse than no list at all.
+    /// all in the `.record(` marker, and there are three. `.record_all(…)`
+    /// does not match it, because `(` must follow `record` immediately (nor
+    /// does the exotic `.record /* c */ ("k", v)`, for the same reason). A
+    /// non-literal first argument — `span.record(key_var, …)` — has no
+    /// literal key to read. And the RAW and BYTE-STRING key spellings —
+    /// `span.record(r"key", v)`, `b"key"`, `br#"key"#` — are skipped: the
+    /// key must be a plain `"…"` literal, so "not a literal" is the wrong
+    /// summary of that clause and it is spelled out here instead. All three
+    /// are pre-existing. This sub-list is maintained by review, not proved
+    /// exhaustive — that is precisely the distinction the deleted sentence
+    /// blurred — but it is kept because a residual list that omits its own
+    /// under-flags is worse than no list at all.
     ///
-    /// A third entry stood here until #3988: the marker was `.record("` and
-    /// required the quote IMMEDIATELY after the paren, so a call rustfmt had
-    /// broken across lines dropped out of the guard — meaning a field could
-    /// leave the scan by being renamed long enough to wrap. The marker is now
-    /// `.record(` plus a whitespace skip, and it is pinned by
-    /// [`a_record_key_on_the_next_line_is_still_scanned`].
+    /// Two entries stood here until #3988 and its review. The marker was
+    /// `.record("`, requiring the quote IMMEDIATELY after the paren, so a
+    /// call rustfmt had broken across lines dropped out of the guard — a
+    /// field could leave the scan by being renamed long enough to wrap. The
+    /// whitespace skip that fixed it then stopped at the `/` of a comment,
+    /// so a `// note` between the paren and the key dropped the call the same
+    /// way. The skip now consumes whitespace AND comments, pinned by
+    /// [`a_record_key_on_the_next_line_is_still_scanned`] and
+    /// [`a_comment_between_the_paren_and_the_key_does_not_hide_it`].
     ///
     /// SKIPS — deliberate, and only as narrow as their list: a `Span`
     /// recorded in a FILE on [`NON_SPAN_RECORD_RECEIVERS`] through a receiver
@@ -614,7 +664,8 @@ mod tests {
     /// ([`ident_start`], round-three note 3). #3988 adds three: whether a
     /// char literal escapes its own closing quote ([`opaque_prefix_len`],
     /// note 1); whether rustfmt has wrapped a `.record(` onto the next line
-    /// ([`record_keys`], note 2); and — for every file but the one reviewed —
+    /// or a comment sits between its paren and its key ([`record_keys`], note
+    /// 2 and its review); and — for every file but the one reviewed —
     /// what a non-span `.record` receiver happens to be called (note 3).
     ///
     /// Scope note: this covers span ATTRIBUTES. Span EVENTS — the `tracing`
@@ -637,15 +688,23 @@ mod tests {
 
         for path in &files {
             let src = std::fs::read_to_string(path).expect("read source file");
+            // `/`-separated, always. `Path::display` emits the platform
+            // separator, so on Windows every `rel` would come out with `\`
+            // and match neither `file!()` below nor a
+            // [`NON_SPAN_RECORD_RECEIVERS`] entry — turning the new
+            // must-match assertion into a hard failure for a developer whose
+            // checkout is fine. CI is ubuntu-only, so nothing would have
+            // caught it there.
             let rel = path
                 .strip_prefix(env!("CARGO_MANIFEST_DIR"))
                 .unwrap_or(path)
                 .display()
-                .to_string();
+                .to_string()
+                .replace('\\', "/");
 
             // Skip this guard's own source: its marker literals and its doc
             // comment quote the very shapes it searches for.
-            if rel == file!() {
+            if rel == file!().replace('\\', "/") {
                 continue;
             }
 
@@ -758,14 +817,22 @@ mod tests {
         // scan carries an excuse it no longer needs — the quiet drift that
         // makes a residual list untrustworthy. Every entry must be earning
         // its place at a real call site.
+        //
+        // The trigger is exactly "no `<name>.record(` in that file", and
+        // deliberately not "no `<name>.record("literal"` in that file":
+        // [`record_keys`] decides the exclusion on the receiver BEFORE it
+        // looks at the argument, so an excused call rewritten to
+        // `.record(&format!(…), …)` still marks the entry used. Keyed on the
+        // literal, that rewrite would redden CI with a message about a file
+        // that had not moved and a call that had not gone away.
         for (file, name) in NON_SPAN_RECORD_RECEIVERS {
             assert!(
                 used_skips
                     .iter()
                     .any(|(u_file, u_name)| u_file == file && u_name == name),
                 "NON_SPAN_RECORD_RECEIVERS entry (`{file}`, `{name}`) matched no \
-                 `.record(\"literal\"` call site. The file moved or the call went \
-                 away: re-point the entry, or delete it."
+                 `{name}.record(` call site in `{file}`. The file moved or the \
+                 call went away: re-point the entry, or delete it."
             );
         }
 
@@ -904,8 +971,12 @@ mod tests {
         );
 
         // The under-flags this does NOT close, pinned so the residual list
-        // stays honest: `(` must follow `record` immediately, and a key that
-        // is not a literal has nothing to read.
+        // stays honest — all three of them, in the same order the list on
+        // [`span_fields_stay_on_the_pii_allowlist`] and SECURITY.md give
+        // them. `(` must follow `record` immediately; a first argument that
+        // is not a literal has nothing to read; and the RAW and BYTE-STRING
+        // key spellings are literals but are still not read, which is why
+        // "non-literal key" alone was the wrong summary of that clause.
         assert!(
             record_keys("src/probe.rs", "span.record_all(\"page_title\", t);")
                 .0
@@ -916,12 +987,64 @@ mod tests {
                 .0
                 .is_empty()
         );
+        for raw in [
+            r##"span.record(r"page_title", t);"##,
+            r##"span.record(r#"page_title"#, t);"##,
+            r##"span.record(b"page_title", t);"##,
+            r##"span.record(br#"page_title"#, t);"##,
+        ] {
+            assert!(
+                record_keys("src/probe.rs", raw).0.is_empty(),
+                "the raw / byte-string key spellings are a documented \
+                 under-flag; if this now reads the key, move the spelling off \
+                 the residual list in BOTH the test doc comment and \
+                 SECURITY.md: {raw}"
+            );
+        }
 
         // An escaped quote inside the key must not cut it short — the same
         // literal-awareness as everywhere else in this scan.
         assert_eq!(
             record_keys("src/probe.rs", r#"span.record("a\"b", t);"#).0,
             vec![r#"a\"b"#.to_owned()]
+        );
+    }
+
+    /// A comment between the paren and the key is not the key. The whitespace
+    /// skip that closed #3988 note 2 stopped at the `/` of a comment, so
+    /// `.record(` then a newline then `// note` then a newline then
+    /// `"page_title",` landed `at` on `/`, failed the `"` check, and the key
+    /// was SILENTLY SKIPPED — a new under-flag arriving with the wrap fix, in
+    /// the one direction this guard exists to prevent. `opaque_prefix_len`
+    /// already measures both comment spellings, so the skip loop consumes
+    /// them exactly as it consumes whitespace.
+    #[test]
+    fn a_comment_between_the_paren_and_the_key_does_not_hide_it() {
+        let commented =
+            "    span.record(\n        // note\n        \"page_title\",\n        t,\n    );\n";
+        assert_eq!(
+            record_keys("src/probe.rs", commented).0,
+            vec!["page_title".to_owned()],
+            "a line comment before the key must be consumed like whitespace"
+        );
+
+        // Both block-comment spellings, inline and wrapped. Nesting too:
+        // `opaque_prefix_len` counts depth, so an inner `/*` cannot end it.
+        assert_eq!(
+            record_keys(
+                "src/probe.rs",
+                r#"span.record(/* note */ "page_title", t);"#
+            )
+            .0,
+            vec!["page_title".to_owned()]
+        );
+        assert_eq!(
+            record_keys(
+                "src/probe.rs",
+                "span.record(\n    /* a /* b */ c */\n    \"page_title\", t);"
+            )
+            .0,
+            vec!["page_title".to_owned()]
         );
     }
 
@@ -948,6 +1071,18 @@ mod tests {
         assert_eq!(
             record_keys(file, &format!("holder.{name}.record(\"page_title\");")),
             (vec![], vec![name])
+        );
+
+        // The entry is marked USED by the receiver, not by the argument. The
+        // exclusion check used to sit behind the string-literal test, so an
+        // excused call rewritten to a non-literal argument marked nothing —
+        // and the staleness assertion in
+        // [`span_fields_stay_on_the_pii_allowlist`] then fired with "the file
+        // moved or the call went away" at a call site that had done neither.
+        assert_eq!(
+            record_keys(file, &format!("{name}.record(&format!(\"{{x}}\"), v);")),
+            (vec![], vec![name]),
+            "a non-literal argument on an excused receiver still exercises the entry"
         );
     }
 
