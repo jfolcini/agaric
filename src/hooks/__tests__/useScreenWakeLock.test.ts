@@ -67,6 +67,34 @@ function installWakeLock(impl?: () => Promise<unknown>) {
   })
 }
 
+/**
+ * A wake lock whose requests stay *pending* until the caller settles them.
+ *
+ * The in-flight window is the whole subject of the tests below, and with the
+ * default `Promise.resolve(sentinel)` impl that window is closed by the next
+ * microtask — too short for a `visibilitychange` to land inside it. Returns the
+ * list of "resolve request N" callbacks, in request order.
+ */
+function installDeferredWakeLock(): Array<() => void> {
+  const settlers: Array<() => void> = []
+  installWakeLock(
+    () =>
+      new Promise((resolve) => {
+        const sentinel = makeSentinel()
+        sentinels.push(sentinel)
+        settlers.push(() => {
+          resolve(sentinel)
+        })
+      }),
+  )
+  return settlers
+}
+
+function showPage() {
+  setVisibility('visible')
+  document.dispatchEvent(new Event('visibilitychange'))
+}
+
 function setVisibility(state: 'visible' | 'hidden') {
   Object.defineProperty(document, 'visibilityState', {
     value: state,
@@ -176,6 +204,96 @@ describe('useScreenWakeLock', () => {
     })
     await waitFor(() => {
       expect(result.current.held).toBe(true)
+    })
+  })
+
+  // -- the in-flight window ------------------------------------------------
+  //
+  // `sentinelRef` is only set once a request has *settled*, so it cannot stop a
+  // second `acquire()` on its own. `visibilitychange` fires whenever the user
+  // swipes back to the app — routinely while the first request is still
+  // pending.
+
+  it('does not fire a second request while the first is still in flight', async () => {
+    const settle = installDeferredWakeLock()
+    renderHook(() => useScreenWakeLock(true))
+
+    await waitFor(() => {
+      expect(request).toHaveBeenCalledTimes(1)
+    })
+
+    act(() => {
+      showPage()
+    })
+
+    expect(request).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      for (const resolve of settle) resolve()
+      await Promise.resolve()
+    })
+  })
+
+  it('leaks no sentinel when visibility flips during a pending request', async () => {
+    // The harm the guard prevents, stated as the user sees it: two requests
+    // both resolve, the second overwrites `sentinelRef`, and the first sentinel
+    // has no owner left to release it — so the screen stays awake after the
+    // pairing dialog is closed.
+    const settle = installDeferredWakeLock()
+    const { result, rerender } = renderHook(({ active }) => useScreenWakeLock(active), {
+      initialProps: { active: true },
+    })
+    await waitFor(() => {
+      expect(request).toHaveBeenCalledTimes(1)
+    })
+
+    act(() => {
+      showPage()
+    })
+    await act(async () => {
+      for (const resolve of settle) resolve()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(result.current.held).toBe(true)
+    })
+
+    // Close the dialog: nothing may still be holding the screen awake.
+    rerender({ active: false })
+
+    await waitFor(() => {
+      expect(result.current.held).toBe(false)
+    })
+    expect(sentinels.length).toBeGreaterThan(0)
+    for (const [i, sentinel] of sentinels.entries()) {
+      expect(
+        sentinel.release,
+        `sentinel ${i} of ${sentinels.length} was handed out and never released — the screen stays awake after the dialog closed`,
+      ).toHaveBeenCalled()
+    }
+  })
+
+  it('retries after a refused request — the guard must not wedge', async () => {
+    // The other edge of the same guard: if the in-flight marker were cleared
+    // only on success, one refusal would block every later re-acquire and a
+    // returning user would silently lose the protection for the whole pair.
+    installWakeLock(() => Promise.reject(new Error('NotAllowedError')))
+    const { result } = renderHook(() => useScreenWakeLock(true))
+
+    await waitFor(() => {
+      expect(request).toHaveBeenCalledTimes(1)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(result.current.held).toBe(false)
+
+    act(() => {
+      showPage()
+    })
+
+    await waitFor(() => {
+      expect(request).toHaveBeenCalledTimes(2)
     })
   })
 

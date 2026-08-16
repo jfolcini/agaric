@@ -102,6 +102,20 @@ export function useScreenWakeLock(active: boolean): ScreenWakeLockState {
   // The live sentinel, so the release path does not depend on React state
   // having flushed — a dialog can close in the same tick it opened.
   const sentinelRef = useRef<WakeLockSentinelLike | null>(null)
+  // The in-flight `request('screen')` promise, or `null` when none is pending.
+  //
+  // `sentinelRef` only becomes non-null once a request has *settled*, so it
+  // cannot by itself stop a second `acquire()` — and `visibilitychange` fires
+  // whenever the user swipes back to the app, which is exactly while the first
+  // request is still pending. Both would then resolve, the second sentinel
+  // would overwrite the first in `sentinelRef`, and the first would never be
+  // released: the screen stays awake after the pairing dialog closes.
+  //
+  // Held as the promise rather than a boolean so the handlers can clear it only
+  // when it is still *their own* request. A stale request from a previous
+  // effect run resolves after the cleanup below nulled this, and must not clear
+  // a newer run's pending request out from under it.
+  const pendingRef = useRef<Promise<WakeLockSentinelLike> | null>(null)
   // Guards against a request that resolves after the flag already went false:
   // without it, a fast open/close leaves a lock held with nothing to release it.
   const activeRef = useRef(active)
@@ -131,10 +145,15 @@ export function useScreenWakeLock(active: boolean): ScreenWakeLockState {
     const acquire = () => {
       // Already holding one, or a request is in flight for a sentinel we still
       // want — asking twice would leak the first sentinel.
-      if (sentinelRef.current != null || !activeRef.current) return
-      void wakeLock
-        .request('screen')
+      if (sentinelRef.current != null || pendingRef.current != null || !activeRef.current) return
+      const pending = wakeLock.request('screen')
+      pendingRef.current = pending
+      const settle = () => {
+        if (pendingRef.current === pending) pendingRef.current = null
+      }
+      void pending
         .then((sentinel) => {
+          settle()
           if (cancelled || !activeRef.current) {
             // The window closed while the request was in flight.
             void sentinel.release().catch(() => {})
@@ -154,6 +173,10 @@ export function useScreenWakeLock(active: boolean): ScreenWakeLockState {
           sentinel.addEventListener('release', onRelease)
         })
         .catch((err: unknown) => {
+          // Cleared on the rejection path too, otherwise one refusal would
+          // wedge `pendingRef` non-null forever and no later `visibilitychange`
+          // could ever retry.
+          settle()
           // A refusal is not a failure worth escalating: the pair may still
           // complete if the user keeps the screen on themselves.
           logger.warn('PairingDialog', 'screen wake lock request refused', undefined, err)
@@ -178,6 +201,11 @@ export function useScreenWakeLock(active: boolean): ScreenWakeLockState {
 
     return () => {
       cancelled = true
+      // A request still in flight for THIS run can no longer produce a sentinel
+      // worth keeping (its `.then` will see `cancelled` and release). Dropping
+      // the reference lets the next effect run acquire immediately instead of
+      // being blocked by a request whose result is already discarded.
+      pendingRef.current = null
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', onVisibility)
       }

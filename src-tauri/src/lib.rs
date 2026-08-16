@@ -586,6 +586,17 @@ fn running_under_flatpak() -> bool {
 // before line 1390" rule.
 // ---------------------------------------------------------------------------
 
+/// Default `EnvFilter` directives for the stderr + file log layers.
+///
+/// A constant rather than an inline literal so a test can assert on the exact
+/// set the production subscriber is built from; see [`init_logging`] for what
+/// each entry buys and what the `mdns_sd` one costs.
+const LOG_LAYER_DEFAULTS: &[(&str, &str)] = &[
+    ("agaric", "info"),
+    ("frontend", "info"),
+    ("mdns_sd", "debug"),
+];
+
 /// Install the `log` → `tracing` bridge (#3852).
 ///
 /// # This is a bug fix, not a nicety
@@ -613,19 +624,21 @@ fn running_under_flatpak() -> bool {
 /// which means records already reach somewhere, and re-installing is neither
 /// possible nor needed. A boot that cannot install a logging bridge is not a
 /// boot worth aborting.
-/// Default `EnvFilter` directives for the stderr + file log layers.
 ///
-/// A constant rather than an inline literal so a test can assert on the exact
-/// set the production subscriber is built from; see [`init_logging`] for what
-/// each entry buys and what the `mdns_sd` one costs.
-const LOG_LAYER_DEFAULTS: &[(&str, &str)] = &[
-    ("agaric", "info"),
-    ("frontend", "info"),
-    ("mdns_sd", "debug"),
-];
-
+/// # Why the bridge is capped at `Debug`
+///
+/// `LogTracer::init()` installs with the maximal filter, which drives
+/// `log::max_level()` to `Trace`: from then on every `log::trace!` in every
+/// dependency is *constructed* and dispatched into `tracing`, only to be
+/// dropped by the per-layer `EnvFilter`. The records this bridge exists for —
+/// `mdns_sd`'s socket/send diagnostics — are all at `debug`, so capping the
+/// bridge at `Debug` buys exactly the same diagnostics while letting the
+/// `log` macros short-circuit trace-level records before they are built.
 fn init_log_bridge() {
-    if let Err(e) = tracing_log::LogTracer::init() {
+    if let Err(e) = tracing_log::LogTracer::builder()
+        .with_max_level(tracing_log::log::LevelFilter::Debug)
+        .init()
+    {
         // No `tracing::warn!` — the subscriber does not exist yet at this point
         // in boot, so a `tracing` event here would itself be dropped, which
         // would be a small re-run of the bug this function fixes.
@@ -2615,6 +2628,14 @@ mod log_bridge_tests {
             "after init_log_bridge, `mdns_sd`'s `log::debug!` records must at least be \
              constructed and offered to `tracing`; max_level was {before:?} before and \
              {after:?} after"
+        );
+        assert_eq!(
+            after,
+            LevelFilter::Debug,
+            "the bridge must be capped at Debug: `LogTracer::init()` would set Trace, making \
+             every dependency's `log::trace!` record be constructed and dispatched into \
+             `tracing` only for the layers' EnvFilter to drop it. max_level was {before:?} \
+             before and {after:?} after"
         );
     }
 

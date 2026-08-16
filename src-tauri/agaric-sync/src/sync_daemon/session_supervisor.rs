@@ -817,14 +817,39 @@ pub(crate) fn handle_mdns_init_result(
 /// * [`MdnsDaemonSignal::Announced`] is the **only** thing that logs "announced over
 ///   mDNS", and it comes from the daemon thread after it wrote to a socket — not from
 ///   `announce()`'s `Ok`, which means only that a command reached a queue.
-/// * [`MdnsDaemonSignal::Failed`] is a failure that `announce()` had already returned
-///   `Ok` for. It is reported in exactly the shape [`handle_mdns_init_result`] uses for
-///   an init failure — `warn!` plus [`SyncEvent::MdnsDisabled`] — because from the
-///   user's side the consequence is identical: no first-ever pair is possible.
+/// * [`MdnsDaemonSignal::Degraded`] is a failure that `announce()` had already returned
+///   `Ok` for. It is logged at `warn!` and reported to the user **not at all** — see
+///   below.
 /// * [`MdnsDaemonSignal::Ignored`] must emit nothing at all.
+///
+/// # Why no daemon event may emit [`SyncEvent::MdnsDisabled`]
+///
+/// `MdnsDisabled` is a **latching** claim. `TauriEventSink` writes
+/// `MdnsStatus { disabled: true }` into `MdnsStatusState` and nothing anywhere ever
+/// writes it back to `false`; `useMdnsStatus` has no reset path either. So the event may
+/// only be emitted by something that proves mDNS is dead *for the whole session*.
+///
+/// [`MdnsService::new`] failing is such a proof — there is no daemon at all — which is
+/// why [`handle_mdns_init_result`] still emits it. A `DaemonEvent::Error` is not:
+/// `mdns::classify_daemon_event` documents the audit, but the short version is that it
+/// reports one failed daemon-side operation and cannot distinguish "no mDNS on this
+/// device" from "one interface of several misbehaved". Latching the permanent banner
+/// "mDNS disabled: no first-ever pair is possible" on that would over-claim to the user
+/// on a device whose discovery works — the same failure this whole change exists to
+/// remove, pointed the other way.
+///
+/// The diagnostic is not lost: the `warn!` below carries the daemon's own message, is in
+/// `commands::bug_report`'s `STABLE_MESSAGES`, and so reaches both `agaric.log` and any
+/// submitted bug report. Strictly more than the pre-#3852 behaviour, where `monitor()`
+/// had no call sites and the failure was observable nowhere at all — but without
+/// claiming, in the UI, something that is not known.
+///
+/// `_event_sink` is retained rather than deleted so that "a daemon signal reaches the
+/// user" stays a property tests assert against a real sink, instead of an absence no
+/// test can observe.
 pub(crate) fn handle_mdns_daemon_signal(
     signal: MdnsDaemonSignal,
-    event_sink: &Arc<dyn SyncEventSink>,
+    _event_sink: &Arc<dyn SyncEventSink>,
 ) {
     match signal {
         MdnsDaemonSignal::Announced { service, on } => {
@@ -837,19 +862,19 @@ pub(crate) fn handle_mdns_daemon_signal(
                 "mDNS announcement sent on the wire"
             );
         }
-        MdnsDaemonSignal::Failed(reason) => {
+        MdnsDaemonSignal::Degraded(reason) => {
             // Kept on ONE line and byte-identical to its `STABLE_MESSAGES` entry in
             // `commands::bug_report`, for the reason spelled out at
             // `handle_mdns_init_result`: the #700 drift guard scans for the quoted
             // literal, and a `\`-continued literal would not match — so the one line
             // that names a real mDNS failure would be redacted out of every bug report.
+            //
+            // "degraded", not "disabled", and no `SyncEvent`: this is the whole of what
+            // is known. See the fn doc above.
             tracing::warn!(
                 reason = %reason,
                 "mDNS daemon reported an error after the announce was accepted; peer discovery is degraded"
             );
-            event_sink.on_sync_event(SyncEvent::MdnsDisabled {
-                reason: format!("mDNS daemon error: {reason}"),
-            });
         }
         MdnsDaemonSignal::Ignored => {}
     }
@@ -1884,18 +1909,50 @@ mod tests {
 
     // -- #3852: the daemon monitor, i.e. the failures `register()` cannot report --
 
-    /// A daemon-side mDNS failure must reach the user, not just a log line.
+    /// The non-latching arm of the pair below: a daemon-side error must NOT put
+    /// the permanent "mDNS disabled" banner in front of the user.
     ///
-    /// This is the regression #3852 is filed for: `announce()` returned `Ok`
-    /// (it only queued a command), the daemon then failed, and NOTHING was
-    /// emitted — the pairing UI spun to the 5-minute TTL with no explanation.
+    /// `MdnsStatusState` and `useMdnsStatus` both latch `disabled` to `true` with
+    /// no reset anywhere, so an `MdnsDisabled` emitted here is permanent for the
+    /// session. A `DaemonEvent::Error` on a VPN tun or docker bridge, on a device
+    /// whose `wlan0` discovery works fine, would therefore leave a false
+    /// "no first-ever pair is possible" banner up until the app restarts.
     #[test]
-    fn a_daemon_mdns_failure_emits_mdns_disabled_with_the_daemons_reason() {
+    fn a_degraded_daemon_signal_does_not_latch_the_mdns_disabled_banner() {
         let typed = Arc::new(RecordingEventSink::new());
         let sink: Arc<dyn SyncEventSink> = typed.clone();
 
         handle_mdns_daemon_signal(
-            MdnsDaemonSignal::Failed("failed to create IPv4 socket".into()),
+            MdnsDaemonSignal::Degraded("failed to create IPv4 socket".into()),
+            &sink,
+        );
+
+        assert!(
+            typed.events().is_empty(),
+            "a daemon-side error proves one operation failed, not that the device has no \
+             mDNS; emitting anything here latches an unresettable banner, got {:?}",
+            typed.events()
+        );
+    }
+
+    /// The fatal arm of the same pair — pinned together with the one above so the
+    /// fix cannot be "read" as "mDNS failures no longer reach the user at all".
+    ///
+    /// `MdnsService::new` failing IS terminal for the session: there is no daemon,
+    /// so no announce can ever go out. That, and only that, may latch the banner.
+    #[test]
+    fn a_fatal_mdns_init_failure_still_reaches_the_user_when_a_degraded_one_does_not() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+
+        // Non-fatal first: it must contribute nothing.
+        handle_mdns_daemon_signal(
+            MdnsDaemonSignal::Degraded("failed to create IPv4 socket".into()),
+            &sink,
+        );
+        // Then the genuinely terminal one.
+        handle_mdns_init_result(
+            Err(AppError::InvalidOperation("multicast unavailable".into())),
             &sink,
         );
 
@@ -1903,13 +1960,14 @@ mod tests {
         assert_eq!(
             events.len(),
             1,
-            "a daemon-side mDNS failure must emit exactly one SyncEvent, got {events:?}"
+            "exactly one of the two failures is terminal, so exactly one event may be \
+             emitted, got {events:?}"
         );
         match &events[0] {
             SyncEvent::MdnsDisabled { reason } => assert!(
-                reason.contains("failed to create IPv4 socket"),
-                "the daemon's own reason is the only description of this failure that \
-                 exists; it must reach the frontend, got {reason:?}"
+                reason.contains("multicast unavailable"),
+                "the surviving event must be the init failure's, not the daemon error's, \
+                 got {reason:?}"
             ),
             other => panic!("expected MdnsDisabled, got {other:?}"),
         }
@@ -1955,10 +2013,11 @@ mod tests {
     }
 
     /// End-to-end over the seam the production reader task uses: a raw
-    /// `mdns_sd::DaemonEvent` off the monitor channel must reach the sink as an
-    /// `MdnsDisabled`. Asserting on `MdnsDaemonSignal` alone would leave the
-    /// `classify_daemon_event` → `handle_mdns_daemon_signal` join untested, and
-    /// that join is the whole wiring #3852 asks for.
+    /// `mdns_sd::DaemonEvent` off the monitor channel must classify as `Degraded`
+    /// and reach the sink as nothing at all. Asserting on `MdnsDaemonSignal` alone
+    /// would leave the `classify_daemon_event` → `handle_mdns_daemon_signal` join
+    /// untested, and that join is the whole wiring #3852 asks for — including the
+    /// part that decides the user is not told.
     #[test]
     fn a_raw_daemon_event_error_travels_the_full_classify_then_handle_path() {
         let typed = Arc::new(RecordingEventSink::new());
@@ -1967,17 +2026,19 @@ mod tests {
         let raw = mdns_sd::DaemonEvent::Error(mdns_sd::Error::Msg(
             "multicast not permitted on this interface".into(),
         ));
+        assert_eq!(
+            crate::mdns::classify_daemon_event(&raw),
+            MdnsDaemonSignal::Degraded("multicast not permitted on this interface".into()),
+            "the raw daemon error must classify as Degraded before it is handled"
+        );
         handle_mdns_daemon_signal(crate::mdns::classify_daemon_event(&raw), &sink);
 
-        let events = typed.events();
-        assert_eq!(events.len(), 1, "expected one event, got {events:?}");
-        match &events[0] {
-            SyncEvent::MdnsDisabled { reason } => assert!(
-                reason.contains("multicast not permitted"),
-                "reason must carry the daemon's message, got {reason:?}"
-            ),
-            other => panic!("expected MdnsDisabled, got {other:?}"),
-        }
+        assert!(
+            typed.events().is_empty(),
+            "the full production path must not latch a permanent banner off one daemon \
+             error, got {:?}",
+            typed.events()
+        );
     }
 
     /// The production cadence gate (`maybe_gc_peer_locks`, the exact
