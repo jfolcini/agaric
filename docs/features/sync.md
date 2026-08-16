@@ -11,7 +11,7 @@ Agaric syncs across your own devices over local WiFi. **No cloud, no accounts, n
 - **Cancel an in-flight sync** while it's running.
 - **Unpair** a device (with confirmation).
 - **Rename a device** so it's recognisable in your list.
-- **Set a manual address** for a peer when mDNS discovery is unavailable (e.g. across subnets).
+- **Set a manual address** for an already-paired peer on your subnet, when mDNS discovery is unavailable. This does not help a device you have not paired yet, and does not reach across subnets — see the pitfalls below.
 
 ## Pairing flow
 
