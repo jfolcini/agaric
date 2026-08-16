@@ -218,8 +218,9 @@ export function foldForFtsIndex(s: string): string {
  * — see {@link stripForFts} and {@link foldForFtsIndex}.
  *
  * An empty needle admits every row. The `search_blocks` arms all test
- * blank-ness before calling in, but `list_backlinks`' `Contains` filter does
- * NOT (`handlers/links.ts`), so that branch IS reachable — and the backend
+ * blank-ness before calling in, but the `Contains` filter of
+ * `query_backlinks_filtered` does NOT (`handlers/links.ts`), so that branch IS
+ * reachable — and the backend
  * returns an EMPTY set there instead (`filters.rs:382`, `:957`, on
  * `query.trim().is_empty()`). Note `trim()`: a whitespace-only query is
  * blank to the backend and a three-space substring test here. Both gaps are

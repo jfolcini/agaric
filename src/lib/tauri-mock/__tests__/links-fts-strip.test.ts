@@ -53,7 +53,6 @@ function clearMock(): void {
 /** Insert a block of `type` under `parent`, returning its id. */
 function put(blockId: string, type: string, content: string, parent: string | null): string {
   const b = makeBlock(blockId, type, content, parent, 1)
-  if (type !== 'page') b['page_id'] = parent
   blocks.set(blockId, b)
   return blockId
 }
@@ -209,6 +208,37 @@ describe('list_unlinked_references — matches fts_blocks.stripped (#4022)', () 
       // does not; ACCENTED is the control that keeps the assertion from
       // passing on a handler that returns nothing.
       expect(unlinkedIds(ACCPAGE)).toEqual([ACCENTED])
+    })
+  })
+
+  // The #4033 review's note 3: the handler's own emptiness test was
+  // truthiness, not `trim()`. A whitespace-only title is not empty by that
+  // test, so it reached the matcher as a literal needle — and a needle of
+  // three spaces is a substring of any block whose text contains three
+  // consecutive spaces. The backend never gets there: `sanitize_fts_query`
+  // yields no terms for whitespace, so `eval_unlinked_references` early
+  // -returns an empty set.
+  describe('a whitespace-only page title matches nothing, as on the backend', () => {
+    const BLANKPAGE = id('UBLNK')
+    const SPACED = id('USPACD')
+
+    beforeEach(() => {
+      put(BLANKPAGE, 'page', '   ', null)
+      put(SPACED, 'content', 'a   b', HOST)
+    })
+
+    it('returns no unlinked references for a blank title', () => {
+      expect(unlinkedIds(BLANKPAGE)).toEqual([])
+    })
+
+    // The control, and the reason the assertion above is not vacuous: the
+    // very same block IS reachable when the title is a real needle it
+    // contains, so an empty answer above is the trim doing its job rather
+    // than the fixture being unmatchable.
+    it('still finds that block when the title is a real term', () => {
+      const REALPAGE = id('UREALP')
+      put(REALPAGE, 'page', 'a   b', null)
+      expect(unlinkedIds(REALPAGE)).toContain(SPACED)
     })
   })
 })

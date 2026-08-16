@@ -198,7 +198,12 @@ export const linksHandlers = {
         truncated: false,
       }
     const pageTitle = (page['content'] as string) ?? ''
-    if (!pageTitle)
+    // `trim()`, not just a truthiness test: a whitespace-only title sanitizes
+    // to no terms on the backend, so `eval_unlinked_references` early-returns
+    // an empty set (`grouped.rs`, via `sanitize_fts_query`). Without the trim
+    // it would run here as a literal substring needle and match every block
+    // containing a space.
+    if (!pageTitle.trim())
       return {
         groups: [],
         next_cursor: null,
