@@ -1229,11 +1229,16 @@ jobs:
   # with nobody able to confirm otherwise. A dispatch now exercises the whole
   # path (artifact download, both `--require-*` gates, the `gh issue list`
   # lookup, the body render) and writes nothing. This job's own `--dry-run`
-  # below is what keeps a dispatch from touching #3394's marker block —
-  # `report-scheduled-failures` no longer dry-runs on a dispatch itself
-  # (#3716: it used to, and discarded a genuinely newly-failing lane for up
-  # to a week as a result), so this lane cannot lean on that job's gating
-  # for its own content-tracking issue.
+  # below is what keeps a dispatch from touching #3394's marker block: this
+  # lane cannot lean on `report-scheduled-failures`'s gating for its own
+  # content-tracking issue, because that job's gate is narrower than this
+  # one's. It writes for the `schedule` event AND for a dispatch on
+  # `refs/heads/main` whose inputs are all at their declared defaults
+  # (#3716 removed a blanket off-schedule `--dry-run` that discarded a
+  # genuinely newly-failing lane for up to a week; #3960 then scoped what
+  # replaced it to the ref and the inputs). This lane dry-runs on EVERY
+  # dispatch regardless, because what it commits is mutation-survivor
+  # CONTENT, not lane health.
   # ---------------------------------------------------------------------------
   file-mutation-survivors:
     needs: [mutants, mutants-frontend]
@@ -1285,11 +1290,17 @@ jobs:
         # `report-scheduled-failures` below `needs:` this job, so the failure
         # is reported through the ordinary path instead of vanishing as a skip.
         #
-        # #3394: `--dry-run` off the schedule — kept even though
-        # `report-scheduled-failures` itself no longer dry-runs (#3716): that
-        # job reads only GitHub's own job-result data, safe to write anytime,
-        # while this lane's own tracking issue holds mutation-survivor
-        # CONTENT a smoke dispatch should not commit as authoritative. The
+        # #3394: `--dry-run` off the schedule — kept, and STRICTER than the
+        # reporter's gate rather than an inconsistency with it. That job now
+        # writes on a dispatch only when the run reproduces the cron (on
+        # `refs/heads/main`, every input at its default — #3716/#3960); this
+        # one dry-runs on every dispatch, because what it commits is
+        # mutation-survivor CONTENT a smoke dispatch should not make
+        # authoritative, not lane health derived from job results. (The
+        # earlier version of this note said the reporter "reads only GitHub's
+        # own job-result data, safe to write anytime". Job-result data is
+        # scoped to the ref and to the dispatch inputs, which is exactly what
+        # #3960 spent two passes on.) The
         # dry run still performs every read —
         # including the real `gh issue list` lookup (only `--known-body-file`
         # stubs that out, and this never passes it) — and only skips the

@@ -272,3 +272,60 @@ output stream over. And a throw out of the workflow-executing helper escaped `ru
 so the hook died with a raw stack trace and exit 1, which reads as *the tool is broken* rather than
 *an assertion did not hold*; both self-tests now wrap their entry point the way `main()` is wrapped
 and exit 2 with one legible `FAIL -` line.
+
+### Round five: approved, and still carrying two stale justifications about itself
+
+The fifth review approved the PR and left seven notes. Four were fixed here; three were filed as
+issues rather than fixed, because the approval condition was "merge on green" and none of them is a
+correctness risk in what ships.
+
+**The two that matter most are prose.** `prek.toml`'s hook note still said the reporting job "must
+never pass `--dry-run` to itself, on any event", and `scheduled-deep-checks.yml:1233` still said
+"`report-scheduled-failures` no longer dry-runs on a dispatch itself", unqualified. Both were true
+when written and false by the end of the same PR: passes three and four restored `--dry-run` for
+every ref but the cron's and for every non-default input, and the token-search guard the first
+sentence described had been deleted outright. A third copy of the same claim sat at `:1294` ("reads
+only GitHub's own job-result data, safe to write anytime"), which the round-three review had already
+quoted as drawing the wrong conclusion; it is corrected with the other two, since leaving it would
+mean the file still says the false thing.
+
+That is worth stating plainly, because it is the most on-the-nose evidence in the batch. This PR
+**documents the stale-justification failure mode three separate times** — it is the diagnosis of its
+own blocking bug, of the last-resort notice's `if:`, and of the `.github/zizmor.yml` overclaim. It
+took four review rounds. And it still shipped two live sentences describing behaviour it had itself
+changed, in the two files a maintainer reads first. A comment cannot be relied on to survive the
+change it justifies; only something executable can. The guards added over these rounds now pin the
+ref, the inputs, the notice's condition, the prek pattern and the array portability — every claim in
+this PR that a future edit could falsify silently is now checked by something that runs. The prose
+is the residue, and the residue is where all five rounds found the rot.
+
+**Two more fail-opens, same family, now closed.** `findLineAnchoredCachePoisoningIgnores` treated any
+non-blank line indented at or below the rule key as the end of the block, without exempting comments
+— so a banner at column 0 inside a `cache-poisoning:` block truncated the scan to `[]`, and `[]` is
+how that module spells *healthy*. Third instance in one function (four-space indent, second key, now
+comments); blank lines had been exempt all along for exactly the same reason. `findDispatchInputDefaults`
+had the same shape one file over, plus a subtler one: it threw only when it found *nothing*, so a
+partial parse silently gated a write on half the input list. It now runs two scans that terminate on
+different rules — the `on:` mapping's indent and the `inputs:` mapping's — and throws when they
+disagree.
+
+**And the generality claim from round four is now actually true.** It recorded only inputs that
+declare a `default:`, so an input added without one (a `required: true` string, a `choice` leaning on
+`options[0]`) was never env-mapped, never flipped, and changed what the lanes test while the run went
+on writing authoritatively. Every declared input is now recorded, with `null` where there is no
+default, and an input the guard *cannot* compare is reported as a problem rather than skipped —
+because "I could not check this" and "this is fine" are the two things this whole batch is about not
+confusing. Pinned with a fixture input that declares no default.
+
+**Filed, not fixed** (three issues, so the record is complete):
+
+- The `sync` log line and the `[dry-run]` summary still print `${all.length} still failing`, which
+  counts carried-over lanes. Same contradiction just fixed in `buildIssueBody` and `buildNoopSummary`,
+  left standing on two more output streams — a third and fourth place where one distinction has to be
+  re-made by hand, which is the argument for making it once in the data instead.
+- The exactly-four inline-suppression assertion lives only in `--self-test`, whose hook is keyed to
+  four files, while the scan covers all of `.github/workflows/**`. A fifth suppression added to
+  `release.yml` touches none of those four, so neither hook notices — the `always_run` one only
+  checks for zero. The coverage and the trigger disagree about scope.
+- `.github/zizmor.yml`'s `unpinned-uses` note is left indented under `rules: {}`, where it annotates
+  nothing. Valid YAML, but it reads as a live nested entry.

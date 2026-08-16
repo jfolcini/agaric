@@ -152,6 +152,12 @@ export function findHookFilesPattern(prekTomlText, hookId) {
  * anchors past the guard, and `[]` is again how this module spells
  * "healthy". That is the same fail-open SHAPE as the four-space-indent bug
  * above, one axis over; a loop is the whole cost of closing it.
+ *
+ * And COMMENTS do not end a block. They carry no YAML structure, but the
+ * dedent test treated them as if they did, so a banner or a commented-out
+ * anchor at column 0 inside the block truncated the scan — `[]`, healthy,
+ * third instance of the same family in this one function. Blank lines were
+ * already exempt for exactly this reason; comments are the same case.
  */
 const CACHE_POISONING_KEY_RE = /^\s*['"]?cache-poisoning['"]?:\s*$/
 
@@ -163,7 +169,10 @@ export function findLineAnchoredCachePoisoningIgnores(zizmorYmlText) {
     const ruleIndent = ruleLine.match(/^(\s*)/)[1].length
     for (let i = ruleLineIdx + 1; i < lines.length; i++) {
       const line = lines[i]
-      if (line.trim() === '') continue
+      // Blank lines and comments are not structure: neither can end a block,
+      // and an anchor line's own trailing comment is handled by the match
+      // below. A `#` at column 0 used to end it, which read as healthy.
+      if (line.trim() === '' || line.trim().startsWith('#')) continue
       const indent = line.match(/^(\s*)/)[1].length
       // Dedented back to (or past) the `cache-poisoning:` key's own indent —
       // its block has ended.
@@ -433,6 +442,52 @@ function selfTestLineAnchorDetection({ check }) {
       bothBlocks.join(',') === 'ci.yml:1,ci.yml:2',
       'every `cache-poisoning:` block contributes its anchors, in file order',
       JSON.stringify(bothBlocks),
+    )
+  }
+  {
+    // #3960 (review pass five) — the third member of the same fail-open
+    // family. The scan ended at any non-blank line indented at or below the
+    // rule key, and comments were not exempted: a banner or commented-out
+    // entry at COLUMN 0 inside the block truncated the scan, `[]` came back,
+    // and `[]` is how this module spells "healthy". Comments carry no YAML
+    // structure, so they must not end a block.
+    const columnZeroComment = [
+      'rules:',
+      '  cache-poisoning:',
+      '    ignore:',
+      '# a banner comment, or a commented-out anchor, at column 0',
+      '      - ci.yml:318',
+      '      - ci.yml:347',
+      '',
+    ].join('\n')
+    const found = findLineAnchoredCachePoisoningIgnores(columnZeroComment)
+    check(
+      found.length === 2 && found[0] === 'ci.yml:318' && found[1] === 'ci.yml:347',
+      'a comment at column 0 inside the block does not truncate the anchor scan (comments are not structure)',
+      JSON.stringify(found),
+    )
+    check(
+      checkHygiene({ lineAnchors: found, inlineHits: [{ location: 'ci.yml:1' }] }).length === 1,
+      'and those anchors reach checkHygiene as a problem rather than reading healthy',
+      '',
+    )
+    // …while a real dedent still ends the block: exempting comments must not
+    // turn the scan into "read to end of file", or an anchor list under some
+    // OTHER rule further down would be attributed to cache-poisoning.
+    check(
+      findLineAnchoredCachePoisoningIgnores(
+        [
+          'rules:',
+          '  cache-poisoning:',
+          '    # nothing suppressed here',
+          '  unpinned-uses:',
+          '    ignore:',
+          '      - ci.yml:12',
+          '',
+        ].join('\n'),
+      ).length === 0,
+      'a real dedent still ends the block — a later rule’s anchors are not swept in',
+      '',
     )
   }
   {

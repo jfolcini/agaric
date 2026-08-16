@@ -557,8 +557,20 @@ export const CRON_REF = 'refs/heads/main'
  * cannot silently escape the gate: `checkReporterAuthority` flips each
  * declared input in turn and requires the run to stop being authoritative.
  *
- * Throws when the block cannot be found or is empty — a dispatch-input list
- * that reads as `{}` would make every input assertion vacuous.
+ * Returns EVERY declared input, mapped to its declared default or to `null`
+ * when it declares none. A `required: true` string, or a `choice` leaning on
+ * `options[0]`, is a legal input with no `default:`, and it changes what the
+ * lanes test exactly like the ones that have one — but recording only the
+ * inputs with a `default:` silently dropped it from the gate, which made the
+ * generality claim above false. An input this cannot compare is reported to
+ * the caller as a problem, never skipped.
+ *
+ * Throws when the block cannot be found, when it is empty, or when the two
+ * scans below disagree. The scans terminate on DIFFERENT rules — one at the
+ * `on:` mapping's indent, one at the `inputs:` mapping's — so a stray line
+ * that ends one but not the other is a partial parse, and a partial parse
+ * gating a write must be loud: reading half the input list and gating on it
+ * is the same fail-open as reading none and calling it healthy.
  */
 export function findDispatchInputDefaults(workflowText) {
   const lines = workflowText.split('\n')
@@ -568,23 +580,48 @@ export function findDispatchInputDefaults(workflowText) {
     (l, i) => i > dispatchIdx && /^ {4}inputs:\s*$/.test(l) && i < dispatchIdx + 4,
   )
   if (inputsIdx === -1) throw new Error('`workflow_dispatch:` declares no `inputs:` block')
+  // Neither blank lines nor comments carry structure, so neither ends a
+  // block. A `#` at column 0 used to end both scans below.
+  const isStructural = (line) => line.trim() !== '' && !line.trim().startsWith('#')
+  const inputKeyOf = (line) => /^ {6}([A-Za-z0-9_-]+):\s*$/.exec(line)?.[1]
+
+  // (a) The permissive scan: every input key anywhere in the `on:` block's
+  //     `workflow_dispatch:` span. Ends only at the trigger level.
+  const declared = []
+  for (let i = inputsIdx + 1; i < lines.length; i++) {
+    if (!isStructural(lines[i])) continue
+    if (lines[i].match(/^(\s*)/)[1].length <= 2) break
+    const key = inputKeyOf(lines[i])
+    if (key) declared.push(key)
+  }
+
+  // (b) The scan that reads the defaults, ending at the `inputs:` level.
   const defaults = {}
   let current = null
   for (let i = inputsIdx + 1; i < lines.length; i++) {
     const line = lines[i]
-    if (line.trim() === '') continue
-    const indent = line.match(/^(\s*)/)[1].length
-    if (indent <= 4) break
-    const name = /^ {6}([A-Za-z0-9_-]+):\s*$/.exec(line)
-    if (name) {
-      current = name[1]
+    if (!isStructural(line)) continue
+    if (line.match(/^(\s*)/)[1].length <= 4) break
+    const key = inputKeyOf(line)
+    if (key) {
+      current = key
+      // Declared first, defaulted only if a `default:` shows up below it —
+      // so an input with none is present and `null`, not absent.
+      defaults[key] = null
       continue
     }
     const def = /^ {8}default:\s*(.+?)\s*$/.exec(line)
     if (def && current) defaults[current] = def[1].replace(/^['"]|['"]$/g, '')
   }
-  if (Object.keys(defaults).length === 0) {
-    throw new Error('no `workflow_dispatch` input defaults found — the input gate would be vacuous')
+
+  if (declared.length === 0) {
+    throw new Error('no `workflow_dispatch` inputs found — the input gate would be vacuous')
+  }
+  const missed = declared.filter((name) => !(name in defaults))
+  if (missed.length > 0) {
+    throw new Error(
+      `the \`workflow_dispatch\` inputs block parsed only ${Object.keys(defaults).length} of ${declared.length} declared inputs (missed: ${missed.join(', ')}) — a partial input list must not be gated on as if it were the whole one`,
+    )
   }
   return defaults
 }
@@ -744,6 +781,10 @@ export function resolveReporterInvocation(
  * a realistic value rather than a type it would never receive).
  */
 export function flipDispatchInputDefault(value) {
+  // An input with no declared default has nothing to differ FROM; any value
+  // at all is "not the cron's". The caller reports that as a problem in its
+  // own right — this only keeps the flip total.
+  if (value === null || value === undefined) return 'any-value-at-all'
   if (value === 'false') return 'true'
   if (value === 'true') return 'false'
   if (/^\d+$/.test(value)) return value === '10' ? '11' : '10'
@@ -818,6 +859,12 @@ export function checkReporterAuthority(
   const declaredDefaults = findDispatchInputDefaults(workflowText)
   const envMapping = findDispatchInputEnvMapping(workflowText, stepName)
   for (const [name, declaredDefault] of Object.entries(declaredDefaults)) {
+    if (declaredDefault === null) {
+      problems.push(
+        `the dispatch input \`${name}\` declares no \`default:\`, so there is no value the step can compare against to recognise a cron-equivalent run — give it a default, or gate on its presence explicitly (#3960)`,
+      )
+      continue
+    }
     if (!envMapping[name]) {
       problems.push(
         `the dispatch input \`${name}\` is not mapped into the deciding step's \`env:\`, so the step cannot tell a run that changed it from a cron-equivalent one (#3960)`,
@@ -1641,7 +1688,7 @@ function selfTestReporterAuthority({ check, fail }) {
   // defaults, both mapped into the deciding step's `env:` the way the real
   // step maps them, and a seeded `extra` array (bash 3.2 cannot expand an
   // empty one under `set -u`).
-  const fixture = (branchBody, { mapInputs = true } = {}) =>
+  const fixture = (branchBody, { mapInputs = true, extraInputWithoutDefault = null } = {}) =>
     [
       'on:',
       '  schedule:',
@@ -1657,6 +1704,15 @@ function selfTestReporterAuthority({ check, fail }) {
       '        required: false',
       '        type: boolean',
       '        default: false',
+      // A `required: true` input with no `default:` — legal, and equally
+      // capable of changing what the lanes test.
+      ...(extraInputWithoutDefault
+        ? [
+            `      ${extraInputWithoutDefault}:`,
+            "        description: 'Something with no default at all'",
+            '        required: true',
+          ]
+        : []),
       '',
       'jobs:',
       '  alpha:',
@@ -1813,6 +1869,59 @@ function selfTestReporterAuthority({ check, fail }) {
       problems.length === 0,
       'authority guard is not fooled by comments discussing `--dry-run`, on their own line or trailing (bash already knows what `#` means)',
       JSON.stringify(problems),
+    )
+  }
+
+  // An input the guard CANNOT compare must fail the guard, not be skipped.
+  // Every input does not have to declare a `default:` — a `required: true`
+  // string, or a `choice` leaning on `options[0]`, is legal — and such an
+  // input changes what the lanes test exactly like the three that do. Reading
+  // only the ones with a `default:` made the generality claim above false: an
+  // input added without one escaped the gate entirely.
+  {
+    const { problems } = checkReporterAuthority(
+      fixture(REF_AND_INPUTS_GUARDED, { extraInputWithoutDefault: 'target_crate' }),
+    )
+    check(
+      problems.some((p) => p.includes('target_crate') && p.includes('no `default:`')),
+      'authority guard catches a dispatch input declared WITHOUT a `default:` (it cannot be compared, so it must not be skipped)',
+      JSON.stringify(problems),
+    )
+  }
+
+  // …and the parse behind that claim must be all-or-loud. A comment or a
+  // stray line inside `inputs:` used to end the scan early, and a PARTIAL
+  // result was indistinguishable from a complete one — the same fail-open
+  // this batch has now fixed three times in two files.
+  {
+    const withComment = fixture(REF_AND_INPUTS_GUARDED).replace(
+      '      slo_include_problem:',
+      '# a banner comment at column 0, e.g. a commented-out input above it\n      slo_include_problem:',
+    )
+    const parsed = findDispatchInputDefaults(withComment)
+    check(
+      Object.keys(parsed).join(',') === 'fuzz_seconds,slo_include_problem',
+      'a column-0 comment inside the `inputs:` block does not truncate the input scan',
+      JSON.stringify(parsed),
+    )
+    // A stray line at the `inputs:` block's own indent DOES end the inner
+    // scan — and the second, differently-terminated scan notices that the two
+    // disagree and throws instead of returning the half it managed to read.
+    let threw = null
+    try {
+      findDispatchInputDefaults(
+        fixture(REF_AND_INPUTS_GUARDED).replace(
+          '      slo_include_problem:',
+          '    unexpected_key: value\n      slo_include_problem:',
+        ),
+      )
+    } catch (err) {
+      threw = err
+    }
+    check(
+      threw !== null && /parsed only/.test(threw.message),
+      'a PARTIAL parse of the `inputs:` block throws instead of silently gating on the half it read',
+      threw ? threw.message : 'no throw — a partial input list read as the whole list',
     )
   }
 

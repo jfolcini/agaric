@@ -2551,10 +2551,21 @@ stages = ["pre-commit"]
 # state machine must not spam on an unchanged failure, and — keyed to the
 # workflow file too — every lane in `scheduled-deep-checks.yml` must appear in
 # the reporting job's `needs:`, so a newly added lane cannot go red into the
-# void again. Also keyed to the workflow file (#3716): the reporting job must
-# never pass `--dry-run` to itself, on any event — that flag is what let a
-# `workflow_dispatch` compute the true failing set and then discard it,
-# leaving the tracking issue advertising a stale (once, inverted) one.
+# void again.
+#
+# Also keyed to the workflow file (#3716/#3960), for the rule about WHICH runs
+# of that job may write to the repo-wide tracking issue. It is not "never pass
+# `--dry-run`" — an earlier version of this note said that, describing a
+# token-search guard that has since been replaced, and it stopped being true
+# two passes before this sentence was rewritten. The rule is that the job is
+# authoritative for exactly the runs that reproduce the cron: the `schedule`
+# event, and a `workflow_dispatch` on `refs/heads/main` with every declared
+# input at its declared default. Every other ref, and every non-default input,
+# passes `--dry-run` — because a dispatch that discards its findings leaves the
+# issue advertising a stale (once, inverted) set, while a dispatch on a branch,
+# or with a shortened budget, publishes something that is not the repository's
+# answer at all. `checkReporterAuthority` pins every arm by executing the
+# step's own bash rather than searching it for a flag.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
