@@ -237,15 +237,25 @@ impl DaemonActivation {
 
     /// Resolve once the daemon has entered `daemon_loop`, returning `true`.
     ///
-    /// Resolves immediately if the transition already happened. Callers should
-    /// wrap this in [`tokio::time::timeout`] — it does not impose one, because
+    /// Resolves immediately if the transition already happened.
+    ///
+    /// # Callers MUST impose a deadline
+    ///
+    /// Wrap this in [`tokio::time::timeout`]. It does not impose one because
     /// the deadline that matters is the caller's claim (e.g. "the *notify*
-    /// wake, not the 30 s poll, made this happen").
+    /// wake, not the 30 s poll, made this happen") — but the omission is not
+    /// merely untidy: **an unwrapped call against a daemon that dies without
+    /// activating hangs forever rather than returning `false`.** The `false`
+    /// path needs the watch channel to close, and the sender is owned by the
+    /// [`SyncDaemon`] handle, not by the daemon task, so a shut-down-while-
+    /// dormant daemon leaves the channel open with the handle still in scope.
+    /// The `false` return is therefore a defence against a *dropped* handle,
+    /// not against a dead daemon; only the caller's timeout covers that, and a
+    /// test that hangs is worse than one that fails.
     ///
     /// Returns `false` only if the watch channel closed without the daemon
-    /// activating. That cannot happen while a [`SyncDaemon`] handle is alive
-    /// (it owns the sender), but it is reported rather than swallowed so a
-    /// closed channel can never be mistaken for an activation.
+    /// activating — reported rather than swallowed so a closed channel can
+    /// never be mistaken for an activation.
     pub async fn wait_until_active(&self) -> bool {
         let mut rx = self.0.subscribe();
         rx.wait_for(|active| *active).await.is_ok()

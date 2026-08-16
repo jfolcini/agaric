@@ -3136,6 +3136,14 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     // (c) sit on the next debounce wait. None of these transitions are
     // exposed to test code, so we still rely on a fixed wait here.
     // Let startup complete and Branch C's first tick pass (no peers → no-op).
+    //
+    // #4025: (b) is the load-bearing part, and it is a workaround — this sleep
+    // is dodging the permit that `wait_for_debounced_change` loses when Branch
+    // C's immediate first tick cancels its debounce window. It is one of the
+    // three things #4025's acceptance criterion 3 says to delete when the
+    // scheduler is fixed (the others are `wait_for_change_round` and
+    // `CHANGE_WAKE_NUDGE`). This is also the suspected cause of this test's
+    // known flakiness.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     // Insert a peer ref with an unreachable last_address (port 1).
@@ -3633,12 +3641,24 @@ async fn change_round_does_not_duplicate_a_paired_and_discovered_peer() {
 
 /// How often [`wait_for_change_round`] re-arms the local-change wake.
 ///
+/// Part of the #4025 workaround; remove it with that fix.
+///
 /// Must exceed the scheduler's debounce window (the #3533 daemon tests use
 /// 100 ms) or every nudge would restart the window and Branch B would never
 /// leave it. 300 ms leaves each wake 200 ms of quiet to complete in.
 const CHANGE_WAKE_NUDGE: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// [`wait_for`], re-arming `notify_change()` on a cadence while it polls.
+///
+/// # This is a WORKAROUND for #4025, not a design
+///
+/// The re-arm exists only because the production wake path loses permits
+/// (#4025). It is not how a test should have to wait for a local change, and
+/// #4025's acceptance criterion 3 names this function and
+/// [`CHANGE_WAKE_NUDGE`] as the things whose removal proves the fix landed: if
+/// the scheduler is repaired and these are still needed, the fix is incomplete.
+/// Delete both, and the 300 ms sleep in
+/// [`daemon_branch_b_local_change_triggers_sync_attempt`], with that fix.
 ///
 /// # Why a single `notify_change()` is not enough
 ///
