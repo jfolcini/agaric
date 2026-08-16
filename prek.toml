@@ -2427,7 +2427,7 @@ stages = ["pre-commit"]
 # script does: given a base ref and a head sha, it builds a FRESH merge in a
 # disposable worktree (never the caller's own checkout) and runs the
 # toolchain-free Rust ratchet-guard trio (check-raw-tx, check-dynamic-sql,
-# check-table-ownership — the four-crate-root scan, #3107) against it. The
+# check-table-ownership — the five-crate-root scan, #3107) against it. The
 # self-test's fixtures are the #3724 near-miss, minimised to the smallest
 # reproducible shape: two branches each add ONE dynamic-SQL site to
 # DIFFERENT, non-overlapping lines of the SAME file, and each (correctly,

@@ -255,6 +255,22 @@ STUB
   chmod +x "$bindir/cargo"
 }
 
+# Minimal probe for the nested-invocation check in run_self_test's section
+# 0, below. Exercises ONLY the ambient-GITHUB_STEP_SUMMARY isolation that
+# check needs — the `local GITHUB_STEP_SUMMARY=` line plus one db-load-
+# failure call to `run_guard` — instead of re-running the ENTIRE suite a
+# second time inside the nested process (the 2s streaming-proof sleep,
+# section 4's two /usr/bin symlink-farm builds, everything else). Not a
+# general entry point; only ever invoked by that nested call.
+run_gss_isolation_probe() {
+  local GITHUB_STEP_SUMMARY=
+  local bindir
+  bindir=$(mktemp -d -t cargo-audit-guard-gssprobe-bin.XXXXXX)
+  st_make_stub_cargo "$bindir" "$STUB_DB_LOAD_TEXT" 1
+  PATH="$bindir:$PATH" run_guard "." >/dev/null 2>&1
+  rm -rf "$bindir"
+}
+
 run_self_test() {
   local tmp
   tmp=$(mktemp -d -t cargo-audit-guard-selftest.XXXXXX)
@@ -277,25 +293,23 @@ run_self_test() {
   local GITHUB_STEP_SUMMARY=
 
   # ── 0. THE REAL (INHERITED) JOB SUMMARY IS NEVER TOUCHED ─────────────────
-  # Proven at the ACTUAL entry point — a full `bash $SELF --self-test`
-  # invocation, exactly how prek/CI runs this — not just by calling
-  # run_guard directly, because the bug lived in what `--self-test` inherits
-  # BEFORE the `local` line above ever runs. MRTEST_NESTED_GSS_CHECK guards
-  # against this same block re-entering itself inside the nested run, which
-  # would otherwise recurse without bound.
-  if [ -z "${MRTEST_NESTED_GSS_CHECK:-}" ]; then
-    local real_summary="$tmp/real-ambient-job-summary.md"
-    printf 'pre-existing content from an unrelated CI step\n' > "$real_summary"
-    MRTEST_NESTED_GSS_CHECK=1 GITHUB_STEP_SUMMARY="$real_summary" bash "$SELF" --self-test \
-      >"$tmp/nested-self-test.out" 2>&1
-    local nested_rc=$?
-    st_expect 'a nested --self-test run (simulating an inherited ambient GITHUB_STEP_SUMMARY, as CI sets it) itself still passes' \
-      '0' "$nested_rc"
-    st_expect 'and it never appends the false advisory-database-failed banner into that inherited (real) summary file' \
-      '0' "$(grep -c 'advisory database failed to load' "$real_summary" || true)"
-    st_expect 'and the summary file keeps its ORIGINAL content untouched — not just "no banner", no write at all' \
-      '1' "$(grep -c 'pre-existing content from an unrelated CI step' "$real_summary" || true)"
-  fi
+  # Proven at the ACTUAL entry point — a real `bash $SELF <flag>` process
+  # inheriting an ambient GITHUB_STEP_SUMMARY, exactly how CI's environment
+  # reaches this script — not just by calling run_guard directly, because
+  # the bug lived in what gets inherited BEFORE the `local` line above ever
+  # runs. `--self-test-gss-probe` (not `--self-test`) keeps this to the one
+  # call under test instead of re-running the whole suite nested inside
+  # itself a second time.
+  local real_summary="$tmp/real-ambient-job-summary.md"
+  printf 'pre-existing content from an unrelated CI step\n' > "$real_summary"
+  GITHUB_STEP_SUMMARY="$real_summary" bash "$SELF" --self-test-gss-probe \
+    >"$tmp/nested-probe.out" 2>&1
+  local probe_rc=$?
+  st_expect 'the ambient-GITHUB_STEP_SUMMARY probe itself exits cleanly' '0' "$probe_rc"
+  st_expect 'and it never appends the false advisory-database-failed banner into an inherited (real) summary file' \
+    '0' "$(grep -c 'advisory database failed to load' "$real_summary" || true)"
+  st_expect 'and the summary file keeps its ORIGINAL content untouched — not just "no banner", no write at all' \
+    '1' "$(grep -c 'pre-existing content from an unrelated CI step' "$real_summary" || true)"
 
   # ── 1. A DATABASE-LOAD FAILURE is classified as exit 2, with the banner ──
   local dbfail_bin="$tmp/bin-dbfail"
@@ -418,7 +432,7 @@ Scanning Cargo.lock for vulnerabilities (962 crate dependencies)' 0
   for p in /usr/bin /bin /usr/local/bin; do
     [ -d "$p" ] || continue
     for f in "$p"/*; do
-      b=$(basename "$f")
+      b=${f##*/}
       [ "$b" = cargo ] || ln -sf "$f" "$nocargo/$b" 2>/dev/null || true
     done
   done
@@ -500,6 +514,10 @@ main() {
 
 if [ "${1:-}" = "--self-test" ]; then
   run_self_test
+elif [ "${1:-}" = "--self-test-gss-probe" ]; then
+  # Internal only — invoked by run_self_test's own nested check (section 0),
+  # never a documented entry point. Not listed in the header Usage block.
+  run_gss_isolation_probe
 else
   main "$@"
 fi

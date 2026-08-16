@@ -211,3 +211,37 @@ worktree-add-failure path two edits ago) are the same shape again, smaller: a to
 step that exists in one place but was never carried to its sibling when the sibling was written.
 Grepping for a change's OTHER occurrences, not just fixing the one a reviewer named, would have
 caught both before they needed a seventh round to surface.
+
+### Convergence round — a guard whose crash blamed the wrong party
+
+`pr-merge-result-check.sh` checked `failures` before `missing` when deciding the exit code. That
+looked right in isolation — "a guard failed" reads as more actionable than "a guard is absent" — but
+`check-dynamic-sql.py` and `check-table-ownership.py` both `importlib`-load `check-raw-tx.py` FROM
+THE MERGED TREE at import time, to share its comment-stripper and test-file helpers. If
+`check-raw-tx.py` alone goes missing, both of the others crash on that import (verified live:
+`FileNotFoundError`, a traceback naming `check-raw-tx.py`, not their own guard logic) and get counted
+as ordinary failures — `failures=2`, `missing=check-raw-tx.py`, and the failures-first check returned
+1: "a ratchet guard fails on the merge result", pointing the author at their own diff for a renamed
+or deleted script that is not their diff at all. A guard absence can cause OTHER guards to fail as a
+side effect; a guard failure can never cause another guard to go missing. That asymmetry is why
+absence has to win regardless of how many guards crashed because of it, and it is exactly the kind of
+fact a single-guard-absence fixture (the `noguards` one already in the suite, which deletes ALL of
+`scripts/` and so never triggers the shared-import crash at all) cannot surface — a fixture that
+removes everything hides the case where removing ONE thing breaks two others.
+
+The other three notes this round needed no new assertions, so recorded here instead of invented as
+tests: (3) `pr-overlap.yml:188` and `prek.toml`'s hook comment both still said "four-crate-root" after
+the script's own header was corrected to "five" two rounds ago — checked `CRATE_ROOTS` in
+`pr-merge-result-check.sh` still has 5 entries (unchanged) and grepped the rest of the repo for the
+same stale phrase, which turned up much more broadly (the guard scripts' own docstrings, `AGENTS.md`,
+old session logs) — left untouched, out of scope for this PR and already the exact shape #3983 tracks
+(one fact restated in several places instead of stated once). (4) `overlaps` truly is unconsumed —
+grepped the workflow file for every other use, found none — so commented as informational rather than
+removed, since a future consumer reading `gh run view` output is a plausible use this job's own
+sticky-comment posting already implies. (5) confirmed the nested `--self-test-gss-probe` proves the
+same thing the old nested `--self-test` did (checked both against the pre-fix code: same RED, same
+message) while cutting real self-test wall-clock from ~25s to ~7s by not re-running the streaming
+sleep and two symlink-farm builds a second time; the `basename` → `${f##*/}` swap was checked for
+behavioural equivalence on the same symlink-farm loops (identical `$nocargo`/`$nopy` contents before
+and after), not asserted, since a fork count isn't something the self-test's own black-box interface
+can observe.

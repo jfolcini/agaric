@@ -44,9 +44,13 @@ jobs:
     # Generous ceiling on a job whose real cost is seconds; if this ever fires,
     # something is retrying an API call, not computing an overlap.
     timeout-minutes: 10
-    # Consumed by `merge-result` below, to decide whether it has anything to
-    # do — see that job for why "any overlap" is the wrong gate and
-    # ratchets/diverged is the right one.
+    # `ratchets`/`diverged` are consumed by `merge-result` below, to decide
+    # whether it has anything to do — see that job for why "any overlap" is
+    # the wrong gate and ratchets/diverged is the right one. `overlaps`
+    # (any shared file, ratchet or not) is NOT consumed by anything — it is
+    # informational only, surfaced for a human reading `gh run view`'s
+    # output alongside the sticky PR comment this job also posts, not a
+    # second gate sitting beside the two that are.
     outputs:
       overlaps: ${{ steps.overlap.outputs.overlaps }}
       ratchets: ${{ steps.overlap.outputs.ratchets }}
@@ -185,7 +189,7 @@ jobs:
   # This is therefore the first thing in this repo's CI that verifies a
   # merge RESULT rather than a branch. It is deliberately narrow: no Rust
   # toolchain, no node_modules — `scripts/pr-merge-result-check.sh` runs
-  # three stdlib-only Python guards (the four-crate-root ratchet trio,
+  # three stdlib-only Python guards (the five-crate-root ratchet trio,
   # #3107) against a disposable worktree. Running the FULL `prek
   # --all-files` here (#3672 comment 3's step 3, in full) needs the whole
   # toolchain this lane deliberately does not carry; see that script's own
@@ -238,18 +242,28 @@ jobs:
     # costs a checkout and three Python invocations; not running it costs the
     # incident.
     #
-    # `always()` is load-bearing, not decoration: WITHOUT it, `needs: overlap`
-    # alone means any FAILURE in `overlap` (it is deliberately non-required,
-    # and its red is tolerated by design — see its own header) skips this
-    # job entirely, silently, rather than evaluating the condition below.
-    # That is the exact "reported nothing while looking like it ran"
-    # shape the rest of this PR exists to close, one job edge away from the
-    # cases already fixed inside `pr-merge-result-check.sh` itself.
-    # `needs.overlap.outputs.*` still reads as empty-string (not `'0'`) when
-    # `overlap` failed before writing outputs, and the `!= '0'` gate below
-    # already treats that as "run" — same as the `unknown` case above.
+    # `!cancelled()` is load-bearing, not decoration: WITHOUT it, `needs:
+    # overlap` alone means any FAILURE in `overlap` (it is deliberately
+    # non-required, and its red is tolerated by design — see its own header)
+    # skips this job entirely, silently, rather than evaluating the
+    # condition below. That is the exact "reported nothing while looking
+    # like it ran" shape the rest of this PR exists to close, one job edge
+    # away from the cases already fixed inside `pr-merge-result-check.sh`
+    # itself. `needs.overlap.outputs.*` still reads as empty-string (not
+    # `'0'`) when `overlap` failed before writing outputs, and the `!= '0'`
+    # gate below already treats that as "run" — same as the `unknown` case
+    # above.
+    #
+    # `always()` (used here in an earlier revision) is the wrong primitive
+    # for that: it ALSO fires when the WORKFLOW RUN itself was cancelled,
+    # not only when a dependency job failed — and this workflow sets
+    # `concurrency.cancel-in-progress: true` (top of this file), so a rapid
+    # second push cancels the in-flight run for the FIRST push, whose
+    # `merge-result` job `always()` would then still start against the now
+    # STALE head. `!cancelled()` keeps the "run despite overlap's tolerated
+    # failure" behaviour above without also resurrecting a superseded run.
     if: |
-      always() && (
+      !cancelled() && (
         needs.overlap.outputs.ratchets != '0' ||
         needs.overlap.outputs.diverged != '0'
       )

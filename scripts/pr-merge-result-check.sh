@@ -28,6 +28,14 @@
 # deliberately NOT run here yet; extending RATCHET_GUARDS to cover them is
 # follow-up work, not a claim this script already makes.
 #
+# The crate-root count above is prose, restated (and once left stale) in
+# `.github/workflows/pr-overlap.yml` and `prek.toml`'s own hook comment —
+# three copies of one fact that `CRATE_ROOTS` below already carries as
+# data. #3983 tracks exactly this shape elsewhere in the repo (one
+# explanation duplicated across several files instead of stated once and
+# cited); worth folding this into that cleanup rather than re-solving it
+# here.
+#
 # ─── What this does NOT replace, and what protection actually exists ───────
 #
 # `main` IS protected. `gh api repos/<owner>/<repo>/branches/main/protection`
@@ -301,20 +309,30 @@ run_merge_check() {
 
   mr_cleanup "$workdir" "$parent"
 
-  # A guard that failed is the more actionable verdict, so it wins the exit
-  # code; the absence note is still printed either way.
+  # The absence note wins the exit code, NOT the failure count. Originally
+  # this checked failures first on the theory that "a guard failed" is the
+  # more actionable verdict — but check-dynamic-sql.py and
+  # check-table-ownership.py both importlib-load check-raw-tx.py FROM THE
+  # MERGED TREE (shared helpers), so if check-raw-tx.py alone is missing,
+  # BOTH of the others crash (FileNotFoundError, non-zero exit) and get
+  # counted as "failures" too — failures=2, missing=check-raw-tx.py, and
+  # checking failures first returned 1: "a ratchet guard fails on the merge
+  # result", telling the author to merge main and re-run prek for an
+  # infrastructure problem that is not their diff. A guard absence can
+  # cause OTHER guards to fail as a side effect; a guard failure can never
+  # cause another guard to go missing. That asymmetry is why missing must
+  # be checked first — it is the more fundamental "verified nothing"
+  # regardless of how many guards crashed because of it.
   if [ -n "$missing" ]; then
     echo "pr-merge-result-check: guard(s) named in RATCHET_GUARDS are ABSENT from the" >&2
     echo "  merged tree: $missing" >&2
     echo "  Either the guard was renamed and RATCHET_GUARDS was not, or the merge" >&2
     echo "  removed it. Previously this printed 'skipping' and still exited 0, i.e." >&2
     echo "  a mistyped guard name bought a green 'merge result verified'." >&2
+    return 3
   fi
   if [ "$failures" -gt 0 ]; then
     return 1
-  fi
-  if [ -n "$missing" ]; then
-    return 3
   fi
   return 0
 }
@@ -683,6 +701,35 @@ STUB
   st_expect 'a guard named in RATCHET_GUARDS but absent from the merged tree is exit 3, not 0' \
     '3' "$rc2"
 
+  # PARTIAL absence, not total — the shape `noguards` above cannot see.
+  # check-dynamic-sql.py and check-table-ownership.py both importlib-load
+  # check-raw-tx.py FROM THE MERGED TREE (shared comment-stripper/test-file
+  # helpers); if check-raw-tx.py alone is missing — verified by hand: both
+  # crash with FileNotFoundError, exit 1, a traceback naming
+  # check-raw-tx.py, NOT their own guard logic — then BOTH of the other two
+  # guards fail too, `failures=2`, and the failure count used to win over
+  # the missing-guard note: exit 1, "a ratchet guard fails on the merge
+  # result", telling the author to merge main and re-run prek for an
+  # infrastructure problem that is not their diff. The `missing` check must
+  # win regardless of how many guards crashed BECAUSE of the absence.
+  local partial="$tmp/partial"
+  mkdir -p "$partial"
+  mr_make_near_miss_repo "$partial"
+  git -C "$partial" rm -q scripts/check-raw-tx.py
+  git -C "$partial" commit --quiet -m 'check-raw-tx.py alone is gone; the other two guards still import it'
+
+  ( cd "$partial" && bash "$SELF" main pr ) >"$tmp/partial.out" 2>"$tmp/partial.err"; rc2=$?
+  st_expect 'a PARTIAL guard absence (the other guards still import the missing one, and crash) is ALSO exit 3, not exit 1' \
+    '3' "$rc2"
+  # The OTHER two guards still get invoked (the loop cannot know in advance
+  # that they will crash on the shared import) and still print their own
+  # crash as a "FAILED" line — that stays; the review calls it diagnosable,
+  # not the defect. What must change is which check wins the RETURN CODE:
+  # the absence note, not the failure count, so the verdict a human acts on
+  # says "ABSENT", not "fails on the merge result".
+  st_expect 'and it still names check-raw-tx.py as the ABSENT guard, which is the note that must govern the verdict' \
+    '1' "$(grep -c 'merged tree: check-raw-tx.py' "$tmp/partial.err" || true)"
+
   # The same near-miss content under a crate root this script does not know
   # about — the shape a repo-layout change produces. Every guard would be
   # handed an empty file list and report clean.
@@ -702,7 +749,7 @@ STUB
   for p in /usr/bin /bin /usr/local/bin; do
     [ -d "$p" ] || continue
     for f in "$p"/*; do
-      b=$(basename "$f")
+      b=${f##*/}
       case "$b" in python3* | python) ;; *) ln -sf "$f" "$nopy/$b" 2>/dev/null || true ;; esac
     done
   done
@@ -726,8 +773,17 @@ STUB
     "$(grep -c 'pr-merge-result-check\.sh "\$BASE_REF" "\$HEAD_SHA" || rc=\$?' "$wf" || true)"
   st_expect 'and the workflow branches on exit 3 (verified nothing) as a failure' '1' \
     "$(grep -c '"\$rc" -eq 3' "$wf" || true)"
-  st_expect 'and the merge-result job runs with always(), so a failure in the (non-required) overlap job cannot silently skip it' \
-    '1' "$(grep -c 'always() && (' "$wf" || true)"
+  # `always()` also fires on a CANCELLED run, and this workflow sets
+  # `concurrency.cancel-in-progress: true` — so `always()` was the wrong
+  # primitive: it would let a superseded run's merge-result job start
+  # against a stale head. `!cancelled()` gives the same "run despite
+  # overlap's tolerated failure" behaviour without that. Pinned as a pair:
+  # the right primitive is present, AND the wrong one (which would silently
+  # satisfy the assertion below alone, since both contain "&& (") is gone.
+  st_expect 'and the merge-result job runs with !cancelled(), not always() — the primitive that also fires on a cancelled run' \
+    '1' "$(grep -c '!cancelled() && (' "$wf" || true)"
+  st_expect 'and always() && ( is NOT the condition anymore (the wrong primitive from an earlier revision)' \
+    '0' "$(grep -c '^ *always() && ($' "$wf" || true)"
 
   # A structural pin, not a behavioural one, and deliberately so: `find`
   # without `-type f` would let a directory or dangling symlink named
