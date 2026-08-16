@@ -322,9 +322,29 @@ impl MdnsService {
     /// falls through to the interface filter and then to `enable_addr_auto()`, because
     /// announcing `127.0.0.1` to the local link is worse than announcing nothing.
     ///
+    /// # What `Ok` means — and what it does not (#3852)
+    ///
+    /// `Ok` means **a register command was queued**, nothing more. `register()` is
+    /// `mdns-sd`'s `send_cmd`: a `flume::try_send` onto the daemon's bounded command
+    /// channel plus a loopback signalling datagram. It returns before the daemon thread
+    /// has looked at the command, let alone built a packet or touched a socket. Its only
+    /// error cases are "queue full" (`Error::Again`) and "daemon thread gone"
+    /// (`Error::DaemonShutdown`).
+    ///
+    /// Every network-level failure therefore lands **after** this returns: a socket that
+    /// cannot be created, an interface with no usable address, a `sendto` refused by the
+    /// platform, an Android per-uid firewall that drops the datagram at the cgroup-BPF
+    /// hook. `mdns-sd` reports those two ways, neither of which is this return value:
+    /// through [`MdnsService::monitor`], and through the `log` crate (which needs a
+    /// `log`→`tracing` bridge installed to reach a subscriber at all).
+    ///
+    /// #3852 was three days invisible because a caller logged `"announced over mDNS"` on
+    /// this `Ok` while the device answered nothing on the wire. Callers must treat this
+    /// as *submitted*, and take "announced" only from [`MdnsService::monitor`].
+    ///
     /// # Errors
     /// [`AppError::InvalidOperation`] if `mdns-sd` rejects the service info (malformed
-    /// instance or host name) or the registration.
+    /// instance or host name) or the registration could not be **queued**.
     pub fn announce(
         &self,
         device_id: &str,
@@ -351,6 +371,28 @@ impl MdnsService {
         self.daemon
             .browse(MDNS_SERVICE_TYPE)
             .map_err(|e| mdns_err(format!("browse: {e}")))
+    }
+
+    /// Subscribe to the daemon's own event stream (#3852).
+    ///
+    /// This is `mdns-sd`'s channel for exactly the failures
+    /// [`announce`](MdnsService::announce) cannot report, and until #3852 it had **zero**
+    /// call sites in this crate. A daemon that cannot open a socket, cannot resolve a
+    /// name conflict, or is handed an unusable service name reports it here and nowhere
+    /// else a caller can reach.
+    ///
+    /// It also carries the only positive signal available: `DaemonEvent::Announce`,
+    /// which the daemon thread emits *after* it has built the unsolicited response and
+    /// pushed it at a socket for a named interface. See [`classify_daemon_event`] for
+    /// the exact strength of that claim.
+    ///
+    /// # Errors
+    /// [`AppError::InvalidOperation`] if the daemon refuses the subscription (its
+    /// command queue is full, or its thread has already exited).
+    pub fn monitor(&self) -> Result<mdns_sd::Receiver<mdns_sd::DaemonEvent>, AppError> {
+        self.daemon
+            .monitor()
+            .map_err(|e| mdns_err(format!("monitor: {e}")))
     }
 
     /// Browse for peers with a timeout, preventing indefinite blocking.
@@ -395,6 +437,62 @@ impl MdnsService {
             .shutdown()
             .map_err(|e| mdns_err(format!("mdns shutdown: {e}")))?;
         Ok(())
+    }
+}
+
+/// What a [`mdns_sd::DaemonEvent`] means to the sync daemon (#3852).
+///
+/// A three-way narrowing of `mdns-sd`'s `#[non_exhaustive]` event enum, so the daemon's
+/// reaction is a pure function of the event and can be tested without a live daemon, a
+/// multicast-capable CI runner, or a wire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MdnsDaemonSignal {
+    /// The daemon multicast our record on an interface.
+    Announced {
+        /// The service fullname as the daemon resolved it (name-conflict resolution may
+        /// have renamed it since we registered).
+        service: String,
+        /// Where it went, in `mdns-sd`'s own spelling: either `hostname:interface` or a
+        /// debug-formatted list of the source addresses it announced from.
+        on: String,
+    },
+    /// The daemon failed at something [`MdnsService::announce`] had already returned
+    /// `Ok` for.
+    Failed(String),
+    /// Housekeeping the daemon reports but the sync daemon does not act on: interface
+    /// address add/remove, name-conflict resolution, per-query responses.
+    Ignored,
+}
+
+/// Classify one [`mdns_sd::DaemonEvent`].
+///
+/// # How much `Announced` actually proves
+///
+/// It proves strictly more than `register()`'s `Ok`, and strictly less than delivery.
+///
+/// `mdns-sd` emits `DaemonEvent::Announce` from the daemon thread only after
+/// `send_unsolicited_response` returned a non-empty set of outgoing addresses — i.e.
+/// after it selected a real interface, built a response with at least one answer,
+/// survived the RFC 6762 §6 rate limit, and called `sendto`. So it rules out every
+/// failure mode between "a command reached a queue" and "a datagram was handed to the
+/// kernel", which is the whole gap #3852 hid in.
+///
+/// It does **not** prove the packet left the device. A `sendto` into a cgroup-BPF egress
+/// hook that drops the packet — Android 15+'s `FIREWALL_CHAIN_BACKGROUND`, the actual
+/// root cause of #3852 — returns success. Nothing observable from inside the process
+/// distinguishes that from a delivered packet, which is why the authoritative signal for
+/// *that* failure is the platform's own
+/// `NetworkCallback.onBlockedStatusChanged`, not anything mDNS can say.
+///
+/// So: log `Announced` as an announce that went out, never as an announce that arrived.
+pub fn classify_daemon_event(event: &mdns_sd::DaemonEvent) -> MdnsDaemonSignal {
+    match event {
+        mdns_sd::DaemonEvent::Announce(service, on) => MdnsDaemonSignal::Announced {
+            service: service.clone(),
+            on: on.clone(),
+        },
+        mdns_sd::DaemonEvent::Error(e) => MdnsDaemonSignal::Failed(e.to_string()),
+        _ => MdnsDaemonSignal::Ignored,
     }
 }
 
@@ -1276,5 +1374,64 @@ mod tests {
         );
         assert_eq!(peer.addresses.len(), 1, "should contain one address");
         assert_eq!(peer.port, 9876, "port should match constructed value");
+    }
+
+    // -- 8. classify_daemon_event (#3852) ------------------------------------
+
+    /// The whole point of wiring `monitor()`: a daemon-side failure that
+    /// `register()` already returned `Ok` for must come out as `Failed`,
+    /// carrying the daemon's own message so the eventual `SyncEvent` can name
+    /// the cause instead of saying "mDNS is unavailable" with no reason.
+    #[test]
+    fn a_daemon_error_classifies_as_failed_and_keeps_its_message() {
+        let event = mdns_sd::DaemonEvent::Error(mdns_sd::Error::Msg(
+            "failed to create IPv4 socket: Operation not permitted".into(),
+        ));
+        match classify_daemon_event(&event) {
+            MdnsDaemonSignal::Failed(reason) => assert!(
+                reason.contains("failed to create IPv4 socket"),
+                "the daemon's own message is the only description of this failure that \
+                 exists anywhere; it must survive classification, got: {reason}"
+            ),
+            other => panic!("a DaemonEvent::Error must classify as Failed, got {other:?}"),
+        }
+    }
+
+    /// `Announce` is the only positive signal in the enum. It must classify as
+    /// `Announced` and carry both halves — which service, and on what — because
+    /// those two strings are the entire evidence that a record went out.
+    #[test]
+    fn an_announce_classifies_as_announced_with_service_and_interface() {
+        let event = mdns_sd::DaemonEvent::Announce(
+            "Agaric_dev-1._agaric._udp.local.".into(),
+            "dev-1.local.:wlan0".into(),
+        );
+        assert_eq!(
+            classify_daemon_event(&event),
+            MdnsDaemonSignal::Announced {
+                service: "Agaric_dev-1._agaric._udp.local.".into(),
+                on: "dev-1.local.:wlan0".into(),
+            },
+            "an Announce must classify as Announced, preserving both strings verbatim"
+        );
+    }
+
+    /// Housekeeping must NOT be mistaken for an announcement. `Respond` fires
+    /// on every query the daemon answers and `IpAdd` on every interface change;
+    /// treating either as "we announced" would restore exactly the
+    /// announce-that-lies shape #3852 is about, just one layer further in.
+    #[test]
+    fn housekeeping_events_classify_as_ignored() {
+        for event in [
+            mdns_sd::DaemonEvent::Respond("wlan0".into()),
+            mdns_sd::DaemonEvent::IpAdd("192.168.1.7".parse().unwrap()),
+            mdns_sd::DaemonEvent::IpDel("192.168.1.7".parse().unwrap()),
+        ] {
+            assert_eq!(
+                classify_daemon_event(&event),
+                MdnsDaemonSignal::Ignored,
+                "{event:?} is housekeeping and must not be read as an announce or a failure"
+            );
+        }
     }
 }

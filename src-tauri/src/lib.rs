@@ -586,6 +586,53 @@ fn running_under_flatpak() -> bool {
 // before line 1390" rule.
 // ---------------------------------------------------------------------------
 
+/// Install the `log` → `tracing` bridge (#3852).
+///
+/// # This is a bug fix, not a nicety
+///
+/// Agaric logs through `tracing`. Several of its dependencies do not — most
+/// consequentially `mdns-sd`, which is the **only** peer discovery Agaric has
+/// and which reports every one of its network-level diagnostics through the
+/// `log` facade: `failed to create IPv4 socket`, `Failed to send unicast …`,
+/// the interface misses.
+///
+/// The `log` crate discards every record until some process installs a global
+/// logger. Agaric installed none, so all of that was a no-op: the records were
+/// emitted and dropped on the floor with no logger, no error, and nothing for
+/// an operator to notice. That was one of the three silences that made #3852
+/// invisible for three days — the other two being `register()` returning `Ok`
+/// for a queued command, and `ServiceDaemon::monitor()` having no call sites.
+///
+/// `LogTracer::init` fixes the first half by installing a logger that forwards
+/// into `tracing`; the `mdns_sd` directive in [`init_logging`] fixes the second
+/// half by letting the forwarded records past the subscriber's filter.
+///
+/// # Why the failure is swallowed
+///
+/// `LogTracer::init` fails only when a global logger is *already* installed —
+/// which means records already reach somewhere, and re-installing is neither
+/// possible nor needed. A boot that cannot install a logging bridge is not a
+/// boot worth aborting.
+/// Default `EnvFilter` directives for the stderr + file log layers.
+///
+/// A constant rather than an inline literal so a test can assert on the exact
+/// set the production subscriber is built from; see [`init_logging`] for what
+/// each entry buys and what the `mdns_sd` one costs.
+const LOG_LAYER_DEFAULTS: &[(&str, &str)] = &[
+    ("agaric", "info"),
+    ("frontend", "info"),
+    ("mdns_sd", "debug"),
+];
+
+fn init_log_bridge() {
+    if let Err(e) = tracing_log::LogTracer::init() {
+        // No `tracing::warn!` — the subscriber does not exist yet at this point
+        // in boot, so a `tracing` event here would itself be dropped, which
+        // would be a small re-run of the bug this function fixes.
+        eprintln!("log→tracing bridge not installed (a global logger already exists): {e}");
+    }
+}
+
 /// Boot-phase 1 — install the tracing-appender file/stderr subscriber and
 /// Keep the non-blocking worker guard alive in managed state (#635).
 ///
@@ -597,6 +644,12 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
+
+    // #3852 — install the `log` → `tracing` bridge first, so that records
+    // emitted through the `log` facade by dependencies are not silently
+    // discarded. See `init_log_bridge` for why this is a bug fix and not a
+    // nicety.
+    init_log_bridge();
 
     // Initialize tracing-appender using the OS-correct
     // `app_data_dir` so the on-disk log files resolve to the same path
@@ -637,11 +690,29 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     // `EnvFilter` is not `Clone`, so build the directive string once and mint a
     // fresh filter per layer (each layer now carries its OWN filter — see the
     // registry composition below — instead of one global filter).
+    //
+    // #3852 adds `mdns_sd` at `debug`. `mdns-sd` is the only discovery Agaric
+    // has, it reports through the `log` facade (hence `init_log_bridge` above),
+    // and every diagnostic that distinguishes "the LAN is quiet" from "this
+    // device cannot open a multicast socket" — `failed to create IPv4 socket`,
+    // `Failed to send unicast …`, the interface misses — is emitted at `debug`.
+    // On Android, where #3852 was found, there is no practical way for a user
+    // to set `RUST_LOG`, so a default that hides those lines hides them on the
+    // one platform that needs them.
+    //
+    // The cost, stated plainly because the M2b note below is about exactly
+    // this: a `debug` directive on ANY target raises the registry's global max
+    // level to DEBUG, so `debug!` callsites elsewhere in `agaric` start
+    // evaluating their (per-layer, rejecting) filter instead of being skipped
+    // at the callsite. That is the same level the OTel layer already asks for
+    // whenever observability is enabled. An operator who wants the quieter
+    // shape can set `RUST_LOG=mdns_sd=warn`, which `build_log_directives`
+    // honours — a user directive for a target always wins over the default.
     let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
-    let directives = build_log_directives(&rust_log, &[("agaric", "info"), ("frontend", "info")]);
+    let directives = build_log_directives(&rust_log, LOG_LAYER_DEFAULTS);
     let make_log_filter = || {
         EnvFilter::try_new(&directives)
-            .unwrap_or_else(|_| EnvFilter::new("agaric=info,frontend=info"))
+            .unwrap_or_else(|_| EnvFilter::new("agaric=info,frontend=info,mdns_sd=debug"))
     };
 
     // #2110 M3 — the OTel trace layer captures at `debug` (default), so the
@@ -2514,6 +2585,71 @@ mod specta_tests {
         let content = std::fs::read_to_string(out_path).expect("read generated bindings");
         std::fs::write(out_path, format!("// @ts-nocheck\n{content}"))
             .expect("write bindings with ts-nocheck header");
+    }
+}
+
+/// #3852 — the `log` → `tracing` bridge, and the filter that lets the bridged
+/// records through.
+#[cfg(test)]
+mod log_bridge_tests {
+    use super::{LOG_LAYER_DEFAULTS, build_log_directives, init_log_bridge};
+
+    /// Until a global `log` logger exists, `log::max_level()` is `Off` and
+    /// EVERY `log::debug!` in every dependency short-circuits inside the macro
+    /// — the record is never even constructed. That is the state Agaric shipped
+    /// in, and it is why `mdns-sd`'s socket/send diagnostics were unreachable
+    /// no matter what filter was configured.
+    ///
+    /// nextest runs each test in its own process, so the pre-init reading below
+    /// is the real boot-time state and not another test's leftovers.
+    #[test]
+    fn init_log_bridge_makes_log_crate_records_reachable() {
+        use tracing_log::log::LevelFilter;
+
+        let before = tracing_log::log::max_level();
+        init_log_bridge();
+        let after = tracing_log::log::max_level();
+
+        assert!(
+            after >= LevelFilter::Debug,
+            "after init_log_bridge, `mdns_sd`'s `log::debug!` records must at least be \
+             constructed and offered to `tracing`; max_level was {before:?} before and \
+             {after:?} after"
+        );
+    }
+
+    /// The bridge alone is not enough: a forwarded record still has to pass the
+    /// subscriber's `EnvFilter`. With only `agaric` / `frontend` directives,
+    /// every `mdns_sd` event is rejected for having no matching directive, so
+    /// bridging them would change nothing observable.
+    #[test]
+    fn the_production_log_filter_admits_mdns_sd_at_debug() {
+        let directives = build_log_directives("", LOG_LAYER_DEFAULTS);
+        assert!(
+            directives.contains("mdns_sd=debug"),
+            "the log layers' default directives must admit mdns-sd's debug diagnostics \
+             (socket-create and send failures are all emitted at debug), got: {directives}"
+        );
+        assert!(
+            tracing_subscriber::EnvFilter::try_new(&directives).is_ok(),
+            "the default directive string must parse as an EnvFilter, got: {directives}"
+        );
+    }
+
+    /// An operator who finds mDNS debug noisy must be able to turn it down, and
+    /// the existing "user directive wins" rule is what makes the default above
+    /// safe to ship. Falsifying this would mean `RUST_LOG` could not quiet it.
+    #[test]
+    fn a_user_rust_log_directive_still_overrides_the_mdns_default() {
+        let directives = build_log_directives("mdns_sd=warn", LOG_LAYER_DEFAULTS);
+        assert!(
+            directives.contains("mdns_sd=warn"),
+            "the operator's directive must be preserved, got: {directives}"
+        );
+        assert!(
+            !directives.contains("mdns_sd=debug"),
+            "the default must NOT be appended alongside the operator's, got: {directives}"
+        );
     }
 }
 

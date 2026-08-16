@@ -20,6 +20,15 @@
 # widened it to every workspace member.
 agaric-sync/src/sync_daemon/android_multicast.rs
 
+# #3852: Android per-uid network-block reporting. JNI FFI is the only way to
+# reach `ConnectivityManager.registerDefaultNetworkCallback`, whose
+# `onBlockedStatusChanged` is the platform's authoritative statement about this
+# uid's firewall status — the only non-inferential source for the block that
+# makes a first-ever pair impossible on Android 15+. Same two `unsafe` blocks
+# and the same invariant as `android_multicast.rs`; the pure reporting rule
+# (`blocked_transition`) carries no `unsafe` at all.
+agaric-sync/src/sync_daemon/android_network_block.rs
+
 # #3847: installs the process-global Android `JavaVM` + Application `Context`
 # from `JNI_OnLoad` (`ndk_context::initialize_android_context` and
 # `JavaVM::from_raw` are both `unsafe`). Without it the first sync task to ask

@@ -154,6 +154,36 @@ pub enum SyncEvent {
         /// identifies the current listener, it is not a stable firewall rule.
         port: u16,
     },
+    /// #3852: the operating system says it is blocking (or has stopped
+    /// blocking) **this application's** network traffic.
+    ///
+    /// Android 15+ runs a per-uid background firewall
+    /// (`FIREWALL_CHAIN_BACKGROUND`) that drops every packet for an app that is
+    /// not top-of-stack — including when the app *is* the top activity and the
+    /// screen has merely gone to sleep (`procState=TOP_SLEEPING`). The daemon
+    /// keeps running, keeps its sockets, keeps the multicast lock, and cannot
+    /// send or receive anything. On the reporting Pixel 8 this was measured
+    /// directly: 300 datagrams aimed at the app's bound `0.0.0.0:5353` raised
+    /// `/proc/net/udp`'s drop counter by exactly 300 with `rx_queue` never
+    /// leaving 0, i.e. discarded at the cgroup-BPF ingress hook before enqueue.
+    ///
+    /// The `blocked` flag comes from `NetworkCallback.onBlockedStatusChanged`,
+    /// which is the platform stating this uid's firewall status about itself.
+    /// That matters more than it sounds: every other route to this fact is an
+    /// inference from silence, and silence is also what a quiet LAN, a sleeping
+    /// peer, and a wrong service type look like. #3852 spent three days being
+    /// mistaken for each of those in turn.
+    ///
+    /// `blocked: false` is emitted only as a *recovery* — after a block was
+    /// reported — so a healthy device never emits this event at all.
+    NetworkBlockedByOs {
+        /// `true` while the OS is dropping this app's traffic.
+        blocked: bool,
+        /// Plain-language explanation for the pairing UI. Not a raw platform
+        /// string: `onBlockedStatusChanged` carries only a boolean, so the text
+        /// is ours and names the user's actual next move.
+        reason: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +199,9 @@ pub const EVENT_SYNC_MDNS_DISABLED: &str = "sync:mdns_disabled";
 /// Emitted when the sync endpoint bound a globally-routable address (#3864).
 /// Payload is [`SyncEvent::InternetFacingBind`].
 pub const EVENT_SYNC_INTERNET_FACING_BIND: &str = "sync:internet_facing_bind";
+/// Emitted when the OS starts or stops blocking this app's network traffic (#3852).
+/// Payload is [`SyncEvent::NetworkBlockedByOs`].
+pub const EVENT_SYNC_NETWORK_BLOCKED: &str = "sync:network_blocked";
 
 // ---------------------------------------------------------------------------
 // mDNS status (#2506) — backfill for the peers/device-management surface
@@ -622,6 +655,53 @@ mod tests {
         assert_eq!(EVENT_SYNC_ERROR, "sync:error");
         assert_eq!(EVENT_SYNC_MDNS_DISABLED, "sync:mdns_disabled");
         assert_eq!(EVENT_PROPERTY_CHANGED, "block:properties-changed");
+        // #3852 — mirrored by `SYNC_NETWORK_BLOCKED_EVENT` in
+        // `src/hooks/useOsNetworkBlock.ts`. The two sides share no type; the
+        // only thing keeping the listener attached to the emitter is that this
+        // string does not change.
+        assert_eq!(EVENT_SYNC_NETWORK_BLOCKED, "sync:network_blocked");
+    }
+
+    // ── NetworkBlockedByOs variant (#3852) ─────────────────────────
+
+    /// The pairing dialog reads `blocked` and `reason` off this payload by
+    /// name. Serde renames the tag but not the fields, so a variant rename or a
+    /// field rename would silently produce an event no listener recognises —
+    /// which is the same "everything looks fine, nothing happens" shape #3852
+    /// is about.
+    #[test]
+    fn sync_event_network_blocked_serializes_with_type_tag_and_both_fields() {
+        let event = SyncEvent::NetworkBlockedByOs {
+            blocked: true,
+            reason: "Android has paused this app's network access".into(),
+        };
+        let json = serde_json::to_value(&event).expect("serialize NetworkBlockedByOs");
+        assert_eq!(
+            json["type"], "network_blocked_by_os",
+            "the variant must serialize with its snake_case type tag"
+        );
+        assert_eq!(
+            json["blocked"], true,
+            "the frontend gates the whole banner on this flag"
+        );
+        assert_eq!(
+            json["reason"], "Android has paused this app's network access",
+            "the reason is the text the user is shown; it must round-trip"
+        );
+    }
+
+    /// The recovery direction has to serialize too — it is what clears the
+    /// banner. A payload that only ever carried `true` would leave the warning
+    /// on screen after the block lifted.
+    #[test]
+    fn sync_event_network_blocked_carries_the_recovery_direction() {
+        let event = SyncEvent::NetworkBlockedByOs {
+            blocked: false,
+            reason: "restored".into(),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "network_blocked_by_os");
+        assert_eq!(json["blocked"], false);
     }
 
     // ── MdnsDisabled variant ──────────────────────────────────────

@@ -245,8 +245,23 @@ const STABLE_MESSAGES: &[&str] = &[
     // #3464 restored the announce that #3488 had to defer: the daemon now owns an iroh
     // endpoint, so it has the `EndpointId` a peer would dial and the record it publishes
     // names the key it is actually accepting on.
-    "SyncDaemon started; announced over mDNS",
-    "mDNS announce failed; peers must discover this device another way",
+    //
+    // #3852 split the old single `"SyncDaemon started; announced over mDNS"` line in two,
+    // because it was making a claim it could not support: `register()` returns as soon as
+    // a command is queued, so that line was logged on a Pixel 8 that answered nothing on
+    // the wire. The submit and the actual wire event are now separate messages, and both
+    // are here — a bug report about mDNS that redacted either of them would be missing
+    // exactly the distinction the report is about.
+    "mDNS announce submitted to the daemon's command queue (not yet on the wire)",
+    "mDNS announcement sent on the wire",
+    "mDNS announce could not be queued; peers must discover this device another way",
+    "mDNS daemon reported an error after the announce was accepted; peer discovery is degraded",
+    "could not subscribe to the mDNS daemon monitor; announce failures will not be observable",
+    // #3852 — Android's per-uid background firewall, as reported by the platform itself.
+    // Whether this line is present is the difference between "the LAN was quiet" and "the
+    // OS was dropping our packets", which is the question that took three days to answer.
+    "the OS is blocking this app's network traffic; sync and pairing cannot reach the network until it is restored",
+    "the OS has restored this app's network traffic",
     "SyncDaemon shut down cleanly",
     "Failed to start SyncDaemon",
     "mDNS disabled: no first-ever pair is possible; already-paired peers may still use a cached address",

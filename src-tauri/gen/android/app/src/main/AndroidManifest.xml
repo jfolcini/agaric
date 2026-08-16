@@ -8,6 +8,15 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
+    <!-- #3852: ConnectivityManager.registerDefaultNetworkCallback, whose
+         onBlockedStatusChanged is the only authoritative report of Android
+         15+'s per-uid background firewall (FIREWALL_CHAIN_BACKGROUND) dropping
+         this app's packets. Without it, a first-ever pair fails with both
+         devices showing a spinner and no explanation. Normal (non-dangerous)
+         permission: granted at install, no runtime prompt.
+         See NetworkBlockMonitor.kt. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- Camera is optional — only used for QR code scanning during sync pairing -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 

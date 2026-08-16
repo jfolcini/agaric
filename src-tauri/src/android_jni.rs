@@ -56,3 +56,42 @@ pub extern "system" fn JNI_OnLoad(vm: *mut c_void, _reserved: *mut c_void) -> i3
     // the process lifetime. `jni_on_load` null-checks it before use.
     unsafe { agaric_sync::android_context::jni_on_load(vm) }
 }
+
+/// `com.agaric.app.NetworkBlockMonitor.nativeOnBlockedStatusChanged` (#3852).
+///
+/// Called from `ConnectivityManager`'s callback thread every time the platform
+/// changes its mind about whether this uid's traffic is blocked — the
+/// authoritative, non-inferential report of the Android 15+
+/// `FIREWALL_CHAIN_BACKGROUND` block that makes a first-ever pair impossible
+/// while the screen is off.
+///
+/// Lives in the app crate for the same reason `JNI_OnLoad` does: only the crate
+/// producing the `cdylib` exports `#[unsafe(no_mangle)]` symbols
+/// unconditionally, and an unexported JNI native fails at *call* time with an
+/// `UnsatisfiedLinkError` from the JVM — i.e. exactly when the block is
+/// happening and nobody is watching. The work itself belongs to
+/// `agaric_sync::sync_daemon::android_network_block`.
+///
+/// Takes no `JNIEnv`/`jobject` arguments of its own beyond the two the JNI ABI
+/// always passes, and touches no JVM object, so it needs no attach handling and
+/// cannot throw.
+///
+/// # Safety
+///
+/// Called by the JVM. Never called from Rust.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+#[allow(
+    non_snake_case,
+    reason = "the symbol name is mandated by the JNI native-method mangling rules"
+)]
+pub extern "system" fn Java_com_agaric_app_NetworkBlockMonitor_nativeOnBlockedStatusChanged(
+    _env: *mut c_void,
+    _class: *mut c_void,
+    blocked: u8,
+) {
+    // `jboolean` is a `u8` that is 0 for false and (by the JNI spec) 1 for
+    // true; compare against 0 rather than to 1 so any non-zero encoding is
+    // still read as `true`.
+    agaric_sync::sync_daemon::android_network_block::report_blocked_status(blocked != 0);
+}
