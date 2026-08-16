@@ -180,6 +180,19 @@ node_deps_remedy() {
 # Both helpers take (required, caller) as comma-separated strings,
 # tolerate empty/whitespace/duplicate entries, and are pure — the
 # self-test below drives them directly.
+#
+# NEWLINES SEPARATE TOO (#3990 item 5). `IFS=',' read -ra` reads ONE LINE:
+# a `SKIP` carrying a newline — `SKIP=$'gitleaks\ntypos'`, or a value that
+# picked one up from a shell heredoc or an editor — silently lost everything
+# after the first, including from the non-equivalence warning, so the run was
+# reported as omitting fewer hooks than it did. That is the silent-discard
+# shape #3968 exists to have removed. `read -r -d ''` consumes the whole
+# value (returning non-zero at EOF, hence `|| true`) and `IFS=$',\n'` makes
+# the newline a separator, so every entry the caller wrote is honoured, named
+# in the warning, and handed to prek in the comma-separated form prek reads.
+# Newline is IFS WHITESPACE, so a trailing one collapses rather than adding an
+# empty entry; the comma is not, so `a,,b` still yields the empty field the
+# trim/skip below is written for.
 
 # Union of the script's own required entries and the caller's, in that
 # order, de-duplicated. The required entries always survive: they are the
@@ -189,7 +202,7 @@ phase_a_skip_compose() {
     local required="${1:-}" caller="${2:-}"
     local -a items=()
     local item seen="," out=""
-    IFS=',' read -ra items <<< "$required,$caller"
+    IFS=$',\n' read -r -d '' -a items <<< "$required,$caller" || true
     for item in "${items[@]}"; do
         item="${item#"${item%%[![:space:]]*}"}"
         item="${item%"${item##*[![:space:]]}"}"
@@ -210,14 +223,14 @@ phase_a_skip_extra() {
     local required="${1:-}" caller="${2:-}"
     local -a req=() cal=()
     local item reqset="," seen="," out=""
-    IFS=',' read -ra req <<< "$required"
+    IFS=$',\n' read -r -d '' -a req <<< "$required" || true
     for item in "${req[@]}"; do
         item="${item#"${item%%[![:space:]]*}"}"
         item="${item%"${item##*[![:space:]]}"}"
         [ -z "$item" ] && continue
         reqset="$reqset$item,"
     done
-    IFS=',' read -ra cal <<< "$caller"
+    IFS=$',\n' read -r -d '' -a cal <<< "$caller" || true
     for item in "${cal[@]}"; do
         item="${item#"${item%%[![:space:]]*}"}"
         item="${item%"${item##*[![:space:]]}"}"
@@ -539,6 +552,30 @@ if [ "${1:-}" = "--self-test" ]; then
             "compose='$st_out' whitespace-only='$st_out2' extra='$st_out3'"
     fi
 
+    # 19c. A caller SKIP carrying a NEWLINE (#3990 item 5). `IFS=',' read -ra`
+    #      reads one LINE, so everything after the first was dropped from the
+    #      value handed to prek AND from the non-equivalence warning — the run
+    #      omitted hooks it did not name, which is the silent discard #3968
+    #      removed one layer up. Both helpers, and both must name `typos`.
+    st_nl_compose="$(phase_a_skip_compose "vitest,cargo-test" "gitleaks
+typos")"
+    st_nl_extra="$(phase_a_skip_extra "vitest,cargo-test" "gitleaks
+typos")"
+    if [ "$st_nl_compose" = "vitest,cargo-test,gitleaks,typos" ] &&
+        [ "$st_nl_extra" = "gitleaks,typos" ]; then
+        st_ok "a caller SKIP containing a newline is honoured whole, not truncated"
+    else
+        st_bad "a caller SKIP containing a newline is honoured whole, not truncated" \
+            "compose='$st_nl_compose' extra='$st_nl_extra'"
+    fi
+
+    #      The other direction — a value that merely ENDS in a newline must
+    #      not gain an empty trailing entry — has no assertion of its own on
+    #      purpose: newline is IFS whitespace, the empty-entry drop in 19b and
+    #      the whitespace trim in 18 (whose `[[:space:]]` class covers `\n`)
+    #      each independently guarantee it, and no implementation that passes
+    #      19c can fail it. An assertion there would be decoration.
+
     # 20. The warning reports what the caller's SKIP actually REMOVES, not
     #     the raw value: re-skipping something already required changes
     #     nothing, and warning about it trains the reader to ignore the
@@ -577,8 +614,19 @@ if [ "${1:-}" = "--self-test" ]; then
     st_skip_wiring_ok() {
         grep -qE "$ST_CALLERSKIP_ANCHOR" "$1" && grep -qE "$ST_COMPOSE_ANCHOR" "$1"
     }
+    # Numbered against the FILE (#3990 item 4). This used to pipe through
+    # `grep -vE '^[[:space:]]*#'` FIRST and number SECOND, so the line numbers
+    # were positions in the comment-stripped stream: a clobber reinstated near
+    # the end of this file would be announced hundreds of lines above where it
+    # lives, sending the reader to the wrong place.
+    #
+    # That prefilter is gone rather than reordered. What excludes the prose
+    # above is the `^` ANCHOR — a commented line begins with `#`, so it can
+    # never match `^PHASE_A_SKIP=`. The filter was doing nothing, and the
+    # comment at case 23 crediting it was a stale justification. Case 25 pins
+    # the anchor's exclusion directly instead.
     st_clobber_lines() {
-        grep -vE '^[[:space:]]*#' "$1" | grep -nE '^PHASE_A_SKIP="\$\(IFS=,' || true
+        grep -nE '^PHASE_A_SKIP="\$\(IFS=,' "$1" || true
     }
     st_rc=0
     st_skip_wiring_ok "${BASH_SOURCE[0]}" || st_rc=1
@@ -592,7 +640,8 @@ if [ "${1:-}" = "--self-test" ]; then
     # 23. Ratchet: the clobbering form must not come back alongside it. A
     #     re-added `PHASE_A_SKIP="$(IFS=,; …)"` line would satisfy case 22
     #     (the composing line still exists) while whichever ran last won.
-    #     Comment lines are excluded so this cannot match the prose above.
+    #     The `^` anchor is what keeps this off the prose above; case 25
+    #     drives that exclusion against a fixture rather than asserting it.
     st_out="$(st_clobber_lines "${BASH_SOURCE[0]}")"
     if [ -z "$st_out" ]; then
         st_ok "the clobbering PHASE_A_SKIP assignment is gone and stays gone"
@@ -625,14 +674,42 @@ if [ "${1:-}" = "--self-test" ]; then
     else
         st_ok "the compose-wiring ratchet reports a file with the wiring removed"
     fi
-    printf 'PHASE_A_SKIP="$(IFS=,; printf %%s "${skip_items[*]}")"\n' \
-        >"$st_fixture_root/clobber.sh"
+    #     The forbidden line is placed at line 10, behind nine COMMENT lines,
+    #     for two reasons at once: it must still be found (the ratchet works)
+    #     and it must be reported at line 10 (#3990 item 4 — numbering a
+    #     comment-filtered stream reported it at line 1, sending the reader
+    #     hundreds of lines from the reinstated clobber in this file). A
+    #     one-line fixture cannot tell those apart: every line number is 1.
+    {
+        for st_i in 1 2 3 4 5 6 7 8 9; do
+            printf '# PHASE_A_SKIP is discussed in prose on line %s\n' "$st_i"
+        done
+        printf 'PHASE_A_SKIP="$(IFS=,; printf %%s "${skip_items[*]}")"\n'
+    } >"$st_fixture_root/clobber.sh"
     st_out="$(st_clobber_lines "$st_fixture_root/clobber.sh")"
     if [ -n "$st_out" ]; then
         st_ok "the clobber ratchet reports the exact form it forbids"
     else
         st_bad "the clobber ratchet reports the exact form it forbids" \
             'st_clobber_lines found nothing in a fixture that is the forbidden line'
+    fi
+    case "$st_out" in
+        10:*) st_ok "the clobber ratchet reports the line number of the FILE" ;;
+        *)
+            st_bad "the clobber ratchet reports the line number of the FILE" \
+                "want line 10, got '$st_out'"
+            ;;
+    esac
+    #     The other half: a clobber sitting inside a COMMENT is still not a
+    #     clobber. Numbering first must not have re-admitted the prose this
+    #     ratchet was written to ignore.
+    printf '# PHASE_A_SKIP="$(IFS=,; printf %%s "${skip_items[*]}")" was the old form\n' \
+        >"$st_fixture_root/clobber-in-comment.sh"
+    if [ -z "$(st_clobber_lines "$st_fixture_root/clobber-in-comment.sh")" ]; then
+        st_ok "the clobber ratchet still ignores the forbidden form inside a comment"
+    else
+        st_bad "the clobber ratchet still ignores the forbidden form inside a comment" \
+            'a commented-out clobber was reported as a live one'
     fi
 
     rm -rf "$st_fixture_root"
@@ -822,10 +899,21 @@ fi
 # whole-tree coverage of the ABSENT categories for a faster push; a latent
 # breach in an untouched, unchanged-category file is caught nightly instead.
 #
-# NEVER skipped (run every push regardless of category): trailing-whitespace,
-# end-of-file-fixer, check-merge-conflict, check-added-large-files,
+# Never skipped BY CATEGORY (no HAS_* branch below removes them, so they run
+# on every push whatever changed): trailing-whitespace, end-of-file-fixer,
+# check-merge-conflict, check-added-large-files,
 # check-shebang-scripts-are-executable, check-executables-have-shebangs,
 # mixed-line-ending, detect-private-key, gitleaks, typos.
+#
+# "Regardless of category" is the whole claim — it is NOT "regardless of
+# everything", and this comment used to say the latter (#3990 item 3). The
+# caller's `SKIP` is composed into `PHASE_A_SKIP` (#3968), so
+# `SKIP=gitleaks git push` genuinely omits gitleaks from Phase A. Nothing
+# about that is silent — `phase_a_skip_extra` names it in the ⚠ line and the
+# final PASS banner repeats it as NOT CI-equivalent — but the list above
+# describes this script's own category plan, not a guarantee against the
+# caller. A green run whose banner declares caller skips is not quotable as a
+# clean gate.
 
 # Base: the two test hooks (always scoped in Phases C/D, never here).
 skip_items=(vitest cargo-test)
