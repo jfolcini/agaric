@@ -1606,7 +1606,14 @@ interface QueryStepShape {
    *  refusal, a declaration that succeeded, and a declaration naming the wrong
    *  kind all fail there, before `CONFORMANCE_UPDATE=1` can record anything)
    *  and cross-checked against the recording below. Ignored by both query
-   *  runners, like `expect_empty`. */
+   *  runners, like `expect_empty`.
+   *
+   *  `string` here is what a fixture SHOULD carry, not what one is guaranteed
+   *  to: this interface is an assertion over `JSON.parse` output. A mis-typed
+   *  declaration reads as an ABSENT one to every `typeof === 'string'` test,
+   *  which is why the guard below re-reads the key as `unknown` and rejects a
+   *  non-string outright (`nonStringDeclaration`, the twin of the Rust
+   *  runner's `a_non_string_declaration_is_rejected`). */
   expect_error?: string
   /** #3833 item 3 / #3946 — required alongside `expect_empty: true` AND
    *  alongside `expect_error` (both enforced below): which NEGATIVE the result
@@ -3165,10 +3172,10 @@ describe('#3083 conformance-coverage ratchet', () => {
     const misaligned: string[] = []
     // #3946 — the `expect_error` half of the same discipline, cross-checked
     // against the RECORDING. The Rust runner already refuses to author any of
-    // these three (see `run_query_steps`), and that gate is what actually
+    // these four (see `run_query_steps`), and that gate is what actually
     // stops an accidental refusal reaching a fixture.
     //
-    // These three are a SECOND SPELLING of it, not a second route: there is
+    // These four are a SECOND SPELLING of it, not a second route: there is
     // no way to reach a fixture that bypasses `run_query_steps`, and a
     // hand-edited `expected_queries` fails the Rust leg too — it re-runs the
     // backend and compares, so a hand-written `error` the backend does not
@@ -3182,6 +3189,21 @@ describe('#3083 conformance-coverage ratchet', () => {
     // sqlite and no backend run, and they name every offending step at once
     // instead of aborting on the first. That is worth the duplication for a
     // corpus edited by hand as often as this one; it is not extra coverage.
+    //
+    // Which is exactly why the SHAPE arm has to be spelled here too, and was
+    // missing until review caught it. `expect_error` is read through a
+    // `typeof === 'string'` test, so a mis-typed `"expect_error": true`
+    // degrades to NO declaration: on a step that also refuses,
+    // `undeclaredRefusal` catches it, but on a step whose recording is
+    // `"error": null` all three semantic arms stay empty and the declaration
+    // passes while reading, to a human, like a real one. That is the same
+    // silent degradation `a_non_string_declaration_is_rejected` pins on the
+    // Rust leg — and the "runs with no Rust toolchain" claim above is worth
+    // nothing on precisely the case where only the Rust leg holds. `null` is
+    // NOT rejected, matching `run_query_steps`' `None | Some(Value::Null)`:
+    // the two spellings have to agree on what counts as absent, or a fixture
+    // green on one leg reddens on the other.
+    const nonStringDeclaration: string[] = []
     const undeclaredRefusal: string[] = []
     const staleErrorClaim: string[] = []
     const mismatchedErrorKind: string[] = []
@@ -3228,7 +3250,17 @@ describe('#3083 conformance-coverage ratchet', () => {
         // empty as a CONSEQUENCE of the refusal, not as the pinned negative,
         // so `expect_empty` on such a step would misdescribe what it proves.
         const recordedError = recorded.error ?? null
-        const declaredError = typeof step.expect_error === 'string' ? step.expect_error : null
+        // `unknown`, not the interface's `string | undefined`: `QueryStepShape`
+        // is an assertion over `JSON.parse` output, so the declared type is
+        // what a fixture SHOULD carry, and the check below is what makes it
+        // so. Reading the key as `unknown` is what lets the shape arm be
+        // written at all.
+        const rawDeclaration: unknown = step.expect_error
+        if (rawDeclaration != null && typeof rawDeclaration !== 'string')
+          nonStringDeclaration.push(
+            `${fx.name}/${step.name} (declares ${JSON.stringify(rawDeclaration)})`,
+          )
+        const declaredError = typeof rawDeclaration === 'string' ? rawDeclaration : null
         const isRefusal = recordedError !== null
         const isEmpty = recorded.rows.length === 0
         if (isEmpty && !isRefusal && step.expect_empty !== true) {
@@ -3237,8 +3269,9 @@ describe('#3083 conformance-coverage ratchet', () => {
         if (!isEmpty && step.expect_empty === true) staleEmptyClaim.push(`${fx.name}/${step.name}`)
         if (isRefusal && step.expect_empty === true)
           misdeclaredRefusal.push(`${fx.name}/${step.name}`)
-        // #3946 — the three arms the Rust runner enforces at authoring time,
-        // restated over the FIXTURE FILE so a hand-edit cannot slip past them.
+        // #3946 — the remaining three arms the Rust runner enforces at
+        // authoring time, restated over the FIXTURE FILE so a hand-edit cannot
+        // slip past them.
         if (isRefusal && declaredError === null) undeclaredRefusal.push(`${fx.name}/${step.name}`)
         if (!isRefusal && declaredError !== null) staleErrorClaim.push(`${fx.name}/${step.name}`)
         if (isRefusal && declaredError !== null && declaredError !== recordedError)
@@ -3303,6 +3336,22 @@ describe('#3083 conformance-coverage ratchet', () => {
         `${JSON.stringify(misdeclaredRefusal)}. A REFUSAL is not an empty result: ` +
         `what the step pins is the AppErrorKind, and the empty rows follow from it. ` +
         `Drop the declaration — the recorded error is already the non-vacuous claim.`,
+    ).toEqual([])
+
+    // #3946 — the SHAPE arm, asserted before the three semantic ones because
+    // it is what makes them mean anything: each of those reads the
+    // declaration through `typeof === 'string'`, so a mis-typed one is not a
+    // wrong declaration to them, it is an absent one. The Rust twin is
+    // `a_non_string_declaration_is_rejected`.
+    expect(
+      nonStringDeclaration,
+      `These query steps declare a non-string "expect_error" ` +
+        `${JSON.stringify(nonStringDeclaration)}. It must be an AppErrorKind WIRE STRING ` +
+        `(e.g. "not_found"): every check below reads the declaration with ` +
+        `\`typeof === 'string'\`, so \`true\`, a number or an object is read as NO ` +
+        `declaration at all — on a step that recorded no error that is silent, and the ` +
+        `mis-typed key sits in the fixture reading like a pinned refusal while pinning ` +
+        `nothing. FIX by declaring the recorded kind as a string, or by deleting the key.`,
     ).toEqual([])
 
     // #3946 — the load-bearing one of the three. `run_step` propagates
@@ -3450,8 +3499,25 @@ describe('#3083 conformance-coverage ratchet', () => {
         // that it did. `expect_error` is the author saying the refusal was the
         // point. The Rust runner refuses to RECORD an undeclared refusal at
         // all and `undeclaredRefusal` above re-checks the fixture file, so in a
-        // green tree the two spellings coincide — this clause is what makes the
-        // liveness verdict independent of those, rather than inheriting them.
+        // green tree the two spellings coincide — and this clause is written to
+        // reach its verdict without ASSUMING either is green, which is what the
+        // `=== recError` below buys and a present-only test does not. A
+        // present-only test INHERITS: it counts `"expect_error": ""` and
+        // `"expect_error": "wrong_kind"` as live coverage, and the thing that
+        // reddens on those is `mismatchedErrorKind`, in a DIFFERENT `it`.
+        // Review caught the `""` case; the fix is the predicate rather than the
+        // sentence, because "another assertion covers it" is precisely the
+        // inheritance this comment claimed not to have.
+        //
+        // The honest limit, stated rather than glossed: the tightening changes
+        // no verdict in today's corpus and cannot be made to, for the same
+        // reason the clause as a whole is not load-bearing (next paragraph) —
+        // `get_block` is live via its populated sibling however the tombstone
+        // step's declaration is spelled. So it was checked by counterfactual
+        // instead: with `get_block_serves_a_live_block`'s recorded rows emptied
+        // AND the tombstone step declaring `""`, the `undeclared` assertion
+        // below is RED under this predicate and GREEN under the present-only
+        // one.
         //
         // Load-bearing status, said plainly rather than left to read as
         // verified. The `expect_empty` clause IS load-bearing: delete it and
@@ -3469,8 +3535,13 @@ describe('#3083 conformance-coverage ratchet', () => {
         // command whose only honest step is a refusal gets a WRONG verdict
         // rather than a missing one.
         const rec = fx.expectedQueries[i]
+        const recError = rec?.error ?? null
+        // Equality with the RECORDED kind, not presence of a string: the
+        // declaration only makes the refusal evidence if it is the refusal
+        // that happened. `''` and a wrong kind are both excluded here rather
+        // than left to `mismatchedErrorKind`'s `it`.
         const declaredRefusal =
-          (rec?.error ?? null) !== null && typeof step.expect_error === 'string'
+          recError !== null && recError !== '' && step.expect_error === recError
         // `rec != null` is what keeps the "a missing entry is no evidence"
         // rule above true of THIS clause: `expect_empty` is a claim about a
         // RECORDING, so with no recording to make it about it is not one, and
@@ -3495,7 +3566,9 @@ describe('#3083 conformance-coverage ratchet', () => {
         `without declaring either negative. Both mean the branch is pinned on one stack, ` +
         `not diffed across two. FIX by EITHER adding a live fixture step that selects ` +
         `rows — or that declares its negative with "expect_empty": true (the branch ` +
-        `answers empty by construction) or "expect_error" (it refuses) — OR declaring ` +
+        `answers empty by construction) or "expect_error": "<the RECORDED kind>" (it ` +
+        `refuses; a declaration that does not match the recording is not counted here) — OR ` +
+        `declaring ` +
         `the branch in QUERY_STEPS_BACKEND_ONLY with the divergence issue that keeps it ` +
         `skipped.`,
     ).toEqual([])
