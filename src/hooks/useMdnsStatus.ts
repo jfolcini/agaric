@@ -2,10 +2,13 @@
  * useMdnsStatus — surface mDNS peer-discovery unavailability (#2506).
  *
  * The sync daemon emits `SyncEvent::MdnsDisabled` when mDNS initialization
- * fails (sandboxed platforms, missing multicast permissions, etc.) — sync
- * still works via manual IP entry, but until this hook the frontend had no
- * listener for the event at all, so the peers/device-management surface
- * just showed an empty peer list with no explanation.
+ * fails (sandboxed platforms, missing multicast permissions, etc.). With mDNS
+ * down, an already-paired peer can still be reached via its cached
+ * `peer_refs.last_address`, but a first-ever pair cannot be made at all —
+ * mDNS is the only carrier of the `endpoint_id` a dial needs. Until this hook
+ * the frontend had no listener for the event at all, so the
+ * peers/device-management surface just showed an empty peer list with no
+ * explanation.
  *
  * Mirrors `useRecoveryStatus`'s "emit + query-on-mount backfill" shape: the
  * daemon can start (and emit) before the webview finishes mounting its

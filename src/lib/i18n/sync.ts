@@ -100,8 +100,24 @@ export const sync: Record<string, string> = {
   'device.syncAllLabel': 'Sync with all paired devices',
   'device.syncAllButton': 'Sync All',
   'device.noPairedDevices': 'No paired devices. Click "Pair New Device" to get started.',
+  // Shown once mDNS init has failed — the state in which a first-ever pair is
+  // impossible, since the mDNS TXT record is the only pre-session carrier of a
+  // peer's endpoint_id. It must not offer a manual address as the way out: an
+  // unpaired peer has no row, so there is no address field, and the setting is
+  // only reachable once a pair has already succeeded. See
+  // sync_daemon::discovery::resolve_peer_address.
+  //
+  // Two reasons this stays hedged rather than reassuring:
+  //  - `useMdnsStatus.disabled` is STICKY (only ever set true, no success event
+  //    clears it), so this can outlive a transient failure a later init
+  //    recovered from.
+  //  - a paired row can carry a NULL endpoint_id: `bind_endpoint_id` is
+  //    best-effort at both sites and `server.rs`'s already_bound_elsewhere
+  //    branch skips it deliberately, after which resolve_peer_address returns
+  //    None and try_sync_with_peer bails without an event.
+  // So "may" is load-bearing — do not promote it to "can".
   'device.mdnsDisabledHint':
-    'Automatic discovery unavailable: {{reason}}. Add peers by address instead.',
+    'Automatic discovery unavailable: {{reason}}. Pairing a new device needs discovery working; devices you have already paired may still sync.',
   // #3864. Deliberately states only what the app can actually observe — the
   // address is outside the private ranges — and stops short of asserting the
   // device IS exposed, which it cannot know: a router handing out public

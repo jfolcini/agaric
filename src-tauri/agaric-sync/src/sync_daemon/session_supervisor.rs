@@ -187,9 +187,12 @@ pub(crate) async fn daemon_loop(
     // mDNS may fail on platforms where raw UDP sockets are blocked (e.g. iOS)
     // or when the Android multicast lock is missing. When this happens we
     // log a warning, emit `SyncEvent::MdnsDisabled` so the frontend can
-    // surface the reason, and continue without peer discovery. Sync still
-    // works via manual IP entry (stored in peer_refs); the mDNS branch in
-    // The select! loop is simply never triggered. See.
+    // surface the reason, and continue without peer discovery. There is no
+    // fallback for a peer that has never paired: a first pair needs an mDNS
+    // resolve to learn the peer's `endpoint_id` (see
+    // `sync_daemon::discovery::resolve_peer_address`). Already-paired peers
+    // can still be dialed via their cached `peer_refs.last_address`, once
+    // bound; the mDNS branch in the select! loop is simply never triggered.
     let mdns = handle_mdns_init_result(MdnsService::new(), &event_sink);
 
     // 2. Bind the LAN-only QUIC endpoint (responder mode — #615, #78).
@@ -753,7 +756,13 @@ pub(crate) fn handle_mdns_init_result(
         Err(e) => {
             let reason = e.to_string();
             tracing::warn!(error = %e, "mDNS initialization failed (peer discovery disabled)");
-            tracing::info!("Sync will work via manual IP entry only");
+            // Kept on ONE line and byte-identical to its `STABLE_MESSAGES` entry in
+            // `commands::bug_report`: the #700 drift guard scans concatenated source text
+            // for the quoted literal, so a `\`-continued literal would not match and the
+            // message would be silently redacted out of every bug report.
+            tracing::info!(
+                "mDNS disabled: no first-ever pair is possible; already-paired peers may still use a cached address"
+            );
             event_sink.on_sync_event(SyncEvent::MdnsDisabled {
                 reason: reason.clone(),
             });
