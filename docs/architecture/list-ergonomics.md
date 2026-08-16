@@ -139,20 +139,28 @@ invariants.
 
 - **Bullet:** `{bullet,"foo"} → "- foo" → {bullet,"foo"} → "- foo"`. Stable with
   a fixed canonical bullet char (`-`, matching `serializeBulletList`,
-  `markdown-serialize.ts:930`).
+  `markdown-serialize.ts`).
 - **Ordered:** the number is computed → import **discards** the literal and
   re-derives from position → export always emits positional numbers. `1./2./3.`
   is a fixpoint; non-canonical input (`1./1./1.`, `3./7.`) normalises on the
   first pass and is stable thereafter.
 
-Two requirements to actually get idempotence:
+Three requirements to actually get idempotence:
 
 1. **Canonical export** — fixed bullet char, fixed indent width
-   (`LIST_NEST_INDENT = '  '`, `markdown-serialize.ts:873`), positional numbers.
+   (`LIST_NEST_INDENT = '  '`, `markdown-common.ts` — shared by both halves,
+   since the parser dedents by exactly one level of it), positional numbers.
    Otherwise the first pass converges but is not a no-op.
 2. **Escape marker-like plain content** — a `listStyle: none` block whose text
    literally starts with `-` or `1.` must be escaped on export (`\- …`) and
-   unescaped on import, or it round-trips *into* a list.
+   unescaped on import, or it round-trips *into* a list. The two list markers
+   are escaped after **any** leading indent (`serializeParagraph`'s `^( *)-` /
+   `^( *)(\d+)\.` productions, each requiring a following space), not only at
+   column 0: a paragraph nested in a list item is exported indented and
+   re-imported *dedented* by the item's content column, so an indent too deep
+   to be a marker on the way out lands inside the import tolerance (below) on
+   the way back in. Heading / blockquote / horizontal rule need no such
+   widening — those productions are anchored at column 0.
 
    **Latent bug to fix as part of this work:** `stripBlockMarker`
    (`src/lib/block-type-convert.ts:48`) strips `-` / `1.` **unconditionally**,
@@ -161,17 +169,32 @@ Two requirements to actually get idempotence:
    `- bullet-ish`, `1. ordered-ish`, etc. round-trip back to a plain paragraph —
    so the fix is to bring `stripBlockMarker` (and the `convertBlockContent` path,
    same file) in line with that escaping contract.
+3. **Import tolerance: up to `MAX_MARKER_INDENT` (3) spaces before a marker**
+   (`markdown-parse/vocab.ts`). CommonMark allows up to three spaces before a
+   block start; a fourth begins indented-code territory. That tolerance is what
+   makes foreign markdown nested by **four** spaces import as a real sub-list:
+   the importer strips exactly one content column (two spaces) per level, so
+   such a sub-list reaches the recursive parse still carrying two residual
+   spaces. User-visible: a marker indented by one to three spaces starts a list;
+   at four or more it is paragraph text, and is re-exported escaped
+   (`\-` at that same indent). By the same arithmetic a single nesting step of
+   six spaces or more (from a marker at column 0) also lands outside the
+   tolerance and imports as paragraph text rather than as a sub-list — our own
+   export never emits that, but a foreign document can.
 
 **Caveat — the coarse (multi-line) block option.** Intra-block soft breaks
 (`Shift+Enter`) and indentation-based child nesting both want indentation in
 markdown. This is idempotent **only** if exporter and importer honour, byte for
 byte, **CommonMark's list-item continuation rule**: a line indented to the
 item's *content column* is a lazy continuation / soft break (same block); a line
-that is itself a deeper marker is a child block. The parser's existing
-`collectListItem` indent/dedent logic (`markdown-parse/parser.ts:473`) is the
-starting point but must be reconciled with the new "content column = marker
-width" convention. **Pin this rule down before building the coarse option**; the
-single-line model needs no such rule and should ship first.
+that is itself a deeper marker is a child block. `collectListItem`
+(`markdown-parse/parser.ts`) now implements the "content column = marker width"
+half of that convention (#4019): it measures the column from the item's **own**
+marker and dedents nested lines by exactly one content column, so indentation
+beyond that column belongs to the content rather than to the structure. The
+remaining half — lazy continuation of a paragraph across an unindented line —
+is still unimplemented and must be pinned down before building the coarse
+option; the single-line model needs no such rule and should ship first.
 
 ## Compatibility with existing content
 

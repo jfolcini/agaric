@@ -19,6 +19,20 @@ const WS_RE = /\s/
 export const ULID_RE = /^[0-9A-Z]{26}$/
 
 /**
+ * Indentation of ONE list-nesting level (#1513). Shared because the two halves
+ * must agree exactly: the serializer prefixes every non-leading child of a list
+ * item with it, and the parser recognizes a nested block by it and dedents by
+ * whole multiples of it. Two spaces is the `- ` marker width.
+ *
+ * The width is also the THRESHOLD: a line indented by less than one whole level
+ * is NOT nested content, it is a sibling block whose own text happens to start
+ * with a space (#4019). Treating any non-zero indent as nesting re-parented
+ * such a paragraph into the preceding item and re-emitted it at this width, so
+ * serialize→parse→serialize drifted from one space to two.
+ */
+export const LIST_NEST_INDENT = '  '
+
+/**
  * CommonMark-aligned flanking test for the contiguous `_` run containing
  * position `pos` of `src`. The flanking chars are taken from the FULL run in
  * both directions — `pos` may sit mid-run — so the rule always sees the run's

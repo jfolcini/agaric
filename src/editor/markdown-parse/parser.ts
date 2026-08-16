@@ -16,7 +16,12 @@
  * Zero external dependencies. O(n) in the input length.
  */
 
-import { scanBareUrl, underscoreRunFlank, WORD_CHAR_RE } from '@/editor/markdown-common'
+import {
+  LIST_NEST_INDENT,
+  scanBareUrl,
+  underscoreRunFlank,
+  WORD_CHAR_RE,
+} from '@/editor/markdown-common'
 import {
   BULLET_ITEM_RE,
   BULLET_TASK_RE,
@@ -414,13 +419,16 @@ export function parseHorizontalRule(lines: readonly string[], i: number): BlockP
   return { blocks: [block], consumed: 1 }
 }
 
-const ORDERED_ITEM_RE = /^(\d+)\. (.*)$/
+// `^ {0,3}` is the CommonMark marker-indent tolerance (see MAX_MARKER_INDENT
+// in ./vocab); groups 1/2 are the number and the item text, neither of which
+// includes the indentation.
+const ORDERED_ITEM_RE = /^ {0,3}(\d+)\. (.*)$/
 
 /**
  * Number of leading spaces on a line (its indentation). A line with no leading
  * space (an item marker at this list's level) has indent 0; nested content
- * lines emitted by the serializer are indented further (see LIST_NEST_INDENT
- * in markdown-serialize.ts).
+ * lines emitted by the serializer are indented by one whole `LIST_NEST_INDENT`
+ * per nesting level (see `markdown-common.ts`).
  */
 function leadingIndent(line: string): number {
   const m = line.match(/^ +/)
@@ -474,8 +482,8 @@ function collectHardBreakContinuations(
 /**
  * Collect the lines belonging to one list item that begins at `lines[start]`:
  * the marker line, any hard-break continuation lines (each preceding line
- * ending in an odd trailing backslash run — #1885), plus all subsequent
- * more-indented (nested) lines. Returns the item's paragraph lines (the marker
+ * ending in an odd trailing backslash run — #1885), plus all subsequent lines
+ * indented by at least one whole nesting level. Returns the item's paragraph lines (the marker
  * text followed by its continuations), the dedented nested lines, and the index
  * just past the item. `markerRe` must capture the item text in group 1 for
  * bullets and group 2 for ordered items (selected via `textGroup`).
@@ -497,22 +505,38 @@ function collectListItem(
     (itemMatch[textGroup] ?? '') as string,
     start + 1,
   )
+  // This item's CONTENT COLUMN: its own marker indentation plus one nesting
+  // level. The marker sits at column 0 in our own output, but at 1-3 for a
+  // foreign over-indented marker (the CommonMark tolerance, MAX_MARKER_INDENT),
+  // and the column must be measured from the marker — otherwise a sibling item
+  // of an over-indented list (`  - a` / `  - b`) would look "more indented than
+  // column 2" and be swallowed as a child of its own sibling.
+  const contentColumn = leadingIndent(lines[start] as string) + LIST_NEST_INDENT.length
   let j = next
   const nestedRaw: string[] = []
-  while (j < lines.length && leadingIndent(lines[j] as string) > 0) {
+  // Nesting is measured in WHOLE levels of `LIST_NEST_INDENT` — the width the
+  // serializer emits. A line indented by less than the content column is not
+  // this item's nested content but the next sibling block, whose own text
+  // merely starts with a space (`- x` followed by a paragraph ` a`); absorbing
+  // it re-parented the paragraph into the item and re-emitted it at the full
+  // nest indent, so serialize→parse→serialize drifted one space → two (#4019).
+  while (j < lines.length && leadingIndent(lines[j] as string) >= contentColumn) {
     nestedRaw.push(lines[j] as string)
     j++
   }
-  // Dedent the nested block by its own minimum indentation so the recursive
-  // parse sees the nested list at column 0 (round-trips the serializer's
-  // per-level indentation; #1513).
-  const minIndent = nestedRaw.reduce(
-    (min, line) => Math.min(min, leadingIndent(line)),
-    Number.POSITIVE_INFINITY,
-  )
-  const nested = Number.isFinite(minIndent)
-    ? nestedRaw.map((line) => line.slice(minIndent))
-    : nestedRaw
+  // Dedent by EXACTLY the content column — the exact inverse of the
+  // serializer's `indentLines` — so the recursive parse sees this item's own
+  // content at column 0 (#1513); deeper levels are stripped by the recursion,
+  // one per level. Dedenting by the block's minimum indent instead (the old
+  // rule) is not an inverse: it also ate indentation that is the nested block's
+  // own LEADING WHITESPACE — a nested paragraph `  a` emitted at `    a` came
+  // back as `a` and re-serialized at `  a`, drifting on every pass (#4019).
+  // This is the CommonMark "content column = marker width" rule
+  // (docs/architecture/list-ergonomics.md § Markdown round-trip): indentation
+  // beyond one content column belongs to the content, not to the structure —
+  // and where that residue is itself a marker (a 4-space-nested import leaves
+  // `  - child`), the marker-indent tolerance still reads it as a sub-list.
+  const nested = nestedRaw.map((line) => line.slice(contentColumn))
   return { textLines, nested, next: j }
 }
 

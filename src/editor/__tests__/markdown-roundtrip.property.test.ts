@@ -369,6 +369,22 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   doc(blockquote(paragraph(text('first quote'))), blockquote(paragraph(text('second quote')))),
   // task paragraph as first child of a listItem (`- - [ ]`)
   doc(bulletList(listItem(task('TODO', text('buy milk'))), listItem(paragraph(text('plain'))))),
+  // #4019: a list followed by a sibling paragraph whose text starts with a
+  // SPACE. `- \\` + `\n` + ` a` — the item text is an escaped backslash, so the
+  // trailing run is even and the next line is not a hard-break continuation
+  // either. The one-space line must stay a sibling paragraph; the parser used
+  // to absorb any non-zero indent as nested item content and re-emit it at the
+  // two-space nest indent. Both the one-space form and its two-space twin
+  // (genuinely nested content) are pinned as strings in
+  // `markdown-serializer.test.ts`.
+  doc(bulletList(listItem(paragraph(text('\\')))), paragraph(text(' a'))),
+  // the two-space twin: the paragraph IS nested content of the item
+  doc(bulletList(listItem(paragraph(text('\\')), paragraph(text('a'))))),
+  // #4019, the marker-indent twin (found by fuzzing the same adjacency): a
+  // sibling paragraph indented past the parser's 3-space marker tolerance is
+  // absorbed as nested content and comes back DEDENTED into that tolerance, so
+  // the leading marker must be escaped at every indent, not only at 0-3.
+  doc(bulletList(listItem(paragraph(text('a')))), paragraph(text('     - [x] a'))),
 ]
 
 /** Shapes that normalize (string changes once) before becoming stable. */
