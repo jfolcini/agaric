@@ -87,7 +87,7 @@ import {
   ScanError,
   blankStringsAndTemplates,
   findMatchingBracket,
-  findStatementEnd,
+  findStatementEndDetailed,
   stripComments,
   tokenize,
 } from './lib/js-scanner.mjs'
@@ -181,22 +181,23 @@ function extractFunctionAt(src, stripped, m) {
   const closeParenIdx = findMatchingBracket(stripped, openParenIdx)
   if (closeParenIdx === -1) return { text: null, reason: 'unbalanced' }
 
-  // `): { … } {` — the annotation itself opens with an object-type literal,
-  // whose braces are indistinguishable from the body's here. Refuse instead
-  // of hashing the signature-only prefix. Comments are already blanked to
-  // spaces in `stripped`, so skipping whitespace skips them too.
+  // Is there a return-type annotation at all? Comments are already blanked
+  // to spaces in `stripped`, so skipping whitespace skips them too.
+  let hasAnnotation = false
   {
     let k = closeParenIdx + 1
     while (k < stripped.length && isSpace(stripped[k])) k++
-    if (stripped[k] === ':') {
-      let q = k + 1
-      while (q < stripped.length && isSpace(stripped[q])) q++
-      if (stripped[q] === '{') return { text: null, reason: 'ambiguous-return-type' }
-    }
+    hasAnnotation = stripped[k] === ':'
   }
 
   let i = closeParenIdx + 1
   let angleDepth = 0
+  // Paren depth as well as angle depth: a function-TYPE parameter list in
+  // the annotation (`): (x: { a: string }) => void {`) puts an object-type
+  // literal at angle depth 0, and without this it was taken as the body
+  // open — the same signature-only truncation as the union case, found by
+  // auditing return-type shapes rather than reported.
+  let parenDepth = 0
   let bodyOpen = -1
   while (i < stripped.length) {
     const c = stripped[i]
@@ -210,8 +211,18 @@ function extractFunctionAt(src, stripped, m) {
       i++
       continue
     }
+    if (c === '(') {
+      parenDepth++
+      i++
+      continue
+    }
+    if (c === ')') {
+      if (parenDepth > 0) parenDepth--
+      i++
+      continue
+    }
     if (c === '{') {
-      if (angleDepth === 0) {
+      if (angleDepth === 0 && parenDepth === 0) {
         bodyOpen = i
         break
       }
@@ -225,6 +236,25 @@ function extractFunctionAt(src, stripped, m) {
   if (bodyOpen === -1) return { text: null, reason: 'unbalanced' }
   const bodyClose = findMatchingBracket(stripped, bodyOpen)
   if (bodyClose === -1) return { text: null, reason: 'unbalanced' }
+
+  // Was the brace we just took as the body actually an OBJECT-TYPE LITERAL
+  // inside the annotation? Testing only whether the annotation STARTS with
+  // `{` caught `): { a } {` but not `): Foo | { a } {` — the very union the
+  // docstring named as the defeating shape — where the probe saw `F`,
+  // declined, and the loop then took the literal's brace as the body,
+  // yielding signature-only text that stays green through arbitrary body
+  // drift. Position-independent test instead: if what follows the candidate
+  // brace's matching `}` continues a TYPE rather than ending the
+  // declaration, the candidate was a type literal and the real body is
+  // further right. Distinguishing them needs a type grammar, so refuse.
+  if (hasAnnotation) {
+    let k = bodyClose + 1
+    while (k < stripped.length && isSpace(stripped[k])) k++
+    const next = stripped[k]
+    if (next === '{' || next === '|' || next === '&' || next === '[') {
+      return { text: null, reason: 'ambiguous-return-type' }
+    }
+  }
 
   return { text: src.slice(declStart, bodyClose + 1), reason: null }
 }
@@ -279,8 +309,11 @@ function extractConstAt(src, stripped, m) {
   }
   if (initStart === -1) return { text: null, reason: 'no-initializer' }
 
-  const end = findStatementEnd(stripped, initStart)
-  if (end === null) return { text: null, reason: 'unbalanced' }
+  // The scanner reports WHY it refused. Mapping every `null` to
+  // `unbalanced` presented its DELIBERATE fail-closed rules as bracket
+  // errors, naming neither the cause nor the remedy its header spells out.
+  const { end, reason } = findStatementEndDetailed(stripped, initStart)
+  if (end === null) return { text: null, reason }
   return { text: src.slice(declStart, end), reason: null }
 }
 
@@ -558,6 +591,17 @@ function checkTree({ root, harnessDir }) {
           message = `${where}, but no such function or const exists there anymore (renamed or removed — the clone is orphaned)`
         } else if (reason === 'no-initializer') {
           message = `${where}, which is declared without an initializer — there is no expression to hash`
+        } else if (reason === 'ambiguous-angle-line-end') {
+          message =
+            `${where}, whose initializer has a line ending in \`>\`. That is either a closing ` +
+            'JSX element (expression complete) or a dangling relational operator (expression ' +
+            'incomplete), and no lexer can tell them apart — guessing one way over-extends into ' +
+            'the next statement, the other hashes a truncated prefix. The scanner refuses ' +
+            'instead. Reformat the initializer so no line ends in `>`, or pin a different symbol.'
+        } else if (reason === 'dangling-operator') {
+          message =
+            `${where}, whose initializer ends dangling on an operator, so there is no defensible ` +
+            'end offset to hash. This usually means the declaration is genuinely incomplete.'
         } else if (reason === 'ambiguous-return-type') {
           message =
             `${where}, whose return-type annotation begins with an object-type literal ` +
@@ -594,8 +638,19 @@ function checkTree({ root, harnessDir }) {
 // Only run as a CLI when this file IS the entry point. Imported (by the
 // falsification harness in the self-test, or by an ad-hoc script), it is
 // a library and must not exit the process.
-const isMainModule =
-  !!process.argv[1] && fs.realpathSync(import.meta.filename) === fs.realpathSync(process.argv[1])
+// Guarded — see the same note in scripts/lib/js-scanner.mjs: this runs at
+// module evaluation, so an unresolvable `process.argv[1]` would throw before
+// any export exists and break every importer.
+const isMainModule = (() => {
+  try {
+    return (
+      !!process.argv[1] &&
+      fs.realpathSync(import.meta.filename) === fs.realpathSync(process.argv[1])
+    )
+  } catch {
+    return false
+  }
+})()
 
 if (isMainModule) {
   if (process.argv.includes('--self-test')) {
@@ -811,6 +866,82 @@ export function scanExample(
     )
   }
 
+  // The other arrangement of the same tokens: the object-type literal is
+  // the SECOND arm of the union, so a probe that only inspects the first
+  // character of the annotation sees `F`, declines to refuse, and the
+  // angle-depth loop then takes the literal's brace as the body open —
+  // signature-only text, stable hash, green through arbitrary body drift.
+  // The docstring named this exact shape as the defeating one while the
+  // implementation covered only the half where the literal comes first.
+  for (const [annotation, label] of [
+    ['Foo | { a: string }', 'the literal SECOND in a union'],
+    ['{ a: string } | Foo', 'the literal FIRST in a union'],
+    ['Foo & { a: string }', 'an intersection'],
+    ['{ a: string }[]', 'an array of an object type'],
+    ['() => { a: string }', 'a function type returning a literal'],
+  ]) {
+    const mk = (body) => `export function f(): ${annotation} {\n  ${body}\n}\n`
+    const ea = extractPinned(mk('return x'), 'f')
+    const eb = extractPinned(mk('return totallyDifferent(1, 2, 3)'), 'f')
+    if (ea.text === null && ea.reason === 'ambiguous-return-type' && eb.text === null) {
+      ok(`an object-type literal in the return annotation FAILS CLOSED (${label})`)
+    } else {
+      fail(
+        `an object-type literal in the return annotation FAILS CLOSED (${label})`,
+        JSON.stringify({ a: ea, b: eb }),
+      )
+    }
+  }
+
+  // The const-pin path's own instance of the same class: a comma inside
+  // generic type arguments truncated the initializer to a stable prefix.
+  // `src/lib/prefetch-page-subtree.ts#prefetchMap` is this shape live.
+  {
+    const mk = (valueType) =>
+      `const prefetchMap = new Map<string, ${valueType}>()\nconst after = 1\n`
+    const ea = extractPinned(mk('PrefetchEntry'), 'prefetchMap')
+    const eb = extractPinned(mk('SomethingElseEntirely'), 'prefetchMap')
+    const same =
+      ea.text !== null &&
+      eb.text !== null &&
+      sha256hex(canonicalize(ea.text)) === sha256hex(canonicalize(eb.text))
+    if (ea.text === 'const prefetchMap = new Map<string, PrefetchEntry>()' && !same) {
+      ok('a generic const initializer extracts fully, so a changed type parameter changes the hash')
+    } else {
+      fail(
+        'a generic const initializer extracts fully, so a changed type parameter changes the hash',
+        JSON.stringify({ a: ea.text, b: eb.text, identicalHash: same }),
+      )
+    }
+  }
+
+  // An object-type literal that is unambiguously INSIDE a function-type
+  // parameter list is not a candidate body at all, so it extracts fully
+  // rather than being refused. Found by auditing return-type shapes rather
+  // than by review: the body-open loop tracked angle depth but not paren
+  // depth, and took this literal's brace as the body open.
+  for (const [annotation, label] of [
+    ['(x: { a: string }) => void', 'a literal inside a function-type parameter'],
+    ['Record<string, { a: number }>', 'a literal inside generic arguments'],
+    ['Map<string, Array<{ a: 1 }>>', 'a deeply nested literal'],
+  ]) {
+    const mk = (body) => `export function f(): ${annotation} {\n  ${body}\n}\n`
+    const ea = extractPinned(mk('return one'), 'f')
+    const eb = extractPinned(mk('return totallyDifferent(1, 2, 3)'), 'f')
+    const driftVisible =
+      ea.text !== null &&
+      eb.text !== null &&
+      sha256hex(canonicalize(ea.text)) !== sha256hex(canonicalize(eb.text))
+    if (ea.text?.includes('return one') && driftVisible) {
+      ok(`an unambiguous nested object-type literal still extracts the full body (${label})`)
+    } else {
+      fail(
+        `an unambiguous nested object-type literal still extracts the full body (${label})`,
+        JSON.stringify({ text: ea.text, reason: ea.reason, driftVisible }),
+      )
+    }
+  }
+
   // Positive controls: the shapes that must keep extracting. A generic
   // wrapper (`Array<{…}>`) and a plain named return type both start their
   // annotation with something other than `{`.
@@ -968,6 +1099,30 @@ const AFTER = 2
     ok('top-level declarations are still found after anchoring')
   } else {
     fail('top-level declarations are still found after anchoring', JSON.stringify(extTopLevelStill))
+  }
+
+  // The scanner's DELIBERATE fail-closed rules must not all surface as
+  // "unbalanced brackets", which named neither the cause nor the remedy.
+  // The reason is produced by the code that makes the decision, not
+  // re-derived here — a second copy of the rule is the failure mode this
+  // whole PR removes, and the first attempt at one misclassified a
+  // genuinely unbalanced initializer as a dangling operator.
+  for (const [src, name, wantReason, label] of [
+    [
+      'const El = <div>x</div>\nconst after = 1\n',
+      'El',
+      'ambiguous-angle-line-end',
+      'a JSX-valued const',
+    ],
+    ["const P =\n  'head' +\n", 'P', 'dangling-operator', 'an initializer dangling on an operator'],
+    ['const X = foo(\n  1,\n', 'X', 'unbalanced', 'a genuinely unbalanced initializer'],
+  ]) {
+    const r = extractPinned(src, name)
+    if (r.text === null && r.reason === wantReason) {
+      ok(`${label} refuses with reason \`${wantReason}\``)
+    } else {
+      fail(`${label} refuses with reason \`${wantReason}\``, JSON.stringify(r))
+    }
   }
 
   const extNoInit = extractPinned('let LATER: number\nLATER = 1\n', 'LATER')

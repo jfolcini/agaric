@@ -462,7 +462,13 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
   // `): ` and the `{` that opens the annotated function's body.
   let returnTypeContext = false
   let returnTypeAngleDepth = 0
-  let ternaryDepth = 0
+  // Ternary colons are matched at the BRACKET DEPTH their `?` opened at. A
+  // bare counter let an object-literal key colon (`f({ a: 1 })`) spend the
+  // ternary's budget, so the real ternary colon then looked like a
+  // return-type colon and classified the alternative's object literal as a
+  // block — the opposite error from the one `returnTypeContext` fixes.
+  const ternaryStack = []
+  let bracketDepth = 0
   let i = from
 
   while (i < to) {
@@ -641,6 +647,11 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
     // the "`}` → REGEX if that `{` opened a BLOCK" row never fired for the
     // most common shape in a `.ts`/`.tsx` codebase. `returnTypeContext`
     // carries "a `:` directly after a `)`" forward across the type's tokens.
+    if (value === '(' || value === '[' || value === '{') bracketDepth++
+    else if (value === ')' || value === ']' || value === '}') {
+      if (bracketDepth > 0) bracketDepth--
+    }
+
     if (value === '?') {
       // Only a BARE `?` reaches here — `?.` and `??` are single tokens
       // above. What remains to exclude is the optional parameter/property
@@ -648,10 +659,10 @@ export function* tokenize(src, { from = 0, to = src.length, initialPrev = null }
       // stay available to the return-type rule.
       let k = i
       while (k < to && isWs(src[k])) k++
-      if (src[k] !== ':') ternaryDepth++
+      if (src[k] !== ':') ternaryStack.push(bracketDepth)
     } else if (value === ':') {
-      if (ternaryDepth > 0) {
-        ternaryDepth--
+      if (ternaryStack.length > 0 && ternaryStack.at(-1) === bracketDepth) {
+        ternaryStack.pop()
       } else if (prev !== null && prev.kind === 'punct' && prev.value === ')') {
         returnTypeContext = true
         returnTypeAngleDepth = 0
@@ -918,6 +929,15 @@ function leavesExpressionIncomplete(tok) {
  * b = 2`), or an automatic-semicolon boundary: a newline after which the
  * next significant token cannot continue the expression.
  *
+ * A comma inside GENERIC TYPE ARGUMENTS is not a declarator boundary, so
+ * angle depth is tracked alongside `()[]{}` depth and a comma seen while
+ * `angleDepth > 0` is skipped (`new Map<string, T>()` is one statement).
+ * `<=` and `<<` are excluded, being operators rather than argument lists.
+ * `<` is genuinely ambiguous between a generic and a comparison; if a comma
+ * was skipped on the strength of a `<` that never closes, the `<` was a
+ * comparison and the skip ate a real boundary, so that combination returns
+ * `null` rather than swallowing the next declarator.
+ *
  * Returns the end offset of the LAST token of the expression (so a
  * trailing comment on the same line is not included), or `null` if the
  * brackets never balance (fail closed).
@@ -926,10 +946,42 @@ function leavesExpressionIncomplete(tok) {
  * path, not the exotic one.
  */
 export function findStatementEnd(src, from) {
+  return findStatementEndDetailed(src, from).end
+}
+
+/**
+ * `findStatementEnd`, but reporting WHY it refused: `{ end, reason }` where
+ * `end` is `null` on refusal and `reason` is one of `unbalanced`,
+ * `ambiguous-angle-line-end` (a line ending in `>` — a closing JSX element
+ * and a dangling relational operator are indistinguishable here) or
+ * `dangling-operator`. Callers surface these so the scanner's DELIBERATE
+ * fail-closed rules do not all report as "unbalanced brackets", which named
+ * neither the cause nor the remedy. The reason is produced by the code that
+ * makes the decision — re-deriving it in the caller means maintaining a
+ * second copy of this rule, which is the failure mode this module exists to
+ * remove.
+ */
+export function findStatementEndDetailed(src, from) {
+  const R = (end, reason = null) => ({ end, reason })
   let depth = 0
+  // Generic type arguments. Without this, the depth-0 comma branch below
+  // fired INSIDE `new Map<string, T>()` and returned at the comma, so
+  // `extractConstAt` hashed `const m = new Map<string` — a stable sha256
+  // over a truncated prefix with the value type freely rewritable behind a
+  // green pin. `extractConstAt`'s pre-`=` scan had tracked angle depth all
+  // along; this function had not, which made it an oversight rather than a
+  // chosen corner.
+  let angleDepth = 0
+  let suppressedComma = false
   let lastSignificantEnd = null
   let lastSignificantTok = null
   let sawNewlineSinceLastToken = false
+
+  // `<` is ambiguous between a generic and a comparison, and nothing
+  // lexical settles it. Suppressing a comma on the strength of a `<` that
+  // never closes means the `<` was a comparison and the suppression ate a
+  // real declarator boundary, so that combination refuses instead.
+  const unbalancedSuppression = () => suppressedComma && angleDepth !== 0
 
   for (const tok of tokenize(src, { from })) {
     if (tok.kind === 'ws') {
@@ -960,7 +1012,7 @@ export function findStatementEnd(src, from) {
       lastSignificantTok.kind === 'punct' &&
       lastSignificantTok.value === '>'
     ) {
-      return null
+      return R(null, 'ambiguous-angle-line-end')
     }
     if (
       depth === 0 &&
@@ -972,16 +1024,26 @@ export function findStatementEnd(src, from) {
         (tok.kind === 'punct' && EXPR_CONTINUATION_PUNCT.has(tok.value)) ||
         tok.kind === 'template' ||
         (tok.kind === 'ident' && EXPR_CONTINUATION_KEYWORD.has(tok.value))
-      if (!continues) return lastSignificantEnd
+      if (!continues) return unbalancedSuppression() ? R(null, 'unbalanced') : R(lastSignificantEnd)
     }
     if (tok.kind === 'punct') {
       const v = tok.value
       if (v === '(' || v === '[' || v === '{') depth++
       else if (v === ')' || v === ']' || v === '}') {
         depth--
-        if (depth < 0) return lastSignificantEnd
-      } else if (depth === 0 && (v === ';' || v === ',')) {
-        return lastSignificantEnd
+        if (depth < 0)
+          return unbalancedSuppression() ? R(null, 'unbalanced') : R(lastSignificantEnd)
+      } else if (depth === 0 && v === '<' && src[tok.end] !== '=' && src[tok.end] !== '<') {
+        // `<=` and `<<` are operators, never a generic argument list.
+        angleDepth++
+      } else if (depth === 0 && v === '>' && angleDepth > 0) {
+        angleDepth--
+      } else if (depth === 0 && v === ';') {
+        return unbalancedSuppression() ? R(null, 'unbalanced') : R(lastSignificantEnd)
+      } else if (depth === 0 && v === ',') {
+        if (angleDepth === 0)
+          return unbalancedSuppression() ? R(null, 'unbalanced') : R(lastSignificantEnd)
+        suppressedComma = true
       }
     }
     lastSignificantEnd = tok.end
@@ -989,18 +1051,28 @@ export function findStatementEnd(src, from) {
     sawNewlineSinceLastToken = false
   }
 
-  if (depth !== 0) return null
+  if (depth !== 0) return R(null, 'unbalanced')
+  if (unbalancedSuppression()) return R(null, 'unbalanced')
   // Ran out of input with the expression still dangling on an operator:
   // there is no defensible end offset, so refuse rather than report the
   // operator's own end (which is how the truncation above used to look).
-  if (leavesExpressionIncomplete(lastSignificantTok)) return null
-  return lastSignificantEnd
+  if (leavesExpressionIncomplete(lastSignificantTok)) return R(null, 'dangling-operator')
+  return R(lastSignificantEnd)
 }
 
 // ─── self-test ──────────────────────────────────────────────────────
 
-const isMainModule =
-  !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
+// Guarded: this runs at MODULE EVALUATION, before any export exists, so an
+// unresolvable `process.argv[1]` (ENOENT) would throw and an importer would
+// die with a path error instead of getting the library. Not being the entry
+// point is the safe answer to "I could not resolve the entry point".
+const isMainModule = (() => {
+  try {
+    return !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
+  } catch {
+    return false
+  }
+})()
 
 if (isMainModule && process.argv.includes('--self-test')) {
   runSelfTest()
@@ -1288,6 +1360,23 @@ function runSelfTest() {
     })(),
     'see source',
   )
+
+  {
+    // An object-literal KEY colon is not a ternary colon. Decrementing on
+    // any `:` let `cond ? f({ a: 1 }) : { b: 2 }` consume the ternary's
+    // budget on the `a:` key, so the real ternary colon saw depth 0 with a
+    // preceding `)` and set `returnTypeContext` — classifying the
+    // ALTERNATIVE's object literal as a block, the opposite direction from
+    // the round-three fix. Ternary colons are matched at the bracket depth
+    // their `?` opened at.
+    const src = 'const v = cond ? f({ a: 1 }) : { b: 2 }\n/re/.test(s)'
+    const closes = [...tokenize(src)].filter((t) => t.kind === 'punct' && t.value === '}')
+    check(
+      'an object-literal key colon does not consume the ternary colon',
+      closes.every((t) => t.blockClose === false) && regexes(src).length === 0,
+      `blockClose=${JSON.stringify(closes.map((t) => t.blockClose))} regexes=${JSON.stringify(regexes(src))}`,
+    )
+  }
 
   {
     // Regression guard on the fix above: a `:` that belongs to a TERNARY,
@@ -1661,6 +1750,69 @@ function runSelfTest() {
       'findStatementEnd stops at a top-level `,` (multi-declarator)',
       end !== null && src.slice(src.indexOf('1'), end) === '1',
       JSON.stringify(end === null ? null : src.slice(src.indexOf('1'), end)),
+    )
+  }
+
+  // A comma inside GENERIC TYPE ARGUMENTS is not a declarator boundary.
+  // `findStatementEnd` tracked round/square/curly depth but not ANGLE depth,
+  // so `new Map<string, T>()` returned at the comma after `string` and
+  // `extractConstAt` hashed `const m = new Map<string` — a stable sha256
+  // over a truncated prefix, with the value type freely rewritable behind a
+  // green pin. `extractConstAt`'s own pre-`=` scan has tracked `angleDepth`
+  // for exactly this reason all along; this function simply did not.
+  // ~20 top-level consts in `src/` already have the shape.
+  for (const [init, label] of [
+    ['new Map<string, PrefetchEntry>()', 'a generic constructor call'],
+    ['new Map<string, Map<string, number>>()', 'nested generic arguments'],
+    ['wrap<Handler<string, number>>((a) => a)', 'a generic arrow argument'],
+    ['useMemo<Record<string, number>>(() => ({}), [])', 'a generic hook call'],
+  ]) {
+    const src = `const m = ${init}\nconst after = 1\n`
+    const at = src.indexOf('=') + 2
+    const end = findStatementEnd(src, at)
+    check(
+      `a comma inside ${label} is not a declarator boundary`,
+      end !== null && src.slice(at, end) === init,
+      JSON.stringify(end === null ? null : src.slice(at, end)),
+    )
+  }
+
+  {
+    // Fail-closed backstop for the `<`-is-ambiguous case: if a depth-0 comma
+    // was suppressed on the strength of an angle bracket that never closes,
+    // the `<` was a comparison and the suppression was wrong. Refuse rather
+    // than swallow the next declarator.
+    const src = 'const m = a < b, c\nconst after = 1\n'
+    const at = src.indexOf('=') + 2
+    check(
+      'a suppressed comma whose angle bracket never closes returns null (fails closed)',
+      findStatementEnd(src, at) === null,
+      JSON.stringify(findStatementEnd(src, at)),
+    )
+  }
+
+  {
+    // The same backstop reached at END OF INPUT rather than at an ASI
+    // boundary — a separate return path, and one no assertion covered until
+    // a mutation of it survived.
+    const src = 'const m = a < b, c'
+    const at = src.indexOf('=') + 2
+    check(
+      'the suppressed-comma backstop also fires at end of input',
+      findStatementEnd(src, at) === null,
+      JSON.stringify(findStatementEnd(src, at)),
+    )
+  }
+
+  {
+    // …and a plain comparison with no comma after it still terminates.
+    const src = 'const m = a < b\nconst after = 1\n'
+    const at = src.indexOf('=') + 2
+    const end = findStatementEnd(src, at)
+    check(
+      'a plain `<` comparison still terminates at the ASI boundary',
+      end !== null && src.slice(at, end) === 'a < b',
+      JSON.stringify(end === null ? null : src.slice(at, end)),
     )
   }
 

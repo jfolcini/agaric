@@ -435,3 +435,104 @@ assertion. A mutant that "dies" because the harness could not load it proves not
 that is worth remembering the next time a mutation sweep looks unanimously green. Re-run
 inside `scripts/`, all six die on real assertions. Counts: 86 → 96 scanner, 40 → 42
 clones, 29 → 31 setProperty. 13 pins resolve; sweep 1781 files, zero `ScanError`s.
+
+## Round five: both must-fixes were the same class, and one had a residual
+
+CHANGES_REQUESTED with two MUST FIX items, both silent truncation — a stable sha256 over
+a prefix, no `ScanError`, no `unbalanced`, pin green through arbitrary drift. The reviewer
+could not execute node, so both came from reading. Both reproduced exactly.
+
+### MUST FIX 1 — `findStatementEnd` split on a comma inside generic type arguments
+
+Verbatim, against the live file the review named:
+
+```
+reason  : null
+>>>const prefetchMap = new Map<string<<<
+hash    : b0f72f93b10dd86640cf512ce2adf35f4a686a3cf6086419ad93a89c08695f59
+```
+
+Changing the value type left the hash byte-identical (`b0f72f93…` both sides). The damning
+detail was the reviewer's: `extractConstAt`'s own pre-`=` scan has tracked `angleDepth`
+since #3953 landed, for exactly this reason. `findStatementEnd` simply did not — an
+oversight, not a chosen corner, and ~20 top-level consts in `src/` already have the shape.
+
+Fixed by tracking angle depth alongside `()[]{}` depth. `<` is genuinely ambiguous between
+a generic and a comparison, so there is a backstop: if a comma was skipped on the strength
+of a `<` that never closes, the `<` was a comparison and the skip ate a real declarator
+boundary, so that combination returns `null`.
+
+### MUST FIX 2 — the #3971 refusal covered the half its own docstring called hard
+
+The probe skipped whitespace after the parameter list, tested for `:`, skipped whitespace,
+and refused only if the very next character was `{`. The docstring three lines above named
+`): { a } | { b } {` as the shape that defeats any skip-one-literal heuristic — and the
+implementation covered only the arrangement where the literal comes first. For
+`): Foo | { a: string } {` the probe saw `F`, declined, and the body-open loop took the
+literal's brace as the body:
+
+```
+A extracted: "export function f(): Foo | { a: string }"
+B extracted: "export function f(): Foo | { a: string }"
+*** FAIL-OPEN: identical hash across arbitrary body drift ***
+```
+
+So what I reported last round as closing #3971 closed half of it, and the half it missed
+was written down in the docstring directly above the code. Replaced with a
+position-independent test: find the candidate brace, find its match, and if what follows
+continues a TYPE (`{`, `|`, `&`, `[`) rather than ending the declaration, the candidate
+was a type literal and the real body is further right — refuse.
+
+### The residual the audit found, that neither review did
+
+Running the audit-as-executable-probes pass over return-type shapes — the same procedure
+that round four adopted after `??` — turned up a third instance the reviewer had not
+listed: `): (x: { a: string }) => void {`. The body-open loop tracked angle depth but not
+PAREN depth, so a literal inside a function-type parameter list was taken as the body
+open. Same silent-truncation class, `driftVisible=false`.
+
+It is worth noting what the right fix was, because my first assertion demanded the wrong
+one. I wrote it expecting a refusal, by analogy with the union case. But a literal inside a
+parameter list is not ambiguous at all — tracking paren depth makes it extract *correctly*.
+Refusing would have been a worse outcome dressed as rigour. The assertion moved to a
+positive control asserting full extraction with drift visible. Fail-closed is the right
+default when a thing is undecidable; it is not a substitute for deciding when you can.
+
+After the fix the return-type audit reports **0 silent truncations** across 14 shapes, and
+the const-pin audit **17/17**.
+
+### Non-blocking notes 1–4
+
+- **1** (fixed): an object-literal KEY colon decremented `ternaryDepth`, so in
+  `cond ? f({ a: 1 }) : { b: 2 }` the `a:` spent the ternary's budget, the real ternary
+  colon then looked like a return-type colon, and the ALTERNATIVE's object literal was
+  classified as a block — `blockClose=[false,true]`, and a following `/re/` lexed as a
+  regex. This is the opposite error from the one round three's `returnTypeContext` fixed.
+  Ternary colons are now matched at the bracket depth their `?` opened at. It did not
+  reproduce on my first fixture (an intervening `=` clears the context) — worth recording,
+  because "it didn't reproduce" nearly became the finding.
+- **2** (fixed): every `null` from `findStatementEnd` was reported as "unbalanced
+  brackets", so both DELIBERATE fail-closed rules surfaced as bracket errors naming
+  neither cause nor remedy. My first attempt re-derived the reason in the guard by
+  inspecting the source — and promptly misclassified a genuinely unbalanced initializer as
+  a dangling operator. That is a second copy of the rule, which is the exact failure this
+  entire PR exists to remove. Replaced with `findStatementEndDetailed`, which returns the
+  reason from the code that makes the decision.
+- **3** (fixed): `realpathSync(process.argv[1])` ran unguarded at module evaluation in all
+  three scripts, so an unresolvable `argv[1]` threw `ENOENT` before any export existed —
+  confirmed by importing with a bogus `argv[1]`. Now `try`/`catch` → `false`.
+- **4** (fixed): the `findStatementEnd` docstring said it stops at a top-level comma with
+  no mention of generics; it now states how a comma inside angle brackets is distinguished.
+
+### Coverage
+
+All 9 new assertions demonstrated RED first — 6 scanner, 3 clones. Six mutations cover the
+new code; one initially SURVIVED (the suppressed-comma backstop reached at end of input
+rather than at an ASI boundary is a separate return path, and no fixture reached it), so an
+assertion was added and it now dies. Counts: 96 → 104 scanner, 42 → 54 clones, 31
+setProperty. 13 pins resolve; sweep 1781 files, zero `ScanError`s.
+
+**#3971 status:** the audit now reports zero silent truncations across every return-type
+shape probed, so the refusal is complete as far as testing reaches. Two independent
+arrangements of the same tokens were missed on the first attempt, though, so "complete"
+here means "no probe finds one", not "proved exhaustive".

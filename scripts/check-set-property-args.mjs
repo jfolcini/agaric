@@ -351,8 +351,19 @@ function analyzeTree({ root, srcDir }) {
 // Only run as a CLI when this file IS the entry point. Imported (by an
 // ad-hoc comparison script, say), it is a library and must not scan the
 // tree or exit the process.
-const isMainModule =
-  !!process.argv[1] && fs.realpathSync(import.meta.filename) === fs.realpathSync(process.argv[1])
+// Guarded — see the same note in scripts/lib/js-scanner.mjs: this runs at
+// module evaluation, so an unresolvable `process.argv[1]` would throw before
+// any export exists and break every importer.
+const isMainModule = (() => {
+  try {
+    return (
+      !!process.argv[1] &&
+      fs.realpathSync(import.meta.filename) === fs.realpathSync(process.argv[1])
+    )
+  } catch {
+    return false
+  }
+})()
 
 if (isMainModule) {
   if (process.argv.includes('--self-test')) {
