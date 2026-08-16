@@ -46,9 +46,14 @@
 //!   process regardless of group membership. (That file's own rationale
 //!   for the group predates this correction and still reads in
 //!   same-process terms; it carries an OPEN QUESTION block saying so.)
-//!   See the module docs of
-//!   `materializer::handlers::create_edit_convergence_tests` and its
-//!   delta-asserting peers for the per-file statement of this.
+//!
+//!   This paragraph is the CANONICAL statement of the mechanism (#3983 —
+//!   it used to be duplicated near-verbatim across seven places and drifted
+//!   in all of them at once). The delta-asserting peer files —
+//!   `materializer::handlers::{tag,move,delete_restore}_convergence_tests`,
+//!   `apply_reproject_proptest`, and `restore_cascade_tests` — each carry
+//!   only a one-line pointer back to this paragraph; they do not restate
+//!   it. Edit the mechanism HERE, not there.
 //!
 //! `crate::merge::engine_apply` stays Tauri-agnostic: it takes
 //! `&LoroState` as a parameter and never touches an `AppHandle`.
