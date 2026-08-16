@@ -217,8 +217,14 @@ export function foldForFtsIndex(s: string): string {
  * where this happily matches. What #3938 changed is the HAYSTACK and the FOLD
  * — see {@link stripForFts} and {@link foldForFtsIndex}.
  *
- * An empty needle admits every row, matching {@link matchesSearchFolded}'s
- * convention; no caller reaches it (every arm tests blank-ness first).
+ * An empty needle admits every row. The `search_blocks` arms all test
+ * blank-ness before calling in, but the `Contains` filter of
+ * `query_backlinks_filtered` does NOT (`handlers/links.ts`), so that branch IS
+ * reachable — and the backend
+ * returns an EMPTY set there instead (`filters.rs:382`, `:957`, on
+ * `query.trim().is_empty()`). Note `trim()`: a whitespace-only query is
+ * blank to the backend and a three-space substring test here. Both gaps are
+ * query-side, predate the #4022 seam, and are named at that call site.
  */
 export function matchesFtsIndex(stripped: string, query: string): boolean {
   if (query === '') return true
