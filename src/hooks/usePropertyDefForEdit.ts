@@ -173,6 +173,16 @@ export function usePropertyDefForEdit(
         setIsRefProp(false)
         // A failed lookup degrades to the plain text input, so the commit path
         // gets the matching 'text' type rather than being blocked forever.
+        //
+        // #4041 review note 5 — deliberately NOT the same policy as
+        // `BlockPropertyEditor`'s own late lookup, which aborts the commit on
+        // an IPC failure instead of degrading. The two are recorded as a known
+        // split, not an oversight: here the failure happens before the user has
+        // typed anything, so degrading only picks the input widget and the user
+        // still sees what they are editing; there it happens with typed text in
+        // hand, where guessing a type is how #3275 wrote a date string through
+        // `Number(...)` into `value_num`. If these are ever unified, unify
+        // towards the abort — it is the conservative one.
         setResolvedType({ key, spaceId, valueType: 'text' })
       })
     return () => {

@@ -23,6 +23,7 @@ import {
   handleDeleteProperty,
   handleSaveProperty,
   NON_DELETABLE_PROPERTIES,
+  renameMayDeclareKey,
 } from '@/lib/property-save-utils'
 import type { PropertyDefinition } from '@/lib/tauri'
 
@@ -416,5 +417,50 @@ describe('carriedRenameDefinition', () => {
     expect(
       carriedRenameDefinition({ value_type: 'select', options: '["a"]' }, row({ value_ref: 'B2' })),
     ).toEqual({ valueType: 'select', options: '["a"]' })
+  })
+})
+
+// #4041 review notes 3 + 4 — the rename must only DECLARE a key whose
+// declaration it could withdraw again, because the value write that follows can
+// still fail and `delete_property_def_inner` refuses to remove a definition for
+// a builtin key or for one any `block_properties` row references.
+describe('renameMayDeclareKey', () => {
+  /** Backend stand-in: `get_property_def` + `list_property_keys`. */
+  function installBackend(defs: Record<string, unknown>, keysInUse: string[]) {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'get_property_def') return defs[(args as { key: string }).key] ?? null
+      if (cmd === 'list_property_keys') return keysInUse
+      return null
+    })
+  }
+
+  it('allows a fresh, unused, non-builtin key', async () => {
+    installBackend({}, ['estimate'])
+    expect(await renameMayDeclareKey('effortPoints')).toBe(true)
+  })
+
+  it('refuses a key any block already holds a value for', async () => {
+    // The un-exitable state: the definition could never be deleted again while
+    // those rows exist, so it must not be written in the first place.
+    installBackend({}, ['estimate', 'status'])
+    expect(await renameMayDeclareKey('status')).toBe(false)
+  })
+
+  it('refuses an already-declared key — that row is not this rename to withdraw', async () => {
+    installBackend(
+      { effortPoints: { key: 'effortPoints', value_type: 'text', options: null, created_at: 'T' } },
+      [],
+    )
+    expect(await renameMayDeclareKey('effortPoints')).toBe(false)
+  })
+
+  it('refuses builtin and column-backed keys without any lookup', async () => {
+    installBackend({}, [])
+    // `delete_property_def_inner` refuses every `is_builtin_property_key`, so
+    // such a declaration is permanent the moment it lands.
+    for (const key of ['repeat', 'created_at', 'completed_at', 'due_date', 'space']) {
+      expect(await renameMayDeclareKey(key)).toBe(false)
+    }
+    expect(mockedInvoke).not.toHaveBeenCalled()
   })
 })

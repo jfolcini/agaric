@@ -10,9 +10,36 @@ import { axe } from 'vitest-axe'
 const RESERVED_KEYS = new Set(['todo_state', 'priority', 'due_date', 'scheduled_date'])
 
 /**
+ * The keys `is_builtin_property_key` (`src-tauri/agaric-store/src/op.rs`)
+ * covers — the four reserved ones plus the lifecycle keys — i.e. exactly the
+ * set `delete_property_def_inner` refuses to delete a definition for.
+ */
+const BUILTIN_KEYS = new Set([
+  ...RESERVED_KEYS,
+  'created_at',
+  'completed_at',
+  'repeat',
+  'repeat-until',
+  'repeat-count',
+  'repeat-seq',
+  'repeat-origin',
+])
+
+/**
  * Payload-shape rules of `validate_set_property`
  * (`src-tauri/agaric-store/src/op.rs:531`), returning the backend's error
  * string or `null` when the payload is accepted.
+ *
+ * HAND-PORT — the twin of `validate_set_property` in
+ * `src-tauri/agaric-store/src/op.rs` (which carries a pointer back to this
+ * function). There is no automated drift guard between the two: if you change
+ * the payload rules on either side, change them here as well, or this suite
+ * goes back to accepting a payload the backend rejects — the exact blindness
+ * that hid the all-null rename clear below. It models the payload SHAPE rules
+ * only, not `validate_property_value` steps 3-5 in
+ * `agaric-engine/src/block_ops.rs` (reserved-key field shape, declared-type
+ * match, select-options membership), so a declared-type mismatch on a carried
+ * write is out of its reach.
  *
  * Adversarial review — the fixture below USED to resolve `{status:'ok'}` for
  * every call, which made this suite structurally unable to see a rejected
@@ -66,6 +93,12 @@ const mockGetProperties = vi.fn().mockResolvedValue({ status: 'ok', data: [] })
 const mockGetPropertyDef = vi.fn().mockResolvedValue({ status: 'ok', data: null })
 const mockCreatePropertyDef = vi.fn().mockResolvedValue({ status: 'ok', data: null })
 const mockDeleteProperty = vi.fn().mockResolvedValue({ status: 'ok', data: {} })
+// #4041 review notes 3+4 — the rename's declaration pre-flight: `listPropertyKeys`
+// is the distinct `block_properties` key list (the same predicate
+// `delete_property_def_inner` counts before refusing), and `deletePropertyDef`
+// withdraws a declaration a failed rename created.
+const mockListPropertyKeys = vi.fn().mockResolvedValue({ status: 'ok', data: [] })
+const mockDeletePropertyDef = vi.fn().mockResolvedValue({ status: 'ok', data: null })
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -77,6 +110,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       getPropertyDef: (...args: unknown[]) => mockGetPropertyDef(...args),
       createPropertyDef: (...args: unknown[]) => mockCreatePropertyDef(...args),
       deleteProperty: (...args: unknown[]) => mockDeleteProperty(...args),
+      listPropertyKeys: (...args: unknown[]) => mockListPropertyKeys(...args),
+      deletePropertyDef: (...args: unknown[]) => mockDeletePropertyDef(...args),
     },
   }
 })
@@ -149,6 +184,8 @@ describe('BlockPropertyEditor', () => {
     mockGetPropertyDef.mockResolvedValue({ status: 'ok', data: null })
     mockCreatePropertyDef.mockResolvedValue({ status: 'ok', data: null })
     mockDeleteProperty.mockResolvedValue({ status: 'ok', data: {} })
+    mockListPropertyKeys.mockResolvedValue({ status: 'ok', data: [] })
+    mockDeletePropertyDef.mockResolvedValue({ status: 'ok', data: null })
   })
 
   it('renders nothing when editingProp and editingKey are null', () => {
@@ -834,9 +871,19 @@ describe('BlockPropertyEditor', () => {
   // below is stateful for exactly that reason: the second edit reads back
   // whatever the rename did (or did not) write.
   describe('#4010 — rename carries the property definition', () => {
-    /** Stand-in `property_definitions` table, mutated by `createPropertyDef`. */
+    /**
+     * Stand-in `property_definitions` table, mutated by `createPropertyDef`
+     * and `deletePropertyDef`.
+     *
+     * `keysInUse` is the distinct `block_properties` key list — what
+     * `list_property_keys` returns, and the same predicate
+     * `delete_property_def_inner` COUNTs before refusing a delete. Modelling
+     * both from one source keeps the fixture honest about the state note 4
+     * describes: a declaration over an in-use key cannot be withdrawn.
+     */
     function installDefinitionRegistry(
       seed: Array<{ key: string; value_type: string; options: string | null }>,
+      keysInUse: string[] = [],
     ): Map<
       string,
       { key: string; value_type: string; options: string | null; created_at: string }
@@ -852,6 +899,28 @@ describe('BlockPropertyEditor', () => {
           return Promise.resolve({ status: 'ok', data: defs.get(key) })
         },
       )
+      mockListPropertyKeys.mockImplementation(() =>
+        Promise.resolve({ status: 'ok', data: [...keysInUse] }),
+      )
+      // `delete_property_def_inner` (`src-tauri/src/commands/properties.rs`):
+      // refuses every builtin key outright, refuses while any
+      // `block_properties` row references the key, and 404s an absent row.
+      mockDeletePropertyDef.mockImplementation((key: string) => {
+        if (BUILTIN_KEYS.has(key))
+          return Promise.resolve({
+            status: 'error',
+            error: 'cannot delete builtin property definition',
+          })
+        if (keysInUse.includes(key))
+          return Promise.resolve({
+            status: 'error',
+            error: `cannot delete property definition '${key}': 1 block_properties row(s) reference this key.`,
+          })
+        if (!defs.has(key))
+          return Promise.resolve({ status: 'error', error: `property definition '${key}'` })
+        defs.delete(key)
+        return Promise.resolve({ status: 'ok', data: null })
+      })
       return defs
     }
 
@@ -1222,6 +1291,215 @@ describe('BlockPropertyEditor', () => {
         )
       })
       expect(mockToastError).not.toHaveBeenCalled()
+    })
+
+    // #4041 review notes 3 + 4 — the declaration is written BEFORE the value
+    // (the engine validates the payload against it), so a value write that
+    // then fails for any other reason used to leave a GLOBAL
+    // `property_definitions` row behind for a rename that never happened.
+    describe('#4041 — a failed rename leaves no declaration behind', () => {
+      /** A block-level rejection the payload rules cannot see. */
+      const softDeleted = { status: 'error', error: "block 'BLOCK_1' has been soft-deleted" }
+
+      function seedNumberRow() {
+        mockGetProperties.mockResolvedValue({
+          status: 'ok',
+          data: [
+            {
+              key: 'estimate',
+              value_text: null,
+              value_num: 5,
+              value_date: null,
+              value_ref: null,
+              value_bool: null,
+            },
+          ],
+        })
+      }
+
+      it('withdraws the declaration when the carried value write fails', async () => {
+        const defs = installDefinitionRegistry([
+          { key: 'estimate', value_type: 'number', options: null },
+        ])
+        seedNumberRow()
+        // Fails only for the NEW key, and for a reason `validate_set_property`
+        // cannot express — the block was soft-deleted between the definition
+        // copy and the value write.
+        mockSetProperty.mockImplementation((...args: unknown[]) => {
+          const [, key] = args as [string, string]
+          return key === 'effortPoints' ? Promise.resolve(softDeleted) : defaultSetProperty(...args)
+        })
+
+        render(
+          <BlockPropertyEditor
+            {...makeProps({ editingKey: { oldKey: 'estimate', value: '5' } })}
+          />,
+        )
+        const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+        fireEvent.change(keyInput, { target: { value: 'effortPoints' } })
+        await act(async () => {
+          fireEvent.blur(keyInput)
+        })
+
+        await waitFor(() => {
+          expect(mockToastError).toHaveBeenCalledWith('Failed to rename property')
+        })
+        // The copy did happen — this is not passing by never declaring.
+        expect(mockCreatePropertyDef).toHaveBeenCalledWith('effortPoints', 'number', null)
+        // ...and nothing survives the rename that did not happen. `defs` is
+        // the registry itself, so this fails if the withdrawal is merely
+        // ATTEMPTED and refused.
+        expect(defs.has('effortPoints')).toBe(false)
+        // The original property is untouched.
+        expect(defs.get('estimate')?.value_type).toBe('number')
+        expect(mockDeleteProperty).not.toHaveBeenCalled()
+      })
+
+      // The other arm: the fix must not pass by never creating a declaration,
+      // or by deleting one on the happy path.
+      it('keeps the declaration when the rename succeeds', async () => {
+        const defs = installDefinitionRegistry([
+          { key: 'estimate', value_type: 'number', options: null },
+        ])
+        seedNumberRow()
+
+        render(
+          <BlockPropertyEditor
+            {...makeProps({ editingKey: { oldKey: 'estimate', value: '5' } })}
+          />,
+        )
+        const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+        fireEvent.change(keyInput, { target: { value: 'effortPoints' } })
+        await act(async () => {
+          fireEvent.blur(keyInput)
+        })
+
+        await waitFor(() => {
+          expect(mockDeleteProperty).toHaveBeenCalledWith('BLOCK_1', 'estimate')
+        })
+        expect(defs.get('effortPoints')).toMatchObject({ value_type: 'number', options: null })
+        expect(mockDeletePropertyDef).not.toHaveBeenCalled()
+        expect(mockToastError).not.toHaveBeenCalled()
+      })
+
+      // Note 4's un-exitable state: `delete_property_def_inner` refuses while
+      // ANY `block_properties` row references the key, so a declaration
+      // written over a key other blocks already use could never be withdrawn
+      // — not by the code below, and not by the user from the Properties tab.
+      // The only remedy is not to write it: the rename still carries the
+      // VALUE, and the new key stays undeclared exactly as it was before
+      // #4010 carried definitions at all.
+      it('declares nothing when other blocks already hold values under the new key', async () => {
+        const defs = installDefinitionRegistry(
+          [{ key: 'estimate', value_type: 'number', options: null }],
+          // `status` is in use elsewhere as free text and undeclared.
+          ['estimate', 'status'],
+        )
+        seedNumberRow()
+
+        render(
+          <BlockPropertyEditor
+            {...makeProps({ editingKey: { oldKey: 'estimate', value: '5' } })}
+          />,
+        )
+        const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+        fireEvent.change(keyInput, { target: { value: 'status' } })
+        await act(async () => {
+          fireEvent.blur(keyInput)
+        })
+
+        // The rename itself still goes through, value intact.
+        await waitFor(() => {
+          expect(mockSetProperty).toHaveBeenCalledWith(
+            'BLOCK_1',
+            'status',
+            expect.objectContaining({ value_num: 5 }),
+          )
+        })
+        expect(mockCreatePropertyDef).not.toHaveBeenCalled()
+        expect(defs.has('status')).toBe(false)
+        expect(mockToastError).not.toHaveBeenCalled()
+      })
+
+      // `create_property_def` has no builtin guard, but
+      // `delete_property_def_inner` refuses every builtin outright, so a
+      // declaration written for one is unremovable the instant it lands —
+      // whether or not the value write then fails. `repeat` is reachable:
+      // it is NOT column-backed, so the existing guard did not cover it, and
+      // `set_property_inner` rejects a malformed rule at the boundary.
+      it('declares nothing when the rename target is a builtin lifecycle key', async () => {
+        const defs = installDefinitionRegistry([{ key: 'note', value_type: 'text', options: null }])
+        mockGetProperties.mockResolvedValue({
+          status: 'ok',
+          data: [
+            {
+              key: 'note',
+              value_text: 'every other tuesday-ish',
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+              value_bool: null,
+            },
+          ],
+        })
+        mockSetProperty.mockImplementation((...args: unknown[]) => {
+          const [, key] = args as [string, string]
+          return key === 'repeat'
+            ? Promise.resolve({ status: 'error', error: 'invalid repeat rule' })
+            : defaultSetProperty(...args)
+        })
+
+        render(
+          <BlockPropertyEditor
+            {...makeProps({ editingKey: { oldKey: 'note', value: 'every other tuesday-ish' } })}
+          />,
+        )
+        const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+        fireEvent.change(keyInput, { target: { value: 'repeat' } })
+        await act(async () => {
+          fireEvent.blur(keyInput)
+        })
+
+        await waitFor(() => {
+          expect(mockToastError).toHaveBeenCalledWith('Failed to rename property')
+        })
+        expect(mockCreatePropertyDef).not.toHaveBeenCalled()
+        expect(defs.has('repeat')).toBe(false)
+      })
+
+      // A declaration the user made earlier is not this rename's to remove:
+      // `create_property_def` is INSERT OR IGNORE, so renaming onto an
+      // already-declared key never creates anything, and the failure path
+      // must not delete what it did not write.
+      it('never withdraws a declaration that already existed', async () => {
+        const defs = installDefinitionRegistry([
+          { key: 'estimate', value_type: 'number', options: null },
+          { key: 'effortPoints', value_type: 'number', options: null },
+        ])
+        seedNumberRow()
+        mockSetProperty.mockImplementation((...args: unknown[]) => {
+          const [, key] = args as [string, string]
+          return key === 'effortPoints' ? Promise.resolve(softDeleted) : defaultSetProperty(...args)
+        })
+
+        render(
+          <BlockPropertyEditor
+            {...makeProps({ editingKey: { oldKey: 'estimate', value: '5' } })}
+          />,
+        )
+        const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+        fireEvent.change(keyInput, { target: { value: 'effortPoints' } })
+        await act(async () => {
+          fireEvent.blur(keyInput)
+        })
+
+        await waitFor(() => {
+          expect(mockToastError).toHaveBeenCalledWith('Failed to rename property')
+        })
+        expect(mockCreatePropertyDef).not.toHaveBeenCalled()
+        expect(mockDeletePropertyDef).not.toHaveBeenCalled()
+        expect(defs.has('effortPoints')).toBe(true)
+      })
     })
   })
 

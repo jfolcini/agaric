@@ -172,6 +172,60 @@ export function carriedRenameDefinition(
 }
 
 /**
+ * Whether a KEY RENAME may create a `property_definitions` row for `newKey`
+ * (#4041 review notes 3 + 4).
+ *
+ * The declaration has to be written BEFORE the value — the engine validates
+ * the payload shape against it (`validate_property_value` step 4) — so
+ * "create it afterwards" is not on the table, and the value write can still
+ * fail after the declaration lands: the block soft-deleted concurrently, a
+ * `ref` whose target sits in another space, a `repeat` rule the command
+ * boundary rejects, a plain IPC failure. Whatever the reason, the rename did
+ * not happen and the declaration must not survive it.
+ *
+ * A compensating delete alone cannot deliver that.
+ * `delete_property_def_inner` (`src-tauri/src/commands/properties.rs`)
+ * refuses to remove a definition while ANY `block_properties` row references
+ * the key ("Clear them first via set_property(value=None) on each affected
+ * block"), and refuses every `is_builtin_property_key` outright. The case
+ * where the leftover hurts most — a key other blocks already use — is
+ * precisely the case the delete refuses, so the cleanup would be missing
+ * exactly where it is needed. Worse, that state is not reachable only on
+ * failure: declaring an in-use free-text key as `number` on a SUCCESSFUL
+ * rename makes every other block's value un-writable and cannot be undone
+ * from the UI.
+ *
+ * Hence the rule is narrower than "clean up afterwards": only declare what
+ * could be taken back, established BEFORE anything is written.
+ *
+ * - Builtin (`NON_DELETABLE_PROPERTIES`) and column-backed keys —
+ *   `create_property_def` has no reserved-key guard of its own, and the
+ *   delete refuses every builtin, so such a row is un-removable the instant
+ *   it lands. (Column-backed keys were already skipped; their shape is fixed
+ *   by the `blocks` column.)
+ * - A key that is ALREADY declared — `create_property_def` is INSERT OR
+ *   IGNORE, so nothing would be created anyway, and the existing row is the
+ *   user's, never this rename's to withdraw.
+ * - A key any block already holds a value for — `list_property_keys` is the
+ *   distinct `block_properties` key list, the same predicate the delete's
+ *   refusal counts.
+ *
+ * Skipping the copy costs only what #4010 added: the renamed key stays
+ * undeclared, exactly as before that fix, and the VALUE still carries over
+ * untouched. `list_property_keys` truncates at the 1000 most-used keys, so a
+ * vault past that cap can still slip a rarely-used key through — that
+ * remainder is what the caller's compensating delete is for.
+ *
+ * Throws whatever the two lookups throw; the caller treats a failed
+ * pre-flight like a failed copy (best-effort, rename proceeds).
+ */
+export async function renameMayDeclareKey(newKey: string): Promise<boolean> {
+  if (NON_DELETABLE_PROPERTIES.has(newKey) || COLUMN_BACKED_PROPERTY_KEYS.has(newKey)) return false
+  if (unwrap(await commands.getPropertyDef(newKey)) != null) return false
+  return !unwrap(await commands.listPropertyKeys()).includes(newKey)
+}
+
+/**
  * Build the type-appropriate `setProperty` params for initializing a
  * newly-added property.  Ref properties are initialized with a null
  * ref — the UI shows the page picker immediately so the user can

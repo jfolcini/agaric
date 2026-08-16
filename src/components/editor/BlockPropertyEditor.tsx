@@ -26,8 +26,8 @@ import { notify } from '@/lib/notify'
 import {
   buildPropertyParams,
   carriedRenameDefinition,
-  COLUMN_BACKED_PROPERTY_KEYS,
   NON_DELETABLE_PROPERTIES,
+  renameMayDeclareKey,
 } from '@/lib/property-save-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
@@ -554,6 +554,16 @@ export function BlockPropertyEditor({
                   // this key — and #3275's rule stands: never write against a
                   // guess. This is now the ONLY path that discards the edit,
                   // and it takes a real IPC failure to reach.
+                  //
+                  // #4041 review note 5 — `usePropertyDefForEdit` answers the
+                  // SAME failure differently: its `.catch` degrades to 'text'
+                  // (`usePropertyDefForEdit.ts`, the `setResolvedType(... 'text')`
+                  // in the catch) so the popup still renders. Recorded as a
+                  // deliberate split rather than left to look accidental: that
+                  // one runs before the user has typed and only chooses a
+                  // widget; this one runs with typed text in hand, where a
+                  // guessed type is a wrong-column WRITE. Both are noted at the
+                  // other end too.
                   logger.warn('BlockPropertyEditor', 'commit skipped: value type unresolved', {
                     blockId,
                     key: editingProp.key,
@@ -682,25 +692,34 @@ export function BlockPropertyEditor({
               // part that must not be lost, and it worked before definitions
               // were carried at all. `create_property_def` is INSERT OR
               // IGNORE, so renaming onto an already-declared key is a no-op.
+              //
+              // #4041 review notes 3 + 4 — writing the declaration first means
+              // the value write can still fail AFTER it lands (a concurrently
+              // soft-deleted block, a cross-space `ref`, an IPC error), and a
+              // `property_definitions` row is global and can be permanent:
+              // `delete_property_def_inner` refuses while any
+              // `block_properties` row references the key, and refuses every
+              // builtin outright. A compensating delete therefore cannot be
+              // the safety mechanism — the case that hurts most is the case it
+              // refuses. `renameMayDeclareKey` is the pre-flight that makes the
+              // row withdrawable BEFORE it exists (not builtin/column-backed,
+              // not already declared, referenced by no block); see its doc
+              // comment for the full argument and for what is given up when it
+              // says no.
+              let declaredKey: string | null = null
               try {
-                const carried = COLUMN_BACKED_PROPERTY_KEYS.has(newKey)
-                  ? // A column-backed target (`due_date` & co., `space`) is not a
-                    // `block_properties` row at all, and `create_property_def`
-                    // has no reserved-key guard of its own: declaring one would
-                    // persist a bogus type for a key whose shape is fixed by the
-                    // `blocks` column (and mis-render it in the drawer /
-                    // Properties tab). The value write below rejects such a
-                    // rename anyway — a FAILED rename must not leave a
-                    // declaration behind.
-                    null
-                  : carriedRenameDefinition(
-                      unwrap(await commands.getPropertyDef(editingKey.oldKey)),
-                      oldRow,
-                    )
-                if (carried) {
+                // Old key's declaration first: when there is nothing to carry
+                // (an untyped key — the common case) the pre-flight's two
+                // lookups are never issued at all.
+                const carried = carriedRenameDefinition(
+                  unwrap(await commands.getPropertyDef(editingKey.oldKey)),
+                  oldRow,
+                )
+                if (carried && (await renameMayDeclareKey(newKey))) {
                   unwrap(
                     await commands.createPropertyDef(newKey, carried.valueType, carried.options),
                   )
+                  declaredKey = newKey
                 }
               } catch (err) {
                 logger.warn(
@@ -710,18 +729,43 @@ export function BlockPropertyEditor({
                   err,
                 )
               }
-              unwrap(
-                await commands.setProperty(blockId, newKey, {
-                  // Non-optional access on purpose: `oldRow` is guaranteed
-                  // present by the guard above, and `?.` here is what let the
-                  // all-null write through in the first place.
-                  value_text: oldRow.value_text ?? null,
-                  value_num: oldRow.value_num ?? null,
-                  value_date: oldRow.value_date ?? null,
-                  value_ref: oldRow.value_ref ?? null,
-                  value_bool: oldRow.value_bool != null ? oldRow.value_bool !== 0 : null,
-                }),
-              )
+              try {
+                unwrap(
+                  await commands.setProperty(blockId, newKey, {
+                    // Non-optional access on purpose: `oldRow` is guaranteed
+                    // present by the guard above, and `?.` here is what let the
+                    // all-null write through in the first place.
+                    value_text: oldRow.value_text ?? null,
+                    value_num: oldRow.value_num ?? null,
+                    value_date: oldRow.value_date ?? null,
+                    value_ref: oldRow.value_ref ?? null,
+                    value_bool: oldRow.value_bool != null ? oldRow.value_bool !== 0 : null,
+                  }),
+                )
+              } catch (err) {
+                // The rename did not happen, so the declaration it created
+                // must go. This is the tidy-up, NOT the guarantee: the
+                // pre-flight above already established the row is ours and
+                // unreferenced, which is why this delete is expected to
+                // succeed. It can still be refused if another write claimed
+                // the key in between (or if the key list was truncated past
+                // its 1000-key cap) — and what then survives is a declaration
+                // over an unused key, which the user can still remove from the
+                // Properties tab. Never the un-exitable state of note 4.
+                if (declaredKey) {
+                  try {
+                    unwrap(await commands.deletePropertyDef(declaredKey))
+                  } catch (cleanupErr) {
+                    logger.warn(
+                      'BlockPropertyEditor',
+                      'could not withdraw the definition a failed rename created',
+                      { blockId, oldKey: editingKey.oldKey, newKey },
+                      cleanupErr,
+                    )
+                  }
+                }
+                throw err
+              }
               // Remove the OLD key, now that the new one holds the value.
               //
               // This used to be an all-null `set_property`, which
