@@ -742,6 +742,40 @@ pass_filenames = false
 files = "^scripts/check-vault-isolation\\.mjs$"
 stages = ["pre-commit"]
 
+# wdio-driver-gate (#3972 / Dependabot alert #50): `extract-zip` <= 2.0.1
+# has an unvalidated symlink path traversal (CVE-2026-56876, HIGH) and NO
+# patched release exists, so the alert can only be dismissed as
+# unreachable. It reaches us as @wdio/cli → @wdio/utils →
+# @puppeteer/browsers → extract-zip, and it stays unreachable only while
+# WDIO never downloads a browser archive. Two properties of wdio.conf.ts
+# keep that true — no `browserName` capability, and remote-driver options
+# (`port`) that make `definesRemoteDriver` true — and both are checked
+# here, because until now the dismissal rested on a line of config that
+# nothing watched. Keyed to the config AND the guard script so neither
+# side can be edited without the check running. pass_filenames=false —
+# the script resolves wdio.conf.ts itself.
+[[repos.hooks]]
+id = "wdio-driver-gate"
+name = "wdio never downloads a browser (extract-zip alert #50)"
+entry = "node scripts/check-wdio-driver-gate.mjs"
+language = "system"
+pass_filenames = false
+files = "^(wdio\\.conf\\.ts|scripts/check-wdio-driver-gate\\.mjs)$"
+stages = ["pre-commit"]
+
+# Self-test the gate's own exit behavior (a config that loses its
+# remote-driver options FAILS, one that grows a browserName capability
+# FAILS, a commented-out port does NOT count as satisfying it) whenever
+# the guard script changes, so a defanged guard can't land quietly.
+[[repos.hooks]]
+id = "wdio-driver-gate-selftest"
+name = "wdio driver-gate guard self-test"
+entry = "node scripts/check-wdio-driver-gate.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-wdio-driver-gate\\.mjs$"
+stages = ["pre-commit"]
+
 # tauri-import-baseline (#2927): `src/lib/tauri.ts` is a hand-written IPC
 # wrapper layer being retired in favor of the generated `commands.*`
 # bindings. This ratchet forbids NEW non-test importers of `@/lib/tauri`

@@ -146,6 +146,90 @@ node_deps_remedy() {
     fi
 }
 
+# ── caller-supplied SKIP (#3968) ───────────────────────────────────
+# Phase A runs prek with a SKIP list this script computes from the
+# changed-file categories. It used to build that list and then run
+#
+#     SKIP="$PHASE_A_SKIP" prek run …
+#
+# which OVERWRITES whatever `SKIP` the caller exported. `SKIP=<hook>` is
+# prek's own documented bypass, and it reaches this script by ordinary
+# environment inheritance (`SKIP=cargo-deny git push` → prek's pre-push
+# stage → this script), so a developer using it got: the hook running
+# anyway, no mention of their request anywhere in the output, and — the
+# part that makes it worse than a no-op — a SUCCESS report. If the hook
+# then passed they concluded the bypass works; if it failed they
+# concluded the bypass is broken *for that hook*. Either way their model
+# of the gate diverged from the gate.
+#
+# Semantics chosen: UNION, announced. Not refusal.
+#
+#   * Refusing (exit non-zero when a caller SKIP would be discarded)
+#     would turn a working prek idiom into a hard push failure, and the
+#     value arrives here by INHERITANCE — the caller aimed it at prek,
+#     not at this script, so a refusal punishes a reasonable action.
+#   * Union honours the request, which is the only reading under which
+#     the developer's mental model and the gate agree.
+#
+# But this script exists to approximate CI, and a caller skip makes the
+# run inequivalent BY CONSTRUCTION. So the union is announced when it
+# actually removes something, and repeated in the final PASS banner: a
+# green from a run with caller skips must not be quotable as a clean
+# gate. Silently discarding the instruction is the one option ruled out.
+#
+# Both helpers take (required, caller) as comma-separated strings,
+# tolerate empty/whitespace/duplicate entries, and are pure — the
+# self-test below drives them directly.
+
+# Union of the script's own required entries and the caller's, in that
+# order, de-duplicated. The required entries always survive: they are the
+# hooks Phase A cannot run meaningfully (the `--cached` test hooks) plus
+# the category-absent list, and a caller cannot un-skip them by omission.
+phase_a_skip_compose() {
+    local required="${1:-}" caller="${2:-}"
+    local -a items=()
+    local item seen="," out=""
+    IFS=',' read -ra items <<< "$required,$caller"
+    for item in "${items[@]}"; do
+        item="${item#"${item%%[![:space:]]*}"}"
+        item="${item%"${item##*[![:space:]]}"}"
+        [ -z "$item" ] && continue
+        case "$seen" in *",$item,"*) continue ;; esac
+        seen="$seen$item,"
+        out="${out:+$out,}$item"
+    done
+    printf '%s' "$out"
+}
+
+# The caller's entries that are NOT already in the required set — i.e.
+# exactly the hooks the caller's SKIP actually removes from this run.
+# This, not the raw `SKIP`, is what the non-equivalence warning reports:
+# a caller who redundantly re-skips `vitest` has changed nothing, and
+# warning about it would train the reader to ignore the warning.
+phase_a_skip_extra() {
+    local required="${1:-}" caller="${2:-}"
+    local -a req=() cal=()
+    local item reqset="," seen="," out=""
+    IFS=',' read -ra req <<< "$required"
+    for item in "${req[@]}"; do
+        item="${item#"${item%%[![:space:]]*}"}"
+        item="${item%"${item##*[![:space:]]}"}"
+        [ -z "$item" ] && continue
+        reqset="$reqset$item,"
+    done
+    IFS=',' read -ra cal <<< "$caller"
+    for item in "${cal[@]}"; do
+        item="${item#"${item%%[![:space:]]*}"}"
+        item="${item%"${item##*[![:space:]]}"}"
+        [ -z "$item" ] && continue
+        case "$reqset" in *",$item,"*) continue ;; esac
+        case "$seen" in *",$item,"*) continue ;; esac
+        seen="$seen$item,"
+        out="${out:+$out,}$item"
+    done
+    printf '%s' "$out"
+}
+
 # ── self-test ──────────────────────────────────────────────────────
 # Fixture suite for the probe-DB isolation above (#3257), wired as the
 # `verify-ci-equivalent-selftest` prek hook so a regression back to a
@@ -380,6 +464,175 @@ if [ "${1:-}" = "--self-test" ]; then
     else
         st_bad "ratchet names a preflight moved BELOW Phase A, with both line numbers" \
             "rc=$st_rc out=$st_out"
+    fi
+
+    # ── caller-supplied SKIP (#3968) ─────────────────────────────────
+    # The property: a `SKIP` the caller exported reaches prek instead of
+    # being silently replaced, the required entries still survive, and
+    # the run reports that it is no longer CI-equivalent.
+
+    # 16. UNION. Before the fix the caller's entry was simply absent from
+    #     the value handed to prek — the hook ran and the run reported
+    #     success. Exact equality, so an implementation that dropped
+    #     either side, or reordered, fails.
+    st_out="$(phase_a_skip_compose "vitest,cargo-test" "cargo-deny")"
+    if [ "$st_out" = "vitest,cargo-test,cargo-deny" ]; then
+        st_ok "a caller SKIP is composed with the required entries, not discarded"
+    else
+        st_bad "a caller SKIP is composed with the required entries, not discarded" \
+            "got '$st_out'"
+    fi
+
+    # 17. The required entries are NOT overridable from outside: a caller
+    #     SKIP naming something else cannot displace them. (The mirror of
+    #     16 — that direction of the swap has its own way of being wrong.)
+    st_out="$(phase_a_skip_compose "vitest,cargo-test" "cargo-deny")"
+    case ",$st_out," in
+        *",vitest,"*) case ",$st_out," in *",cargo-test,"*) st_rc=0 ;; *) st_rc=1 ;; esac ;;
+        *) st_rc=1 ;;
+    esac
+    if [ "$st_rc" -eq 0 ]; then
+        st_ok "the script's own required skips survive a caller SKIP"
+    else
+        st_bad "the script's own required skips survive a caller SKIP" "got '$st_out'"
+    fi
+
+    # 18. Whitespace and duplicates: `SKIP='cargo-test , cargo-deny'` is a
+    #     shape a human types. A duplicate must collapse (prek takes a
+    #     comma list; a doubled entry is noise in the echoed SKIP= line)
+    #     and surrounding spaces must not become part of a hook name,
+    #     which would silently match nothing.
+    st_out="$(phase_a_skip_compose "vitest,cargo-test" " cargo-test , cargo-deny ")"
+    if [ "$st_out" = "vitest,cargo-test,cargo-deny" ]; then
+        st_ok "caller SKIP entries are trimmed and de-duplicated"
+    else
+        st_bad "caller SKIP entries are trimmed and de-duplicated" "got '$st_out'"
+    fi
+
+    # 19. No caller SKIP is the overwhelmingly common case (every
+    #     scripts/push.sh invocation): the composed value must be exactly
+    #     the required list, with no trailing comma — prek reads an empty
+    #     trailing field as a hook name that matches nothing, which is how
+    #     a "harmless" formatting slip becomes a silent no-op again.
+    st_out="$(phase_a_skip_compose "vitest,cargo-test" "")"
+    if [ "$st_out" = "vitest,cargo-test" ]; then
+        st_ok "no caller SKIP leaves the required list byte-identical"
+    else
+        st_bad "no caller SKIP leaves the required list byte-identical" "got '$st_out'"
+    fi
+
+    # 19b. EMPTY fields inside the caller's value — `SKIP=a,,b`, or a value
+    #      that is nothing but separators and spaces. `read -ra` drops a
+    #      TRAILING empty field on its own, so case 19 above does not reach
+    #      the empty-entry skip; only an interior or whitespace-only field
+    #      does. An empty entry reaching prek is a hook name that matches
+    #      nothing, i.e. exactly the silent no-op this issue is about, one
+    #      layer down. Both helpers, since both split the same way.
+    st_out="$(phase_a_skip_compose "vitest,cargo-test" "cargo-deny,,typos")"
+    st_out2="$(phase_a_skip_compose "vitest" " , ")"
+    st_out3="$(phase_a_skip_extra "vitest" "cargo-deny,,typos")"
+    if [ "$st_out" = "vitest,cargo-test,cargo-deny,typos" ] &&
+        [ "$st_out2" = "vitest" ] && [ "$st_out3" = "cargo-deny,typos" ]; then
+        st_ok "empty and whitespace-only SKIP entries are dropped, not passed to prek"
+    else
+        st_bad "empty and whitespace-only SKIP entries are dropped, not passed to prek" \
+            "compose='$st_out' whitespace-only='$st_out2' extra='$st_out3'"
+    fi
+
+    # 20. The warning reports what the caller's SKIP actually REMOVES, not
+    #     the raw value: re-skipping something already required changes
+    #     nothing, and warning about it trains the reader to ignore the
+    #     warning.
+    st_out="$(phase_a_skip_extra "vitest,cargo-test" "cargo-test,cargo-deny")"
+    if [ "$st_out" = "cargo-deny" ]; then
+        st_ok "the non-equivalence warning names only the hooks actually removed"
+    else
+        st_bad "the non-equivalence warning names only the hooks actually removed" \
+            "got '$st_out'"
+    fi
+
+    # 21. …and is EMPTY when the caller removed nothing, so a redundant
+    #     SKIP does not print a scary "not CI-equivalent" banner on a run
+    #     that is, in fact, equivalent.
+    st_out="$(phase_a_skip_extra "vitest,cargo-test" " vitest ")"
+    if [ -z "$st_out" ]; then
+        st_ok "a redundant caller SKIP produces no non-equivalence warning"
+    else
+        st_bad "a redundant caller SKIP produces no non-equivalence warning" "got '$st_out'"
+    fi
+
+    # 22. Ratchet: the helpers above are worthless if Phase A does not USE
+    #     them. This is the half that the pure-function cases cannot cover
+    #     — the original bug was entirely in the call site, not in any
+    #     function. Anchored at line start and matched as exact text so a
+    #     future edit back to `PHASE_A_SKIP="$(IFS=,; …skip_items…)"`
+    #     fails here rather than silently reinstating the clobber.
+    ST_COMPOSE_ANCHOR='^PHASE_A_SKIP="\$\(phase_a_skip_compose "\$PHASE_A_REQUIRED_SKIP" "\$CALLER_SKIP"\)"$'
+    ST_CALLERSKIP_ANCHOR='^CALLER_SKIP="\$\{SKIP:-\}"$'
+    # Both ratchets are expressed as FUNCTIONS taking a file, so case 25
+    # can drive the identical logic against a fixture that violates the
+    # property. A ratchet written inline as a grep over this file alone
+    # passes on a healthy tree no matter what it looks for, and a weakened
+    # pattern is then indistinguishable from a satisfied one.
+    st_skip_wiring_ok() {
+        grep -qE "$ST_CALLERSKIP_ANCHOR" "$1" && grep -qE "$ST_COMPOSE_ANCHOR" "$1"
+    }
+    st_clobber_lines() {
+        grep -vE '^[[:space:]]*#' "$1" | grep -nE '^PHASE_A_SKIP="\$\(IFS=,' || true
+    }
+    st_rc=0
+    st_skip_wiring_ok "${BASH_SOURCE[0]}" || st_rc=1
+    if [ "$st_rc" -eq 0 ]; then
+        st_ok "Phase A's SKIP is built by composing the caller's SKIP, not by replacing it"
+    else
+        st_bad "Phase A's SKIP is built by composing the caller's SKIP, not by replacing it" \
+            'no `CALLER_SKIP="${SKIP:-}"` + `PHASE_A_SKIP="$(phase_a_skip_compose …)"` pair found'
+    fi
+
+    # 23. Ratchet: the clobbering form must not come back alongside it. A
+    #     re-added `PHASE_A_SKIP="$(IFS=,; …)"` line would satisfy case 22
+    #     (the composing line still exists) while whichever ran last won.
+    #     Comment lines are excluded so this cannot match the prose above.
+    st_out="$(st_clobber_lines "${BASH_SOURCE[0]}")"
+    if [ -z "$st_out" ]; then
+        st_ok "the clobbering PHASE_A_SKIP assignment is gone and stays gone"
+    else
+        st_bad "the clobbering PHASE_A_SKIP assignment is gone and stays gone" \
+            "$(printf '%s' "$st_out" | tr '\n' ' ')"
+    fi
+
+    # 24. Ratchet: a run made inequivalent by a caller SKIP must say so in
+    #     the FINAL banner, not only in a Phase A line that has scrolled
+    #     past by the time the gate reports. The banner is the line that
+    #     gets quoted as "the gate passed".
+    if grep -qE '^[[:space:]]*echo "  ⚠ NOT CI-equivalent: caller SKIP omitted' "${BASH_SOURCE[0]}"; then
+        st_ok "the PASSED banner declares the run non-equivalent when caller skips applied"
+    else
+        st_bad "the PASSED banner declares the run non-equivalent when caller skips applied" \
+            'no "NOT CI-equivalent" line found near the final banner'
+    fi
+
+    # 25. Cases 22 and 23 must be able to FAIL. Both are checks over this
+    #     very file, so on a healthy tree they pass whatever they look
+    #     for — a weakened `st_skip_wiring_ok` (or one that always returns
+    #     0) is indistinguishable from a satisfied one. Drive the SAME
+    #     functions against fixtures that violate the property and require
+    #     them to report it there.
+    grep -vE "$ST_COMPOSE_ANCHOR" "${BASH_SOURCE[0]}" >"$st_fixture_root/unwired-skip.sh" || true
+    if st_skip_wiring_ok "$st_fixture_root/unwired-skip.sh"; then
+        st_bad "the compose-wiring ratchet reports a file with the wiring removed" \
+            'st_skip_wiring_ok passed a fixture with the composing assignment stripped'
+    else
+        st_ok "the compose-wiring ratchet reports a file with the wiring removed"
+    fi
+    printf 'PHASE_A_SKIP="$(IFS=,; printf %%s "${skip_items[*]}")"\n' \
+        >"$st_fixture_root/clobber.sh"
+    st_out="$(st_clobber_lines "$st_fixture_root/clobber.sh")"
+    if [ -n "$st_out" ]; then
+        st_ok "the clobber ratchet reports the exact form it forbids"
+    else
+        st_bad "the clobber ratchet reports the exact form it forbids" \
+            'st_clobber_lines found nothing in a fixture that is the forbidden line'
     fi
 
     rm -rf "$st_fixture_root"
@@ -621,7 +874,22 @@ fi
 [ "$HAS_RS" = "0" ] && [ "$HAS_CI" = "0" ] && skip_items+=(check-toml)
 [ "$HAS_CI" = "0" ] && skip_items+=(check-yaml)
 
-PHASE_A_SKIP="$(IFS=,; printf '%s' "${skip_items[*]}")"
+PHASE_A_REQUIRED_SKIP="$(IFS=,; printf '%s' "${skip_items[*]}")"
+
+# #3968 — compose, don't clobber. See phase_a_skip_compose above for why
+# this is a union rather than a refusal, and why the result is announced.
+CALLER_SKIP="${SKIP:-}"
+PHASE_A_SKIP="$(phase_a_skip_compose "$PHASE_A_REQUIRED_SKIP" "$CALLER_SKIP")"
+CALLER_SKIP_EXTRA="$(phase_a_skip_extra "$PHASE_A_REQUIRED_SKIP" "$CALLER_SKIP")"
+NOT_CI_EQUIVALENT=0
+if [ -n "$CALLER_SKIP_EXTRA" ]; then
+    NOT_CI_EQUIVALENT=1
+    echo ""
+    echo "⚠ Honouring caller-supplied SKIP: $CALLER_SKIP_EXTRA"
+    echo "  Those hooks will NOT run in Phase A. CI runs them unskipped, so"
+    echo "  this run is NOT CI-equivalent and a green result here does not"
+    echo "  predict a green there. Unset SKIP for a representative run."
+fi
 
 echo ""
 echo "→ Phase A: prek run --all-files (pre-commit stage)"
@@ -877,6 +1145,12 @@ rm -f "$npm_sig_log"
 
 echo ""
 echo "✓ Pre-push verification PASSED."
+# #3968 — a green earned with caller-supplied skips is not the same green.
+# Repeated here because the Phase A warning has scrolled past by now, and
+# this banner is the line that gets quoted as "the gate passed".
+if [ "$NOT_CI_EQUIVALENT" = "1" ]; then
+    echo "  ⚠ NOT CI-equivalent: caller SKIP omitted these Phase A hooks: $CALLER_SKIP_EXTRA"
+fi
 [ "$HAS_MCP" = "0" ] && echo "  (MCP build skipped — no MCP paths in range; CI will run the full check)"
 echo "  (Playwright skipped — runs in CI on every PR; run \`npx playwright test\` locally if needed)"
 echo "  (release bundle build: run scripts/verify-release-build.sh manually before tagging)"

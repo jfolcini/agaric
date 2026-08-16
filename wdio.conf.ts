@@ -234,6 +234,15 @@ export const config: WebdriverIO.Config = {
   runner: 'local',
 
   // WDIO connects to the endpoint `tauri-driver` exposes.
+  //
+  // SECURITY (#3972, Dependabot alert #50): these two lines, plus the
+  // absence of a browserName capability below, are what keep WDIO out of
+  // its browser-download path — `setupBrowser`/`setupDriver` keep only
+  // capabilities that have a browserName AND only when
+  // `definesRemoteDriver(options)` is false, and that path unpacks a zip
+  // through extract-zip <= 2.0.1, for which no patch exists. Removing
+  // either property is a real security decision, not a config tidy-up.
+  // `scripts/check-wdio-driver-gate.mjs` fails the commit if you do.
   hostname: '127.0.0.1',
   port: 4444,
 
@@ -242,6 +251,10 @@ export const config: WebdriverIO.Config = {
 
   capabilities: [
     {
+      // Deliberately NO browserName here — see the security note on
+      // `hostname`/`port` above (#3972 / alert #50). tauri-driver launches
+      // the app itself; WDIO must never be asked to fetch a browser.
+      //
       // `tauri:options.application` is the contract `tauri-driver` reads to
       // launch the app under WebKitWebDriver (per the Tauri WebDriver guide).
       'tauri:options': {
