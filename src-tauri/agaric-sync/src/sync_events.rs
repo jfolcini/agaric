@@ -154,6 +154,44 @@ pub enum SyncEvent {
         /// identifies the current listener, it is not a stable firewall rule.
         port: u16,
     },
+    /// #3852: the operating system says it is blocking (or has stopped
+    /// blocking) **this application's** network traffic.
+    ///
+    /// Android 15+ runs a per-uid background firewall
+    /// (`FIREWALL_CHAIN_BACKGROUND`) that drops every packet for an app that is
+    /// not top-of-stack — including when the app *is* the top activity and the
+    /// screen has merely gone to sleep (`procState=TOP_SLEEPING`). The daemon
+    /// keeps running, keeps its sockets, keeps the multicast lock, and cannot
+    /// send or receive anything. On the reporting Pixel 8 this was measured
+    /// directly: 300 datagrams aimed at the app's bound `0.0.0.0:5353` raised
+    /// `/proc/net/udp`'s drop counter by exactly 300 with `rx_queue` never
+    /// leaving 0, i.e. discarded at the cgroup-BPF ingress hook before enqueue.
+    ///
+    /// The `blocked` flag comes from `NetworkCallback.onBlockedStatusChanged`,
+    /// which is the platform stating this uid's firewall status about itself.
+    /// That matters more than it sounds: every other route to this fact is an
+    /// inference from silence, and silence is also what a quiet LAN, a sleeping
+    /// peer, and a wrong service type look like. #3852 spent three days being
+    /// mistaken for each of those in turn.
+    ///
+    /// `blocked: false` is emitted only as a *recovery* — after a block was
+    /// reported — so a healthy device never emits this event at all.
+    NetworkBlockedByOs {
+        /// `true` while the OS is dropping this app's traffic.
+        blocked: bool,
+        /// The **i18n key** naming the explanation the pairing UI shows, not
+        /// the explanation itself. `onBlockedStatusChanged` carries only a
+        /// boolean, so the wording is Agaric's — and wording built in Rust is
+        /// English for every user in every locale, because the daemon has no
+        /// idea what language the window is in. The frontend translates this
+        /// key; see `BLOCKED_REASON_KEY` in
+        /// `sync_daemon::android_network_block` for the constant and for why no
+        /// human-readable twin rides along.
+        ///
+        /// `Some` exactly when `blocked`: a recovery removes the banner, so it
+        /// has no text to name.
+        reason_key: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +207,9 @@ pub const EVENT_SYNC_MDNS_DISABLED: &str = "sync:mdns_disabled";
 /// Emitted when the sync endpoint bound a globally-routable address (#3864).
 /// Payload is [`SyncEvent::InternetFacingBind`].
 pub const EVENT_SYNC_INTERNET_FACING_BIND: &str = "sync:internet_facing_bind";
+/// Emitted when the OS starts or stops blocking this app's network traffic (#3852).
+/// Payload is [`SyncEvent::NetworkBlockedByOs`].
+pub const EVENT_SYNC_NETWORK_BLOCKED: &str = "sync:network_blocked";
 
 // ---------------------------------------------------------------------------
 // mDNS status (#2506) — backfill for the peers/device-management surface
@@ -622,6 +663,63 @@ mod tests {
         assert_eq!(EVENT_SYNC_ERROR, "sync:error");
         assert_eq!(EVENT_SYNC_MDNS_DISABLED, "sync:mdns_disabled");
         assert_eq!(EVENT_PROPERTY_CHANGED, "block:properties-changed");
+        // #3852 — mirrored by `SYNC_NETWORK_BLOCKED_EVENT` in
+        // `src/hooks/useOsNetworkBlock.ts`. The two sides share no type; the
+        // only thing keeping the listener attached to the emitter is that this
+        // string does not change.
+        assert_eq!(EVENT_SYNC_NETWORK_BLOCKED, "sync:network_blocked");
+    }
+
+    // ── NetworkBlockedByOs variant (#3852) ─────────────────────────
+
+    /// The pairing dialog reads `blocked` and `reason_key` off this payload by
+    /// name. Serde renames the tag but not the fields, so a variant rename or a
+    /// field rename would silently produce an event no listener recognises —
+    /// which is the same "everything looks fine, nothing happens" shape #3852
+    /// is about.
+    ///
+    /// The field is spelled `reason_key`, not `reason`, on purpose: what
+    /// crosses this boundary is an i18n key the frontend translates. A field
+    /// carrying English would be shown verbatim to every non-English user.
+    #[test]
+    fn sync_event_network_blocked_serializes_with_type_tag_and_both_fields() {
+        let event = SyncEvent::NetworkBlockedByOs {
+            blocked: true,
+            reason_key: Some("pairing.osNetworkBlocked".into()),
+        };
+        let json = serde_json::to_value(&event).expect("serialize NetworkBlockedByOs");
+        assert_eq!(
+            json["type"], "network_blocked_by_os",
+            "the variant must serialize with its snake_case type tag"
+        );
+        assert_eq!(
+            json["blocked"], true,
+            "the frontend gates the whole banner on this flag"
+        );
+        assert_eq!(
+            json["reason_key"], "pairing.osNetworkBlocked",
+            "the key is what the frontend translates; it must round-trip under \
+             this exact field name"
+        );
+    }
+
+    /// The recovery direction has to serialize too — it is what clears the
+    /// banner. A payload that only ever carried `true` would leave the warning
+    /// on screen after the block lifted. It carries `reason_key: null`, because
+    /// a cleared banner has no text.
+    #[test]
+    fn sync_event_network_blocked_carries_the_recovery_direction() {
+        let event = SyncEvent::NetworkBlockedByOs {
+            blocked: false,
+            reason_key: None,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "network_blocked_by_os");
+        assert_eq!(json["blocked"], false);
+        assert!(
+            json["reason_key"].is_null(),
+            "a recovery names no string to show, got: {json}"
+        );
     }
 
     // ── MdnsDisabled variant ──────────────────────────────────────

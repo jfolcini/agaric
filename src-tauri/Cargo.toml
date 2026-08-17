@@ -216,6 +216,14 @@ zstd = "0.13"
 ciborium = "0.2"
 tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+# #3852 — `log`→`tracing` bridge. Several deps in the sync path (notably
+# `mdns-sd`) report their diagnostics through the `log` facade, not `tracing`.
+# With no `log` logger installed, every one of those records — socket bind
+# failures, `sendto` failures, interface misses — is a compiled-in no-op, which
+# is one of the three silences that hid #3852. Already in the lockfile as a
+# `tracing-subscriber` default feature; named here because `init_logging` now
+# calls `LogTracer::init` directly.
+tracing-log = "0.2.0"
 
 # OpenTelemetry stack (issue #2110). The `opentelemetry`, `opentelemetry_sdk`,
 # `opentelemetry-otlp`, and `opentelemetry-appender-tracing` crates moved with

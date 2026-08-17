@@ -30,6 +30,13 @@ pub mod snapshot_transfer;
 // without a device.
 pub(crate) mod android_multicast;
 
+// #3852: report Android's per-uid background firewall to the user instead of
+// spinning. Unlike `android_multicast` this module compiles on every target —
+// its reporting rule is a pure function with no JNI in it, and only the
+// registration call is `cfg(target_os = "android")` — so the rule that decides
+// what the pairing UI is told is tested on the host, on every platform.
+pub mod android_network_block;
+
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;

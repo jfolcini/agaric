@@ -9,8 +9,9 @@
 
 use agaric_sync::sync_events::{
     BindExposureStatus, BindExposureStatusState, EVENT_SYNC_COMPLETE, EVENT_SYNC_ERROR,
-    EVENT_SYNC_INTERNET_FACING_BIND, EVENT_SYNC_MDNS_DISABLED, EVENT_SYNC_PROGRESS,
-    InternetFacingBind, MdnsStatus, MdnsStatusState, SyncEvent, SyncEventSink, SyncProgressUpdate,
+    EVENT_SYNC_INTERNET_FACING_BIND, EVENT_SYNC_MDNS_DISABLED, EVENT_SYNC_NETWORK_BLOCKED,
+    EVENT_SYNC_PROGRESS, InternetFacingBind, MdnsStatus, MdnsStatusState, SyncEvent, SyncEventSink,
+    SyncProgressUpdate,
 };
 
 // ---------------------------------------------------------------------------
@@ -29,6 +30,11 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             SyncEvent::Error { .. } => EVENT_SYNC_ERROR,
             SyncEvent::MdnsDisabled { .. } => EVENT_SYNC_MDNS_DISABLED,
             SyncEvent::InternetFacingBind { .. } => EVENT_SYNC_INTERNET_FACING_BIND,
+            // #3852 — the OS says it is dropping this app's packets. Goes on
+            // the legacy `app.emit` bus, like the other two "why is discovery
+            // not working" events: its audience is the pairing dialog and the
+            // device-management surface, not an active sync's progress stream.
+            SyncEvent::NetworkBlockedByOs { .. } => EVENT_SYNC_NETWORK_BLOCKED,
             // File-transfer progress was never on the
             // legacy `app.emit` bus, so this sink drops it. The
             // canonical path is `ChannelEventSink` → `Channel<…>::Files`;

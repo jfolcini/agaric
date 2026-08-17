@@ -586,6 +586,149 @@ fn running_under_flatpak() -> bool {
 // before line 1390" rule.
 // ---------------------------------------------------------------------------
 
+/// Default `EnvFilter` directives every build ships for the stderr + file log
+/// layers.
+///
+/// A constant rather than an inline literal so a test can assert on the exact
+/// set the production subscriber is built from.
+const BASE_LOG_LAYER_DEFAULTS: &[(&str, &str)] = &[("agaric", "info"), ("frontend", "info")];
+
+/// The `mdns-sd` diagnostic directive, added to the defaults only where the
+/// user has no other way to switch it on: see [`MDNS_DEBUG_BY_DEFAULT`].
+const MDNS_DIAGNOSTIC_DEFAULT: (&str, &str) = ("mdns_sd", "debug");
+
+/// Whether `mdns_sd=debug` is a **default**, as opposed to something an
+/// operator opts into with `RUST_LOG`.
+///
+/// # Why this is gated at all
+///
+/// `mdns-sd` logs a lot at `debug`, and not only at startup: `handle_read`,
+/// `dns_parser`, and the cache log per *incoming packet*, and on a busy LAN
+/// (printers, casts, phones, every `_services._dns-sd._udp` sweep) that is
+/// continuous. It flows into the JSON file layer, and `tracing-appender` has no
+/// per-file size cap — daily rotation with 14 retained files bounds the file
+/// *count*, not the bytes in the current day (#157 sub-item D). An
+/// unconditional default therefore charges that to every Agaric install on
+/// every platform, forever, to answer a question almost none of them are asking.
+///
+/// # Why Android, and why not the alternatives
+///
+/// * Not `cfg(debug_assertions)`. The whole point of the bridge is on-device
+///   diagnosis of a **release** build — #3852 was found on a shipped APK on a
+///   Pixel 8, and a debug-build gate would have hidden it from the one build
+///   that had the bug.
+/// * Not a narrower target filter. The diagnostics that matter
+///   (`failed to create IPv4 socket`, `failed to join multicast`,
+///   `Failed to send unicast …`) and the per-packet chatter are emitted from
+///   the *same* module path, `mdns_sd::service_daemon`. `log` records take
+///   `module_path!()` as their target, so no target prefix separates signal
+///   from volume — the filter cannot express the distinction.
+/// * Not a user-facing runtime toggle. A switch the user must find and flip
+///   *before* reproducing is a switch that is off during the failure it exists
+///   to catch, and 0.9.7 ships no settings surface for it.
+///
+/// What is left is the platform gate, and it happens to be the honest one:
+/// `RUST_LOG` is the toggle everywhere it can be set, and Android is precisely
+/// the platform where it cannot. So the default exists exactly where the
+/// alternative is nothing, and everywhere else the operator asks for it by name
+/// (`RUST_LOG=mdns_sd=debug`), which `build_log_directives` honours.
+///
+/// `cfg!` rather than `#[cfg]` so both shapes stay compiled and the tests below
+/// can assert on the Android shape from a CI runner that is not Android.
+const MDNS_DEBUG_BY_DEFAULT: bool = cfg!(target_os = "android");
+
+/// The default directives for the stderr + file log layers on this build.
+///
+/// Takes the gate as an argument rather than reading [`MDNS_DEBUG_BY_DEFAULT`]
+/// so both branches are reachable from a test on any host.
+fn log_layer_defaults(mdns_debug: bool) -> Vec<(&'static str, &'static str)> {
+    let mut defaults = BASE_LOG_LAYER_DEFAULTS.to_vec();
+    if mdns_debug {
+        defaults.push(MDNS_DIAGNOSTIC_DEFAULT);
+    }
+    defaults
+}
+
+/// Does the final directive string admit `mdns-sd`'s `log`-facade records at
+/// `debug`?
+///
+/// This is the question [`init_log_bridge`] needs answered: bridging a record
+/// that the layers' `EnvFilter` will reject still costs its construction and
+/// dispatch, once per packet. Returns `true` for a `debug` or `trace` directive
+/// on `mdns_sd` or any of its submodules, whether it came from the defaults or
+/// from the operator's `RUST_LOG`.
+fn directives_admit_mdns_debug(directives: &str) -> bool {
+    directives
+        .split(',')
+        .map(str::trim)
+        .filter_map(|piece| piece.split('[').next().unwrap_or(piece).split_once('='))
+        .any(|(target, level)| {
+            let target = target.trim();
+            (target == "mdns_sd" || target.starts_with("mdns_sd::"))
+                && matches!(
+                    level.trim().to_ascii_lowercase().as_str(),
+                    "debug" | "trace"
+                )
+        })
+}
+
+/// Install the `log` → `tracing` bridge (#3852).
+///
+/// # This is a bug fix, not a nicety
+///
+/// Agaric logs through `tracing`. Several of its dependencies do not — most
+/// consequentially `mdns-sd`, which is the **only** peer discovery Agaric has
+/// and which reports every one of its network-level diagnostics through the
+/// `log` facade: `failed to create IPv4 socket`, `Failed to send unicast …`,
+/// the interface misses.
+///
+/// The `log` crate discards every record until some process installs a global
+/// logger. Agaric installed none, so all of that was a no-op: the records were
+/// emitted and dropped on the floor with no logger, no error, and nothing for
+/// an operator to notice. That was one of the three silences that made #3852
+/// invisible for three days — the other two being `register()` returning `Ok`
+/// for a queued command, and `ServiceDaemon::monitor()` having no call sites.
+///
+/// `LogTracer::init` fixes the first half by installing a logger that forwards
+/// into `tracing`; the `mdns_sd` directive in [`init_logging`] fixes the second
+/// half by letting the forwarded records past the subscriber's filter — by
+/// default on Android, and on request (`RUST_LOG=mdns_sd=debug`) everywhere
+/// else. See [`MDNS_DEBUG_BY_DEFAULT`] for why that split.
+///
+/// # Why the failure is swallowed
+///
+/// `LogTracer::init` fails only when a global logger is *already* installed —
+/// which means records already reach somewhere, and re-installing is neither
+/// possible nor needed. A boot that cannot install a logging bridge is not a
+/// boot worth aborting.
+///
+/// # Why the bridge is capped, and why the cap follows the filter
+///
+/// `LogTracer::init()` installs with the maximal filter, which drives
+/// `log::max_level()` to `Trace`: from then on every `log::trace!` in every
+/// dependency is *constructed* and dispatched into `tracing`, only to be
+/// dropped by the per-layer `EnvFilter`. `log::max_level()` is the only cheap
+/// gate there is — it is what lets the `log` macros short-circuit before a
+/// record is built — so it should never sit above what the layers will accept.
+///
+/// Hence `max_level`: `Debug` when the log layers admit `mdns_sd` at debug (the
+/// records this bridge exists for), `Info` otherwise. On a desktop build, where
+/// `mdns_sd=debug` is no longer a default (see [`MDNS_DEBUG_BY_DEFAULT`]),
+/// `Info` means mdns-sd's per-packet `debug!` calls short-circuit inside the
+/// macro instead of being formatted once per packet and then thrown away by the
+/// filter. An operator's `RUST_LOG=mdns_sd=debug` raises both together.
+fn init_log_bridge(max_level: tracing_log::log::LevelFilter) {
+    if let Err(e) = tracing_log::LogTracer::builder()
+        .with_max_level(max_level)
+        .init()
+    {
+        // No `tracing::warn!` — the subscriber does not exist yet at this point
+        // in boot, so a `tracing` event here would itself be dropped, which
+        // would be a small re-run of the bug this function fixes.
+        eprintln!("log→tracing bridge not installed (a global logger already exists): {e}");
+    }
+}
+
 /// Boot-phase 1 — install the tracing-appender file/stderr subscriber and
 /// Keep the non-blocking worker guard alive in managed state (#635).
 ///
@@ -597,6 +740,48 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
+
+    // Preserve any user-provided `RUST_LOG` directives for
+    // `agaric` / `frontend`. The log layers (stderr + file) default to `info`.
+    // `EnvFilter` is not `Clone`, so build the directive string once and mint a
+    // fresh filter per layer (each layer now carries its OWN filter — see the
+    // registry composition below — instead of one global filter).
+    //
+    // #3852 adds `mdns_sd` at `debug`, and PR #4034 scoped it to the platform
+    // that has no other way to ask for it. `mdns-sd` is the only discovery
+    // Agaric has, it reports through the `log` facade (hence `init_log_bridge`
+    // below), and every diagnostic that distinguishes "the LAN is quiet" from
+    // "this device cannot open a multicast socket" — `failed to create IPv4
+    // socket`, `Failed to send unicast …`, the interface misses — is emitted at
+    // `debug`. On Android, where #3852 was found on a release build, there is no
+    // practical way for a user to set `RUST_LOG`, so a default that hides those
+    // lines hides them on the one platform that needs them. Everywhere else
+    // `RUST_LOG=mdns_sd=debug` is available and the default is not paid for.
+    // `MDNS_DEBUG_BY_DEFAULT` carries the full argument, including why the other
+    // three ways of scoping it were rejected.
+    //
+    // The cost where it IS on, stated plainly because the M2b note below is
+    // about exactly this: a `debug` directive on ANY target raises the
+    // registry's global max level to DEBUG, so `debug!` callsites elsewhere in
+    // `agaric` start evaluating their (per-layer, rejecting) filter instead of
+    // being skipped at the callsite. That is the same level the OTel layer
+    // already asks for whenever observability is enabled. An operator who wants
+    // the quieter shape can set `RUST_LOG=mdns_sd=warn`, which
+    // `build_log_directives` honours — a user directive for a target always
+    // wins over the default.
+    let defaults = log_layer_defaults(MDNS_DEBUG_BY_DEFAULT);
+    let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
+    let directives = build_log_directives(&rust_log, &defaults);
+
+    // #3852 — install the `log` → `tracing` bridge, so that records emitted
+    // through the `log` facade by dependencies are not silently discarded. See
+    // `init_log_bridge` for why this is a bug fix and not a nicety, and why its
+    // ceiling tracks the filter built just above rather than being a constant.
+    init_log_bridge(if directives_admit_mdns_debug(&directives) {
+        tracing_log::log::LevelFilter::Debug
+    } else {
+        tracing_log::log::LevelFilter::Info
+    });
 
     // Initialize tracing-appender using the OS-correct
     // `app_data_dir` so the on-disk log files resolve to the same path
@@ -632,16 +817,12 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
         None => (None, None),
     };
 
-    // Preserve any user-provided `RUST_LOG` directives for
-    // `agaric` / `frontend`. The log layers (stderr + file) default to `info`.
-    // `EnvFilter` is not `Clone`, so build the directive string once and mint a
-    // fresh filter per layer (each layer now carries its OWN filter — see the
-    // registry composition below — instead of one global filter).
-    let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
-    let directives = build_log_directives(&rust_log, &[("agaric", "info"), ("frontend", "info")]);
+    // The fallback is the same defaults with the user's `RUST_LOG` dropped —
+    // derived, not a hand-copied literal, so it cannot drift away from the
+    // defaults above the way a duplicated string would.
     let make_log_filter = || {
         EnvFilter::try_new(&directives)
-            .unwrap_or_else(|_| EnvFilter::new("agaric=info,frontend=info"))
+            .unwrap_or_else(|_| EnvFilter::new(build_log_directives("", &defaults)))
     };
 
     // #2110 M3 — the OTel trace layer captures at `debug` (default), so the
@@ -2514,6 +2695,155 @@ mod specta_tests {
         let content = std::fs::read_to_string(out_path).expect("read generated bindings");
         std::fs::write(out_path, format!("// @ts-nocheck\n{content}"))
             .expect("write bindings with ts-nocheck header");
+    }
+}
+
+/// #3852 — the `log` → `tracing` bridge, and the filter that lets the bridged
+/// records through.
+#[cfg(test)]
+mod log_bridge_tests {
+    use super::{
+        build_log_directives, directives_admit_mdns_debug, init_log_bridge, log_layer_defaults,
+    };
+
+    /// Until a global `log` logger exists, `log::max_level()` is `Off` and
+    /// EVERY `log::debug!` in every dependency short-circuits inside the macro
+    /// — the record is never even constructed. That is the state Agaric shipped
+    /// in, and it is why `mdns-sd`'s socket/send diagnostics were unreachable
+    /// no matter what filter was configured.
+    ///
+    /// nextest runs each test in its own process, so the pre-init reading below
+    /// is the real boot-time state and not another test's leftovers.
+    #[test]
+    fn init_log_bridge_makes_log_crate_records_reachable() {
+        use tracing_log::log::LevelFilter;
+
+        let before = tracing_log::log::max_level();
+        init_log_bridge(LevelFilter::Debug);
+        let after = tracing_log::log::max_level();
+
+        assert!(
+            after >= LevelFilter::Debug,
+            "after init_log_bridge, `mdns_sd`'s `log::debug!` records must at least be \
+             constructed and offered to `tracing`; max_level was {before:?} before and \
+             {after:?} after"
+        );
+        assert_eq!(
+            after,
+            LevelFilter::Debug,
+            "the bridge must honour the ceiling it is given: `LogTracer::init()` would set \
+             Trace, making every dependency's `log::trace!` record be constructed and \
+             dispatched into `tracing` only for the layers' EnvFilter to drop it. max_level \
+             was {before:?} before and {after:?} after"
+        );
+    }
+
+    /// The bridge alone is not enough: a forwarded record still has to pass the
+    /// subscriber's `EnvFilter`. With only `agaric` / `frontend` directives,
+    /// every `mdns_sd` event is rejected for having no matching directive, so
+    /// bridging them would change nothing observable. This is the shape Android
+    /// boots with, asserted from any host because the gate is a parameter.
+    #[test]
+    fn the_android_default_log_filter_admits_mdns_sd_at_debug() {
+        let directives = build_log_directives("", &log_layer_defaults(true));
+        assert!(
+            directives.contains("mdns_sd=debug"),
+            "on the platform with no RUST_LOG, the default directives must admit mdns-sd's \
+             debug diagnostics (socket-create and send failures are all emitted at debug), \
+             got: {directives}"
+        );
+        assert!(
+            tracing_subscriber::EnvFilter::try_new(&directives).is_ok(),
+            "the default directive string must parse as an EnvFilter, got: {directives}"
+        );
+        assert!(
+            directives_admit_mdns_debug(&directives),
+            "the bridge ceiling is derived from this string; it must read the directive it \
+             just built, got: {directives}"
+        );
+    }
+
+    /// The scoping this whole gate exists for (PR #4034 note 5): off Android,
+    /// `mdns_sd=debug` is NOT a default, so it does not stream into a JSON log
+    /// file that has no per-file size cap (#157 sub-item D) on every desktop
+    /// install that never asked for it.
+    ///
+    /// Asserted through the constant the production path actually reads, so a
+    /// widened `cfg!` — say back to an unconditional `true` — reddens here on
+    /// every non-Android CI runner rather than shipping quietly.
+    #[test]
+    #[cfg(not(target_os = "android"))]
+    fn mdns_debug_is_not_a_default_off_android() {
+        use super::MDNS_DEBUG_BY_DEFAULT;
+
+        // Asserted through the directive string rather than on the constant
+        // directly: `assert!(!MDNS_DEBUG_BY_DEFAULT)` is a constant assertion
+        // clippy rejects, and this form checks the thing that actually ships —
+        // what the production subscriber is handed.
+        let directives = build_log_directives("", &log_layer_defaults(MDNS_DEBUG_BY_DEFAULT));
+        assert!(
+            !directives.contains("mdns_sd"),
+            "no mdns-sd directive may be shipped by default off Android, got: {directives}"
+        );
+        assert!(
+            !directives_admit_mdns_debug(&directives),
+            "and the log bridge must therefore stay below Debug, so mdns-sd's per-packet \
+             `log::debug!` calls short-circuit instead of being built and dropped, \
+             got: {directives}"
+        );
+    }
+
+    /// The default being off must not put the diagnostics out of reach: on
+    /// every platform that has an environment, asking for them by name still
+    /// works, and the bridge ceiling rises with the filter.
+    #[test]
+    fn an_operator_can_still_opt_in_off_android() {
+        let directives = build_log_directives("mdns_sd=debug", &log_layer_defaults(false));
+        assert!(
+            directives.contains("mdns_sd=debug"),
+            "RUST_LOG=mdns_sd=debug must survive into the layer filter, got: {directives}"
+        );
+        assert!(
+            directives_admit_mdns_debug(&directives),
+            "and must raise the log bridge's ceiling, or the records it asks for are \
+             short-circuited before they are built, got: {directives}"
+        );
+    }
+
+    /// Submodule directives count too — `log` records take `module_path!()` as
+    /// their target, so an operator naming `mdns_sd::service_daemon` is asking
+    /// for exactly the records the bridge carries.
+    #[test]
+    fn a_submodule_directive_raises_the_bridge_ceiling() {
+        assert!(
+            directives_admit_mdns_debug("agaric=info,mdns_sd::service_daemon=debug"),
+            "a submodule directive must be recognised"
+        );
+        assert!(
+            !directives_admit_mdns_debug("agaric=debug,frontend=info,mdns_sd_helper=debug"),
+            "a target that merely starts with the same letters must not"
+        );
+        assert!(
+            !directives_admit_mdns_debug("mdns_sd=warn"),
+            "a directive that rejects debug must not raise the ceiling"
+        );
+    }
+
+    /// An operator who finds mDNS debug noisy must be able to turn it down, and
+    /// the existing "user directive wins" rule is what makes the Android
+    /// default safe to ship. Falsifying this would mean `RUST_LOG` could not
+    /// quiet it.
+    #[test]
+    fn a_user_rust_log_directive_still_overrides_the_mdns_default() {
+        let directives = build_log_directives("mdns_sd=warn", &log_layer_defaults(true));
+        assert!(
+            directives.contains("mdns_sd=warn"),
+            "the operator's directive must be preserved, got: {directives}"
+        );
+        assert!(
+            !directives.contains("mdns_sd=debug"),
+            "the default must NOT be appended alongside the operator's, got: {directives}"
+        );
     }
 }
 

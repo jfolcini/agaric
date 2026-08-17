@@ -47,7 +47,13 @@ import { DialogBody } from '@/components/ui/dialog'
 import { SheetBody } from '@/components/ui/sheet'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
+// #3852 — the OS's own report that it is dropping this app's packets, and the
+// wake lock that stops it happening in the first place. See each hook's docs;
+// between them they turn "both devices spin until the window expires" into
+// "this does not happen, and if it does, it says so."
+import { useOsNetworkBlock } from '@/hooks/useOsNetworkBlock'
 import { usePollingQuery } from '@/hooks/usePollingQuery'
+import { useScreenWakeLock } from '@/hooks/useScreenWakeLock'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
@@ -146,6 +152,27 @@ export function PairingDialog({
   const [waitCountdown, setWaitCountdown] = useState<number | null>(null)
 
   const { t } = useTranslation()
+
+  // #3852 — hold the screen awake for the lifetime of THIS dialog and nothing
+  // more. On Android 15+ a sleeping screen moves the app's uid into
+  // `FIREWALL_CHAIN_BACKGROUND` and every packet is dropped at the cgroup-BPF
+  // hook — measured on the reporting Pixel 8 as +300 drops for 300 datagrams
+  // sent, with `rx_queue` never leaving 0 — which made a first-ever pair
+  // impossible while both devices displayed "Waiting for the other device…".
+  //
+  // Keyed on `open` rather than on `awaitingPairResult`: the daemon's
+  // dormant → active transition, the mDNS announce, and the peer's discovery of
+  // it all happen in the seconds AFTER the dialog opens and BEFORE either
+  // waiting state is entered, and those are exactly the seconds the record has
+  // to reach the wire in.
+  useScreenWakeLock(open)
+
+  // #3852 — if the OS blocks us anyway (the user pressed the power button, a
+  // policy revoked the lock, an OEM ignores it), say so instead of spinning to
+  // the 5-minute TTL. This is the platform stating its own firewall decision,
+  // not an inference from silence.
+  const osNetworkBlock = useOsNetworkBlock()
+
   const dialogRef = useRef<HTMLDivElement>(null)
   const retryBtnRef = useRef<HTMLButtonElement>(null)
   // Tracks the paste-focus setTimeout so we can cancel it on unmount and
@@ -1057,6 +1084,29 @@ export function PairingDialog({
 
           <Body>
             <div ref={dialogRef}>
+              {/* #3852 — the OS is dropping this app's packets. Rendered ABOVE
+                  the error banner because it explains failures the error banner
+                  cannot: while this is showing, every pairing symptom
+                  downstream ("no response from the other device", the silent
+                  TTL expiry) has this as its cause. Not dismissible and not a
+                  toast — it is a live condition, and it clears itself when the
+                  daemon reports the block lifted. */}
+              {osNetworkBlock.blocked && (
+                <div
+                  className="pairing-network-blocked mb-4"
+                  role="alert"
+                  aria-live="assertive"
+                  data-testid="pairing-network-blocked"
+                >
+                  {/* The daemon names an i18n KEY, never a sentence — a
+                      sentence built in Rust would be English for every user in
+                      every locale. `blocked` narrows the union, so `reasonKey`
+                      is a `string` here and there is no fallback branch to
+                      leave unreachable. */}
+                  <p className="text-sm text-destructive">{t(osNetworkBlock.reasonKey)}</p>
+                </div>
+              )}
+
               {/* Error message with Retry button (#282) */}
               {error && (
                 <div
