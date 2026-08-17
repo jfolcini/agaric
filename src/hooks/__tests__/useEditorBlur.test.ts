@@ -932,11 +932,17 @@ describe('useEditorBlur', () => {
         branch: 'split',
       })
 
+      // Same pre-condition as the edit branch, and for the same reason: it is
+      // what makes a stale mid-blur read distinguishable from "the harness
+      // never rendered the split content at all".
+      expect(committedText()).toBe('<pre-blur>')
+
       act(() => {
         handle.blur?.(makeFocusEvent())
       })
 
       expect(seenMidBlur).toEqual(['line1\nline2'])
+      expect(committedText()).toBe('line1\nline2')
     })
   })
 

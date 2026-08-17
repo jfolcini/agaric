@@ -37,8 +37,10 @@
  *
  * ## What is measured vs what is ASSERTED (#3700)
  * The four timings above are the bench product: they are printed, and the
- * doc table is regenerated from them. They are NOT, any longer, the whole
- * gate.
+ * table in `docs/architecture/editor-and-content.md` § "Mount envelope" is a
+ * transcription of one such run. Running this file does NOT refresh that
+ * table, and the absolute milliseconds are hardware-dependent — see the
+ * provenance note printed under it. They are NOT, any longer, the whole gate.
  *
  * The mount phase used to carry an absolute `mountMs < 10_000` ceiling. That
  * is a wall-clock budget on a shared, unreserved machine, so it measured mount
@@ -86,7 +88,7 @@
  * they stood in for is now an exact, load-invariant COUNT — see the
  * `asymptotic work` test at the bottom of this file. The timings are still
  * measured and printed, because they are the bench PRODUCT this file exists to
- * produce and the doc table is regenerated from them; they are simply no
+ * produce and the source the doc table is transcribed from; they are simply no
  * longer a gate. A quantity this machine-dependent can be reported honestly or
  * asserted honestly, not both.
  */
@@ -325,9 +327,12 @@ describe('BlockTree scale envelope (#2467 Measure)', () => {
     }
 
     // Print the measured envelope so `vitest run` output carries the real
-    // numbers this bench exists to produce (matches the doc table in
-    // editor-and-content.md § Mount envelope — regenerate that table from
-    // this output when re-running the bench).
+    // numbers this bench exists to produce. The table in editor-and-content.md
+    // § Mount envelope is a transcription of ONE such run on CI-class
+    // hardware, not a live view of this output: the absolute milliseconds move
+    // several-fold with machine and load (see the provenance note there), so
+    // refresh it deliberately, and record which machine, rather than assuming
+    // it tracks whatever this run printed.
     console.table(
       measurements.map((m) => ({
         blocks: m.n,
@@ -381,10 +386,13 @@ describe('BlockTree scale envelope (#2467 Measure)', () => {
 
     // The per-test timeout is a SAFETY NET, not a budget, so it is sized for
     // the worst contention actually observed rather than for a typical run.
-    // Derivation: the whole test measures ~3.0 s idle here, of which the 10K
-    // mount is ~0.8 s, i.e. total ≈ 4x that one phase. #3700 recorded a 10K
-    // mount of 4.1 s idle / 12.8 s under load on a busier box, which
-    // extrapolates to ≈16 s idle and ≈51 s under the same contention. 120 s is
+    // Derivation: on this box the whole test measures ~2.3-3.0 s with the
+    // machine near idle, of which the 10K mount is ~0.7-0.8 s, i.e. total ≈
+    // 3-4x that one phase. Re-run at load average 22 on 16 cores it took
+    // 8.6-9.1 s with the 10K mount at 2.6-2.9 s — a ~3.9x inflation, still 13x
+    // inside this timeout. #3700 recorded a 10K mount of 4.1 s idle / 12.8 s
+    // under load on a busier box, which extrapolates to ≈16 s idle and ≈51 s
+    // under the same contention. 120 s is
     // ~2.4x that worst case. Since #4013 removed the wall-clock assertions
     // this is now the ONLY way slowness can fail the file — deliberately, and
     // only at an order of magnitude beyond anything yet seen.
@@ -402,26 +410,61 @@ describe('BlockTree scale envelope (#2467 Measure)', () => {
    *
    * But that class change does have an exact proxy: how many times the code
    * TOUCHES the input rows. Each row is replaced by an object whose own
-   * properties are counting getters, so `buildFlatTree`'s grouping read, its
-   * sort comparisons, its `visited` probes and its `{...child, depth}` spread
-   * — and React's per-row prop reads during mount and re-render — are all
-   * tallied. The tally is a property of the code path and of nothing else: it
-   * is byte-identical whatever else the machine is doing, which is the
-   * property the wall clock could never have.
+   * properties are counting getters, so every read `buildFlatTree` performs on
+   * a row — and every per-row prop read React performs during mount and
+   * re-render — is tallied. The tally is a property of the code path and of
+   * nothing else: it is byte-identical whatever else the machine is doing,
+   * which is the property the wall clock could never have.
    *
    * Measured on this fixture (a flat page — one already-sorted sibling group):
    *
-   *   buildFlatTree   7n - 2  reads ->  6.998 / 7.000 / 7.000 per block
-   *   mount          34n      reads -> 34.000 / 34.000 / 34.000 per block
-   *   re-render      58n - 24 reads -> 57.976 / 57.995 / 57.998 per block
+   *   buildFlatTree   7n - 2 reads ->  6.998 /  7.000 /  7.000 per block
+   *   mount          34n     reads -> 34.000 / 34.000 / 34.000 per block
+   *   re-render      34n     reads -> 34.000 / 34.000 / 34.000 per block
    *
-   * at n = 1K / 5K / 10K. The 1K and 10K figures this test asserts on were
-   * byte-identical to three decimals on all 10 consecutive runs measured for
-   * #4013 — zero spread — 5 of them idle and 5 under a deliberate 48-way CPU
-   * load spike on a 16-core box that inflated the 10K MOUNT from ~0.78 s to
-   * 6.0-7.6 s (a ~8x wall-clock inflation, and not one digit of these counts
-   * moved). The 5K column comes from the same instrumentation run at the
-   * middle scale; the assertion needs only the endpoints.
+   * at n = 1K / 5K / 10K — exact at every scale (6 998 / 34 998 / 69 998 build
+   * reads, 34 000 / 170 000 / 340 000 mount reads, the same again on
+   * re-render).
+   *
+   * The `7n - 2` decomposes term by term, and it is worth being exact about
+   * which reads are in it, because the arithmetic is the argument:
+   *
+   *    n       `block.parent_id`, once per row, in the group-by-parent pass.
+   *   2n - 2   `a.position` / `b.position` in the sort comparator. The group
+   *            arrives already ascending, so V8's TimSort settles it in a
+   *            single run of n - 1 comparisons (999 at 1K, 9 999 at 10K) at
+   *            2 reads each.
+   *   3n       `child.id`, three times per row in the DFS: `visited.has`,
+   *            `visited.add`, and the recursive `dfs(child.id, depth + 1)`.
+   *    n       `child.depth`, in the identity-preserving test at
+   *            `tree-utils.ts:101`.
+   *
+   * What is NOT in that list is the `{...child, depth}` spread on that same
+   * line: it never runs on this fixture. `makeBlock` defaults `depth: 0` and
+   * `makeFlatPage` never overrides it, so `'depth' in child &&
+   * flatChild.depth === depth` holds for every row and `buildFlatTree` returns
+   * the input objects themselves (`in` is a HasProperty check and does not
+   * invoke the getter, so that test costs exactly the one `depth` read counted
+   * above). The measurement rules the spread out on its own: `makeBlock` has
+   * 12 own properties, so spreading each row would add 12 reads/block and put
+   * the total near 18-19n, not the observed 6.998. The probe WOULD see such a
+   * spread if a change introduced one — that is why `countFieldReads` makes
+   * its getters enumerable — which is the point of counting rather than
+   * assuming.
+   *
+   * Mount and re-render tally the same 34n because the fixture hands React a
+   * fresh props object on the re-render: every `SortableBlockWrapper` memo is
+   * busted, so the re-render re-reads exactly what the mount read. The one
+   * extra block spliced in for the re-render is a plain `makeBlock` row rather
+   * than an instrumented one, so it contributes nothing to the tally.
+   *
+   * Every figure above is an exact multiple of n, reproduced digit-for-digit
+   * on each run taken here. Load-invariance is what the #4013 experiment
+   * established: 10 consecutive runs — 5 idle, 5 under a deliberate 48-way CPU
+   * load spike on a 16-core box — inflated the 10K MOUNT wall-clock from
+   * ~0.78 s to 6.0-7.6 s (~8x) and did not move the asserted ratio by a single
+   * digit. The 5K column was taken with the same instrumentation at the middle
+   * scale; the assertion itself needs only the endpoints.
    *
    * So the asserted quantity — reads per block at 10K divided by reads per
    * block at 1K — measures 1.000. The ceiling is 2, derived: the largest
@@ -451,9 +494,12 @@ describe('BlockTree scale envelope (#2467 Measure)', () => {
       const buildReads = build.reads()
       expect(instrumentedFlat).toHaveLength(n)
 
-      // 2. Mount / re-render over counting rows. `buildFlatTree` returns fresh
-      // spread objects, so the flat list must be re-instrumented before it is
-      // handed to React.
+      // 2. Mount / re-render over counting rows, on a FRESH counter. Note the
+      // reason: on this fixture `buildFlatTree` hands back the very objects it
+      // was given (the identity-preserving branch — see the block comment
+      // above), so re-instrumenting is not about object identity. It is what
+      // gives the mount phase a counter that starts at zero instead of at
+      // `buildFlatTree`'s 7n - 2.
       const tree = countFieldReads(buildFlatTree(makeFlatPage(n), null))
       const rows = tree.rows
       const renderResult = render(
@@ -461,13 +507,15 @@ describe('BlockTree scale envelope (#2467 Measure)', () => {
       )
       const mountReads = tree.reads()
 
+      // Building `spliced` reads no row property — the array spread copies
+      // references and `Array.prototype.splice` moves them — so `mountReads`
+      // is still the running total here and is what the re-render subtracts.
       const spliced = [...rows]
       spliced.splice(Math.floor(n / 2), 0, makeBlock({ id: `${n}_NEW`, content: 'new', depth: 0 }))
-      const beforeRerender = tree.reads()
       renderResult.rerender(
         <BlockListRenderer {...makeProps({ visibleItems: spliced, blocks: spliced })} />,
       )
-      const rerenderReads = tree.reads() - beforeRerender
+      const rerenderReads = tree.reads() - mountReads
 
       renderResult.unmount()
       cleanup()
