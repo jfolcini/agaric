@@ -202,6 +202,28 @@ export const DEFAULT_MAX_CHILDREN = 43
 // oversized body from the same unchanged `known` set. Same cap and same
 // "never cut the marker block mid-way" rule as the sibling
 // `scripts/file-fuzz-findings.mjs`.
+//
+// #4032 — THE CEILING IN FINDINGS, measured rather than guessed, because the
+// first `NoCoverage`-admitting run (#3788) may be the one that reaches it and
+// "roughly 600" is not a number anyone can plan against. Binary-searched
+// through `buildIssueBody` on 2026-08-17 with a run URL and every line dated,
+// which is the widest the state block ever renders:
+//
+//   rust id      89 chars  ->  635 findings  (body 59 917, 5 619 under 65 536)
+//   frontend id  82 chars  ->  689 findings  (body 59 990, 5 546 under 65 536)
+//   no-cov id    81 chars  ->  697 findings  (body 59 959, 5 577 under 65 536)
+//
+// So ~635 findings is the floor of the ceiling, and the 5 536-char gap between
+// this cap and GitHub's hard limit is the headroom: whatever prose is added to
+// the head above, the body still lands well inside 65 536 rather than 422-ing.
+//
+// Past that the parent body THROWS (see the end of `buildIssueBody`) — it does
+// not truncate, because the block is the filer's only cross-run memory and a
+// short block silently shrinks the tracked set. That red weekly job is the
+// designed outcome, not a bug to be patched by raising this number; the fix is
+// a per-outcome cap or a spill-to-child strategy. The COMMENT bodies, which
+// hold no state, do truncate — at a line boundary and labelled with the count
+// dropped (`clampCommentLines`).
 export const MAX_BODY_CHARS = 60_000
 
 // ---------------------------------------------------------------------------
@@ -268,6 +290,25 @@ export function partitionByOutcome(ids) {
  * prevent, and #3245's double count in a new costume. So: a current id whose
  * pre-#3788 form is already tracked is NOT new, its predecessor is NOT resolved,
  * and it inherits its predecessor's first-seen date.
+ *
+ * #4032 — WHAT THAT COSTS, on the one run it applies. "Not new" reads as *the
+ * mutant was always there, we only respelled it*, and for a line carrying
+ * exactly one mutant that is exactly what happened. It is NOT what happened
+ * when the old line-level id collapsed several: one tracked predecessor,
+ * several current ids mapping back to it, so a mutant that started surviving
+ * THIS WEEK at `f.ts:86:24` is absorbed as "not new" alongside the `f.ts:86:7`
+ * that genuinely was tracked, inherits the legacy first-seen date, and is never
+ * announced. Collapsing several mutants into one entry is precisely the defect
+ * the column exists to fix, so the absorbed ids sit in exactly the lines this
+ * change was written for.
+ *
+ * Accepted rather than fixed, and the trade is one-sided: a line-level
+ * predecessor records no column, so there is nothing to compare the new one
+ * against and no way to tell the tracked mutant from its new neighbour. The
+ * only alternative is "treat every reshaped id as new" — the whole-backlog
+ * churn two paragraphs up. An absorbed finding is unannounced, not lost: from
+ * that run on it is in the state block, in its area's child body and in the
+ * parent's counts, and only the one-off "new this run" comment misses it.
  *
  * Deliberately `undefined` for `NoCoverage` ids. Their pre-#3788 form would be
  * the survivor id at the same line and mutator, which the old filer could well
@@ -481,12 +522,23 @@ export function survivorArea(id) {
 /**
  * Groups mutant ids by `survivorArea`, worst first.
  *
- * "Worst" is NO-COVERAGE FIRST (#3788), then total, then area name for
+ * "Worst" is NO-COVERAGE COUNT first (#3788), then total, then area name for
  * determinism. An area with untested code outranks an area with the same number
  * of weakly-tested lines: the second has tests that can be sharpened, the first
  * has none at all, and the ranking is the whole navigational claim of the
- * report. Each group also carries its two halves so callers never have to
- * re-derive (and risk disagreeing about) the split.
+ * report.
+ *
+ * #4032 — the equal-count tiebreak above is the mild half of what this actually
+ * does. Because the FIRST comparator is the no-coverage count and only ties
+ * there fall through to total, ANY area holding one no-coverage mutant outranks
+ * EVERY survivor-only area, however large: 1 no-coverage sorts above 500
+ * survivors. That is deliberate and it is the ranking's point — "there is no
+ * test here" is a different and worse fact than "the tests are weak", and no
+ * quantity of the second adds up to the first — but it is strong enough to
+ * surprise a reader who saw only the tiebreak sentence, so it is written down.
+ *
+ * Each group also carries its two halves so callers never have to re-derive
+ * (and risk disagreeing about) the split.
  */
 export function groupByArea(ids) {
   const byArea = new Map()
@@ -512,9 +564,12 @@ export function groupByArea(ids) {
 export function diffSurvivors(current, known) {
   const currentSet = new Set(current)
   // #3788 — a tracked id whose successor is in `current` was not resolved, and
-  // that successor is not new. See `legacyFrontendId` for why skipping this
-  // would make the release itself report the entire frontend backlog twice, as
-  // resolved and as new, and reset every first-seen date.
+  // NO successor of it is announced as new. See `legacyFrontendId` for why
+  // skipping this would make the release itself report the entire frontend
+  // backlog twice, as resolved and as new, and reset every first-seen date —
+  // and for the price of the "no successor": one predecessor can have several
+  // successors, and the ones that are genuinely new go unannounced with the
+  // rest on the single run this applies.
   const superseded = new Set()
   for (const id of currentSet) {
     const legacy = legacyFrontendId(id)
@@ -683,7 +738,12 @@ export function buildChildBody({ area, members, firstSeen = new Map(), parentNum
       ...section(`### No coverage — no test executed this code (${noCoverage.length})`, nc),
       ...section(`### Survivors — a test ran and did not fail (${survived.length})`, sv),
       ...tail,
-    ].join('\n')
+    ]
+      .join('\n')
+      // #4032 minor — `section` ends in a blank line so the next heading is
+      // separated from the fence above it. With no `runUrl` there is no tail to
+      // separate it from, and the body ends on a stray blank line.
+      .replace(/\n+$/, '')
 
   const datedNc = dated(noCoverage)
   const datedSv = dated(survived)
@@ -694,11 +754,26 @@ export function buildChildBody({ area, members, firstSeen = new Map(), parentNum
   // block must never be cut mid-way. The no-coverage half is filled FIRST so it
   // is the half that survives the cut: it is the more serious finding and,
   // historically, much the smaller list.
-  const note = `…(${members.length} findings do not fit in one issue body — see the parent's machine-readable block for the full list)`
-  const withNote = (ids, kept) => (kept.length < ids.length ? [...kept, note] : kept)
+  //
+  // #4032 — the note is PER SECTION and must therefore count per section. It
+  // used to report `members.length` (the whole area, not what was dropped) from
+  // a single shared string appended to each overflowing list, so a child whose
+  // no-coverage AND survivor lists both overflowed printed "…(1800 findings do
+  // not fit…)" twice under an area holding 1800 findings — reading as 3600
+  // omitted, and as "nothing here is shown" when in fact ~570 lines were. A
+  // truncation note that overstates the loss is the same defect as one that
+  // hides it: neither number is what was dropped.
+  const note = (omitted, total) =>
+    `…(${omitted} of this section's ${total} findings do not fit in one issue body — see the parent's machine-readable block for the full list)`
+  const withNote = (ids, kept) =>
+    kept.length < ids.length ? [...kept, note(ids.length - kept.length, ids.length)] : kept
+  // Worst case for the reservation: each present section loses everything.
   const budget =
     MAX_BODY_CHARS -
-    render(datedNc.length > 0 ? [note] : [], datedSv.length > 0 ? [note] : []).length
+    render(
+      datedNc.length > 0 ? [note(datedNc.length, datedNc.length)] : [],
+      datedSv.length > 0 ? [note(datedSv.length, datedSv.length)] : [],
+    ).length
   const keptNc = []
   const keptSv = []
   let used = 0
@@ -713,6 +788,70 @@ export function buildChildBody({ area, members, firstSeen = new Map(), parentNum
   return render(withNote(datedNc, keptNc), withNote(datedSv, keptSv))
 }
 
+/**
+ * #3257/#4032 — clamp a rendered COMMENT to `MAX_BODY_CHARS`.
+ *
+ * Comments carry no state (the parent's marker block is the only tracked set),
+ * so cutting one is safe — but the pre-#4032 cut was
+ * `text.slice(0, MAX_BODY_CHARS - footer.length) + footer`, and a raw character
+ * slice fails three ways at once, every one of them quiet. Measured on 2000
+ * rust-shaped findings against `buildNewSurvivorComment` before this change:
+ *
+ *   - the cut landed mid-id, so the last rendered line was
+ *     `[rust] src/reverse/batch.rs:1657:18: replace ` — a truncated mutant that
+ *     reads as a complete finding, and would be searched for as one;
+ *   - the ``` fence was left unterminated (odd fence count: 1), so the
+ *     "truncated" footer was swallowed INTO the code block instead of reading
+ *     as a note about it;
+ *   - the footer named no number, so a reader could not tell whether 3 findings
+ *     were missing or 1 200. It was 1 200.
+ *
+ * The result was a 60 000-char comment that looked like a complete report. That
+ * is the fail-open shape: a report that has dropped most of its content must
+ * say so louder than one that has not.
+ *
+ * So: cut at a LINE boundary, re-close the fence, and state the exact count
+ * omitted against the total. A comment that already fits is returned
+ * byte-for-byte unchanged and carries no note at all — a truncation label that
+ * is always present says nothing.
+ *
+ * `noteFor(omitted, total)` returns the footer LINES. It is called once with
+ * the worst case (everything omitted) to size the reservation, so the space set
+ * aside never depends on the cut it is paying for.
+ */
+function clampCommentLines(lines, noteFor) {
+  const full = lines.join('\n')
+  if (full.length <= MAX_BODY_CHARS) return full
+
+  // Findings are exactly the fenced lines: every builder here renders ids
+  // inside ``` blocks and prose outside them, so fence parity is the count.
+  let total = 0
+  let fenced = false
+  for (const line of lines) {
+    if (line === '```') fenced = !fenced
+    else if (fenced) total += 1
+  }
+
+  const reserve = ['```', ...noteFor(total, total)].join('\n').length + 1
+  const budget = MAX_BODY_CHARS - reserve
+  const kept = []
+  let used = 0
+  let keptFindings = 0
+  let inFence = false
+  for (const line of lines) {
+    if (used + line.length + 1 > budget) break
+    kept.push(line)
+    used += line.length + 1
+    if (line === '```') inFence = !inFence
+    else if (inFence) keptFindings += 1
+  }
+  // The cut can land inside a code block; close it so the note below renders as
+  // a note rather than as one more line of monospace mutant id.
+  if (inFence) kept.push('```')
+  kept.push(...noteFor(total - keptFindings, total))
+  return kept.join('\n')
+}
+
 export function buildChildComment({ area, newMembers, runUrl }) {
   const { survived, noCoverage } = partitionByOutcome(newMembers)
   const lines = [
@@ -723,10 +862,10 @@ export function buildChildComment({ area, newMembers, runUrl }) {
   if (survived.length > 0)
     lines.push('', `**Survivors (${survived.length})**`, '```', ...survived, '```')
   if (runUrl) lines.push('', `Run: ${runUrl}`)
-  const text = lines.join('\n')
-  if (text.length <= MAX_BODY_CHARS) return text
-  const footer = '\n…(truncated — the full list is in this issue’s body)'
-  return text.slice(0, MAX_BODY_CHARS - footer.length) + footer
+  return clampCommentLines(lines, (omitted, total) => [
+    '',
+    `_**Truncated** — ${omitted} of these ${total} findings are not shown above, to keep this comment under GitHub's ${MAX_BODY_CHARS}-character working limit. The full list is in this issue's body._`,
+  ])
 }
 
 export function buildChildCloseComment({ area, runUrl }) {
@@ -946,8 +1085,17 @@ export function buildIssueBody({
 
   // The state block alone does not fit. Fail with a diagnosis rather than
   // letting `gh issue edit` return a bare 422 nobody can act on.
+  //
+  // #4032 — this throw is the DESIGNED behaviour at the ceiling and the reason
+  // there is no truncation arm here: the block is the only cross-run memory
+  // this filer has, so a short block does not lose a report, it loses the
+  // tracked set — every dropped line comes back as "new" the following week,
+  // forever, which is #3245's double count with a longer fuse. Red-and-intact
+  // beats green-and-lying. The measured ceiling is ~635 findings (see
+  // MAX_BODY_CHARS); the message carries the actual numbers so a maintainer
+  // reading a red weekly job knows by how much, not just that.
   throw new Error(
-    `the survivor set outgrew a single issue body: ${all.length} survivor(s) render to ${clampedHarder.length} chars, over the ${MAX_BODY_CHARS}-char cap (GitHub's hard limit is 65536). The machine-readable state block cannot be truncated without corrupting the tracked set. Triage the tracking issue down, split the lanes into separate tracking issues, or un-enrol the noisiest module from stryker.modules.mjs — the deferred list there records this ceiling as the reason some modules are not enrolled yet (#3350).`,
+    `the survivor set outgrew a single issue body: ${all.length} finding(s) render to ${clampedHarder.length} chars, ${clampedHarder.length - MAX_BODY_CHARS} over the ${MAX_BODY_CHARS}-char cap (GitHub's hard limit is 65536; the measured ceiling is ~635 findings at ~90 chars each). The machine-readable state block cannot be truncated without corrupting the tracked set — every dropped line would be re-reported as new next run. Triage the tracking issue down, split the lanes into separate tracking issues, add a per-outcome cap or spill the lists to the child issues, or un-enrol the noisiest module from stryker.modules.mjs — the deferred list there records this ceiling as the reason some modules are not enrolled yet (#3350).`,
   )
 }
 
@@ -986,16 +1134,18 @@ export function buildNewSurvivorComment({ newOnes, runUrl }) {
     }
   }
   if (runUrl) lines.push('', `Run: ${runUrl}`)
-  const text = lines.join('\n')
   // #3257 — a comment body hits the same 65536 limit as an issue body, and
   // this is the call the SAME large-batch run makes right after the edit, so
   // capping only the body would just move the 422 one line down. A comment
-  // carries no state, so a plain truncation is safe here.
-  if (text.length <= MAX_BODY_CHARS) return text
-  const footer = runUrl
-    ? `\n…(truncated — see the full list in the issue body, and [this run](${runUrl}))`
-    : '\n…(truncated — see the full list in the issue body)'
-  return text.slice(0, MAX_BODY_CHARS - footer.length) + footer
+  // carries no state, so truncation is safe here — see `clampCommentLines` for
+  // why it is not a `slice`, and #4032 for the run that made it matter: the
+  // first `NoCoverage`-admitting run announces its whole newly-visible
+  // no-coverage set as new in ONE comment, which is the largest single artifact
+  // this script has ever rendered.
+  return clampCommentLines(lines, (omitted, total) => [
+    '',
+    `_**Truncated** — ${omitted} of these ${total} findings are not shown above, to keep this comment under GitHub's ${MAX_BODY_CHARS}-character working limit. The full list is in the issue body${runUrl ? `, and this run is [here](${runUrl})` : ''}._`,
+  ])
 }
 
 // ---------------------------------------------------------------------------
@@ -2741,6 +2891,128 @@ function selfTestNoCoverageEmptyAndMigration({ ok, fail }) {
   }
 }
 
+/**
+ * #4032 — the 60k boundary, both arms.
+ *
+ * Both arms, because a clamp that always truncates and always labels passes any
+ * single-arm test while destroying every report it touches. So: an over-cap
+ * render is cut, labelled, and labelled with the RIGHT number; an under-cap
+ * render comes back byte-for-byte with no label anywhere.
+ *
+ * The fixtures use real id shapes at real lengths (~90 chars) so the counts here
+ * are the counts the weekly job will see — see MAX_BODY_CHARS for the measured
+ * ceiling these were derived from.
+ */
+function selfTestBodyCap({ ok, fail }) {
+  // Lines of VARYING length, which is what a real `missed.txt` looks like (the
+  // description carries the mutated expression). Uniform-length fixtures make a
+  // character slice land on a line boundary by luck, which hides the arm this
+  // exists to test: the cut severing an id mid-string.
+  const rust = (i) =>
+    `[rust] src/reverse/batch.rs:${1000 + i}:${(i % 40) + 1}: replace is_skippable_non_reversible${'_x'.repeat(i % 9)} -> bool with true`
+  const ncId = (i) =>
+    `[frontend] date-utils: src/lib/date-utils.ts:${1000 + i}:${(i % 40) + 1} [BooleanLiteral]${NO_COVERAGE_SUFFIX}`
+  const RUN = 'https://github.com/o/r/actions/runs/1234567890'
+
+  // ── over-cap comment: cut at a line boundary, fence closed, count exact ──
+  {
+    const newOnes = Array.from({ length: 2000 }, (_, i) => rust(i)).toSorted()
+    const comment = buildNewSurvivorComment({ newOnes, runUrl: RUN })
+    const shown = newOnes.filter((id) => comment.includes(id)).length
+    const m = /_\*\*Truncated\*\* — (\d+) of these (\d+) findings are not shown/.exec(comment)
+    const fences = (comment.match(/```/g) ?? []).length
+    // Every id that appears must appear WHOLE: the pre-#4032 slice left a
+    // partial id as the last line, which reads as a finding and is not one.
+    const lastFinding = comment.split('\n').findLast((l) => l.startsWith('[rust] '))
+    const problems = []
+    if (comment.length > MAX_BODY_CHARS) problems.push(`len=${comment.length}`)
+    if (!m) problems.push('no truncation label')
+    else if (Number(m[1]) !== 2000 - shown)
+      problems.push(`label says ${m[1]}, dropped ${2000 - shown}`)
+    else if (Number(m[2]) !== 2000) problems.push(`label total ${m[2]} != 2000`)
+    if (fences % 2 !== 0) problems.push(`unbalanced fences (${fences})`)
+    if (!newOnes.includes(lastFinding))
+      problems.push(`last finding line is partial: ${lastFinding}`)
+    if (problems.length === 0)
+      ok(
+        'over-cap comment is truncated at a line boundary and labelled with the count dropped (#4032)',
+      )
+    else
+      fail(
+        'over-cap comment is truncated at a line boundary and labelled with the count dropped (#4032)',
+        problems.join('; '),
+      )
+  }
+
+  // ── under-cap comment: whole, and NOT labelled ──
+  {
+    const newOnes = Array.from({ length: 20 }, (_, i) => rust(i)).toSorted()
+    const comment = buildNewSurvivorComment({ newOnes, runUrl: RUN })
+    const allPresent = newOnes.every((id) => comment.includes(id))
+    if (allPresent && !/Truncated/.test(comment) && !/not shown/.test(comment))
+      ok('under-cap comment is posted whole and carries no truncation label (#4032)')
+    else
+      fail(
+        'under-cap comment is posted whole and carries no truncation label (#4032)',
+        `len=${comment.length} allPresent=${allPresent}`,
+      )
+  }
+
+  // ── child body: the note counts PER SECTION, not the whole area, twice ──
+  {
+    const members = [
+      ...Array.from({ length: 900 }, (_, i) => ncId(i)),
+      ...Array.from({ length: 900 }, (_, i) => rust(i)),
+    ].toSorted()
+    const body = buildChildBody({
+      area: 'frontend: date-utils',
+      members,
+      parentNumber: 3142,
+      runUrl: RUN,
+    })
+    // Deliberately wording-agnostic: match any "…(N …)" note and add the Ns up.
+    // Keying on the new phrasing would make this test pass the old code for the
+    // wrong reason (no match, so nothing claimed) instead of catching what the
+    // old code actually did — print the whole area's 1800 under BOTH sections.
+    const notes = [...body.matchAll(/…\((\d+)\b[^)]*\)/g)]
+    const shown = members.filter((id) => body.includes(id)).length
+    const claimed = notes.reduce((n, m) => n + Number(m[1]), 0)
+    const problems = []
+    if (body.length > MAX_BODY_CHARS) problems.push(`len=${body.length}`)
+    if (notes.length !== 2) problems.push(`${notes.length} note(s), expected one per section`)
+    if (claimed !== members.length - shown)
+      problems.push(
+        `notes claim ${claimed} omitted (${notes.map((m) => m[1]).join(' + ')}), actually ${members.length - shown} of ${members.length}`,
+      )
+    if (problems.length === 0)
+      ok('child-body truncation notes count per section, not the whole area twice (#4032)')
+    else
+      fail(
+        'child-body truncation notes count per section, not the whole area twice (#4032)',
+        problems.join('; '),
+      )
+  }
+
+  // ── the PARENT stays fail-closed: it throws, it does not truncate state ──
+  {
+    const all = Array.from({ length: 900 }, (_, i) => rust(i)).toSorted()
+    let threw = null
+    let body = null
+    try {
+      body = buildIssueBody({ all, resolvedOnes: [], runUrl: RUN, today: '2026-08-17' })
+    } catch (err) {
+      threw = err
+    }
+    if (threw && /\d+ over the 60000-char cap/.test(threw.message))
+      ok('over-cap PARENT body throws with the overshoot rather than truncating state (#4032)')
+    else
+      fail(
+        'over-cap PARENT body throws with the overshoot rather than truncating state (#4032)',
+        threw ? threw.message : `no throw; body=${body.length} chars`,
+      )
+  }
+}
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -2861,7 +3133,9 @@ function runSelfTest() {
   {
     const newOnes = Array.from({ length: 800 }, (_, i) => survivor(i))
     const comment = buildNewSurvivorComment({ newOnes, runUrl: 'https://example/run' })
-    if (comment.length <= MAX_BODY_CHARS && comment.includes('truncated'))
+    // #4032 — the label moved from a bare "truncated" to one carrying the count
+    // dropped; `selfTestBodyCap` checks that count is the true one.
+    if (comment.length <= MAX_BODY_CHARS && /\*\*Truncated\*\* — \d+ of these \d+/.test(comment))
       ok('oversized new-survivor comment is truncated (#3257)')
     else fail('oversized new-survivor comment is truncated (#3257)', `len=${comment.length}`)
   }
@@ -2893,6 +3167,11 @@ function runSelfTest() {
   //     no-op; and the one-off id reshape migrates instead of churning.
   selfTestNoCoverage({ ok, fail })
   selfTestNoCoverageEmptyAndMigration({ ok, fail })
+
+  // 13. #4032 — the 60k boundary, both arms: over-cap truncates AND says by how
+  //     much, under-cap is untouched AND unlabelled, and the parent's state
+  //     block still refuses to be cut at all.
+  selfTestBodyCap({ ok, fail })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
