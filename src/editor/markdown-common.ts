@@ -116,12 +116,31 @@ function underscoreRunEdges(
  * preserve: whitespace, string edges and punctuation are all "not a word
  * char", so this rule is invariant under every one of them.
  *
- * The rule is strictly STRONGER than the parser's: every run the parser could
- * treat as a delimiter is escaped by it (if the parser can open, the run is not
- * preceded by a word char; if it can close, it is not followed by one — either
- * way it is not intraword). So it can never leak an emphasis delimiter; it only
- * over-escapes the whitespace-on-both-sides case (`a _ b` → `a \_ b`), which is
- * lossless. `underscoreRunFlank` is the exact rule and stays the parser's.
+ * The rule is strictly STRONGER than the parser's, and the PROOF is the one
+ * line of algebra below — nothing here rests on enumeration. This rule escapes
+ * iff `!(word(before) && word(after))`; `canOpen` requires `!word(before)` and
+ * `canClose` requires `!word(after)`, so `canOpen || canClose` implies
+ * `!word(before) || !word(after)`, which is exactly the escape condition.
+ * Hence every run the parser could treat as a delimiter is escaped and no
+ * emphasis delimiter can leak into stored text. The neighbour table in
+ * `markdown-serializer.test.ts` ("escapes a superset of what the parser can
+ * treat as a delimiter") only SAMPLES that implication on a handful of
+ * neighbour chars — it is a check on the algebra, not a completeness
+ * guarantee, so re-derive the implication above when touching either rule.
+ *
+ * The rule over-escapes only the whitespace-on-both-sides case
+ * (`a _ b` → `a \_ b`), which is lossless. `underscoreRunFlank` is the exact
+ * rule and stays the parser's.
+ *
+ * ONE-TIME CONTENT MIGRATION. Existing stored notes containing a
+ * whitespace-flanked `_` were written under the old serializer rule, which left
+ * it bare; they serialize differently now, so `computeContentDelta` emits a
+ * rewrite for each of them on the first open/blur after this ships. That is a
+ * real bulk diff over existing content, but it happens exactly once and is
+ * lossless: `\_` reparses to `_` and re-escapes to `\_`, so the second
+ * serialize is byte-identical and the note never rewrites again. Pinned by
+ * "a pre-existing `a _ b` note migrates ONCE, then is byte-stable" in
+ * `markdown-serializer.test.ts`.
  */
 export function underscoreNeedsEscape(src: string, pos: number): boolean {
   const { before, after } = underscoreRunEdges(src, pos)

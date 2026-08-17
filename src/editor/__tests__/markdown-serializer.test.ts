@@ -3204,10 +3204,17 @@ describe('#710 round-trip corruption family', () => {
       })
 
       /**
-       * The safety proof, exhaustively: the serializer's rule must escape a
-       * SUPERSET of the runs the parser's rule would treat as a delimiter. An
-       * escape rule that stopped escaping would "fix" the fixpoint by leaking
-       * emphasis delimiters into stored text; this is what forbids that.
+       * A SPOT CHECK on the safety argument, not a proof of it: the serializer's
+       * rule must escape a SUPERSET of the runs the parser's rule would treat as
+       * a delimiter, because an escape rule that stopped escaping would "fix"
+       * the fixpoint by leaking emphasis delimiters into stored text.
+       *
+       * The proof is algebraic and lives in `underscoreNeedsEscape`'s doc
+       * comment (escape iff `!(word(before) && word(after))`, while `canOpen`
+       * needs `!word(before)` and `canClose` needs `!word(after)`). The table
+       * below samples 11 neighbour chars on each side × 3 run lengths — enough
+       * to catch a slip in either implementation, NOT a completeness guarantee
+       * over the input domain. Re-derive the algebra when touching either rule.
        */
       it('escapes a superset of what the parser can treat as a delimiter', () => {
         const NEIGHBOURS = ['', 'a', 'Z', '1', ' ', '\t', '*', '.', '(', '\\', '$']
@@ -3230,6 +3237,25 @@ describe('#710 round-trip corruption family', () => {
         // …and the rule is not vacuous: the intraword exemption really fires
         // (3 word-ish chars × 3 × 3 run lengths).
         expect(intrawordSeen).toBe(27)
+      })
+
+      /**
+       * The stored-content migration this rule implies. A note saved under the
+       * OLD rule kept a whitespace-flanked `_` bare; the new rule escapes it, so
+       * the FIRST serialize after this ships produces a different string and
+       * `computeContentDelta` emits a rewrite for every such existing note.
+       *
+       * Both halves matter: the first assertion proves the migration is real
+       * (this is not a no-op for stored content), the second proves it CONVERGES
+       * — the escaped form reparses to `_` and re-escapes identically, so the
+       * note is rewritten once, not on every open.
+       */
+      it('a pre-existing `a _ b` note migrates ONCE, then is byte-stable', () => {
+        const stored = 'a _ b' // what the old serializer wrote
+        const migrated = serialize(parse(stored))
+        expect(migrated).toBe('a \\_ b')
+        expect(migrated).not.toBe(stored) // the one-time rewrite really happens
+        expect(serialize(parse(migrated))).toBe(migrated) // …and never happens again
       })
 
       it('a table cell that trims/degrades around a `_` is a strict fixpoint', () => {
