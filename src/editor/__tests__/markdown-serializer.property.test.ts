@@ -24,6 +24,21 @@ import type {
 /** Number of runs per property. Increase for deeper fuzzing. */
 const NUM_RUNS = 500
 
+/**
+ * NO `seed` on any `fc.assert` in this file — a deliberate choice, not an
+ * oversight (#4059).
+ *
+ * An unseeded property is a lottery ticket for every unrelated PR unless the
+ * property is actually true of the whole generated space. This one is, as far
+ * as measurement goes: a 10 × 20 000-run sweep at distinct random seeds (40×
+ * the run count below) was green for all 58 tests here. So the random
+ * exploration is pure upside and stays.
+ *
+ * Its sibling `markdown-roundtrip.property.test.ts` is PINNED, because the same
+ * sweep found three pre-existing violations reachable from its generators; the
+ * reasoning and the reproducers live next to its `PROPERTY_SEED`.
+ */
+
 // -- Generators ---------------------------------------------------------------
 
 /**

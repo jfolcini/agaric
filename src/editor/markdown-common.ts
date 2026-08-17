@@ -54,43 +54,80 @@ export const LIST_NEST_INDENT = '  '
  * A run that is neither — e.g. `_`/`__` flanked by word chars on both sides
  * (`snake_case`, `a__b__c`) — is literal text.
  *
- * `edges` controls how a missing neighbor (run touching the start/end of
- * `src`) is treated:
+ * A missing neighbor (the run touches the start or end of `src`) is a hard
+ * boundary: start-of-line counts as "not a word char" and end-of-line as
+ * whitespace, so a run at end-of-line cannot open.
  *
- * - `'line'` — `src` is a full line: a missing neighbor is a hard boundary
- *   (line start counts as "not a word char", line end as "absent": a run at
- *   end-of-line cannot open). Used by the parser.
- * - `'unknown'` — `src` is a single text NODE that may be concatenated with
- *   neighboring marked nodes: a missing neighbor could be anything, so
- *   assume whichever value makes the run a delimiter (pessimistic). Used by
- *   the serializer's escape decision (#710-1) so a `_` at a node edge is
- *   escaped rather than risking re-parse as emphasis after concatenation.
+ * This is the PARSER's rule, evaluated on a full line. The serializer cannot
+ * use it — it escapes one text NODE at a time and does not know the line — so
+ * it has its own, deliberately coarser rule: `underscoreNeedsEscape`.
  */
 export function underscoreRunFlank(
   src: string,
   pos: number,
-  edges: 'line' | 'unknown' = 'line',
 ): { canOpen: boolean; canClose: boolean } {
-  let start = pos
-  while (start > 0 && src[start - 1] === '_') start--
-  let end = pos
-  while (end < src.length && src[end] === '_') end++
-  const before = start > 0 ? (src[start - 1] as string) : null
-  const after = end < src.length ? (src[end] as string) : null
-  if (edges === 'unknown') {
-    const canOpen =
-      (before === null || !WORD_CHAR_RE.test(before)) && (after === null || !WS_RE.test(after))
-    const canClose =
-      (before === null || !WS_RE.test(before)) && (after === null || !WORD_CHAR_RE.test(after))
-    return { canOpen, canClose }
-  }
+  const { before, after } = underscoreRunEdges(src, pos)
   const beforeWord = before !== null && WORD_CHAR_RE.test(before)
   const afterWord = after !== null && WORD_CHAR_RE.test(after)
   const beforeWs = before === null || WS_RE.test(before)
   const afterWs = after === null || WS_RE.test(after)
-  const canOpen = !beforeWord && after !== null && !afterWs
-  const canClose = before !== null && !beforeWs && !afterWord
-  return { canOpen, canClose }
+  return { canOpen: !beforeWord && !afterWs, canClose: !beforeWs && !afterWord }
+}
+
+/** The chars flanking the contiguous `_` run containing `pos` (`null` at an edge). */
+function underscoreRunEdges(
+  src: string,
+  pos: number,
+): { before: string | null; after: string | null } {
+  let start = pos
+  while (start > 0 && src[start - 1] === '_') start--
+  let end = pos
+  while (end < src.length && src[end] === '_') end++
+  return {
+    before: start > 0 ? (src[start - 1] as string) : null,
+    after: end < src.length ? (src[end] as string) : null,
+  }
+}
+
+/**
+ * The SERIALIZER's escape rule for the `_` run containing `pos` of a single
+ * text node's text (#710-1): escape unless the run is INTRAWORD, i.e. has a
+ * word char on both sides. `snake_case` and `a__b__c` stay readable; everything
+ * else gets `\_`.
+ *
+ * Why not `underscoreRunFlank` (#4049). The serializer escapes per NODE, but
+ * the parser decides per LINE, and the round trip moves text between the two:
+ *
+ *  - `collectListItem` absorbs a two-space-indented sibling paragraph into the
+ *    preceding list item and re-emits it DEDENTED, so a leading `_` goes from
+ *    "preceded by a space" to "at the start of the node";
+ *  - a table cell TRIMS its edge whitespace, so a trailing `_ ` becomes `_`;
+ *  - a hardBreak inside a table cell degrades to a space and the neighbouring
+ *    text nodes coalesce, so `text('_') · hardBreak · text('a')` becomes the
+ *    single node `_ a`;
+ *  - a node edge abuts the previous/next node's mark delimiter, which is
+ *    punctuation, not the whitespace an edge looks like in isolation.
+ *
+ * A rule that distinguishes whitespace from a string edge, or an edge from
+ * punctuation, therefore gives DIFFERENT verdicts for the same rendered line
+ * before and after a round trip — the serialize→parse→serialize fixpoint
+ * breaks and the stored document grows or loses a backslash on every
+ * open/close cycle. Word-ness is the only property all four transformations
+ * preserve: whitespace, string edges and punctuation are all "not a word
+ * char", so this rule is invariant under every one of them.
+ *
+ * The rule is strictly STRONGER than the parser's: every run the parser could
+ * treat as a delimiter is escaped by it (if the parser can open, the run is not
+ * preceded by a word char; if it can close, it is not followed by one — either
+ * way it is not intraword). So it can never leak an emphasis delimiter; it only
+ * over-escapes the whitespace-on-both-sides case (`a _ b` → `a \_ b`), which is
+ * lossless. `underscoreRunFlank` is the exact rule and stays the parser's.
+ */
+export function underscoreNeedsEscape(src: string, pos: number): boolean {
+  const { before, after } = underscoreRunEdges(src, pos)
+  const beforeWord = before !== null && WORD_CHAR_RE.test(before)
+  const afterWord = after !== null && WORD_CHAR_RE.test(after)
+  return !(beforeWord && afterWord)
 }
 
 // -- Bare-URL autolink (#1441) ------------------------------------------------

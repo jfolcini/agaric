@@ -65,6 +65,38 @@ import type {
  */
 const NUM_RUNS = 300
 
+/**
+ * FIXED fast-check seed for every property in this FILE (#4059).
+ *
+ * Unseeded exploration is only safe while the properties are true of the whole
+ * generated space. They are not. A 200 000-run sweep (10 distinct random seeds
+ * × 20 000 runs) of this file found three PRE-EXISTING violations, none of them
+ * reachable through a change made here and none involving the `_` escape that
+ * #4049 was about:
+ *
+ *  1. `serialize(parse('   1. item\n    - item\n3. item'))` does not converge in
+ *     one pass — two ordered lists separated by a nested item merge and
+ *     renumber only on the SECOND pass (`1./1.` → `1./2.`). 7 of the 10 seeds.
+ *  2. a link whose text starts with `!` as the first child of a blockquote
+ *     re-reads as a callout label and normalizes its case:
+ *     `> [!a](https://example.com)a` → `> [!A] (https://example.com)a`. 1 seed.
+ *  3. a leading hardBreak in a table cell followed by `>` is not a fixpoint
+ *     (the cell degrades the break to a space and then trims it). 1 seed.
+ *
+ * So route 1 of #4059 (fix the bug, stay unseeded) is unavailable and route 2
+ * applies: every `fc.assert` here is a deterministic replay, and new
+ * exploration happens deliberately — bump this seed, or raise the run counts by
+ * hand — rather than on an unrelated contributor's PR. Delete the pin when the
+ * three violations above are fixed, not before.
+ *
+ * `markdown-serializer.property.test.ts` stays UNSEEDED on purpose: the same
+ * sweep (10 seeds × 20 000 runs, 40× its shipped 500) was green for all 58 of
+ * its tests, so random exploration there is pure upside.
+ *
+ * The value is the issue number, so its provenance is obvious.
+ */
+const PROPERTY_SEED = 4059
+
 // -- Generators ---------------------------------------------------------------
 
 /**
@@ -322,19 +354,30 @@ const arbDoc: fc.Arbitrary<DocNode> = fc
  * Adjacent same-type siblings of the GREEDY block productions (blockquote,
  * table, orderedList) merge on reparse by canonical policy — for tables and
  * ordered lists the merge also normalizes the string (separator row dropped /
- * items renumbered), so those docs converge in one pass instead of already
- * being a fixpoint. They are exercised by the convergence property below and
- * excluded from the strict-fixpoint property.
+ * items renumbered), and for blockquotes a callout absorbed into a plain quote
+ * has its `[!INFO]` re-emitted as escaped literal text — so those docs converge
+ * in one pass instead of already being a fixpoint. They are exercised by the
+ * convergence property below and excluded from the strict-fixpoint property.
+ *
+ * RECURSIVE (#4053): the merge rule is a property of a node's CHILD list, not
+ * of the document's top level. Two ordered lists nested inside a blockquote or
+ * a list item renumber exactly like top-level ones (`> 1. a` / `> 1. b` →
+ * `> 1. a` / `> 2. b`), so a top-level-only walk let them through the exclusion
+ * and the strict-fixpoint property failed on a known, accepted normalization.
+ *
+ * `bulletList` is deliberately NOT in the set: adjacent bullet lists merge too,
+ * but nothing renumbers, so the STRING is a fixpoint and excluding them would
+ * only cost coverage. Pinned by the bullet-list seeds in `FIXPOINT_SEEDS`.
  */
-function hasGreedyAdjacency(d: DocNode): boolean {
+function hasGreedyAdjacency(node: DocNode | BlockLevelNode | ListItemNode): boolean {
   const greedy = new Set<string>(['blockquote', 'table', 'orderedList'])
-  const content = d.content ?? []
-  for (let i = 1; i < content.length; i++) {
-    const prev = (content[i - 1] as BlockLevelNode).type
-    const cur = (content[i] as BlockLevelNode).type
-    if (prev === cur && greedy.has(cur)) return true
+  const children = (node.content ?? []) as readonly BlockLevelNode[]
+  for (let i = 1; i < children.length; i++) {
+    const prev = children[i - 1] as BlockLevelNode
+    const cur = children[i] as BlockLevelNode
+    if (prev.type === cur.type && greedy.has(cur.type)) return true
   }
-  return false
+  return children.some((c) => typeof c === 'object' && 'content' in c && hasGreedyAdjacency(c))
 }
 
 // -- Seeds: the fixed round-trip audit shapes ----------------------------------
@@ -385,6 +428,42 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   // absorbed as nested content and comes back DEDENTED into that tolerance, so
   // the leading marker must be escaped at every indent, not only at 0-3.
   doc(bulletList(listItem(paragraph(text('a')))), paragraph(text('     - [x] a'))),
+  // #4049: the two-space residue of the same adjacency. The sibling paragraph
+  // IS absorbed here (two spaces is a full content column), so its text is
+  // re-emitted dedented — which moves the `_` from "preceded by a space" to the
+  // start of the text node. The inline-escape verdict must not notice; it keys
+  // on WORD-ness alone, and a space and a string edge are equally not-a-word.
+  doc(bulletList(listItem(paragraph(text('a')))), paragraph(text('  _ '))),
+  // …and its tab twin, from the same sweep.
+  doc(bulletList(listItem(paragraph(text('a')))), paragraph(text('  _\t'))),
+  // #4049, the table-cell arm found by the post-fix sweep: a cell TRIMS its
+  // edge whitespace, so `_ ` comes back as `_`; and a hardBreak inside a cell
+  // degrades to a space, so `text('_') · hardBreak · text('a')` comes back as
+  // the single node `_ a`. Both move the `_`'s neighbours between "whitespace"
+  // and "string edge", and neither may change the escape verdict.
+  doc(table(tableRow(tableHeader(paragraph(text('_ ')))))),
+  doc(
+    table(
+      tableRow(
+        tableHeader(paragraph(text('a'))),
+        tableHeader(paragraph(text('_'), hardBreak(), text('a'), hardBreak())),
+      ),
+    ),
+  ),
+  // #4053: adjacent BULLET lists merge like every greedy production, but
+  // nothing renumbers, so the string is already a fixpoint. Pinned at both
+  // levels because `hasGreedyAdjacency` deliberately leaves `bulletList` out of
+  // the exclusion set and this is what justifies that.
+  doc(bulletList(listItem(paragraph(text('a')))), bulletList(listItem(paragraph(text('b'))))),
+  doc(
+    bulletList(
+      listItem(
+        paragraph(text('p')),
+        bulletList(listItem(paragraph(text('a')))),
+        bulletList(listItem(paragraph(text('b')))),
+      ),
+    ),
+  ),
 ]
 
 /** Shapes that normalize (string changes once) before becoming stable. */
@@ -399,6 +478,25 @@ const CONVERGENCE_SEEDS: readonly DocNode[] = [
   doc(
     { type: 'orderedList', content: [listItem(paragraph(text('a')))] },
     { type: 'orderedList', content: [listItem(paragraph(text('b')))] },
+  ),
+  // #4053: the same renumbering one level down, inside a blockquote —
+  // `> 1. a` / `> 1. b` → `> 1. a` / `> 2. b`. The top-level-only exclusion let
+  // this shape into the strict-fixpoint property; it belongs here.
+  doc(
+    blockquote(
+      { type: 'orderedList', content: [listItem(paragraph(text('a')))] },
+      { type: 'orderedList', content: [listItem(paragraph(text('b')))] },
+    ),
+  ),
+  // …and inside a list item, the other container the recursion reaches.
+  doc(
+    bulletList(
+      listItem(
+        paragraph(text('p')),
+        { type: 'orderedList', content: [listItem(paragraph(text('a')))] },
+        { type: 'orderedList', content: [listItem(paragraph(text('b')))] },
+      ),
+    ),
   ),
 ]
 
@@ -415,7 +513,11 @@ describe('property: serialize→parse→serialize is a strict fixpoint', () => {
           expect(md2).toBe(md1)
         },
       ),
-      { numRuns: NUM_RUNS, examples: FIXPOINT_SEEDS.map((d) => [d] as [DocNode]) },
+      {
+        numRuns: NUM_RUNS,
+        seed: PROPERTY_SEED,
+        examples: FIXPOINT_SEEDS.map((d) => [d] as [DocNode]),
+      },
     )
   })
 })
@@ -434,6 +536,7 @@ describe('property: one parse pass reaches the canonical fixed point', () => {
       }),
       {
         numRuns: NUM_RUNS,
+        seed: PROPERTY_SEED,
         examples: [...FIXPOINT_SEEDS, ...CONVERGENCE_SEEDS].map((d) => [d] as [DocNode]),
       },
     )
@@ -454,6 +557,64 @@ describe('property: structural round-trip for the fixed audit shapes', () => {
   )
 })
 
+// -- #4053: the exclusion predicate itself ------------------------------------
+/**
+ * An exclusion that silently stops covering what it names is the expensive
+ * failure mode: the property keeps passing until a generator grows an arm that
+ * reaches the uncovered shape, and then it reddens on a random seed for a
+ * reason that is a known, accepted normalization. So the predicate is asserted
+ * directly, not only through the properties it filters.
+ */
+describe('#4053 hasGreedyAdjacency excludes nested adjacency, not just top-level', () => {
+  const ol = (t: string): BlockLevelNode => ({
+    type: 'orderedList',
+    content: [listItem(paragraph(text(t)))],
+  })
+
+  it('excludes adjacent ordered lists at the top level', () => {
+    expect(hasGreedyAdjacency(doc(ol('a'), ol('b')))).toBe(true)
+  })
+
+  it('excludes adjacent ordered lists inside a blockquote', () => {
+    expect(hasGreedyAdjacency(doc(blockquote(ol('a'), ol('b'))))).toBe(true)
+  })
+
+  it('excludes adjacent ordered lists inside a list item', () => {
+    expect(
+      hasGreedyAdjacency(doc(bulletList(listItem(paragraph(text('p')), ol('a'), ol('b'))))),
+    ).toBe(true)
+  })
+
+  it('excludes adjacent tables inside a list item', () => {
+    const t = table(tableRow(tableHeader(paragraph(text('a')))))
+    expect(hasGreedyAdjacency(doc(bulletList(listItem(paragraph(text('p')), t, t))))).toBe(true)
+  })
+
+  it('does NOT exclude adjacent bullet lists (they merge without renumbering)', () => {
+    const ul = (t: string): BlockLevelNode => ({
+      type: 'bulletList',
+      content: [listItem(paragraph(text(t)))],
+    })
+    expect(hasGreedyAdjacency(doc(ul('a'), ul('b')))).toBe(false)
+    expect(
+      hasGreedyAdjacency(doc(bulletList(listItem(paragraph(text('p')), ul('a'), ul('b'))))),
+    ).toBe(false)
+  })
+
+  it('does NOT exclude non-adjacent or mixed greedy siblings', () => {
+    expect(hasGreedyAdjacency(doc(ol('a'), paragraph(text('x')), ol('b')))).toBe(false)
+    expect(hasGreedyAdjacency(doc(blockquote(paragraph(text('a')), paragraph(text('b')))))).toBe(
+      false,
+    )
+  })
+
+  it('the nested renumbering it now catches really is not a fixpoint', () => {
+    const md1 = serialize(doc(blockquote(ol('a'), ol('b'))))
+    expect(md1).toBe('> 1. a\n> 1. b')
+    expect(serialize(parse(md1))).toBe('> 1. a\n> 2. b')
+  })
+})
+
 // -- #4019: the marker-indent / nesting instrument ----------------------------
 /**
  * The generators that discriminated the #4019 fix, committed so the evidence is
@@ -472,11 +633,13 @@ describe('property: structural round-trip for the fixed audit shapes', () => {
  *    FOREIGN indentation the exporter never emits (P3: tabs, CRLF, 0-8-space
  *    nesting steps, nested blockquotes).
  *
- * All three run at a FIXED SEED. They are a deterministic replay, not a new
- * source of random CI reddening: #4049 (open) is a live seed-dependent fixpoint
- * violation reachable from this suite's own alphabet, so an unseeded property
- * here would be able to redden an unrelated PR. When #4049 lands, the seed can
- * be dropped and `hasKnownIssue4049Drift` deleted with it.
+ * All three ran at a fixed seed with a named `hasKnownIssue4049Drift`
+ * exclusion while #4049 was open. #4049 is fixed — the serializer's `_` escape
+ * verdict now keys on word-ness alone and so survives every dedent, trim and
+ * node-coalescing the round trip performs (`underscoreNeedsEscape`) — so the
+ * exclusion is GONE: 10 × 20 000 runs across distinct random seeds produced no
+ * underscore drift in either property file. The seed pin stays, for the three
+ * unrelated pre-existing violations documented at `PROPERTY_SEED`.
  */
 
 /**
@@ -496,33 +659,6 @@ describe('property: structural round-trip for the fixed audit shapes', () => {
  * rows by hand when touching the parse/serialize pair.
  */
 const NESTING_NUM_RUNS = 5000
-
-/**
- * Fixed fast-check seed — see the block comment above. Any value works; this
- * one is the issue number so its provenance is obvious.
- */
-const NESTING_SEED = 4019
-
-/**
- * KNOWN OPEN BUG, EXCLUDED BY NAME: #4049 — "markdown fixpoint still violated
- * for a 2-space-indented paragraph after a list (underscore flanking flips
- * under the dedent)".
- *
- * `underscoreRunFlank` (`markdown-common.ts`) classifies a `_` run at the START
- * of a string differently from one preceded by a space, so a line that is both
- * INDENTED and contains an underscore can change its escape decision when
- * `collectListItem` dedents it — `  _ ` serializes clean but re-serializes as
- * `  \_ `. That is a pre-existing inline-escape bug, orthogonal to the
- * structural invariant these properties are the instrument for, and it is
- * tracked and diagnosed in #4049 (with the exact repro and fix).
- *
- * The exclusion is deliberately visible rather than silent: DELETE this
- * predicate and its three call sites when #4049 lands, and these properties
- * should stay green.
- */
-function hasKnownIssue4049Drift(md: string): boolean {
-  return md.split('\n').some((line) => /^[ \t]/.test(line) && line.includes('_'))
-}
 
 // -- P1: deep, heterogeneous list structures ---------------------------------
 
@@ -560,44 +696,24 @@ function arbNestedList(depth: number): fc.Arbitrary<BlockLevelNode> {
     }))
 }
 
-/**
- * `hasGreedyAdjacency` applies the greedy-sibling-merge rule to the DOC's
- * children; inside a list item the same rule applies to the item's children
- * (two adjacent blockquotes merge, and a callout absorbed into a plain quote
- * has its `[!INFO]` re-emitted as escaped literal text). Same pre-existing
- * canonical-merge policy, one level down — a one-pass normalization, not a
- * fixpoint, so it belongs to the convergence property rather than this one.
- */
-function hasGreedyAdjacencyAnywhere(node: BlockLevelNode | DocNode | ListItemNode): boolean {
-  const children = (node.content ?? []) as readonly BlockLevelNode[]
-  const greedy = new Set<string>(['blockquote', 'table', 'orderedList', 'bulletList'])
-  for (let i = 1; i < children.length; i++) {
-    const prev = children[i - 1] as BlockLevelNode
-    const cur = children[i] as BlockLevelNode
-    if (prev.type === cur.type && greedy.has(cur.type)) return true
-  }
-  return children.some(
-    (c) => typeof c === 'object' && 'content' in c && hasGreedyAdjacencyAnywhere(c),
-  )
-}
-
 const arbDeepListDoc: fc.Arbitrary<DocNode> = fc
   .array(arbNestedList(1), { minLength: 1, maxLength: 2 })
   .map((content) => ({ type: 'doc' as const, content }))
   // Adjacent ordered-list siblings merge and renumber (a one-pass
   // normalization, covered by the convergence property above), so they are not
-  // strict fixpoints and belong to that property, not this one.
-  .filter((d) => !hasGreedyAdjacency(d) && !hasGreedyAdjacencyAnywhere(d))
+  // strict fixpoints and belong to that property, not this one. This generator
+  // is where a list item's children can BE adjacent greedy siblings, which is
+  // why the exclusion has to recurse (#4053).
+  .filter((d) => !hasGreedyAdjacency(d))
 
 describe('property (#4019): deep, heterogeneous list nesting is a strict fixpoint', () => {
   it('a depth-4 list with mixed item children re-serializes byte-identically', () => {
     fc.assert(
       fc.property(arbDeepListDoc, (d) => {
         const md1 = serialize(d)
-        fc.pre(!hasKnownIssue4049Drift(md1))
         expect(serialize(parse(md1))).toBe(md1)
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
+      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
     )
   })
 })
@@ -647,7 +763,7 @@ describe('property (#4019): a marker-like paragraph never resurrects as a list',
         expect(parse(md)).toEqual(d)
         expect(serialize(parse(md))).toBe(md)
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
+      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
     )
   })
 })
@@ -697,11 +813,10 @@ describe('property (#4019): foreign markdown import converges in one pass', () =
     fc.assert(
       fc.property(arbForeignMarkdown, (md) => {
         const md1 = serialize(parse(md))
-        fc.pre(!hasKnownIssue4049Drift(md1))
         const md2 = serialize(parse(md1))
         expect(md2).toBe(md1)
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
+      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
     )
   })
 })

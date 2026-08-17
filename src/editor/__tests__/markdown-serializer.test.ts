@@ -29,6 +29,7 @@ import {
   text,
   underline,
 } from '@/editor/__tests__/builders'
+import { underscoreNeedsEscape, underscoreRunFlank } from '@/editor/markdown-common'
 import { MAX_MARKER_INDENT } from '@/editor/markdown-parse/vocab'
 import {
   __resetSerializerToastsForTests,
@@ -3139,6 +3140,113 @@ describe('#710 round-trip corruption family', () => {
 
     it('user-typed `_em_` still parses as italic (parser unchanged)', () => {
       expect(parse('_em_')).toEqual(doc(paragraph(italic('em'))))
+    })
+
+    // -- #4049: the escape verdict must be INVARIANT, not merely correct -----
+    //
+    // The serializer escapes per text NODE; the parser decides per LINE. The
+    // round trip moves text between the two — a two-space-indented sibling
+    // paragraph is absorbed into the preceding list item and re-emitted
+    // dedented, a table cell trims its edge whitespace, a hardBreak in a cell
+    // degrades to a space and the neighbouring text nodes coalesce — so a rule
+    // that tells whitespace from a string edge, or an edge from punctuation,
+    // gives two different verdicts for the same rendered line and the fixpoint
+    // breaks. `underscoreNeedsEscape` therefore keys on WORD-ness alone, the one
+    // property all of those transformations preserve. Both arms are pinned: it
+    // must still escape every run that could delimit, and must still leave
+    // `snake_case` alone.
+    describe('#4049 underscore escape verdict', () => {
+      /** ESCAPED arm: an escape rule that stops escaping would corrupt emphasis. */
+      it('still escapes every run that could delimit emphasis', () => {
+        expect(serialize(doc(paragraph(text('_foo_'))))).toBe('\\_foo\\_')
+        expect(serialize(doc(paragraph(text('__foo__'))))).toBe('\\_\\_foo\\_\\_')
+        expect(serialize(doc(paragraph(text('a _foo_ b'))))).toBe('a \\_foo\\_ b')
+        expect(serialize(doc(paragraph(text('_(a)_'))))).toBe('\\_(a)\\_')
+        expect(serialize(doc(paragraph(text('_'), bold('b'), text('_'))))).toBe('\\_**b**\\_')
+        // and the escaped forms really do come back as literal text
+        expect(parse(serialize(doc(paragraph(text('_foo_')))))).toEqual(
+          doc(paragraph(text('_foo_'))),
+        )
+        expect(parse(serialize(doc(paragraph(text('_'), bold('b'), text('_')))))).toEqual(
+          doc(paragraph(text('_'), bold('b'), text('_'))),
+        )
+      })
+
+      it('still leaves an intraword `_` literal (snake_case stays readable)', () => {
+        expect(serialize(doc(paragraph(text('snake_case_name'))))).toBe('snake_case_name')
+        expect(serialize(doc(paragraph(text('a__b__c'))))).toBe('a__b__c')
+        expect(parse('snake_case_name')).toEqual(doc(paragraph(text('snake_case_name'))))
+      })
+
+      /** The invariance itself, which is what actually closes #4049. */
+      it('the verdict is invariant under stripping leading spaces', () => {
+        for (const body of ['_ ', '_ a', '_a_', 'a_b', '_', '__ x', 'a _ b']) {
+          expect(serialize(doc(paragraph(text(`  ${body}`))))).toBe(
+            `  ${serialize(doc(paragraph(text(body))))}`,
+          )
+        }
+      })
+
+      it('the verdict is invariant under trimming a trailing space', () => {
+        for (const body of ['_', 'a_', '_a', 'a _', 'a_b']) {
+          expect(serialize(doc(paragraph(text(`${body} `))))).toBe(
+            `${serialize(doc(paragraph(text(body))))} `,
+          )
+        }
+      })
+
+      it('the #4049 repro is a strict fixpoint', () => {
+        const d = doc(bulletList(listItem(paragraph(text('a')))), paragraph(text('  _ ')))
+        expect(serialize(d)).toBe('- a\n  \\_ ')
+        expectByteStable('- a\n  \\_ ')
+        // the tab twin from the issue
+        expectByteStable('- a\n  \\_\t')
+      })
+
+      /**
+       * The safety proof, exhaustively: the serializer's rule must escape a
+       * SUPERSET of the runs the parser's rule would treat as a delimiter. An
+       * escape rule that stopped escaping would "fix" the fixpoint by leaking
+       * emphasis delimiters into stored text; this is what forbids that.
+       */
+      it('escapes a superset of what the parser can treat as a delimiter', () => {
+        const NEIGHBOURS = ['', 'a', 'Z', '1', ' ', '\t', '*', '.', '(', '\\', '$']
+        let intrawordSeen = 0
+        for (const before of NEIGHBOURS) {
+          for (const after of NEIGHBOURS) {
+            for (const run of ['_', '__', '___']) {
+              const s = `${before}${run}${after}`
+              const pos = before.length
+              const { canOpen, canClose } = underscoreRunFlank(s, pos)
+              const escapes = underscoreNeedsEscape(s, pos)
+              if (canOpen || canClose) expect({ s, escapes }).toEqual({ s, escapes: true })
+              if (!escapes) {
+                intrawordSeen++
+                expect({ s, canOpen, canClose }).toEqual({ s, canOpen: false, canClose: false })
+              }
+            }
+          }
+        }
+        // …and the rule is not vacuous: the intraword exemption really fires
+        // (3 word-ish chars × 3 × 3 run lengths).
+        expect(intrawordSeen).toBe(27)
+      })
+
+      it('a table cell that trims/degrades around a `_` is a strict fixpoint', () => {
+        // cell whitespace trimming: `_ ` becomes `_` on reparse
+        expectByteStable('| \\_ |\n| --- |')
+        // hardBreak → space + text-node coalescing inside a cell
+        const cell = doc(
+          table(
+            tableRow(
+              tableHeader(paragraph(text('a'))),
+              tableHeader(paragraph(text('_'), hardBreak(), text('a'), hardBreak())),
+            ),
+          ),
+        )
+        const md = serialize(cell)
+        expect(serialize(parse(md))).toBe(md)
+      })
     })
   })
 
