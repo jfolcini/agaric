@@ -897,7 +897,18 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
                 .with_filter(make_log_filter()),
         )
         .with(file_layer.map(|f| f.with_filter(make_log_filter())))
-        .init();
+        // NOT `.init()`. `SubscriberInitExt::init` sets the global default
+        // subscriber and then installs `LogTracer` a second time, at the
+        // registry's own max level — and it `expect()`s on the result. Since
+        // `init_log_bridge` above has already installed the bridge (with the
+        // capped level that is the entire point of that function), that second
+        // install always returns `SetLoggerError`, so `.init()` panicked on
+        // every boot (#4034). `try_init` sets the global default FIRST and only
+        // then attempts the bridge, so an `Err` here means exactly one thing:
+        // the subscriber is live and the bridge we deliberately installed
+        // ourselves is still the one in place.
+        .try_init()
+        .ok();
 
     // #2110 M1a/M1b — announce only when telemetry is actually enabled; stay
     // silent (no new log line) when off so the existing logging output is
@@ -2735,6 +2746,41 @@ mod log_bridge_tests {
              Trace, making every dependency's `log::trace!` record be constructed and \
              dispatched into `tracing` only for the layers' EnvFilter to drop it. max_level \
              was {before:?} before and {after:?} after"
+        );
+    }
+
+    /// Boot ordering: `init_log_bridge` runs BEFORE the subscriber is installed,
+    /// so by the time the registry goes in, a global `log` logger already exists.
+    /// `SubscriberInitExt::init` `expect()`s on installing its own bridge on top
+    /// of that, so it panicked before the first window ever appeared — every
+    /// launch, every platform. This asserts the surviving half: the subscriber
+    /// must end up installed, and the second bridge install must be a tolerated
+    /// `Err` rather than an abort.
+    ///
+    /// nextest runs each test in its own process, so this is a real boot
+    /// sequence and not a fight with another test's globals.
+    #[test]
+    fn installing_the_subscriber_after_the_bridge_does_not_abort_boot() {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        init_log_bridge(tracing_log::log::LevelFilter::Info);
+
+        let result = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .try_init();
+
+        assert!(
+            result.is_err(),
+            "guard on the premise: with the bridge already installed, the subscriber's own \
+             `LogTracer` install must fail — if this ever passes, the `.ok()` in `init_logging` \
+             is swallowing something else"
+        );
+        assert!(
+            tracing::dispatcher::has_been_set(),
+            "`try_init` sets the global default BEFORE attempting the bridge, so a boot that \
+             tolerates the bridge error must still come up with a live subscriber; without one, \
+             every `tracing` event in the process is dropped"
         );
     }
 
