@@ -19,6 +19,7 @@
 
 import {
   isAutolinkableUrl,
+  LIST_NEST_INDENT,
   scanBareUrl,
   ULID_RE,
   underscoreRunFlank,
@@ -706,10 +707,23 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
   // here. Only the START of the paragraph can trigger a block production
   // (hard-break continuation lines are consumed by the paragraph parser before
   // any block production sees them).
+  // The two LIST markers are additionally escaped after ANY leading indent,
+  // because the parser tolerates up to three spaces before a marker
+  // (CommonMark's 3-space rule, `MAX_MARKER_INDENT` in
+  // `markdown-parse/vocab.ts`, which is what keeps a 4-space-nested import a
+  // real sub-list). The escape has to be WIDER than that tolerance: a
+  // paragraph nested in a list item is emitted indented and re-parsed
+  // DEDENTED by the item's content column, so an indent that is too deep to be
+  // a marker on the way out (`     - x`) lands inside the tolerance on the way
+  // back in (`   - x`) and would re-parse as a list — the marker-ness of a line
+  // has to be invariant under that dedent, and only escaping at every indent
+  // makes it so. Heading / blockquote / horizontal rule need no such widening:
+  // their productions are anchored at column 0, so an indented one is never a
+  // marker at any depth.
   const escaped = result
-    .replace(/^(\d+)\. /, '$1\\. ')
+    .replace(/^( *)(\d+)\. /, '$1$2\\. ')
     .replace(/^(#{1,6}) /, '\\$1 ')
-    .replace(/^- /, '\\- ')
+    .replace(/^( *)- /, '$1\\- ')
     // Horizontal rule: a line of only 3+ dashes (`/^-{3,}$/`). Escaping the
     // first dash (`\---`) drops out of the rule pattern; the parser unescapes
     // `\-` back to `-`, so the run survives as paragraph text.
@@ -862,11 +876,11 @@ function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void)
   return [header, separator, ...dataRows].join('\n')
 }
 
-// Nested lists (created by `Tab`/`sinkListItem`) are indented by this many
-// spaces per level. The parser dedents by the same width, so indented lists
-// round-trip without loss (#1513). Two spaces is the bullet-marker width and
-// is enough for the parser to recognize a continuation line.
-const LIST_NEST_INDENT = '  '
+// Nested lists (created by `Tab`/`sinkListItem`) are indented by
+// `LIST_NEST_INDENT` per level. The parser recognizes a nested block by that
+// same width and dedents by whole multiples of it, so indented lists round-trip
+// without loss (#1513, #4019) — hence the constant's canonical home in
+// `markdown-common`, shared by both halves.
 
 /** Prefix every line of `text` with `indent`. */
 function indentLines(text: string, indent: string): string {

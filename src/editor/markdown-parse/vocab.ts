@@ -48,6 +48,50 @@ export const CALLOUT_RE = /^\[!(\w+)\]\s?(.*)/i
 export const MAX_PARSE_DEPTH = 10
 
 /**
+ * Leading indentation tolerated before a LIST marker — the width every list
+ * marker regex below is built from (and `ORDERED_ITEM_RE` in `./parser`), via
+ * {@link MARKER_INDENT_SRC}.
+ *
+ * CommonMark allows up to THREE spaces of indentation before a block start; a
+ * fourth space starts an indented code block instead. That tolerance is what
+ * makes foreign markdown import correctly: a great many editors nest sublists
+ * by FOUR spaces, and `collectListItem` strips exactly one content column
+ * (`LIST_NEST_INDENT`, two spaces) per level, so such a sublist arrives at the
+ * recursive parse still carrying two residual spaces. Without the tolerance it
+ * would degrade to literal paragraph text (`  - child`) instead of a real
+ * sub-list (#4019).
+ *
+ * Our OWN output never uses it — every marker is emitted at column 0 of its
+ * nesting level — and the serializer escapes a leading list marker after ANY
+ * leading indent (`^( *)- `, `^( *)(\d+)\. `), not merely inside this
+ * tolerance, so a paragraph can never re-parse as a list. That asymmetry is
+ * deliberate and load-bearing: a paragraph nested in a list item is emitted
+ * indented and re-parsed DEDENTED by the item's content column, so an indent
+ * too deep to be a marker on the way out (`     - x`) lands inside the
+ * tolerance on the way back in — marker-ness is only invariant under that
+ * dedent because the escape is strictly wider than the tolerance. Widening the
+ * tolerance here is safe; NARROWING `markdown-serialize.ts`'s
+ * leading-block-marker escapes to match it would reopen exactly the
+ * serialize→parse→serialize drift #4019 closed.
+ *
+ * The boundary this constant names — 3 spaces still a marker, 4 no longer one
+ * — is pinned behaviourally for all three marker kinds (bullet, ordered, task)
+ * in `markdown-serializer.test.ts`.
+ */
+export const MAX_MARKER_INDENT = 3
+
+/**
+ * The regex SOURCE fragment for that tolerance, and the only spelling of the
+ * quantifier in the codebase. All four marker productions —
+ * {@link TASK_ITEM_RE}, {@link BULLET_ITEM_RE}, {@link BULLET_TASK_RE} here and
+ * `ORDERED_ITEM_RE` in `./parser` — are constructed from it, so the constant
+ * and the quantifier are the same fact rather than two facts kept in sync by
+ * tests. A PARTIAL widening (three productions moved, one forgotten) is
+ * therefore unrepresentable, not merely test-detectable.
+ */
+export const MARKER_INDENT_SRC = ` {0,${MAX_MARKER_INDENT}}`
+
+/**
  * GFM task list item (#1435): `- [ ] `, `- [x] `, `- [/] `, `- [-] ` (either
  * `-` or `*` marker). Parses to a SINGLE paragraph carrying `attrs.todoState`
  * so the checkbox state round-trips with the block's `todo_state`. Markers map
@@ -62,7 +106,9 @@ export const MAX_PARSE_DEPTH = 10
 // The text part is optional so an EMPTY task (`- [ ]`, no trailing space —
 // which is how the serializer emits an empty task block) still parses back to
 // a task and round-trips. With content, a separating space is required.
-export const TASK_ITEM_RE = /^[-*] \[([ xX/-])\](?: (.*))?$/
+// The leading `MARKER_INDENT_SRC` is the CommonMark marker-indent tolerance
+// (see MAX_MARKER_INDENT); the indentation is not part of the task text.
+export const TASK_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] \\[([ xX/-])\\](?: (.*))?$`)
 
 /**
  * Bullet (unordered) list: consecutive `- item` / `* item` lines.
@@ -75,12 +121,17 @@ export const TASK_ITEM_RE = /^[-*] \[([ xX/-])\](?: (.*))?$/
  *  - `---` (and longer hyphen runs) is a horizontal rule, handled by
  *    `parseHorizontalRule` which runs BEFORE this production in dispatch, so
  *    `- ` here only matches a hyphen FOLLOWED by a space + content.
+ *
+ * The leading {@link MARKER_INDENT_SRC} is the CommonMark marker-indent
+ * tolerance (see {@link MAX_MARKER_INDENT}); group 1 is the item text WITHOUT
+ * it.
  */
-export const BULLET_ITEM_RE = /^[-*] (.*)$/
+export const BULLET_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] (.*)$`)
 // Matches a task line so the bullet production excludes it (both `- [ ] text`
 // and the empty `- [ ]` with no trailing space — kept in sync with
-// `TASK_ITEM_RE`).
-export const BULLET_TASK_RE = /^[-*] \[[ xX/-]\](?: |$)/
+// `TASK_ITEM_RE`, marker-indent tolerance included: both are built from
+// `MARKER_INDENT_SRC`).
+export const BULLET_TASK_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] \\[[ xX/-]\\](?: |$)`)
 
 // -- Scanner ------------------------------------------------------------------
 
