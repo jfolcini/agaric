@@ -209,12 +209,19 @@ pub fn lan_only(
 /// `lan_only_gates_on_the_addresses_this_host_actually_holds`, which is the one test that
 /// drives the public entry point against the machine's own addresses.
 ///
-/// Not `pub`: callers get [`lan_only`], which reads the real host. Only the tests in this
-/// module supply the list.
+/// # Not only a test seam (#3869)
+///
+/// `SyncService::bind` calls this rather than [`lan_only`], passing the list the bind
+/// policy already enumerated (`sync_daemon::lan_interface::BindDecision::host_addrs`).
+/// Letting it call `lan_only` meant a *second* `getifaddrs(3)` sweep taken after the
+/// address had been chosen from the first, so an address disappearing between the two
+/// turned a working bind into a hard `daemon_loop` failure instead of the loopback
+/// fallback. Crate-visible, not `pub`: an external caller has no such list and wants
+/// [`lan_only`], which reads the real host.
 ///
 /// # Errors
 /// As [`lan_only`].
-fn lan_only_with_host_addrs(
+pub(crate) fn lan_only_with_host_addrs(
     bind: SocketAddr,
     prefix_len: u8,
     resolver: DnsResolver,

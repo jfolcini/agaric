@@ -35,10 +35,20 @@
 //! 1. **Class** (hard-ordered, best first)
 //!    1. physical-named, ordinary unicast
 //!    2. physical-named, CGNAT (`100.64/10`)
-//!    3. virtual-named or point-to-point, ordinary unicast
-//!    4. virtual-named or point-to-point, CGNAT
+//!    3. off-LAN link (virtual-named, point-to-point, or cellular), ordinary unicast
+//!    4. off-LAN link, CGNAT
 //! 2. **The default route**, as a tiebreak *within* a class.
 //! 3. Enumeration order, so the result is deterministic.
+//!
+//! "Off-LAN link" covers two unrelated things with one consequence — see
+//! [`is_off_lan_link`]. A hotspot's soft-AP interface (`ap0`) is deliberately **still**
+//! one of them: #3869 tried promoting it to physical, so a tethering phone would prefer
+//! its own hotspot over the cellular link it is sharing, and that promotion was
+//! reverted (see the note on [`VIRTUAL_NAME_PREFIXES`]) because it regressed the
+//! isolated-LAN case — the one these docs call the interesting one. The carrier link
+//! ([`CELLULAR_NAME_PREFIXES`]) stays deprioritised regardless; that half is unaffected
+//! and independently correct. A real fix for the hotspot case needs a soft-AP ranking
+//! key between the route tiebreak and the index, not a class change; see #4108.
 //!
 //! ### Why the default route is a tiebreak and not the primary key
 //!
@@ -110,6 +120,19 @@
 //!   side by `mdns::tests::the_announced_record_carries_exactly_the_bound_address`. What
 //!   remains unpinned is the pair of hops between them:
 //!   `daemon_loop` → `MdnsService::announce` → `announce_info`.
+//! * **`daemon_loop`'s `host_addrs` argument.** The same seam, one hop earlier:
+//!   `session_supervisor::daemon_loop` hands [`BindDecision::host_addrs`] to
+//!   `SyncService::bind`, and replacing that argument with `&[]` compiles and leaves the
+//!   suite green — because every test binds loopback or an RFC 1918 address, which the
+//!   locality gate waves through whatever list it is given. It goes wrong only on a host
+//!   whose LAN is numbered out of public space, which is the reporting hardware and no CI
+//!   runner. Both seams around it *are* pinned: that `SyncService::bind` reads the list it
+//!   is given rather than a fresh sweep, by
+//!   `transport::service::tests::the_locality_gate_reads_the_host_addresses_the_caller_passed`,
+//!   and that the list this decision yields satisfies the gate, by
+//!   `the_bind_gate_is_answered_from_the_sweep_that_chose_the_address`. What is unpinned
+//!   is the argument between them, for the same reason the announce above is: `daemon_loop`
+//!   needs a full `SyncDaemonContext` and does not return.
 //! * **Machine-conditional halves of the host-reading tests.** Three assertions are
 //!   exercised only on a machine that has the interface in question, and are *equivalent
 //!   mutants* — not silent gaps — on machines that do not: the public `lan_only` gate
@@ -232,6 +255,33 @@ impl LanInterface {
 ///
 /// Adding a prefix is therefore cheap only when the name is *system-assigned*: entries
 /// that a user could plausibly have chosen for their own LAN interface do not belong here.
+///
+/// # `ap0` is deliberately still here (#3869, reverted)
+///
+/// `ap0` — the Android / Linux soft-AP interface — is the one name on this list that was
+/// briefly removed. #3869 promoted it to physical so that a tethering phone would prefer
+/// its own hotspot over the cellular link it is sharing, and that promotion was
+/// reverted: once `ap0` is class 0, the only thing separating it from the LAN the device
+/// actually joined is the default-route tiebreak, and that tiebreak has nothing to say
+/// with no default route (an isolated LAN — see the module docs) or when the route hint
+/// names a *third* interface (a wired uplink or VPN carrying the route while the LAN is
+/// Wi-Fi). Either way the tiebreak falls through to enumeration order, and a soft-AP that
+/// happens to come up first wins, taking the device off the LAN it joined — the same
+/// failure shape #3853 described, with the roles reversed. See
+/// `a_hotspot_does_not_outrank_the_lan_the_device_actually_joined` for the pinned
+/// property and the mechanism in more detail.
+///
+/// [`CELLULAR_NAME_PREFIXES`] is the other, independently correct half of #3869 and is
+/// unaffected by this revert: a carrier link is deprioritised because no LAN peer can
+/// ever be on it, which does not depend on `ap0`'s class.
+///
+/// The real fix needs a soft-AP ranking key that sits *between* the route tiebreak and
+/// the index — narrow enough to prefer `ap0` over a same-class carrier link without ever
+/// outranking a joined LAN — which is a ranking change, not a name-list edit, and is not
+/// made here. Tracked at #4108.
+///
+/// Vendors also name the soft-AP `wlan1`, `swlan0` or `softap0`; none of those are on
+/// this list, so they are already treated as physical and unaffected by any of this.
 const VIRTUAL_NAME_PREFIXES: &[&str] = &[
     "docker",    // Docker's default bridge + gwbridge
     "br-",       // Docker user-defined networks (NOT bare `br0`, see above)
@@ -250,13 +300,81 @@ const VIRTUAL_NAME_PREFIXES: &[&str] = &[
     "wg",        // WireGuard
     "tailscale", // Tailscale
     "zt",        // ZeroTier
-    "p2p0",      // Android Wi-Fi Direct
-    "ap0",       // Android / Linux soft-AP (hotspot) interface
+    "p2p0",      // Android Wi-Fi Direct (a transient negotiation link, not the hotspot)
+    "ap0",       // Android / Linux soft-AP: deliberately still deprioritised — see the
+                 // doc comment above (#4108)
 ];
 
 /// Does this name look like a virtual interface?
 fn has_virtual_name(name: &str) -> bool {
     VIRTUAL_NAME_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
+/// Interface-name prefixes that name a *cellular WAN* link (#3869).
+///
+/// Deprioritised for a reason none of [`VIRTUAL_NAME_PREFIXES`] can claim: a carrier link
+/// is not a broadcast domain the user's other device can be on. A bridge at least has
+/// neighbours — containers, VMs, a tethered peer — so the residual case there is "the
+/// bridge really is the LAN". On a consumer APN the peer you are trying to pair with is
+/// not on your mobile operator's access network, whether that hands out CGNAT
+/// `100.64/10` or, as several operators do, ordinary `10/8` space.
+///
+/// It is not an *absolute*: a private or corporate APN can land the device inside an
+/// enterprise network where another device really is reachable. That is why this is a
+/// deprioritisation and not a rejection — such a link still wins when nothing else is
+/// rankable, and loses to any Wi-Fi or wired NIC, which is the right answer even there.
+///
+/// This was introduced alongside an attempt to have a phone acting as a hotspot rank its
+/// soft-AP interface **above** the cellular link it is sharing, by promoting `ap0` to
+/// class 0 (see the note on [`VIRTUAL_NAME_PREFIXES`]). That promotion was reverted — it
+/// regressed the isolated-LAN case — so `ap0` and a cellular interface are back to being
+/// the same class, and the hotspot-vs-carrier case this was meant to fix is tracked,
+/// still open, at #4108.
+///
+/// This list stays regardless, because it earns its keep independently: it is the same
+/// treatment the module docs give the VPN case — the default route deliberately pointing
+/// away from the LAN — applied to a carrier link, rank on what the link *is* and let the
+/// route only break ties inside a class. That keeps a LAN NIC winning over a cellular
+/// uplink even when the uplink happens to carry the default route (a laptop LTE modem
+/// with a lower route metric than Wi-Fi, say), which class 0 alone would not have
+/// prevented.
+///
+/// Deprioritisation, not rejection, for the usual reason: a phone with no Wi-Fi has
+/// nothing else, and a single rankable cellular interface is still selected (see
+/// `a_cellular_interface_is_still_chosen_when_it_is_the_only_candidate`).
+///
+/// # How often this actually fires, measured
+///
+/// On a Pixel 8 (Android 15) the kernel exposes `rmnet0`..`rmnet29`, but only the two
+/// carrying a live PDN hold an IPv4 address at all — and each holds it as a **`/32`**
+/// (`10.73.39.114/32`, `10.89.153.63/32`). [`rejection`] already refuses those as
+/// [`Verdict::HostRoute`] before any ranking runs, so on that hardware this list changes
+/// nothing and the 28 address-less `rmnet*` links never reach [`host_candidates`] either.
+/// It bites where a modem is handed a subnet rather than a host route — laptop `wwan*`
+/// cards and operators that hand out a real prefix — which is the case
+/// `a_cellular_uplink_does_not_outrank_the_lan_even_via_the_route_hint` fixtures with a
+/// `/24`. Android's own `rmnet*` shape (a `/32`, rejected before ranking runs, per the
+/// measurement above) is not this case, which is why the hotspot-vs-carrier scenario
+/// #4108 tracks is not exercised here.
+///
+/// Every entry is a modem name assigned by a driver or the RIL, never by a user, which is
+/// the bar [`VIRTUAL_NAME_PREFIXES`] sets for adding a prefix. Deliberately *not* here:
+/// `ppp`, which is already caught by `IFF_POINTOPOINT`, and `usb0`/`rndis0`, which name
+/// the *receiving* end of USB tethering — a link whose peer is precisely the device we
+/// want to reach.
+const CELLULAR_NAME_PREFIXES: &[&str] = &[
+    "rmnet",  // Qualcomm / Android (`rmnet0`, `rmnet_data0`, `rmnet_ipa0`)
+    "ccmni",  // MediaTek
+    "pdp_ip", // iOS / older Android PDP contexts
+    "wwan",   // Linux ModemManager / laptop WWAN cards
+    "qmimux", // QMI multiplexed carrier channels
+];
+
+/// Does this name look like a cellular WAN interface?
+fn has_cellular_name(name: &str) -> bool {
+    CELLULAR_NAME_PREFIXES
         .iter()
         .any(|prefix| name.starts_with(prefix))
 }
@@ -311,6 +429,13 @@ pub(crate) enum Verdict {
     PrefixTooBroad,
     /// Rankable, but a virtual / point-to-point interface and a better class existed.
     PassedOverVirtual,
+    /// Rankable, but a cellular WAN interface and a better class existed (#3869).
+    ///
+    /// Distinct from [`Self::PassedOverVirtual`] because the reason text is the whole
+    /// point of these variants and "virtual or point-to-point interface" is untrue about
+    /// `rmnet0` — which is also frequently `IFF_POINTOPOINT`, so the two facts overlap and
+    /// the more specific one is reported.
+    PassedOverCellular,
     /// Rankable, but CGNAT and a better class existed.
     PassedOverCgnat,
     /// Rankable, but *both* virtual / point-to-point **and** CGNAT (the worst class).
@@ -320,8 +445,25 @@ pub(crate) enum Verdict {
     /// the tunnel half sends the reader looking for the address reason that is already
     /// known. Selection is unaffected — [`class`] already ranks the pair last.
     PassedOverVirtualCgnat,
-    /// Rankable and in the winning class, but it lost the default-route tiebreak.
-    PassedOverLowerPriority,
+    /// Rankable, but *both* cellular **and** CGNAT — the ordinary shape of a carrier
+    /// interface, and the same "name both halves" argument as
+    /// [`Self::PassedOverVirtualCgnat`] (#3869).
+    PassedOverCellularCgnat,
+    /// Rankable and in the winning class, but the winner carried the default route and
+    /// this candidate did not.
+    ///
+    /// Split from [`Self::PassedOverEnumerationOrder`] in #3869. One variant used to cover
+    /// both, reporting "does not carry the default route" even when `route_hint` was
+    /// `None` and *nothing* carried it — an audit line stating a cause that did not apply,
+    /// in exactly the isolated-LAN case the module argues is the interesting one.
+    PassedOverDefaultRoute,
+    /// Rankable and in the winning class, and no default route separated the two: the
+    /// winner was simply enumerated first.
+    ///
+    /// This is the arbitrary outcome — the residual case the `VIRTUAL_NAME_PREFIXES` docs
+    /// describe — and saying so is the difference between a reader checking their routing
+    /// table for an answer that is there and one checking it for an answer that is not.
+    PassedOverEnumerationOrder,
 }
 
 impl Verdict {
@@ -336,11 +478,19 @@ impl Verdict {
             Self::HostRoute => "/32 host route — no on-link peers (VPN / point-to-point)",
             Self::PrefixTooBroad => "prefix too broad to describe a LAN",
             Self::PassedOverVirtual => "virtual or point-to-point interface",
+            Self::PassedOverCellular => "cellular WAN interface — no LAN peer is on it",
             Self::PassedOverCgnat => "CGNAT 100.64/10 — a carrier network, not a LAN",
             Self::PassedOverVirtualCgnat => {
                 "virtual or point-to-point interface, on CGNAT 100.64/10"
             }
-            Self::PassedOverLowerPriority => "does not carry the default route",
+            Self::PassedOverCellularCgnat => {
+                "cellular WAN interface, on CGNAT 100.64/10 — no LAN peer is on it"
+            }
+            Self::PassedOverDefaultRoute => "does not carry the default route",
+            Self::PassedOverEnumerationOrder => {
+                "same class as the chosen interface and no default route separated them — \
+                 chosen on enumeration order"
+            }
         }
     }
 }
@@ -369,11 +519,23 @@ fn rejection(candidate: &LanInterface) -> Option<Verdict> {
     None
 }
 
+/// Is this a link no LAN peer can be sitting on?
+///
+/// Two unrelated facts, deprioritised alike because the consequence is the same: a
+/// virtual or point-to-point interface ([`VIRTUAL_NAME_PREFIXES`], `IFF_POINTOPOINT`),
+/// and a cellular WAN ([`CELLULAR_NAME_PREFIXES`], #3869). Which of the two applied is
+/// not collapsed — the [`Verdict`] the loser is filed under names it, because the audit
+/// line is the whole diagnostic #3853 lacked and "virtual or point-to-point interface"
+/// is simply false about `rmnet0`.
+fn is_off_lan_link(candidate: &LanInterface) -> bool {
+    candidate.is_p2p || has_virtual_name(&candidate.name) || has_cellular_name(&candidate.name)
+}
+
 /// Ranking class — lower is better. See the module docs for the ordering rationale.
 fn class(candidate: &LanInterface) -> u8 {
-    let virtual_iface = candidate.is_p2p || has_virtual_name(&candidate.name);
+    let off_lan = is_off_lan_link(candidate);
     let cgnat = is_cgnat(candidate.ip);
-    match (virtual_iface, cgnat) {
+    match (off_lan, cgnat) {
         (false, false) => 0,
         (false, true) => 1,
         (true, false) => 2,
@@ -438,6 +600,40 @@ pub(crate) struct BindDecision {
 }
 
 impl BindDecision {
+    /// Every IPv4 address this decision was made from, for `lan_only`'s locality gate.
+    ///
+    /// # Why the bind must not enumerate the host a second time (#3869)
+    ///
+    /// `lan_only` refuses a publicly-routable bind address unless the host actually holds
+    /// it, and it used to answer "does the host hold it" with its own `getifaddrs(3)`
+    /// sweep — a second one, taken after this decision had already been made from the
+    /// first. Two sweeps are not merely one syscall too many: an address that goes away
+    /// between them (DHCP lease expiring, Wi-Fi roaming, a hotspot toggled) makes the
+    /// second sweep disagree with the first, `lan_only` return `BindAddressNotPrivate`,
+    /// and `daemon_loop` fail outright — where a genuinely address-less host would have
+    /// come up on the loopback fallback and said so. The narrow failure was strictly
+    /// louder than the total one.
+    ///
+    /// Threading this list into the bind closes the window by construction: the chosen
+    /// address is one of the entries in [`Self::verdicts`], so the gate is answered from
+    /// the same enumeration that chose it and the daemon's bind can no longer be refused
+    /// for locality at all. The gate keeps its meaning for every other caller of
+    /// `lan_only`, which supplies a bind address this module never picked.
+    ///
+    /// Derived from `verdicts` rather than stored alongside it, so the two cannot drift:
+    /// `verdicts` holds every enumerated address — rejected ones included, since loopback
+    /// and a NO-CARRIER bridge are addresses the host holds just as much as the winner —
+    /// and anything missing from it is missing from the log line too, which is loud.
+    ///
+    /// IPv4 only, because `decide` only ever ranks and binds IPv4; an IPv6 bind address
+    /// would need the v6 half of the sweep and does not arrive from here.
+    pub fn host_addrs(&self) -> Vec<IpAddr> {
+        self.verdicts
+            .iter()
+            .map(|(candidate, _)| IpAddr::V4(candidate.ip))
+            .collect()
+    }
+
     /// One-line summary of everything that was *not* chosen, for the log.
     pub fn passed_over(&self) -> String {
         let summary: Vec<String> = self
@@ -490,9 +686,11 @@ pub(crate) fn decide(candidates: Vec<LanInterface>, route_hint: Option<Ipv4Addr>
         match rejection(&candidate) {
             Some(verdict) => verdicts.push((candidate, verdict)),
             None => {
-                // Placeholder; overwritten once the winner is known.
+                // Placeholder; overwritten once the winner is known. Every index pushed
+                // here is reassigned in the loop below, and if there is no winner there
+                // are no indices, so this value never reaches a log line.
                 rankable.push(verdicts.len());
-                verdicts.push((candidate, Verdict::PassedOverLowerPriority));
+                verdicts.push((candidate, Verdict::PassedOverEnumerationOrder));
             }
         }
     }
@@ -510,26 +708,51 @@ pub(crate) fn decide(candidates: Vec<LanInterface>, route_hint: Option<Ipv4Addr>
     };
 
     let winning_class = class(&verdicts[winner].0);
+    let winner_ip = verdicts[winner].0.ip;
+    // Did the route hint actually decide anything? Only if it names the winner: the
+    // winner holds the minimum of `(class, off-route, idx)`, so no loser can be the one
+    // on the default route. When it does not name the winner — `None`, or an address no
+    // candidate holds — every same-class candidate carried the same route penalty and
+    // enumeration order is what separated them. #3869: reporting the route as the cause
+    // in that case is an audit line asserting something that did not happen.
+    let route_named_the_winner = route_hint == Some(winner_ip);
     for &idx in &rankable {
         if idx == winner {
             verdicts[idx].1 = Verdict::Chosen;
             continue;
         }
         let candidate = &verdicts[idx].0;
+        let cellular = has_cellular_name(&candidate.name);
         verdicts[idx].1 = if class(candidate) <= winning_class {
             // Same class as the winner — a strictly better class is impossible, the
             // winner holds the minimum — so what it lost was the route tiebreak or,
-            // failing that, enumeration order.
-            Verdict::PassedOverLowerPriority
+            // failing that, enumeration order. The two are not the same fact and are no
+            // longer reported as one. A candidate holding the winner's own address (the
+            // same address on two interfaces) tied on the route penalty too, so order is
+            // what separated it even when the hint names the winner.
+            if route_named_the_winner && candidate.ip != winner_ip {
+                Verdict::PassedOverDefaultRoute
+            } else {
+                Verdict::PassedOverEnumerationOrder
+            }
         } else if is_cgnat(candidate.ip) {
             // Class 1 or class 3. Class 3 is *both* things and says so: the reporting
             // desktop's `zcctun0 100.64.0.1` is exactly that pair, and a line naming only
             // one half sends the reader looking for a second reason that is already there.
-            if candidate.is_p2p || has_virtual_name(&candidate.name) {
-                Verdict::PassedOverVirtualCgnat
-            } else {
-                Verdict::PassedOverCgnat
+            match (
+                cellular,
+                candidate.is_p2p || has_virtual_name(&candidate.name),
+            ) {
+                // Cellular first where both apply: an `rmnet*` link is routinely
+                // `IFF_POINTOPOINT`, and "cellular WAN" is the fact that explains the
+                // ranking, where "point-to-point" merely restates a flag.
+                (true, _) => Verdict::PassedOverCellularCgnat,
+                (false, true) => Verdict::PassedOverVirtualCgnat,
+                (false, false) => Verdict::PassedOverCgnat,
             }
+        } else if cellular {
+            // Class 2 by way of the carrier, not a bridge or a tunnel (#3869).
+            Verdict::PassedOverCellular
         } else {
             // Class 2: virtual, ordinary address. Class 0 cannot reach here — it is the
             // best class, so `class(candidate) > winning_class` already excluded it.
@@ -1179,8 +1402,11 @@ mod tests {
     /// selectable when it is all a CGNAT'd mobile device has.
     #[test]
     fn cgnat_ranks_below_a_lan_but_is_selectable_alone() {
+        // Two physical radios, so the *address* is the only thing separating them: a
+        // carrier-named interface would now be deprioritised by name too (#3869) and this
+        // test would no longer be about CGNAT.
         let mixed = vec![
-            LanInterface::new("rmnet0", "100.64.0.1", 16),
+            LanInterface::new("wlan1", "100.64.0.1", 16),
             LanInterface::new("wlan0", "192.168.0.30", 24),
         ];
         assert_eq!(
@@ -1188,7 +1414,7 @@ mod tests {
             Some("wlan0")
         );
 
-        let alone = vec![LanInterface::new("rmnet0", "100.64.0.1", 16)];
+        let alone = vec![LanInterface::new("wlan1", "100.64.0.1", 16)];
         assert_eq!(
             decide(alone, None).lan_ip,
             Some("100.64.0.1".parse::<Ipv4Addr>().unwrap())
@@ -1208,10 +1434,12 @@ mod tests {
         let decision = decide(
             vec![
                 LanInterface::new("eth0", "192.168.1.10", 24), // class 0, wins on order
-                LanInterface::new("eth1", "192.168.2.10", 24), // class 0, lost the tiebreak
-                LanInterface::new("rmnet0", "100.64.0.1", 16), // class 1, CGNAT only
+                LanInterface::new("eth1", "192.168.2.10", 24), // class 0, lost on order
+                LanInterface::new("wlan1", "100.64.0.1", 16),  // class 1, CGNAT only
                 LanInterface::new("docker0", "172.17.0.1", 16), // class 2, virtual only
-                p2p(LanInterface::new("zcctun0", "100.64.1.1", 16)), // class 3, both
+                LanInterface::new("wwan0", "10.44.0.9", 24),   // class 2, cellular only
+                p2p(LanInterface::new("zcctun0", "100.64.1.1", 16)), // class 3, virtual+CGNAT
+                LanInterface::new("rmnet0", "100.64.2.1", 16), // class 3, cellular+CGNAT
             ],
             None,
         );
@@ -1225,13 +1453,15 @@ mod tests {
             reasons,
             vec![
                 ("eth0", Verdict::Chosen),
-                ("eth1", Verdict::PassedOverLowerPriority),
-                ("rmnet0", Verdict::PassedOverCgnat),
+                ("eth1", Verdict::PassedOverEnumerationOrder),
+                ("wlan1", Verdict::PassedOverCgnat),
                 ("docker0", Verdict::PassedOverVirtual),
+                ("wwan0", Verdict::PassedOverCellular),
                 ("zcctun0", Verdict::PassedOverVirtualCgnat),
+                ("rmnet0", Verdict::PassedOverCellularCgnat),
             ],
-            "a candidate that is both virtual and CGNAT must not be filed under either \
-             half alone; passed over: {}",
+            "a candidate that is both off-LAN and CGNAT must not be filed under either \
+             half alone, and a carrier link must not be filed as a tunnel; passed over: {}",
             decision.passed_over()
         );
 
@@ -1244,6 +1474,237 @@ mod tests {
             ),
             "the log line is the only place this reason is ever seen, got: {passed_over}"
         );
+        assert!(
+            passed_over.contains(
+                "rmnet0=100.64.2.1/16 (cellular WAN interface, on CGNAT 100.64/10 — no \
+                 LAN peer is on it)"
+            ),
+            "a carrier link's line must say carrier, not 'virtual or point-to-point' — \
+             that is the reader's cue that no routing change can help, got: {passed_over}"
+        );
+    }
+
+    /// A same-class loser must name the rule that *actually* decided (#3869).
+    ///
+    /// One verdict used to cover both cases and always read "does not carry the default
+    /// route" — including when `route_hint` was `None`, where nothing carried it and
+    /// enumeration order decided. That is an audit line stating a cause that did not
+    /// apply, in exactly the isolated-LAN case (`desktop_shape_with_no_default_route…`)
+    /// the module argues is the interesting one, and it sends the reader to a routing
+    /// table that has no answer in it.
+    ///
+    /// Three cases because a `route_hint.is_some()` test would pass the first two and
+    /// still be wrong: a probe can answer with an address that is not in contention.
+    #[test]
+    fn a_same_class_loser_names_the_rule_that_actually_decided() {
+        /// The verdict recorded against `name`, for readable assertions.
+        fn verdict_for(decision: &BindDecision, name: &str) -> Option<Verdict> {
+            decision
+                .verdicts
+                .iter()
+                .find(|(candidate, _)| candidate.name == name)
+                .map(|(_, verdict)| *verdict)
+        }
+
+        let candidates = vec![
+            LanInterface::new("eth0", "192.168.1.10", 24),
+            LanInterface::new("eth1", "192.168.2.10", 24),
+        ];
+
+        // 1. The hint names the winner, so the route tiebreak is what fired.
+        let by_route = decide(candidates.clone(), Some("192.168.1.10".parse().unwrap()));
+        assert_eq!(chosen(&by_route).map(|c| c.name.as_str()), Some("eth0"));
+        assert_eq!(
+            verdict_for(&by_route, "eth1"),
+            Some(Verdict::PassedOverDefaultRoute),
+            "the winner carried the default route and this one did not — that is a cause \
+             the reader can act on"
+        );
+        assert!(
+            by_route
+                .passed_over()
+                .contains("eth1=192.168.2.10/24 (does not carry the default route)"),
+            "got: {}",
+            by_route.passed_over()
+        );
+
+        // 2. No hint at all: nothing carried the default route, so nothing lost to it.
+        let by_order = decide(candidates.clone(), None);
+        assert_eq!(chosen(&by_order).map(|c| c.name.as_str()), Some("eth0"));
+        assert_eq!(
+            verdict_for(&by_order, "eth1"),
+            Some(Verdict::PassedOverEnumerationOrder),
+            "with no default route the choice was arbitrary; saying it lost the route \
+             tiebreak is a statement about a rule that never ran"
+        );
+        let text = by_order.passed_over();
+        assert!(
+            text.contains("chosen on enumeration order"),
+            "the audit line must say the choice was arbitrary, got: {text}"
+        );
+        assert!(
+            !text.contains("does not carry the default route"),
+            "…and must not blame a route nothing carried, got: {text}"
+        );
+
+        // 3. A hint that names no candidate — the probe answered, but with an address not
+        //    in contention. Still enumeration order: `route_hint.is_some()` is not the
+        //    question, `route_hint == the winner` is.
+        let stale_hint = decide(candidates, Some("10.9.9.9".parse().unwrap()));
+        assert_eq!(
+            verdict_for(&stale_hint, "eth1"),
+            Some(Verdict::PassedOverEnumerationOrder),
+            "a route hint pointing at neither candidate separated neither of them"
+        );
+
+        // 4. The same address on two interfaces, with the hint naming it. The hint *does*
+        //    name the winner, so the `route_named_the_winner` half is satisfied — and the
+        //    loser is on the default route just as much as the winner is, so the route is
+        //    still not what separated them. Without the `candidate.ip != winner_ip` guard
+        //    this is the one shape that files a loser under a rule it did not lose to, and
+        //    every other case in this test stays green.
+        let shared = "192.168.1.10";
+        let duplicated = decide(
+            vec![
+                LanInterface::new("eth0", shared, 24),
+                LanInterface::new("eth0:1", shared, 24),
+            ],
+            Some(shared.parse().unwrap()),
+        );
+        assert_eq!(chosen(&duplicated).map(|c| c.name.as_str()), Some("eth0"));
+        assert_eq!(
+            verdict_for(&duplicated, "eth0:1"),
+            Some(Verdict::PassedOverEnumerationOrder),
+            "an alias holding the winner's own address carries the winner's own route \
+             penalty; telling the reader it 'does not carry the default route' would send \
+             them to a routing table that agrees with it. Passed over: {}",
+            duplicated.passed_over()
+        );
+    }
+
+    // -- The hotspot case (#3869) ---------------------------------------------
+
+    /// A cellular uplink does not outrank the LAN, even when it carries the default
+    /// route — the genuinely-passing case the surviving half of #3869 fixes.
+    ///
+    /// #3869 originally set out to have a phone acting as a hotspot bind `ap0` rather
+    /// than the cellular link it is sharing, by promoting `ap0` to class 0. That
+    /// promotion was reverted (see the note on `VIRTUAL_NAME_PREFIXES`): it regressed
+    /// the isolated-LAN case, so `ap0` and a cellular interface are the same class again
+    /// and this test is **not** about that scenario. The original hotspot-vs-carrier
+    /// request stays open, tracked at #4108.
+    ///
+    /// What `CELLULAR_NAME_PREFIXES` fixes on its own, independent of `ap0`'s class, is
+    /// this: a laptop LTE/WWAN modem — unlike Android's `rmnet*`, which hands out a
+    /// `/32` host route already rejected before ranking runs (see the measurement on
+    /// `CELLULAR_NAME_PREFIXES`) — is typically handed a real subnet by the carrier or
+    /// ModemManager, and once up commonly carries the default route (a lower metric than
+    /// idle Wi-Fi). Without this list that ties the modem for class 0 with the LAN NIC
+    /// and the route hint hands it the win; with the list, the modem is class 2 and the
+    /// LAN wins regardless of the route.
+    #[test]
+    fn a_cellular_uplink_does_not_outrank_the_lan_even_via_the_route_hint() {
+        let candidates = vec![
+            // A real /24, not Android's /32 — see the doc comment above for why that
+            // distinction is the whole test.
+            LanInterface::new("wwan0", "10.150.2.5", 24),
+            LanInterface::new("wlp2s0", "192.168.1.44", 24),
+        ];
+        // The modem carries the default route — plausible once it is up and Wi-Fi is
+        // merely idle, not down.
+        let decision = decide(candidates, Some("10.150.2.5".parse().unwrap()));
+
+        assert_eq!(
+            chosen(&decision).map(|c| c.name.as_str()),
+            Some("wlp2s0"),
+            "wwan0 holds a real /24 and carries the route hint, but a carrier link is \
+             class 2 regardless of the route; passed over: {}",
+            decision.passed_over()
+        );
+    }
+
+    /// A hotspot does not outrank the LAN the device actually joined — including with no
+    /// default route to break the tie, which was the gap left when #3869 first attempted
+    /// this by promoting `ap0` to class 0 (see the note on `VIRTUAL_NAME_PREFIXES`; that
+    /// promotion was reverted).
+    ///
+    /// This is the stronger property class gives for free once `ap0` stays
+    /// deprioritised: `ap0` and a joined Wi-Fi network are never the same class, so the
+    /// route hint — or its absence — cannot matter, and the isolated-LAN gap the
+    /// promotion opened is closed. What remains genuinely open is the original #3869
+    /// item 1 request itself (a tethering phone preferring its own hotspot over the
+    /// carrier it is sharing); that needs a soft-AP ranking key between the route
+    /// tiebreak and the index, and a verdict naming it, which is a ranking change and
+    /// not made here. Tracked at #4108.
+    #[test]
+    fn a_hotspot_does_not_outrank_the_lan_the_device_actually_joined() {
+        let candidates = vec![
+            LanInterface::new("ap0", "192.168.43.1", 24),
+            LanInterface::new("wlan0", "192.168.1.44", 24),
+        ];
+        // No route hint at all — the isolated-LAN case the module docs call the
+        // interesting one, and exactly the case where the reverted `ap0` promotion fell
+        // through to enumeration order and could hand the win to the hotspot.
+        let decision = decide(candidates, None);
+
+        assert_eq!(
+            chosen(&decision).map(|c| c.name.as_str()),
+            Some("wlan0"),
+            "ap0 is class 2 and wlan0 is class 0, so class alone decides even with no \
+             default route to break a tie; passed over: {}",
+            decision.passed_over()
+        );
+    }
+
+    /// Cellular is deprioritised, never excluded — a phone with no Wi-Fi has nothing else.
+    #[test]
+    fn a_cellular_interface_is_still_chosen_when_it_is_the_only_candidate() {
+        let decision = decide(
+            vec![
+                LanInterface::new("lo", "127.0.0.1", 8),
+                LanInterface::new("rmnet_data0", "10.144.5.22", 28),
+            ],
+            None,
+        );
+
+        assert_eq!(
+            decision.lan_ip,
+            Some("10.144.5.22".parse::<Ipv4Addr>().unwrap()),
+            "a deprioritised candidate is still a candidate; binding loopback here would \
+             kill sync on a phone that is merely off Wi-Fi"
+        );
+        assert_eq!(
+            decision.level,
+            Level::Warn,
+            "…but a carrier link is not a LAN, so this is never the quiet case"
+        );
+    }
+
+    /// Every cellular prefix, one assertion each, against a NIC that must beat all of
+    /// them with no route hint — the same table shape as the virtual-name test above.
+    #[test]
+    fn every_cellular_name_prefix_loses_to_a_physical_nic() {
+        for name in [
+            "rmnet0",
+            "rmnet_data0",
+            "ccmni0",
+            "pdp_ip0",
+            "wwan0",
+            "qmimux0",
+        ] {
+            let candidates = vec![
+                LanInterface::new(name, "10.144.5.22", 24),
+                LanInterface::new("wlan0", "192.168.5.5", 24),
+            ];
+            let decision = decide(candidates, None);
+            assert_eq!(
+                chosen(&decision).map(|c| c.name.as_str()),
+                Some("wlan0"),
+                "{name} enumerates first and is private, but no LAN peer can be on a \
+                 carrier link. Passed over: {}",
+                decision.passed_over()
+            );
+        }
     }
 
     /// `br-<hash>` is Docker; a bare `br0` is a bridge the user built and may be the LAN.
@@ -1315,6 +1776,159 @@ mod tests {
             too_broad.verdicts.first().map(|(_, verdict)| *verdict),
             Some(Verdict::PrefixTooBroad),
             "and it must be attributed to its breadth, not lumped in with the rest"
+        );
+    }
+
+    // -- The bind the decision feeds (#3869) ----------------------------------
+
+    /// `host_addrs` is the whole sweep, rejected candidates included.
+    ///
+    /// It answers "what addresses does this host hold", which is a different question
+    /// from "what could this host bind": loopback and a NO-CARRIER bridge are held just
+    /// as much as the winner. Narrowing it to the rankable ones would be a second,
+    /// smaller disagreement with the enumeration — the same class of bug as taking a
+    /// second sweep, arrived at by editing instead of by timing.
+    #[test]
+    fn host_addrs_reports_every_enumerated_address_not_only_the_rankable_ones() {
+        let decision = decide(desktop_interfaces(), None);
+
+        let expected: Vec<IpAddr> = [
+            "127.0.0.1",
+            "192.160.160.80",
+            "192.168.32.1",
+            "10.0.6.1",
+            "10.0.7.1",
+            "100.64.0.1",
+        ]
+        .iter()
+        .map(|ip| IpAddr::V4(ip.parse().expect("test literal is a valid IPv4 address")))
+        .collect();
+
+        assert_eq!(
+            decision.host_addrs(),
+            expected,
+            "the list handed to the locality gate must be the enumeration itself — in \
+             order, and including the addresses the policy refused"
+        );
+    }
+
+    /// The invariant the "the daemon's bind can no longer be refused for locality"
+    /// claim rests on, asserted rather than argued (#3869).
+    ///
+    /// `bind_locality_ok` passes iff the address is not publicly routable **or** it is in
+    /// the list. So the claim is exactly: for every decision, `bind` is either loopback or
+    /// one of [`BindDecision::host_addrs`]. Every shape [`decide`] can return is here,
+    /// because the argument is a case analysis and a case analysis with a gap is a
+    /// counterexample: a winner, a lone winner, every candidate rejected, and no
+    /// candidates at all — the last two being the loopback fallback, where `verdicts` need
+    /// not contain `bind` and the first disjunct is what saves it.
+    ///
+    /// Changing `host_addrs` to skip rejected entries keeps this green (the winner is
+    /// never rejected); changing it to skip the *chosen* one reddens the first two rows,
+    /// which is the mutation this is aimed at.
+    #[test]
+    fn the_bound_address_is_always_one_the_locality_gate_can_vouch_for() {
+        let cases: Vec<(&str, Vec<LanInterface>)> = vec![
+            ("a contested host", desktop_interfaces()),
+            (
+                // Publicly routable on purpose: an RFC 1918 single candidate satisfies
+                // the first disjunct and would assert nothing about the list.
+                "a single candidate",
+                vec![LanInterface::new("eth0", "192.160.160.80", 24)],
+            ),
+            (
+                "every candidate rejected",
+                vec![
+                    LanInterface::new("lo", "127.0.0.1", 8),
+                    down(LanInterface::new("docker0", "172.17.0.1", 16)),
+                ],
+            ),
+            ("no candidates at all", vec![]),
+        ];
+
+        for (label, candidates) in cases {
+            let decision = decide(candidates, None);
+            let vouched = decision.host_addrs().contains(&decision.bind.ip());
+            assert!(
+                !is_publicly_routable(&decision.bind) || vouched,
+                "{label}: `lan_only` refuses a publicly-routable bind it cannot find in \
+                 the list, so a decision that binds one it did not enumerate is a daemon \
+                 that fails to start. bind={}, host_addrs={:?}",
+                decision.bind,
+                decision.host_addrs()
+            );
+        }
+    }
+
+    /// The race, and the reason this is threaded at all (#3869).
+    ///
+    /// `select_bind_target` enumerates the host to choose an address; `lan_only` used to
+    /// enumerate it *again* to decide whether that address may be claimed. Between the
+    /// two sweeps an address can go away — a DHCP lease expiring, Wi-Fi roaming, a
+    /// hotspot switched off — and the second sweep then refuses a bind the first sweep
+    /// had just chosen. `daemon_loop` maps that refusal to an error and the whole daemon
+    /// fails to start, where a host with genuinely no LAN would have come up on the
+    /// loopback fallback and said so: the narrow failure was strictly louder than the
+    /// total one.
+    ///
+    /// The two calls below are the two sweeps. The second argument is the only difference
+    /// between them, and it is the difference between a bound endpoint and a dead daemon.
+    ///
+    /// Non-vacuous by construction: the fixture's LAN is `192.160.160.0/24`, real public
+    /// space (the reporting hardware), so the locality gate is actually consulted — with
+    /// an RFC 1918 address it passes whatever list it is handed and this test would pin
+    /// nothing. That precondition is asserted rather than assumed.
+    #[test]
+    fn the_bind_gate_is_answered_from_the_sweep_that_chose_the_address() {
+        use crate::transport::endpoint::{
+            LanBindError, RecordingResolver, lan_only_with_host_addrs,
+        };
+        use iroh_dns::dns::DnsResolver;
+
+        let decision = decide(
+            vec![
+                LanInterface::new("lo", "127.0.0.1", 8),
+                LanInterface::new("wlp2s0", "192.160.160.80", 24),
+            ],
+            None,
+        );
+        assert!(
+            decision.internet_facing,
+            "precondition: the chosen address must be publicly routable, or the locality \
+             gate short-circuits and neither call below tests it"
+        );
+
+        // One sweep: the addresses this decision was made from. Nothing is bound —
+        // `lan_only_with_host_addrs` returns a builder — so this opens no socket.
+        lan_only_with_host_addrs(
+            decision.bind,
+            decision.prefix_len,
+            DnsResolver::custom(RecordingResolver::new()),
+            &decision.host_addrs(),
+        )
+        .map(|_| ())
+        .expect(
+            "the address was chosen from this very list, so the gate that asks whether \
+             the host holds it can only answer yes",
+        );
+
+        // A second sweep that no longer sees the address: the window that used to exist
+        // between `select_bind_target` and the bind. Same bind, same prefix, and the
+        // daemon dies.
+        let err = lan_only_with_host_addrs(
+            decision.bind,
+            decision.prefix_len,
+            DnsResolver::custom(RecordingResolver::new()),
+            &[],
+        )
+        .map(|_| ())
+        .expect_err(
+            "control: an enumeration that has lost the address is what made this a race \
+             rather than a redundant syscall",
+        );
+        assert!(
+            matches!(err, LanBindError::BindAddressNotPrivate { .. }),
+            "got {err:?}"
         );
     }
 
