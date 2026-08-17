@@ -330,14 +330,14 @@ function verifyBatchStreamFraming(check) {
   const parsed = parseBatchStream(good, chunk)
   check(
     'batch framing: a well-formed stream reads every record, empty payload included',
-    parsed.bodies.get('a.md') === 'alpha' &&
-      parsed.bodies.get('b.md') === '' &&
-      parsed.bodies.get('c.md') === 'omega' &&
-      parsed.missing.length === 0,
-    `got ${JSON.stringify([...parsed.bodies])} / missing ${JSON.stringify(parsed.missing)}`,
+    parsed.get('a.md') === 'alpha' &&
+      parsed.get('b.md') === '' &&
+      parsed.get('c.md') === 'omega' &&
+      parsed.size === 3,
+    `got ${JSON.stringify([...parsed])}`,
   )
 
-  const throws = (name, buf, expect) => {
+  const throws = (name, buf, expect, flag = 'isBatchDesync') => {
     let err = null
     try {
       parseBatchStream(buf, chunk)
@@ -345,11 +345,11 @@ function verifyBatchStreamFraming(check) {
       err = e
     }
     check(
-      `batch framing: ${name} is a desync error, not a silent drop`,
-      err?.isBatchDesync === true && expect.test(err.message),
+      `batch framing: ${name} is an error, not a silent drop`,
+      err?.[flag] === true && expect.test(err.message),
       err === null
         ? 'no error thrown — the remaining paths would have gone unread'
-        : `message did not match ${expect}: ${err.message}`,
+        : `${flag} / message did not match ${expect}: ${err.message}`,
     )
   }
   // Truncated mid-stream: the header for record 2 never arrives.
@@ -368,19 +368,32 @@ function verifyBatchStreamFraming(check) {
     Buffer.from(`${record('alpha')}${oid} blob 9999\nshort\n`),
     /claims 9999 bytes but only/,
   )
-  // ...while `missing` — a DOCUMENTED per-file answer — must still be a
-  // working-tree fallback rather than an error, or the fix above would have
-  // turned a damaged-object commit into an unconditional exit 2.
-  const withMissing = parseBatchStream(
+  // ...and `<oid> missing` — a damaged object store — is an error too
+  // (#4046). It used to fall back to the working tree on the grounds that it
+  // is a DOCUMENTED per-file answer, which it is; the objection is that the
+  // answer it produces is about DIFFERENT CONTENT than the index names,
+  // printed under "judged the staged index". The three well-formed
+  // assertions above are the control: a parser that threw on everything
+  // would fail them, so this pair discriminates rather than merely agreeing.
+  throws(
+    'a `missing` blob the index names',
     Buffer.from(`${record('alpha')}${oid} missing\n${record('omega')}`),
-    chunk,
+    /object store does not have it/,
+    'isMissingObject',
   )
+  // ...and it is NOT re-labelled as a framing desync: the two have different
+  // causes (git cannot honour its protocol / the repository is damaged) and a
+  // caller distinguishing them must be able to.
+  let missingErr = null
+  try {
+    parseBatchStream(Buffer.from(`${oid} missing\n${record('b')}${record('c')}`), chunk)
+  } catch (e) {
+    missingErr = e
+  }
   check(
-    'batch framing: a `missing` record still falls back instead of throwing',
-    withMissing.missing.join(',') === 'b.md' &&
-      withMissing.bodies.get('a.md') === 'alpha' &&
-      withMissing.bodies.get('c.md') === 'omega',
-    `missing=${JSON.stringify(withMissing.missing)} bodies=${JSON.stringify([...withMissing.bodies])}`,
+    'batch framing: a `missing` blob is not mislabelled as a protocol desync',
+    missingErr?.isMissingObject === true && missingErr?.isBatchDesync === undefined,
+    `flags: missing=${missingErr?.isMissingObject} desync=${missingErr?.isBatchDesync}`,
   )
 }
 
@@ -679,8 +692,19 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
   // ── 6. A STAGED BLOB THAT IS NOT IN THE OBJECT STORE — `cat-file --batch`
   // answers `<oid> missing`. Skipping that record leaves the path out of the
   // result map and therefore unscanned, which is a silent false green in a
-  // guard whose whole subject is silent false greens. It must fall back to
-  // the working tree, like an unmerged path, so the file is still judged.
+  // guard whose whole subject is silent false greens.
+  //
+  // It used to fall back to the working tree, like an unmerged path, so that
+  // the file was still judged. "Still judged" was the wrong goal (#4046): the
+  // index names content that IS being committed and git cannot produce it, so
+  // the copy on disk is not a degraded version of that content but a
+  // DIFFERENT file — reported under `(judged the staged index)`. Unmerged is
+  // the one case whose right answer is the disk, and it has no stage-0 sha,
+  // so it never reaches `cat-file` at all. What is left has no correct
+  // per-file answer, so the guard exits 2 with the sha named. The scenario
+  // below is unchanged except in what it expects: a fixture that produced a
+  // real `<oid> missing` before still produces one, and the assertion under
+  // it moved from "judged from disk" to "refused, and said why".
   {
     let sha = ''
     const { dir, env } = fixture(({ dir: repoDir, git, write }) => {
@@ -706,9 +730,21 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
     )
     const cached = run(dir, env, ['--cached'])
     check(
-      'damaged index: a missing staged blob is judged from disk, not silently skipped',
-      cached.status === 1 && namesFile(cached),
-      `expected 1 naming ${file}, got ${cached.status}: ${cached.stderr}`,
+      'damaged index: a missing staged blob is exit 2 naming the sha, not a working-tree verdict',
+      cached.status === 2 && cached.stderr.includes(sha),
+      `expected 2 naming ${sha}, got ${cached.status}: ${cached.stderr}`,
+    )
+    // THE CONTROL. The refusal is about the object store, not about
+    // `--cached`: the same damaged fixture still reads and judges from the
+    // working tree, which never asks for a blob (the bad line is on disk
+    // here, so a working answer is exit 1 naming the file). Without this,
+    // "exit 2" would be satisfied by a guard that had stopped working
+    // altogether.
+    const worktree = run(dir, env, ['--worktree'])
+    check(
+      'damaged index: …while --worktree still judges normally — it never asks the object store',
+      worktree.status === 1 && namesFile(worktree),
+      `expected 1 naming ${file}, got ${worktree.status}: ${worktree.stderr}`,
     )
   }
 

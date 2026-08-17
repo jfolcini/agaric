@@ -146,11 +146,13 @@
 //     `*.tsx` symlink exists today; this is stated so the divergence is a
 //     decision rather than a surprise.
 //
-// Not on that list, because it is not a per-path condition: a `cat-file
-// --batch` response that does not have the shape git documents. The record
-// walk THROWS and the guard exits 2, rather than abandoning the rest of the
-// chunk — which is how the invariant above ("every enumerated path is read
-// from some source, or the guard says so") stays true. See
+// Not on that list, because neither has a correct per-path answer: a
+// `cat-file --batch` response that does not have the shape git documents,
+// and a `<oid> missing` for a blob the index names (a damaged object store).
+// Both THROW and the guard exits 2, rather than abandoning the rest of the
+// chunk or re-aiming at the working tree — which is how the invariant above
+// ("every enumerated path is read from some source, or the guard says so")
+// stays true, and true about the source the guard PRINTS. See
 // `parseBatchStream`.
 //
 // ─── Cost ─────────────────────────────────────────────────────────────────
@@ -467,10 +469,23 @@ function readFromIndex(paths, repoRoot, entries, chunkSize = CAT_FILE_CHUNK, env
   const fallToWorktree = []
   for (const path of paths) {
     const entry = entries?.byPath?.get(path)
-    if (!entry || entry.sha === null) {
-      // No stage-0 blob: an unmerged path (conflict in progress), or a path
-      // the caller passed that the index does not contain at all. Neither
-      // may crash the guard — see the header.
+    if (!entry) {
+      // Not in the index at all — never staged, or staged for DELETION
+      // (`git rm --cached`, which leaves the file on disk). It is not being
+      // committed, so under `--cached` it is not read: reading the disk copy
+      // would be this source answering about a path it has just been told is
+      // absent. Unreachable from the four guards, which enumerate FROM
+      // `listTrackedEntries`; stated so the rule is one rule. The Python
+      // sibling reaches it (its callers pass prek's path arguments) and
+      // answers the same way — `read` in scripts/lib/guard_file_source.py,
+      // #4058.
+      continue
+    }
+    if (entry.sha === null) {
+      // UNMERGED (stages 1/2/3, no stage 0) — a conflict in progress. The
+      // conflicted copy on disk is where the markers the author is resolving
+      // live, so it is judged from there rather than crashing the guard. The
+      // ONE case whose right answer is the working tree; see the header.
       fallToWorktree.push(path)
       continue
     }
@@ -488,9 +503,7 @@ function readFromIndex(paths, repoRoot, entries, chunkSize = CAT_FILE_CHUNK, env
       input: `${chunk.map((e) => e.sha).join('\n')}\n`,
       maxBuffer: CAT_FILE_MAX_BUFFER,
     })
-    const parsed = parseBatchStream(out, chunk)
-    for (const [path, body] of parsed.bodies) bodies.set(path, body)
-    fallToWorktree.push(...parsed.missing)
+    for (const [path, body] of parseBatchStream(out, chunk)) bodies.set(path, body)
   }
   for (const [path, body] of readFromWorktree(fallToWorktree, repoRoot)) {
     bodies.set(path, body)
@@ -505,11 +518,13 @@ function readFromIndex(paths, repoRoot, entries, chunkSize = CAT_FILE_CHUNK, env
  * @param {Buffer} out    the batch response (a Buffer, never a string — see
  *   the call site)
  * @param {Array<{path: string, sha: string}>} chunk the input lines, in order
- * @returns {{bodies: Map<string, string>, missing: string[]}} `missing` names
- *   the paths git answered `<oid> missing` for, which the caller judges from
- *   the working tree instead.
+ * @returns {Map<string, string>} path -> staged contents. There is NO second
+ *   channel: every path in the chunk is either read from the index here or
+ *   the call throws. See "Why a `missing` object throws too" below.
  * @throws {Error & {isBatchDesync: true}} if the response does not have the
  *   shape `cat-file --batch` documents — see below.
+ * @throws {Error & {isMissingObject: true}} if git answers `<oid> missing`
+ *   for a blob the index names.
  *
  * Extracted from `readFromIndex` so the desync branches have somewhere to be
  * TESTED from: they cannot be reached through a fixture, because reaching
@@ -528,23 +543,47 @@ function readFromIndex(paths, repoRoot, entries, chunkSize = CAT_FILE_CHUNK, env
  * last staged file, a truncated stream produced `exit=0` with empty stderr.
  *
  * The alternative — pushing the remainder onto the working-tree fallback, as
- * the `missing` and unmerged paths do — is rejected deliberately:
+ * an unmerged path does — is rejected deliberately:
  *
- *   * Those two are DOCUMENTED per-file answers from git ("this blob is not
- *     here", "this path has no stage 0"), and the fallback is a considered
- *     verdict on a specific file. A desync is git not honouring the batch
- *     protocol at all, so nothing about the remaining bytes is known —
- *     including whether the paths still line up with the records.
+ *   * An unmerged path is a DOCUMENTED per-file answer from git ("this path
+ *     has no stage 0"), and the fallback is a considered verdict on a
+ *     specific file: the conflicted copy on disk is what the author is
+ *     resolving. A desync is git not honouring the batch protocol at all, so
+ *     nothing about the remaining bytes is known — including whether the
+ *     paths still line up with the records.
  *   * The guards PRINT the source with the verdict ("judged the staged
  *     index"). Silently reading 499 files from the working tree under that
  *     banner is the mis-attributed verdict #3962 is about, at scale.
  *   * Exit 2 is fail-CLOSED: the commit is blocked and the cause is named.
  *     A fallback is fail-open in the one direction that has burned this repo
  *     — a green that describes content nobody scanned.
+ *
+ * ─── Why a `missing` object throws too (#4046) ────────────────────────────
+ *
+ * `<oid> missing` used to join the unmerged paths in the working-tree
+ * fallback, on the grounds that it is also a documented per-file answer and
+ * that a damaged repository must not mean an unscanned file. Both halves are
+ * true and the conclusion still did not follow, because it is the WRONG FILE
+ * that gets read: the sha came out of `git ls-files -s` moments earlier, so
+ * the index names content that IS being committed and git cannot produce it.
+ * The copy on disk is not a degraded version of that content, it is
+ * different content — and it would be reported under `(judged the staged
+ * index)`, which is the third bullet above with a smaller N.
+ *
+ * The unmerged path is the one case where the disk copy IS the right answer,
+ * and it never reaches here: it has no stage-0 sha, so `readFromIndex` routes
+ * it to the working tree without asking `cat-file` at all. Everything that
+ * arrives at this branch is a damaged or unreadable object store, which has
+ * no correct per-file answer — so it fails closed, and the commit is blocked
+ * with the sha named rather than judged against a file nobody staged.
+ *
+ * `scripts/lib/guard_file_source.py` reaches the same verdict from the same
+ * reasoning in `_blob`, one blob per call instead of a batch. Its first draft
+ * conflated EVERY `cat-file` failure into this same silent fallback, which is
+ * what #4046 was filed about; the two helpers now differ only in framing.
  */
 export function parseBatchStream(out, chunk) {
   const bodies = new Map()
-  const missing = []
   const desync = (detail, i) => {
     const err = new Error(
       `git cat-file --batch desynchronised: ${detail}. ${chunk.length - i} of ${chunk.length} ` +
@@ -567,13 +606,19 @@ export function parseBatchStream(out, chunk) {
     // of this one.
     //
     // A staged entry whose blob is not in the object store means a damaged
-    // repository, but "damaged" must not mean "unscanned": dropping the
-    // path here would be a silent false green of exactly the kind #3962
-    // is about. It takes the unmerged path's treatment — read the copy on
-    // disk instead — so the file is still judged, by the only source left.
+    // repository. "Damaged" must not mean "unscanned" — but it must not
+    // mean "scanned something else" either, which is what the working-tree
+    // fallback here amounted to (#4046, and the section above).
     if (parts[1] === 'missing') {
-      missing.push(path)
-      continue
+      const err = new Error(
+        `git cat-file --batch: the index names blob ${chunk[i].sha} for '${path}', but the ` +
+          'object store does not have it. The staged content cannot be read, and the copy on ' +
+          'disk is different content — reporting it under "judged the staged index" would be a ' +
+          'verdict about a file nobody staged, so the scan is abandoned rather than ' +
+          're-aimed (scripts/lib/guard-file-source.mjs).',
+      )
+      err.isMissingObject = true
+      throw err
     }
     const size = Number(parts[2])
     if (!Number.isFinite(size)) {
@@ -599,5 +644,5 @@ export function parseBatchStream(out, chunk) {
     if (parts[1] === 'blob') bodies.set(path, out.toString('utf8', off, off + size))
     off += size + 1
   }
-  return { bodies, missing }
+  return bodies
 }
