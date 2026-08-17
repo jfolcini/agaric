@@ -414,10 +414,18 @@ jobs:
       # aborted before its first window. Every check we had answered "does it
       # compile and unpack", never "does it run". This one runs it.
       #
-      # Placed BEFORE the first upload step on purpose: a build that cannot
-      # start must never reach the draft as an asset, and `generate-latest-json`
-      # / `publish-release` both require this job to succeed, so a failure here
-      # means no signed asset and no updater manifest exist at all.
+      # Placed BEFORE the repack/sign/publish steps on purpose. Be precise
+      # about what that does and does not buy: `tauri-action` (releaseDraft:
+      # true) has ALREADY uploaded every bundle — the un-repacked AppImage,
+      # .deb, .rpm and the Windows/macOS artifacts — to the draft by the time
+      # this runs (see the comment at the repack step below, which says the
+      # same). So this gate does NOT keep a broken build out of the draft.
+      #
+      # What it does prevent is everything that makes a draft shippable: the
+      # repacked replacement AppImage, the minisign signatures, `latest.json`,
+      # and publication — `generate-latest-json` and `publish-release` both
+      # `needs: build-and-release`, so a failure here means no signed asset and
+      # no updater manifest exist at all, and nothing auto-updates onto it.
       #
       # Linux only for now. macOS and Windows runners do have a session, but
       # whether the WebView initialises headlessly there needs its own spike
@@ -469,11 +477,22 @@ jobs:
 
           # CHECK 1 — positive proof that the setup hook ran.
           #
-          # Staying alive is NOT that proof, and this was measured rather than
-          # assumed: an intentionally-broken config (AGARIC_E2E_SANDBOX=1 with
-          # no AGARIC_DATA_DIR, which app_paths::decide MUST reject) still sat
-          # there for the full timeout, because a fatal boot error puts up a
-          # dialog and waits. A liveness-only check reports that as a pass.
+          # Staying alive is NOT proof of a completed boot, so this check looks
+          # for a positive artifact instead of liveness.
+          #
+          # Note what does NOT justify it here. The measurement behind this
+          # check (an intentionally-broken AGARIC_E2E_SANDBOX=1 with no
+          # AGARIC_DATA_DIR sitting at a fatal dialog for the full timeout) was
+          # taken LOCALLY, without CI set. On a runner that path does not
+          # happen: `show_fatal_error_dialog` treats CI as headless, skips the
+          # dialog and returns, and the handler then exits 1 — which CHECK 2
+          # already catches. CHECK 1 earns its place as positive proof that
+          # boot reached the logging phase, not as the only net under a dialog.
+          #
+          # Scope limit: it proves phase 1 only. `init_persistence`,
+          # `recover_and_bootstrap` and window creation all come after
+          # `init_logging`. A boot that HANGS after this line while the process
+          # stays alive still reads as green here.
           #
           # `init_logging` creates this file and writes "log directory
           # initialized" into it, so its presence means boot got past the
@@ -488,9 +507,11 @@ jobs:
           app_logs=("$AGARIC_DATA_DIR"/logs/agaric.log*)
           if [ ${#app_logs[@]} -eq 0 ]; then
             echo "ERROR: no log file under $AGARIC_DATA_DIR/logs after ${BOOT_SECONDS}s." >&2
-            echo "       The process may have been alive without ever completing boot" >&2
-            echo "       (a fatal-error dialog does exactly that), or the sandbox" >&2
-            echo "       override was not honoured. Sandbox tree:" >&2
+            echo "       Process exit code was $code (124 = still running at the deadline)." >&2
+            echo "       That code is the tell: 101 means it panicked before init_logging" >&2
+            echo "       (the 0.9.7 shape), 124 means it was alive but never got there," >&2
+            echo "       anything else means it exited early. Or the sandbox override" >&2
+            echo "       was not honoured. Sandbox tree:" >&2
             find "$SANDBOX" -maxdepth 3 >&2 || true
             exit 1
           fi
@@ -514,11 +535,20 @@ jobs:
               echo "OK: survived ${BOOT_SECONDS}s and exited on SIGTERM"
               ;;
             137)
-              echo "ERROR: ignored SIGTERM and had to be SIGKILLed" >&2
+              # NOT "ignored SIGTERM": GNU timeout reports EXIT_TIMEDOUT (124)
+              # whenever it timed out, including when --kill-after had to
+              # escalate to SIGKILL. So a 137 arriving here came from an
+              # EXTERNAL SIGKILL — an OOM kill on the runner being the likely
+              # one — not from the app outlasting our own TERM.
+              echo "ERROR: killed by an external SIGKILL (exit 137); OOM on the runner is" >&2
+              echo "       the usual cause. Not a SIGTERM-ignored timeout — that reports 124." >&2
               exit 1
               ;;
             101)
-              echo "ERROR: Rust panic during boot (exit 101) — this is the 0.9.7 shape" >&2
+              # Reachable only when a panic still let init_logging write its
+              # line first; a panic BEFORE that (the literal 0.9.7 shape) trips
+              # CHECK 1 above and never reaches this case.
+              echo "ERROR: Rust panic during boot (exit 101), after init_logging had run" >&2
               exit 1
               ;;
             0)
