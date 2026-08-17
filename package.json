@@ -161,6 +161,7 @@
     "vitest-axe": "^0.1.0"
   },
   "overrides": {
+    "deepmerge-ts": ">=8.0.1",
     "js-yaml": "^4.2.0",
     "markdown-it": "^14.2.0",
     "postcss": ">=8.5.18",
