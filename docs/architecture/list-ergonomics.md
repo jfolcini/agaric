@@ -190,6 +190,59 @@ Three requirements to actually get idempotence:
    six spaces or more (from a marker at column 0) also lands outside the
    tolerance and imports as paragraph text rather than as a sub-list — our own
    export never emits that, but a foreign document can.
+4. **Indentation is counted in COLUMNS, and a tab is a column count** — a tab
+   advances to the next 4-column stop (CommonMark §2.2), not to a fixed number
+   of spaces (`leadingIndent` / `dedentColumns`, `markdown-parse/parser.ts`;
+   #4052). Two consequences follow from the arithmetic above: a tab-indented
+   marker is *never* a marker on its own line (a tab inside leading whitespace
+   always reaches column 4, past the tolerance), while a tab-indented **child**
+   of an item at column 0 is a real sub-list, because one content column of
+   dedent spends half the tab and leaves two residual columns — the same two
+   the four-space case leaves. A tab that is not indentation (inside inline
+   text, or inside fenced code content) is stored byte for byte; a paragraph's
+   leading whitespace is indentation and is stored as the columns it occupies,
+   which is what gives a tab-indented paragraph a fixed point at all.
+5. **Line endings are not part of the document** — `parse` consumes `\r\n` as
+   one line ending (`splitLines`, `markdown-parse/parser.ts`; #4051), so a
+   document written by a Windows editor imports as its LF twin instead of
+   leaving a `\r` on every line, where it both defeats the `^…$`-anchored
+   productions and lands inside stored text. Import therefore normalises CRLF
+   to LF once, like every other normalisation on this list. A **lone** `\r` is
+   content, not a line ending — that diverges from CommonMark §2.3 deliberately,
+   because promoting a stray control character to a block boundary is not
+   recoverable whereas keeping it is.
+
+**Known divergence — the vault importer normalises the opposite way on both of
+those axes.** Rules 4 and 5 describe the TypeScript parser, which is the path a
+PASTE into the editor takes. A markdown file read from disk goes through the
+Rust vault importer instead (`src-tauri/agaric-engine/src/import.rs`), and it
+decides both questions differently:
+
+- **Lone `\r`** — `import.rs:514` normalises `\r\n` to `\n` and then *every
+  remaining* `\r` to `\n`, i.e. CommonMark §2.3: a lone CR is a line ending and
+  splits the block. The TS parser keeps it as content (rule 5). So `a\rb` is two
+  blocks imported from disk and one paragraph holding a CR when pasted.
+- **Tabs** — `import.rs:517` expands `\t` to two spaces flat (not to the next
+  4-column stop), and `import.rs:596-600` derives depth as
+  `leading-space-count / 2`. So a tab is exactly one nesting level there, while
+  the TS parser measures a tab as the columns it occupies and spends one content
+  column per level.
+
+The two agree on the common case — a single leading tab is one level under both
+— but not beyond it. `- p` followed by `\t\t- deep` is a **depth-2 block** to
+the importer (two tabs → four spaces → depth 2) and a **continuation paragraph
+inside `- p`** to the parser (two tabs → column 8, dedented by one content
+column, still far past the three-space marker tolerance, so it is text: the
+serializer re-emits it escaped, as six spaces followed by an escaped dash and
+the word). A mixed space-then-tab indent diverges the same way. So the same file can nest differently depending on whether it was
+imported or pasted.
+
+Nothing pins this today — no conformance vector covers markdown tab or CR
+handling — and neither behaviour is obviously the wrong one to pick: the
+importer's flat expansion matches Logseq's on-disk convention (two spaces per
+level, which is what our own exporter writes), while the parser's column
+arithmetic matches CommonMark. Reconciling them is a decision about which
+convention owns the on-disk format, deliberately **not** made here.
 
 **Caveat — the coarse (multi-line) block option.** Intra-block soft breaks
 (`Shift+Enter`) and indentation-based child nesting both want indentation in

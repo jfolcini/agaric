@@ -38,7 +38,22 @@ import type {
 export { ULID_RE } from '@/editor/markdown-common'
 export { taskStateFromMarker } from '@/lib/task-states'
 export const MAX_LINK_SCAN = 10_000
-export const CALLOUT_RE = /^\[!(\w+)\]\s?(.*)/i
+/**
+ * Callout prefix on the first line of a blockquote: `[!NOTE] title`. Group 1 is
+ * the type, group 2 the remaining title text, which `extractCalloutType`
+ * (`./parser`) writes BACK over the quote line — so what group 2 fails to
+ * capture is not merely unmatched, it is DELETED.
+ *
+ * That makes this the one production where the `.` → `[^\n]` rule of #4051 is
+ * destructive rather than inert. Every other line production is anchored `$`,
+ * so a `.` that cannot cross a CR just fails to match and the line falls
+ * through to a paragraph intact; this one is unanchored at the end, so `.`
+ * would match the PREFIX before the CR and truncate the title there
+ * (`[!note] a\rb` → `a`). The separator is `[ \t]` rather than `\s` for the
+ * same reason: `\s` includes CR, so it would swallow a CR sitting directly
+ * after `]` instead of leaving it as content.
+ */
+export const CALLOUT_RE = /^\[!(\w+)\][ \t]?([^\n]*)/i
 /**
  * Maximum recursion depth for `parse()` to guard against pathological or
  * adversarial inputs (deeply nested blockquotes, link-display-text with
@@ -108,7 +123,12 @@ export const MARKER_INDENT_SRC = ` {0,${MAX_MARKER_INDENT}}`
 // a task and round-trips. With content, a separating space is required.
 // The leading `MARKER_INDENT_SRC` is the CommonMark marker-indent tolerance
 // (see MAX_MARKER_INDENT); the indentation is not part of the task text.
-export const TASK_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] \\[([ xX/-])\\](?: (.*))?$`)
+// The text is matched with `[^\n]` rather than `.` because JavaScript's `.`
+// excludes CR (and U+2028/9): a `.`-matched production is silently unmatchable
+// on a line carrying one, which is the bug class behind #4051. Lines never
+// contain `\n` (see `splitLines` in `./parser`), so the two are otherwise the
+// same match.
+export const TASK_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] \\[([ xX/-])\\](?: ([^\\n]*))?$`)
 
 /**
  * Bullet (unordered) list: consecutive `- item` / `* item` lines.
@@ -124,9 +144,10 @@ export const TASK_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] \\[([ xX/-])\\
  *
  * The leading {@link MARKER_INDENT_SRC} is the CommonMark marker-indent
  * tolerance (see {@link MAX_MARKER_INDENT}); group 1 is the item text WITHOUT
- * it.
+ * it, matched with `[^\n]` rather than `.` for the reason given on
+ * {@link TASK_ITEM_RE}.
  */
-export const BULLET_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] (.*)$`)
+export const BULLET_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] ([^\\n]*)$`)
 // Matches a task line so the bullet production excludes it (both `- [ ] text`
 // and the empty `- [ ]` with no trailing space — kept in sync with
 // `TASK_ITEM_RE`, marker-indent tolerance included: both are built from
