@@ -3094,6 +3094,14 @@ const BRANCH_DISPATCH_DEADLINE: std::time::Duration = std::time::Duration::from_
 /// it is inherent to UDP rather than to anything this port chose. Sized from
 /// `CONNECT_TIMEOUT` plus 50 % for a loaded runner, the same way
 /// [`BRANCH_DISPATCH_DEADLINE`] is.
+///
+/// #4031 — READ THIS BEFORE DEBUGGING A TIMEOUT HERE. The 50 % is 5 s of slack over a
+/// 10 s worst case, and #4027 added another test riding it. When one of these expires,
+/// the message says "shutdown hung"; the far likelier cause is that a contended runner
+/// ate the slack while the seeded peer's dial burned the full `CONNECT_TIMEOUT`
+/// (`session_supervisor.rs`). Nothing here is worsened per-test and the margin is
+/// recorded rather than widened — but "the daemon deadlocked on shutdown" is the wrong
+/// first hypothesis, and confirming it costs an afternoon.
 const BRANCH_SHUTDOWN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Branch B: A local-change notification triggers the debounced-change path in
@@ -4335,11 +4343,21 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
     .await
     .unwrap();
 
-    // The peer-presence check has to have already sent this daemon into
-    // `daemon_loop`, or "keeps running after the peer is removed" would be a
-    // claim about a daemon that never started. `activation` states that
-    // directly (#3533) — it replaces a 100 ms sleep that was standing in for an
-    // observable the daemon did not have.
+    // The peer-presence check has to have chosen the ACTIVE path, or "keeps
+    // running after the peer is removed" would be a claim about a daemon that
+    // never started. `activation` states exactly that and no more (#3533,
+    // #4031): `start_seeded` flips it synchronously before `tokio::spawn`, so
+    // it is a fact about the branch `start_if_peers_exist` took, readable
+    // before the daemon task has been polled once.
+    //
+    // What it does NOT establish is that `daemon_loop` has been entered — and
+    // it replaced a 100 ms sleep whose job was precisely to wait for that, so
+    // the peer below is now deleted at an arbitrarily earlier point. That is
+    // safe only because `daemon_loop` never re-reads peer presence as a
+    // liveness condition: it lists peer refs per sync cycle and proceeds with
+    // whatever it gets (`list_peer_refs_or_empty`), so an empty peer table at
+    // any point in the loop's life ends nothing. The timeout below is what
+    // actually holds up "still alive, shuts down cleanly".
     assert!(
         daemon.activation.is_active(),
         "the daemon must have taken the active path before the peer is deleted"

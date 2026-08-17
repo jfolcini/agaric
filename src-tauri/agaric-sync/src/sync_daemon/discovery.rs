@@ -12,6 +12,11 @@ use agaric_store::peer_refs::PeerRef;
 /// (#3533) — a bare local could only ever be filled by a real mDNS resolve,
 /// which left Branch B's pairing-window round unreachable from a test. The
 /// `Instant` is the last-seen stamp Branch C's 5-minute eviction reads.
+///
+/// #4031: this is the ONLY place the tuple shape is spelled. Every function in
+/// this module that takes the map takes `&DiscoveredPeers` / `&mut
+/// DiscoveredPeers`; four of them still wrote the `HashMap<String, (…)>` out
+/// longhand, which is four places to keep in step the day the stamp changes.
 pub type DiscoveredPeers = HashMap<String, (DiscoveredPeer, tokio::time::Instant)>;
 
 /// Determine whether a discovered mDNS peer should trigger an immediate
@@ -173,7 +178,7 @@ pub fn resolve_peer_address(
     peer_id: &str,
     last_address: Option<&str>,
     endpoint_id: Option<&str>,
-    discovered: &std::collections::HashMap<String, (DiscoveredPeer, tokio::time::Instant)>,
+    discovered: &DiscoveredPeers,
 ) -> Option<DiscoveredPeer> {
     discovered
         .get(peer_id)
@@ -243,7 +248,7 @@ pub fn resolve_peer_address(
 /// composition does not depend on `HashMap` iteration order.
 pub fn peers_for_change_round(
     peer_refs: &[PeerRef],
-    discovered: &HashMap<String, (DiscoveredPeer, tokio::time::Instant)>,
+    discovered: &DiscoveredPeers,
     pairing_pending: bool,
 ) -> Vec<DiscoveredPeer> {
     let mut round: Vec<DiscoveredPeer> = peer_refs
@@ -384,7 +389,7 @@ pub fn should_store_cert_hash(stored_hash: Option<&str>, observed_hash: Option<&
 pub fn process_discovery_event(
     event: mdns_sd::ServiceEvent,
     device_id: &str,
-    discovered: &mut HashMap<String, (DiscoveredPeer, tokio::time::Instant)>,
+    discovered: &mut DiscoveredPeers,
     peer_refs: &[PeerRef],
     pairing_pending: bool,
 ) -> Option<DiscoveredPeer> {
@@ -439,7 +444,7 @@ pub fn process_discovery_event(
 pub fn process_service_removed(
     removed_device_id: &str,
     local_device_id: &str,
-    discovered: &mut HashMap<String, (DiscoveredPeer, tokio::time::Instant)>,
+    discovered: &mut DiscoveredPeers,
 ) -> bool {
     if removed_device_id == local_device_id {
         // Removing our own announcement is a no-op for the discovered

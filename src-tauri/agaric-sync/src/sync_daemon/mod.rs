@@ -195,7 +195,20 @@ impl SyncEventSink for SharedEventSink {
 // DaemonActivation — the dormant→active observable
 // ---------------------------------------------------------------------------
 
-/// Whether the daemon has entered [`session_supervisor::daemon_loop`].
+/// Whether the daemon has committed to the ACTIVE path — it has left the
+/// dormant waiter (or never entered one) and is about to call
+/// [`session_supervisor::daemon_loop`].
+///
+/// Not "is inside `daemon_loop`", and the difference is load-bearing for every
+/// caller: on the paired-at-startup path [`SyncDaemon::start_seeded`] flips the
+/// flag synchronously, *before* `tokio::spawn`, so `true` can be read before
+/// the daemon task has been polled at all — and it stays `true` if
+/// `daemon_loop` then returns `Err` at the QUIC bind without ever reaching its
+/// `select!`. The flag states which BRANCH was taken; nothing here observes
+/// the loop itself. There is deliberately no observable for that: the claim
+/// worth testing is the branch, and a caller that needs the loop to be running
+/// has to establish it some other way (see
+/// `dormant_daemon_unaffected_when_last_peer_removed`, which does not need to).
 ///
 /// # Why this exists (#3533, and the vacuity #3852 flagged)
 ///
@@ -217,7 +230,8 @@ impl SyncEventSink for SharedEventSink {
 ///
 /// It is `false` while the daemon sits in the dormant waiter, and `true` from
 /// the moment it commits to `daemon_loop` — on the dormant→active path *and*
-/// on the paired-at-startup path, which enters `daemon_loop` directly.
+/// on the paired-at-startup path, which calls `daemon_loop` directly. It is
+/// never reset: an active daemon that later shuts down still reads `true`.
 #[derive(Clone)]
 pub struct DaemonActivation(Arc<tokio::sync::watch::Sender<bool>>);
 
@@ -228,7 +242,8 @@ impl Default for DaemonActivation {
 }
 
 impl DaemonActivation {
-    /// Record that the daemon is entering `daemon_loop`.
+    /// Record that the daemon has committed to the active path and is about to
+    /// call `daemon_loop`.
     ///
     /// `pub(crate)` so only the two start paths in this module can flip it: a
     /// flag a test could set itself would observe nothing about production.
@@ -236,13 +251,16 @@ impl DaemonActivation {
         self.0.send_replace(true);
     }
 
-    /// Whether the daemon has entered `daemon_loop`.
+    /// Whether the daemon has committed to the active path — see
+    /// [`DaemonActivation`] for why this is not "is inside `daemon_loop`".
     #[must_use]
     pub fn is_active(&self) -> bool {
         *self.0.borrow()
     }
 
-    /// Resolve once the daemon has entered `daemon_loop`, returning `true`.
+    /// Resolve once the daemon has committed to the active path, returning
+    /// `true`. Not a barrier for `daemon_loop` having been entered — see
+    /// [`DaemonActivation`].
     ///
     /// Resolves immediately if the transition already happened.
     ///
@@ -263,6 +281,39 @@ impl DaemonActivation {
     /// Returns `false` only if the watch channel closed without the daemon
     /// activating — reported rather than swallowed so a closed channel can
     /// never be mistaken for an activation.
+    ///
+    /// `#[must_use]` for that last reason (#4031): the whole point of returning
+    /// `false` rather than swallowing it is that the caller act on it, and
+    /// `daemon.activation.wait_until_active().await;` as a statement reads as a
+    /// barrier while being satisfied by a closed channel. [`is_active`] was
+    /// already `#[must_use]`; the awaitable one — the one whose `false` arm the
+    /// paragraph above exists to warn about — was not.
+    ///
+    /// The guard for that is this example, which must keep failing to compile:
+    ///
+    /// ```compile_fail
+    /// use agaric_sync::sync_daemon::DaemonActivation;
+    ///
+    /// // Reads as a barrier; a dropped `SyncDaemon` handle satisfies it just as
+    /// // well as an activation, and the difference is in the return value.
+    /// //
+    /// // `deny` on the ITEM, not a crate-level `#![deny]`: rustdoc merges
+    /// // doctests into one compilation unit, and an inner attribute does not
+    /// // survive that merge — the example then compiles clean and this guard
+    /// // silently stops guarding.
+    /// #[deny(unused_must_use)]
+    /// async fn wait_for_daemon(activation: &DaemonActivation) {
+    ///     activation.wait_until_active().await;
+    /// }
+    /// ```
+    ///
+    /// Removing the `#[must_use]` below makes that example compile, which makes
+    /// this doctest fail — the falsification is the deletion of the attribute
+    /// it guards.
+    ///
+    /// [`is_active`]: Self::is_active
+    #[must_use = "a `false` return means the channel closed WITHOUT the daemon activating; \
+                  discarding it turns this await into a barrier that anything satisfies"]
     pub async fn wait_until_active(&self) -> bool {
         let mut rx = self.0.subscribe();
         rx.wait_for(|active| *active).await.is_ok()
@@ -299,8 +350,9 @@ pub struct SyncDaemon {
     // the join handle across the crate boundary) can read it; also silences the
     // dead_code lint on non-test builds without the `#[cfg_attr]` gymnastics.
     pub handle: Option<JoinHandle<()>>,
-    /// Whether the daemon has entered `daemon_loop` — see [`DaemonActivation`]
-    /// for why the dormant→active transition needs an observable at all.
+    /// Whether the daemon has committed to the active path — see
+    /// [`DaemonActivation`] for why the dormant→active transition needs an
+    /// observable at all, and for why "committed" is not "inside the loop".
     pub activation: DaemonActivation,
 }
 
@@ -585,7 +637,10 @@ impl SyncDaemon {
         let scheduler = ctx.scheduler.clone();
         // This path *is* the active one — there is no dormant waiter to leave,
         // so the daemon is active from the start rather than at some later
-        // transition.
+        // transition. Flipped here, synchronously, BEFORE `tokio::spawn`: the
+        // caller therefore observes `true` the instant `start_seeded` returns,
+        // which is what makes this a statement about the branch taken and not
+        // about the task's progress. See [`DaemonActivation`].
         let activation = DaemonActivation::default();
         activation.mark_active();
 
