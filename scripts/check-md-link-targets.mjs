@@ -24,112 +24,259 @@
 // `.gitignore`-d directory (`node_modules/`, `dist/`, `target/`, …)
 // — those are owned by tooling, not by us.
 //
-// Usage: `node scripts/check-md-link-targets.mjs`
-// Exit: 0 = clean, 1 = at least one untracked target.
+// ─── Which COPY of each doc is judged (#3962, swept here by #4017) ───
+//
+// The corpus and the existence table were ALWAYS index-based —
+// `git ls-files` reads the index, which is the whole point of this
+// guard versus lychee — but the link bodies were read with
+// `fs.readFileSync`, i.e. from the working tree. Mixing the two is how
+// a pre-commit verdict comes to describe content that is not being
+// committed:
+//
+//   * FALSE GREEN — a doc whose staged copy links to a path that was
+//     deleted commits cleanly, because the author already fixed the
+//     link on disk without `git add`. That is the exact failure this
+//     guard exists to prevent, arriving silently.
+//   * FALSE RED — the fix is staged and a later working-tree edit
+//     reintroduces the broken link; the commit is blocked over a doc
+//     the author already fixed.
+//
+// `--cached` / `--worktree` force the source; with neither,
+// `GIT_INDEX_FILE` (git naming the index it is about to commit)
+// decides. Rationale, the measurements behind that auto rule, and the
+// deletion / unmerged / symlink decisions: scripts/lib/guard-file-source.mjs.
+//
+// Usage:
+//   node scripts/check-md-link-targets.mjs              # auto source
+//   node scripts/check-md-link-targets.mjs --cached     # staged index
+//   node scripts/check-md-link-targets.mjs --worktree   # working tree
+//   node scripts/check-md-link-targets.mjs --print-source
+//   node scripts/check-md-link-targets.mjs --self-test
+//
+// Any OTHER argument is a usage error, not a silently ignored one: a
+// mistyped `--cache` that resolved to AUTO would judge a copy the
+// caller did not ask for, and say nothing about it.
+//
+// Exit: 0 = clean, 1 = at least one untracked target, 2 = invocation error.
 // ─────────────────────────────────────────────────────────────────────
 
 import { execSync } from 'node:child_process'
-import fs from 'node:fs'
-import path from 'node:path'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path, { join } from 'node:path'
 
-const ROOT = path.resolve(import.meta.dirname, '..')
+import { runSourceScenarios } from './lib/git-scratch-guard.mjs'
+import {
+  describeSource,
+  gitEnv,
+  listTrackedEntries,
+  readContents,
+  resolveSource,
+} from './lib/guard-file-source.mjs'
 
-// ─── 1. List of tracked files (lookup table) ─────────────────────────
-const trackedFiles = new Set(
-  execSync('git ls-files', { cwd: ROOT, encoding: 'utf8' }).split('\n').filter(Boolean),
-)
+// The repository the CALLER is standing in, not the one this script was
+// checked out into — the documented EXCEPTION to "a guard judges the tree
+// that contains it". The rule, the exception, the four guards that take it and
+// what to do instead are stated once, in `scripts/lib/guard-file-source.mjs`
+// ("Which TREE is judged, and the one documented exception"). Not restated
+// here: a rule written down twice is a rule that will be true in one place.
+const ROOT = (() => {
+  try {
+    return execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim()
+  } catch {
+    return process.cwd()
+  }
+})()
 
-// ─── 2. Markdown files to scan ───────────────────────────────────────
-const mdFiles = execSync('git ls-files "*.md"', { cwd: ROOT, encoding: 'utf8' })
-  .split('\n')
-  .filter(Boolean)
+// The environment this guard's OWN `git` calls run under. An ambient
+// `GIT_INDEX_FILE` outranks `cwd`, so without this an explicit `--cached`
+// under somebody else's commit would enumerate that repository while
+// `cwd=ROOT` made it look otherwise — see `gitEnv`.
+const GIT_ENV = gitEnv(ROOT, process.env)
 
-// ─── 3. Walk every link and verify ───────────────────────────────────
-//
 // Match `](href)` where href is non-empty and contains no whitespace
 // inside the parens. We strip surrounding `<>` (for autolinks) and an
 // optional title after the URL (`](href "title")`). The title syntax
 // is rare in this repo but the tolerant parse keeps us out of trouble.
 const LINK_RE = /\]\(\s*<?([^\s)>]+)>?(?:\s+"[^"]*")?\s*\)/g
 
-const failures = []
-
 // Replace fenced code blocks and inline code spans with whitespace
 // of the same length so absolute character offsets stay stable but
 // markdown-syntax-as-documentation (e.g. `[text](url)` inside a
 // table cell explaining link syntax) doesn't trip the link regex.
-function stripCode(src) {
+export function stripCode(src) {
   return src
     .replace(/```[\s\S]*?```/g, (m) => m.replace(/[^\n]/g, ' '))
     .replace(/`[^`\n]*`/g, (m) => ' '.repeat(m.length))
 }
 
-for (const md of mdFiles) {
-  const fileSrc = fs.readFileSync(path.join(ROOT, md), 'utf8')
-  const stripped = stripCode(fileSrc)
-  const dir = path.dirname(md)
+/** Every broken intra-repo link in `bodies`, judged against `tracked`. */
+export function findBrokenLinks(mdFiles, bodies, tracked) {
+  const failures = []
+  for (const md of mdFiles) {
+    // `=== undefined`, never a truthiness test: a zero-byte doc reads as
+    // `''` and must count as READ, not as skipped. See `readContents`.
+    const fileSrc = bodies.get(md)
+    if (fileSrc === undefined) continue
+    const stripped = stripCode(fileSrc)
+    const dir = path.dirname(md)
 
-  for (const match of stripped.matchAll(LINK_RE)) {
-    const href = match[1]
+    for (const match of stripped.matchAll(LINK_RE)) {
+      const href = match[1]
 
-    // External URL? Skip — lychee covers those.
-    if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(href)) continue
-    // Pure anchor inside the same file? Skip.
-    if (href.startsWith('#')) continue
-    // Strip fragment / query (lychee handles fragments separately).
-    const pathOnly = href.replace(/[#?].*$/, '')
-    if (!pathOnly) continue
+      // External URL? Skip — lychee covers those.
+      if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(href)) continue
+      // Pure anchor inside the same file? Skip.
+      if (href.startsWith('#')) continue
+      // Strip fragment / query (lychee handles fragments separately).
+      const pathOnly = href.replace(/[#?].*$/, '')
+      if (!pathOnly) continue
 
-    // Resolve relative to the markdown file's directory.
-    const resolved = path.posix.normalize(path.posix.join(dir, pathOnly))
+      // Resolve relative to the markdown file's directory.
+      const resolved = path.posix.normalize(path.posix.join(dir, pathOnly))
 
-    // Out-of-tree (`../` past the repo root) — not our problem.
-    if (resolved.startsWith('..')) continue
-    // Already known not to be a file (link points at a directory) —
-    // git ls-files won't list directories, so verify either the
-    // exact path OR an `index.md` / README inside it.
-    if (
-      trackedFiles.has(resolved) ||
-      trackedFiles.has(`${resolved}/index.md`) ||
-      trackedFiles.has(`${resolved}/README.md`)
-    ) {
-      continue
+      // Out-of-tree (`../` past the repo root) — not our problem.
+      if (resolved.startsWith('..')) continue
+      // Already known not to be a file (link points at a directory) —
+      // git ls-files won't list directories, so verify either the
+      // exact path OR an `index.md` / README inside it.
+      if (
+        tracked.has(resolved) ||
+        tracked.has(`${resolved}/index.md`) ||
+        tracked.has(`${resolved}/README.md`)
+      ) {
+        continue
+      }
+
+      // The target may be a directory implicitly listed via its files;
+      // check if any tracked file lives under that prefix.
+      const dirPrefix = `${resolved}/`
+      let isDirHit = false
+      for (const t of tracked) {
+        if (t.startsWith(dirPrefix)) {
+          isDirHit = true
+          break
+        }
+      }
+      if (isDirHit) continue
+
+      failures.push({ source: md, link: href, resolved })
     }
+  }
+  return failures
+}
 
-    // The target may be a directory implicitly listed via its files;
-    // check if any tracked file lives under that prefix.
-    const dirPrefix = `${resolved}/`
-    let isDirHit = false
-    for (const tracked of trackedFiles) {
-      if (tracked.startsWith(dirPrefix)) {
-        isDirHit = true
-        break
+function check() {
+  let chosen
+  try {
+    chosen = resolveSource(process.argv, process.env, {
+      extraFlags: ['--print-source', '--self-test'],
+      // AUTO must know whose index `GIT_INDEX_FILE` names, not merely that it
+      // is set — see `resolveSource`.
+      repoRoot: ROOT,
+    })
+  } catch (err) {
+    console.error(`check-md-link-targets: invocation error: ${err.message}`)
+    return 2
+  }
+  if (process.argv.includes('--print-source')) {
+    console.log(`check-md-link-targets: ${describeSource(chosen.source)} (${chosen.why})`)
+    return 0
+  }
+  let entries
+  try {
+    entries = listTrackedEntries(ROOT, { env: GIT_ENV })
+  } catch (err) {
+    console.error(`check-md-link-targets: invocation error: ${err.message}`)
+    return 2
+  }
+  if (entries === null) {
+    console.warn('check-md-link-targets: not a git repo; skipping.')
+    return 0
+  }
+  const tracked = new Set(entries.paths)
+  const mdFiles = entries.paths.filter((p) => p.endsWith('.md'))
+  let bodies
+  try {
+    bodies = readContents(mdFiles, {
+      repoRoot: ROOT,
+      source: chosen.source,
+      entries,
+      env: GIT_ENV,
+    })
+  } catch (err) {
+    console.error(`check-md-link-targets: invocation error: ${err.message}`)
+    return 2
+  }
+
+  const failures = findBrokenLinks(mdFiles, bodies, tracked)
+  if (failures.length > 0) {
+    console.error('ERROR: tracked Markdown files link to paths not tracked by git:')
+    // Name the source with the verdict. A red the author cannot reproduce by
+    // opening the file is otherwise indistinguishable from a broken guard.
+    console.error(`  (judged the ${describeSource(chosen.source)} — ${chosen.why})`)
+    for (const f of failures) {
+      console.error(`  ${f.source} → ${f.link}  (resolves to ${f.resolved})`)
+    }
+    console.error('')
+    console.error(
+      'Either restore the target file (git restore / re-add to tracking), update the link to point',
+    )
+    console.error(
+      'at the new home, or remove the broken reference. Lychee in CI catches these eventually,',
+    )
+    console.error(
+      'but only after a fresh checkout — local lychee runs see untracked working-tree copies and pass.',
+    )
+    return 1
+  }
+
+  console.log(
+    `OK: ${mdFiles.length} tracked .md files have no broken intra-repo links ` +
+      `(judged the ${describeSource(chosen.source)}).`,
+  )
+  return 0
+}
+
+// #3962/#4017 — index vs working tree, in throwaway repositories built
+// through the shared scratch guard. Every assertion is a PAIR: the source
+// that must go red and the source that must stay green on the same fixture.
+// A one-sided "the fixed guard fails" would pass just as well against a
+// guard that fails on everything.
+//
+// `goodLine` deliberately contains NO link. A "good" line linking to another
+// fixture file would make scenario 4 (the offending file is `git rm`'d) red
+// for a second reason — the surviving doc would then link at a path that
+// just left the index — and the scenario's point is that a deletion is the
+// best possible commit, not a new violation.
+function selfTest() {
+  const root = mkdtempSync(join(tmpdir(), 'md-link-targets-selftest-'))
+  try {
+    const results = runSourceScenarios({
+      scriptPath: import.meta.filename,
+      file: 'notes.md',
+      badLine: 'See the [migration plan](docs/plan-that-was-deleted.md) for the rollout.',
+      goodLine: 'See the migration plan for the rollout.',
+      root,
+    })
+    let failures = 0
+    for (const result of results) {
+      if (result.ok) {
+        console.log(`  ok   - ${result.name}`)
+      } else {
+        failures += 1
+        console.error(`  FAIL - ${result.name}: ${result.detail}`)
       }
     }
-    if (isDirHit) continue
-
-    failures.push({ source: md, link: href, resolved })
+    if (failures > 0) {
+      console.error('\nself-test FAILED')
+      return 1
+    }
+    console.log('self-test OK')
+    return 0
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 }
 
-// ─── 4. Report ───────────────────────────────────────────────────────
-if (failures.length > 0) {
-  console.error('ERROR: tracked Markdown files link to paths not tracked by git:')
-  for (const f of failures) {
-    console.error(`  ${f.source} → ${f.link}  (resolves to ${f.resolved})`)
-  }
-  console.error('')
-  console.error(
-    'Either restore the target file (git restore / re-add to tracking), update the link to point',
-  )
-  console.error(
-    'at the new home, or remove the broken reference. Lychee in CI catches these eventually,',
-  )
-  console.error(
-    'but only after a fresh checkout — local lychee runs see untracked working-tree copies and pass.',
-  )
-  process.exit(1)
-}
-
-console.log(`OK: ${mdFiles.length} tracked .md files have no broken intra-repo links.`)
-process.exit(0)
+process.exit(process.argv.includes('--self-test') ? selfTest() : check())

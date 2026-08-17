@@ -47,27 +47,47 @@ Stdlib only — no third-party deps.
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-COMMANDS_DIR = REPO_ROOT / "src-tauri" / "src" / "commands"
-
-MAX_ARGS = 10
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Reuse the battle-tested comment-stripper (and its #818 fixes) from the
 # raw-tx guard rather than re-deriving it. It blanks line/block comments
 # and string bodies while preserving newlines, so line numbers stay exact
 # and a `#[tauri::command]` inside a comment or string never fires.
-_spec = importlib.util.spec_from_file_location(
-    "_check_raw_tx", REPO_ROOT / "scripts" / "check-raw-tx.py"
-)
+#
+# Both loads are resolved from SCRIPT_DIR, not REPO_ROOT: the libraries live
+# beside this file wherever it is run from, while REPO_ROOT below is the
+# repository being JUDGED, which during a self-test is a throwaway fixture.
+_spec = importlib.util.spec_from_file_location("_check_raw_tx", SCRIPT_DIR / "check-raw-tx.py")
 assert _spec and _spec.loader
 _crt = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_crt)
 
 strip_rust_comments = _crt.strip_rust_comments
+
+# Which COPY of each file this guard judges — the staged index during a
+# commit, the working tree otherwise (#3962, swept here by #4017).
+_gfs_spec = importlib.util.spec_from_file_location(
+    "_guard_file_source", SCRIPT_DIR / "lib" / "guard_file_source.py"
+)
+assert _gfs_spec and _gfs_spec.loader
+guard_file_source = importlib.util.module_from_spec(_gfs_spec)
+_gfs_spec.loader.exec_module(guard_file_source)
+
+# The tree this guard JUDGES is the tree that CONTAINS it — never one
+# derived from the process cwd. See scripts/lib/guard_file_source.py
+# ("Which TREE is judged"): pr-merge-result-check.sh runs the MERGED
+# worktree's own copy of this script so that the copy's location is the
+# statement of which tree to judge, and check-table-ownership.py has
+# always spelled it this way.
+REPO_ROOT = SCRIPT_DIR.parent
+COMMANDS_DIR = REPO_ROOT / "src-tauri" / "src" / "commands"
+
+MAX_ARGS = 10
 
 # Matches the `#[tauri::command]` attribute, with or without args, e.g.
 # `#[tauri::command]` or `#[tauri::command(rename_all = "snake_case")]`.
@@ -252,14 +272,25 @@ def all_command_files() -> list[Path]:
     return sorted(COMMANDS_DIR.rglob("*.rs"))
 
 
-def check_file(path: Path) -> list[str]:
-    """Return violation strings for `path` (commands over the ceiling)."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
-    stripped = strip_rust_comments(text)
+def check_file(path: Path, src=None) -> list[str]:
+    """Return violation strings for `path` (commands over the ceiling).
+
+    `src` is a `guard_file_source.FileSource`; None means the working
+    tree, so a manual no-arg whole-tree run behaves exactly as before.
+    """
     rel = _rel(path)
+    if src is not None:
+        # `is None`, never a truthiness test: a zero-byte file reads as
+        # "" and must count as READ, not as skipped.
+        text = src.read(rel)
+        if text is None:
+            return []
+    else:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return []
+    stripped = strip_rust_comments(text)
     violations: list[str] = []
     for name, line_no, count in find_command_arities(stripped):
         if count > MAX_ARGS:
@@ -401,33 +432,61 @@ def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         return run_self_test()
 
+    try:
+        src = guard_file_source.build(
+            argv, os.environ, REPO_ROOT, extra_flags=("--self-test", "--print-source")
+        )
+    except (guard_file_source.UsageError, guard_file_source.AmbiguousSourceError) as err:
+        print(f"check-command-arity: invocation error: {err}", file=sys.stderr)
+        return 2
+    if "--print-source" in argv:
+        print(
+            f"check-command-arity: "
+            f"{guard_file_source.describe_source(src.source)} ({src.why})"
+        )
+        return 0
+
     # Determine targets. prek passes changed files; a manual no-arg run
     # scans the whole commands tree. Either way, only police
     # `src-tauri/src/commands/**/*.rs`.
     file_args = [a for a in argv if not a.startswith("-")]
-    if file_args:
-        targets: list[Path] = []
-        for arg in file_args:
-            p = Path(arg)
-            if p.suffix != ".rs":
-                continue
-            rel = _rel(p)
-            if not rel.startswith("src-tauri/src/commands/"):
-                continue
-            if not p.is_file():
-                continue
-            targets.append(p)
-    else:
-        targets = all_command_files()
-
     violations: list[str] = []
-    for p in targets:
-        violations.extend(check_file(p))
+    try:
+        if file_args:
+            targets: list[Path] = []
+            for arg in file_args:
+                p = Path(arg)
+                if p.suffix != ".rs":
+                    continue
+                rel = _rel(p)
+                if not rel.startswith("src-tauri/src/commands/"):
+                    continue
+                # Presence is asked of the SOURCE BEING JUDGED, not of the
+                # disk: `p.is_file()` skipped a path that was `git add`ed and
+                # then removed from the working tree — a file that IS being
+                # committed — and kept a `git rm --cached`'d one, which is
+                # not.
+                if not src.exists(rel):
+                    continue
+                targets.append(p)
+        else:
+            targets = all_command_files()
+
+        for p in targets:
+            violations.extend(check_file(p, src))
+    except guard_file_source.GitError as err:
+        # Fail CLOSED — see the same branch in check-raw-tx.py.
+        print(f"check-command-arity: invocation error: {err}", file=sys.stderr)
+        return 2
 
     if violations:
         print(
             "tauri-specta arity guard (#1317) — `#[tauri::command]`(s) "
             f"over the {MAX_ARGS}-argument ceiling:\n",
+            file=sys.stderr,
+        )
+        print(
+            f"  (judged the {guard_file_source.describe_source(src.source)} — {src.why})",
             file=sys.stderr,
         )
         for v in violations:

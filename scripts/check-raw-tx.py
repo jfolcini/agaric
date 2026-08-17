@@ -63,9 +63,36 @@ Anything left over is printed as `file:line: <code>` with a pointer to
 from __future__ import annotations
 
 import fnmatch
+import importlib.util
+import os
 import re
 import sys
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+# Which COPY of each file this guard judges — the staged index during a
+# commit, the working tree otherwise (#3962, swept here by #4017). Loaded by
+# PATH rather than imported, because `scripts/` is not a package and this
+# script's own name is not a legal module name; the same `importlib` shape
+# `check-command-arity.py` already uses to borrow `strip_rust_comments` from
+# here. Resolved from SCRIPT_DIR, not REPO_ROOT: the library lives beside
+# this file wherever it is run from, while REPO_ROOT below is the repository
+# being JUDGED, which during a self-test is a throwaway fixture.
+_gfs_spec = importlib.util.spec_from_file_location(
+    "_guard_file_source", SCRIPT_DIR / "lib" / "guard_file_source.py"
+)
+assert _gfs_spec and _gfs_spec.loader
+guard_file_source = importlib.util.module_from_spec(_gfs_spec)
+_gfs_spec.loader.exec_module(guard_file_source)
+
+# The tree this guard JUDGES is the tree that CONTAINS it — never one
+# derived from the process cwd. See scripts/lib/guard_file_source.py
+# ("Which TREE is judged"): pr-merge-result-check.sh runs the MERGED
+# worktree's own copy of this script so that the copy's location is the
+# statement of which tree to judge, and check-table-ownership.py has
+# always spelled it this way.
+REPO_ROOT = SCRIPT_DIR.parent
 
 ISSUE_HINT = (
     "    -> #110: route user-edit write txs through the "
@@ -466,7 +493,13 @@ def scan_text(rel_path: str, text: str) -> list[str]:
     return violations
 
 
-def check_file(path: Path, repo_root: Path) -> list[str]:
+def check_file(path: Path, repo_root: Path, src=None) -> list[str]:
+    """Violations in `path`, read from `src` (default: the working tree).
+
+    `src` is a `guard_file_source.FileSource`. It defaults to None — i.e.
+    the working tree — so `check-elevation-tiers.py`, which reuses this
+    function, keeps its existing behaviour until it is swept too.
+    """
     try:
         rel_path = str(path.resolve().relative_to(repo_root))
     except ValueError:
@@ -477,10 +510,17 @@ def check_file(path: Path, repo_root: Path) -> list[str]:
     if is_test_file(rel_path) or is_bin_file(rel_path):
         return []
 
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
+    if src is not None:
+        # `is None`, never a truthiness test: a zero-byte file reads as
+        # "" and must count as READ, not as skipped.
+        text = src.read(rel_path)
+        if text is None:
+            return []
+    else:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return []
 
     return scan_text(rel_path, text)
 
@@ -671,32 +711,61 @@ def run_self_test() -> int:
 
 
 def main(argv: list[str]) -> int:
-    if argv and argv[0] == "--self-test":
+    if "--self-test" in argv:
         return run_self_test()
 
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = REPO_ROOT
+    try:
+        src = guard_file_source.build(
+            argv, os.environ, repo_root, extra_flags=("--self-test", "--print-source")
+        )
+    except (guard_file_source.UsageError, guard_file_source.AmbiguousSourceError) as err:
+        print(f"check-raw-tx: invocation error: {err}", file=sys.stderr)
+        return 2
+    if "--print-source" in argv:
+        print(
+            f"check-raw-tx: {guard_file_source.describe_source(src.source)} ({src.why})"
+        )
+        return 0
 
     all_violations: list[str] = []
-    for arg in argv:
-        p = Path(arg)
-        if p.suffix != ".rs":
-            continue
-        try:
-            rel = str(p.resolve().relative_to(repo_root))
-        except ValueError:
-            rel = str(p)
-        # Police production source across all four crate roots (#3110). The
-        # diagnostics crate is in scope too; its src/bin audit tools are
-        # skipped inside check_file (BIN_FILE_GLOBS).
-        if not under_crate_root(rel):
-            continue
-        if not p.is_file():
-            continue
-        all_violations.extend(check_file(p, repo_root))
+    try:
+        for arg in argv:
+            if arg.startswith("-"):
+                continue
+            p = Path(arg)
+            if p.suffix != ".rs":
+                continue
+            try:
+                rel = str(p.resolve().relative_to(repo_root))
+            except ValueError:
+                rel = str(p)
+            # Police production source across all four crate roots (#3110).
+            # The diagnostics crate is in scope too; its src/bin audit tools
+            # are skipped inside check_file (BIN_FILE_GLOBS).
+            if not under_crate_root(rel):
+                continue
+            # Presence is asked of the SOURCE BEING JUDGED, not of the disk.
+            # `p.is_file()` skipped a path that was `git add`ed and then
+            # deleted from the working tree — a file that IS being committed
+            # — and kept a path that was `git rm --cached`'d, which is not.
+            if not src.exists(rel):
+                continue
+            all_violations.extend(check_file(p, repo_root, src))
+    except guard_file_source.GitError as err:
+        # Fail CLOSED. An index that could not be enumerated answers "absent"
+        # for every path, so the loop above would skip the whole tree and
+        # exit 0 having read nothing (measured).
+        print(f"check-raw-tx: invocation error: {err}", file=sys.stderr)
+        return 2
 
     if all_violations:
         print("Raw write-transaction guard (#110) found "
               "new unmanaged site(s):\n", file=sys.stderr)
+        print(
+            f"  (judged the {guard_file_source.describe_source(src.source)} — {src.why})",
+            file=sys.stderr,
+        )
         for v in all_violations:
             print(f"  {v}", file=sys.stderr)
         print("", file=sys.stderr)

@@ -180,7 +180,24 @@ export function assertScratchIsolation(dir, env) {
   return leaks
 }
 
-/** `git init` a fixture at `dir`, then assert its toplevel really is `dir`. */
+/**
+ * `git init` a fixture at `dir`, then assert that EVERY path git resolves
+ * from inside it lands inside it.
+ *
+ * The toplevel check this used to carry alone is blind to a leaked
+ * `GIT_INDEX_FILE` — measured on git 2.43, `--show-toplevel` and
+ * `--absolute-git-dir` both stay pinned to the fixture while only
+ * `--git-path index` moves (#4015). Delegating to `assertScratchIsolation`
+ * keeps the init check and the per-fixture check reading the SAME probe
+ * list, so the two cannot drift into disagreeing about what "isolated"
+ * means — the drift that let four private copies of this scrub be worse
+ * than none.
+ *
+ * Both the explicit `env` AND the ambient `process.env` are probed: an
+ * in-process helper that spawns `git` with no `env` uses the latter, and
+ * that is exactly how #3962's scenario 7 came to enumerate the real
+ * repository while looking like it enumerated a fixture.
+ */
 export function initScratchRepo(dir, env) {
   mkdirSync(dir, { recursive: true })
   const git = (...args) => execFileSync('git', args, { cwd: dir, env, encoding: 'utf8' })
@@ -192,10 +209,14 @@ export function initScratchRepo(dir, env) {
   git('config', 'commit.gpgsign', 'false')
   git('config', 'user.email', 'selftest@example.invalid')
   git('config', 'user.name', 'self test')
-  const top = git('rev-parse', '--show-toplevel').trim()
-  if (physical(top) !== physical(dir)) {
+  const leaks = [
+    ...assertScratchIsolation(dir, env).map((l) => `explicit env: ${l}`),
+    ...assertScratchIsolation(dir, process.env).map((l) => `ambient env: ${l}`),
+  ]
+  if (leaks.length > 0) {
     throw new Error(
-      `git-scratch-guard.mjs: fixture at '${dir}' resolved to '${top}' — refusing to continue`,
+      `git-scratch-guard.mjs: fixture at '${dir}' is NOT isolated — refusing to continue:\n  - ` +
+        `${leaks.join('\n  - ')}`,
     )
   }
   return git
@@ -805,6 +826,74 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
       '--print-source is still accepted and names a source',
       printSource.status === 0 && /(staged index|working tree)/.test(printSource.stdout),
       `expected 0 naming a source, got ${printSource.status}: ${printSource.stdout}${printSource.stderr}`,
+    )
+  }
+
+  // ── 9. A COMMIT IN FLIGHT IN ANOTHER REPOSITORY — the fail-closed half of
+  // the ownership rule (#4017), ported here from `guard_file_source.py` so
+  // the two helpers cannot answer the same situation differently.
+  //
+  // `GIT_INDEX_FILE` merely being SET used to be the whole AUTO test on the
+  // Node side, so an index belonging to a DIFFERENT repository selected
+  // "the staged index" and the guard reported a verdict about content it was
+  // not judging. Measured before the port, against a two-fixture pair:
+  // Python raised `AmbiguousSourceError`, Node answered
+  // `{source: 'index', why: 'auto: git is running a commit hook, …'}` — for
+  // the same tree, the same variable and the same value.
+  //
+  // The fixture is scenario 1's shape (VIOLATION STAGED, working tree clean),
+  // so every "exit 0" below can only mean the guard failed to look. All four
+  // arms, because a helper that refused every `GIT_INDEX_FILE` — or that
+  // never read this tree's index at all — would satisfy the refusal alone.
+  {
+    const { dir, env } = fixture(({ git, write }) => {
+      write(`${goodLine}\n`)
+      git('add', '-A')
+      git('commit', '-qm', 'base')
+      write(`${badLine}\n`)
+      git('add', '-A') // the violation is STAGED…
+      write(`${goodLine}\n`) // …and invisible to the working tree
+    })
+    // The committing repository: a scratch fixture like every other one here.
+    // Nothing in this file ever names an index outside `root`.
+    const foreignDir = join(root, 'foreign-repo')
+    const foreignEnv = scrubbedGitEnv(root)
+    const foreignGit = initScratchRepo(foreignDir, foreignEnv)
+    writeFileSync(join(foreignDir, 'seed.txt'), 'unrelated\n')
+    foreignGit('add', '-A')
+    foreignGit('commit', '-qm', 'base')
+    const foreign = { GIT_INDEX_FILE: join(foreignDir, '.git', 'index') }
+
+    const auto = run(dir, env, [], foreign)
+    check(
+      'foreign index: AUTO refuses to guess (exit 2), rather than reporting on another repo',
+      auto.status === 2 && /different repository/.test(auto.stderr),
+      `expected 2 naming a different repository, got ${auto.status}: ${auto.stderr}`,
+    )
+    const wt = run(dir, env, ['--worktree'], foreign)
+    check(
+      'foreign index: --worktree resolves the ambiguity and judges the files on disk',
+      wt.status === 0,
+      `expected 0, got ${wt.status}: ${wt.stderr}`,
+    )
+    // The env-binding half: `cwd` does NOT decide which index git reads, so
+    // without `gitEnv` this `--cached` run enumerated the FOREIGN index — a
+    // tree with no scanned file in it — and exited 0 over a staged violation.
+    const cached = run(dir, env, ['--cached'], foreign)
+    check(
+      "foreign index: --cached reads THIS tree's index, not the ambient foreign one",
+      cached.status === 1 && namesFile(cached),
+      `expected 1 naming ${file}, got ${cached.status}: ${cached.stderr}`,
+    )
+    // …and the refusal is a DISCRIMINATION, not a guard that refuses every
+    // GIT_INDEX_FILE: this tree's OWN index still auto-selects the index,
+    // which is what a real commit hook depends on (asserted absolute and
+    // relative in scenario 1).
+    const own = run(dir, env, [], { GIT_INDEX_FILE: join(dir, '.git', 'index') })
+    check(
+      "foreign index: the tree's OWN index still auto-selects the index (a discrimination)",
+      own.status === 1 && namesFile(own),
+      `expected 1 naming ${file}, got ${own.status}: ${own.stderr}`,
     )
   }
 

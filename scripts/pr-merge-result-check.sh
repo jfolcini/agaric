@@ -296,6 +296,14 @@ RATCHET_PREREQS=(
   'check-tauri-import-baseline.mjs|scripts/tauri-import-baseline.json|the baseline it ratchets against'
   'check-tauri-import-baseline.mjs|scripts/tauri-sanctioned-symbols.json|the sanctioned-symbols list a missing copy of which silently turns sanctioned-only importers into false new-importer verdicts'
   'check-tauri-import-baseline.mjs|src/|the frontend tree it scans'
+  # All three Python guards load this by PATH at import time (#4017). Absent,
+  # they die with a FileNotFoundError traceback — exit 1, which this script
+  # would otherwise read as "the guard FAILED on the merged tree": a content
+  # verdict about a merge, from a guard that never ran. Same shape as the
+  # js-scanner.mjs entry above, and the same remedy.
+  'check-raw-tx.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
+  'check-dynamic-sql.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
+  'check-command-arity.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
 )
 
 # Returns 0 if every prerequisite of every PRESENT guard exists in the merged
@@ -437,7 +445,22 @@ run_one_guard() {
   local guard="$1" workdir="$2" base_tip="$3"
   shift 3
   case "$guard" in
+    check-raw-tx.py | check-dynamic-sql.py)
+      # `--worktree` is EXPLICIT, never left to the guards' AUTO rule (#4017).
+      # A merged tree is a hypothetical: it exists as files in a worktree and
+      # was never staged anywhere, so "the staged index" has no meaning for
+      # it. AUTO keys on `GIT_INDEX_FILE`, which under a commit hook names
+      # the COMMITTING repository's index — a different tree entirely. The
+      # guards now refuse that combination (exit 2) rather than guess, so
+      # omitting this flag would be an invocation error rather than a wrong
+      # verdict; naming it means this call site does not depend on either
+      # behaviour, and reads the same under prek, under CI and by hand.
+      python3 "$workdir/scripts/$guard" --worktree "$@"
+      ;;
     *.py)
+      # check-table-ownership.py has no source flags: it ignores argv and
+      # rescans its own crate roots off the filesystem, so it only ever reads
+      # the worktree in the first place.
       python3 "$workdir/scripts/$guard" "$@"
       ;;
     check-unsafe-allowlist.sh)
@@ -793,6 +816,15 @@ mr_seed_guards() {
   cp "$REPO_ROOT/scripts/check-migrations-immutable.sh" "$dir/scripts/check-migrations-immutable.sh"
   cp "$REPO_ROOT/scripts/check-tauri-import-baseline.mjs" "$dir/scripts/check-tauri-import-baseline.mjs"
   cp "$REPO_ROOT/scripts/lib/js-scanner.mjs" "$dir/scripts/lib/js-scanner.mjs"
+  # The three Python guards load this by PATH, relative to their own
+  # directory, on every run (#4017) — so a fixture that seeds the guards but
+  # not this file gives all three a FileNotFoundError at import time. That is
+  # exit 1 with a traceback, which this script reads as "the guard FAILED on
+  # the merged tree", i.e. a content verdict about a merge, produced by a
+  # guard that never ran. It is declared in RATCHET_PREREQS as well, so the
+  # same absence in a REAL merged tree is reported as the infrastructure gap
+  # it is rather than as a merge failure.
+  cp "$REPO_ROOT/scripts/lib/guard_file_source.py" "$dir/scripts/lib/guard_file_source.py"
   # unsafe-allowlist.sh hard-errors (exit 1) if this file is absent at all;
   # empty is a legitimate "nothing allowlisted yet" state.
   : > "$dir/src-tauri/unsafe-allowlist.txt"
