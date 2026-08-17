@@ -47,18 +47,24 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::sync_events::{SyncEvent, SyncEventSink};
 
-/// The user-facing explanation attached to a block.
+/// The i18n key naming the explanation shown to the user when blocked.
 ///
 /// `onBlockedStatusChanged` carries a bare boolean — no reason code, no
-/// message — so this text is ours. It names the user's next move rather than
-/// the kernel mechanism, because the person reading it is mid-pair and the only
-/// action available to them is to keep the screen on.
-pub const BLOCKED_REASON: &str = "Android has paused this app's network access because it is not \
-                                  in the foreground (the screen going off is enough). Keep the \
-                                  screen on and this app open while pairing.";
-
-/// The explanation attached to a recovery.
-pub const UNBLOCKED_REASON: &str = "Android has restored this app's network access.";
+/// message — so the *wording* is Agaric's. It lives in the frontend catalog
+/// (`src/lib/i18n/sync.ts`), not here: a string built in Rust is English for
+/// every user, in every locale, forever, and the daemon has no access to the
+/// user's chosen language. What crosses the boundary is this key.
+///
+/// # Why there is no human-readable twin on the payload
+///
+/// A payload that carried *both* a key for the UI and prose for the logs would
+/// leave two fields whose relationship nobody could state. There is no need:
+/// the log line for this condition is emitted separately by
+/// [`report_blocked_status`] as its own `tracing::warn!` literal — which is
+/// what `STABLE_MESSAGES` in `commands::bug_report` pins and what a bug report
+/// carries. The event is the UI's channel and the `tracing` call is the log's;
+/// neither borrows the other's text.
+pub const BLOCKED_REASON_KEY: &str = "pairing.osNetworkBlocked";
 
 /// Decide what to emit for a newly-reported blocked status.
 ///
@@ -81,14 +87,12 @@ pub fn blocked_transition(previous: Option<bool>, now: bool) -> Option<SyncEvent
         (Some(prev), now) if prev == now => None,
         // First reading, and it is healthy — nothing happened.
         (None, false) => None,
+        // A recovery removes the banner, so it has no text to show and carries
+        // no key. Sending one would be dead weight: nothing renders it, and the
+        // catalog entry behind it could never be reached.
         (_, blocked) => Some(SyncEvent::NetworkBlockedByOs {
             blocked,
-            reason: if blocked {
-                BLOCKED_REASON
-            } else {
-                UNBLOCKED_REASON
-            }
-            .to_owned(),
+            reason_key: blocked.then(|| BLOCKED_REASON_KEY.to_owned()),
         }),
     }
 }
@@ -225,13 +229,55 @@ mod tests {
             blocked_flag(&event),
             "the event for a block must carry blocked = true"
         );
-        match &event {
-            SyncEvent::NetworkBlockedByOs { reason, .. } => assert!(
-                reason.contains("screen"),
-                "the reason must tell the user what to do (keep the screen on), got: {reason}"
-            ),
-            other => panic!("expected NetworkBlockedByOs, got {other:?}"),
-        }
+    }
+
+    /// The wire payload must carry a **translation key**, not English prose.
+    ///
+    /// The literal below is deliberately spelled out rather than compared to
+    /// [`BLOCKED_REASON_KEY`]: a constant-to-constant assertion is a tautology,
+    /// and the thing that has to hold is that this exact string is also a key
+    /// in `src/lib/i18n/sync.ts`. Its twin on the other side of the boundary is
+    /// `OS_NETWORK_BLOCKED_REASON_KEY` in `src/hooks/useOsNetworkBlock.ts`,
+    /// pinned by the same literal.
+    ///
+    /// The absent `reason` field matters as much as the present key: while the
+    /// daemon shipped an English `reason`, every non-English user was shown
+    /// English and the catalog entry that should have translated it was
+    /// unreachable.
+    #[test]
+    fn a_block_carries_a_translation_key_and_no_english_prose() {
+        let event = blocked_transition(None, true).expect("a first block must be reported");
+        let json = serde_json::to_value(&event).expect("serialize NetworkBlockedByOs");
+        assert_eq!(
+            json["reason_key"], "pairing.osNetworkBlocked",
+            "the block must name an i18n key the frontend can translate, got: {json}"
+        );
+        assert!(
+            json.get("reason").is_none(),
+            "no English prose may ride along on the payload — it would be shown \
+             verbatim to a non-English user, got: {json}"
+        );
+    }
+
+    /// The recovery direction carries no key at all.
+    ///
+    /// A recovery *removes* the banner, so there is no string to show and a key
+    /// here would be dead on arrival — exactly the shape this change exists to
+    /// delete. `reason_key` is therefore `None` precisely when `blocked` is
+    /// `false`, and the frontend's result type encodes that as a discriminated
+    /// union rather than as a nullable field plus an unreachable fallback.
+    #[test]
+    fn a_recovery_carries_no_translation_key() {
+        let event = blocked_transition(Some(true), false).expect("a recovery is news");
+        let json = serde_json::to_value(&event).expect("serialize NetworkBlockedByOs");
+        assert!(
+            json["reason_key"].is_null(),
+            "a recovery shows no text, so it must carry no key, got: {json}"
+        );
+        assert!(
+            json.get("reason").is_none(),
+            "no English prose may ride along on the payload, got: {json}"
+        );
     }
 
     /// A healthy device must stay silent. `registerDefaultNetworkCallback`

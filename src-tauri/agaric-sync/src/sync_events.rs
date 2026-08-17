@@ -179,10 +179,18 @@ pub enum SyncEvent {
     NetworkBlockedByOs {
         /// `true` while the OS is dropping this app's traffic.
         blocked: bool,
-        /// Plain-language explanation for the pairing UI. Not a raw platform
-        /// string: `onBlockedStatusChanged` carries only a boolean, so the text
-        /// is ours and names the user's actual next move.
-        reason: String,
+        /// The **i18n key** naming the explanation the pairing UI shows, not
+        /// the explanation itself. `onBlockedStatusChanged` carries only a
+        /// boolean, so the wording is Agaric's — and wording built in Rust is
+        /// English for every user in every locale, because the daemon has no
+        /// idea what language the window is in. The frontend translates this
+        /// key; see `BLOCKED_REASON_KEY` in
+        /// `sync_daemon::android_network_block` for the constant and for why no
+        /// human-readable twin rides along.
+        ///
+        /// `Some` exactly when `blocked`: a recovery removes the banner, so it
+        /// has no text to name.
+        reason_key: Option<String>,
     },
 }
 
@@ -664,16 +672,20 @@ mod tests {
 
     // ── NetworkBlockedByOs variant (#3852) ─────────────────────────
 
-    /// The pairing dialog reads `blocked` and `reason` off this payload by
+    /// The pairing dialog reads `blocked` and `reason_key` off this payload by
     /// name. Serde renames the tag but not the fields, so a variant rename or a
     /// field rename would silently produce an event no listener recognises —
     /// which is the same "everything looks fine, nothing happens" shape #3852
     /// is about.
+    ///
+    /// The field is spelled `reason_key`, not `reason`, on purpose: what
+    /// crosses this boundary is an i18n key the frontend translates. A field
+    /// carrying English would be shown verbatim to every non-English user.
     #[test]
     fn sync_event_network_blocked_serializes_with_type_tag_and_both_fields() {
         let event = SyncEvent::NetworkBlockedByOs {
             blocked: true,
-            reason: "Android has paused this app's network access".into(),
+            reason_key: Some("pairing.osNetworkBlocked".into()),
         };
         let json = serde_json::to_value(&event).expect("serialize NetworkBlockedByOs");
         assert_eq!(
@@ -685,23 +697,29 @@ mod tests {
             "the frontend gates the whole banner on this flag"
         );
         assert_eq!(
-            json["reason"], "Android has paused this app's network access",
-            "the reason is the text the user is shown; it must round-trip"
+            json["reason_key"], "pairing.osNetworkBlocked",
+            "the key is what the frontend translates; it must round-trip under \
+             this exact field name"
         );
     }
 
     /// The recovery direction has to serialize too — it is what clears the
     /// banner. A payload that only ever carried `true` would leave the warning
-    /// on screen after the block lifted.
+    /// on screen after the block lifted. It carries `reason_key: null`, because
+    /// a cleared banner has no text.
     #[test]
     fn sync_event_network_blocked_carries_the_recovery_direction() {
         let event = SyncEvent::NetworkBlockedByOs {
             blocked: false,
-            reason: "restored".into(),
+            reason_key: None,
         };
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["type"], "network_blocked_by_os");
         assert_eq!(json["blocked"], false);
+        assert!(
+            json["reason_key"].is_null(),
+            "a recovery names no string to show, got: {json}"
+        );
     }
 
     // ── MdnsDisabled variant ──────────────────────────────────────

@@ -47,9 +47,12 @@ export const sync: Record<string, string> = {
   'pairing.waitTimedOut': 'No response from the other device. The pairing code may have expired.',
   // #3852 \u2014 the OS is dropping this app's packets (Android 15+'s per-uid
   // background firewall fires the moment the screen sleeps, even with the app
-  // top-of-stack). The daemon's own `reason` string is shown when present; this
-  // is the fallback for a payload that somehow carries none, and it names the
-  // only action the user can take.
+  // top-of-stack). This is the ONLY wording for that banner: the daemon sends
+  // the key `pairing.osNetworkBlocked` (`BLOCKED_REASON_KEY` in
+  // `android_network_block.rs`) and the frontend translates it, so the sentence
+  // is localisable instead of being English from Rust. Renaming this key
+  // reddens `useOsNetworkBlock.test.ts`, which pins the same literal.
+  // It names the only action the user can take.
   'pairing.osNetworkBlocked':
     'This device paused the app\u2019s network access. Keep the screen on and this app open while pairing.',
   'pairing.qrScannedMessage': 'QR code scanned \u2014 verify and tap Pair',

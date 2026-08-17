@@ -1098,9 +1098,12 @@ export function PairingDialog({
                   aria-live="assertive"
                   data-testid="pairing-network-blocked"
                 >
-                  <p className="text-sm text-destructive">
-                    {osNetworkBlock.reason ?? t('pairing.osNetworkBlocked')}
-                  </p>
+                  {/* The daemon names an i18n KEY, never a sentence — a
+                      sentence built in Rust would be English for every user in
+                      every locale. `blocked` narrows the union, so `reasonKey`
+                      is a `string` here and there is no fallback branch to
+                      leave unreachable. */}
+                  <p className="text-sm text-destructive">{t(osNetworkBlock.reasonKey)}</p>
                 </div>
               )}
 

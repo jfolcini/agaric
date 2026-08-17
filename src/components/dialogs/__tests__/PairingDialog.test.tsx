@@ -37,7 +37,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
@@ -51,6 +51,20 @@ import { PAIRING_MUTATION_TIMEOUT_MS, resetPairingMutationQueue } from '@/lib/pa
 // viewport-state boolean.
 vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
+}))
+
+// #3852 / PR #4034 note 4 — the dialog mounts `useOsNetworkBlock`, which
+// subscribes through `useTauriEventListener`. Stub `listen` so a test can drive
+// the `sync:network_blocked` payload the daemon really sends and assert on what
+// the user is shown. Inert for every other test in this file: no other hook here
+// listens, and the subscription is gated on `__TAURI_INTERNALS__`, which only
+// the #3852 block below defines.
+const { mockListen } = vi.hoisted(() => ({
+  mockListen: vi.fn().mockResolvedValue(vi.fn()),
+}))
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: (...args: unknown[]) => mockListen(...args),
 }))
 
 // Mock react-qr-code — no longer used by the component, but keep mock to avoid import errors
@@ -3031,6 +3045,81 @@ describe('PairingDialog', () => {
       expect(await screen.findByText('Pair Device')).toBeInTheDocument()
       await selectHostRole(user)
       expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // #3852 / PR #4034 note 4 — the OS-network-block banner is TRANSLATED.
+  //
+  // The daemon sends a key (`reason_key`), never prose, so the string on
+  // screen has to come out of the i18n catalog. These tests drive the real
+  // payload through the real hook into the real component and assert on the
+  // rendered text; the i18n bundle is the production one (`src/test-setup.ts`
+  // imports `@/lib/i18n`), so a catalog entry that went missing would render
+  // the bare key and redden here.
+  // -----------------------------------------------------------------------
+  describe('#3852 OS network-block banner', () => {
+    /** Deliver a payload through the registered `sync:network_blocked` handler. */
+    async function emitNetworkBlock(payload: unknown) {
+      const call = mockListen.mock.calls.find((c) => c[0] === 'sync:network_blocked')
+      const handler = call?.[1] as ((e: { payload: unknown }) => void) | undefined
+      expect(handler, 'the dialog must subscribe to sync:network_blocked').toBeTypeOf('function')
+      await act(async () => {
+        handler?.({ payload })
+        await Promise.resolve()
+      })
+    }
+
+    let hadTauriInternals = false
+
+    beforeEach(() => {
+      mockListen.mockResolvedValue(vi.fn())
+      hadTauriInternals = '__TAURI_INTERNALS__' in window
+      if (!hadTauriInternals) {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true })
+      }
+      mockInvokeByCommand({ start_pairing: mockPairingInfo, list_peer_refs: [] })
+    })
+
+    afterEach(() => {
+      if (!hadTauriInternals) {
+        Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
+      }
+    })
+
+    it('renders the translated catalog string, not the daemon’s key and not English prose', async () => {
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('Pair Device')
+      await waitFor(() => {
+        expect(mockListen).toHaveBeenCalledWith('sync:network_blocked', expect.any(Function))
+      })
+
+      await emitNetworkBlock({ blocked: true, reason_key: 'pairing.osNetworkBlocked' })
+
+      const banner = await screen.findByTestId('pairing-network-blocked')
+      // t('pairing.osNetworkBlocked') — the catalog entry, verbatim.
+      expect(banner).toHaveTextContent(
+        'This device paused the app’s network access. Keep the screen on and this app open while pairing.',
+      )
+      // The key itself must never reach the screen: i18next renders a missing
+      // key as the key, which is the failure this assertion exists to catch.
+      expect(banner).not.toHaveTextContent('pairing.osNetworkBlocked')
+    })
+
+    it('clears the banner when the OS restores access', async () => {
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('Pair Device')
+      await waitFor(() => {
+        expect(mockListen).toHaveBeenCalledWith('sync:network_blocked', expect.any(Function))
+      })
+
+      await emitNetworkBlock({ blocked: true, reason_key: 'pairing.osNetworkBlocked' })
+      expect(await screen.findByTestId('pairing-network-blocked')).toBeInTheDocument()
+
+      await emitNetworkBlock({ blocked: false, reason_key: null })
+      await waitFor(() => {
+        expect(screen.queryByTestId('pairing-network-blocked')).not.toBeInTheDocument()
+      })
     })
   })
 })
