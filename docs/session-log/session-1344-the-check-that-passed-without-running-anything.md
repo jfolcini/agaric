@@ -11,13 +11,25 @@ Cut from `main` at `2e10dd821`, all five version manifests bumped together, tag
 pushed, and the Release workflow published it with all 24 jobs green. `latest.json`
 resolves to 0.9.8 with correct minisign signatures for every platform.
 
-Two things about the push are worth writing down. It went **directly to `main`**,
-bypassing branch protection, and GitHub recorded three violations doing so:
-changes-must-be-made-through-a-pull-request, 2-of-2-required-status-checks, and
-**commits-must-have-verified-signatures**. The first two are the release script's
-normal, intentional path. The third is not intentional — `2e10dd821` is unsigned,
-and it is the commit a tag points at. Worth deciding on deliberately rather than
-inheriting.
+The push went **directly to `main`**, bypassing branch protection, and GitHub
+recorded three violations doing so: changes-must-be-made-through-a-pull-request,
+2-of-2-required-status-checks, and **commits-must-have-verified-signatures**. The
+first two are `bump-version.sh`'s intended path. The third took a wrong turn
+before it was understood, and the wrong turn is the more useful half.
+
+The obvious reading — "the release commit is unsigned" — is false.
+`bump-version.sh` signs deliberately (`git commit -S` at :255, `git tag -s` at
+:300), and `git log --format=%G?` returns `G` on `2e10dd821`. What GitHub
+actually says is `verified=false, reason=unverified_email`: the signature is good
+and made by key `6CD11759A20B6111`, whose UID is `jfolcini86@gmail.com`, while
+the commit is authored as `t <t@t.t>`. The cryptography is fine; the binding to a
+GitHub identity is not.
+
+It stays invisible because every other commit's identity is laundered by the
+merge — GitHub re-signs squash commits with its own web-flow key, so they land
+`verified=true` no matter what the local `user.email` says. The release path is
+the only one where a locally-authored commit reaches `main` directly, and so the
+only place the placeholder identity is ever tested. Filed as #4082.
 
 ## Verifying the release, and getting a false green on the first try
 
