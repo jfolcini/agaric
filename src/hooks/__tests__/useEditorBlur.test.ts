@@ -13,7 +13,8 @@
  *  - B-56: internal portals (inside editor wrapper) do not prevent save
  */
 
-import { act, renderHook } from '@testing-library/react'
+import { act, render, renderHook } from '@testing-library/react'
+import { createElement, useState } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -821,6 +822,121 @@ describe('useEditorBlur', () => {
       })
 
       expect(callOrder).toEqual(['splitBlock', 'setFocused'])
+    })
+  })
+
+  // -- #4004: `invokeSync: flushSync` is pinned, not incidental ------------
+
+  describe('#4004 — the blur flush is synchronous (flushSync is load-bearing)', () => {
+    /**
+     * `useEditorBlur` is the ONLY one of the three unmount-flush call sites
+     * that passes `invokeSync: flushSync` to `runUnmountFlush` (#3278 made the
+     * shared default a plain `(fn) => fn()`). That argument is the whole
+     * reason the blur path is safe: `handleBlur` runs inside a synchronous DOM
+     * blur event, and by the time it returns the browser has already moved
+     * focus and React is about to swap the editor row for a `StaticBlock`. A
+     * store update that is still QUEUED at that moment is applied against the
+     * post-blur tree — the B-5/B-6 stale-content bug.
+     *
+     * The pre-existing `call ordering` tests above assert `edit` runs before
+     * `setFocused`, which is true with or without `flushSync` — the calls are
+     * sequential statements either way. They therefore cannot tell a pinned
+     * invariant from a passing coincidence: dropping `invokeSync: flushSync`
+     * left the whole file green (#4004).
+     *
+     * What DOES discriminate is React's commit timing, and it can be observed
+     * without mocking `react-dom` at all. `discardDraft` is called
+     * synchronously by `handleBlur` immediately after `runUnmountFlush`
+     * returns, i.e. still inside the blur turn. If `edit` performs a React
+     * state update, then:
+     *
+     *   - with `flushSync`, the update is COMMITTED before `runUnmountFlush`
+     *     returns, so the DOM already shows the saved content at that point;
+     *   - without it, React batches the update and flushes only after the
+     *     handler (here: at the end of `act`), so the DOM still shows the
+     *     pre-blur content.
+     *
+     * Reading the DOM from inside `discardDraft` is therefore a direct
+     * falsification of the flush's synchrony. Verified RED against the current
+     * code with `invokeSync: flushSync` removed from `useEditorBlur`.
+     */
+    const PROBE = '[data-testid="committed-content"]'
+
+    /** Text currently committed to the DOM by the harness component. */
+    function committedText(): string {
+      return document.querySelector(PROBE)?.textContent ?? '<unmounted>'
+    }
+
+    /**
+     * Renders a component that owns the "store" as React state and wires it to
+     * `useEditorBlur`, capturing what the DOM showed at the moment
+     * `discardDraft` ran (mid-blur, after the flush).
+     */
+    function renderBlurHarness(opts: { unmounted: string; branch: 'edit' | 'split' }) {
+      const seenMidBlur: string[] = []
+      const handle: { blur: ((e: React.FocusEvent) => void) | null } = { blur: null }
+
+      function Harness() {
+        const [committed, setCommitted] = useState('<pre-blur>')
+        const store = (_blockId: string, content: string) => {
+          setCommitted(content)
+        }
+        const { handleBlur } = useEditorBlur({
+          rovingEditor: makeRovingEditor({
+            activeBlockId: 'B1',
+            unmount: () => opts.unmounted,
+          }),
+          blockId: 'B1',
+          edit: opts.branch === 'edit' ? store : vi.fn(),
+          splitBlock: opts.branch === 'split' ? store : vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: () => {
+            seenMidBlur.push(committedText())
+          },
+        })
+        handle.blur = handleBlur
+        return createElement('div', { 'data-testid': 'committed-content' }, committed)
+      }
+
+      render(createElement(Harness))
+      return { seenMidBlur, handle }
+    }
+
+    it('commits the plain-edit store update to the DOM BEFORE handleBlur returns', () => {
+      const { seenMidBlur, handle } = renderBlurHarness({
+        unmounted: 'saved on blur',
+        branch: 'edit',
+      })
+
+      // Sanity: the harness starts from the pre-blur text, so a stale read
+      // below is distinguishable from "never rendered".
+      expect(committedText()).toBe('<pre-blur>')
+
+      act(() => {
+        handle.blur?.(makeFocusEvent())
+      })
+
+      // The assertion: mid-blur — after `runUnmountFlush`, before `handleBlur`
+      // returned — React had ALREADY committed the edit. Without
+      // `invokeSync: flushSync` this reads '<pre-blur>'.
+      expect(seenMidBlur).toEqual(['saved on blur'])
+      expect(committedText()).toBe('saved on blur')
+    })
+
+    it('commits the split store update to the DOM BEFORE handleBlur returns', () => {
+      // Same falsification for the OTHER branch `invokeSync` wraps. The async
+      // checkbox/property branches are deliberately not flushSync-wrapped, so
+      // they have no equivalent guarantee to pin.
+      const { seenMidBlur, handle } = renderBlurHarness({
+        unmounted: 'line1\nline2',
+        branch: 'split',
+      })
+
+      act(() => {
+        handle.blur?.(makeFocusEvent())
+      })
+
+      expect(seenMidBlur).toEqual(['line1\nline2'])
     })
   })
 

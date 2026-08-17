@@ -65,14 +65,30 @@
  * These do not move when the machine is busy. A 500-row page under a 3x load
  * spike still renders 500 times and reads layout 0 times.
  *
- * ## What still uses wall-clock, and why that is defensible
- * The 10K/1K RATIO ceilings stay: an asymptotic regression (an accidental
- * O(n^2) in `buildFlatTree` or the splice path) has no count-based proxy, and
- * a ratio of two measurements taken in the same process is far less exposed to
- * ambient load than a fixed millisecond budget — contention inflates both
- * terms. The two pure-JS phases also keep absolute ceilings, which sit ~3
- * orders of magnitude above their measured cost; see the assertion block for
- * the derivation from the loaded/idle numbers #3700 recorded.
+ * ## What used to still use wall-clock, and why it no longer does (#4013)
+ * #3700 kept 10K/1K RATIO ceilings for the asymptotic regressions that have no
+ * render-count proxy (an accidental O(n^2) in the flatten path), on the sound
+ * ground that a ratio of two measurements taken in the same process is far
+ * less exposed to ambient load than a fixed millisecond budget — contention
+ * inflates numerator and denominator together.
+ *
+ * The assertions then wrapped each ratio in a FLOOR:
+ * `expect(last.buildFlatTreeMs).toBeLessThan(Math.max(first * 40, 50))`.
+ * `buildFlatTree` measures 0.4-2 ms here, so `first * 40` is ~17-80 ms and the
+ * floor dominated in the common case. The effective bound was a fixed 50 ms
+ * wall-clock budget — precisely the thing #3700 says it removed — and it fired
+ * as `expected 229.25 to be less than 50` on a full-suite parallel run while
+ * the same file passed alone in 3.57 s (#4013). A guard whose verdict depends
+ * on what else the box is doing is not evidence in either direction.
+ *
+ * The fix is NOT a third guess at that constant. All four wall-clock ceilings
+ * (and the two absolute pure-JS ones) are GONE, and the asymptotic regression
+ * they stood in for is now an exact, load-invariant COUNT — see the
+ * `asymptotic work` test at the bottom of this file. The timings are still
+ * measured and printed, because they are the bench PRODUCT this file exists to
+ * produce and the doc table is regenerated from them; they are simply no
+ * longer a gate. A quantity this machine-dependent can be reported honestly or
+ * asserted honestly, not both.
  */
 
 import { cleanup, render } from '@testing-library/react'
@@ -204,6 +220,45 @@ function countLayoutReads(): { stop: () => number } {
   }
 }
 
+/**
+ * #4013 — replace each row with a structurally identical object whose own
+ * enumerable properties are counting getters, and tally every read.
+ *
+ * This is the load-invariant stand-in for the wall-clock ratio ceilings this
+ * file used to carry: an O(n^2) rewrite of a flatten/lookup path touches the
+ * input rows O(n) times per row instead of O(1), which the tally shows as an
+ * exact integer that ambient CPU contention cannot move. Getters are
+ * `enumerable` + `configurable` so `{...row}` spreads and `Object.entries`
+ * behave exactly as they do on the plain rows — including invoking (and
+ * therefore counting) every getter.
+ *
+ * Deliberately NOT applied to the timed measurement pass above: a getter call
+ * is slower than a property load, and those timings are the bench product.
+ */
+function countFieldReads<T extends object>(
+  rows: readonly T[],
+): {
+  rows: T[]
+  reads: () => number
+} {
+  let reads = 0
+  const instrumented = rows.map((row) => {
+    const probe = {} as Record<string, unknown>
+    for (const [key, value] of Object.entries(row)) {
+      Object.defineProperty(probe, key, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          reads++
+          return value
+        },
+      })
+    }
+    return probe as T
+  })
+  return { rows: instrumented, reads: () => reads }
+}
+
 describe('BlockTree scale envelope (#2467 Measure)', () => {
   it('measures buildFlatTree / splice / mount / re-render at 1K, 5K, and 10K blocks/page', () => {
     const measurements: ScaleMeasurement[] = []
@@ -287,12 +342,10 @@ describe('BlockTree scale envelope (#2467 Measure)', () => {
     )
 
     // ── Assertions ──────────────────────────────────────────────────────
-    // #3700 — the React-phase guards are COUNTS, not wall-clock. See the
+    // #3700 / #4013 — every guard here is a COUNT, not wall-clock. See the
     // header for why. Each is an exact integer that depends on the render
     // path and on nothing else the machine happens to be doing.
-    const first = measurements[0]
-    const last = measurements.at(-1)
-    if (!first || !last) throw new Error('expected measurements for every scale')
+    expect(measurements).toHaveLength(SCALES.length)
 
     for (const m of measurements) {
       // Mount renders EXACTLY one leaf per row. More than that means an extra
@@ -317,48 +370,147 @@ describe('BlockTree scale envelope (#2467 Measure)', () => {
       // count catches what the timer could not.
       expect(m.mountLayoutReads).toBe(0)
 
-      // The two pure-JS phases keep their absolute ceilings. They are three
-      // orders of magnitude under them (measured idle: buildFlatTree
-      // 0.5-1.5 ms, splice 0.02-8.8 ms), so even at the ~3.1x slowdown #3700
-      // observed under concurrent Rust builds (12 800 ms vs 4 100 ms idle for
-      // the same phase) the worst case is ~5 ms and ~27 ms — 18x and 7x under
-      // these ceilings. Unlike the React phases, contention cannot plausibly
-      // close that gap.
-      expect(m.buildFlatTreeMs).toBeLessThan(500)
-      expect(m.spliceMs).toBeLessThan(200)
+      // #4013 — the four wall-clock ceilings that used to live here
+      // (`buildFlatTreeMs < 500`, `spliceMs < 200`, and the two
+      // `Math.max(first * 40, floor)` ratio bounds) are gone. `buildFlatTreeMs`
+      // was measured at 229.25 ms on a loaded box against a 500 ms bound and
+      // 50 ms floor; a threshold that a passing run already sits within 2.2x of
+      // is a coin toss, not a gate. The asymptotic property they proxied for is
+      // asserted exactly, in counts, by the `asymptotic work` test below.
     }
 
-    // Sub-quadratic trend: 10x more blocks should not cost anywhere near
-    // 10x^2 (100x) more time. A ~40x ceiling comfortably separates linear/
-    // n-log-n growth from a real O(n^2) regression; measured idle 10K/1K
-    // ratios are ~2.6x (buildFlatTree), ~4.8x (mount) and ~8.5x (re-render).
-    //
-    // #3700 kept these while dropping the absolute wall-clock ceilings: a
-    // RATIO of two measurements taken seconds apart in the same process is far
-    // less exposed to ambient load than a fixed millisecond budget, because
-    // contention inflates numerator and denominator together. It is not
-    // immune — a burst landing on the 10K phase alone would skew it — but it
-    // would take a ~5x differential inflation to reach the ceiling, against
-    // the fixed 10 s budget that a uniform ~3.1x slowdown was already enough
-    // to breach twice in one day.
-    const scaleFactor = last.n / first.n
-    const superlinearCeiling = scaleFactor * 4
+    // The per-test timeout is a SAFETY NET, not a budget, so it is sized for
+    // the worst contention actually observed rather than for a typical run.
+    // Derivation: the whole test measures ~3.0 s idle here, of which the 10K
+    // mount is ~0.8 s, i.e. total ≈ 4x that one phase. #3700 recorded a 10K
+    // mount of 4.1 s idle / 12.8 s under load on a busier box, which
+    // extrapolates to ≈16 s idle and ≈51 s under the same contention. 120 s is
+    // ~2.4x that worst case. Since #4013 removed the wall-clock assertions
+    // this is now the ONLY way slowness can fail the file — deliberately, and
+    // only at an order of magnitude beyond anything yet seen.
+  }, 120_000)
 
-    expect(last.buildFlatTreeMs).toBeLessThan(
-      Math.max(first.buildFlatTreeMs * superlinearCeiling, 50),
+  /**
+   * #4013 — the asymptotic guard, as an exact load-invariant COUNT.
+   *
+   * What the removed wall-clock ratios were for: catching a change of
+   * ALGORITHMIC CLASS that the render counters cannot see. The two canonical
+   * forms are dropping `buildFlatTree`'s `childrenMap` for a per-parent
+   * `allBlocks.filter(...)` scan, and adding a per-row O(n) lookup inside the
+   * mount path. `mountRenders === n` still holds under both, which is why
+   * #3700 kept a clock here at all.
+   *
+   * But that class change does have an exact proxy: how many times the code
+   * TOUCHES the input rows. Each row is replaced by an object whose own
+   * properties are counting getters, so `buildFlatTree`'s grouping read, its
+   * sort comparisons, its `visited` probes and its `{...child, depth}` spread
+   * — and React's per-row prop reads during mount and re-render — are all
+   * tallied. The tally is a property of the code path and of nothing else: it
+   * is byte-identical whatever else the machine is doing, which is the
+   * property the wall clock could never have.
+   *
+   * Measured on this fixture (a flat page — one already-sorted sibling group):
+   *
+   *   buildFlatTree   7n - 2  reads ->  6.998 / 7.000 / 7.000 per block
+   *   mount          34n      reads -> 34.000 / 34.000 / 34.000 per block
+   *   re-render      58n - 24 reads -> 57.976 / 57.995 / 57.998 per block
+   *
+   * at n = 1K / 5K / 10K. The 1K and 10K figures this test asserts on were
+   * byte-identical to three decimals on all 10 consecutive runs measured for
+   * #4013 — zero spread — 5 of them idle and 5 under a deliberate 48-way CPU
+   * load spike on a 16-core box that inflated the 10K MOUNT from ~0.78 s to
+   * 6.0-7.6 s (a ~8x wall-clock inflation, and not one digit of these counts
+   * moved). The 5K column comes from the same instrumentation run at the
+   * middle scale; the assertion needs only the endpoints.
+   *
+   * So the asserted quantity — reads per block at 10K divided by reads per
+   * block at 1K — measures 1.000. The ceiling is 2, derived: the largest
+   * legitimate growth a comparison sort can add across this 10x span is
+   * log2(10 000) / log2(1 000) = 1.33x (and only 2 of `buildFlatTree`'s 7
+   * reads per block are comparisons, so the realised figure is well under
+   * that), while ANY quadratic term drives the same quantity to ~10x. 2 sits
+   * 1.5x above the worst legitimate value and 5x below the smallest regression
+   * signal. Verified by injecting the filter-per-parent rewrite into
+   * `buildFlatTree`: reads per block became 1 009.996 at 1K and 10 010.000 at
+   * 10K, failing as `expected 9.910929944277006 to be less than 2`.
+   *
+   * The splice phase has NO assertion, here or above, deliberately: the test
+   * inlines `[...flat]` + `Array.prototype.splice`, so no repository code runs
+   * in it and a "guard" on it could only ever fail for reasons no change to
+   * this codebase can cause. It stays in the printed table as a cost datum.
+   */
+  it('bounds asymptotic work with load-invariant field-read counts', () => {
+    // Only the ratio endpoints — the middle scale adds cost without adding
+    // signal, and the printed measurement above already covers 5K.
+    const WORK_SCALES = [SCALES[0], SCALES.at(-1) as number] as const
+
+    const work = WORK_SCALES.map((n) => {
+      // 1. buildFlatTree over counting rows.
+      const build = countFieldReads(makeFlatPage(n))
+      const instrumentedFlat = buildFlatTree(build.rows, null)
+      const buildReads = build.reads()
+      expect(instrumentedFlat).toHaveLength(n)
+
+      // 2. Mount / re-render over counting rows. `buildFlatTree` returns fresh
+      // spread objects, so the flat list must be re-instrumented before it is
+      // handed to React.
+      const tree = countFieldReads(buildFlatTree(makeFlatPage(n), null))
+      const rows = tree.rows
+      const renderResult = render(
+        <BlockListRenderer {...makeProps({ visibleItems: rows, blocks: rows })} />,
+      )
+      const mountReads = tree.reads()
+
+      const spliced = [...rows]
+      spliced.splice(Math.floor(n / 2), 0, makeBlock({ id: `${n}_NEW`, content: 'new', depth: 0 }))
+      const beforeRerender = tree.reads()
+      renderResult.rerender(
+        <BlockListRenderer {...makeProps({ visibleItems: spliced, blocks: spliced })} />,
+      )
+      const rerenderReads = tree.reads() - beforeRerender
+
+      renderResult.unmount()
+      cleanup()
+
+      return { n, buildReads, mountReads, rerenderReads }
+    })
+
+    console.table(
+      work.map((w) => ({
+        blocks: w.n,
+        'buildFlatTree reads/block': (w.buildReads / w.n).toFixed(3),
+        'mount reads/block': (w.mountReads / w.n).toFixed(3),
+        're-render reads/block': (w.rerenderReads / w.n).toFixed(3),
+      })),
     )
-    expect(last.spliceMs).toBeLessThan(Math.max(first.spliceMs * superlinearCeiling, 50))
-    expect(last.mountMs).toBeLessThan(Math.max(first.mountMs * superlinearCeiling, 200))
-    expect(last.rerenderMs).toBeLessThan(Math.max(first.rerenderMs * superlinearCeiling, 200))
 
-    // #3700 — the per-test timeout is a SAFETY NET, not a budget, so it is
-    // sized for the worst contention actually observed rather than for a
-    // typical run. Derivation: the whole test measures ~4.4 s idle here, of
-    // which the 10K mount is ~1.0 s, i.e. total ≈ 4.6x that one phase. #3700
-    // recorded a 10K mount of 4.1 s idle / 12.8 s under load on a busier box,
-    // which extrapolates to ≈19 s idle and ≈58 s under the same contention.
-    // 120 s is ~2x that worst case. (The old 30 s would have TIMED OUT there
-    // once the mount assertion stopped firing first — trading one spurious
-    // failure mode for another.)
+    const small = work[0]
+    const large = work.at(-1)
+    if (!small || !large) throw new Error('expected work measurements at both endpoints')
+
+    /**
+     * Work per block must not grow with n. See the derivation above for why
+     * the ceiling is 2 and not a wider number: this quantity has zero
+     * measured spread, so the headroom is sized against legitimate
+     * ALGORITHMIC change, not against machine noise.
+     */
+    const SUPERLINEAR_CEILING = 2
+    const perBlockGrowth = (a: number, b: number) => b / large.n / (a / small.n)
+
+    expect(perBlockGrowth(small.buildReads, large.buildReads)).toBeLessThan(SUPERLINEAR_CEILING)
+    expect(perBlockGrowth(small.mountReads, large.mountReads)).toBeLessThan(SUPERLINEAR_CEILING)
+    expect(perBlockGrowth(small.rerenderReads, large.rerenderReads)).toBeLessThan(
+      SUPERLINEAR_CEILING,
+    )
+
+    // A row that is never touched would make the ratio vacuously 1: pin that
+    // the instrumentation actually observed work at both endpoints, so the
+    // guard cannot pass by measuring nothing (which is the whole failure mode
+    // #4013 is about).
+    for (const w of work) {
+      expect(w.buildReads).toBeGreaterThan(w.n)
+      expect(w.mountReads).toBeGreaterThan(w.n)
+      expect(w.rerenderReads).toBeGreaterThan(w.n)
+    }
   }, 120_000)
 })
