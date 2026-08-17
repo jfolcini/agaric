@@ -163,10 +163,23 @@ export function BlockListRenderer({
       return prev.value
     }
     const styleOf = (id: string): ListStyle => listStyles.get(id) ?? 'none'
-    const value: ListMarkerValue = { styleOf, ordinalOf: (id) => ordinals.get(id) }
-    prevMarkerRef.current = { listStyles, ordinals, value }
-    return value
+    return { styleOf, ordinalOf: (id) => ordinals.get(id) }
   }, [listStyles, ordinals])
+
+  // #4012 item 3 — the cache is populated AFTER commit, never during render.
+  // This memo previously assigned `prevMarkerRef.current` inline, which made
+  // render impure: under concurrent rendering React may run (and then discard)
+  // a render whose output is never committed, and such a render would still
+  // have published its `listStyles`/`ordinals`/`value` triple as "previous" —
+  // so a later render could reuse a value derived from state the tree never
+  // actually showed. Syncing in an effect means the ref only ever holds a
+  // COMMITTED triple, while the memo above merely READS it. Behaviour is
+  // otherwise identical: the reuse gate is unchanged, so a content edit that
+  // leaves every marker untouched still republishes the same context identity
+  // and leaves the memoized rows alone (#3277).
+  useEffect(() => {
+    prevMarkerRef.current = { listStyles, ordinals, value: listMarkerValue }
+  }, [listStyles, ordinals, listMarkerValue])
 
   // #1267 — publish the per-move DnD state to a ref-backed external store with
   // per-id subscription instead of threading `projected`/`overId`/`dropAfter`

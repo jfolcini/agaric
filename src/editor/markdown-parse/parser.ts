@@ -320,7 +320,9 @@ export function parseHeading(
  * Table: consecutive lines starting with `|`. Row 0 is the header and row 1 is
  * the GFM delimiter row — both POSITIONAL, per `buildTableRows` (#3274): the
  * run is collected from `i`, so index 0 is always the header, and index 1 is
- * the only position GFM allows a delimiter row in.
+ * the only position GFM allows a delimiter row in. Whether the row AT index 1
+ * is really a delimiter (rather than a dash-only first data row of foreign
+ * markdown that never had one) is decided by `isSeparatorRow` (#4003).
  */
 export function parseTable(
   lines: readonly string[],
@@ -369,6 +371,61 @@ function splitRowOnUnescapedPipes(line: string): string[] {
   return cells
 }
 
+/**
+ * Shape of a GFM delimiter row: outer pipes around cells of only dashes,
+ * colons, spaces and pipes, with at least one `-`/`:` present. The dash/colon
+ * requirement keeps a row of EMPTY cells (`|  |`, serialized from an
+ * empty-cell table row) classified as data (#3274).
+ */
+const SEPARATOR_ROW_SHAPE = /^\|[\s|]*[-:][\s\-:|]*\|$/
+
+/**
+ * The CANONICAL delimiter cell — three or more dashes with optional alignment
+ * colons. This is exactly what `serializeTable` emits (`separator`, built as
+ * `'---'` per column), so any delimiter row in markdown WE produced matches.
+ */
+const CANONICAL_SEPARATOR_CELL = /^:?-{3,}:?$/
+
+/** The trimmed cells of a row, without the outer `| … |` empty segments. */
+function rowCells(tableLine: string): string[] {
+  const segments = splitRowOnUnescapedPipes(tableLine)
+  if (segments.length > 0 && segments[0]?.trim() === '') segments.shift()
+  if (segments.length > 1 && segments.at(-1)?.trim() === '') segments.pop()
+  return segments.map((c) => c.trim())
+}
+
+/**
+ * Is the row at index 1 of a table run the GFM delimiter row, or is it data?
+ *
+ * #3274 made this test POSITIONAL — only index 1 can ever be a separator —
+ * which is sound for markdown we produced ourselves, because `serializeTable`
+ * always synthesizes `[header, separator, …dataRows]` and never derives the
+ * separator from row content. FOREIGN markdown carries no such guarantee:
+ * a table that never had a delimiter row at all, whose FIRST data row happens
+ * to be dash-only (`| Name | Value |` / `| - | - |`), had that row read as the
+ * separator and silently dropped (#4003).
+ *
+ * The tie-breaker for that genuinely ambiguous case is a SECOND signal, not a
+ * different shape test:
+ *
+ *   - a CANONICAL row (`---` per cell) is always the delimiter — that is the
+ *     form our own serializer emits, so our documents (including a header-only
+ *     table, which serializes to exactly `| a |` / `| --- |`) round-trip
+ *     unchanged;
+ *   - a SHORT-form row (`| - | - |`, `| :- | -: |`) is the delimiter only when
+ *     data rows FOLLOW it — i.e. when row 0 is demonstrably acting as a header
+ *     for something. An ordinary short-form GFM table is unaffected.
+ *
+ * What is left — a two-line table whose second line is short-form dashes — is
+ * the case where reading it as a delimiter would leave a header with no data
+ * at all. There we prefer the user's content over the empty table.
+ */
+function isSeparatorRow(tableLine: string, hasFollowingRows: boolean): boolean {
+  if (!SEPARATOR_ROW_SHAPE.test(tableLine)) return false
+  if (hasFollowingRows) return true
+  return rowCells(tableLine).every((cell) => CANONICAL_SEPARATOR_CELL.test(cell))
+}
+
 function buildTableRows(tableLines: readonly string[], depth: number): TableRowNode[] {
   const rows: TableRowNode[] = []
   for (let r = 0; r < tableLines.length; r++) {
@@ -378,10 +435,8 @@ function buildTableRows(tableLines: readonly string[], depth: number): TableRowN
     // previous code applied the dash/colon heuristic to EVERY row, so a
     // legitimate DATA row made entirely of dashes/colons (`| - | - |`)
     // anywhere else in the table was silently swallowed on reparse (#3274).
-    // Separator rows must additionally contain at least one `-`/`:` — a row
-    // of empty cells (`|  |`, serialized from an empty-cell table row) is
-    // data, not a separator, and used to be silently dropped here too.
-    if (r === 1 && /^\|[\s|]*[-:][\s\-:|]*\|$/.test(tableLine)) continue
+    // At index 1 the row is disambiguated by `isSeparatorRow` (#4003).
+    if (r === 1 && isSeparatorRow(tableLine, tableLines.length > 2)) continue
     // Drop the leading/trailing empty segments produced by the row's outer
     // `| … |` delimiters, then trim and unescape each cell. The `\|` → `|`
     // unescape runs BEFORE parseLine so pipes inside inline code spans and

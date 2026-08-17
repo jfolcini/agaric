@@ -26,6 +26,7 @@ import {
   orderedList,
   paragraph,
   table,
+  tableCell,
   tableHeader,
   tableRow,
   task,
@@ -412,6 +413,75 @@ describe('parse — a lone table-separator line pasted as its own block (#3274)'
     expect(result).toEqual(
       doc(
         table(tableRow(tableHeader(paragraph(text('---'))), tableHeader(paragraph(text('---'))))),
+      ),
+    )
+  })
+})
+
+// -- #4003: an ambiguous dash-only row 1 in FOREIGN markdown --------------
+// #3274 made the delimiter test POSITIONAL (only row 1 can be a separator),
+// which is correct for markdown we produced ourselves: `serializeTable`
+// always synthesizes `[header, separator, …data]`, so a real data row can
+// never land at index 1. Foreign markdown carries no such guarantee — a
+// table that never had a delimiter row, whose FIRST row of data happens to
+// be dash-only, had that row read as the separator and dropped.
+//
+// The discriminator is the CANONICAL form our serializer emits: exactly
+// `---` per cell (`markdown-serialize.ts`'s `separator`). A short-form
+// delimiter (`| - | - |`) is only honoured when data rows follow it —
+// i.e. when row 0 really is acting as a header for something.
+describe('parse — an ambiguous dash-only row 1 in foreign markdown (#4003)', () => {
+  it('keeps a short-dash row 1 as DATA when nothing follows it', () => {
+    // The reported shape. Both rows are the user's content; dropping row 1
+    // silently destroyed half the pasted table.
+    expect(parse('| Name | Value |\n| - | - |')).toEqual(
+      doc(
+        table(
+          tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value')))),
+          // Also pins the #4019 marker-tolerance interaction: a `-` cell is a
+          // bullet-marker SHAPE, but cell text is parsed inline (`parseLine`),
+          // never through the block productions, so it stays literal text and
+          // does not become a `bulletList`.
+          tableRow(tableCell(paragraph(text('-'))), tableCell(paragraph(text('-')))),
+        ),
+      ),
+    )
+  })
+
+  it('the kept row survives serialization (a canonical delimiter is synthesized)', () => {
+    const reparsed = parse('| Name | Value |\n| - | - |')
+    const md = serialize(reparsed)
+    expect(md).toBe('| Name | Value |\n| --- | --- |\n| - | - |')
+    // Fixed point: the synthesized `---` is now at index 1, so the kept row
+    // sits at index 2 where #3274's positional rule already protects it.
+    expect(parse(md)).toEqual(reparsed)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  // The two arms below are the counterweight: without them the fix could
+  // "pass" by never treating any row as a delimiter.
+  it('still reads a CANONICAL `---` row 1 as the delimiter (our header-only table)', () => {
+    expect(parse('| a |\n| --- |')).toEqual(doc(table(tableRow(tableHeader(paragraph(text('a')))))))
+  })
+
+  it('still reads a SHORT-dash row 1 as the delimiter when data rows follow it', () => {
+    expect(parse('| Name | Value |\n| - | - |\n| a | b |')).toEqual(
+      doc(
+        table(
+          tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value')))),
+          tableRow(tableCell(paragraph(text('a'))), tableCell(paragraph(text('b')))),
+        ),
+      ),
+    )
+  })
+
+  it('still reads an ALIGNED short-dash row 1 as the delimiter when data follows', () => {
+    expect(parse('| Name | Value |\n| :- | -: |\n| a | b |')).toEqual(
+      doc(
+        table(
+          tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value')))),
+          tableRow(tableCell(paragraph(text('a'))), tableCell(paragraph(text('b')))),
+        ),
       ),
     )
   })
