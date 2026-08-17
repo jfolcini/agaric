@@ -9,6 +9,7 @@
 
 import { Smartphone } from 'lucide-react'
 import type React from 'react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -18,7 +19,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import type { PeerRef } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
-import { lastSyncActivityAt } from '@/lib/peer-sync-activity'
+import { comparePeers, lastSyncActivityAt } from '@/lib/peer-sync-activity'
 
 export interface PairingPeersListProps {
   peers: PeerRef[]
@@ -28,17 +29,28 @@ export interface PairingPeersListProps {
 export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): React.ReactElement {
   const { t } = useTranslation()
 
+  // #4084 (review) — sort here, exactly as `DeviceManagement` does on load.
+  // The prop arrives straight from `list_peer_refs`, whose `ORDER BY
+  // synced_at DESC` puts NULLs last under SQLite's DESC collation — so a
+  // responder-only peer displayed "Last: 5 minutes ago" (from the
+  // `MAX(synced_at, streamed_at)` fold below) while sitting at the very
+  // bottom among the peers that genuinely never synced. Sorting inside the
+  // component rather than at the one call site keeps the display order a
+  // property of the list, so a future second caller cannot reintroduce the
+  // split. Sorts a COPY — the prop belongs to the caller.
+  const sortedPeers = useMemo(() => [...peers].toSorted(comparePeers), [peers])
+
   return (
     <>
       <Separator className="my-4" />
       <div className="pairing-peers">
         <h3 className="text-sm font-medium mb-2">{t('pairing.pairedDevicesTitle')}</h3>
-        {peers.length === 0 ? (
+        {sortedPeers.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t('pairing.noPairedDevices')}</p>
         ) : (
           <ScrollArea className="max-h-48">
             <div className="space-y-2">
-              {peers.map((peer) => {
+              {sortedPeers.map((peer) => {
                 // #4084: the later of synced_at / streamed_at. A device that
                 // only ever succeeds as RESPONDER never advances synced_at
                 // (#610 forbids it) and would otherwise read "never synced"

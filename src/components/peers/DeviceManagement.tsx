@@ -38,55 +38,11 @@ import { formatErrorForDisplay } from '@/lib/error-display'
 import { truncateId } from '@/lib/format'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { lastSyncActivityAt } from '@/lib/peer-sync-activity'
+import { comparePeers } from '@/lib/peer-sync-activity'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { startSync } from '@/lib/tauri'
 import { useSyncStore } from '@/stores/sync'
-
-/**
- * #1673: Total-order comparator for the paired-peer list.
- *
- * Sort intent: named devices first (alphabetical by name), then unnamed
- * devices ordered by most-recently-synced first. Every branch returns a
- * consistent numeric -1/0/1 and the keys are layered so the relation is
- * total and transitive (no comparator returns 0 unless two rows are truly
- * indistinguishable on all keys), which keeps the sort well-defined and
- * stable across engines.
- *
- * Keys, in priority order:
- *  1. has-name  (named before unnamed)
- *  2. device_name, localeCompare (named only — both unnamed skip this)
- *  3. last sync activity desc (never => -Infinity, sorts last)
- *  4. peer_id, localeCompare (stable, deterministic final tiebreak)
- *
- * #4084: key 3 is `MAX(synced_at, streamed_at)`, not `synced_at`. A device
- * that only ever succeeds as RESPONDER never advances `synced_at` (#610
- * forbids the streamer touching it), so sorting on `synced_at` alone buried
- * an actively-syncing peer at the bottom of the list with the peers that
- * genuinely never synced.
- */
-export function comparePeers(a: PeerRef, b: PeerRef): number {
-  const aHasName = a.device_name != null && a.device_name !== ''
-  const bHasName = b.device_name != null && b.device_name !== ''
-
-  // 1. named devices before unnamed
-  if (aHasName !== bHasName) return aHasName ? -1 : 1
-
-  // 2. both named: alphabetical by name
-  if (aHasName && bHasName) {
-    const byName = (a.device_name as string).localeCompare(b.device_name as string)
-    if (byName !== 0) return byName
-  }
-
-  // 3. most-recent activity first (null => never synced => last)
-  const aSynced = lastSyncActivityAt(a) ?? Number.NEGATIVE_INFINITY
-  const bSynced = lastSyncActivityAt(b) ?? Number.NEGATIVE_INFINITY
-  if (aSynced !== bSynced) return aSynced > bSynced ? -1 : 1
-
-  // 4. deterministic final tiebreak so the order is total
-  return a.peer_id.localeCompare(b.peer_id)
-}
 
 export function DeviceManagement(): React.ReactElement {
   const { t } = useTranslation()

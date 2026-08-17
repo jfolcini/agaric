@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { PairingPeersList } from '@/components/peers/PairingPeersList'
+import type { PeerRef } from '@/lib/bindings'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -212,5 +213,100 @@ describe('PairingPeersList — last-sync activity (#4084)', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+})
+
+/**
+ * #4084 (review) — display and sort order must agree.
+ *
+ * The prop arrives verbatim from `list_peer_refs`, which ends `ORDER BY
+ * synced_at DESC`; SQLite sorts NULLs LAST under DESC, so a responder-only
+ * peer (`synced_at IS NULL`, `streamed_at` recent) arrives at the very bottom
+ * of the backend's list, interleaved with the peers that genuinely never
+ * synced. Rendering that order unchanged showed such a peer "Last: 5m ago"
+ * while placing it below a peer labelled "Never synced" — the exact split
+ * `comparePeers` exists to close on the device list.
+ *
+ * These pin the *rendered* order, in backend order, so the component cannot
+ * quietly go back to rendering `peers` as given.
+ */
+describe('PairingPeersList — order matches the last-sync activity it displays (#4084)', () => {
+  const row = (over: Partial<PeerRef>): PeerRef => ({
+    peer_id: 'peer-x',
+    last_hash: null,
+    last_sent_hash: null,
+    streamed_at: null,
+    synced_at: null,
+    reset_count: 0,
+    last_reset_at: null,
+    cert_hash: null,
+    device_name: null,
+    last_address: null,
+    endpoint_id: null,
+    ...over,
+  })
+
+  /** The rendered peer ids, top to bottom. */
+  const renderedOrder = (container: HTMLElement): string[] =>
+    Array.from(container.querySelectorAll('.pairing-peer-item p.font-mono')).map(
+      (el) => el.textContent ?? '',
+    )
+
+  it('lifts a responder-only peer above the genuinely-never-synced ones', () => {
+    // Exactly the shape `ORDER BY synced_at DESC` hands us: the one peer with
+    // a non-NULL synced_at first, then the NULL-synced_at rows — the
+    // responder-only peer buried among them.
+    const backendOrder = [
+      row({ peer_id: 'peer-pulled-long-ago', synced_at: 1000 }),
+      row({ peer_id: 'peer-never-synced', synced_at: null, streamed_at: null }),
+      row({ peer_id: 'peer-responder-only', synced_at: null, streamed_at: 9000 }),
+    ]
+
+    const { container } = render(<PairingPeersList peers={backendOrder} onUnpair={vi.fn()} />)
+
+    expect(renderedOrder(container)).toEqual([
+      'peer-responder-only', // streamed_at 9000 — the most recent activity
+      'peer-pulled-long-ago', // synced_at 1000
+      'peer-never-synced', // no activity at all
+    ])
+  })
+
+  it('applies the same named-first rule as the device list', () => {
+    const backendOrder = [
+      row({ peer_id: 'peer-unnamed', synced_at: 9999 }),
+      row({ peer_id: 'peer-named', device_name: 'Pixel 8', synced_at: null }),
+    ]
+
+    const { container } = render(<PairingPeersList peers={backendOrder} onUnpair={vi.fn()} />)
+
+    expect(renderedOrder(container)).toEqual(['peer-named', 'peer-unnamed'])
+  })
+
+  it('does not mutate the caller-owned peers array', () => {
+    const backendOrder = [
+      row({ peer_id: 'peer-b', synced_at: null, streamed_at: 9000 }),
+      row({ peer_id: 'peer-a', synced_at: 1000 }),
+    ]
+    const before = backendOrder.map((p) => p.peer_id)
+
+    render(<PairingPeersList peers={backendOrder} onUnpair={vi.fn()} />)
+
+    expect(backendOrder.map((p) => p.peer_id)).toEqual(before)
+  })
+
+  it('unpairs the peer whose row was clicked, not the one at that backend index', async () => {
+    const user = userEvent.setup()
+    const onUnpair = vi.fn()
+    const backendOrder = [
+      row({ peer_id: 'peer-never-synced', synced_at: null, streamed_at: null }),
+      row({ peer_id: 'peer-responder-only', synced_at: null, streamed_at: 9000 }),
+    ]
+
+    render(<PairingPeersList peers={backendOrder} onUnpair={onUnpair} />)
+
+    const unpairBtns = screen.getAllByRole('button', { name: /Unpair/i })
+    await user.click(unpairBtns[0] as HTMLElement)
+
+    expect(onUnpair).toHaveBeenCalledWith('peer-responder-only')
   })
 })

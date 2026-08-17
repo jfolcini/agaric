@@ -36,6 +36,13 @@ pub struct PeerRef {
     /// The scheduler (`peers_due_for_resync`) still reads `synced_at` **only**:
     /// treating a recent stream as "not due" would reintroduce exactly the
     /// #610 starvation this column exists to avoid.
+    // Not a doc comment on purpose: specta exports `///` into
+    // `src/lib/bindings.ts`, and the `_ms`-suffix rationale below is a DB
+    // convention note with nothing to say to a TypeScript consumer of
+    // `PeerRef`. The full reasoning lives in `migrations/AGENTS.md` under
+    // "Known exceptions"; the short version is that this column is always
+    // read paired with `synced_at`, so suffixing one half would imply the
+    // encodings differ.
     pub streamed_at: Option<i64>,
     pub reset_count: i64,
     /// Most recent protocol reset, in milliseconds since the UNIX epoch

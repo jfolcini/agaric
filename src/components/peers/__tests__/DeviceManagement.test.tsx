@@ -22,7 +22,12 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { comparePeers, DeviceManagement } from '@/components/peers/DeviceManagement'
+import { DeviceManagement } from '@/components/peers/DeviceManagement'
+// #4084 (review): `comparePeers` moved to `@/lib/peer-sync-activity` so the
+// pairing dialog's list can apply the same order without importing
+// `DeviceManagement` (which imports `PairingDialog`, which renders
+// `PairingPeersList` — a cycle).
+import { comparePeers } from '@/lib/peer-sync-activity'
 import { PREFERENCES } from '@/lib/preferences'
 import type { PeerRef } from '@/lib/tauri'
 

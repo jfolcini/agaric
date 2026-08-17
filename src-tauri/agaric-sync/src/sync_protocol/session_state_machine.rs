@@ -287,10 +287,17 @@ impl SyncOrchestrator {
         out
     }
 
-    /// Set the expected remote device_id for peer identity validation.
+    /// Set the authoritative remote device_id for this session.
     ///
-    /// When set, the orchestrator will reject HeadExchange messages where
-    /// the remote device_id does not match this value.
+    /// When set, this value **wins**: the `HeadExchange` arm takes it verbatim
+    /// instead of deriving an id from the peer's advertised heads. It does NOT
+    /// reject anything — there is no comparison against the advertised heads
+    /// and no error path, because #2481 made the heads an unreliable identity
+    /// (a peer advertises the frontier of *every* device it holds, so the
+    /// first non-self head belongs to a third device as often as to the peer),
+    /// and rejecting on a disagreement would false-fail a legitimate
+    /// multi-device peer. The heads are consulted only when this is `None` —
+    /// the cert-less in-memory test path.
     ///
     /// # Why this seeds the session's `remote_device_id` too (#4085)
     ///

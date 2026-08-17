@@ -5544,3 +5544,174 @@ async fn page_link_cache_incremental_skips_dangling_rollup_keys_3894() {
          no `blocks` row and still write the clean page-keyed row"
     );
 }
+
+// ----------------------------------------------------------------------
+// 0111 — peer_refs.streamed_at (#4084)
+// ----------------------------------------------------------------------
+
+/// The sibling of `peer_refs_0107_endpoint_id_add_preserves_existing_rows_3464`,
+/// one column later: `streamed_at` is a nullable `ADD COLUMN` on the same table,
+/// so the same claim has to hold — a database that already holds `peer_refs`
+/// rows keeps every one of them, byte for byte, and the new column reads NULL
+/// rather than being invented.
+///
+/// Low risk is not the same as no risk, and the two things worth pinning here
+/// are the ones a well-meaning follow-up would get wrong:
+///
+/// * **No backfill.** `loro_vv_bytes` proves a stream happened, so it is
+///   tempting to seed `streamed_at` from *something* for those rows. There is
+///   nothing to seed it from — the version vector carries no timestamp — and a
+///   fabricated one would go straight into the device list as
+///   `MAX(synced_at, streamed_at)`, i.e. the UI would report a stream at a time
+///   it cannot know. NULL is the true state.
+/// * **No DEFAULT.** The column must read NULL, not 0. `0` is a real epoch-ms
+///   instant (1970-01-01), which is why the TS fold is null-safe rather than
+///   truthy; a `DEFAULT 0` would make every pre-existing peer claim it streamed
+///   at the epoch and sort ahead of the peers that genuinely never did.
+#[tokio::test]
+async fn peer_refs_0111_streamed_at_add_preserves_existing_rows_4084() {
+    let (pool, _dir) = unmigrated_pool().await;
+    // 0110 is the last migration before streamed_at arrives.
+    apply_migrations_through(&pool, 0, 110).await;
+
+    let vv: Vec<u8> = vec![0x00, 0xff, 0x10, 0x42];
+    let endpoint_id = "b".repeat(64);
+    sqlx::query(
+        "INSERT INTO peer_refs \
+             (peer_id, last_hash, last_sent_hash, synced_at, reset_count, \
+              last_reset_at, cert_hash, device_name, last_address, loro_vv_bytes, \
+              endpoint_id) \
+             VALUES ('PEER4084A', 'h-recv', 'h-sent', 1700000000000, 3, \
+                     1700000001000, ?, \"Javier's Phone\", '192.168.1.9:7777', ?, ?)",
+    )
+    .bind("a".repeat(64))
+    .bind(&vv)
+    .bind(&endpoint_id)
+    .execute(&pool)
+    .await
+    .expect("seed a fully-populated pre-0111 peer row");
+
+    // The row shape #4084 is actually about: a responder-only device, whose
+    // ONLY populated columns are `endpoint_id` and `loro_vv_bytes`. It is also
+    // the NULL-everywhere-else shape an ADD COLUMN is most likely to get wrong
+    // by supplying a default.
+    sqlx::query("INSERT INTO peer_refs (peer_id, loro_vv_bytes) VALUES ('PEER4084B', ?)")
+        .bind(&vv)
+        .execute(&pool)
+        .await
+        .expect("seed a responder-only pre-0111 peer row");
+
+    apply_migrations_to_head(&pool, 110).await;
+
+    let surviving: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM peer_refs WHERE peer_id LIKE 'PEER4084%'")
+            .fetch_one(&pool)
+            .await
+            .expect("count peer_refs after 0111");
+    assert_eq!(
+        surviving, 2,
+        "0111 is an ADD COLUMN — every pre-existing peer_refs row must survive it"
+    );
+
+    #[allow(clippy::type_complexity)]
+    let row: (
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<Vec<u8>>,
+        Option<String>,
+        Option<i64>,
+    ) = sqlx::query_as(
+        "SELECT last_hash, last_sent_hash, synced_at, reset_count, last_reset_at, \
+                cert_hash, device_name, last_address, loro_vv_bytes, endpoint_id, \
+                streamed_at \
+           FROM peer_refs WHERE peer_id = 'PEER4084A'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read the populated peer row back after 0111");
+
+    assert_eq!(
+        row.0.as_deref(),
+        Some("h-recv"),
+        "last_hash must survive 0111"
+    );
+    assert_eq!(
+        row.1.as_deref(),
+        Some("h-sent"),
+        "last_sent_hash must survive 0111"
+    );
+    assert_eq!(
+        row.2,
+        Some(1_700_000_000_000),
+        "synced_at must survive 0111 — the column 0111 exists NOT to disturb"
+    );
+    assert_eq!(row.3, 3, "reset_count must survive 0111");
+    assert_eq!(
+        row.4,
+        Some(1_700_000_001_000),
+        "last_reset_at must survive 0111"
+    );
+    assert_eq!(
+        row.5.as_deref(),
+        Some("a".repeat(64).as_str()),
+        "cert_hash must survive 0111 (#3464: a column losing its last reader is \
+         still not a reason to drop or disturb it)"
+    );
+    assert_eq!(
+        row.6.as_deref(),
+        Some("Javier's Phone"),
+        "device_name must survive 0111"
+    );
+    assert_eq!(
+        row.7.as_deref(),
+        Some("192.168.1.9:7777"),
+        "last_address must survive 0111"
+    );
+    assert_eq!(
+        row.8,
+        Some(vv.clone()),
+        "loro_vv_bytes must survive 0111 verbatim"
+    );
+    assert_eq!(
+        row.9.as_deref(),
+        Some(endpoint_id.as_str()),
+        "endpoint_id must survive 0111"
+    );
+    assert_eq!(
+        row.10, None,
+        "0111 must NOT backfill streamed_at — nothing in an existing row records \
+         WHEN we last streamed, and a fabricated timestamp would be rendered to \
+         the user as MAX(synced_at, streamed_at)"
+    );
+
+    // The responder-only row: the one whose reading #4084 is about.
+    let (streamed, vv_back, synced): (Option<i64>, Option<Vec<u8>>, Option<i64>) = sqlx::query_as(
+        "SELECT streamed_at, loro_vv_bytes, synced_at FROM peer_refs WHERE peer_id = 'PEER4084B'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read the responder-only peer row back after 0111");
+    assert_eq!(
+        streamed, None,
+        "0111 adds streamed_at with no DEFAULT — it must read NULL, not 0. `0` is \
+         a real epoch-ms instant, so a defaulted row would claim it streamed at \
+         1970-01-01 and sort ahead of the peers that genuinely never streamed"
+    );
+    assert_eq!(
+        vv_back,
+        Some(vv),
+        "loro_vv_bytes — the authoritative frontier, and the only evidence a \
+         responder-only device has ever synced at all — must survive 0111 verbatim"
+    );
+    assert_eq!(
+        synced, None,
+        "0111 must not invent a synced_at either; #610 reserves that column for \
+         the puller and the scheduler measures staleness from it"
+    );
+}

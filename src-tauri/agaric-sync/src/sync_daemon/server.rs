@@ -658,12 +658,14 @@ async fn handle_incoming_sync_inner(
     _session_activity = Some(scheduler.begin_session_activity());
 
     // Build the orchestrator now that identity is settled. `expected_remote_id` is set
-    // only from a *bound* row: it is authoritative there, and the FSM rejects a
-    // `HeadExchange` that disagrees with it. It is deliberately NOT set from
-    // `claimed_id`, because #2481 frontier advertisement makes the first non-self head
-    // an unreliable identity and a mismatch would false-fail a legitimate multi-device
-    // peer. With it unset the FSM falls back to the same heads-derived id, which is
-    // exactly what the old cert-less path did.
+    // only from a *bound* row: it is authoritative there, and the FSM takes it verbatim
+    // in preference to the id it would otherwise derive from the peer's advertised
+    // heads. It does NOT reject a disagreeing `HeadExchange` — the advertised heads are
+    // never compared against it, precisely because #2481 frontier advertisement makes
+    // the first non-self head an unreliable identity and a mismatch would false-fail a
+    // legitimate multi-device peer. It is deliberately NOT set from `claimed_id` for the
+    // same reason; with it unset the FSM falls back to the same heads-derived id, which
+    // is exactly what the old cert-less path did.
     let mut orch = SyncOrchestrator::new(pool, device_id.clone(), materializer)
         .with_event_sink(event_sink_box);
     if !pairing_pending && !remote_id.is_empty() {
