@@ -163,10 +163,38 @@ export function BlockListRenderer({
       return prev.value
     }
     const styleOf = (id: string): ListStyle => listStyles.get(id) ?? 'none'
-    const value: ListMarkerValue = { styleOf, ordinalOf: (id) => ordinals.get(id) }
-    prevMarkerRef.current = { listStyles, ordinals, value }
-    return value
+    return { styleOf, ordinalOf: (id) => ordinals.get(id) }
   }, [listStyles, ordinals])
+
+  // #4012 item 3 — the cache is populated AFTER commit, never during render.
+  // This memo previously assigned `prevMarkerRef.current` inline, which made
+  // render impure: under concurrent rendering React may run (and then discard)
+  // a render whose output is never committed, and such a render would still
+  // have published its `listStyles`/`ordinals`/`value` triple as "previous" —
+  // so a later render could reuse a value derived from state the tree never
+  // actually showed. Syncing in an effect confines the WRITE to commit.
+  //
+  // The memo above still READS the mutable ref during render, so the render is
+  // not PURE — it is merely SAFE, and only because of this effect: the ref can
+  // now only ever hold a triple the tree actually committed, so whatever a
+  // render reads is a value that really was published, whether or not that
+  // render is itself thrown away.
+  //
+  // The tradeoff, stated rather than hidden: this memo is strictly WEAKER than
+  // the render-time write it replaces. Between mount and the first effect flush
+  // the ref is null, so a re-render landing inside that window mints a fresh
+  // `ListMarkerValue` where the old code would have reused one — a new context
+  // identity, hence one extra re-render of every marker consumer, which is
+  // exactly what #3277 exists to suppress. `useLayoutEffect` is what keeps that
+  // window theoretical rather than merely unlikely: it runs before the browser
+  // paints and before this commit can schedule further work, so nothing the
+  // user can see renders while the ref is still null. The reuse gate itself is
+  // unchanged, so from the first flush onward a content edit that leaves every
+  // marker untouched still republishes the same identity and leaves the
+  // memoized rows alone.
+  useLayoutEffect(() => {
+    prevMarkerRef.current = { listStyles, ordinals, value: listMarkerValue }
+  }, [listStyles, ordinals, listMarkerValue])
 
   // #1267 — publish the per-move DnD state to a ref-backed external store with
   // per-id subscription instead of threading `projected`/`overId`/`dropAfter`

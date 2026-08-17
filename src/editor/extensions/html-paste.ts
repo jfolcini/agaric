@@ -44,18 +44,6 @@ import { useBlockStore } from '@/stores/blocks'
 const htmlPastePluginKey = new PluginKey('htmlPaste')
 
 /**
- * Decide whether a clipboard `text/html` payload is worth converting. Rejects
- * the absent / empty / wrapper-only cases so the handler can fall through to the
- * existing handlers + plain-text paste. Exported for testing.
- *
- * A payload is "usable" when, after stripping tags, it carries some visible text
- * AND it actually contains at least one HTML tag (a `text/html` that is really
- * just escaped plain text has no tags and is better handled by the plain-text
- * path). Browsers commonly wrap a copied fragment in
- * `<html><body><!--StartFragment-->…<!--EndFragment--></body></html>`, so the
- * wrapper alone (no inner text) is correctly rejected.
- */
-/**
  * Parse a clipboard HTML string and return its `body` iff it is "usable" —
  * after stripping tags it carries some visible text AND it actually contains
  * at least one HTML tag (a `text/html` that is really just escaped plain
@@ -76,6 +64,21 @@ const htmlPastePluginKey = new PluginKey('htmlPaste')
  * A `null` return IS `handlePaste`'s "not usable" answer — the handler returns
  * false and the paste falls through to the plain-text path — so the usability
  * assertions belong here and nowhere else (#4008 note 2).
+ *
+ * DELIBERATELY NOT CARRIED OVER from the `isUsableHtml` boolean gate this
+ * replaced (#4012 item 2): that function had a `/<[a-zA-Z][\s\S]*>/` regex
+ * fallback for hosts with no `DOMParser`, answering "usable" from the raw
+ * string. Here, no `DOMParser` means `null` — "not usable". The behavioural
+ * difference is confined to such a host: the old path claimed the paste and
+ * then landed the payload via `insertPlainText` (its own `parseHtmlBody`
+ * returned null too, so conversion could never run); this one declines the
+ * paste, and the browser's default handler runs instead. `DOMParser` is
+ * universally available in every environment this app ships to, so the branch
+ * is unreachable in production — which is exactly why the regex was dropped
+ * rather than reimplemented: #3277 removed the gate's second, redundant parse,
+ * and carrying the fallback forward would have re-pinned dead code (the six
+ * assertions #4008 retargeted). The guard stays as a cheap total-function
+ * contract, not as a supported mode.
  *
  * @internal Exported for testing.
  */

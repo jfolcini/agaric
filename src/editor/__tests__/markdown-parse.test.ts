@@ -26,6 +26,7 @@ import {
   orderedList,
   paragraph,
   table,
+  tableCell,
   tableHeader,
   tableRow,
   task,
@@ -414,5 +415,191 @@ describe('parse — a lone table-separator line pasted as its own block (#3274)'
         table(tableRow(tableHeader(paragraph(text('---'))), tableHeader(paragraph(text('---'))))),
       ),
     )
+  })
+})
+
+// -- #4003: an ambiguous dash-only row 1 in FOREIGN markdown --------------
+// #3274 made the delimiter test POSITIONAL (only row 1 can be a separator),
+// which is correct for markdown we produced ourselves: `serializeTable`
+// always synthesizes `[header, separator, …data]`, so a real data row can
+// never land at index 1. Foreign markdown carries no such guarantee — a
+// table that never had a delimiter row, whose FIRST row of data happens to
+// be dash-only, had that row read as the separator and dropped.
+//
+// The discriminator is the cell SHAPE, not its width: every legal GFM
+// delimiter cell (`:?-+:?`) is honoured, and the sole carve-out is the row
+// whose every cell is a bare `-` with nothing following it — the one form that
+// reads equally well as a placeholder value. The boundary itself is pinned
+// shape by shape in the describe below this one.
+describe('parse — an ambiguous dash-only row 1 in foreign markdown (#4003)', () => {
+  it('keeps a short-dash row 1 as DATA when nothing follows it', () => {
+    // The reported shape. Both rows are the user's content; dropping row 1
+    // silently destroyed half the pasted table.
+    expect(parse('| Name | Value |\n| - | - |')).toEqual(
+      doc(
+        table(
+          tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value')))),
+          // Also pins the #4019 marker-tolerance interaction: a `-` cell is a
+          // bullet-marker SHAPE, but cell text is parsed inline (`parseLine`),
+          // never through the block productions, so it stays literal text and
+          // does not become a `bulletList`.
+          tableRow(tableCell(paragraph(text('-'))), tableCell(paragraph(text('-')))),
+        ),
+      ),
+    )
+  })
+
+  it('the kept row survives serialization (a canonical delimiter is synthesized)', () => {
+    const reparsed = parse('| Name | Value |\n| - | - |')
+    const md = serialize(reparsed)
+    expect(md).toBe('| Name | Value |\n| --- | --- |\n| - | - |')
+    // Fixed point: the synthesized `---` is now at index 1, so the kept row
+    // sits at index 2 where #3274's positional rule already protects it.
+    expect(parse(md)).toEqual(reparsed)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  // The two arms below are the counterweight: without them the fix could
+  // "pass" by never treating any row as a delimiter.
+  it('still reads a CANONICAL `---` row 1 as the delimiter (our header-only table)', () => {
+    expect(parse('| a |\n| --- |')).toEqual(doc(table(tableRow(tableHeader(paragraph(text('a')))))))
+  })
+
+  it('still reads a SHORT-dash row 1 as the delimiter when data rows follow it', () => {
+    expect(parse('| Name | Value |\n| - | - |\n| a | b |')).toEqual(
+      doc(
+        table(
+          tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value')))),
+          tableRow(tableCell(paragraph(text('a'))), tableCell(paragraph(text('b')))),
+        ),
+      ),
+    )
+  })
+
+  it('still reads an ALIGNED short-dash row 1 as the delimiter when data follows', () => {
+    expect(parse('| Name | Value |\n| :- | -: |\n| a | b |')).toEqual(
+      doc(
+        table(
+          tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value')))),
+          tableRow(tableCell(paragraph(text('a'))), tableCell(paragraph(text('b')))),
+        ),
+      ),
+    )
+  })
+})
+
+// -- The delimiter/data boundary at row 1, pinned per SHAPE ------------------
+// #4003's carve-out is narrow and the exact width of it matters, because both
+// sides of the boundary are silent: too wide and a delimiter the author wrote
+// renders as a junk data row; too narrow and a real data row is dropped.
+//
+// The rule `isSeparatorRow` implements: row 1 is the delimiter when EVERY cell
+// is a legal GFM delimiter cell (optional colons around ONE or more dashes) —
+// unless reading it as the delimiter would leave the table with no data at all
+// AND the row is the single shape that reads equally well as content: every
+// cell exactly `-`. Dash WIDTH is not the discriminator, so `--`, mixed widths
+// and any colon-carrying form stay delimiters even in a two-line table.
+describe('parse — the delimiter/data boundary at table row 1', () => {
+  const HEADER = '| Name | Value |'
+  const headerRow = () =>
+    tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value'))))
+  const dataRow = (a: string, b: string) =>
+    tableRow(tableCell(paragraph(text(a))), tableCell(paragraph(text(b))))
+
+  // Every legal delimiter shape EXCEPT the minimal `-`-per-cell one. With
+  // nothing following, each of these is a header-only table: honouring the
+  // delimiter is what the author wrote, and keeping it would render a visible
+  // junk row of dashes.
+  const UNAMBIGUOUS_DELIMITERS: readonly [string, string][] = [
+    ['2 dashes', '| -- | -- |'],
+    ['3 dashes — canonical, what our own serializer emits', '| --- | --- |'],
+    ['more than 3 dashes', '| ----- | ----- |'],
+    ['mixed widths', '| --- | - |'],
+    ['mixed widths, reversed', '| - | --- |'],
+    ['left/right aligned short form', '| :- | -: |'],
+    ['centre/right aligned canonical', '| :---: | ---: |'],
+    ['a single colon-carrying cell alongside a bare dash', '| :- | - |'],
+  ]
+
+  it.each(UNAMBIGUOUS_DELIMITERS)(
+    'row 1 (%s) is the delimiter even with NO rows following',
+    (_shape, delimiter) => {
+      expect(parse(`${HEADER}\n${delimiter}`)).toEqual(doc(table(headerRow())))
+    },
+  )
+
+  it.each([...UNAMBIGUOUS_DELIMITERS, ['1 dash', '| - | - |'] as [string, string]])(
+    'row 1 (%s) is the delimiter when a data row FOLLOWS',
+    (_shape, delimiter) => {
+      expect(parse(`${HEADER}\n${delimiter}\n| a | b |`)).toEqual(
+        doc(table(headerRow(), dataRow('a', 'b'))),
+      )
+    },
+  )
+
+  it('the ONE exception — every cell exactly `-`, nothing following — is DATA (#4003)', () => {
+    expect(parse(`${HEADER}\n| - | - |`)).toEqual(doc(table(headerRow(), dataRow('-', '-'))))
+  })
+
+  it('honours a delimiter written without the closing pipe, which GFM also allows', () => {
+    // The rule is now per-CELL, so it no longer needs the row to end in `|` —
+    // the previous whole-row shape regex did, and rejected this legal form.
+    expect(parse('| Name | Value\n| --- | ---')).toEqual(doc(table(headerRow())))
+  })
+
+  it('a row of EMPTY cells is data — no cell carries a dash, so no cell is a delimiter (#3274)', () => {
+    const result = parse(`${HEADER}\n|  |  |`)
+    const block = result.content?.[0]
+    const rows = block?.type === 'table' ? block.content : undefined
+    expect(rows).toHaveLength(2)
+    // An empty cell parses to `content: []`, which no builder emits, so this
+    // arm asserts the shape directly rather than via `toEqual(doc(…))`.
+    expect(rows?.[1]?.content?.map((cell) => cell.content)).toEqual([[], []])
+  })
+
+  // An EMPTY cell alongside dash cells is a MALFORMED delimiter (GFM wants one
+  // cell per header column), not data — nobody writes `---` as a value. So an
+  // empty cell neither qualifies nor disqualifies the row: the DASH cells
+  // decide it, and the row of ONLY empty cells above still has no dash cell to
+  // decide with, so it stays data.
+  const SHORT_DELIMITERS: readonly [string, string][] = [
+    ['a trailing empty cell', '| --- |  |'],
+    ['a leading empty cell', '|  | --- |'],
+    ['an empty cell beside an aligned cell', '| :---: |  |'],
+  ]
+
+  it.each(SHORT_DELIMITERS)(
+    'row 1 (%s) is a malformed DELIMITER, not a junk data row, with NO rows following',
+    (_shape, delimiter) => {
+      expect(parse(`${HEADER}\n${delimiter}`)).toEqual(doc(table(headerRow())))
+    },
+  )
+
+  it.each(SHORT_DELIMITERS)(
+    'row 1 (%s) is a malformed DELIMITER, not a junk data row, when a data row FOLLOWS',
+    (_shape, delimiter) => {
+      expect(parse(`${HEADER}\n${delimiter}\n| a | b |`)).toEqual(
+        doc(table(headerRow(), dataRow('a', 'b'))),
+      )
+    },
+  )
+
+  it('a bare-dash cell beside an empty one, nothing following, is still DATA (#4003)', () => {
+    // The ambiguity carve-out judges the cells that carry dashes: every one of
+    // them is a bare `-`, so the placeholder reading wins as it does for
+    // `| - | - |`, and the row is kept rather than leaving an empty table.
+    const result = parse(`${HEADER}\n| - |  |`)
+    const block = result.content?.[0]
+    const rows = block?.type === 'table' ? block.content : undefined
+    expect(rows).toHaveLength(2)
+    expect(rows?.[1]?.content?.map((cell) => cell.content)).toEqual([[paragraph(text('-'))], []])
+  })
+
+  it('a row of EMPTY cells stays data even when rows FOLLOW it (#3274)', () => {
+    const result = parse(`${HEADER}\n|  |  |\n| a | b |`)
+    const block = result.content?.[0]
+    const rows = block?.type === 'table' ? block.content : undefined
+    expect(rows).toHaveLength(3)
+    expect(rows?.[1]?.content?.map((cell) => cell.content)).toEqual([[], []])
   })
 })
