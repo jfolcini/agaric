@@ -32,6 +32,13 @@
 // real rather than hypothetical). This file is exempt too: it necessarily
 // contains the offending patterns as detector fixtures.
 //
+// Exemptions are PER RULE where one rule is enough. The two file-source
+// helpers are waived from rule 1 alone (`SCRUB_EXEMPT_BASENAMES`) and are
+// still enumerated, opened and judged by rule 2 — because a file skipped
+// before either rule runs cannot honestly be described as "still caught if it
+// ever built a fixture", and that sentence is the whole justification for
+// excusing it.
+//
 // ─── Why `.mjs` and `.py` are scanned, not just `.sh` (#4015) ─────────────
 //
 // This guard used to enumerate with `entry.name.endsWith('.sh')`, so it
@@ -104,31 +111,45 @@ const SCRIPTS_DIR = join(import.meta.dirname)
 // `.mjs` name what a Node script must be seen to IMPORT.
 const SHARED_GUARD_BASENAME = 'git-scratch-guard.sh'
 const SHARED_GUARD_MJS_BASENAME = 'git-scratch-guard.mjs'
-// Exempt from every check: the two canonical implementations, and this file,
-// which necessarily carries the offending patterns as detector fixtures.
+// Exempt from EVERY check — never opened, neither rule run: the two canonical
+// implementations, and this file, which necessarily carries the offending
+// patterns as detector fixtures.
 const EXEMPT_BASENAMES = new Set([
   SHARED_GUARD_BASENAME,
   SHARED_GUARD_MJS_BASENAME,
   'check-git-fixture-isolation.mjs',
-  // The Python guards' file-source helper (#4017). It is the one place that
-  // decides which INDEX a Python guard reads, and doing that means removing a
-  // foreign `GIT_INDEX_FILE` from a subprocess environment — which rule 1
-  // cannot tell apart from a private copy of the fixture scrub, because
-  // textually it is the same statement.
-  //
-  // Exempt DELIBERATELY and narrowly, rather than reworded to slip past the
-  // detector: `{k: v for k, v in env.items() if k != …}` would pass this scan
-  // today, and writing it that way to avoid a true positive is the evasion
-  // this guard exists to make expensive. What this exemption does NOT excuse
-  // is a fixture: `guard_file_source.py` builds none, and rule 2 (`git` …
-  // `init`) is what would catch it if that ever changed — so the exemption is
-  // recorded here where the next reader sees it, not spent silently.
-  //
-  // The general shape — that rule 1 for `.py` currently reads as "no Python
-  // file may touch a GIT_ variable", since there is no Python sibling to
-  // point at — is a real over-reach and is filed separately.
-  'guard_file_source.py',
 ])
+
+/** Exempt from RULE 1 ONLY (the hand-rolled-scrub detector). The file is
+ * still enumerated, still opened, and rule 2 (`git` … `init`) still judges
+ * it.
+ *
+ * `guard_file_source.py` and its Node twin `guard-file-source.mjs` (#4017)
+ * are the one place per language that decides which INDEX a guard reads, and
+ * doing that means removing a foreign `GIT_INDEX_FILE` from a subprocess
+ * environment (`git_env` / `gitEnv`) — which rule 1 cannot tell apart from a
+ * private copy of the fixture scrub, because textually it is the same
+ * statement. Note this is a PAIR, not a special case: the two files are
+ * ports of each other, and the second one arrived by this guard flagging it.
+ *
+ * Exempt DELIBERATELY and narrowly, rather than reworded to slip past the
+ * detector: `{k: v for k, v in env.items() if k != …}` would pass this scan
+ * today, and writing it that way to avoid a true positive is the evasion this
+ * guard exists to make expensive.
+ *
+ * PER-RULE, not per-file, because the narrower exemption is the one whose
+ * justification is true. The claim worth making about this file is that it
+ * builds no fixture and would be caught if it ever did — and a basename in
+ * `EXEMPT_BASENAMES` is skipped by `listGuardedScripts` before either rule
+ * runs, so under a total exemption that claim was false: the file would never
+ * have been read. Rule 2 is left live so the sentence describes the code.
+ *
+ * The general shape — that rule 1 reads as "no file outside the shared
+ * scrubber may touch a GIT_ variable", with no way to say "this removal is
+ * not a fixture scrub" other than an exemption — is a real over-reach, filed
+ * as #4064 along with rule 2's missing same-call requirement.
+ */
+const SCRUB_EXEMPT_BASENAMES = new Set(['guard_file_source.py', 'guard-file-source.mjs'])
 const EXCLUDED_DIR_NAMES = new Set(['node_modules', '__pycache__', '.git'])
 
 /** Extension -> language tag. The scanned corpus is exactly these keys, and
@@ -145,15 +166,85 @@ export const SCANNED_EXTENSIONS = new Map([
 // Text-level detection
 // ---------------------------------------------------------------------------
 
-/** A Python DOCSTRING, blanked in place.
+/** Python DOCSTRINGS, blanked in place — every triple-quoted string in the
+ * file walked IN ORDER, so a delimiter can only ever be read in the role it
+ * actually plays.
  *
- * Anchored to the start of a line (after indentation, and after any of the
- * `r`/`b`/`u`/`f` string prefixes), which is where a module, class or
- * function docstring always begins and where an argument like
- * `subprocess.run("""git init""", shell=True)` never does. Blanked rather
- * than deleted so line structure — and therefore the per-line detectors
- * below — is unchanged; see `stripLineComments`. */
-const PY_DOCSTRING_RE = /^[ \t]*[rRbBuUfF]{0,2}("""|''')[\s\S]*?\1/gm
+ * A docstring is a triple-quoted literal that OPENS a statement: at the start
+ * of a line, after indentation and after any of the `r`/`b`/`u`/`f` prefixes.
+ * That is where a module, class or function docstring always begins and where
+ * an argument like `subprocess.run("""git init""", shell=True)` never does, so
+ * only those are blanked; every other triple-quoted literal is left as the
+ * code it is.
+ *
+ * WHY A WALK AND NOT A REGEX. This was `/^[ \t]*[rRbBuUfF]{0,2}("""|''')[\s\S]*?\1/gm`,
+ * which asks only "is this delimiter at the start of a line?" — and the
+ * CLOSING delimiter of a multi-line string that opened mid-line is at the
+ * start of a line too. Measured, before the fix:
+ *
+ *     SQL = """
+ *     select 1
+ *     """
+ *     subprocess.run(["git", "init"])
+ *     """trailing"""
+ *
+ * the line-3 `"""` matched as an OPENER and `[\s\S]*?` blanked forward to the
+ * line-5 delimiter, erasing the fixture spawn on line 4 — `hasFixtureGitInit`
+ * returned false. A false negative in exactly the language #4015 widened the
+ * scan to cover, produced by the strip rather than by the detector. Walking
+ * from the top means the line-1 `"""` is entered as a non-docstring literal
+ * and its own closing delimiter on line 3 is CONSUMED as a close, so nothing
+ * downstream can mistake it for an opener.
+ *
+ * Two deliberate conservatisms, both erring toward reporting rather than
+ * hiding (the direction this guard's failures must take):
+ *
+ *   * an UNTERMINATED literal ends the walk and leaves the remainder of the
+ *     file untouched, rather than blanking to EOF — a file that would blank
+ *     its own tail is a file whose fixture spawns stop being visible;
+ *   * a delimiter escaped inside a literal (`"""a \""" b"""`) is not modelled,
+ *     exactly as the previous regex did not model it.
+ *
+ * Blanked rather than deleted so line structure — and therefore the per-line
+ * detectors below — is unchanged; see `stripLineComments`. */
+function blankPyDocstrings(text) {
+  const DELIM_RE = /"""|'''/g
+  let out = ''
+  let pos = 0
+  for (;;) {
+    DELIM_RE.lastIndex = pos
+    const open = DELIM_RE.exec(text)
+    if (open === null) {
+      out += text.slice(pos)
+      break
+    }
+    // Back up over an `r`/`b`/`u`/`f` string prefix (at most two characters),
+    // so `r"""…` at the head of a line still reads as line-initial.
+    let litStart = open.index
+    while (
+      litStart > pos &&
+      open.index - litStart < 2 &&
+      /[rRbBuUfF]/.test(text[litStart - 1] ?? '')
+    ) {
+      litStart -= 1
+    }
+    const lineStart = text.lastIndexOf('\n', litStart - 1) + 1
+    const isDocstring = /^[ \t]*$/.test(text.slice(lineStart, litStart))
+    const close = text.indexOf(open[0], open.index + 3)
+    if (close === -1) {
+      // Unterminated. Leave everything from here on as-is — see above.
+      out += text.slice(pos)
+      break
+    }
+    const end = close + 3
+    out += text.slice(pos, litStart)
+    out += isDocstring
+      ? text.slice(litStart, end).replace(/[^\n]/g, ' ')
+      : text.slice(litStart, end)
+    pos = end
+  }
+  return out
+}
 
 /** Drop whole-line comments — a comment merely NAMING `git init` or
  * `GIT_DIR` in prose (every migrated script's docstring does this, on
@@ -186,7 +277,7 @@ export function stripLineComments(text, lang = 'sh') {
           // `\n`, and deleting a multi-line docstring would splice the line
           // above it onto the line below and invent a statement neither one
           // contains. (The `.mjs` branch predates this and is left alone.)
-          text.replace(PY_DOCSTRING_RE, (m) => m.replace(/[^\n]/g, ' '))
+          blankPyDocstrings(text)
         : text
   const commentRe = lang === 'mjs' ? /^\s*\/\// : /^\s*#/
   return body
@@ -320,10 +411,12 @@ export function sourcesSharedGuard(text, lang = 'sh') {
 // ---------------------------------------------------------------------------
 
 /** Every `.sh`, `.mjs` and `.py` file under `dir`, recursively, as
- * `{ path, lang, text }` with `path` relative to `dir` (posix-separated, so
- * messages are stable across platforms) — except the canonical helpers and
- * this file, which are exempt (see the header). Sorted for deterministic
- * output. */
+ * `{ path, lang, text, scrubExempt }` with `path` relative to `dir`
+ * (posix-separated, so messages are stable across platforms) — except the
+ * canonical helpers and this file, which are exempt from everything (see the
+ * header). `scrubExempt` marks the files `SCRUB_EXEMPT_BASENAMES` excuses
+ * from rule 1 only; they are enumerated and read like any other file so
+ * rule 2 still judges them. Sorted for deterministic output. */
 export function listGuardedScripts(dir) {
   const out = []
   const walk = (d) => {
@@ -347,6 +440,7 @@ export function listGuardedScripts(dir) {
         path: relative(dir, full).split(sep).join('/'),
         lang: SCANNED_EXTENSIONS.get(ext),
         text: readFileSync(full, 'utf8'),
+        scrubExempt: SCRUB_EXEMPT_BASENAMES.has(entry.name),
       })
     }
   }
@@ -377,9 +471,11 @@ const HAZARD =
  * through the shared guard for its language. */
 export function checkFixtureIsolation(files) {
   const problems = []
-  for (const { path, lang, text } of files) {
+  for (const { path, lang, text, scrubExempt = false } of files) {
     const helper = SHARED_GUARD_FOR[lang]
-    if (hasHandRolledGitEnvUnset(text, lang)) {
+    // Rule 1 only is waived for a `SCRUB_EXEMPT_BASENAMES` file; rule 2 below
+    // runs on it exactly as it runs on everything else.
+    if (!scrubExempt && hasHandRolledGitEnvUnset(text, lang)) {
       problems.push(
         `${path}: hand-rolls its own git-environment scrub instead of using ` +
           `${helper ?? 'a shared helper'} (#3722) — every private copy of this scrub is ` +
@@ -683,6 +779,68 @@ function selfTestDetection({ check }) {
       'sees the statement below it',
     '',
   )
+
+  // ── A CLOSING delimiter is not an opener ────────────────────────────────
+  //
+  // The strip used to ask only "is this triple-quote at the start of a
+  // line?", which the closing delimiter of a multi-line string that opened
+  // MID-line also satisfies. It then blanked forward to the next delimiter,
+  // erasing the code in between. Both arms, because a strip that simply
+  // stopped blanking anything would satisfy the first assertion alone and
+  // hand back every docstring in the repo as code — the false positive the
+  // blanking was added to end.
+  check(
+    hasFixtureGitInit(
+      'SQL = """\nselect 1\n"""\nsubprocess.run(["git", "init"])\n"""trailing"""\n',
+      'py',
+    ) === true,
+    'py: a fixture spawn BELOW the closing delimiter of a mid-line multi-line string is still ' +
+      'detected — the close is consumed as a close, not re-read as an opener',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset(
+      'SQL = """\nselect 1\n"""\ndel os.environ["GIT_DIR"]\n"""trailing"""\n',
+      'py',
+    ) === true,
+    'py: the same hole in the SCRUB detector — a `del os.environ[...]` hidden behind a closing ' +
+      'delimiter is still seen',
+    '',
+  )
+  check(
+    hasFixtureGitInit(
+      '"""Module prose.\n\nWe never run `git` `init` here; the fixture is built in shell.\n"""\n' +
+        'import subprocess\nsubprocess.run(["git", "status"])\n',
+      'py',
+    ) === false,
+    'py: a genuine MULTI-LINE module docstring naming `git`/`init` in prose is still blanked ' +
+      'whole and is not a false positive (the arm the walk must not break)',
+    '',
+  )
+  check(
+    hasFixtureGitInit(
+      'def build(d):\n    """Prose.\n\n    Mentions "git" and "init" only in words.\n    """\n' +
+        '    return d\n',
+      'py',
+    ) === false,
+    'py: an INDENTED multi-line function docstring is a docstring too — the line-initial test ' +
+      'allows leading whitespace',
+    '',
+  )
+  check(
+    hasFixtureGitInit('SQL = """\nselect 1\nsubprocess.run(["git", "init"])\n', 'py') === true,
+    'py: an UNTERMINATED literal leaves the rest of the file scanned rather than blanking to ' +
+      'EOF — the conservative direction is to report, not to hide',
+    '',
+  )
+  check(
+    hasFixtureGitInit(
+      'r"""Raw prose about `git init`."""\nimport subprocess\nsubprocess.run(["git", "log"])\n',
+      'py',
+    ) === false,
+    'py: an `r`-prefixed docstring is recognised as line-initial (the prefix is stepped back over)',
+    '',
+  )
 }
 
 /** `checkFixtureIsolation` against real files on disk, not just parsed
@@ -818,6 +976,50 @@ function selfTestDiskScan({ check }) {
       'subprocess.run(["git", "ls-files", "-s", "-z"], capture_output=True)',
       '',
     ].join('\n')
+    // (o) the `.py` twin of (f): the fixture spawn is hidden not by a line
+    // continuation but by the CLOSING delimiter of a multi-line string, which
+    // the old line-initial strip read as an opener and blanked forward from.
+    // On disk rather than only as a parsed string, because the strip runs on
+    // whole files and this is the shape a real module carries it in.
+    const closingDelimiterPy = [
+      'SQL = """',
+      'select 1',
+      '"""',
+      'subprocess.run(["git", "init"])',
+      '"""trailing"""',
+      '',
+    ].join('\n')
+    // (p) the PER-RULE exemption, both arms. `SCRUB_EXEMPT_BASENAMES` waives
+    // rule 1 for this basename and nothing else, so:
+    //   - a file that only scrubs is clean…
+    const scrubExemptPy = [
+      'import os',
+      'env = dict(os.environ)',
+      'del env["GIT_INDEX_FILE"]',
+      '',
+    ].join('\n')
+    //   - …and the same basename BUILDING A FIXTURE is still reported, by
+    //     rule 2, which is the claim the exemption's justification makes. A
+    //     basename in `EXEMPT_BASENAMES` is skipped before either rule runs,
+    //     so under a total exemption this file would be silently clean.
+    const scrubExemptWithFixturePy = [
+      'import os, subprocess',
+      'env = dict(os.environ)',
+      'del env["GIT_INDEX_FILE"]',
+      'subprocess.run(["git", "-C", str(tmp), "init", "-q"], check=True)',
+      '',
+    ].join('\n')
+    //   - …and the same, per language: the exemption is a PAIR (`git_env` /
+    //     `gitEnv`), so the Node twin is asserted too. Its rule-2 message is
+    //     a different sentence from Python's, and an exemption proven in one
+    //     language only is an exemption half-proven.
+    const scrubExemptWithFixtureMjs = [
+      "import { execFileSync } from 'node:child_process'",
+      'const env = { ...process.env }',
+      'delete env.GIT_INDEX_FILE',
+      "execFileSync('git', ['init', '-q'], { cwd: dir, env })",
+      '',
+    ].join('\n')
 
     writeFileSync(join(dir, 'good.sh'), good, 'utf8')
     writeFileSync(join(dir, 'naive.sh'), naive, 'utf8')
@@ -833,8 +1035,12 @@ function selfTestDiskScan({ check }) {
     writeFileSync(join(dir, 'naive.py'), naivePy, 'utf8')
     writeFileSync(join(dir, 'unrelated.py'), unrelatedPy, 'utf8')
     writeFileSync(join(dir, 'docstring-prose.py'), docstringPy, 'utf8')
+    writeFileSync(join(dir, 'closing-delimiter.py'), closingDelimiterPy, 'utf8')
+    writeFileSync(join(dir, 'guard_file_source.py'), scrubExemptPy, 'utf8')
     writeFileSync(join(dir, 'notes.md'), naive, 'utf8') // unscanned extension, ignored
     mkdirSync(join(dir, 'lib'))
+    writeFileSync(join(dir, 'lib', 'guard_file_source.py'), scrubExemptWithFixturePy, 'utf8')
+    writeFileSync(join(dir, 'lib', 'guard-file-source.mjs'), scrubExemptWithFixtureMjs, 'utf8')
     // The shared helpers themselves, even dropped in a scanned tree, are
     // exempt — they necessarily contain the raw `git init` this guard looks
     // for, and the raw scrub.
@@ -858,16 +1064,27 @@ function selfTestDiskScan({ check }) {
 
     const files = listGuardedScripts(dir)
     check(
-      files.length === 14,
-      'the scan finds all 14 scoped .sh/.mjs/.py files, excluding the .md, the two shared ' +
+      files.length === 18,
+      'the scan finds all 18 scoped .sh/.mjs/.py files, excluding the .md, the two shared ' +
         'helpers and the guard itself',
       JSON.stringify(files.map((f) => f.path)),
     )
     check(
-      files.filter((f) => f.lang === 'mjs').length === 5 &&
-        files.filter((f) => f.lang === 'py').length === 3,
+      files.filter((f) => f.lang === 'mjs').length === 6 &&
+        files.filter((f) => f.lang === 'py').length === 6,
       'the .mjs and .py files are actually opened — the scan is no longer .sh-only (#4015)',
       JSON.stringify(files.map((f) => `${f.path}:${f.lang}`)),
+    )
+    check(
+      files.filter((f) => f.scrubExempt).length === 3 &&
+        files.every(
+          (f) =>
+            f.scrubExempt ===
+            (f.path.endsWith('guard_file_source.py') || f.path.endsWith('guard-file-source.mjs')),
+        ),
+      'a rule-1-exempt basename is still ENUMERATED (a totally exempt one never appears at all) ' +
+        '— the precondition for rule 2 judging it',
+      JSON.stringify(files.map((f) => `${f.path}:${f.scrubExempt}`)),
     )
 
     const problems = checkFixtureIsolation(files)
@@ -946,8 +1163,37 @@ function selfTestDiskScan({ check }) {
       JSON.stringify(problems),
     )
     check(
-      problems.length === 8,
-      'exactly the eight offending files are reported, nothing else',
+      problems.some((p) => p.startsWith('closing-delimiter.py:')),
+      'a .py whose fixture spawn sits below the CLOSING delimiter of a mid-line multi-line ' +
+        'string is flagged — the strip no longer reads that delimiter as an opener and blanks ' +
+        'the spawn away',
+      JSON.stringify(problems),
+    )
+    check(
+      !problems.some((p) => p.startsWith('guard_file_source.py:')),
+      'a rule-1-exempt basename that only hand-rolls a scrub is clean (the exemption works)',
+      JSON.stringify(problems),
+    )
+    check(
+      problems.some(
+        (p) => p.startsWith('lib/guard_file_source.py:') && /no Python sibling/.test(p),
+      ) && !problems.some((p) => p.startsWith('lib/guard_file_source.py: hand-rolls')),
+      'the SAME exempt basename BUILDING A FIXTURE is still flagged, by rule 2 and not rule 1 — ' +
+        'the exemption is per-rule, so the sentence justifying it ("rule 2 is what would catch ' +
+        'it if that ever changed") is true of the code',
+      JSON.stringify(problems),
+    )
+    check(
+      problems.some(
+        (p) => p.startsWith('lib/guard-file-source.mjs:') && /without wiring itself to/.test(p),
+      ) && !problems.some((p) => p.startsWith('lib/guard-file-source.mjs: hand-rolls')),
+      'the Node half of the exempt PAIR behaves the same way — rule 1 waived, rule 2 live, with ' +
+        "the .mjs remedy in the message rather than Python's",
+      JSON.stringify(problems),
+    )
+    check(
+      problems.length === 11,
+      'exactly the eleven offending files are reported, nothing else',
       JSON.stringify(problems),
     )
   } finally {

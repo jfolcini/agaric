@@ -58,11 +58,17 @@ import { join } from 'node:path'
 import { runSourceScenarios } from './lib/git-scratch-guard.mjs'
 import {
   describeSource,
+  gitEnv,
   listTrackedEntries,
   readContents,
   resolveSource,
 } from './lib/guard-file-source.mjs'
 
+// cwd-derived, not script-anchored — the documented EXCEPTION to "a guard judges
+// the tree that contains it". The rule, the exception, the four guards that take
+// it and what to do instead are stated once, in
+// `scripts/lib/guard-file-source.mjs` ("Which TREE is judged, and the one
+// documented exception").
 const REPO_ROOT = (() => {
   try {
     return execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim()
@@ -70,6 +76,12 @@ const REPO_ROOT = (() => {
     return process.cwd()
   }
 })()
+
+// The environment this guard's OWN `git` calls run under. An ambient
+// `GIT_INDEX_FILE` outranks `cwd`, so without this an explicit `--cached`
+// under somebody else's commit would enumerate that repository while
+// `cwd=REPO_ROOT` made it look otherwise — see `gitEnv`.
+const GIT_ENV = gitEnv(REPO_ROOT, process.env)
 
 // This file's own repo-relative path — excluded from the scan.
 const SELF_PATH = 'scripts/check-architecture-citations.mjs'
@@ -121,6 +133,9 @@ function check() {
       // This guard's own flags, declared so an argument that is neither
       // these nor a source flag is a usage error rather than a silent AUTO.
       extraFlags: ['--print-source', '--self-test'],
+      // AUTO must know whose index `GIT_INDEX_FILE` names, not merely that it
+      // is set — see `resolveSource`.
+      repoRoot: REPO_ROOT,
     })
   } catch (err) {
     process.stderr.write(`check-architecture-citations: invocation error: ${err.message}\n`)
@@ -135,7 +150,7 @@ function check() {
   }
   let entries
   try {
-    entries = listTrackedEntries(REPO_ROOT)
+    entries = listTrackedEntries(REPO_ROOT, { env: GIT_ENV })
   } catch (err) {
     process.stderr.write(`check-architecture-citations: invocation error: ${err.message}\n`)
     return 2
@@ -147,7 +162,12 @@ function check() {
   const targets = scanTargets(entries.paths)
   let bodies
   try {
-    bodies = readContents(targets, { repoRoot: REPO_ROOT, source: chosen.source, entries })
+    bodies = readContents(targets, {
+      repoRoot: REPO_ROOT,
+      source: chosen.source,
+      entries,
+      env: GIT_ENV,
+    })
   } catch (err) {
     process.stderr.write(`check-architecture-citations: invocation error: ${err.message}\n`)
     return 2

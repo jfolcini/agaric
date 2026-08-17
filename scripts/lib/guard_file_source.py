@@ -48,10 +48,32 @@ a fixture puts the guard IN the fixture, which is what
 `scripts/test-py-guard-file-source.sh` and `pr-merge-result-check.sh`
 both now do.
 
+The rule, the ONE guard family that does not follow it, and what to do
+instead are stated once — in `scripts/lib/guard-file-source.mjs`, under
+"Which TREE is judged, and the one documented exception". Not restated
+here beyond the paragraph above: a rule written down twice is a rule
+that will be true in one place.
+
 ─── How the source is chosen ───────────────────────────────────────────
 
 Identical rule to the `.mjs` helper, deliberately — two helpers that
-resolve the same question differently are worse than one:
+resolve the same question differently are worse than one. "Identical"
+names three things, all of which the `.mjs` side now implements:
+`_index_belongs_to` (there, `indexBelongsTo`), the exit-2 refusal when a
+commit is in flight in a different repository (there, an error carrying
+`isAmbiguousSource`, which both callers already render as an exit-2
+invocation error), and the binding of the guard's own `git` environment
+(there, `gitEnv`).
+
+It was NOT identical when this paragraph was first written: the `.mjs`
+AUTO rule keyed on `GIT_INDEX_FILE` merely being SET and bound no env, so
+for a foreign index the two helpers answered OPPOSITELY — Python exit 2,
+Node "the staged index" of a repository it was not judging, plus a
+`--cached` that enumerated that repository from a cwd suggesting
+otherwise. Both are ported, and both are held there by the fail-closed
+scenarios in `runSourceScenarios` (scenario 9), which are the twin of
+section 5 of `scripts/test-py-guard-file-source.sh`. A claim of sameness
+is only worth making where something fails when it stops being true.
 
   --cached     read the staged index (`git cat-file` on the index blob)
   --worktree   read the working tree (`Path.read_text`)

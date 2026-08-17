@@ -31,6 +31,16 @@
 //   --worktree   read the working tree (`readFileSync`)
 //   neither      AUTO — see below
 //
+// AUTO requires the exported index to be THIS tree's. `GIT_INDEX_FILE` merely
+// being SET is not the question; whose index it names is. A guard rooted in
+// one tree while a commit runs in another has no correct guess available, so
+// it makes none and exits 2 (`isAmbiguousSource`). This rule and its Python
+// twin in `guard_file_source.py` are one rule, and are kept in step by the
+// same fail-closed scenarios in `runSourceScenarios` — before it was ported
+// here, a foreign `GIT_INDEX_FILE` made the two helpers answer OPPOSITELY
+// for the same situation: Python exit 2, Node "read the staged index" of a
+// repository it was not judging.
+//
 // AUTO exists because the two prek invocations that must behave differently
 // share ONE `entry` line in prek.toml: the hooks are registered at
 // `stages = ["pre-commit"]`, and `prek run --all-files` (CI, `push.sh`
@@ -55,6 +65,49 @@
 // Whichever way it resolves, the guard PRINTS the source it used with any
 // non-clean verdict, so a surprising red is one line away from explaining
 // itself. `--print-source` reports it without scanning.
+//
+// ─── Which TREE is judged, and the one documented exception ───────────────
+//
+// THE RULE, stated once, here, because this is the file a guard author of
+// either language reaches for when they need to know which copy they are
+// reading: A GUARD JUDGES THE TREE THAT CONTAINS IT. Its root is its own
+// `scripts/..` (`import.meta.dirname` / `Path(__file__).parent.parent`),
+// never a root derived from the process cwd. That is the contract
+// `scripts/pr-merge-result-check.sh` is built on — it runs each ratchet guard
+// out of the MERGED WORKTREE's own `scripts/` precisely so the copy's
+// location states which tree to judge. `check-table-ownership.py`,
+// `check-raw-tx.py`, `check-dynamic-sql.py` and `check-command-arity.py` are
+// all spelled this way.
+//
+// THE EXCEPTION, also stated once, here rather than a paragraph apiece in the
+// files that take it. FOUR guards root themselves at `git rev-parse
+// --show-toplevel` from the process cwd instead — every consumer of this
+// helper, and no others:
+//
+//   scripts/check-md-link-targets.mjs
+//   scripts/check-doc-code-paths.mjs
+//   scripts/check-architecture-citations.mjs
+//   scripts/check-dead-symbol-citations.mjs
+//
+// All four drive themselves through `runSourceScenarios`, which spawns the
+// guard INSIDE a throwaway fixture with `cwd` set to it; a script-anchored
+// root would send them scanning the real repository from there and passing
+// for entirely the wrong reason. The Python guards solved the same problem by
+// copying the guard into the fixture (`scripts/test-py-guard-file-source.sh`,
+// `pr-merge-result-check.sh`), which is the better answer and the one to
+// adopt if these four ever need it.
+//
+// None is in `RATCHET_GUARDS`, so none is ever run against a tree other than
+// the caller's, and the divergence is inert today. A NEW guard copies the
+// rule, not the exception — and if it must take the exception, it says so by
+// adding itself to the list above rather than by growing another private
+// explanation.
+//
+// THE LIST IS LOAD-BEARING, not decorative: `repoRoot` below is a required
+// option precisely so that a consumer which forgets to say which tree it
+// judges fails loudly instead of silently resolving AUTO. Two of the four
+// above were missed on the first pass of exactly that change, and their own
+// self-tests — not review — are what caught it.
 //
 // ─── Deletions and absent files ───────────────────────────────────────────
 //
@@ -112,7 +165,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, normalize, resolve as resolvePath, sep } from 'node:path'
 
 export const SOURCE_INDEX = 'index'
 export const SOURCE_WORKTREE = 'worktree'
@@ -145,6 +198,67 @@ export const CAT_FILE_CHUNK = 500
 const CAT_FILE_MAX_BUFFER = 64 * 1024 * 1024
 
 /**
+ * Does `indexFile` name an index of the repository at `repoRoot`?
+ *
+ * The Node twin of `guard_file_source.py`'s `_index_belongs_to`, and
+ * deliberately the same shape:
+ *
+ *   * a RELATIVE `GIT_INDEX_FILE` (`.git/index` — what an ordinary `git
+ *     commit` exports) is resolved against the process cwd, because that is
+ *     how git itself resolves it;
+ *   * both `--absolute-git-dir` and `--git-common-dir` count, because in a
+ *     linked worktree the index lives under `…/.git/worktrees/<name>/index`
+ *     while the object store is shared, and both spellings are "this
+ *     repository";
+ *   * a `repoRoot` that is not a git repository at all answers false — a
+ *     commit in flight somewhere, over a tree that is not a repository, is
+ *     precisely the case with no right answer.
+ */
+export function indexBelongsTo(indexFile, repoRoot) {
+  let indexPath = resolvePath(indexFile)
+  indexPath = normalize(indexPath)
+  for (const flag of ['--absolute-git-dir', '--git-common-dir']) {
+    let out
+    try {
+      out = execFileSync('git', ['-C', repoRoot, 'rev-parse', flag], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+    } catch {
+      continue
+    }
+    if (!out) continue
+    const gitDir = normalize(resolvePath(out, repoRoot))
+    if (indexPath === gitDir || indexPath.startsWith(`${gitDir}${sep}`)) return true
+  }
+  return false
+}
+
+/**
+ * The environment a guard's own `git` calls should run under — the Node twin
+ * of `guard_file_source.py`'s `git_env`, and the other half of the ownership
+ * rule.
+ *
+ * `cwd` does NOT decide which index git reads: an ambient `GIT_INDEX_FILE`
+ * outranks it. So a guard reading the staged index of `repoRoot` while some
+ * OTHER repository's index is exported would enumerate that other repository,
+ * with `cwd=repoRoot` making it look otherwise. Without this, porting the
+ * AUTO rule alone would only move the divergence — AUTO would refuse a
+ * foreign index while an EXPLICIT `--cached` still read it.
+ *
+ * Belonging decides, and nothing else is stripped: a foreign
+ * `GIT_DIR`/`GIT_WORK_TREE` is out of scope here and would already have made
+ * `repoRoot` itself wrong.
+ */
+export function gitEnv(repoRoot, env = process.env) {
+  const out = { ...env }
+  if (out.GIT_INDEX_FILE && !indexBelongsTo(out.GIT_INDEX_FILE, repoRoot)) {
+    delete out.GIT_INDEX_FILE
+  }
+  return out
+}
+
+/**
  * Resolve which copy of each file the caller wants read.
  *
  * @param {string[]} argv         full `process.argv` (the node binary and the
@@ -154,13 +268,29 @@ const CAT_FILE_MAX_BUFFER = 64 * 1024 * 1024
  * @param {object} [opts]
  * @param {string[]} [opts.extraFlags] flags the CALLING guard understands, on
  *   top of the two source flags this module owns.
+ * @param {string} opts.repoRoot  the tree being judged. REQUIRED: AUTO cannot
+ *   ask whether the exported index is this tree's without it, and defaulting
+ *   it would restore the very rule this parameter exists to replace — a
+ *   silent one, taken because a call site forgot.
  * @returns {{source: string, why: string}} `why` is quoted verbatim in the
  *   guard's failure output — the mechanism has to be legible from the
  *   verdict, not only from this file.
- * @throws {Error & {isUsageError: true}} if both source flags are given, or
- *   if any argument is one this guard does not understand.
+ * @throws {Error & {isUsageError: true}} if both source flags are given, if
+ *   any argument is one this guard does not understand, or if `repoRoot` is
+ *   missing.
+ * @throws {Error & {isAmbiguousSource: true}} if a commit is in flight in a
+ *   DIFFERENT repository than `repoRoot`. See the header: reading that index
+ *   would enumerate the committing repository and report the result as a
+ *   verdict about this tree, which is the mis-attributed verdict this whole
+ *   module is about. Both guards already turn a throw here into an exit-2
+ *   invocation error, which is fail-CLOSED — the caller is told to say which
+ *   copy it means rather than handed a guess.
  */
-export function resolveSource(argv = process.argv, env = process.env, { extraFlags = [] } = {}) {
+export function resolveSource(
+  argv = process.argv,
+  env = process.env,
+  { extraFlags = [], repoRoot } = {},
+) {
   // UNKNOWN ARGUMENTS ARE AN ERROR. Ignoring them makes `--cache` — one
   // keystroke short of `--cached` — resolve to AUTO, so the caller who asked
   // for the index silently gets whichever copy AUTO picked. That is the exact
@@ -191,16 +321,39 @@ export function resolveSource(argv = process.argv, env = process.env, { extraFla
   if (cached) return { source: SOURCE_INDEX, why: 'explicit --cached' }
   if (worktree) return { source: SOURCE_WORKTREE, why: 'explicit --worktree' }
   const indexFile = env.GIT_INDEX_FILE
-  if (indexFile) {
+  if (!indexFile) {
+    return {
+      source: SOURCE_WORKTREE,
+      why: 'auto: no commit in flight (GIT_INDEX_FILE unset)',
+    }
+  }
+  // Only AUTO needs it, and only with a commit in flight — but a call site
+  // that forgot it must not be answered with a guess.
+  if (!repoRoot) {
+    const err = new Error(
+      'resolveSource: AUTO needs `repoRoot` to decide whether the exported GIT_INDEX_FILE ' +
+        `(${indexFile}) belongs to the tree being judged — pass it, or say --worktree/--cached`,
+    )
+    err.isUsageError = true
+    throw err
+  }
+  // SET is not enough — it has to be OUR index. See the header.
+  if (indexBelongsTo(indexFile, repoRoot)) {
     return {
       source: SOURCE_INDEX,
       why: `auto: git is running a commit hook, GIT_INDEX_FILE=${indexFile}`,
     }
   }
-  return {
-    source: SOURCE_WORKTREE,
-    why: 'auto: no commit in flight (GIT_INDEX_FILE unset)',
-  }
+  const err = new Error(
+    `a commit is in flight (GIT_INDEX_FILE=${indexFile}) but it belongs to a different ` +
+      `repository than the tree being judged (${repoRoot}).\n` +
+      '  Reading that index would enumerate the committing repository and report the result ' +
+      'as a verdict about this tree.\n' +
+      '  Say which copy you mean: --worktree (judge the files on disk) or --cached (judge the ' +
+      'staged index).',
+  )
+  err.isAmbiguousSource = true
+  throw err
 }
 
 /**

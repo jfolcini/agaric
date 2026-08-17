@@ -68,17 +68,18 @@ import path, { join } from 'node:path'
 import { runSourceScenarios } from './lib/git-scratch-guard.mjs'
 import {
   describeSource,
+  gitEnv,
   listTrackedEntries,
   readContents,
   resolveSource,
 } from './lib/guard-file-source.mjs'
 
 // The repository the CALLER is standing in, not the one this script was
-// checked out into. prek runs hooks from the repo root, so the two agree in
-// every production invocation — but the self-test drives this script inside
-// throwaway fixtures, and a `path.resolve(import.meta.dirname, '..')` root
-// would make it scan the real repository from there and pass for entirely
-// the wrong reason. Mirrors check-architecture-citations.mjs.
+// checked out into — the documented EXCEPTION to "a guard judges the tree
+// that contains it". The rule, the exception, the four guards that take it and
+// what to do instead are stated once, in `scripts/lib/guard-file-source.mjs`
+// ("Which TREE is judged, and the one documented exception"). Not restated
+// here: a rule written down twice is a rule that will be true in one place.
 const ROOT = (() => {
   try {
     return execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim()
@@ -86,6 +87,12 @@ const ROOT = (() => {
     return process.cwd()
   }
 })()
+
+// The environment this guard's OWN `git` calls run under. An ambient
+// `GIT_INDEX_FILE` outranks `cwd`, so without this an explicit `--cached`
+// under somebody else's commit would enumerate that repository while
+// `cwd=ROOT` made it look otherwise — see `gitEnv`.
+const GIT_ENV = gitEnv(ROOT, process.env)
 
 // Match `](href)` where href is non-empty and contains no whitespace
 // inside the parens. We strip surrounding `<>` (for autolinks) and an
@@ -164,6 +171,9 @@ function check() {
   try {
     chosen = resolveSource(process.argv, process.env, {
       extraFlags: ['--print-source', '--self-test'],
+      // AUTO must know whose index `GIT_INDEX_FILE` names, not merely that it
+      // is set — see `resolveSource`.
+      repoRoot: ROOT,
     })
   } catch (err) {
     console.error(`check-md-link-targets: invocation error: ${err.message}`)
@@ -175,7 +185,7 @@ function check() {
   }
   let entries
   try {
-    entries = listTrackedEntries(ROOT)
+    entries = listTrackedEntries(ROOT, { env: GIT_ENV })
   } catch (err) {
     console.error(`check-md-link-targets: invocation error: ${err.message}`)
     return 2
@@ -188,7 +198,12 @@ function check() {
   const mdFiles = entries.paths.filter((p) => p.endsWith('.md'))
   let bodies
   try {
-    bodies = readContents(mdFiles, { repoRoot: ROOT, source: chosen.source, entries })
+    bodies = readContents(mdFiles, {
+      repoRoot: ROOT,
+      source: chosen.source,
+      entries,
+      env: GIT_ENV,
+    })
   } catch (err) {
     console.error(`check-md-link-targets: invocation error: ${err.message}`)
     return 2
