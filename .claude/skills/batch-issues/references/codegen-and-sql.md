@@ -46,11 +46,23 @@ incident history, and #4095 for the one caused by this file's own previous advic
 
 `just gen-sqlx` is not simply "add `--workspace`" — it runs the correctly-scoped root pass
 **plus** one pass per member crate against its own throwaway migrated DB, which is what
-covers 1 and 2. For 3, `scripts/check-sqlx-cache-drift.sh` is the guard — and note what
-it judges: by default the **staged diff** (there is also a commit-range mode used by CI
-and `verify-ci-equivalent.sh`). In the staged case it can only see what you staged, so
-`git add` all four caches before trusting it; staging one and leaving three dirty reads as
-green. See AGENTS.md § Key
+covers 1 and 2. For 3, `scripts/check-sqlx-cache-drift.sh` is the guard.
+
+**`git add` all four caches before trusting that guard**, and know which way it fails if
+you don't. It judges the staged **index**, not the working tree (there is also a
+`--range` mode, used only by the pre-push verifier `verify-ci-equivalent.sh` — CI never
+invokes this script; CI's net for this shape is the four `prepare --check` lanes). So
+after a full-tree `just gen-sqlx`, partial staging goes wrong in *both* directions:
+
+- Stage one cache's deletion while a sibling's identical entry is still tracked in the
+  index → the guard sees a live sibling and fires **red**, which reads as genuine
+  cross-cache drift but is really just partial staging. Its self-test builds exactly this
+  case.
+- Leave a cache's deletions entirely unstaged → the guard never sees them and reports
+  **green**, while the stale cache sits in your working tree waiting to fail CI. This is
+  the one that actually bit in #4095.
+
+See AGENTS.md § Key
 Architectural Invariants #6 for the full shape.
 
 A type-only `FromRow` *field* change does NOT need regen. A query-macro change (incl. a
