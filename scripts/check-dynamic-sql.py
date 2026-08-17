@@ -366,14 +366,28 @@ def site_has_marker(path: Path, indices: list[int]) -> list[int]:
 
 
 def all_production_files() -> list[Path]:
+    """Every production `.rs`, FROM THE SOURCE BEING JUDGED (#4047).
+
+    Enumeration through `SOURCE` for the same reason `read_source` is the
+    single funnel: this used to `rglob` the disk while every content read
+    below it came from the index, so a whole-tree run under `--cached`
+    enumerated one tree and judged another. The exclusions cost nothing to
+    re-derive — `is_excluded_file` is path-only and `is_test_only_module`
+    already reads through `read_source` — so the mixed shape bought
+    nothing.
+
+    `--update-baseline` still sees the working tree, and deliberately:
+    `main` dispatches it BEFORE rebinding `SOURCE`, so it runs against the
+    module default. Re-anchoring is a statement about the tree you are
+    editing, not about a commit in flight.
+    """
     files: list[Path] = []
     for root in CRATE_ROOTS:
-        if not root.is_dir():
-            continue
-        for p in sorted(root.rglob("*.rs")):
-            rel = str(p.relative_to(REPO_ROOT))
+        rel_root = str(root.relative_to(REPO_ROOT))
+        for rel in SOURCE.list_paths(rel_root, ".rs"):
             if is_excluded_file(rel):
                 continue
+            p = REPO_ROOT / rel
             if is_test_only_module(read_source(p)):
                 continue
             files.append(p)

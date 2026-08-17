@@ -27,8 +27,8 @@
 // green for the wrong reason, and one `git add` away from being destructive.
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve, sep } from 'node:path'
 
 import {
   listTrackedEntries,
@@ -146,7 +146,8 @@ export function withScrubbedProcessEnv(scratchRoot, fn) {
 }
 
 /**
- * Report every way git, run in `dir` under `env`, would reach OUTSIDE `dir`.
+ * Report every way git, run in `dir` under `env`, would reach OUTSIDE `base`
+ * (which defaults to `dir` itself).
  *
  * Returns [] when the fixture is isolated; otherwise one string per leak.
  *
@@ -155,12 +156,20 @@ export function withScrubbedProcessEnv(scratchRoot, fn) {
  * `--show-toplevel` and `--absolute-git-dir` both stay pinned to the fixture
  * (measured on git 2.43), which is precisely why `initScratchRepo`'s existing
  * toplevel assertion watched the #3962 leak happen and reported nothing.
+ *
+ * `base` exists for ONE caller: a LINKED WORKTREE, whose git dir and index
+ * live under the MAIN fixture's `.git` by construction (#4048) — the very
+ * property scenario 10 is about. Widening the ceiling to the scratch root
+ * keeps that fixture checked (nothing may reach the real repository) instead
+ * of exempting it, which is the difference between a probe and a waiver.
+ * Every other caller passes no `base` and gets the strict "inside this
+ * fixture" rule unchanged.
  */
-export function assertScratchIsolation(dir, env) {
+export function assertScratchIsolation(dir, env, baseDir = dir) {
   // Physical on BOTH sides — see `physical`. A relative answer (git returns a
   // bare `.git/index` from the toplevel) is resolved against the physical
   // base, so the two spellings cannot disagree by construction.
-  const base = physical(dir)
+  const base = physical(baseDir)
   const ask = (...args) =>
     execFileSync('git', ['rev-parse', ...args], { cwd: dir, env, encoding: 'utf8' }).trim()
   const leaks = []
@@ -330,14 +339,14 @@ function verifyBatchStreamFraming(check) {
   const parsed = parseBatchStream(good, chunk)
   check(
     'batch framing: a well-formed stream reads every record, empty payload included',
-    parsed.bodies.get('a.md') === 'alpha' &&
-      parsed.bodies.get('b.md') === '' &&
-      parsed.bodies.get('c.md') === 'omega' &&
-      parsed.missing.length === 0,
-    `got ${JSON.stringify([...parsed.bodies])} / missing ${JSON.stringify(parsed.missing)}`,
+    parsed.get('a.md') === 'alpha' &&
+      parsed.get('b.md') === '' &&
+      parsed.get('c.md') === 'omega' &&
+      parsed.size === 3,
+    `got ${JSON.stringify([...parsed])}`,
   )
 
-  const throws = (name, buf, expect) => {
+  const throws = (name, buf, expect, flag = 'isBatchDesync') => {
     let err = null
     try {
       parseBatchStream(buf, chunk)
@@ -345,11 +354,11 @@ function verifyBatchStreamFraming(check) {
       err = e
     }
     check(
-      `batch framing: ${name} is a desync error, not a silent drop`,
-      err?.isBatchDesync === true && expect.test(err.message),
+      `batch framing: ${name} is an error, not a silent drop`,
+      err?.[flag] === true && expect.test(err.message),
       err === null
         ? 'no error thrown — the remaining paths would have gone unread'
-        : `message did not match ${expect}: ${err.message}`,
+        : `${flag} / message did not match ${expect}: ${err.message}`,
     )
   }
   // Truncated mid-stream: the header for record 2 never arrives.
@@ -368,19 +377,190 @@ function verifyBatchStreamFraming(check) {
     Buffer.from(`${record('alpha')}${oid} blob 9999\nshort\n`),
     /claims 9999 bytes but only/,
   )
-  // ...while `missing` — a DOCUMENTED per-file answer — must still be a
-  // working-tree fallback rather than an error, or the fix above would have
-  // turned a damaged-object commit into an unconditional exit 2.
-  const withMissing = parseBatchStream(
+  // ...and `<oid> missing` — a damaged object store — is an error too
+  // (#4046). It used to fall back to the working tree on the grounds that it
+  // is a DOCUMENTED per-file answer, which it is; the objection is that the
+  // answer it produces is about DIFFERENT CONTENT than the index names,
+  // printed under "judged the staged index". The three well-formed
+  // assertions above are the control: a parser that threw on everything
+  // would fail them, so this pair discriminates rather than merely agreeing.
+  throws(
+    'a `missing` blob the index names',
     Buffer.from(`${record('alpha')}${oid} missing\n${record('omega')}`),
-    chunk,
+    /object store does not have it/,
+    'isMissingObject',
   )
+  // ...and it is NOT re-labelled as a framing desync: the two have different
+  // causes (git cannot honour its protocol / the repository is damaged) and a
+  // caller distinguishing them must be able to.
+  let missingErr = null
+  try {
+    parseBatchStream(Buffer.from(`${oid} missing\n${record('b')}${record('c')}`), chunk)
+  } catch (e) {
+    missingErr = e
+  }
   check(
-    'batch framing: a `missing` record still falls back instead of throwing',
-    withMissing.missing.join(',') === 'b.md' &&
-      withMissing.bodies.get('a.md') === 'alpha' &&
-      withMissing.bodies.get('c.md') === 'omega',
-    `missing=${JSON.stringify(withMissing.missing)} bodies=${JSON.stringify([...withMissing.bodies])}`,
+    'batch framing: a `missing` blob is not mislabelled as a protocol desync',
+    missingErr?.isMissingObject === true && missingErr?.isBatchDesync === undefined,
+    `flags: missing=${missingErr?.isMissingObject} desync=${missingErr?.isBatchDesync}`,
+  )
+}
+
+// ── SCENARIO 10: A LINKED WORKTREE — the case scenario 9 could not
+// discriminate (#4048). Extracted rather than inlined beside the others only
+// because it is the longest of them; `fixture`, `run`, `check` and
+// `namesFile` are the runner's own helpers, passed in.
+//
+// Scenario 9 pins "the two helpers answer the same question the same way"
+// using a FOREIGN repository's index, which is the one situation where every
+// plausible implementation answers "not mine". So it held the claim in the
+// only place that could not tell an implementation from a wrong one, and the
+// two duly diverged: for a linked worktree's OWN index — which lives under
+// the MAIN repository's `.git`, at `…/.git/worktrees/<name>/index` — Python
+// said "mine" and Node said "somebody else's", so all four citation guards
+// exited 2 on every commit made from a worktree. Verbatim:
+//
+//   check-md-link-targets: invocation error: a commit is in flight
+//   (GIT_INDEX_FILE=…/.git/worktrees/wt-b21b-crlf/index) but it belongs to a
+//   different repository than the tree being judged (…/wt-b21b-crlf).
+//
+// The cause was `resolve(out, repoRoot)` — `path.resolve` walks RIGHT TO
+// LEFT, so an absolute `repoRoot` discarded the git dir entirely and the
+// comparison was against the WORK TREE. An ordinary checkout keeps its index
+// inside the work tree, so it answered true anyway; a worktree does not.
+//
+// A worktree is also the shape that exposes the opposite error, and both
+// helpers had it: `…/.git` is the COMMON dir of the main checkout and of
+// every linked worktree, so accepting a path under `--git-common-dir`
+// accepted a SIBLING worktree's index, and plain containment under
+// `--absolute-git-dir` accepts a worktree's index as the main checkout's
+// (a worktree git dir is nested inside the main one). Both are false
+// ACCEPTS that fail silently: the guard reads a tree nobody is committing,
+// finds nothing staged there, and exits 0.
+//
+// So all five arms are asserted, and the fixture is arranged so that every
+// wrong answer is an exit 0 over a staged violation rather than a different
+// shade of red.
+function verifyLinkedWorktreeOwnership({
+  file,
+  badLine,
+  goodLine,
+  root,
+  fixture,
+  run,
+  namesFile,
+  check,
+}) {
+  const { dir: mainDir, env } = fixture(({ git, write }) => {
+    write(`${goodLine}\n`)
+    git('add', '-A')
+    git('commit', '-qm', 'base')
+  })
+  const gitIn = (d, ...args) => execFileSync('git', args, { cwd: d, env, encoding: 'utf8' })
+  const wtA = join(root, 'linked-a')
+  const wtB = join(root, 'linked-b')
+  gitIn(mainDir, 'worktree', 'add', '-q', '-b', 'linked-a', wtA)
+  gitIn(mainDir, 'worktree', 'add', '-q', '-b', 'linked-b', wtB)
+  // git's own answer, not a path this file assembles: `--git-path index` is
+  // relative in the main checkout (`.git/index`) and absolute in a linked
+  // worktree, and both spellings have to reach the same comparison.
+  const indexOf = (d) => resolve(d, gitIn(d, 'rev-parse', '--git-path', 'index').trim())
+  const [idxMain, idxA, idxB] = [mainDir, wtA, wtB].map(indexOf)
+
+  // The worktree fixtures are held to the same isolation rule as every
+  // other one, widened to the scratch root because their git dir lives
+  // inside the MAIN fixture by construction — see `assertScratchIsolation`.
+  const wtLeaks = []
+  for (const d of [wtA, wtB]) {
+    for (const [label, probeEnv] of [
+      ['scrubbed', env],
+      ['ambient', process.env],
+    ]) {
+      for (const leak of assertScratchIsolation(d, probeEnv, root)) {
+        wtLeaks.push(`${d} ${label} env: ${leak}`)
+      }
+    }
+  }
+  check(
+    'linked worktree: both worktrees resolve inside the scratch root, under both envs',
+    wtLeaks.length === 0,
+    wtLeaks.join('; '),
+  )
+  // …and the fixture really has the shape the scenario is about. Without
+  // this, a `git worktree add` that silently produced an ordinary clone
+  // would make every assertion below pass for the wrong reason — which is
+  // precisely how scenario 9 came to hold a claim it could not test.
+  check(
+    "linked worktree: its index lives under the MAIN fixture's .git, not inside the worktree",
+    existsSync(idxA) &&
+      existsSync(idxB) &&
+      existsSync(idxMain) &&
+      idxA.startsWith(`${join(mainDir, '.git')}${sep}`) &&
+      !idxA.startsWith(`${wtA}${sep}`) &&
+      idxA !== idxB,
+    `main=${idxMain} a=${idxA} b=${idxB}`,
+  )
+
+  // The violation is staged in WORKTREE A only. Every index below therefore
+  // has a distinct, checkable answer: A's holds it, main's and B's do not.
+  writeFileSync(join(wtA, file), `${badLine}\n`)
+  gitIn(wtA, 'add', '-A')
+  writeFileSync(join(wtA, file), `${goodLine}\n`) // …invisible on disk
+
+  const ownIndex = run(wtA, env, [], { GIT_INDEX_FILE: idxA })
+  check(
+    "linked worktree: AUTO accepts the worktree's OWN index (the #4048 regression)",
+    ownIndex.status === 1 && namesFile(ownIndex),
+    `expected 1 naming ${file}, got ${ownIndex.status}: ${ownIndex.stderr}`,
+  )
+  const siblingIndex = run(wtA, env, [], { GIT_INDEX_FILE: idxB })
+  check(
+    "linked worktree: a SIBLING worktree's index is refused, not read as this tree's",
+    siblingIndex.status === 2 && /different repository/.test(siblingIndex.stderr),
+    `expected 2 naming a different repository, got ${siblingIndex.status}: ${siblingIndex.stderr}`,
+  )
+  const mainIndexInWorktree = run(wtA, env, [], { GIT_INDEX_FILE: idxMain })
+  check(
+    'linked worktree: the MAIN index is refused too — a shared object store is not a shared index',
+    mainIndexInWorktree.status === 2 && /different repository/.test(mainIndexInWorktree.stderr),
+    `expected 2, got ${mainIndexInWorktree.status}: ${mainIndexInWorktree.stderr}`,
+  )
+  // THE CONTROL for all three: the disk copy is clean, so the exit 1 above
+  // is about the index and the exit 2s are not a guard that has stopped
+  // working.
+  const wtSource = run(wtA, env, ['--worktree'], { GIT_INDEX_FILE: idxA })
+  check(
+    'linked worktree: --worktree still judges the clean copy on disk',
+    wtSource.status === 0,
+    `expected 0, got ${wtSource.status}: ${wtSource.stderr}`,
+  )
+
+  // ...and the symmetric direction. A linked worktree's git dir is NESTED
+  // inside the main checkout's, so "the index is somewhere under my git
+  // dir" accepts a worktree's index as the main checkout's — the same false
+  // accept one level up, and the live shape here: an agent runs a guard in
+  // the main checkout while a commit is in flight in a worktree.
+  //
+  // The violation MOVES rather than being duplicated: worktree A's index is
+  // returned to the clean copy first, and main's takes it up. So a run in
+  // main that wrongly read A's index exits 0 over main's staged violation,
+  // rather than exiting 1 over a violation that happens to be staged in
+  // both — which would leave the two answers indistinguishable.
+  gitIn(wtA, 'add', '-A') // A's index is clean again (the good copy is on disk)
+  writeFileSync(join(mainDir, file), `${badLine}\n`)
+  gitIn(mainDir, 'add', '-A')
+  writeFileSync(join(mainDir, file), `${goodLine}\n`)
+  const mainOwn = run(mainDir, env, [], { GIT_INDEX_FILE: idxMain })
+  check(
+    'linked worktree: the MAIN checkout of a repo that HAS worktrees still reads its own index',
+    mainOwn.status === 1 && namesFile(mainOwn),
+    `expected 1 naming ${file}, got ${mainOwn.status}: ${mainOwn.stderr}`,
+  )
+  const worktreeIndexInMain = run(mainDir, env, [], { GIT_INDEX_FILE: idxA })
+  check(
+    "linked worktree: …and refuses a WORKTREE's index nested inside its own .git",
+    worktreeIndexInMain.status === 2 && /different repository/.test(worktreeIndexInMain.stderr),
+    `expected 2, got ${worktreeIndexInMain.status}: ${worktreeIndexInMain.stderr}`,
   )
 }
 
@@ -679,8 +859,19 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
   // ── 6. A STAGED BLOB THAT IS NOT IN THE OBJECT STORE — `cat-file --batch`
   // answers `<oid> missing`. Skipping that record leaves the path out of the
   // result map and therefore unscanned, which is a silent false green in a
-  // guard whose whole subject is silent false greens. It must fall back to
-  // the working tree, like an unmerged path, so the file is still judged.
+  // guard whose whole subject is silent false greens.
+  //
+  // It used to fall back to the working tree, like an unmerged path, so that
+  // the file was still judged. "Still judged" was the wrong goal (#4046): the
+  // index names content that IS being committed and git cannot produce it, so
+  // the copy on disk is not a degraded version of that content but a
+  // DIFFERENT file — reported under `(judged the staged index)`. Unmerged is
+  // the one case whose right answer is the disk, and it has no stage-0 sha,
+  // so it never reaches `cat-file` at all. What is left has no correct
+  // per-file answer, so the guard exits 2 with the sha named. The scenario
+  // below is unchanged except in what it expects: a fixture that produced a
+  // real `<oid> missing` before still produces one, and the assertion under
+  // it moved from "judged from disk" to "refused, and said why".
   {
     let sha = ''
     const { dir, env } = fixture(({ dir: repoDir, git, write }) => {
@@ -706,9 +897,21 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
     )
     const cached = run(dir, env, ['--cached'])
     check(
-      'damaged index: a missing staged blob is judged from disk, not silently skipped',
-      cached.status === 1 && namesFile(cached),
-      `expected 1 naming ${file}, got ${cached.status}: ${cached.stderr}`,
+      'damaged index: a missing staged blob is exit 2 naming the sha, not a working-tree verdict',
+      cached.status === 2 && cached.stderr.includes(sha),
+      `expected 2 naming ${sha}, got ${cached.status}: ${cached.stderr}`,
+    )
+    // THE CONTROL. The refusal is about the object store, not about
+    // `--cached`: the same damaged fixture still reads and judges from the
+    // working tree, which never asks for a blob (the bad line is on disk
+    // here, so a working answer is exit 1 naming the file). Without this,
+    // "exit 2" would be satisfied by a guard that had stopped working
+    // altogether.
+    const worktree = run(dir, env, ['--worktree'])
+    check(
+      'damaged index: …while --worktree still judges normally — it never asks the object store',
+      worktree.status === 1 && namesFile(worktree),
+      `expected 1 naming ${file}, got ${worktree.status}: ${worktree.stderr}`,
     )
   }
 
@@ -896,6 +1099,10 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
       `expected 1 naming ${file}, got ${own.status}: ${own.stderr}`,
     )
   }
+
+  // ── 10. A LINKED WORKTREE — see `verifyLinkedWorktreeOwnership`, which is
+  // where the reasoning lives.
+  verifyLinkedWorktreeOwnership({ file, badLine, goodLine, root, fixture, run, namesFile, check })
 
   return results
 }

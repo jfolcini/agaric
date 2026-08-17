@@ -473,6 +473,344 @@ _eq 'merge-result: …and the RELATIVE .git/index a real commit exports does too
   '1' "$(_run_auto_commit "$fx" "$GUARD_RAW_TX" "$RAW_TX_FILE")"
 
 # ---------------------------------------------------------------------------
+# 6. exists() AND read() ANSWER ABOUT THE SAME SET (#4058)
+# ---------------------------------------------------------------------------
+# `read` used to fall back to disk for ANY path with no stage-0 entry. That
+# is right for an UNMERGED path — the conflicted copy on disk is where the
+# markers live — but "no stage-0 entry" also covers a STAGED DELETION, and
+# there the fallback contradicted `exists()`: one method said the path is not
+# in the commit while the other handed back its content.
+#
+# The two are asserted directly (the helper's own answers) AND through a
+# guard's exit code, because a helper that agrees with itself while no guard
+# consults it would satisfy only the first.
+
+# Ask the fixture's OWN helper what it thinks about `rel` under the index.
+# One line, so a shell comparison can be the assertion.
+_probe_source() {
+  local dir="$1"
+  shift
+  (
+    cd "$dir" || exit 99
+    env -u GIT_INDEX_FILE python3 - "$@" <<'PY'
+import importlib.util
+import pathlib
+import sys
+
+root = pathlib.Path.cwd()
+spec = importlib.util.spec_from_file_location(
+    "_gfs", root / "scripts" / "lib" / "guard_file_source.py"
+)
+gfs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gfs)
+src = gfs.FileSource(root, gfs.SOURCE_INDEX, "test probe")
+for rel in sys.argv[1:]:
+    print(f"{rel} exists={src.exists(rel)} read_is_none={src.read(rel) is None}")
+PY
+  ) 2>/dev/null
+}
+
+DYN_BASELINE="src-tauri/dynamic-sql-baseline.txt"
+
+fx="$tmp/agreement-staged-deletion"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src"
+printf '%s\n' "$DYN_BAD" > "$fx/$DYN_FILE"
+printf '# Format: <count> <path-relative-to-repo-root>\n1 %s\n' "$DYN_FILE" \
+  > "$fx/$DYN_BASELINE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+# The commit under judgement REMOVES the baseline while leaving it on disk.
+git -C "$fx" rm -q --cached "$DYN_BASELINE"
+
+_eq 'agreement: a staged deletion reads as absent, exactly as exists() says' \
+  "$DYN_BASELINE exists=False read_is_none=True" \
+  "$(_probe_source "$fx" "$DYN_BASELINE")"
+# THE CONTROL. Without it, "exists() and read() agree" is satisfied by a
+# helper that answers absent/None for everything — including the file this
+# very commit is about.
+_eq 'agreement: …and a path that IS staged reads as present, so the probe discriminates' \
+  "$DYN_FILE exists=True read_is_none=False" \
+  "$(_probe_source "$fx" "$DYN_FILE")"
+
+# …and the consequence, in the guard that actually asks. The ceiling is
+# leaving the commit, so the site it was licensing is unjustified in the
+# commit being made.
+_eq 'agreement: the INDEX judges the commit against the ceiling that commit removes' \
+  '1' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
+_eq 'agreement: …while the WORKING TREE still sees the on-disk ceiling (the control)' \
+  '0' "$(_run "$fx" "$GUARD_DYN" --worktree "$DYN_FILE")"
+
+# The UNMERGED path is the one case whose right answer IS the disk, and it
+# must not be swept up by the fix above. A real conflict is built by merging
+# two branches that touch the same line.
+fx="$tmp/agreement-unmerged"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src"
+printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+git -C "$fx" checkout -q -b other
+printf '%s\n' "$DYN_BAD" > "$fx/$DYN_FILE"
+git -C "$fx" commit -qam theirs
+git -C "$fx" checkout -q -
+printf 'async fn f() {\n    let rows = 0;\n}\n' > "$fx/$DYN_FILE"
+git -C "$fx" commit -qam ours
+git -C "$fx" merge -q other >/dev/null 2>&1 || true
+_eq 'agreement: an UNMERGED path still reads the conflicted copy on disk' \
+  "$DYN_FILE exists=False read_is_none=False" \
+  "$(_probe_source "$fx" "$DYN_FILE")"
+
+# ---------------------------------------------------------------------------
+# 7. A BLOB THE INDEX NAMES THAT GIT CANNOT PRODUCE (#4046)
+# ---------------------------------------------------------------------------
+# `_blob` swallowed EVERY non-zero `git cat-file` into None, and `read` then
+# returned the working-tree copy — under a verdict printed as "judged the
+# staged index". The one case whose right answer is the disk (unmerged) never
+# reaches `cat-file` at all, so everything left here is a damaged object
+# store: the staged content cannot be read, and the file on disk is not a
+# degraded copy of it but DIFFERENT CONTENT. Fails closed instead.
+#
+# The fixture deletes the loose object behind the staged blob. Nothing else
+# in the repository refers to it.
+fx="$tmp/damaged-object"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src/commands"
+printf '%s\n' "$RAW_TX_GOOD" > "$fx/$RAW_TX_FILE"
+printf '%s\n' "$ARITY_GOOD" > "$fx/$ARITY_FILE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+printf '%s\n' "$RAW_TX_BAD" > "$fx/$RAW_TX_FILE"   # the violations are STAGED
+printf '%s\n' "$ARITY_BAD" > "$fx/$ARITY_FILE"
+git -C "$fx" add -A
+printf '%s\n' "$RAW_TX_GOOD" > "$fx/$RAW_TX_FILE"  # …and clean on disk
+printf '%s\n' "$ARITY_GOOD" > "$fx/$ARITY_FILE"
+
+# THE CONTROL, before the damage: the staged violations are found, so an exit
+# 0 below can only mean the guard read the wrong copy — never "nothing to
+# find". check-dynamic-sql scans $RAW_TX_FILE too (a `sqlx::query(` site is
+# not what makes that file interesting — being STAGED is).
+_eq 'damaged object: the intact fixture fails under --cached (the control)' \
+  '1' "$(_run "$fx" "$GUARD_RAW_TX" --cached "$RAW_TX_FILE")"
+_eq 'damaged object: …and the arity fixture too (the control)' \
+  '1' "$(_run "$fx" "$GUARD_ARITY" --cached "$ARITY_FILE")"
+
+staged_sha="$(git -C "$fx" rev-parse ":$RAW_TX_FILE")"
+arity_sha="$(git -C "$fx" rev-parse ":$ARITY_FILE")"
+rm -f "$fx/.git/objects/${staged_sha:0:2}/${staged_sha:2}"
+rm -f "$fx/.git/objects/${arity_sha:0:2}/${arity_sha:2}"
+
+_eq 'damaged object: an unreadable staged blob is exit 2, not a working-tree verdict' \
+  '2' "$(_run "$fx" "$GUARD_RAW_TX" --cached "$RAW_TX_FILE")"
+_eq 'damaged object: …and the refusal names the sha rather than falling back silently' \
+  '1' "$(cd "$fx" && env -u GIT_INDEX_FILE python3 "$GUARD_RAW_TX" --cached "$RAW_TX_FILE" 2>&1 >/dev/null | grep -c "$staged_sha")"
+# …and the refusal is SPECIFIC to the index: --worktree is a legitimate
+# request that the object store cannot break, so it still answers.
+_eq 'damaged object: --worktree is unaffected — it never asks the object store' \
+  '0' "$(_run "$fx" "$GUARD_RAW_TX" --worktree "$RAW_TX_FILE")"
+_eq 'damaged object: the same fail-closed answer in check-dynamic-sql' \
+  '2' "$(_run "$fx" "$GUARD_DYN" --cached "$RAW_TX_FILE")"
+_eq 'damaged object: …and in check-command-arity' \
+  '2' "$(_run "$fx" "$GUARD_ARITY" --cached "$ARITY_FILE")"
+
+# ---------------------------------------------------------------------------
+# 8. THE WHOLE-TREE BRANCH ENUMERATES THE SOURCE (#4060 / #4047)
+# ---------------------------------------------------------------------------
+# `check-command-arity.py` with no path arguments scanned `COMMANDS_DIR.rglob`
+# — the DISK — even under `--cached`, while its path-argument branch asked
+# `src.exists()`. So the two branches disagreed about what the file set is,
+# in both directions.
+#
+# STAGED BUT ABSENT FROM DISK is the case that isolates the ENUMERATOR: with
+# the path passed explicitly the guard already judged it, so only the
+# no-arguments branch can miss it.
+fx="$tmp/arity-whole-tree-staged-absent"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src/commands"
+printf '%s\n' "$ARITY_GOOD" > "$fx/$ARITY_FILE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+printf '%s\n' "$ARITY_BAD" > "$fx/$ARITY_FILE"
+git -C "$fx" add -A
+rm "$fx/$ARITY_FILE"                                # staged, gone from disk
+_eq 'whole tree: --cached enumerates the index, so a staged-but-absent file is judged' \
+  '1' "$(_run "$fx" "$GUARD_ARITY" --cached)"
+_eq 'whole tree: --worktree does not — there is nothing on disk to enumerate (the control)' \
+  '0' "$(_run "$fx" "$GUARD_ARITY" --worktree)"
+
+# …and the other direction: on disk, but NOT in the commit.
+fx="$tmp/arity-whole-tree-uncached"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src/commands"
+printf '%s\n' "$ARITY_BAD" > "$fx/$ARITY_FILE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+git -C "$fx" rm -q --cached "$ARITY_FILE"           # leaving the commit
+_eq 'whole tree: --cached does not judge a file the commit removes' \
+  '0' "$(_run "$fx" "$GUARD_ARITY" --cached)"
+_eq 'whole tree: --worktree still judges it — it is right there on disk (the control)' \
+  '1' "$(_run "$fx" "$GUARD_ARITY" --worktree)"
+
+# `check-dynamic-sql.py`'s `all_production_files` had the same shape. Its one
+# caller is `--update-baseline`, which runs against the WORKING TREE by
+# design — so the fix has to leave that alone, and the two answers are pinned
+# side by side: the enumerator follows the source, and the source for a
+# re-anchor is still the disk.
+DYN_OTHER="src-tauri/src/other_4047.rs"
+fx="$tmp/dyn-whole-tree"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src"
+printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
+printf '# Format: <count> <path-relative-to-repo-root>\n' > "$fx/$DYN_BASELINE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+printf '%s\n' "$DYN_BAD" > "$fx/$DYN_OTHER"          # staged only, then removed
+git -C "$fx" add -A
+rm "$fx/$DYN_OTHER"
+printf '%s\n' "$DYN_BAD" > "$fx/$DYN_FILE"
+git -C "$fx" rm -q --cached "$DYN_FILE"              # on disk only
+
+_probe_list() {
+  local dir="$1"
+  shift
+  (
+    cd "$dir" || exit 99
+    env -u GIT_INDEX_FILE python3 - "$@" <<'PY'
+import importlib.util
+import pathlib
+import sys
+
+root = pathlib.Path.cwd()
+spec = importlib.util.spec_from_file_location(
+    "_gfs", root / "scripts" / "lib" / "guard_file_source.py"
+)
+gfs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gfs)
+for source in (gfs.SOURCE_INDEX, gfs.SOURCE_WORKTREE):
+    src = gfs.FileSource(root, source, "test probe")
+    listed = src.list_paths(sys.argv[1], ".rs")
+    # list_paths and exists() must answer about ONE set, or the whole-tree
+    # branch enumerates files the path-argument branch would skip.
+    assert all(src.exists(rel) for rel in listed), (source, listed)
+    print(f"{source}: {' '.join(listed) or '(none)'}")
+PY
+  ) 2>/dev/null
+}
+_eq 'whole tree: list_paths follows the source, and agrees with exists() in both' \
+  "index: $DYN_OTHER
+worktree: $DYN_FILE" \
+  "$(_probe_list "$fx" src-tauri/src)"
+
+# --update-baseline is dispatched BEFORE the source is resolved, so it keeps
+# reading the tree you are editing. Pinned, because the enumerator it calls
+# is the one just changed.
+( cd "$fx" && env -u GIT_INDEX_FILE python3 "$GUARD_DYN" --update-baseline --all >/dev/null 2>&1 )
+_eq 'whole tree: --update-baseline --all still re-anchors from the WORKING TREE' \
+  "1 $DYN_FILE" "$(grep -Ev '^(#|$)' "$fx/$DYN_BASELINE")"
+
+# ---------------------------------------------------------------------------
+# 9. A LINKED WORKTREE'S OWN INDEX (#4048)
+# ---------------------------------------------------------------------------
+# Section 5 above pins the fail-closed rule using a FOREIGN repository's
+# index — the one situation where every plausible implementation answers "not
+# mine". So the sameness claim it shares with `runSourceScenarios` scenario 9
+# was held in the only place that could not discriminate, and the two helpers
+# diverged anyway: for a LINKED WORKTREE's own index, this one said "mine"
+# while the `.mjs` twin said "somebody else's", and every citation guard exited
+# 2 on every commit made from a worktree.
+#
+# A worktree is also the shape that exposes the OPPOSITE error, and this
+# helper had it. `<main>/.git` is the COMMON dir of the main checkout and of
+# every linked worktree, so accepting a path under `--git-common-dir` accepted
+# a SIBLING worktree's index; and a worktree's git dir is NESTED inside the
+# main one, so plain containment accepted a worktree's index as the main
+# checkout's. Both are false ACCEPTS, and both fail in the silent direction:
+# the guard reads a tree nobody is committing, finds nothing staged there, and
+# exits 0 over the violation actually in flight.
+#
+# The fixture is arranged so that every wrong answer below is an exit 0 over a
+# real staged violation, never a different shade of red. Both worktrees live
+# under "$tmp"; nothing here names an index outside it.
+WT_MAIN_FILE="src-tauri/src/main_only_4048.rs"
+wt_main="$tmp/wt-main"
+_new_fixture "$wt_main"
+mkdir -p "$wt_main/src-tauri/src"
+printf '%s\n' "$RAW_TX_GOOD" > "$wt_main/$RAW_TX_FILE"
+printf '%s\n' "$RAW_TX_GOOD" > "$wt_main/$WT_MAIN_FILE"
+git -C "$wt_main" add -A
+# The guards travel with the tree: a guard judges the tree that CONTAINS it,
+# so committing `scripts/` here is what gives each worktree its own copy.
+git -C "$wt_main" commit -qm base
+wt_a="$tmp/wt-linked-a"
+wt_b="$tmp/wt-linked-b"
+git -C "$wt_main" worktree add -q -b linked-a "$wt_a"
+git -C "$wt_main" worktree add -q -b linked-b "$wt_b"
+
+# git's own answer for each index, absolute — not a path this script
+# assembles. `--git-path index` is relative in the main checkout and absolute
+# in a linked worktree, and `--path-format=absolute` collapses that.
+_index_of() { git -C "$1" rev-parse --path-format=absolute --git-path index; }
+idx_main="$(_index_of "$wt_main")"
+idx_a="$(_index_of "$wt_a")"
+idx_b="$(_index_of "$wt_b")"
+
+# THE FIXTURE REALLY HAS THE SHAPE THIS SECTION IS ABOUT. Without this, a
+# `git worktree add` that quietly produced an ordinary clone would make every
+# assertion below pass for the wrong reason — which is exactly how the claim
+# in section 5 came to be held somewhere it could not be tested.
+_eq "linked worktree: its index lives under the MAIN checkout's .git, not inside the worktree" \
+  "yes yes yes" \
+  "$(
+    a='no' b='no' c='no'
+    # `.git/worktrees/<name>` is named after the worktree DIRECTORY, not the
+    # branch, so the prefix stops at `worktrees/`.
+    case "$idx_a" in "$wt_main/.git/worktrees/"*) a='yes' ;; esac
+    case "$idx_a" in "$wt_a/"*) : ;; *) b='yes' ;; esac
+    [ -f "$idx_a" ] && [ -f "$idx_b" ] && [ -f "$idx_main" ] && [ "$idx_a" != "$idx_b" ] && c='yes'
+    printf '%s %s %s\n' "$a" "$b" "$c"
+  )"
+
+# Run a guard inside `dir` with `index` exported as the commit in flight.
+_run_with_index() {
+  local dir="$1" index="$2"
+  shift 2
+  (
+    cd "$dir" || exit 99
+    GIT_INDEX_FILE="$index" python3 "$@" >/dev/null 2>&1
+  )
+  printf '%s\n' "$?"
+}
+
+# The violation is staged in WORKTREE A only, so main's index and B's index
+# both hold the clean copy: a guard that reads either exits 0.
+printf '%s\n' "$RAW_TX_BAD" > "$wt_a/$RAW_TX_FILE"
+git -C "$wt_a" add -A
+printf '%s\n' "$RAW_TX_GOOD" > "$wt_a/$RAW_TX_FILE" # …invisible on disk
+
+_eq "linked worktree: AUTO accepts the worktree's OWN index (the #4048 regression)" \
+  '1' "$(_run_with_index "$wt_a" "$idx_a" "$GUARD_RAW_TX" "$RAW_TX_FILE")"
+_eq "linked worktree: a SIBLING worktree's index is refused, not read as this tree's" \
+  '2' "$(_run_with_index "$wt_a" "$idx_b" "$GUARD_RAW_TX" "$RAW_TX_FILE")"
+_eq 'linked worktree: the MAIN index is refused too — a shared object store is not a shared index' \
+  '2' "$(_run_with_index "$wt_a" "$idx_main" "$GUARD_RAW_TX" "$RAW_TX_FILE")"
+# THE CONTROL for all three: the copy on disk is clean, so the exit 1 above is
+# about the index and the exit 2s are not a guard that has stopped working.
+_eq 'linked worktree: --worktree still judges the clean copy on disk' \
+  '0' "$(_run_with_index "$wt_a" "$idx_a" "$GUARD_RAW_TX" --worktree "$RAW_TX_FILE")"
+
+# …and the symmetric direction, which is the live shape in this repo: a guard
+# running in the MAIN checkout while a commit is in flight in a worktree. Main
+# gets its own staged violation first, so "still reads its own index" is an
+# exit 1 over content only main has staged.
+printf '%s\n' "$RAW_TX_BAD" > "$wt_main/$WT_MAIN_FILE"
+git -C "$wt_main" add -A
+printf '%s\n' "$RAW_TX_GOOD" > "$wt_main/$WT_MAIN_FILE"
+_eq 'linked worktree: the MAIN checkout of a repo that HAS worktrees still reads its own index' \
+  '1' "$(_run_with_index "$wt_main" "$idx_main" "$GUARD_RAW_TX" "$WT_MAIN_FILE")"
+_eq "linked worktree: …and refuses a WORKTREE's index nested inside its own .git" \
+  '2' "$(_run_with_index "$wt_main" "$idx_a" "$GUARD_RAW_TX" "$WT_MAIN_FILE")"
+
+# ---------------------------------------------------------------------------
 if [ "$failures" -gt 0 ]; then
   printf '\npy guard file-source suite: %s assertion(s) failed\n' "$failures" >&2
   exit 1

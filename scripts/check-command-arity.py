@@ -85,7 +85,10 @@ _gfs_spec.loader.exec_module(guard_file_source)
 # statement of which tree to judge, and check-table-ownership.py has
 # always spelled it this way.
 REPO_ROOT = SCRIPT_DIR.parent
-COMMANDS_DIR = REPO_ROOT / "src-tauri" / "src" / "commands"
+# Repo-relative, because that is the spelling `FileSource` speaks — the
+# same string filters prek's path arguments and enumerates the whole-tree
+# branch, so the two cannot drift apart.
+COMMANDS_REL = "src-tauri/src/commands/"
 
 MAX_ARGS = 10
 
@@ -266,30 +269,39 @@ def find_command_arities(text: str) -> list[tuple[str, int, int]]:
     return results
 
 
-def all_command_files() -> list[Path]:
-    if not COMMANDS_DIR.exists():
-        return []
-    return sorted(COMMANDS_DIR.rglob("*.rs"))
+def all_command_files(src) -> list[Path]:
+    """Every command `.rs`, FROM THE SOURCE BEING JUDGED (#4060).
+
+    The no-arguments branch: a manual whole-tree run. It used to `rglob`
+    the disk unconditionally, including under `--cached`, so this branch
+    and the path-argument branch two functions down disagreed about what
+    "the file set" is — the latter asks `src.exists()`, and the comment
+    above it asserts a rule this one did not follow. A file staged but
+    deleted from disk was never listed; a `git rm --cached`'d one, not in
+    the commit at all, was listed and judged.
+
+    `src` is a `guard_file_source.FileSource` and is required: there is no
+    "the tree" independent of a source, which is the whole point.
+    """
+    return [REPO_ROOT / rel for rel in src.list_paths(COMMANDS_REL, ".rs")]
 
 
-def check_file(path: Path, src=None) -> list[str]:
+def check_file(path: Path, src) -> list[str]:
     """Return violation strings for `path` (commands over the ceiling).
 
-    `src` is a `guard_file_source.FileSource`; None means the working
-    tree, so a manual no-arg whole-tree run behaves exactly as before.
+    `src` is a `guard_file_source.FileSource` and is REQUIRED. It used to
+    default to None ("read the disk"), for the whole-tree branch that no
+    longer exists — that branch now enumerates the source like every other
+    caller (#4060), which left the default as a disk reader with no caller
+    and an open invitation to a future one. A guard has no reading of a
+    file that is independent of which copy it is judging.
     """
     rel = _rel(path)
-    if src is not None:
-        # `is None`, never a truthiness test: a zero-byte file reads as
-        # "" and must count as READ, not as skipped.
-        text = src.read(rel)
-        if text is None:
-            return []
-    else:
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return []
+    # `is None`, never a truthiness test: a zero-byte file reads as "" and
+    # must count as READ, not as skipped.
+    text = src.read(rel)
+    if text is None:
+        return []
     stripped = strip_rust_comments(text)
     violations: list[str] = []
     for name, line_no, count in find_command_arities(stripped):
@@ -459,7 +471,7 @@ def main(argv: list[str]) -> int:
                 if p.suffix != ".rs":
                     continue
                 rel = _rel(p)
-                if not rel.startswith("src-tauri/src/commands/"):
+                if not rel.startswith(COMMANDS_REL):
                     continue
                 # Presence is asked of the SOURCE BEING JUDGED, not of the
                 # disk: `p.is_file()` skipped a path that was `git add`ed and
@@ -470,7 +482,9 @@ def main(argv: list[str]) -> int:
                     continue
                 targets.append(p)
         else:
-            targets = all_command_files()
+            # Enumerated from the SOURCE too, not from the disk — the two
+            # branches answer the same question about the same tree (#4060).
+            targets = all_command_files(src)
 
         for p in targets:
             violations.extend(check_file(p, src))

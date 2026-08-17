@@ -75,6 +75,28 @@ scenarios in `runSourceScenarios` (scenario 9), which are the twin of
 section 5 of `scripts/test-py-guard-file-source.sh`. A claim of sameness
 is only worth making where something fails when it stops being true.
 
+And only where the situation it is pinned in can tell the two apart.
+Scenario 9 and section 5 both use a FOREIGN repository's index — the one
+case where every plausible implementation answers False — so they held
+the claim in the one situation that could not discriminate, and the two
+helpers diverged anyway the moment #4048 gave the `.mjs` side its own
+copy of the probe: for a LINKED WORKTREE's own index, Python said True
+and Node said False, blocking every worktree commit at exit 2. The
+discriminating case is a worktree, so both suites now build one —
+`git worktree add` inside the scratch root, section 9 here and scenario
+10 there — and assert all three answers: the tree's own index accepted,
+a sibling worktree's refused, the main checkout's refused.
+
+A fourth thing was NOT the same and now is (#4046): what a failed blob
+read means. Both helpers used to answer "read the working tree copy
+instead", while still printing `(judged the staged index)` — the
+mis-attributed verdict of #3962, arriving through the reader. Both now
+fail closed, for the reason spelled out in `_blob` here and in
+`parseBatchStream` there. The two are the same rule stated where each
+implementation can violate it, not the same paragraph twice: the shared
+half — that an unmerged path is the ONE case whose right answer is the
+disk, and that it never reaches the blob read — is stated in `read`.
+
   --cached     read the staged index (`git cat-file` on the index blob)
   --worktree   read the working tree (`Path.read_text`)
   neither      AUTO: `GIT_INDEX_FILE` naming THIS tree's index -> index;
@@ -105,6 +127,14 @@ stating so nobody adds one:
     sitting on disk) is now seen as the deletion it is. That was
     previously invisible: `Path.is_file()` said yes.
 
+A staged deletion has to be answered the same way by EVERY method, and
+for one release it was not: `read` fell back to disk for any path with no
+stage-0 entry, so the guard whose sweep had just been taught to see the
+deletion read the deleted file's content anyway (#4058). `exists`, `read`
+and `list_paths` now answer about one set — see `read` for the three-way
+split that gets an unmerged path its disk copy without giving one to a
+path that is simply not in the commit.
+
 ─── Cost ───────────────────────────────────────────────────────────────
 
 One `git cat-file blob <sha>` spawn per file read from the index, cached
@@ -123,6 +153,13 @@ from pathlib import Path
 
 SOURCE_INDEX = "index"
 SOURCE_WORKTREE = "worktree"
+
+# The first path segment under a `$GIT_DIR` at which ANOTHER repository's git
+# dir begins: `$GIT_DIR/worktrees/<name>` for a linked worktree,
+# `$GIT_DIR/modules/<name>` for a submodule. An index below one of those
+# belongs to that repository, never to the root whose `$GIT_DIR` contains it.
+# See `_index_belongs_to`; the `.mjs` twin spells this `NESTED_GIT_DIRS`.
+_NESTED_GIT_DIRS = frozenset({"worktrees", "modules"})
 
 
 class UsageError(Exception):
@@ -167,39 +204,75 @@ def _index_belongs_to(index_file: str, root: Path) -> bool:
 
     A RELATIVE `GIT_INDEX_FILE` (`.git/index` — what an ordinary `git commit`
     exports) is resolved against the process cwd, because that is how git
-    itself resolves it.
+    itself resolves it. A `root` that is not a git repository at all answers
+    False — a commit in flight somewhere, over a tree that is not a
+    repository, is precisely the case with no right answer.
 
-    Both `--absolute-git-dir` and `--git-common-dir` are accepted: in a
-    linked worktree the index lives under
-    `…/.git/worktrees/<name>/index` while the object store is shared, and
-    both spellings have to count as "this repository". A `root` that is not
-    a git repository at all answers False — a commit in flight somewhere,
-    over a tree that is not a repository, is precisely the case with no
-    right answer.
+    ─── One git dir, not two — correcting the #4048 probe ──────────────
+
+    This used to accept a path under EITHER `--absolute-git-dir` or
+    `--git-common-dir`, on the stated grounds that "in a linked worktree the
+    index lives under `…/.git/worktrees/<name>/index` while the object store
+    is shared, so both spellings have to count". The premise is true and the
+    conclusion does not follow: in a linked worktree `--absolute-git-dir` IS
+    `…/.git/worktrees/<name>`, which already contains that index — and every
+    index of a repository lives in its `$GIT_DIR`, including the
+    `index.lock` / `next-index-<pid>.lock` temp indexes git exports for
+    `git commit -a` and `git commit -- <path>`. So the common-dir arm never
+    accepted anything the git-dir arm refused for a good reason.
+
+    What it DID accept is every OTHER worktree's index, since `…/.git` is
+    the common dir of the main checkout and of all its linked worktrees
+    alike. Measured on git 2.43, in a scratch repo with two linked
+    worktrees, before this change: worktree B's index was accepted as
+    belonging to worktree A. That is a false ACCEPT, and it fails silently
+    in the worst direction — the guard reads a sibling tree's index, finds
+    nothing staged there, and exits 0 over the violation actually being
+    committed.
+
+    …and containment alone is not enough either. A linked worktree's git
+    dir is NESTED INSIDE the main one (`<main>/.git/worktrees/<name>`), so
+    "under `--absolute-git-dir`" still accepts a worktree's index as the
+    MAIN checkout's — the same false accept one level up, and the live
+    shape in this repo, where an agent runs a guard in the main checkout
+    while a commit is in flight in a worktree. `_NESTED_GIT_DIRS` is git's
+    own layout contract: `$GIT_DIR/worktrees/<name>` is a linked worktree's
+    git dir and `$GIT_DIR/modules/<name>` a submodule's, so an index under
+    either belongs to THAT repository and never to this root. For a linked
+    worktree root the git dir already IS `…/worktrees/<name>` and git does
+    not nest further, so one rule reads correctly from both sides.
+
+    Measured before the fix, against section 9 of
+    `scripts/test-py-guard-file-source.sh`: all three false accepts exited
+    0 over a staged violation — a sibling worktree's index, the main
+    checkout's index read from a worktree, and a worktree's index read from
+    the main checkout. Pinned there, and by scenario 10 of
+    `runSourceScenarios`.
     """
     path = Path(index_file)
     if not path.is_absolute():
         path = Path.cwd() / path
     path = Path(os.path.normpath(path))
-    for flag in ("--absolute-git-dir", "--git-common-dir"):
-        try:
-            out = subprocess.run(
-                ["git", "-C", str(root), "rev-parse", flag],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except OSError:
-            return False
-        if out.returncode != 0 or not out.stdout.strip():
-            continue
-        git_dir = Path(out.stdout.strip())
-        if not git_dir.is_absolute():
-            git_dir = root / git_dir
-        git_dir = Path(os.path.normpath(git_dir))
-        if path == git_dir or git_dir in path.parents:
-            return True
-    return False
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    if out.returncode != 0 or not out.stdout.strip():
+        return False
+    git_dir = Path(out.stdout.strip())
+    if not git_dir.is_absolute():
+        git_dir = root / git_dir
+    git_dir = Path(os.path.normpath(git_dir))
+    if path == git_dir:
+        return True
+    if git_dir not in path.parents:
+        return False
+    return path.relative_to(git_dir).parts[0] not in _NESTED_GIT_DIRS
 
 
 def git_env(root: Path, env) -> dict:
@@ -298,6 +371,7 @@ class FileSource:
         self.why = why
         self.env = git_env(repo_root, os.environ if env is None else env)
         self._index: dict[str, tuple[str, str]] | None = None
+        self._unmerged: set[str] = set()
         self._blobs: dict[str, str | None] = {}
 
     # -- index plumbing ---------------------------------------------------
@@ -308,10 +382,24 @@ class FileSource:
         `-z` rather than plain `ls-files -s`: NUL-separated records mean a
         path containing a quote, a backslash or a newline arrives intact
         instead of C-quoted, and a path that cannot be parsed is a path
-        that cannot be scanned. Unmerged paths (stages 1/2/3, no stage 0)
-        are deliberately absent, so `read` falls back to the conflicted
-        copy on disk — which is where the markers the author is resolving
-        actually live.
+        that cannot be scanned.
+
+        Unmerged paths (stages 1/2/3, no stage 0) are deliberately absent
+        from this mapping — they are not part of the commit — but they are
+        RECORDED, in `_unmerged`, because "no stage-0 entry" is two
+        different facts and `read` owes them different answers (#4058):
+
+          * UNMERGED — a conflict in progress. The conflicted copy on disk
+            is where the markers the author is resolving actually live, so
+            that is what `read` returns.
+          * ABSENT — never staged, or staged for DELETION (`git rm
+            --cached`, which leaves the file sitting on disk). It is not in
+            the commit, `exists()` says so, and `read` must say so too.
+
+        Collapsing the two onto "fall back to disk" made the two methods
+        contradict each other: `exists()` answered the index while `read()`
+        handed back the working tree's content for the very path it had
+        just called absent.
         """
         if self._index is None:
             try:
@@ -331,27 +419,72 @@ class FileSource:
                     f"{out.stderr.decode('utf-8', 'replace').strip()}"
                 )
             entries: dict[str, tuple[str, str]] = {}
+            unmerged: set[str] = set()
             for record in out.stdout.split(b"\0"):
                 if not record or b"\t" not in record:
                     continue
                 meta, _, raw_path = record.partition(b"\t")
                 parts = meta.split(b" ")
-                if len(parts) < 3 or parts[2] != b"0":
+                if len(parts) < 3:
                     continue
-                entries[raw_path.decode("utf-8", "surrogateescape")] = (
-                    parts[0].decode(),
-                    parts[1].decode(),
-                )
+                rel = raw_path.decode("utf-8", "surrogateescape")
+                if parts[2] == b"0":
+                    entries[rel] = (parts[0].decode(), parts[1].decode())
+                else:
+                    unmerged.add(rel)
             self._index = entries
+            self._unmerged = unmerged
         return self._index
 
+    def _is_unmerged(self, rel: str) -> bool:
+        """Does `rel` have conflict stages (1/2/3) and no stage 0?
+
+        Goes through `_entries` so the index is loaded — and so a `git
+        ls-files` that could not answer still fails CLOSED here rather than
+        reporting "not unmerged" about an index nobody read.
+        """
+        self._entries()
+        return rel in self._unmerged
+
     def _blob(self, rel: str) -> str | None:
+        """`rel`'s STAGED text, or None if the index offers no blob for it.
+
+        NONE MEANS "THE INDEX HAS NO BLOB HERE", NEVER "THE BLOB WOULD NOT
+        COME BACK" (#4046). Exactly two things produce None: no stage-0
+        entry, and a gitlink (mode 160000, a submodule — no blob to read,
+        and the working tree would effectively skip it too, it is a
+        directory).
+
+        A `git cat-file` that FAILS raises `GitError` instead, and the
+        reasoning is worth keeping because the first draft did the opposite
+        — it swallowed every non-zero exit into None and let `read` return
+        the working-tree copy under a "judged the staged index" banner.
+
+        A `cat-file` failure has more than one cause (a missing object, a
+        corrupt pack, an unreadable object store, the OOM killer, `git`
+        itself gone), and the only per-call signal separating them is
+        stderr TEXT, which is not a contract. But the distinction that
+        actually matters is not made by parsing stderr at all — it is made
+        by WHICH BRANCH THE PATH TOOK. The one case where the working-tree
+        copy IS the right answer is an unmerged path, and such a path has
+        no stage-0 sha, so it never reaches `cat-file`; it is routed to
+        disk by `read` before this method would run. Everything left here
+        is "the index says this content is being committed, and git cannot
+        produce it" — for which the on-disk file is not a substitute but a
+        DIFFERENT file's content, offered under a verdict claiming the
+        index. There is no benign cause to preserve the fallback for, so it
+        fails closed: the callers already turn `GitError` into exit 2 with
+        the cause named, which is the only honest answer available.
+
+        The `.mjs` sibling reaches the same verdict by the same reasoning —
+        see `readFromIndex`/`parseBatchStream` in
+        `scripts/lib/guard-file-source.mjs`, where `<oid> missing` is an
+        error rather than a working-tree fallback.
+        """
         if rel in self._blobs:
             return self._blobs[rel]
         entry = self._entries().get(rel)
         text: str | None = None
-        # mode 160000 is a gitlink (submodule): no blob to read, and the
-        # working tree would effectively skip it too (it is a directory).
         if entry is not None and entry[0] != "160000":
             out = subprocess.run(
                 ["git", "cat-file", "blob", entry[1]],
@@ -360,8 +493,19 @@ class FileSource:
                 capture_output=True,
                 check=False,
             )
-            if out.returncode == 0:
-                text = out.stdout.decode("utf-8", "replace")
+            if out.returncode != 0:
+                raise GitError(
+                    f"`git cat-file blob {entry[1]}` failed for '{rel}' "
+                    f"(exit {out.returncode}): "
+                    f"{out.stderr.decode('utf-8', 'replace').strip()}\n"
+                    "  The index names that blob, so this is a damaged or "
+                    "unreadable object store — the staged content cannot be "
+                    "read.\n"
+                    "  Reading the working-tree copy instead would report a "
+                    "verdict about a different file's content under a claim of "
+                    "having judged the index."
+                )
+            text = out.stdout.decode("utf-8", "replace")
         self._blobs[rel] = text
         return text
 
@@ -372,6 +516,10 @@ class FileSource:
 
         Under the index that means "will be in the commit"; under the
         working tree it means "is a file on disk right now".
+
+        `exists`, `read` and `list_paths` answer about the SAME SET, and
+        that agreement is pinned by fixtures rather than left to reading:
+        a path this returns False for reads as None and is not listed.
         """
         if self.source == SOURCE_INDEX:
             return rel in self._entries()
@@ -385,23 +533,72 @@ class FileSource:
         empty file trivially holds no violation, so conflating the two is
         invisible until the day the file is not empty.
 
-        A path with no stage-0 index entry (unmerged, or simply not in the
-        index) falls back to the working tree under the index source, so
-        it is still JUDGED rather than silently skipped.
+        Under the index there are THREE cases, not two (#4058):
+
+          * a stage-0 entry — the staged blob, or `GitError` if git cannot
+            hand it back (see `_blob`); a gitlink reads as None;
+          * UNMERGED — no stage-0 entry but conflict stages 1/2/3. Falls
+            back to the working tree, which is where the markers the author
+            is resolving live, so the path is still JUDGED rather than
+            silently skipped. git refuses to commit with unmerged paths
+            anyway, so the verdict is advisory either way;
+          * ABSENT from the index — None, agreeing with `exists()`.
+
+        That last case used to fall back to disk as well, which made the
+        two methods contradict each other on a STAGED DELETION: `git rm
+        --cached src-tauri/dynamic-sql-baseline.txt` leaves the file on
+        disk, so `exists()` said "not in the commit" while `read()` handed
+        back the 68-entry ceiling being deleted, and the ratchet judged the
+        commit against a baseline that commit removes.
         """
         if self.source == SOURCE_INDEX:
-            text = self._blob(rel)
-            if text is not None:
-                return text
             if rel in self._entries():
-                # Present in the index but its blob would not come back:
-                # a damaged object store. Judge the copy on disk rather
-                # than report a file nobody scanned as clean.
-                pass
+                return self._blob(rel)
+            if not self._is_unmerged(rel):
+                return None
+            # UNMERGED — fall through to the conflicted copy on disk.
         try:
             return (self.repo_root / rel).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             return None
+
+    def list_paths(self, prefix: str, suffix: str = "") -> list[str]:
+        """Repo-relative paths under `prefix` ending in `suffix`, FROM THE SOURCE.
+
+        The enumerator half of the same question `read` answers (#4047 /
+        #4060). Two guards scan a whole subtree when handed no file
+        arguments, and both used to `rglob` the DISK while reading contents
+        from the index — the mixed shape #4017 is about, one level up from
+        the reader it fixed. Under `--cached` that missed a file staged but
+        deleted from the working tree and judged a `git rm --cached`'d one
+        that is not in the commit, which is exactly the pair of answers the
+        path-argument branch of those guards already gets right.
+
+        Under the index this lists stage-0 entries only, so it agrees with
+        `exists()` by construction: an unmerged path is not in the commit
+        and is not enumerated as if it were. Under the working tree it is
+        the `rglob` it has always been, including untracked files — "the
+        working tree" means what is on disk.
+
+        `prefix` is a repo-relative directory (a trailing `/` is optional);
+        `suffix` an extension, or `""` for every file.
+        """
+        if not prefix.endswith("/"):
+            prefix += "/"
+        if self.source == SOURCE_INDEX:
+            return sorted(
+                rel
+                for rel in self._entries()
+                if rel.startswith(prefix) and rel.endswith(suffix)
+            )
+        root = self.repo_root / prefix
+        if not root.is_dir():
+            return []
+        return sorted(
+            p.relative_to(self.repo_root).as_posix()
+            for p in root.rglob(f"*{suffix}")
+            if p.is_file()
+        )
 
 
 def build(argv: list[str], env, repo_root: Path, extra_flags: tuple[str, ...] = ()) -> FileSource:
