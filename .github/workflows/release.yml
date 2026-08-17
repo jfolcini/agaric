@@ -511,7 +511,8 @@ jobs:
             echo "       Read the boot output dumped above FIRST: if it shows xvfb-run or" >&2
             echo "       the AppImage failing to start, the process never reached Rust at" >&2
             echo "       all and none of the boot-phase readings below apply." >&2
-            echo "       Otherwise the code is the tell: 101 means it panicked before" >&2
+            echo "       Otherwise the code is the tell: 134 (or 101 on an unwinding" >&2
+            echo "       build) means it panicked before" >&2
             echo "       init_logging, 124 means it was alive but never got there, anything" >&2
             echo "       else means it exited early. Or the sandbox override was not" >&2
             echo "       honoured. Sandbox tree:" >&2
@@ -551,15 +552,23 @@ jobs:
               echo "       the usual cause. Not a SIGTERM-ignored timeout — that reports 124." >&2
               exit 1
               ;;
-            101)
-              # Reachable only when a panic still let init_logging write its
-              # line first; a panic BEFORE that (the literal 0.9.7 shape) trips
-              # CHECK 1 above and never reaches this case. Note WHICH branch of
-              # CHECK 1 it trips: `RollingFileAppender::builder().build()` opens
-              # the file eagerly, before the `.init()` that panicked in 0.9.7, so
-              # the file EXISTS and it is the grep that fails — the operator sees
-              # "exists but carries no boot line", not "no log file".
-              echo "ERROR: Rust panic during boot (exit 101), after init_logging had run" >&2
+            101 | 134)
+              # 134 is the one that actually fires for a RELEASE AppImage:
+              # `[profile.release]` sets `panic = "abort"` (Cargo.toml), so a
+              # panic raises SIGABRT and the shell reports 128+6 = 134, never
+              # 101. 101 is kept for a debug/unwinding build run through this
+              # same step by hand.
+              #
+              # Either code is reachable only when a panic still let
+              # init_logging write its line first; a panic BEFORE that (the
+              # literal 0.9.7 shape) trips CHECK 1 above and never reaches this
+              # case. Note WHICH branch of CHECK 1 it trips:
+              # `RollingFileAppender::builder().build()` opens the file eagerly,
+              # before the `.init()` that panicked in 0.9.7, so the file EXISTS
+              # and it is the grep that fails — the operator sees "exists but
+              # carries no boot line", not "no log file".
+              echo "ERROR: Rust panic during boot (exit $code — 134 = SIGABRT under" >&2
+              echo "       panic=abort, 101 = an unwinding build), after init_logging ran" >&2
               exit 1
               ;;
             0)
