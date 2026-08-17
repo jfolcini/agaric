@@ -38,7 +38,22 @@ import type {
 export { ULID_RE } from '@/editor/markdown-common'
 export { taskStateFromMarker } from '@/lib/task-states'
 export const MAX_LINK_SCAN = 10_000
-export const CALLOUT_RE = /^\[!(\w+)\]\s?(.*)/i
+/**
+ * Callout prefix on the first line of a blockquote: `[!NOTE] title`. Group 1 is
+ * the type, group 2 the remaining title text, which `extractCalloutType`
+ * (`./parser`) writes BACK over the quote line — so what group 2 fails to
+ * capture is not merely unmatched, it is DELETED.
+ *
+ * That makes this the one production where the `.` → `[^\n]` rule of #4051 is
+ * destructive rather than inert. Every other line production is anchored `$`,
+ * so a `.` that cannot cross a CR just fails to match and the line falls
+ * through to a paragraph intact; this one is unanchored at the end, so `.`
+ * would match the PREFIX before the CR and truncate the title there
+ * (`[!note] a\rb` → `a`). The separator is `[ \t]` rather than `\s` for the
+ * same reason: `\s` includes CR, so it would swallow a CR sitting directly
+ * after `]` instead of leaving it as content.
+ */
+export const CALLOUT_RE = /^\[!(\w+)\][ \t]?([^\n]*)/i
 /**
  * Maximum recursion depth for `parse()` to guard against pathological or
  * adversarial inputs (deeply nested blockquotes, link-display-text with

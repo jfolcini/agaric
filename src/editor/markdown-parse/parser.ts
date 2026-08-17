@@ -563,32 +563,6 @@ function leadingIndent(line: string): number {
 }
 
 /**
- * Strip exactly `columns` COLUMNS of leading indentation — the column-counting
- * inverse of the serializer's `indentLines`, and the only place indentation is
- * ever consumed as structure.
- *
- * A tab that STRADDLES the boundary is replaced by the columns it contributes
- * past it (CommonMark's partially-consumed tab): dedenting `\t- child` by the
- * 2-column content column yields `  - child`, which the marker-indent tolerance
- * then reads as a real sublist. Everything from the first non-whitespace char
- * on is copied verbatim, so a tab that is not spent on structure — one inside
- * inline text, or inside fenced code content — is never rewritten. That is what
- * keeps the expansion out of the interior of code blocks (#4052) without the
- * dedent needing to know where a fence is.
- *
- * APPROXIMATION, stated precisely. Tab stops are counted from the start of the
- * line as the parser currently sees it, and `collectListItem` re-bases that
- * start on every nesting level. So for a line whose leading whitespace STILL
- * holds a tab after the dedent, the stops shift by `columns % TAB_STOP` against
- * a strict CommonMark reading, which counts from the original document column.
- * No structural decision can differ: a surviving tab means column ≥ 4 either
- * way, i.e. past the marker tolerance under both readings. Only the retained
- * whitespace TEXT of such a line differs — `- p` / `\t\t- deep` keeps the
- * second tab verbatim (`  \t- deep`) where full expansion would have written
- * six spaces. Preserving the user's tab is the better of the two, and it is the
- * same choice that keeps code-fence content intact.
- */
-/**
  * Rewrite a line's LEADING WHITESPACE RUN as the spaces it occupies in columns,
  * leaving everything from the first non-whitespace character verbatim.
  *
@@ -617,6 +591,32 @@ function expandLeadingIndent(line: string): string {
   return ' '.repeat(leadingIndent(line)) + rest
 }
 
+/**
+ * Strip exactly `columns` COLUMNS of leading indentation — the column-counting
+ * inverse of the serializer's `indentLines`, and the only place indentation is
+ * ever consumed as structure.
+ *
+ * A tab that STRADDLES the boundary is replaced by the columns it contributes
+ * past it (CommonMark's partially-consumed tab): dedenting `\t- child` by the
+ * 2-column content column yields `  - child`, which the marker-indent tolerance
+ * then reads as a real sublist. Everything from the first non-whitespace char
+ * on is copied verbatim, so a tab that is not spent on structure — one inside
+ * inline text, or inside fenced code content — is never rewritten. That is what
+ * keeps the expansion out of the interior of code blocks (#4052) without the
+ * dedent needing to know where a fence is.
+ *
+ * APPROXIMATION, stated precisely. Tab stops are counted from the start of the
+ * line as the parser currently sees it, and `collectListItem` re-bases that
+ * start on every nesting level. So for a line whose leading whitespace STILL
+ * holds a tab after the dedent, the stops shift by `columns % TAB_STOP` against
+ * a strict CommonMark reading, which counts from the original document column.
+ * No structural decision can differ: a surviving tab means column ≥ 4 either
+ * way, i.e. past the marker tolerance under both readings. Only the retained
+ * whitespace TEXT of such a line differs — `- p` / `\t\t- deep` keeps the
+ * second tab verbatim (`  \t- deep`) where full expansion would have written
+ * six spaces. Preserving the user's tab is the better of the two, and it is the
+ * same choice that keeps code-fence content intact.
+ */
 function dedentColumns(line: string, columns: number): string {
   let column = 0
   let i = 0

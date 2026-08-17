@@ -167,3 +167,21 @@ export function bulletList(...items: ListItemNode[]): BulletListNode {
 export function horizontalRule(): HorizontalRuleNode {
   return { type: 'horizontalRule' }
 }
+
+/**
+ * Every stored text-node string in a parsed doc, depth-first — the inverse of
+ * the builders above, for asserting on what a parse actually STORED.
+ *
+ * Representation-independent by design: a `JSON.stringify(doc).includes('\\r')`
+ * check tests the JSON ENCODING, where the two characters `\` + `r` are also
+ * how a literal backslash followed by the letter `r` in document text encodes,
+ * so it silently stops discriminating the moment a generator's alphabet gains a
+ * backslash. Walking the nodes compares the real characters.
+ */
+export function allStoredText(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap((v) => allStoredText(v))
+  if (value === null || typeof value !== 'object') return []
+  const node = value as { type?: string; text?: string; content?: unknown; attrs?: unknown }
+  const own = typeof node.text === 'string' ? [node.text] : []
+  return [...own, ...allStoredText(node.content), ...allStoredText(node.attrs)]
+}

@@ -17,9 +17,11 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import {
+  allStoredText,
   blockquote,
   bold,
   bulletList,
+  callout,
   codeBlock,
   doc,
   hardBreak,
@@ -618,15 +620,6 @@ describe('parse — the delimiter/data boundary at table row 1', () => {
 // at end of input) is a LINE ENDING and is consumed as one; a CR anywhere else
 // is ordinary content and is preserved verbatim.
 
-/** Every stored text-node string in a parsed doc, depth-first. */
-function allStoredText(value: unknown): string[] {
-  if (Array.isArray(value)) return value.flatMap((v) => allStoredText(v))
-  if (value === null || typeof value !== 'object') return []
-  const node = value as { type?: string; text?: string; content?: unknown; attrs?: unknown }
-  const own = typeof node.text === 'string' ? [node.text] : []
-  return [...own, ...allStoredText(node.content), ...allStoredText(node.attrs)]
-}
-
 /**
  * One document per block production, written with LF. Each is re-issued with
  * CRLF endings and must parse to the IDENTICAL document — the productions are
@@ -698,6 +691,20 @@ describe('parse — CRLF line endings (#4051)', () => {
     // marker line unmatchable the moment it holds a lone CR. Content matchers
     // are `[^\n]` for exactly that reason.
     expect(parse('- a\rb')).toEqual(doc(bulletList(listItem(paragraph(text('a\rb'))))))
+  })
+
+  it('a lone CR in a callout title is preserved, not truncated away', () => {
+    // `CALLOUT_RE` is the one production that is not anchored at the end, so a
+    // `.`-matched title there does not merely fail to match on a lone CR — it
+    // matches the PREFIX, and `extractCalloutType` overwrites the quote line
+    // with that prefix, silently dropping everything from the CR onward. Its
+    // title matcher is `[^\n]` for that reason, and the separator after `]` is
+    // a space/tab rather than `\s` so it cannot swallow a leading CR either.
+    expect(parse('> [!note] a\rb')).toEqual(doc(callout('note', paragraph(text('a\rb')))))
+  })
+
+  it('a lone CR immediately after a callout marker is content, not the separator', () => {
+    expect(parse('> [!note]\rb')).toEqual(doc(callout('note', paragraph(text('\rb')))))
   })
 
   it('a lone CR survives serialize(parse(·)) unchanged', () => {

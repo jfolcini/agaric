@@ -24,6 +24,7 @@ import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
 import {
+  allStoredText,
   blockRef,
   blockquote,
   bold,
@@ -725,7 +726,12 @@ describe('property (#4051): a CRLF document parses as its LF twin', () => {
         const lf = lines.join('\n')
         const parsed = parse(lf.replaceAll('\n', '\r\n'))
         expect(parsed).toEqual(parse(lf))
-        expect(JSON.stringify(parsed)).not.toContain('\\r')
+        // On the STORED CHARACTERS, not on the JSON encoding: in JSON the two
+        // characters `\` + `r` are also how a literal backslash followed by
+        // `r` in document text encodes, so a `stringify().not.toContain('\\r')`
+        // check stops discriminating the day `arbForeignLine`'s alphabet gains
+        // a backslash — passing for the wrong reason rather than failing.
+        expect(allStoredText(parsed).filter((t) => t.includes('\r'))).toEqual([])
       }),
       { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
     )

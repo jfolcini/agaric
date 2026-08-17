@@ -212,6 +212,38 @@ Three requirements to actually get idempotence:
    because promoting a stray control character to a block boundary is not
    recoverable whereas keeping it is.
 
+**Known divergence — the vault importer normalises the opposite way on both of
+those axes.** Rules 4 and 5 describe the TypeScript parser, which is the path a
+PASTE into the editor takes. A markdown file read from disk goes through the
+Rust vault importer instead (`src-tauri/agaric-engine/src/import.rs`), and it
+decides both questions differently:
+
+- **Lone `\r`** — `import.rs:514` normalises `\r\n` to `\n` and then *every
+  remaining* `\r` to `\n`, i.e. CommonMark §2.3: a lone CR is a line ending and
+  splits the block. The TS parser keeps it as content (rule 5). So `a\rb` is two
+  blocks imported from disk and one paragraph holding a CR when pasted.
+- **Tabs** — `import.rs:517` expands `\t` to two spaces flat (not to the next
+  4-column stop), and `import.rs:596-600` derives depth as
+  `leading-space-count / 2`. So a tab is exactly one nesting level there, while
+  the TS parser measures a tab as the columns it occupies and spends one content
+  column per level.
+
+The two agree on the common case — a single leading tab is one level under both
+— but not beyond it. `- p` followed by `\t\t- deep` is a **depth-2 block** to
+the importer (two tabs → four spaces → depth 2) and a **continuation paragraph
+inside `- p`** to the parser (two tabs → column 8, dedented by one content
+column, still far past the three-space marker tolerance, so it is text: the
+serializer re-emits it escaped, as six spaces followed by an escaped dash and
+the word). A mixed space-then-tab indent diverges the same way. So the same file can nest differently depending on whether it was
+imported or pasted.
+
+Nothing pins this today — no conformance vector covers markdown tab or CR
+handling — and neither behaviour is obviously the wrong one to pick: the
+importer's flat expansion matches Logseq's on-disk convention (two spaces per
+level, which is what our own exporter writes), while the parser's column
+arithmetic matches CommonMark. Reconciling them is a decision about which
+convention owns the on-disk format, deliberately **not** made here.
+
 **Caveat — the coarse (multi-line) block option.** Intra-block soft breaks
 (`Shift+Enter`) and indentation-based child nesting both want indentation in
 markdown. This is idempotent **only** if exporter and importer honour, byte for
