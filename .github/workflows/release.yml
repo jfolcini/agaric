@@ -145,7 +145,8 @@ jobs:
             libsoup-3.0-dev \
             libappindicator3-dev \
             patchelf \
-            pkg-config
+            pkg-config \
+            xvfb
 
       - name: Setup Node.js
         # No package-manager cache on a publishing lane (#3573). The
@@ -342,7 +343,12 @@ jobs:
           bash scripts/fix-appimage-icons.sh \
             "src-tauri/target/${{ matrix.target }}/release/bundle/appimage/Agaric.AppDir"
 
-      - name: Verify repacked AppImage
+      # NAME IS DELIBERATELY NARROW (#4080). This step verifies the icon
+      # wiring and the repack size — nothing here starts the program. It was
+      # written for an icon bug and its four assertions all passed on 0.9.7, a
+      # build that could not reach its first window. The boot check is the
+      # separate step below.
+      - name: Verify repacked AppImage (icon + size only)
         if: matrix.platform == 'ubuntu-24.04'
         env:
           PRE_FIX_SIZE: ${{ steps.prefix_size.outputs.size }}
@@ -400,6 +406,131 @@ jobs:
             exit 1
           fi
           echo "OK: repacked AppImage ≥ pre-fix size"
+
+      # #4080 Tier 2 — start the artifact we are about to sign and publish.
+      #
+      # 0.9.7 was built, bundled, signed, uploaded and given an updater
+      # `latest.json` with all four platform jobs green, on a binary that
+      # aborted before its first window. Every check we had answered "does it
+      # compile and unpack", never "does it run". This one runs it.
+      #
+      # Placed BEFORE the first upload step on purpose: a build that cannot
+      # start must never reach the draft as an asset, and `generate-latest-json`
+      # / `publish-release` both require this job to succeed, so a failure here
+      # means no signed asset and no updater manifest exist at all.
+      #
+      # Linux only for now. macOS and Windows runners do have a session, but
+      # whether the WebView initialises headlessly there needs its own spike
+      # before a release is gated on it (#4080 records this).
+      - name: Smoke-boot the repacked AppImage (Xvfb)
+        if: matrix.platform == 'ubuntu-24.04'
+        env:
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
+          # Long enough to get well past window creation and the setup hook
+          # (init_logging, deep-link router, DB open), short enough not to
+          # matter on a job that already spent minutes compiling.
+          BOOT_SECONDS: '20'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          appimages=("$BUNDLE_DIR"/Agaric_*_amd64.AppImage)
+          if [ ${#appimages[@]} -eq 0 ]; then
+            echo "ERROR: No repacked Agaric_*_amd64.AppImage found to boot" >&2
+            exit 1
+          fi
+          APPIMAGE_BIN="${appimages[0]}"
+
+          # Throwaway vault. `AGARIC_E2E_SANDBOX=1` makes the relocation
+          # MANDATORY (app_paths.rs), so if the override were ever dropped the
+          # app fails loudly here instead of quietly opening a real vault —
+          # the runner being ephemeral is not the thing keeping this safe.
+          SANDBOX="$(mktemp -d)"
+          export AGARIC_DATA_DIR="$SANDBOX/data"
+          export AGARIC_E2E_SANDBOX=1
+          mkdir -p "$AGARIC_DATA_DIR"
+
+          # ubuntu-24.04 runners have no libfuse2, so the AppImage cannot
+          # self-mount. Extract-and-run still exercises the real AppRun, the
+          # bundled libraries and the real binary — it does NOT cover the
+          # squashfs mount path, which is the one launch failure this step
+          # cannot see.
+          export APPIMAGE_EXTRACT_AND_RUN=1
+
+          set +e
+          timeout --signal=TERM --kill-after=10s "${BOOT_SECONDS}s" \
+            xvfb-run -a "$APPIMAGE_BIN" > "$SANDBOX/boot.log" 2>&1
+          code=$?
+          set -e
+
+          echo "----- first 200 lines of boot output -----"
+          sed -n '1,200p' "$SANDBOX/boot.log" || true
+          echo "------------------------------------------"
+
+          # CHECK 1 — positive proof that the setup hook ran.
+          #
+          # Staying alive is NOT that proof, and this was measured rather than
+          # assumed: an intentionally-broken config (AGARIC_E2E_SANDBOX=1 with
+          # no AGARIC_DATA_DIR, which app_paths::decide MUST reject) still sat
+          # there for the full timeout, because a fatal boot error puts up a
+          # dialog and waits. A liveness-only check reports that as a pass.
+          #
+          # `init_logging` creates this file and writes "log directory
+          # initialized" into it, so its presence means boot got past the
+          # phase that aborted in 0.9.7 — and it lands under the throwaway
+          # AGARIC_DATA_DIR, so finding it also proves the sandbox override
+          # took effect and the run never touched a real vault.
+          # NOTE the glob. `build_log_file_appender` uses a DAILY rotation with
+          # `filename_prefix("agaric.log")`, so tracing-appender appends the
+          # date: the file on disk is `agaric.log.YYYY-MM-DD`, never plain
+          # `agaric.log`. A hardcoded `agaric.log` here would fail every
+          # release with a message blaming boot for a naming mistake.
+          app_logs=("$AGARIC_DATA_DIR"/logs/agaric.log*)
+          if [ ${#app_logs[@]} -eq 0 ]; then
+            echo "ERROR: no log file under $AGARIC_DATA_DIR/logs after ${BOOT_SECONDS}s." >&2
+            echo "       The process may have been alive without ever completing boot" >&2
+            echo "       (a fatal-error dialog does exactly that), or the sandbox" >&2
+            echo "       override was not honoured. Sandbox tree:" >&2
+            find "$SANDBOX" -maxdepth 3 >&2 || true
+            exit 1
+          fi
+          if ! grep -qh "log directory initialized" "${app_logs[@]}"; then
+            echo "ERROR: ${app_logs[*]} exists but carries no boot line from init_logging." >&2
+            head -c 4000 "${app_logs[@]}" >&2 || true
+            exit 1
+          fi
+          echo "OK: init_logging completed and wrote ${app_logs[*]}"
+
+          # CHECK 2 — and it was still running when the deadline fired.
+          #
+          # 124 is the only pass. Every other code means it exited on its own,
+          # which for a desktop app that just booted is a failure however tidy
+          # the code — exit 0 included. A silent, instant, successful-looking
+          # exit is precisely the shape a false green takes here: a
+          # single-instance handoff produces exactly that, and did, when this
+          # check was first tried by hand against 0.9.8.
+          case "$code" in
+            124)
+              echo "OK: survived ${BOOT_SECONDS}s and exited on SIGTERM"
+              ;;
+            137)
+              echo "ERROR: ignored SIGTERM and had to be SIGKILLed" >&2
+              exit 1
+              ;;
+            101)
+              echo "ERROR: Rust panic during boot (exit 101) — this is the 0.9.7 shape" >&2
+              exit 1
+              ;;
+            0)
+              echo "ERROR: exited 0 before ${BOOT_SECONDS}s. A booted app stays up; a quiet" >&2
+              echo "       immediate success here means it never really started." >&2
+              exit 1
+              ;;
+            *)
+              echo "ERROR: exited with code $code before ${BOOT_SECONDS}s" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Replace AppImage on draft release with repacked build
         if: matrix.platform == 'ubuntu-24.04'
