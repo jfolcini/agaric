@@ -85,18 +85,32 @@ completed no boot at all. A liveness-only check reports that as a pass. The
 second draft of a check whose whole purpose is "stop believing green means
 working" had reproduced the bug a third time.
 
-So the step now leads with positive proof: `init_logging` creates
-`$AGARIC_DATA_DIR/logs/agaric.log` and writes "log directory initialized" into
-it, and the step requires that file, non-empty, containing that line. It lands
-under the throwaway data dir, so finding it proves two things at once — boot got
-past the phase that aborted in 0.9.7, and the sandbox override took effect, so
-the run never went near a real vault.
+So the step now leads with positive proof: `init_logging` creates a log file
+under `$AGARIC_DATA_DIR/logs/` and writes "log directory initialized" into it,
+and the step requires a file matching that glob which contains that line. It
+lands under the throwaway data dir, so finding it proves two things at once —
+boot got past the phase that aborted in 0.9.7, and the sandbox override took
+effect, so the run never went near a real vault.
+
+Two details in that sentence are load-bearing and were both got wrong in an
+earlier draft of this very entry. The file is **not** `agaric.log`:
+`build_log_file_appender` uses a DAILY rotation with
+`filename_prefix("agaric.log")`, so on disk it is `agaric.log.YYYY-MM-DD`, which
+is why the step globs. And the check is existence-plus-grep, **not** a
+non-emptiness test — writing "non-empty" here would be this document promising
+more than the check delivers, which is the failure this whole PR is about.
 
 Only then does the exit code get checked, where the **only** passing value is
 124. Every other outcome is a failure with its own message, **including exit 0**:
 a desktop app that boots stays up, and a quiet immediate success is precisely the
-shape a false green takes here. 137 (ignored SIGTERM), 101 (Rust panic, the 0.9.7
-shape) and everything else are separated so the log says which happened.
+shape a false green takes here. 101 (a Rust panic that still let logging come up)
+and everything else are separated so the log says which happened.
+
+137 deserves its own note, because the first draft of this entry read it as
+"ignored SIGTERM and had to be SIGKILLed" and that is wrong. GNU `timeout`
+reports 124 whenever it timed out, `--kill-after` escalation included, so a 137
+arriving here came from an **external** SIGKILL — an OOM kill on the runner being
+the likely one. The workflow comment carries the corrected reading.
 
 Placement matters as much as the check: it sits after the icon verification and
 **before `Replace AppImage on draft release with repacked build`**, the first step

@@ -508,10 +508,13 @@ jobs:
           if [ ${#app_logs[@]} -eq 0 ]; then
             echo "ERROR: no log file under $AGARIC_DATA_DIR/logs after ${BOOT_SECONDS}s." >&2
             echo "       Process exit code was $code (124 = still running at the deadline)." >&2
-            echo "       That code is the tell: 101 means it panicked before init_logging" >&2
-            echo "       (the 0.9.7 shape), 124 means it was alive but never got there," >&2
-            echo "       anything else means it exited early. Or the sandbox override" >&2
-            echo "       was not honoured. Sandbox tree:" >&2
+            echo "       Read the boot output dumped above FIRST: if it shows xvfb-run or" >&2
+            echo "       the AppImage failing to start, the process never reached Rust at" >&2
+            echo "       all and none of the boot-phase readings below apply." >&2
+            echo "       Otherwise the code is the tell: 101 means it panicked before" >&2
+            echo "       init_logging, 124 means it was alive but never got there, anything" >&2
+            echo "       else means it exited early. Or the sandbox override was not" >&2
+            echo "       honoured. Sandbox tree:" >&2
             find "$SANDBOX" -maxdepth 3 >&2 || true
             exit 1
           fi
@@ -532,7 +535,11 @@ jobs:
           # check was first tried by hand against 0.9.8.
           case "$code" in
             124)
-              echo "OK: survived ${BOOT_SECONDS}s and exited on SIGTERM"
+              # 124 is "timeout fired", which covers both a clean SIGTERM exit
+              # and the --kill-after escalation to SIGKILL (timeout reports its
+              # own status, not the child's, whenever it timed out). Either way
+              # the app was still alive at the deadline, which is what we assert.
+              echo "OK: still running at ${BOOT_SECONDS}s; reaped by timeout"
               ;;
             137)
               # NOT "ignored SIGTERM": GNU timeout reports EXIT_TIMEDOUT (124)
@@ -547,7 +554,11 @@ jobs:
             101)
               # Reachable only when a panic still let init_logging write its
               # line first; a panic BEFORE that (the literal 0.9.7 shape) trips
-              # CHECK 1 above and never reaches this case.
+              # CHECK 1 above and never reaches this case. Note WHICH branch of
+              # CHECK 1 it trips: `RollingFileAppender::builder().build()` opens
+              # the file eagerly, before the `.init()` that panicked in 0.9.7, so
+              # the file EXISTS and it is the grep that fails — the operator sees
+              # "exists but carries no boot line", not "no log file".
               echo "ERROR: Rust panic during boot (exit 101), after init_logging had run" >&2
               exit 1
               ;;
