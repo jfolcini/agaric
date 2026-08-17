@@ -9,9 +9,10 @@ If a Rust change touches SQL queries (`query!`/`query_as!`, or an
 `as "col!: NewType"` override), regenerate the caches: **`just gen-sqlx`**.
 
 Never the bare `cargo sqlx prepare -- --tests`. There are **four** caches (root +
-`agaric-store` / `agaric-engine` / `agaric-sync`), each checked by its own CI lane, and
-the bare command produces three distinct failures. Keep them separate — conflating them
-is what makes people think one extra flag is the fix:
+`agaric-store` / `agaric-engine` / `agaric-sync`), each checked by its own CI lane. The
+bare command produces two distinct failures (1 and 2 below); a third is residual and
+survives any recipe. Keep them separate — conflating them is what makes people think one
+extra flag is the fix:
 
 First, the flag that trips everyone up: `cargo sqlx prepare --workspace` and
 `cargo sqlx prepare -- --workspace` are **different things**. The first is sqlx's own
@@ -38,11 +39,19 @@ that placement is the whole point.
    `scripts/check-sqlx-cache-drift.sh:5-14` exists to catch, and the reason to read a
    `.sqlx` diff rather than assume a green command means a correct cache.
 
-Nothing local complains about 1 or 2: `cargo sqlx prepare --check -- --tests` re-checks
-the same narrow scope it just wrote — and tolerates a superset cache — so it exits 0, and
-`cargo check` stays green because the live DB puts sqlx in online mode. Only CI's offline
-lanes notice, in a different crate's cache than the one you touched. See #3901 for the
-incident history, and #4095 for the one caused by this file's own previous advice.
+**Nothing in the regen recipe itself complains** about 1 or 2: `cargo sqlx prepare
+--check -- --tests` re-checks the same narrow scope it just wrote, so it exits 0, and
+`cargo check` stays green because the live DB puts sqlx in online mode.
+
+The `check-sqlx-cache-drift` pre-commit hook *is* a local net and does fire on 2 — but
+only when a pruned entry still has an identically-named sibling in another cache. Its
+documented blind spot is an entry that exists in **only one** cache (true of most
+root-cache entries, which are private to the `agaric` crate): there is no sibling to
+compare against, so a wrong-scope prune is indistinguishable from a genuine retirement.
+That blind spot is the actual mechanism by which #4095 got through. Otherwise it is CI's
+offline lanes that notice, in a different crate's cache than the one you touched.
+See #3901 for the incident history, and #4095 for the one caused by this file's own
+previous advice.
 
 `just gen-sqlx` is not simply "add `--workspace`" — it runs the correctly-scoped root pass
 **plus** one pass per member crate against its own throwaway migrated DB, which is what
