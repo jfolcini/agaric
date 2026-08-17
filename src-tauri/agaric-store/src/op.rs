@@ -528,6 +528,16 @@ pub fn is_builtin_property_key(key: &str) -> bool {
 ///
 /// Returns `Ok(())` if valid, or an `AppError::Validation` describing the
 /// violation.
+///
+/// # Hand-ported twin
+///
+/// `validateSetPropertyPayload` in
+/// `src/components/editor/__tests__/BlockPropertyEditor.test.tsx` re-implements
+/// the rules below in TypeScript, so the chip-editor suite can reject exactly
+/// what this function rejects (a fixture that always answered "ok" hid a live
+/// rename failure). Nothing checks the two for drift: change the payload rules
+/// here and that hand-port needs the same change, or the frontend suite starts
+/// accepting payloads the backend refuses.
 pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), agaric_core::error::AppError> {
     // Validate key format: alphanumeric + hyphens + underscores, 1-64 chars
     if p.key.is_empty() || p.key.len() > 64 {
