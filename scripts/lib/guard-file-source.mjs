@@ -208,32 +208,77 @@ const CAT_FILE_MAX_BUFFER = 64 * 1024 * 1024
  *   * a RELATIVE `GIT_INDEX_FILE` (`.git/index` — what an ordinary `git
  *     commit` exports) is resolved against the process cwd, because that is
  *     how git itself resolves it;
- *   * both `--absolute-git-dir` and `--git-common-dir` count, because in a
- *     linked worktree the index lives under `…/.git/worktrees/<name>/index`
- *     while the object store is shared, and both spellings are "this
- *     repository";
+ *   * the question is asked of `--absolute-git-dir` and NOTHING ELSE — see
+ *     below;
  *   * a `repoRoot` that is not a git repository at all answers false — a
  *     commit in flight somewhere, over a tree that is not a repository, is
  *     precisely the case with no right answer.
+ *
+ * ─── One git dir, not two — correcting the #4048 probe ─────────────────────
+ *
+ * This used to accept a path under EITHER `--absolute-git-dir` or
+ * `--git-common-dir`, on the stated grounds that "in a linked worktree the
+ * index lives under `…/.git/worktrees/<name>/index` while the object store is
+ * shared, so both spellings are this repository". The premise is true and the
+ * conclusion does not follow: in a linked worktree `--absolute-git-dir` IS
+ * `…/.git/worktrees/<name>`, which already contains that index — and every
+ * index of a repository lives in its `$GIT_DIR`, including the
+ * `index.lock`/`next-index-<pid>.lock` temp indexes git exports for
+ * `git commit -a` and `git commit -- <path>`. So the common-dir arm never
+ * accepted anything the git-dir arm would have refused for a good reason.
+ *
+ * What it DID accept is every OTHER worktree's index, because
+ * `…/.git` is the common dir of the main checkout and of all its linked
+ * worktrees alike. Measured on git 2.43, in a scratch repo with two linked
+ * worktrees, before this change: a commit in flight in worktree B was
+ * accepted as belonging to worktree A. That is the mis-attributed verdict
+ * this module exists to prevent, in the direction that fails SILENTLY — the
+ * guard reads a sibling tree's index, finds nothing staged there, and exits 0
+ * over the violation actually being committed.
+ *
+ * ─── …and containment alone is not enough either ──────────────────────────
+ *
+ * A linked worktree's git dir is NESTED INSIDE the main one
+ * (`<main>/.git/worktrees/<name>`), so "under `--absolute-git-dir`" still
+ * accepts a worktree's index as the MAIN checkout's — the same false accept
+ * one level up, and the live shape in this repo, where an agent runs a guard
+ * in the main checkout while a commit is in flight in a worktree. The
+ * reserved segments below are git's own layout contract:
+ * `$GIT_DIR/worktrees/<name>` is a linked worktree's git dir and
+ * `$GIT_DIR/modules/<name>` a submodule's, so an index under either belongs
+ * to THAT repository and never to this root. (For a linked worktree root the
+ * git dir already IS `…/worktrees/<name>`, and git does not nest further, so
+ * the same one rule reads correctly from both sides. The worktree arm is
+ * pinned by scenario 10; the submodule arm is the identical layout rule, not
+ * a second mechanism.)
  */
+const NESTED_GIT_DIRS = new Set(['worktrees', 'modules'])
+
 export function indexBelongsTo(indexFile, repoRoot) {
-  let indexPath = resolvePath(indexFile)
-  indexPath = normalize(indexPath)
-  for (const flag of ['--absolute-git-dir', '--git-common-dir']) {
-    let out
-    try {
-      out = execFileSync('git', ['-C', repoRoot, 'rev-parse', flag], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      }).trim()
-    } catch {
-      continue
-    }
-    if (!out) continue
-    const gitDir = normalize(resolvePath(out, repoRoot))
-    if (indexPath === gitDir || indexPath.startsWith(`${gitDir}${sep}`)) return true
+  const indexPath = normalize(resolvePath(indexFile))
+  let out
+  try {
+    out = execFileSync('git', ['-C', repoRoot, 'rev-parse', '--absolute-git-dir'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    return false
   }
-  return false
+  if (!out) return false
+  // ARGUMENT ORDER IS LOAD-BEARING: `path.resolve` walks its arguments RIGHT
+  // TO LEFT and stops at the first absolute one, so `resolve(out, repoRoot)`
+  // — which is what this line said from #4048 until this change — discards
+  // `out` entirely and
+  // yields `repoRoot`. In an ordinary checkout the index sits inside the work
+  // tree (`<root>/.git/index`), so the comparison below still answered TRUE
+  // and the slip was invisible; in a linked worktree the index lives under
+  // the MAIN repository's `.git`, outside the root, and every citation guard
+  // exited 2 on every commit. The base comes first.
+  const gitDir = normalize(resolvePath(repoRoot, out))
+  if (indexPath === gitDir) return true
+  if (!indexPath.startsWith(`${gitDir}${sep}`)) return false
+  return !NESTED_GIT_DIRS.has(indexPath.slice(gitDir.length + 1).split(sep)[0])
 }
 
 /**

@@ -75,6 +75,18 @@ scenarios in `runSourceScenarios` (scenario 9), which are the twin of
 section 5 of `scripts/test-py-guard-file-source.sh`. A claim of sameness
 is only worth making where something fails when it stops being true.
 
+And only where the situation it is pinned in can tell the two apart.
+Scenario 9 and section 5 both use a FOREIGN repository's index — the one
+case where every plausible implementation answers False — so they held
+the claim in the one situation that could not discriminate, and the two
+helpers diverged anyway the moment #4048 gave the `.mjs` side its own
+copy of the probe: for a LINKED WORKTREE's own index, Python said True
+and Node said False, blocking every worktree commit at exit 2. The
+discriminating case is a worktree, so both suites now build one —
+`git worktree add` inside the scratch root, section 9 here and scenario
+10 there — and assert all three answers: the tree's own index accepted,
+a sibling worktree's refused, the main checkout's refused.
+
 A fourth thing was NOT the same and now is (#4046): what a failed blob
 read means. Both helpers used to answer "read the working tree copy
 instead", while still printing `(judged the staged index)` — the
@@ -142,6 +154,13 @@ from pathlib import Path
 SOURCE_INDEX = "index"
 SOURCE_WORKTREE = "worktree"
 
+# The first path segment under a `$GIT_DIR` at which ANOTHER repository's git
+# dir begins: `$GIT_DIR/worktrees/<name>` for a linked worktree,
+# `$GIT_DIR/modules/<name>` for a submodule. An index below one of those
+# belongs to that repository, never to the root whose `$GIT_DIR` contains it.
+# See `_index_belongs_to`; the `.mjs` twin spells this `NESTED_GIT_DIRS`.
+_NESTED_GIT_DIRS = frozenset({"worktrees", "modules"})
+
 
 class UsageError(Exception):
     """A flag this guard does not understand, or two that contradict."""
@@ -185,39 +204,75 @@ def _index_belongs_to(index_file: str, root: Path) -> bool:
 
     A RELATIVE `GIT_INDEX_FILE` (`.git/index` — what an ordinary `git commit`
     exports) is resolved against the process cwd, because that is how git
-    itself resolves it.
+    itself resolves it. A `root` that is not a git repository at all answers
+    False — a commit in flight somewhere, over a tree that is not a
+    repository, is precisely the case with no right answer.
 
-    Both `--absolute-git-dir` and `--git-common-dir` are accepted: in a
-    linked worktree the index lives under
-    `…/.git/worktrees/<name>/index` while the object store is shared, and
-    both spellings have to count as "this repository". A `root` that is not
-    a git repository at all answers False — a commit in flight somewhere,
-    over a tree that is not a repository, is precisely the case with no
-    right answer.
+    ─── One git dir, not two — correcting the #4048 probe ──────────────
+
+    This used to accept a path under EITHER `--absolute-git-dir` or
+    `--git-common-dir`, on the stated grounds that "in a linked worktree the
+    index lives under `…/.git/worktrees/<name>/index` while the object store
+    is shared, so both spellings have to count". The premise is true and the
+    conclusion does not follow: in a linked worktree `--absolute-git-dir` IS
+    `…/.git/worktrees/<name>`, which already contains that index — and every
+    index of a repository lives in its `$GIT_DIR`, including the
+    `index.lock` / `next-index-<pid>.lock` temp indexes git exports for
+    `git commit -a` and `git commit -- <path>`. So the common-dir arm never
+    accepted anything the git-dir arm refused for a good reason.
+
+    What it DID accept is every OTHER worktree's index, since `…/.git` is
+    the common dir of the main checkout and of all its linked worktrees
+    alike. Measured on git 2.43, in a scratch repo with two linked
+    worktrees, before this change: worktree B's index was accepted as
+    belonging to worktree A. That is a false ACCEPT, and it fails silently
+    in the worst direction — the guard reads a sibling tree's index, finds
+    nothing staged there, and exits 0 over the violation actually being
+    committed.
+
+    …and containment alone is not enough either. A linked worktree's git
+    dir is NESTED INSIDE the main one (`<main>/.git/worktrees/<name>`), so
+    "under `--absolute-git-dir`" still accepts a worktree's index as the
+    MAIN checkout's — the same false accept one level up, and the live
+    shape in this repo, where an agent runs a guard in the main checkout
+    while a commit is in flight in a worktree. `_NESTED_GIT_DIRS` is git's
+    own layout contract: `$GIT_DIR/worktrees/<name>` is a linked worktree's
+    git dir and `$GIT_DIR/modules/<name>` a submodule's, so an index under
+    either belongs to THAT repository and never to this root. For a linked
+    worktree root the git dir already IS `…/worktrees/<name>` and git does
+    not nest further, so one rule reads correctly from both sides.
+
+    Measured before the fix, against section 9 of
+    `scripts/test-py-guard-file-source.sh`: all three false accepts exited
+    0 over a staged violation — a sibling worktree's index, the main
+    checkout's index read from a worktree, and a worktree's index read from
+    the main checkout. Pinned there, and by scenario 10 of
+    `runSourceScenarios`.
     """
     path = Path(index_file)
     if not path.is_absolute():
         path = Path.cwd() / path
     path = Path(os.path.normpath(path))
-    for flag in ("--absolute-git-dir", "--git-common-dir"):
-        try:
-            out = subprocess.run(
-                ["git", "-C", str(root), "rev-parse", flag],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except OSError:
-            return False
-        if out.returncode != 0 or not out.stdout.strip():
-            continue
-        git_dir = Path(out.stdout.strip())
-        if not git_dir.is_absolute():
-            git_dir = root / git_dir
-        git_dir = Path(os.path.normpath(git_dir))
-        if path == git_dir or git_dir in path.parents:
-            return True
-    return False
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    if out.returncode != 0 or not out.stdout.strip():
+        return False
+    git_dir = Path(out.stdout.strip())
+    if not git_dir.is_absolute():
+        git_dir = root / git_dir
+    git_dir = Path(os.path.normpath(git_dir))
+    if path == git_dir:
+        return True
+    if git_dir not in path.parents:
+        return False
+    return path.relative_to(git_dir).parts[0] not in _NESTED_GIT_DIRS
 
 
 def git_env(root: Path, env) -> dict:

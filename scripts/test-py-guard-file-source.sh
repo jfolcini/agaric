@@ -709,6 +709,108 @@ _eq 'whole tree: --update-baseline --all still re-anchors from the WORKING TREE'
   "1 $DYN_FILE" "$(grep -Ev '^(#|$)' "$fx/$DYN_BASELINE")"
 
 # ---------------------------------------------------------------------------
+# 9. A LINKED WORKTREE'S OWN INDEX (#4048)
+# ---------------------------------------------------------------------------
+# Section 5 above pins the fail-closed rule using a FOREIGN repository's
+# index — the one situation where every plausible implementation answers "not
+# mine". So the sameness claim it shares with `runSourceScenarios` scenario 9
+# was held in the only place that could not discriminate, and the two helpers
+# diverged anyway: for a LINKED WORKTREE's own index, this one said "mine"
+# while the `.mjs` twin said "somebody else's", and every citation guard exited
+# 2 on every commit made from a worktree.
+#
+# A worktree is also the shape that exposes the OPPOSITE error, and this
+# helper had it. `<main>/.git` is the COMMON dir of the main checkout and of
+# every linked worktree, so accepting a path under `--git-common-dir` accepted
+# a SIBLING worktree's index; and a worktree's git dir is NESTED inside the
+# main one, so plain containment accepted a worktree's index as the main
+# checkout's. Both are false ACCEPTS, and both fail in the silent direction:
+# the guard reads a tree nobody is committing, finds nothing staged there, and
+# exits 0 over the violation actually in flight.
+#
+# The fixture is arranged so that every wrong answer below is an exit 0 over a
+# real staged violation, never a different shade of red. Both worktrees live
+# under "$tmp"; nothing here names an index outside it.
+WT_MAIN_FILE="src-tauri/src/main_only_4048.rs"
+wt_main="$tmp/wt-main"
+_new_fixture "$wt_main"
+mkdir -p "$wt_main/src-tauri/src"
+printf '%s\n' "$RAW_TX_GOOD" > "$wt_main/$RAW_TX_FILE"
+printf '%s\n' "$RAW_TX_GOOD" > "$wt_main/$WT_MAIN_FILE"
+git -C "$wt_main" add -A
+# The guards travel with the tree: a guard judges the tree that CONTAINS it,
+# so committing `scripts/` here is what gives each worktree its own copy.
+git -C "$wt_main" commit -qm base
+wt_a="$tmp/wt-linked-a"
+wt_b="$tmp/wt-linked-b"
+git -C "$wt_main" worktree add -q -b linked-a "$wt_a"
+git -C "$wt_main" worktree add -q -b linked-b "$wt_b"
+
+# git's own answer for each index, absolute — not a path this script
+# assembles. `--git-path index` is relative in the main checkout and absolute
+# in a linked worktree, and `--path-format=absolute` collapses that.
+_index_of() { git -C "$1" rev-parse --path-format=absolute --git-path index; }
+idx_main="$(_index_of "$wt_main")"
+idx_a="$(_index_of "$wt_a")"
+idx_b="$(_index_of "$wt_b")"
+
+# THE FIXTURE REALLY HAS THE SHAPE THIS SECTION IS ABOUT. Without this, a
+# `git worktree add` that quietly produced an ordinary clone would make every
+# assertion below pass for the wrong reason — which is exactly how the claim
+# in section 5 came to be held somewhere it could not be tested.
+_eq "linked worktree: its index lives under the MAIN checkout's .git, not inside the worktree" \
+  "yes yes yes" \
+  "$(
+    a='no' b='no' c='no'
+    # `.git/worktrees/<name>` is named after the worktree DIRECTORY, not the
+    # branch, so the prefix stops at `worktrees/`.
+    case "$idx_a" in "$wt_main/.git/worktrees/"*) a='yes' ;; esac
+    case "$idx_a" in "$wt_a/"*) : ;; *) b='yes' ;; esac
+    [ -f "$idx_a" ] && [ -f "$idx_b" ] && [ -f "$idx_main" ] && [ "$idx_a" != "$idx_b" ] && c='yes'
+    printf '%s %s %s\n' "$a" "$b" "$c"
+  )"
+
+# Run a guard inside `dir` with `index` exported as the commit in flight.
+_run_with_index() {
+  local dir="$1" index="$2"
+  shift 2
+  (
+    cd "$dir" || exit 99
+    GIT_INDEX_FILE="$index" python3 "$@" >/dev/null 2>&1
+  )
+  printf '%s\n' "$?"
+}
+
+# The violation is staged in WORKTREE A only, so main's index and B's index
+# both hold the clean copy: a guard that reads either exits 0.
+printf '%s\n' "$RAW_TX_BAD" > "$wt_a/$RAW_TX_FILE"
+git -C "$wt_a" add -A
+printf '%s\n' "$RAW_TX_GOOD" > "$wt_a/$RAW_TX_FILE" # …invisible on disk
+
+_eq "linked worktree: AUTO accepts the worktree's OWN index (the #4048 regression)" \
+  '1' "$(_run_with_index "$wt_a" "$idx_a" "$GUARD_RAW_TX" "$RAW_TX_FILE")"
+_eq "linked worktree: a SIBLING worktree's index is refused, not read as this tree's" \
+  '2' "$(_run_with_index "$wt_a" "$idx_b" "$GUARD_RAW_TX" "$RAW_TX_FILE")"
+_eq 'linked worktree: the MAIN index is refused too — a shared object store is not a shared index' \
+  '2' "$(_run_with_index "$wt_a" "$idx_main" "$GUARD_RAW_TX" "$RAW_TX_FILE")"
+# THE CONTROL for all three: the copy on disk is clean, so the exit 1 above is
+# about the index and the exit 2s are not a guard that has stopped working.
+_eq 'linked worktree: --worktree still judges the clean copy on disk' \
+  '0' "$(_run_with_index "$wt_a" "$idx_a" "$GUARD_RAW_TX" --worktree "$RAW_TX_FILE")"
+
+# …and the symmetric direction, which is the live shape in this repo: a guard
+# running in the MAIN checkout while a commit is in flight in a worktree. Main
+# gets its own staged violation first, so "still reads its own index" is an
+# exit 1 over content only main has staged.
+printf '%s\n' "$RAW_TX_BAD" > "$wt_main/$WT_MAIN_FILE"
+git -C "$wt_main" add -A
+printf '%s\n' "$RAW_TX_GOOD" > "$wt_main/$WT_MAIN_FILE"
+_eq 'linked worktree: the MAIN checkout of a repo that HAS worktrees still reads its own index' \
+  '1' "$(_run_with_index "$wt_main" "$idx_main" "$GUARD_RAW_TX" "$WT_MAIN_FILE")"
+_eq "linked worktree: …and refuses a WORKTREE's index nested inside its own .git" \
+  '2' "$(_run_with_index "$wt_main" "$idx_a" "$GUARD_RAW_TX" "$WT_MAIN_FILE")"
+
+# ---------------------------------------------------------------------------
 if [ "$failures" -gt 0 ]; then
   printf '\npy guard file-source suite: %s assertion(s) failed\n' "$failures" >&2
   exit 1
