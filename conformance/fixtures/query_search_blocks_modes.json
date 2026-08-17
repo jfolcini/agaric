@@ -230,6 +230,14 @@
       "name": "search_fts_paged_page2",
       "rows": ["B9"],
       "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "search_limit_zero_refused",
+      "rows": [],
+      "total_count": null
     }
   ],
   "name": "query_search_blocks_modes",
@@ -441,6 +449,22 @@
       "cursor_from": "search_fts_paged_page1",
       "name": "search_fts_paged_page2",
       "ordered": true
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "active",
+            "space_id": "$SPACE"
+          }
+        },
+        "limit": 0,
+        "query": "widget"
+      },
+      "command": "search_blocks",
+      "comment": "#4030 — `limit: 0` is a REFUSAL, not an empty page. `PageRequest::new` accepts `1..=MAX_PAGE_SIZE` and returns `AppError::Validation` for everything else (`agaric-store/src/pagination/mod.rs:856-865`), so the request never reaches an arm — `search_fts` could not serve it if it did, since `rows[limit_usize - 1]` would underflow. The mock clamped only the UPPER bound, so it answered `items: []` with `has_more: false`: 'no more results' for a request the backend refuses, and the one input on which an empty page and a refusal are distinguishable at all. `expect_error` rather than `expect_empty` for exactly that reason. Paired with `search_fts_widget` at the top of this file, which is the SAME query at an in-range limit and returns four rows — so an implementation that refused (or emptied) every search fails that step instead of this one.",
+      "expect_error": "validation",
+      "name": "search_limit_zero_refused"
     }
   ],
   "seed": {

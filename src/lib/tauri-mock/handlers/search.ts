@@ -1064,9 +1064,20 @@ interface SearchPageResponse {
   total_count: number | null
 }
 
-/** `fts::MAX_SEARCH_RESULTS` — the FTS scan ceiling every `search_blocks` arm
- *  clamps to (`search_blocks_inner` rejects a larger explicit `limit`). */
+/** `fts::MAX_SEARCH_RESULTS` — the FTS scan ceiling `search_blocks_inner`
+ *  rejects a larger explicit `limit` against (`queries.rs:239-245`). */
 const SEARCH_MAX_RESULTS = 100
+
+/** `pagination::MAX_PAGE_SIZE` (`agaric-store/src/pagination/mod.rs:55`) — the
+ *  upper end of the range `PageRequest::new` accepts, checked BEFORE
+ *  {@link SEARCH_MAX_RESULTS} and in a different function, hence the two
+ *  distinct refusal messages in {@link searchHandlers.search_blocks}. */
+const PAGINATION_MAX_PAGE_SIZE = 200
+
+/** `pagination::DEFAULT_PAGE_SIZE` (`mod.rs:52`) — what an OMITTED `limit`
+ *  (serde `None`) falls through to. An omitted limit is not an out-of-range
+ *  one: it skips the range check entirely. */
+const PAGINATION_DEFAULT_PAGE_SIZE = 50
 
 /** `toggle_filter::REGEX_PRE_FILTER_CAP` — the regex arm's SQL `LIMIT`, applied
  *  to the recency-ordered candidate scan BEFORE the pattern runs, so a match
@@ -1201,6 +1212,97 @@ function encodeSearchCursor(id: string, rank: number | null): string {
   return utf8ToBase64Url(JSON.stringify(payload))
 }
 
+/** The third reviver argument of ES2025 "JSON.parse source text access". Only
+ *  PRIMITIVE values carry a `source`; objects and arrays do not, and neither
+ *  does a key that appeared more than once in the same object. */
+interface JsonReviverContext {
+  source?: string
+}
+
+type SourceAwareReviver = (
+  this: unknown,
+  key: string,
+  value: unknown,
+  context?: JsonReviverContext,
+) => unknown
+
+/** `JSON.parse` with the third reviver argument the `ES2023` lib type predates. */
+const parseJsonWithSource = JSON.parse as unknown as (
+  text: string,
+  reviver: SourceAwareReviver,
+) => unknown
+
+/**
+ * Whether this runtime hands a parsed number's SOURCE TEXT to a `JSON.parse`
+ * reviver — ES2025 "JSON.parse source text access", V8 ≥ 11.4 / Chrome ≥ 114.
+ *
+ * Feature-detected rather than assumed, because the mock's runtime floor is
+ * not one engine. It is excluded from shipped builds (`main.tsx` gates the
+ * import on `!import.meta.env.PROD`, so it never runs in a Tauri webview) and
+ * runs in exactly three places: `vitest` on Node (`package.json` `engines`
+ * allows `^22.22.2`), Playwright's Chromium against the `VITE_E2E` preview
+ * build, and whatever browser a developer points at `vite dev`. The oldest of
+ * those is the constraint, and it is not pinned anywhere — hence detection plus
+ * the documented fallback in {@link cursorVersionSlotIsU8}, not a hard
+ * dependency.
+ */
+const JSON_PARSE_EXPOSES_SOURCE: boolean = ((): boolean => {
+  let seen: unknown
+  try {
+    parseJsonWithSource('{"v":1.0}', (key, value, context) => {
+      if (key === 'v') seen = context?.source
+      return value
+    })
+  } catch {
+    return false
+  }
+  return seen === '1.0'
+})()
+
+/** A JSON number lexeme `serde_json` stores as an INTEGER — no `.`, no
+ *  exponent, no sign. Anything else lands in the `f64` arm, where `as_u64()`
+ *  is `None`. */
+const JSON_INTEGER_LEXEME = /^(?:0|[1-9][0-9]*)$/
+
+/**
+ * `Cursor::decode`'s accept test for the `version` slot, as measured against
+ * `serde_json` rather than inferred (`pagination/mod.rs:656-667`):
+ *
+ * ```text
+ *      0 -> u8=0    1 -> u8=1    2 -> u8=2    255 -> u8=255
+ *    256 -> invalid version field       1.0 / 2.0 / 255.0 / 0.0 -> invalid
+ *    1.5 -> invalid                     1e0 / 1e2 / 1E2         -> invalid
+ *     -0 -> invalid                     -1                      -> invalid
+ *    "1" / null / true / [] / {}                                -> invalid
+ * ```
+ *
+ * So the accepted set is exactly "an integer LEXEME whose value is a `u8`" —
+ * `n.as_u64().and_then(|v| u8::try_from(v).ok())` over a `Number` that
+ * `serde_json` parsed into its integer (not `f64`) representation.
+ *
+ * `JSON.parse` erases that distinction: `1`, `1.0`, `1e0` and `-0` all become
+ * the same JS number. `source` — the raw lexeme from the reviver — restores it,
+ * and is the ONLY reason this can be exact.
+ *
+ * ## The fallback, stated precisely
+ *
+ * When `source` is `undefined` (a runtime without
+ * {@link JSON_PARSE_EXPOSES_SOURCE}, a non-primitive `version`, or a duplicated
+ * `version` key, for all of which the spec supplies no source) this degrades to
+ * the VALUE test, which differs from the backend on exactly one family: a
+ * lexeme that is not an integer but whose value is a `u8` — `N.0`, `Ne0`, `-0`.
+ * Those are refused by the backend as `invalid version field` and are either
+ * ACCEPTED here (`1.0`, `1e0`) or refused with the MISMATCH message
+ * (`2.0` → `unsupported version 2`, `-0` → `unsupported version 0`). Every
+ * other input agrees on both paths. That residue is JSON's, not this decoder's,
+ * only on a runtime that withholds the lexeme; where the lexeme is available it
+ * is not a residue at all.
+ */
+export function cursorVersionSlotIsU8(value: unknown, source: string | undefined): boolean {
+  if (source !== undefined) return JSON_INTEGER_LEXEME.test(source) && Number(source) <= 255
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 255
+}
+
 /**
  * `Cursor::decode` (`pagination/mod.rs:645-679`), THROWING a
  * {@link validationRejection} on malformed input.
@@ -1208,11 +1310,19 @@ function encodeSearchCursor(id: string, rank: number | null): string {
  * `search_blocks_inner` decodes through `PageRequest::new`
  * (`src-tauri/src/commands/queries.rs:228`), which runs BEFORE
  * `search_with_toggles` picks an arm and propagates `AppError::Validation` —
- * so the strictness belongs to the COMMAND, not to one arm, and this is shared
- * by both paging arms for that reason. The filter-only arm previously swallowed
- * every failure and silently restarted from row 0, which is the same
- * more-permissive-than-the-backend divergence #3899 removed from
+ * so the strictness belongs to the COMMAND, not to one arm. The filter-only arm
+ * previously swallowed every failure and silently restarted from row 0, which
+ * is the same more-permissive-than-the-backend divergence #3899 removed from
  * {@link decodeCursor}.
+ *
+ * #4030 item 2 — and "the COMMAND" is now what the code does, not only what
+ * this comment said. The single call site is the `search_blocks` handler's
+ * prologue, which runs it ONCE for all four arms; it used to be called from
+ * inside the two PAGING helpers, so the regex and blank-query arms — which
+ * return before either helper runs — accepted a cursor that does not decode,
+ * where the backend refuses in `PageRequest::new` before dispatch. The helpers
+ * now take the DECODED {@link SearchCursor}, so there is still exactly one
+ * decode per request and no arm can grow a lenient copy of it back.
  *
  * Two deliberate differences from {@link decodeCursor}, both because this
  * mirrors a DIFFERENT Rust function:
@@ -1234,8 +1344,20 @@ function decodeSearchCursor(s: string): SearchCursor {
     throw validationRejection('invalid cursor UTF-8: invalid utf-8 sequence')
   }
   let parsed: unknown
+  // Every `version` slot the parse walked, with the raw lexeme the reviver was
+  // handed for it. Collected for ALL holders and narrowed to the ROOT object
+  // below, because a nested `{"a":{"version":2}}` carries a `version` key that
+  // is not the one `Cursor::decode` reads — and the reviver visits nested keys
+  // BEFORE the root's own when the nested object is declared first, so
+  // last-one-wins would pick the wrong slot.
+  const versionSlots: { holder: unknown; source: string | undefined }[] = []
   try {
-    parsed = JSON.parse(json)
+    parsed = JSON_PARSE_EXPOSES_SOURCE
+      ? parseJsonWithSource(json, function (key, value, context) {
+          if (key === 'version') versionSlots.push({ holder: this, source: context?.source })
+          return value
+        })
+      : JSON.parse(json)
   } catch {
     throw validationRejection('invalid cursor JSON: not valid JSON')
   }
@@ -1243,13 +1365,37 @@ function decodeSearchCursor(s: string): SearchCursor {
     throw validationRejection('invalid cursor JSON: not an object')
   }
   const obj = parsed as Record<string, unknown>
+  const versionSource = versionSlots.find((slot) => slot.holder === parsed)?.source
   // The version comparison runs BEFORE the field shapes, which is the order
   // `Cursor::decode` reads them in: it pulls `version` off the untyped
   // `serde_json::Value` and rejects a mismatch (`mod.rs:654-670`), and only
   // THEN hands the value to `serde_json::from_value::<Cursor>`
   // (`mod.rs:675-676`). Get this backwards and `{"version":2}` reports a
   // missing `id` on a cursor the backend refuses for its version.
-  const version = obj['version'] === undefined ? PAGINATION_CURSOR_VERSION : obj['version']
+  //
+  // #4030 item 3 — a MALFORMED version slot is a DIFFERENT refusal from a
+  // version MISMATCH, and the mock used to report the latter for both.
+  // `Cursor::decode` matches on the `serde_json::Value` (`mod.rs:658-668`):
+  // anything that is not a `Number` fails immediately, and a `Number` that is
+  // not a `u8` fails the `as_u64().and_then(|v| u8::try_from(v).ok())` chain —
+  // both with `cursor: invalid version field`, before `CURRENT_CURSOR_VERSION`
+  // is ever compared. Falling through to the `!==` comparison instead reported
+  // `unsupported version 1 (expected 1)` for the STRING `"1"`, which names a
+  // guard that did not fire and reads as a contradiction.
+  //
+  // The accept test is the LEXEME's, not the parsed value's — see
+  // {@link cursorVersionSlotIsU8} for the measured `serde_json` table and for
+  // what the no-lexeme fallback gives up. `1.0`, `1e0` and `-0` are the whole
+  // of the difference, and they are refusals here whenever the runtime hands
+  // the reviver a `source`.
+  const rawVersion = obj['version']
+  if (rawVersion !== undefined && !cursorVersionSlotIsU8(rawVersion, versionSource)) {
+    throw validationRejection('cursor: invalid version field')
+  }
+  // A MISSING `version` decodes as the current one — `Cursor::decode`'s
+  // `None => CURRENT_CURSOR_VERSION` arm (`mod.rs:657`), the pre-versioning
+  // compatibility clause `QueryCursor::decode` has no equivalent of.
+  const version = rawVersion === undefined ? PAGINATION_CURSOR_VERSION : rawVersion
   if (version !== PAGINATION_CURSOR_VERSION) {
     throw validationRejection(
       `cursor: unsupported version ${String(version)} (expected ${PAGINATION_CURSOR_VERSION})`,
@@ -1275,16 +1421,19 @@ function decodeSearchCursor(s: string): SearchCursor {
  * separately can — and in the FTS arm below, did — report `has_more: true`
  * with `next_cursor: null`, a state no backend produces and no client can act
  * on.
+ *
+ * Takes the DECODED cursor (#4030 item 2): `PageRequest::new` decodes once, at
+ * the command, before any arm is picked — see the `search_blocks` handler.
  */
 function searchIdDescPage(
   candidates: Record<string, unknown>[],
-  cursor: string | null,
+  cursor: SearchCursor | null,
   limit: number,
 ): SearchPageResponse {
   let rows = candidates.toSorted(byIdDesc)
   if (cursor != null) {
     // `b.id < ?` — strictly after the previous page's last (oldest) row.
-    const after = decodeSearchCursor(cursor).id
+    const after = cursor.id
     rows = rows.filter((b) => (b['id'] as string) < after)
   }
   const window = rows.slice(0, limit + 1)
@@ -1324,11 +1473,17 @@ function searchIdDescPage(
  * then the same `c.rank.unwrap_or(0.0)` `search_fts` applies (`cursor.rs`),
  * so a caller that swaps arms mid-pagination degrades identically on both
  * stacks instead of crashing on either.
+ *
+ * Takes the DECODED cursor, like {@link searchIdDescPage} — and `null` from
+ * the cursor-less callers, which is every partition of
+ * `search_blocks_partitioned` (#4030 item 1: `search_fts_partitioned` passes
+ * `None` for the cursor and the command answers `next_cursor: None`, but the
+ * ORDER and the `limit + 1` probe are `search_fts`'s own).
  */
 function searchFtsRankedPage(
   candidates: Record<string, unknown>[],
   foldedQuery: string,
-  cursor: string | null,
+  cursor: SearchCursor | null,
   limit: number,
 ): SearchPageResponse {
   let ranked = candidates
@@ -1338,7 +1493,7 @@ function searchFtsRankedPage(
     }))
     .toSorted((x, y) => x.rank - y.rank || (x.b['id'] as string).localeCompare(y.b['id'] as string))
   if (cursor != null) {
-    const after = decodeSearchCursor(cursor)
+    const after = cursor
     const afterRank = after.rank ?? 0
     const eps = 1e-9 * Math.max(1, Math.abs(afterRank))
     ranked = ranked.filter(
@@ -1635,11 +1790,69 @@ export const searchHandlers = {
     const a = args as Record<string, unknown>
     const query = (a['query'] as string | null) ?? ''
     const filter = (a['filter'] as Record<string, unknown> | undefined) ?? {}
-    const cursor = (a['cursor'] as string | null | undefined) ?? null
-    // `PageRequest::new(_, None)` → `DEFAULT_PAGE_SIZE`; `search_blocks_inner`
-    // then rejects anything above `MAX_SEARCH_RESULTS` and the scans clamp to
-    // it, so the effective ceiling is 100.
-    const limit = Math.min(Number((a['limit'] as number | null) ?? 50), SEARCH_MAX_RESULTS)
+    const rawCursor = (a['cursor'] as string | null | undefined) ?? null
+
+    // #4030 items 2 + 4 — `search_blocks_inner`'s three PRE-DISPATCH checks, in
+    // its order (`src-tauri/src/commands/queries.rs:228-246`). All three run
+    // before `search_with_toggles` picks an arm, so each is the COMMAND's
+    // refusal and applies to all four arms alike — including the two that
+    // never look at a cursor and the one that answers the empty page.
+    //
+    //  1. `PageRequest::new` validates `limit` against `1..=MAX_PAGE_SIZE`
+    //     (`pagination/mod.rs:856-865`) and REFUSES anything else. The mock
+    //     clamped instead (`Math.min(…, SEARCH_MAX_RESULTS)`), which silently
+    //     accepted a limit of `0` — served as an empty page with
+    //     `has_more: false` even with rows remaining, because `items.at(-1)`
+    //     is `undefined` — and equally silently shrank an over-cap ask;
+    //  2. the SAME call then decodes the cursor (`mod.rs:866-869`), so a
+    //     malformed cursor is refused ahead of any arm. Decoding here rather
+    //     than inside the two paging helpers is what extends that to the regex
+    //     and blank-unfiltered arms, which return before either helper runs;
+    //  3. only then does `search_blocks_inner` reject a limit above the FTS
+    //     scan ceiling (SQL-A1) — a different guard, in a different function,
+    //     with its own message.
+    //
+    // The order is observable: `{limit: 0, cursor: <garbage>}` reports the
+    // LIMIT and `{limit: 150, cursor: <garbage>}` reports the CURSOR.
+    //
+    // The range test is spelled as an ACCEPT (`(1..=MAX_PAGE_SIZE).contains`,
+    // like the Rust) rather than as two comparisons, because a value that is
+    // not an integer compares `false` against both bounds and would sail
+    // through to `slice(0, limit + 1)` — where `'5' + 1` is `'51'` and
+    // `50.5 + 1` is a fractional slice bound.
+    //
+    // Where the two stacks part, stated in full rather than by half. An
+    // INTEGER out of range (`0`, `-1`, `201`) is `AppError::Validation` on both
+    // sides, same kind and same text — that is the parity this guard exists
+    // for. A NON-INTEGER (`50.5`) or non-number `limit` is not: the backend
+    // never reaches `PageRequest::new` with one, because Tauri's `Option<i64>`
+    // deserialisation refuses it at the IPC boundary, and a deserialisation
+    // failure is not an `AppError` at all — there is no kind on that side for
+    // this mock to be in parity WITH. So the `validation` kind thrown here is
+    // the mock's own choice, not a mirrored one: it is the cheapest way to keep
+    // a fractional bound out of `slice`, and it diverges from the backend in
+    // kind as well as text. #2463's kind-parity rule is about refusals the
+    // backend expresses as an `AppError`; this is the documented exception, and
+    // the exception is why the test below asserts only that it refuses.
+    //
+    // Nor is it unreachable: `limit` is typed `number`, so a typed caller CAN
+    // send `50.5` (only a non-number is ruled out by the types). No caller in
+    // this repo does, and both stacks refuse it — they disagree about how.
+    const rawLimit = (a['limit'] as number | null | undefined) ?? null
+    if (
+      rawLimit !== null &&
+      !(Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= PAGINATION_MAX_PAGE_SIZE)
+    ) {
+      throw validationRejection(
+        `pagination limit must be in [1, ${PAGINATION_MAX_PAGE_SIZE}]; got ${String(rawLimit)}. ` +
+          `For larger result sets, use cursor pagination.`,
+      )
+    }
+    const limit = rawLimit ?? PAGINATION_DEFAULT_PAGE_SIZE
+    const cursor = rawCursor === null ? null : decodeSearchCursor(rawCursor)
+    if (limit > SEARCH_MAX_RESULTS) {
+      throw validationRejection(`search limit must be in [1, ${SEARCH_MAX_RESULTS}]; got ${limit}`)
+    }
 
     const candidates = searchStructuralCandidates(filter)
     const empty = { items: [], next_cursor: null, has_more: false, total_count: null }
@@ -1719,6 +1932,14 @@ export const searchHandlers = {
     // It was `matchesSearchFolded` over raw content, which made the two
     // commands disagree about which blocks match the same query — a divergence
     // between two mock handlers, on top of the one from the backend.
+    //
+    // #4030 item 1 — and the same is true of their ORDER, which #3938 left at
+    // `blocks` Map insertion order. Both partitions run through
+    // `fts_fetch_rows` (`partitioned.rs:165-212`), whose SQL ends
+    // `ORDER BY fts.rank, b.id` (`fetch.rs:292`) — the very clause
+    // {@link searchFtsRankedPage} models for `search_blocks`, which is why the
+    // partitions go through that seam rather than a sort spelled again here.
+    // `partitioned.rs:55-60` documents both partitions as "in rank order".
     const a = args as Record<string, unknown>
     const query = (a['query'] as string) ?? ''
     const pageLimit = (a['pageLimit'] as number) ?? 0
@@ -1731,23 +1952,34 @@ export const searchHandlers = {
         !(b['deleted_at'] as string | null) &&
         matchesFtsIndex(stripForFts(b['content'] as string | null), query),
     )
-
     const pagesAll = matching.filter((b) => (b['block_type'] as string) === 'page')
-    const pagesItems = pagesAll.slice(0, pageLimit)
-    const blocksItems = matching.slice(0, blockLimit)
+
+    // Two INDEPENDENT scans, each capped at its own limit — not one scan
+    // partitioned afterwards (`partitioned.rs:17-27`: the one-scan shape could
+    // drop the pages partition entirely). `null` for the cursor because the
+    // palette does not paginate: `search_fts_partitioned` passes `None` through
+    // to both `fts_fetch_rows` calls and the command answers `next_cursor: None`
+    // (`queries.rs:783-796`), so the cursor the seam mints from the boundary row
+    // is DISCARDED here rather than put on the wire. What is kept is the rest of
+    // `search_fts`'s window: the `(rank, id)` order, the `take(limit)`, and the
+    // `limit + 1` probe behind `has_more` — including its zero-limit answer
+    // (`partitioned.rs:237-238`: `page_limit_usize > 0 && …`, which the seam
+    // reproduces because a zero-limit page has no boundary row to mint from).
+    const folded = foldForFtsIndex(query)
+    const pages = searchFtsRankedPage(pagesAll, folded, null, pageLimit)
+    const blocksPartition = searchFtsRankedPage(matching, folded, null, blockLimit)
 
     return {
       pages: {
-        items: pagesItems,
+        items: pages.items,
         next_cursor: null,
-        has_more: pageLimit > 0 && pagesItems.length === pageLimit && pagesAll.length > pageLimit,
+        has_more: pages.has_more,
         total_count: null,
       },
       blocks: {
-        items: blocksItems,
+        items: blocksPartition.items,
         next_cursor: null,
-        has_more:
-          blockLimit > 0 && blocksItems.length === blockLimit && matching.length > blockLimit,
+        has_more: blocksPartition.has_more,
         total_count: null,
       },
     }
