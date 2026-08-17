@@ -21,12 +21,37 @@
  * mint a keyset cursor from, and the rank has to run over the same stripped
  * text the narrowing does or the keyset stops being monotonic (see
  * `approximateFtsRank`'s zero-occurrence guard).
+ *
+ * #4030 adds the four residuals the #3938 review left behind, each of which
+ * lives next to the block above that it belongs to:
+ *
+ *  - `search_blocks_partitioned` returned INSERTION order where both partitions
+ *    are `ORDER BY fts.rank, b.id` (`fts/search/fetch.rs:292`, routed through
+ *    `fts_fetch_rows` by `partitioned.rs:165-212`);
+ *  - `decodeSearchCursor` ran on the two PAGING arms only, where
+ *    `PageRequest::new` decodes before `search_with_toggles` dispatches
+ *    (`src-tauri/src/commands/queries.rs:228`) — so the refusal is the
+ *    COMMAND's, on all four arms;
+ *  - a malformed `version` is `cursor: invalid version field`
+ *    (`pagination/mod.rs:658-668`), not the `unsupported version …` mismatch
+ *    message — and "malformed" is a property of the LEXEME `serde_json` read,
+ *    not of the number it produced, so `1.0` and `-0` are malformed while `1`
+ *    is not. `JSON.parse`'s reviver `source` is what makes that expressible
+ *    here;
+ *  - `limit` is validated, not clamped: `PageRequest::new` takes `1..=200`
+ *    (`pagination/mod.rs:855-866`) and `search_blocks_inner` then rejects
+ *    anything above `MAX_SEARCH_RESULTS` (`queries.rs:239-245`).
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { foldForFtsIndex, matchesFtsIndex, stripForFts } from '@/lib/tauri-mock/handlers/search'
+import {
+  cursorVersionSlotIsU8,
+  foldForFtsIndex,
+  matchesFtsIndex,
+  stripForFts,
+} from '@/lib/tauri-mock/handlers/search'
 import {
   blockTags,
   blocks,
@@ -38,6 +63,10 @@ import {
 } from '@/lib/tauri-mock/seed'
 
 const SPACE = 'SPACE_S'.padStart(26, '0')
+
+/** The `SpaceScope::Active` every step below runs under — not a user filter
+ *  (`has_filters` excludes it), so a `filter` carrying only this is "unfiltered". */
+const SCOPE = { kind: 'active', space_id: SPACE }
 
 function id(label: string): string {
   return label.padStart(26, '0')
@@ -384,6 +413,108 @@ describe('search_blocks_partitioned — same stripped haystack as search_blocks 
   })
 })
 
+/**
+ * #4030 item 1 — BOTH partitions are rank-ordered.
+ *
+ * `search_fts_partitioned` runs its two scans through `fts_fetch_rows`
+ * (`partitioned.rs:165-212`), whose SQL ends `ORDER BY fts.rank, b.id`
+ * (`fetch.rs:292`) — the SAME clause the single-partition `search_fts` arm
+ * pages on. `partitioned.rs:55-60` documents both partitions as "in rank
+ * order". #4026 moved this handler's HAYSTACK onto `stripForFts` and left its
+ * SEQUENCE at `blocks` Map insertion order, so the two sibling commands agreed
+ * on which blocks match and disagreed on their order.
+ *
+ * The fixture is inserted in an order that is none of the candidate answers:
+ * the expected `(rank, id)` order is not insertion order, and the two
+ * IDENTICALLY-ranked rows are inserted with the LATER id first, so a rank-only
+ * sort (JS `Array#toSorted` is stable) still returns them the wrong way round.
+ * A fix that sorts by rank and forgets `b.id` therefore fails, as does one that
+ * sorts only the `blocks` partition and leaves `pages` alone.
+ */
+describe('search_blocks_partitioned — both partitions are (rank, id)-ordered (#4030)', () => {
+  // Identical content ⇒ identical rank; only the `b.id` tiebreak separates
+  // them, and `TIE_LO < TIE_HI` byte-wise.
+  const TIE_LO = id('QPA1')
+  const TIE_HI = id('QPA2')
+  // A content-typed row, so the `pages` partition is a strictly smaller set
+  // than `blocks` and the two expectations cannot be satisfied by one list.
+  const MIDDLE = id('QCB3')
+  const WORST = id('QPA4')
+
+  beforeEach(() => {
+    clearMock()
+    // Insertion order: WORST, TIE_HI, MIDDLE, TIE_LO — deliberately neither
+    // the expected order nor its reverse.
+    for (const [blockId, type, content] of [
+      [WORST, 'page', 'gizmo with a good deal of additional unrelated padding text here'],
+      [TIE_HI, 'page', 'gizmo'],
+      [MIDDLE, 'content', 'gizmo gizmo'],
+      [TIE_LO, 'page', 'gizmo'],
+    ] as Array<[string, string, string]>) {
+      const b = makeBlock(blockId, type, content, null, 1)
+      b['page_id'] = blockId
+      blocks.set(blockId, b)
+      setSpace(blockId, SPACE)
+    }
+  })
+
+  function partitioned(args: Record<string, unknown>): {
+    pages: SearchResponse
+    blocks: SearchResponse
+  } {
+    return dispatch('search_blocks_partitioned', {
+      query: 'gizmo',
+      pageLimit: 10,
+      blockLimit: 10,
+      ...args,
+    }) as { pages: SearchResponse; blocks: SearchResponse }
+  }
+
+  it('orders the unrestricted partition by rank, then id', () => {
+    expect(ids(partitioned({}).blocks)).toEqual([TIE_LO, TIE_HI, MIDDLE, WORST])
+  })
+
+  it('orders the page-only partition by rank, then id', () => {
+    // Same rule over the `block_type = 'page'` pre-filter — MIDDLE is absent,
+    // so this is not the assertion above restated.
+    expect(ids(partitioned({}).pages)).toEqual([TIE_LO, TIE_HI, WORST])
+  })
+
+  it('caps each partition at the best-ranked rows, not the first-inserted ones', () => {
+    // The cap is `take(limit)` AFTER the ORDER BY, so a 2-row page is the two
+    // BEST rows. Under insertion order it would be [WORST, TIE_HI].
+    const res = partitioned({ pageLimit: 2, blockLimit: 2 })
+    expect(ids(res.blocks)).toEqual([TIE_LO, TIE_HI])
+    expect(ids(res.pages)).toEqual([TIE_LO, TIE_HI])
+    // `has_more` still rides the `limit + 1` probe, in both directions.
+    expect(res.blocks.has_more).toBe(true)
+    expect(res.pages.has_more).toBe(true)
+    const all = partitioned({ pageLimit: 10, blockLimit: 10 })
+    expect(all.blocks.has_more).toBe(false)
+    expect(all.pages.has_more).toBe(false)
+  })
+
+  it('mints no cursor on either partition', () => {
+    // `search_blocks_partitioned_inner` hardcodes `next_cursor: None`
+    // (`queries.rs:783-796`) — the palette does not paginate. Ordering the
+    // partitions through the `search_fts` seam must not start emitting one.
+    const res = partitioned({ pageLimit: 2, blockLimit: 2 })
+    expect(res.pages.next_cursor).toBeNull()
+    expect(res.blocks.next_cursor).toBeNull()
+  })
+
+  it('answers a zero limit with an empty partition and no has_more', () => {
+    // `partitioned.rs:237-238` — `page_limit_usize > 0 && …`. Zero is a legal
+    // ask HERE (the command's own range is `[0, 100]`, `queries.rs:735-741`),
+    // unlike `search_blocks`'s `PageRequest::new`, which refuses it.
+    const res = partitioned({ pageLimit: 0, blockLimit: 0 })
+    expect(res.pages.items).toEqual([])
+    expect(res.pages.has_more).toBe(false)
+    expect(res.blocks.items).toEqual([])
+    expect(res.blocks.has_more).toBe(false)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // #3943 — the `(rank, id)` cursor
 // ---------------------------------------------------------------------------
@@ -553,6 +684,44 @@ describe('search_blocks — the FTS arm mints a resumable (rank, id) cursor (#39
       b64urlJson({ version: 99 }),
       /unsupported version 99/,
     ],
+    // #4030 item 3 — a MALFORMED `version` is its own refusal, distinct from
+    // the mismatch above. `Cursor::decode` (`pagination/mod.rs:658-668`) reads
+    // the slot off the untyped `Value`: a non-`Number` is rejected outright,
+    // and a `Number` that is not a `u8` (`as_u64().and_then(u8::try_from)`)
+    // fails the same way — both with `cursor: invalid version field`, BEFORE
+    // any comparison to `CURRENT_CURSOR_VERSION` happens. Accept/reject parity
+    // held without this (every case below is a refusal either way), so only the
+    // exact TEXT can tell the two guards apart — hence `^…$` rather than a
+    // substring match, and hence the mismatch case above stays in the table as
+    // the other half of the pair: a decoder that answered "invalid version
+    // field" for everything would fail it.
+    [
+      'a `version` that is not a number',
+      b64urlJson({ id: 'x', version: '1' }),
+      /^cursor: invalid version field$/,
+    ],
+    [
+      'a JSON `null` `version`',
+      b64urlJson({ id: 'x', version: null }),
+      /^cursor: invalid version field$/,
+    ],
+    [
+      'a fractional `version`',
+      b64urlJson({ id: 'x', version: 1.5 }),
+      /^cursor: invalid version field$/,
+    ],
+    [
+      'a negative `version`',
+      b64urlJson({ id: 'x', version: -1 }),
+      /^cursor: invalid version field$/,
+    ],
+    // `as_u64()` succeeds and `u8::try_from` does not — the second half of the
+    // Rust `and_then`, which a bare "is it an integer" check would let through.
+    [
+      'a `version` above `u8::MAX`',
+      b64urlJson({ id: 'x', version: 256 }),
+      /^cursor: invalid version field$/,
+    ],
   ]
 
   for (const [armLabel, extra] of ARMS) {
@@ -570,6 +739,217 @@ describe('search_blocks — the FTS arm mints a resumable (rank, id) cursor (#39
     const first = search({ limit: 2, ...extra })
     expect(first.next_cursor).not.toBeNull()
     expect(() => search({ limit: 2, cursor: first.next_cursor, ...extra })).not.toThrow()
+  })
+
+  // #4030 item 2 — the OTHER two arms. `search_blocks_inner` decodes the cursor
+  // in `PageRequest::new` (`queries.rs:228`) BEFORE `search_with_toggles` picks
+  // an arm, so the refusal belongs to the command; an arm that happens to
+  // ignore the decoded value still cannot be reached with a cursor that does
+  // not decode. Both of these return before the mock's paging helpers ever run,
+  // which is exactly why they were the two that let a malformed cursor through.
+  const NON_PAGING_ARMS: Array<[string, Record<string, unknown>]> = [
+    // Regex mode BYPASSES FTS5 and never emits a cursor (`toggle_filter.rs`).
+    ['regex', { query: 'gizmo', filter: { scope: SCOPE, isRegex: true } }],
+    // A blank query with no structural filter is the empty page by construction.
+    ['blank-unfiltered', { query: '', filter: { scope: SCOPE } }],
+  ]
+
+  for (const [armLabel, extra] of NON_PAGING_ARMS) {
+    it.each(MALFORMED)(`${armLabel} arm: rejects %s`, (_label, cursor, message) => {
+      expect(() => search({ limit: 2, cursor, ...extra })).toThrow(
+        expect.objectContaining({ kind: 'validation', message: expect.stringMatching(message) }),
+      )
+    })
+  }
+
+  // …and the other half: a cursor that DECODES is accepted and then ignored,
+  // because neither arm has a keyset to resume. Without this the block above
+  // would pass against a handler that refused every cursor outright — a
+  // different divergence in the same place.
+  it.each(NON_PAGING_ARMS)('%s arm: accepts a well-formed cursor and ignores it', (_l, extra) => {
+    const wellFormed = b64urlJson({ id: ROWS[1], rank: 5, version: 1 })
+    const withCursor = search({ limit: 2, cursor: wellFormed, ...extra })
+    const without = search({ limit: 2, ...extra })
+    expect(ids(withCursor)).toEqual(ids(without))
+    expect(withCursor.next_cursor).toBeNull()
+  })
+
+  // The regex arm's row set is non-empty, so the equality above is a real
+  // comparison there rather than `[] === []` (the blank-unfiltered arm's answer
+  // IS the empty page, and that arm is pinned by the refusal table instead).
+  it('regex arm: the ignored-cursor comparison is over a non-empty page', () => {
+    expect(
+      ids(search({ limit: 2, query: 'gizmo', filter: { scope: SCOPE, isRegex: true } })).length,
+    ).toBeGreaterThan(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // #4030 item 3, the LEXEME half
+  // -------------------------------------------------------------------------
+
+  /**
+   * `Cursor::decode` judges the `version` slot by the lexeme `serde_json`
+   * parsed, not by the number it produced: `1` is an integer `Number` and
+   * `1.0` is an `f64`, whose `as_u64()` is `None`. `JSON.parse` erases that —
+   * `1`, `1.0`, `1e0` and `-0` are one JS number — so the mock read the VALUE
+   * and diverged on every lexeme that is not an integer but whose value is a
+   * `u8`. `JSON.parse`'s reviver `context.source` (ES2025) hands back the raw
+   * lexeme and closes it.
+   *
+   * The expectations below are MEASURED, not derived: the middle column is the
+   * output of a `serde_json` probe over exactly these lexemes, run through the
+   * same `match` arms `pagination/mod.rs:656-667` uses. That is the point —
+   * `1e2` refuses where a reader who only thought about `1.0` would expect
+   * `unsupported version 100`, and `-0` refuses where "is it an integer ≥ 0"
+   * says yes.
+   *
+   * The last column is the FALLBACK, for a runtime that withholds `source`. It
+   * is here rather than in prose because the residue has to be exact to be
+   * honest: `1.0` / `1e0` are ACCEPTED there (an accept/reject divergence, the
+   * only one), and `2.0` / `0.0` / `255.0` / `1e2` / `1E2` / `-0` report the
+   * MISMATCH message instead of the malformed one (a text divergence — the very
+   * parity item 3 exists to restore). Every other row agrees on both paths.
+   */
+  const VERSION_LEXEMES: Array<[string, string | null, string | null]> = [
+    // lexeme,  with `source` (the backend's answer),  without `source`
+    ['1', null, null],
+    [
+      '0',
+      'cursor: unsupported version 0 (expected 1)',
+      'cursor: unsupported version 0 (expected 1)',
+    ],
+    [
+      '2',
+      'cursor: unsupported version 2 (expected 1)',
+      'cursor: unsupported version 2 (expected 1)',
+    ],
+    [
+      '255',
+      'cursor: unsupported version 255 (expected 1)',
+      'cursor: unsupported version 255 (expected 1)',
+    ],
+    ['256', 'cursor: invalid version field', 'cursor: invalid version field'],
+    ['1.5', 'cursor: invalid version field', 'cursor: invalid version field'],
+    ['-1', 'cursor: invalid version field', 'cursor: invalid version field'],
+    ['"1"', 'cursor: invalid version field', 'cursor: invalid version field'],
+    ['null', 'cursor: invalid version field', 'cursor: invalid version field'],
+    ['true', 'cursor: invalid version field', 'cursor: invalid version field'],
+    // Non-primitives carry no `source` on ANY runtime, so both columns are the
+    // value test — which rejects them for not being numbers.
+    ['[]', 'cursor: invalid version field', 'cursor: invalid version field'],
+    ['{}', 'cursor: invalid version field', 'cursor: invalid version field'],
+    // The whole of the difference between the two columns starts here.
+    ['1.0', 'cursor: invalid version field', null],
+    ['1e0', 'cursor: invalid version field', null],
+    ['2.0', 'cursor: invalid version field', 'cursor: unsupported version 2 (expected 1)'],
+    ['0.0', 'cursor: invalid version field', 'cursor: unsupported version 0 (expected 1)'],
+    ['255.0', 'cursor: invalid version field', 'cursor: unsupported version 255 (expected 1)'],
+    ['1e2', 'cursor: invalid version field', 'cursor: unsupported version 100 (expected 1)'],
+    ['1E2', 'cursor: invalid version field', 'cursor: unsupported version 100 (expected 1)'],
+    ['-0', 'cursor: invalid version field', 'cursor: unsupported version 0 (expected 1)'],
+  ]
+
+  /**
+   * Feature detection, recomputed here rather than imported, so the test states
+   * its own premise: if this ever reads `false` the table below silently
+   * switches columns, and that has to be visible in the test output.
+   */
+  const HAS_JSON_SOURCE = ((): boolean => {
+    let seen: unknown
+    try {
+      ;(JSON.parse as unknown as (t: string, r: unknown) => unknown)(
+        '{"v":1.0}',
+        (key: string, value: unknown, ctx?: { source?: string }) => {
+          if (key === 'v') seen = ctx?.source
+          return value
+        },
+      )
+    } catch {
+      return false
+    }
+    return seen === '1.0'
+  })()
+
+  /** Base64url of RAW JSON text. `b64urlJson` cannot express these cases at
+   *  all: `JSON.stringify` normalises `1.0` and `1e0` to `1`, and `-0` to `0`,
+   *  destroying the very lexeme under test before it reaches the encoder. */
+  function b64urlRaw(text: string): string {
+    return b64url(new TextEncoder().encode(text))
+  }
+
+  it('the runtime under test exposes `JSON.parse` source text', () => {
+    // Not an assertion about the mock — an assertion about which COLUMN of the
+    // table below was exercised. Node ≥ 22 and Chrome ≥ 114 both expose it; if
+    // this ever fails, the suite is pinning the fallback and the strict rule is
+    // covered only by the pure-predicate test that follows.
+    expect(HAS_JSON_SOURCE).toBe(true)
+  })
+
+  it.each(VERSION_LEXEMES)(
+    'refuses (or accepts) a `version` lexeme of %s exactly as `serde_json` does',
+    (lexeme, strict, fallback) => {
+      const expected = HAS_JSON_SOURCE ? strict : fallback
+      const cursor = b64urlRaw(`{"id":${JSON.stringify(ROWS[1])},"version":${lexeme}}`)
+      if (expected === null) {
+        expect(() => search({ query: 'gizmo', limit: 2, cursor })).not.toThrow()
+        return
+      }
+      expect(() => search({ query: 'gizmo', limit: 2, cursor })).toThrow(
+        expect.objectContaining({ kind: 'validation', message: expected }),
+      )
+    },
+  )
+
+  // The pure rule, both ways round, so BOTH columns are pinned on every runtime
+  // rather than only whichever one this engine happens to take. `true` means
+  // "the slot is a `u8`" — the mismatch rows reach the `!==` comparison and are
+  // refused there instead, which is the backend's own division of labour.
+  it.each(VERSION_LEXEMES)(
+    'the %s slot predicate agrees with the table on both paths',
+    (lexeme, strict, fallback) => {
+      const value = (JSON.parse(`{"v":${lexeme}}`) as { v: unknown }).v
+      expect(cursorVersionSlotIsU8(value, lexeme), `lexeme path for ${lexeme}`).toBe(
+        strict !== 'cursor: invalid version field',
+      )
+      expect(cursorVersionSlotIsU8(value, undefined), `value path for ${lexeme}`).toBe(
+        fallback !== 'cursor: invalid version field',
+      )
+    },
+  )
+
+  // The reviver sees EVERY `version` key in the document, and it sees nested
+  // ones FIRST when the nested object is declared first. `Cursor::decode` reads
+  // `value.get("version")` — the root object's own slot and nothing else — so
+  // the lexeme has to be narrowed to the root holder. Taking the last-seen
+  // source instead would refuse this well-formed cursor for a lexeme buried in
+  // a key the backend never looks at.
+  it('reads the ROOT `version` lexeme, not a nested one', () => {
+    const nestedFirst = b64urlRaw(
+      `{"version":1,"nested":{"version":1.0},"id":${JSON.stringify(ROWS[1])}}`,
+    )
+    expect(() => search({ query: 'gizmo', limit: 2, cursor: nestedFirst })).not.toThrow()
+    // …and the mirror image: a malformed ROOT lexeme is still caught when a
+    // well-formed nested one follows it.
+    const rootMalformed = b64urlRaw(
+      `{"version":1.0,"nested":{"version":1},"id":${JSON.stringify(ROWS[1])}}`,
+    )
+    expect(() => search({ query: 'gizmo', limit: 2, cursor: rootMalformed })).toThrow(
+      expect.objectContaining({ kind: 'validation', message: 'cursor: invalid version field' }),
+    )
+  })
+
+  it('the two columns actually differ, so the fallback residue is not vacuous', () => {
+    const diverging = VERSION_LEXEMES.filter(([, strict, fallback]) => strict !== fallback)
+    expect(diverging.map(([lexeme]) => lexeme)).toEqual([
+      '1.0',
+      '1e0',
+      '2.0',
+      '0.0',
+      '255.0',
+      '1e2',
+      '1E2',
+      '-0',
+    ])
   })
 })
 
@@ -631,5 +1011,149 @@ describe('search_blocks — the FTS arm orders by (rank, id), not insertion (#39
       expect(cursor).not.toBeNull()
     }
     expect(seen).toEqual([BEST, MIDDLE, WORST])
+  })
+})
+
+/**
+ * #4030 item 4 — `limit` is VALIDATED, not clamped.
+ *
+ * Two checks, in the order `search_blocks_inner` runs them:
+ *
+ *  1. `PageRequest::new` (`pagination/mod.rs:855-866`) accepts `1..=200` and
+ *     refuses anything else — `0` included. The mock clamped only the UPPER
+ *     bound (`Math.min(…, SEARCH_MAX_RESULTS)`), so `limit: 0` reached the
+ *     paging helpers and answered `items: []` with `has_more: false` even with
+ *     rows left to serve: a client's "no more results" where the backend
+ *     refuses the request. The backend cannot get there at all —
+ *     `rows[limit_usize - 1]` would underflow.
+ *  2. `search_blocks_inner` then rejects `limit > MAX_SEARCH_RESULTS`
+ *     (`queries.rs:239-245`) rather than letting `search_fts`'s `min` silently
+ *     shrink the ask, so `101..=200` is a refusal too — with a DIFFERENT
+ *     message, since it is a different guard in a different function.
+ *
+ * Every case asserts the exact string, because a test that only asserted "it
+ * threw" cannot tell the two guards apart, and both of them fire on inputs the
+ * other would also reject.
+ */
+describe('search_blocks — the limit range is a refusal, not a clamp (#4030)', () => {
+  const PAGE = id('LPAGE')
+  const ROWS = ['L1', 'L2', 'L3'].map((label) => id(label))
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Limit Page', null, 0))
+    setSpace(PAGE, SPACE)
+    for (const blockId of ROWS) {
+      const b = makeBlock(blockId, 'content', 'gizmo calibration record', PAGE, 1)
+      b['page_id'] = PAGE
+      blocks.set(blockId, b)
+    }
+  })
+
+  /** Every arm, so the refusal is the COMMAND's and not one helper's (#4030
+   *  item 2's point, applied to the guard that runs before dispatch). */
+  const ALL_ARMS: Array<[string, Record<string, unknown>]> = [
+    ['fts', { query: 'gizmo' }],
+    ['filter-only', { query: '', filter: { scope: SCOPE, parentId: PAGE } }],
+    ['regex', { query: 'gizmo', filter: { scope: SCOPE, isRegex: true } }],
+    ['blank-unfiltered', { query: '', filter: { scope: SCOPE } }],
+  ]
+
+  const OUT_OF_RANGE: Array<[number, string]> = [
+    // The zero-means-zero case: the mock's `items.at(-1)` returned `undefined`
+    // here, so it answered an empty page instead of refusing.
+    [
+      0,
+      'pagination limit must be in [1, 200]; got 0. For larger result sets, use cursor pagination.',
+    ],
+    [
+      -1,
+      'pagination limit must be in [1, 200]; got -1. For larger result sets, use cursor pagination.',
+    ],
+    [
+      201,
+      'pagination limit must be in [1, 200]; got 201. For larger result sets, use cursor pagination.',
+    ],
+    // Inside `PageRequest::new`'s range and outside the FTS scan ceiling — the
+    // SECOND guard, which is what makes this a pair rather than one boundary.
+    [101, 'search limit must be in [1, 100]; got 101'],
+    [200, 'search limit must be in [1, 100]; got 200'],
+  ]
+
+  for (const [armLabel, extra] of ALL_ARMS) {
+    it.each(OUT_OF_RANGE)(`${armLabel} arm: refuses limit %i`, (limit, message) => {
+      expect(() => search({ limit, ...extra })).toThrow(
+        expect.objectContaining({ kind: 'validation', message }),
+      )
+    })
+  }
+
+  // The other half of every pair above: an IN-RANGE limit still serves rows, on
+  // the same fixture and the same arms. Without this a handler that refused
+  // every request — or returned an empty page for every limit — would pass the
+  // table above, which is the failure the `limit: 0` bug actually was.
+  it.each(ALL_ARMS)('%s arm: an in-range limit still answers', (label, extra) => {
+    for (const limit of [1, 3, 100]) {
+      const res = search({ limit, ...extra })
+      // The blank-unfiltered arm's answer is the empty page BY CONSTRUCTION
+      // (`has_filters` false), so it is the one arm where rows are not expected.
+      const expected = label === 'blank-unfiltered' ? 0 : Math.min(limit, ROWS.length)
+      expect(res.items.length, `${label} limit=${limit}`).toBe(expected)
+    }
+  })
+
+  // The range test accepts a value rather than rejecting two bounds, so a
+  // non-integer cannot slip past both comparisons into `slice(0, limit + 1)`
+  // (where `'5' + 1` is the string `'51'`).
+  //
+  // NEITHER the kind NOR the text is asserted against the backend here, and the
+  // distinction matters: the two cases above never reach `PageRequest::new` on
+  // the real stack. Tauri's `Option<i64>` deserialisation refuses them at the
+  // IPC boundary, and that failure is not an `AppError` — it carries no kind
+  // for the mock's `validation` to be in parity WITH, so this is the documented
+  // exception to the #2463 kind-parity rule rather than an instance of it. What
+  // is pinned is only that the mock REFUSES rather than computing a fractional
+  // slice bound. `50.5` is reachable from a typed caller (`limit: number |
+  // null` in `bindings.ts`); the string case is not, and is here because the
+  // guard's shape is what rules it out.
+  it.each([[50.5], ['5' as unknown as number]])(
+    'refuses a non-integer limit %p (the mock, not the backend, chooses this kind)',
+    (limit) => {
+      expect(() => search({ query: 'gizmo', limit })).toThrow(
+        expect.objectContaining({ kind: 'validation' }),
+      )
+    },
+  )
+
+  it('defaults an omitted limit to DEFAULT_PAGE_SIZE rather than refusing', () => {
+    // `PageRequest::new`'s `None => DEFAULT_PAGE_SIZE` (50) — an absent limit is
+    // not an out-of-range one, and `null` deserialises to the same `None`.
+    expect(ids(search({ query: 'gizmo', limit: undefined }))).toEqual(ROWS)
+    expect(ids(search({ query: 'gizmo', limit: null }))).toEqual(ROWS)
+  })
+
+  // ORDER, not just the guards. The three checks run in one fixed sequence
+  // inside `search_blocks_inner`, and each pair below has exactly one input
+  // that can tell two of them apart.
+  it('checks the limit RANGE before decoding the cursor', () => {
+    // `PageRequest::new` validates `limit` and only then calls
+    // `Cursor::decode` (`pagination/mod.rs:856-869`), so a request that is bad
+    // in both ways reports the LIMIT.
+    expect(() => search({ query: 'gizmo', limit: 0, cursor: 'not base64!!' })).toThrow(
+      expect.objectContaining({
+        message:
+          'pagination limit must be in [1, 200]; got 0. For larger result sets, use cursor pagination.',
+      }),
+    )
+  })
+
+  it('decodes the cursor before rejecting an over-cap limit', () => {
+    // …and the FTS ceiling is checked AFTER `PageRequest::new` returns
+    // (`queries.rs:230-246`), so a 150-limit request with a broken cursor
+    // reports the CURSOR. Same two malformed inputs as the case above, opposite
+    // answer — which is what pins the sequence rather than the set.
+    expect(() => search({ query: 'gizmo', limit: 150, cursor: 'not base64!!' })).toThrow(
+      expect.objectContaining({ message: 'invalid cursor: invalid base64' }),
+    )
   })
 })
