@@ -1132,9 +1132,14 @@ export function scanAutolink(st: InlineState): boolean {
  * CommonMark-aligned flanking test for an underscore delimiter run at the
  * scanner cursor (the cursor may sit mid-run if an earlier `_` was already
  * emitted as literal — e.g. the 2nd `_` of `a__b__c`). Thin wrapper over the
- * shared `underscoreRunFlank` (also used by the serializer's escape decision,
- * #710-1, so the two halves cannot drift). `*` runs use the naive asterisk
- * toggle and have no such guard.
+ * shared `underscoreRunFlank`. `*` runs use the naive asterisk toggle and have
+ * no such guard.
+ *
+ * The serializer does NOT use this rule (#4049): it escapes one text node at a
+ * time and cannot see the line, so it uses the coarser, dedent-invariant
+ * `underscoreNeedsEscape` from the same module — which escapes a superset of
+ * what this accepts, so the two halves still cannot drift apart into a leaked
+ * delimiter. See that function's comment for the proof and the cost.
  */
 function underscoreFlank(s: Scanner): { canOpen: boolean; canClose: boolean } {
   return underscoreRunFlank(s.src, s.pos)

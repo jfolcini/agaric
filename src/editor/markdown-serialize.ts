@@ -22,7 +22,7 @@ import {
   LIST_NEST_INDENT,
   scanBareUrl,
   ULID_RE,
-  underscoreRunFlank,
+  underscoreNeedsEscape,
   WORD_CHAR_RE,
 } from '@/editor/markdown-common'
 import type {
@@ -106,16 +106,13 @@ function escapeContextChar(s: string, i: number): string | null {
   // non-digit (a digit means currency like `$5`, left literal). `\$` round-trips
   // back to `$`, so this is lossless and stops `$x … $` re-parsing as math.
   if (ch === '$') return dollarOpensMath(s, i) ? '\\$' : null
-  // `_` is an emphasis delimiter (GFM) — escape exactly the runs the parser's
-  // flanking rule could treat as delimiters (#710-1), so `_foo_` survives the
-  // round-trip while intraword underscores (`snake_case`) stay readable.
-  // `'unknown'` edges: this node may be concatenated with neighboring marked
-  // nodes, so a run at a node edge is escaped pessimistically. Inserted escapes
-  // never flip a flank verdict: every escapable char is punctuation, like `\`.
-  if (ch === '_') {
-    const { canOpen, canClose } = underscoreRunFlank(s, i, 'unknown')
-    return canOpen || canClose ? '\\_' : null
-  }
+  // `_` is an emphasis delimiter (GFM) — escape every run that is not INTRAWORD
+  // (#710-1, #4049), so `_foo_` survives the round-trip while `snake_case` stays
+  // readable. Deliberately coarser than the parser's flanking rule, and
+  // invariant under the dedents/trims/coalescing the round trip performs: see
+  // `underscoreNeedsEscape`. Inserted escapes never flip the verdict — every
+  // escapable char is punctuation, like `\`.
+  if (ch === '_') return underscoreNeedsEscape(s, i) ? '\\_' : null
   // `<u>` / `</u>` are the underline storage tokens (#211 P2-5) — escape the
   // leading `<` so literal angle-bracket text round-trips as text instead of
   // re-parsing into an underline mark.
