@@ -16,7 +16,27 @@ pub struct PeerRef {
     pub last_sent_hash: Option<String>,
     /// Most recent successful sync, in milliseconds since the UNIX epoch
     /// (UTC); `None` = never synced. #109 Phase 2: was an RFC 3339 string.
+    ///
+    /// This is the **puller's** clock: it advances only when WE pulled this
+    /// peer's state into our store (#610 — a streamer that advanced it would
+    /// make itself permanently not-overdue and starve the reverse direction).
+    /// A device that only ever succeeds as responder therefore leaves it
+    /// `None` forever; [`Self::streamed_at`] is the other half of the picture.
     pub synced_at: Option<i64>,
+    /// Most recent session in which we STREAMED our state to this peer, in
+    /// milliseconds since the UNIX epoch (UTC); `None` = never streamed
+    /// (migration 0111, #4084).
+    ///
+    /// The counterpart to [`Self::synced_at`], recording the direction that
+    /// column deliberately cannot. Together they answer "when did anything
+    /// last move between us" — the device list renders
+    /// `MAX(synced_at, streamed_at)` so a responder-only peer stops reading as
+    /// "never synced".
+    ///
+    /// The scheduler (`peers_due_for_resync`) still reads `synced_at` **only**:
+    /// treating a recent stream as "not due" would reintroduce exactly the
+    /// #610 starvation this column exists to avoid.
+    pub streamed_at: Option<i64>,
     pub reset_count: i64,
     /// Most recent protocol reset, in milliseconds since the UNIX epoch
     /// (UTC); `None` = never reset. #109 Phase 2: was an RFC 3339 string.
@@ -53,7 +73,7 @@ pub struct PeerRef {
 pub async fn get_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<Option<PeerRef>, AppError> {
     let row = sqlx::query_as!(
         PeerRef,
-        r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
+        r#"SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
                   device_name, last_address, endpoint_id
            FROM peer_refs WHERE peer_id = ?"#,
@@ -194,7 +214,7 @@ pub async fn get_peer_ref_by_endpoint_id(
     validate_endpoint_id(endpoint_id)?;
     let mut rows = sqlx::query_as!(
         PeerRef,
-        r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
+        r#"SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
                   device_name, last_address, endpoint_id
            FROM peer_refs WHERE endpoint_id = ? AND peer_id != ''"#,
@@ -290,7 +310,7 @@ pub async fn bind_endpoint_id(
 pub async fn list_peer_refs(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError> {
     let rows = sqlx::query_as!(
         PeerRef,
-        r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
+        r#"SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
                   device_name, last_address, endpoint_id
            FROM peer_refs
@@ -387,11 +407,12 @@ pub async fn upsert_peer_ref_with_cert(
 /// `last_sent_hash` accepts the empty string (`""`) as a "we sent
 /// nothing this session" sentinel. Two call sites use it:
 ///
-/// 1. The per-session `sync_protocol::session_state_machine` propagates
-///    the empty-string default when no ops were sent this session
-///    (typical for an initiator that has no new ops since the previous
-///    sync) — see the `last_sent_hash.clone().unwrap_or_default()`
-///    expression in `handle_message(SyncComplete)`.
+/// 1. `sync_protocol::session_state_machine`'s `record_pull_in_tx`
+///    passes the `""` literal on every pull, because no per-peer
+///    sent-hash delta is tracked under the loro-vv send path (#490 M1).
+///    It used to forward a `SyncOrchestrator.last_sent_hash` field that
+///    production never assigned; #4084 deleted the field and inlined the
+///    sentinel it always produced.
 /// 2. `sync_daemon::snapshot_transfer::try_receive_snapshot_catchup`
 ///    explicitly passes `""` after applying a snapshot, because the
 ///    snapshot apply path does not stream ops in either direction.
@@ -460,6 +481,40 @@ pub async fn update_on_sync_in_tx(
          WHERE peer_id = ?",
         last_hash,
         last_sent_hash,
+        now,
+        peer_id,
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("peer_refs ({peer_id})")));
+    }
+    Ok(())
+}
+
+/// Record that we STREAMED our state to a peer this session (#4084).
+///
+/// The mirror of [`update_on_sync_in_tx`] for the direction that column
+/// deliberately cannot record. Stamps `streamed_at` and **nothing else** —
+/// in particular not `synced_at`, whose "we pulled from them" meaning the
+/// scheduler depends on (#610: a streamer that refreshed `synced_at` would
+/// never find the peer overdue and would starve the reverse direction).
+///
+/// Composes inside the streamer's existing `BEGIN IMMEDIATE` transaction so the
+/// ensure-row + stamp pair commits atomically, exactly like the puller's
+/// bookkeeping. Only in-transaction because that is the only call shape the
+/// orchestrator needs; there is no pool variant to keep un-exercised.
+///
+/// Returns [`AppError::NotFound`] if `peer_id` does not exist after the upsert
+/// (only possible if the caller skipped [`upsert_peer_ref_in_tx`]).
+pub async fn update_on_stream_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    peer_id: &str,
+) -> Result<(), AppError> {
+    let now = crate::db::now_ms();
+    let result = sqlx::query!(
+        "UPDATE peer_refs SET streamed_at = ? WHERE peer_id = ?",
         now,
         peer_id,
     )
@@ -830,10 +885,101 @@ mod tests {
             "last_sent_hash must default to NULL"
         );
         assert!(peer.synced_at.is_none(), "synced_at must default to NULL");
+        assert!(
+            peer.streamed_at.is_none(),
+            "streamed_at must default to NULL"
+        );
         assert_eq!(peer.reset_count, 0, "reset_count must default to 0");
         assert!(
             peer.last_reset_at.is_none(),
             "last_reset_at must default to NULL"
+        );
+    }
+
+    // ── update_on_stream_in_tx (#4084) ──────────────────────────────────
+
+    /// Happy path: the streamer's stamp advances `streamed_at` and touches
+    /// **nothing else** — in particular not `synced_at`, whose "we pulled from
+    /// them" meaning `peers_due_for_resync` depends on (#610).
+    #[tokio::test]
+    async fn update_on_stream_stamps_streamed_at_without_touching_synced_at_4084() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-stream").await.unwrap();
+
+        let before = crate::db::now_ms();
+        let mut tx = pool.begin().await.unwrap();
+        update_on_stream_in_tx(&mut tx, "peer-stream")
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let after = crate::db::now_ms();
+
+        let peer = get_peer_ref(&pool, "peer-stream")
+            .await
+            .unwrap()
+            .expect("peer-stream must exist");
+        let streamed = peer
+            .streamed_at
+            .expect("streamed_at must be stamped by update_on_stream_in_tx");
+        assert!(
+            (before..=after).contains(&streamed),
+            "streamed_at must be epoch-ms taken during the call: {streamed} not in \
+             {before}..={after}"
+        );
+        assert!(
+            peer.synced_at.is_none(),
+            "#610: recording a STREAM must never advance synced_at — the scheduler \
+             measures staleness from it, and refreshing it on every inbound session \
+             starves the reverse direction"
+        );
+        assert!(
+            peer.last_hash.is_none() && peer.last_sent_hash.is_none(),
+            "the stream stamp writes one column; the pull path owns the hashes"
+        );
+    }
+
+    /// A pull that already advanced `synced_at` and a later stream keep their
+    /// own columns: the two directions are recorded independently, which is
+    /// the whole point of the column existing separately.
+    #[tokio::test]
+    async fn stream_and_sync_stamps_are_independent_4084() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-both").await.unwrap();
+        update_on_sync(&pool, "peer-both", "h-recv", "")
+            .await
+            .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        update_on_stream_in_tx(&mut tx, "peer-both").await.unwrap();
+        tx.commit().await.unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-both").await.unwrap().unwrap();
+        assert!(
+            peer.synced_at.is_some(),
+            "the earlier pull's synced_at must survive a later stream stamp"
+        );
+        assert!(peer.streamed_at.is_some(), "and the stream stamp lands too");
+        assert_eq!(
+            peer.last_hash.as_deref(),
+            Some("h-recv"),
+            "the stream stamp must not clobber the pull's frontier"
+        );
+    }
+
+    /// Error path: stamping a peer that has no row is a caller bug (the
+    /// orchestrator upserts first inside the same transaction). Report it
+    /// rather than silently writing nothing, mirroring `update_on_sync_in_tx`.
+    #[tokio::test]
+    async fn update_on_stream_missing_peer_is_not_found_4084() {
+        let (pool, _dir) = test_pool().await;
+
+        let mut tx = pool.begin().await.unwrap();
+        let err = update_on_stream_in_tx(&mut tx, "no-such-peer")
+            .await
+            .expect_err("stamping a nonexistent peer must not silently succeed");
+        assert!(
+            matches!(err, AppError::NotFound(ref m) if m.contains("no-such-peer")),
+            "expected NotFound naming the peer, got {err:?}"
         );
     }
 

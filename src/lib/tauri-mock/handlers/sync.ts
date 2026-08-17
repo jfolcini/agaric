@@ -109,6 +109,7 @@ export const syncHandlers = {
           peer_id: peerId,
           last_hash: null,
           last_sent_hash: null,
+          streamed_at: null,
           synced_at: null,
           reset_count: 0,
           last_reset_at: null,

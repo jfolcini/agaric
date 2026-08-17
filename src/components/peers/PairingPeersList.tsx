@@ -18,6 +18,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import type { PeerRef } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
+import { lastSyncActivityAt } from '@/lib/peer-sync-activity'
 
 export interface PairingPeersListProps {
   peers: PeerRef[]
@@ -37,39 +38,46 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
         ) : (
           <ScrollArea className="max-h-48">
             <div className="space-y-2">
-              {peers.map((peer) => (
-                <Card key={peer.peer_id} className="pairing-peer-item p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-mono truncate">{peer.peer_id}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {t('device.lastSyncedAt', {
-                            time:
-                              peer.synced_at != null
-                                ? formatRelativeTime(peer.synced_at, t)
-                                : t('sidebar.lastSyncedNever'),
-                          })}
-                        </p>
-                        {peer.reset_count > 0 && (
-                          <Badge tone="outline" className="mt-0.5 text-xs">
-                            {t('device.resetCount', { count: peer.reset_count })}
-                          </Badge>
-                        )}
+              {peers.map((peer) => {
+                // #4084: the later of synced_at / streamed_at. A device that
+                // only ever succeeds as RESPONDER never advances synced_at
+                // (#610 forbids it) and would otherwise read "never synced"
+                // while syncing fine.
+                const lastActivity = lastSyncActivityAt(peer)
+                return (
+                  <Card key={peer.peer_id} className="pairing-peer-item p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-mono truncate">{peer.peer_id}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {t('device.lastSyncedAt', {
+                              time:
+                                lastActivity != null
+                                  ? formatRelativeTime(lastActivity, t)
+                                  : t('sidebar.lastSyncedNever'),
+                            })}
+                          </p>
+                          {peer.reset_count > 0 && (
+                            <Badge tone="outline" className="mt-0.5 text-xs">
+                              {t('device.resetCount', { count: peer.reset_count })}
+                            </Badge>
+                          )}
+                        </div>
                       </div>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => onUnpair(peer.peer_id)}
+                        className="pairing-unpair-btn shrink-0 touch-target"
+                      >
+                        {t('device.unpairButton')}
+                      </Button>
                     </div>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => onUnpair(peer.peer_id)}
-                      className="pairing-unpair-btn shrink-0 touch-target"
-                    >
-                      {t('device.unpairButton')}
-                    </Button>
-                  </div>
-                </Card>
-              ))}
+                  </Card>
+                )
+              })}
             </div>
           </ScrollArea>
         )}

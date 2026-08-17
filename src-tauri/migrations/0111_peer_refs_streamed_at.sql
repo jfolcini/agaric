@@ -1,0 +1,75 @@
+-- #4084 — `streamed_at`: when we last STREAMED our state to a peer.
+--
+-- ## The gap this closes
+--
+-- A sync session is one-directional: the initiator pulls, the responder
+-- streams. Every progress column on `peer_refs` is written by exactly one of
+-- those roles:
+--
+--   * `synced_at` / `last_hash` / `last_sent_hash` — `update_on_sync_in_tx`,
+--     reached only from the orchestrator's `record_pull_in_tx`, which the
+--     `SyncComplete` arm gates behind `if !self.streamed_to_peer`. **Puller
+--     only.**
+--   * `last_address` — `update_last_address`, called from
+--     `session_supervisor`'s post-connect arm. **Initiator only.**
+--   * `endpoint_id` — `bind_endpoint_id`, called by both roles, which is
+--     exactly why a responder-only device has that one column populated and
+--     nothing else.
+--
+-- So a device that only ever succeeds as RESPONDER writes no progress at all.
+-- Its row is indistinguishable from a peer it has never synced with, even
+-- though `loro_vv_bytes` — the authoritative frontier — is being written on
+-- every session. The device list renders "never synced" for a peer that is
+-- demonstrably syncing.
+--
+-- ## Why a NEW column instead of advancing `synced_at`
+--
+-- #610 established, deliberately, that the streamer must NOT advance
+-- `synced_at`: `peers_due_for_resync` measures staleness from it, so a
+-- responder refreshing `synced_at[initiator]` on every inbound session would
+-- make itself permanently not-overdue toward that peer and starve the reverse
+-- direction. `SyncOrchestrator::streamed_to_peer` exists solely to enforce
+-- that gate.
+--
+-- `streamed_at` is the honest way to record the same event without touching
+-- the value the scheduler reads. `synced_at` keeps its exact meaning ("we last
+-- pulled this peer's state into our store"); `streamed_at` adds the missing
+-- half ("this peer last pulled our state"). The device list renders
+-- MAX(synced_at, streamed_at) — the last time anything moved between us — and
+-- the scheduler continues to read `synced_at` alone.
+--
+-- ## Shape
+--
+-- Milliseconds since the UNIX epoch (UTC), written via `agaric_store::db::now_ms()`
+-- — the canonical timestamp encoding (#109 Phase 2 / migrations/AGENTS.md), and
+-- the same encoding as the sibling `synced_at` and `last_reset_at` columns this
+-- one is compared against in Rust. The `CHECK (col IS NULL OR col >= 0)` shape is
+-- copied verbatim from those two (see `0075_peer_refs_timestamps_ms.sql`).
+--
+-- NULL is the correct and expected value for every existing row: no device has
+-- ever recorded this event, and there is nothing to derive it from — a peer's
+-- `loro_vv_bytes` proves that a stream happened but carries no timestamp.
+-- "We have never recorded streaming to this peer" is the true state, it is the
+-- state every peer starts in, and the read path (`MAX(synced_at, streamed_at)`
+-- with a null-safe fold) has to handle it anyway.
+--
+-- `peer_refs` has been STRICT since 0075; INTEGER is a STRICT-permitted type
+-- and a nullable ADD COLUMN needs no default, so this is an append-only
+-- ALTER with no table rebuild and no backfill.
+--
+-- ## Why `synced_at` is not also being reinterpreted here
+--
+-- It would be tempting to have the scheduler treat a recent `streamed_at` as
+-- "not due". That is #610's starvation bug wearing a new column name: under
+-- sustained one-way activity the initiator refreshes our `streamed_at` on every
+-- tick, and we would never find it overdue. `peers_due_for_resync` deliberately
+-- continues to read `synced_at` only.
+--
+-- mock-unaffected: the JS Tauri mock does not model `peer_refs` rows —
+-- `src/lib/tauri-mock/handlers/sync.ts` answers `list_peer_refs` with a literal
+-- `[]` — so there is no second implementation of this table to keep in step
+-- (`peer_refs` is correspondingly absent from the CONTRACT map in
+-- `scripts/check-migration-mock-contract.py`).
+
+ALTER TABLE peer_refs
+    ADD COLUMN streamed_at INTEGER CHECK (streamed_at IS NULL OR streamed_at >= 0);

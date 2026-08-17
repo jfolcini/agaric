@@ -30,6 +30,7 @@ const mockPeers = [
     peer_id: 'peer-abc-1234567890',
     last_hash: 'hash1',
     last_sent_hash: null,
+    streamed_at: null,
     synced_at: Date.now() - 5 * 60 * 1000,
     reset_count: 0,
     last_reset_at: null,
@@ -42,6 +43,7 @@ const mockPeers = [
     peer_id: 'peer-def-0987654321',
     last_hash: null,
     last_sent_hash: null,
+    streamed_at: null,
     synced_at: null,
     reset_count: 2,
     last_reset_at: 1735689600000, // 2025-01-01T00:00:00Z
@@ -161,6 +163,52 @@ describe('PairingPeersList', () => {
 
   it('has no a11y violations with peers', async () => {
     const { container } = render(<PairingPeersList peers={mockPeers} onUnpair={vi.fn()} />)
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
+/**
+ * #4084 — the pairing dialog's peer list uses the same
+ * `MAX(synced_at, streamed_at)` reading as the device list, so the two never
+ * disagree about whether a responder-only peer has ever synced.
+ */
+describe('PairingPeersList — last-sync activity (#4084)', () => {
+  const responderOnly = [
+    {
+      peer_id: 'peer-responder-only',
+      last_hash: null,
+      last_sent_hash: null,
+      streamed_at: Date.now() - 5 * 60 * 1000,
+      synced_at: null,
+      reset_count: 0,
+      last_reset_at: null,
+      cert_hash: null,
+      device_name: null,
+      last_address: null,
+      endpoint_id: null,
+    },
+  ]
+
+  it('does not say "never synced" for a peer that has only pulled from us', () => {
+    render(<PairingPeersList peers={responderOnly} onUnpair={vi.fn()} />)
+
+    expect(screen.queryByText(/Never synced/)).not.toBeInTheDocument()
+  })
+
+  it('keeps Unpair working for such a peer', async () => {
+    const user = userEvent.setup()
+    const onUnpair = vi.fn()
+
+    render(<PairingPeersList peers={responderOnly} onUnpair={onUnpair} />)
+
+    await user.click(screen.getByRole('button', { name: /Unpair/i }))
+    expect(onUnpair).toHaveBeenCalledWith('peer-responder-only')
+  })
+
+  it('has no a11y violations for a responder-only peer', async () => {
+    const { container } = render(<PairingPeersList peers={responderOnly} onUnpair={vi.fn()} />)
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()

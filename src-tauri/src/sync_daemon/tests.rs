@@ -534,6 +534,7 @@ fn make_peer_ref(peer_id: &str) -> PeerRef {
         last_hash: None,
         last_sent_hash: None,
         synced_at: None,
+        streamed_at: None,
         reset_count: 0,
         last_reset_at: None,
         cert_hash: None,
@@ -2753,6 +2754,7 @@ fn make_peer_ref_with_cert(peer_id: &str, cert_hash: Option<&str>) -> PeerRef {
         last_hash: None,
         last_sent_hash: None,
         synced_at: None,
+        streamed_at: None,
         reset_count: 0,
         last_reset_at: None,
         cert_hash: cert_hash.map(String::from),
@@ -6778,6 +6780,125 @@ async fn issue610_only_the_puller_records_synced_at() {
             .iter()
             .any(|p| p == DEV_A),
         "#610: B must still consider A due for resync (reverse direction not starved)"
+    );
+
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
+/// #4084 — a responder-only device records its progress in `streamed_at`,
+/// and #610's `synced_at` rule survives intact.
+///
+/// The sibling of `issue610_only_the_puller_records_synced_at`, and the same
+/// session shape. Before this, #610's rule had an unintended consequence: a
+/// session is one-directional, `synced_at`/`last_hash` are written by the
+/// puller and `last_address` by the initiator, so a device that only ever
+/// succeeds as RESPONDER wrote no progress at all. Its row was
+/// indistinguishable from a peer it had never synced with — the device list
+/// said "never synced" about a peer it was demonstrably syncing with, every
+/// 30 s.
+///
+/// The fix records the stream in its own column. This pins all three halves of
+/// that being correct:
+///   * the responder stamps `streamed_at` (the bookkeeping gap is closed),
+///   * the responder still does NOT advance `synced_at` (#610's rule holds —
+///     this is the assertion that would catch a "just stamp synced_at" fix),
+///   * the scheduler still finds the initiator due from the responder's side
+///     (a `streamed_at`-aware scheduler would be #610's starvation under a new
+///     column name).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue4084_responder_only_device_records_streamed_at() {
+    use agaric_sync::sync_protocol::{SyncOrchestrator, SyncState};
+
+    const DEV_A: &str = "DEV4084A";
+    const DEV_B: &str = "DEV4084B";
+    const BLOCK_B: &str = "01HZ4084BLKBXXXXXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ4084SPACEXXXXXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+    let state_b = std::sync::Arc::clone(mat_b.loro_state());
+
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    // Only B has state, so A pulls and B streams — the responder-only shape.
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        &state_b,
+        DEV_B,
+        &space,
+        BLOCK_B,
+        "edit from device B",
+        1_736_942_401_000,
+    )
+    .await;
+
+    let before_ms = agaric_store::db::now_ms();
+
+    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_expected_remote_id(DEV_A.into());
+    pump_full_session_602(&mut init_a, &mut resp_b).await;
+
+    assert_eq!(init_a.session().state, SyncState::Complete);
+    assert_eq!(resp_b.session().state, SyncState::Complete);
+
+    let after_ms = agaric_store::db::now_ms();
+
+    // ── Responder B: streamed to A, pulled nothing ──────────────────
+    let b_view_of_a = peer_refs::get_peer_ref(&pool_b, DEV_A)
+        .await
+        .unwrap()
+        .expect("B's peer row for A must exist");
+    let streamed = b_view_of_a.streamed_at.expect(
+        "#4084: the responder must record streamed_at — without it a \
+         responder-only device writes no progress at all and reads as \
+         'never synced' forever",
+    );
+    assert!(
+        (before_ms..=after_ms).contains(&streamed),
+        "streamed_at must be stamped during this session: {streamed} not in \
+         {before_ms}..={after_ms}"
+    );
+    assert!(
+        b_view_of_a.synced_at.is_none(),
+        "#610 still holds: the streamer must NOT advance synced_at. Stamping it \
+         here would starve the reverse direction, which is exactly why #4084 \
+         needed a separate column"
+    );
+
+    // ── Initiator A: pulled from B, streamed nothing ────────────────
+    let a_view_of_b = peer_refs::get_peer_ref(&pool_a, DEV_B)
+        .await
+        .unwrap()
+        .expect("A's peer row for B must exist");
+    assert!(
+        a_view_of_b.synced_at.is_some(),
+        "#610: the puller records synced_at"
+    );
+    assert!(
+        a_view_of_b.streamed_at.is_none(),
+        "the puller streamed nothing this session, so streamed_at stays NULL — \
+         the two columns record two different directions, not one event twice"
+    );
+
+    // ── The scheduler must be unmoved by streamed_at ────────────────
+    let scheduler = agaric_sync::sync_scheduler::SyncScheduler::default();
+    let b_peers = peer_refs::list_peer_refs(&pool_b).await.unwrap();
+    assert!(
+        scheduler
+            .peers_due_for_resync(&b_peers)
+            .iter()
+            .any(|p| p == DEV_A),
+        "#4084/#610: a fresh streamed_at must NOT suppress B's own resync toward \
+         A. Under sustained one-way activity A refreshes B's streamed_at every \
+         tick, so a streamed_at-aware scheduler would never find A overdue — \
+         #610's starvation wearing a new column name"
     );
 
     mat_a.shutdown();

@@ -897,6 +897,7 @@ mod tests {
             last_hash: None,
             last_sent_hash: None,
             synced_at: None,
+            streamed_at: None,
             reset_count: 0,
             last_reset_at: None,
             cert_hash: None,

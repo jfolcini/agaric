@@ -54,6 +54,7 @@ function makePeerRow(overrides: Partial<PeerRef> = {}): PeerRef {
     peer_id: 'PEER1',
     last_hash: null,
     last_sent_hash: null,
+    streamed_at: null,
     synced_at: null,
     reset_count: 0,
     last_reset_at: null,
@@ -110,6 +111,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER1',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -143,6 +145,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER1',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -171,6 +174,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER_FILES',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -273,6 +277,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER1',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -301,6 +306,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER1',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -356,6 +362,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER1',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -382,6 +389,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER_FAIL_12345',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -422,6 +430,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER_RETRY_999',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -481,6 +490,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER1',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -512,6 +522,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER1',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -554,6 +565,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER1',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -591,6 +603,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER1',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -640,6 +653,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER1',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -679,6 +693,7 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER1',
         last_hash: null,
         last_sent_hash: null,
+        streamed_at: null,
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
@@ -745,6 +760,7 @@ describe('useSyncTrigger', () => {
           peer_id: 'PEER1',
           last_hash: null,
           last_sent_hash: null,
+          streamed_at: null,
           synced_at: null,
           reset_count: 0,
           last_reset_at: null,
@@ -796,7 +812,31 @@ describe('useSyncTrigger', () => {
     })
 
     it('mapPeerRefToInfo keeps lastSyncedAt null when never synced', () => {
-      expect(mapPeerRefToInfo(makePeerRow({ synced_at: null })).lastSyncedAt).toBeNull()
+      expect(
+        mapPeerRefToInfo(makePeerRow({ synced_at: null, streamed_at: null })).lastSyncedAt,
+      ).toBeNull()
+    })
+
+    // #4084: a responder-only device never advances `synced_at` (#610 forbids
+    // the streamer touching it), so the StatusPanel and the sidebar dot showed
+    // "never synced" for a peer that was syncing on every tick.
+    it('mapPeerRefToInfo falls back to streamed_at for a responder-only peer', () => {
+      expect(
+        mapPeerRefToInfo(
+          makePeerRow({ synced_at: null, streamed_at: Date.UTC(2025, 0, 15, 12, 0, 0) }),
+        ).lastSyncedAt,
+      ).toBe('2025-01-15T12:00:00.000Z')
+    })
+
+    it('mapPeerRefToInfo takes the later of the two timestamps', () => {
+      expect(
+        mapPeerRefToInfo(
+          makePeerRow({
+            synced_at: Date.UTC(2025, 0, 1),
+            streamed_at: Date.UTC(2025, 0, 15, 12, 0, 0),
+          }),
+        ).lastSyncedAt,
+      ).toBe('2025-01-15T12:00:00.000Z')
     })
 
     it('populates store peers from listPeerRefs after syncAll', async () => {

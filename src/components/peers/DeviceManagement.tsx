@@ -38,6 +38,7 @@ import { formatErrorForDisplay } from '@/lib/error-display'
 import { truncateId } from '@/lib/format'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { lastSyncActivityAt } from '@/lib/peer-sync-activity'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { startSync } from '@/lib/tauri'
@@ -56,8 +57,14 @@ import { useSyncStore } from '@/stores/sync'
  * Keys, in priority order:
  *  1. has-name  (named before unnamed)
  *  2. device_name, localeCompare (named only — both unnamed skip this)
- *  3. synced_at desc (never-synced => -Infinity, sorts last)
+ *  3. last sync activity desc (never => -Infinity, sorts last)
  *  4. peer_id, localeCompare (stable, deterministic final tiebreak)
+ *
+ * #4084: key 3 is `MAX(synced_at, streamed_at)`, not `synced_at`. A device
+ * that only ever succeeds as RESPONDER never advances `synced_at` (#610
+ * forbids the streamer touching it), so sorting on `synced_at` alone buried
+ * an actively-syncing peer at the bottom of the list with the peers that
+ * genuinely never synced.
  */
 export function comparePeers(a: PeerRef, b: PeerRef): number {
   const aHasName = a.device_name != null && a.device_name !== ''
@@ -72,9 +79,9 @@ export function comparePeers(a: PeerRef, b: PeerRef): number {
     if (byName !== 0) return byName
   }
 
-  // 3. most-recently-synced first (null => never synced => last)
-  const aSynced = a.synced_at ?? Number.NEGATIVE_INFINITY
-  const bSynced = b.synced_at ?? Number.NEGATIVE_INFINITY
+  // 3. most-recent activity first (null => never synced => last)
+  const aSynced = lastSyncActivityAt(a) ?? Number.NEGATIVE_INFINITY
+  const bSynced = lastSyncActivityAt(b) ?? Number.NEGATIVE_INFINITY
   if (aSynced !== bSynced) return aSynced > bSynced ? -1 : 1
 
   // 4. deterministic final tiebreak so the order is total
@@ -140,7 +147,8 @@ export function DeviceManagement(): React.ReactElement {
       setDeviceId(id)
       // #1673: Sort a COPY (don't mutate the IPC payload) with a total-order
       // comparator: named devices first (alphabetical), then unnamed by
-      // synced_at desc, with peer_id as the final stable tiebreak.
+      // last sync activity desc (#4084: MAX(synced_at, streamed_at)), with
+      // peer_id as the final stable tiebreak.
       const sorted = [...peerList].toSorted(comparePeers)
       setPeers(sorted)
       // #1076: mirror the backend peer list into the shared sync store so
