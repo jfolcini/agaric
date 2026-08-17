@@ -426,10 +426,11 @@ describe('parse — a lone table-separator line pasted as its own block (#3274)'
 // table that never had a delimiter row, whose FIRST row of data happens to
 // be dash-only, had that row read as the separator and dropped.
 //
-// The discriminator is the CANONICAL form our serializer emits: exactly
-// `---` per cell (`markdown-serialize.ts`'s `separator`). A short-form
-// delimiter (`| - | - |`) is only honoured when data rows follow it —
-// i.e. when row 0 really is acting as a header for something.
+// The discriminator is the cell SHAPE, not its width: every legal GFM
+// delimiter cell (`:?-+:?`) is honoured, and the sole carve-out is the row
+// whose every cell is a bare `-` with nothing following it — the one form that
+// reads equally well as a placeholder value. The boundary itself is pinned
+// shape by shape in the describe below this one.
 describe('parse — an ambiguous dash-only row 1 in foreign markdown (#4003)', () => {
   it('keeps a short-dash row 1 as DATA when nothing follows it', () => {
     // The reported shape. Both rows are the user's content; dropping row 1
@@ -484,5 +485,75 @@ describe('parse — an ambiguous dash-only row 1 in foreign markdown (#4003)', (
         ),
       ),
     )
+  })
+})
+
+// -- The delimiter/data boundary at row 1, pinned per SHAPE ------------------
+// #4003's carve-out is narrow and the exact width of it matters, because both
+// sides of the boundary are silent: too wide and a delimiter the author wrote
+// renders as a junk data row; too narrow and a real data row is dropped.
+//
+// The rule `isSeparatorRow` implements: row 1 is the delimiter when EVERY cell
+// is a legal GFM delimiter cell (optional colons around ONE or more dashes) —
+// unless reading it as the delimiter would leave the table with no data at all
+// AND the row is the single shape that reads equally well as content: every
+// cell exactly `-`. Dash WIDTH is not the discriminator, so `--`, mixed widths
+// and any colon-carrying form stay delimiters even in a two-line table.
+describe('parse — the delimiter/data boundary at table row 1', () => {
+  const HEADER = '| Name | Value |'
+  const headerRow = () =>
+    tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Value'))))
+  const dataRow = (a: string, b: string) =>
+    tableRow(tableCell(paragraph(text(a))), tableCell(paragraph(text(b))))
+
+  // Every legal delimiter shape EXCEPT the minimal `-`-per-cell one. With
+  // nothing following, each of these is a header-only table: honouring the
+  // delimiter is what the author wrote, and keeping it would render a visible
+  // junk row of dashes.
+  const UNAMBIGUOUS_DELIMITERS: readonly [string, string][] = [
+    ['2 dashes', '| -- | -- |'],
+    ['3 dashes — canonical, what our own serializer emits', '| --- | --- |'],
+    ['more than 3 dashes', '| ----- | ----- |'],
+    ['mixed widths', '| --- | - |'],
+    ['mixed widths, reversed', '| - | --- |'],
+    ['left/right aligned short form', '| :- | -: |'],
+    ['centre/right aligned canonical', '| :---: | ---: |'],
+    ['a single colon-carrying cell alongside a bare dash', '| :- | - |'],
+  ]
+
+  it.each(UNAMBIGUOUS_DELIMITERS)(
+    'row 1 (%s) is the delimiter even with NO rows following',
+    (_shape, delimiter) => {
+      expect(parse(`${HEADER}\n${delimiter}`)).toEqual(doc(table(headerRow())))
+    },
+  )
+
+  it.each([...UNAMBIGUOUS_DELIMITERS, ['1 dash', '| - | - |'] as [string, string]])(
+    'row 1 (%s) is the delimiter when a data row FOLLOWS',
+    (_shape, delimiter) => {
+      expect(parse(`${HEADER}\n${delimiter}\n| a | b |`)).toEqual(
+        doc(table(headerRow(), dataRow('a', 'b'))),
+      )
+    },
+  )
+
+  it('the ONE exception — every cell exactly `-`, nothing following — is DATA (#4003)', () => {
+    expect(parse(`${HEADER}\n| - | - |`)).toEqual(doc(table(headerRow(), dataRow('-', '-'))))
+  })
+
+  it('honours a delimiter written without the closing pipe, which GFM also allows', () => {
+    // The rule is now per-CELL, so it no longer needs the row to end in `|` —
+    // the previous whole-row shape regex did, and rejected this legal form.
+    expect(parse('| Name | Value\n| --- | ---')).toEqual(doc(table(headerRow())))
+  })
+
+  it('a row of EMPTY cells is data — no cell carries a dash, so no cell is a delimiter (#3274)', () => {
+    const result = parse(`${HEADER}\n|  |  |`)
+    const block = result.content?.[0]
+    const rows = block?.type === 'table' ? block.content : undefined
+    expect(rows).toHaveLength(2)
+    // An empty cell parses to `content: []`, which no builder emits, so this
+    // arm asserts the shape directly rather than via `toEqual(doc(…))`.
+    expect(rows?.[1]?.content?.map((cell) => cell.content)).toEqual([[], []])
   })
 })

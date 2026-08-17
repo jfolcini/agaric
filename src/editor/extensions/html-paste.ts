@@ -44,18 +44,6 @@ import { useBlockStore } from '@/stores/blocks'
 const htmlPastePluginKey = new PluginKey('htmlPaste')
 
 /**
- * Decide whether a clipboard `text/html` payload is worth converting. Rejects
- * the absent / empty / wrapper-only cases so the handler can fall through to the
- * existing handlers + plain-text paste. Exported for testing.
- *
- * A payload is "usable" when, after stripping tags, it carries some visible text
- * AND it actually contains at least one HTML tag (a `text/html` that is really
- * just escaped plain text has no tags and is better handled by the plain-text
- * path). Browsers commonly wrap a copied fragment in
- * `<html><body><!--StartFragment-->…<!--EndFragment--></body></html>`, so the
- * wrapper alone (no inner text) is correctly rejected.
- */
-/**
  * Parse a clipboard HTML string and return its `body` iff it is "usable" —
  * after stripping tags it carries some visible text AND it actually contains
  * at least one HTML tag (a `text/html` that is really just escaped plain

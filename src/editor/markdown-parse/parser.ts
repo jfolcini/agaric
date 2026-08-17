@@ -372,21 +372,30 @@ function splitRowOnUnescapedPipes(line: string): string[] {
 }
 
 /**
- * Shape of a GFM delimiter row: outer pipes around cells of only dashes,
- * colons, spaces and pipes, with at least one `-`/`:` present. The dash/colon
- * requirement keeps a row of EMPTY cells (`|  |`, serialized from an
- * empty-cell table row) classified as data (#3274).
+ * GFM's actual delimiter cell: ONE or more dashes, with optional alignment
+ * colons on either side. `---` (what `serializeTable` emits), `--`, `-`, `:-`,
+ * `-:` and `:---:` all qualify. Requiring a dash in EVERY cell is what keeps a
+ * row of EMPTY cells (`|  |`, serialized from an empty-cell table row)
+ * classified as data (#3274).
  */
-const SEPARATOR_ROW_SHAPE = /^\|[\s|]*[-:][\s\-:|]*\|$/
+const DELIMITER_CELL = /^:?-+:?$/
 
 /**
- * The CANONICAL delimiter cell — three or more dashes with optional alignment
- * colons. This is exactly what `serializeTable` emits (`separator`, built as
- * `'---'` per column), so any delimiter row in markdown WE produced matches.
+ * The one delimiter-shaped cell that reads equally well as CONTENT: a lone
+ * dash, the conventional "no value here" placeholder. Every other legal
+ * delimiter cell — two or more dashes, or any colon — is drawn as a rule and
+ * nobody types it as data.
  */
-const CANONICAL_SEPARATOR_CELL = /^:?-{3,}:?$/
+const AMBIGUOUS_DELIMITER_CELL = /^-$/
 
-/** The trimmed cells of a row, without the outer `| … |` empty segments. */
+/**
+ * The trimmed cells of a row, without the outer `| … |` empty segments. The
+ * ONE definition of a row's cell boundaries: both `isSeparatorRow` (which
+ * classifies the row) and `buildTableRows` (which builds it) go through here,
+ * so the two can never come to disagree about where the columns are. At least
+ * one cell always comes back, so a degenerate `|` line still yields an empty
+ * cell (matching the original `.replace(…).split('|')` behaviour).
+ */
 function rowCells(tableLine: string): string[] {
   const segments = splitRowOnUnescapedPipes(tableLine)
   if (segments.length > 0 && segments[0]?.trim() === '') segments.shift()
@@ -405,25 +414,45 @@ function rowCells(tableLine: string): string[] {
  * to be dash-only (`| Name | Value |` / `| - | - |`), had that row read as the
  * separator and silently dropped (#4003).
  *
- * The tie-breaker for that genuinely ambiguous case is a SECOND signal, not a
- * different shape test:
+ * The question is what separates "a delimiter row the author WROTE" from "a
+ * data row that happens to be dashes", and the answer is the SHAPE of the
+ * cells, not their width:
  *
- *   - a CANONICAL row (`---` per cell) is always the delimiter — that is the
- *     form our own serializer emits, so our documents (including a header-only
- *     table, which serializes to exactly `| a |` / `| --- |`) round-trip
- *     unchanged;
- *   - a SHORT-form row (`| - | - |`, `| :- | -: |`) is the delimiter only when
- *     data rows FOLLOW it — i.e. when row 0 is demonstrably acting as a header
- *     for something. An ordinary short-form GFM table is unaffected.
+ *   - the row must be a legal GFM delimiter row at all — every cell matching
+ *     `DELIMITER_CELL`. This is GFM's own rule, so every delimiter an author
+ *     can legally write (`--`, mixed `--- | -`, `:-`, `:---:`) is honoured,
+ *     and so is our serializer's `---` per column, which is just one instance
+ *     of it (a header-only table of ours serializes to `| a |` / `| --- |`
+ *     and round-trips unchanged);
+ *   - the sole carve-out is the row whose EVERY cell is a bare `-`
+ *     (`AMBIGUOUS_DELIMITER_CELL`) with NO rows following it. Only there do
+ *     both readings stay plausible: `-` is the usual placeholder for an empty
+ *     cell, and reading it as the delimiter would leave a header with no data
+ *     at all. We prefer the user's content over the empty table (#4003).
+ *     One colon, or one second dash, anywhere in the row settles it as a
+ *     delimiter; and once data rows FOLLOW, row 0 is demonstrably a header for
+ *     something and even `| - | - |` is the delimiter.
  *
- * What is left — a two-line table whose second line is short-form dashes — is
- * the case where reading it as a delimiter would leave a header with no data
- * at all. There we prefer the user's content over the empty table.
+ * Two rejected discriminators, since both look plausible:
+ *
+ *   - CANONICAL-ness (`-{3,}` per cell, exactly our serializer's output) —
+ *     what this function used to AND with `hasFollowingRows`. It misreads
+ *     legal input in BOTH directions: `| -- | -- |` became a junk `--` data
+ *     row, and a mixed `| --- | - |` was kept whole as data because `.every`
+ *     needed every cell canonical. Dash count is an artifact of who typed the
+ *     row, not evidence of what it means.
+ *   - CELL-COUNT agreement with the header. GFM does require it, but it is
+ *     near-worthless HERE: a dash-only data row is rectangular with its header
+ *     too, so it never separates the two readings. All it would add is turning
+ *     a MALFORMED delimiter (`| A | B |` / `| --- |`) into a visible junk row —
+ *     the very failure mode this rule exists to prevent.
  */
 function isSeparatorRow(tableLine: string, hasFollowingRows: boolean): boolean {
-  if (!SEPARATOR_ROW_SHAPE.test(tableLine)) return false
+  const cells = rowCells(tableLine)
+  if (cells.length === 0) return false
+  if (!cells.every((cell) => DELIMITER_CELL.test(cell))) return false
   if (hasFollowingRows) return true
-  return rowCells(tableLine).every((cell) => CANONICAL_SEPARATOR_CELL.test(cell))
+  return !cells.every((cell) => AMBIGUOUS_DELIMITER_CELL.test(cell))
 }
 
 function buildTableRows(tableLines: readonly string[], depth: number): TableRowNode[] {
@@ -437,16 +466,13 @@ function buildTableRows(tableLines: readonly string[], depth: number): TableRowN
     // anywhere else in the table was silently swallowed on reparse (#3274).
     // At index 1 the row is disambiguated by `isSeparatorRow` (#4003).
     if (r === 1 && isSeparatorRow(tableLine, tableLines.length > 2)) continue
-    // Drop the leading/trailing empty segments produced by the row's outer
-    // `| … |` delimiters, then trim and unescape each cell. The `\|` → `|`
-    // unescape runs BEFORE parseLine so pipes inside inline code spans and
-    // link URLs (which bypass scanEscape) are restored too.
-    const segments = splitRowOnUnescapedPipes(tableLine)
-    if (segments.length > 0 && segments[0]?.trim() === '') segments.shift()
-    // Keep at least one cell so a degenerate `|` line still yields an empty
-    // cell (matching the previous `.replace(...).split('|')` behaviour).
-    if (segments.length > 1 && segments.at(-1)?.trim() === '') segments.pop()
-    const cellTexts = segments.map((c) => c.trim().replace(/\\\|/g, '|'))
+    // The SAME `rowCells` split `isSeparatorRow` classified on, so the cells a
+    // row is built from can never disagree with the cells it was judged by.
+    // Only the `\|` → `|` unescape is applied on top, and only here: it runs
+    // BEFORE parseLine so pipes inside inline code spans and link URLs (which
+    // bypass scanEscape) are restored too, while the delimiter test wants the
+    // raw text (an escaped pipe is not a dash either way).
+    const cellTexts = rowCells(tableLine).map((c) => c.replace(/\\\|/g, '|'))
     const isHeader = r === 0
     const cells = cellTexts.map((cellText) => buildTableCell(cellText, isHeader, depth))
     rows.push({ type: 'tableRow', content: cells })

@@ -172,11 +172,24 @@ export function BlockListRenderer({
   // a render whose output is never committed, and such a render would still
   // have published its `listStyles`/`ordinals`/`value` triple as "previous" —
   // so a later render could reuse a value derived from state the tree never
-  // actually showed. Syncing in an effect means the ref only ever holds a
-  // COMMITTED triple, while the memo above merely READS it. Behaviour is
-  // otherwise identical: the reuse gate is unchanged, so a content edit that
-  // leaves every marker untouched still republishes the same context identity
-  // and leaves the memoized rows alone (#3277).
+  // actually showed. Syncing in an effect confines the WRITE to commit.
+  //
+  // The memo above still READS the mutable ref during render, so the render is
+  // not PURE — it is merely SAFE, and only because of this effect: the ref can
+  // now only ever hold a triple the tree actually committed, so whatever a
+  // render reads is a value that really was published, whether or not that
+  // render is itself thrown away.
+  //
+  // The tradeoff, stated rather than hidden: this memo is strictly WEAKER than
+  // the render-time write it replaces. Between mount and the first passive-
+  // effect flush the ref is null, so a re-render landing inside that window
+  // mints a fresh `ListMarkerValue` where the old code would have reused one —
+  // a new context identity, hence one extra re-render of every marker consumer,
+  // which is exactly what #3277 exists to suppress. React flushes passive
+  // effects before starting new work in practice, so the window is theoretical;
+  // the reuse gate itself is unchanged, so from the first flush onward a
+  // content edit that leaves every marker untouched still republishes the same
+  // identity and leaves the memoized rows alone.
   useEffect(() => {
     prevMarkerRef.current = { listStyles, ordinals, value: listMarkerValue }
   }, [listStyles, ordinals, listMarkerValue])
