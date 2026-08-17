@@ -1003,9 +1003,11 @@ pub async fn project_block_full_to_sql(
                     block_id = %snap.block_id,
                     parent_id = ?parent_id,
                     "#4083: projecting a block's core columns hit a FOREIGN KEY \
-                     violation; `parent_id` is the only unguarded reference in \
-                     this statement, so a parent id absent from `blocks` is the \
-                     likely cause (the tx is aborted; nothing was written)"
+                     violation; `parent_id` is the only reference here that can \
+                     dangle, so a parent id absent from `blocks` is the likely \
+                     cause — but note `page_id` is also an unguarded \
+                     `REFERENCES blocks(id)` in this statement, so rule it out \
+                     rather than assuming (the tx is aborted; nothing was written)"
                 );
             }
             return Err(err.into());

@@ -1371,6 +1371,12 @@ pub(crate) async fn import_and_project(
             missing_ancestors.push(candidate.clone());
         }
     }
+    // Known gap in this healing pass: Pass B writes the backfilled ancestor's
+    // own `block_tags`, but `tag_scope` was resolved from the import's subtree
+    // roots and does not include an ancestor sitting ABOVE them — so
+    // `block_tag_inherited` can stay stale for that ancestor until the next
+    // full rebuild. Strictly better than the abort this replaces, and recorded
+    // here so it is not rediscovered as a new defect.
     if !missing_ancestors.is_empty() {
         tracing::warn!(
             space_id = space_id.as_str(),
