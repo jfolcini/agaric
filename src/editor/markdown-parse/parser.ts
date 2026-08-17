@@ -299,7 +299,10 @@ export function parseHeading(
   depth: number,
 ): BlockParseResult | null {
   const line = lines[i] as string
-  const headingMatch = line.match(/^(#{1,6}) (.*)$/)
+  // `[^\n]` rather than `.` for the content: `.` excludes CR (and U+2028/9), so
+  // a `.`-matched production silently fails on a line holding one — see
+  // `splitLines`. Lines never contain `\n`, so the two are otherwise identical.
+  const headingMatch = line.match(/^(#{1,6}) ([^\n]*)$/)
   if (!headingMatch) return null
   const level = headingMatch[1]?.length as number
   // A hardBreak inside a heading serializes as an odd trailing backslash run
@@ -516,18 +519,116 @@ export function parseHorizontalRule(lines: readonly string[], i: number): BlockP
 // (see MAX_MARKER_INDENT in ./vocab) — the SAME fragment the three marker
 // regexes there are built from, so this fourth production cannot be left
 // behind by a widening. Groups 1/2 are the number and the item text, neither
-// of which includes the indentation.
-const ORDERED_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}(\\d+)\\. (.*)$`)
+// of which includes the indentation. `[^\n]` rather than `.` for the item text:
+// see the note in `parseHeading`.
+const ORDERED_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}(\\d+)\\. ([^\\n]*)$`)
 
 /**
- * Number of leading spaces on a line (its indentation). A line with no leading
- * space (an item marker at this list's level) has indent 0; nested content
- * lines emitted by the serializer are indented by one whole `LIST_NEST_INDENT`
- * per nesting level (see `markdown-common.ts`).
+ * Tab stop width for indentation (CommonMark §2.2). A tab does not stand for a
+ * fixed number of spaces: it advances to the NEXT multiple of this, so its
+ * width depends on the column it starts at.
+ */
+const TAB_STOP = 4
+
+/**
+ * The COLUMN at which a line's content begins — its indentation, counted the
+ * way CommonMark counts it (§2.2): a space is one column, a tab advances to the
+ * next {@link TAB_STOP} boundary. A line with no leading whitespace (an item
+ * marker at this list's level) has indent 0; nested content lines emitted by
+ * the serializer are indented by one whole `LIST_NEST_INDENT` per nesting level
+ * (see `markdown-common.ts`).
+ *
+ * Counting COLUMNS rather than characters is the whole of the tab fix (#4052):
+ * a tab-nested sublist (`- parent` / `\t- child`, the default in several
+ * outliners) has indent 0 under a character count, so `collectListItem` never
+ * saw the child as nested content and it degraded to a sibling paragraph.
+ *
+ * Note the consequence for MARKER-ness, which is why no marker regex needs to
+ * learn about tabs: a tab inside a line's leading whitespace starts at some
+ * column < {@link TAB_STOP} and therefore always lands the content at column
+ * ≥ 4 — past `MAX_MARKER_INDENT` (3). So ` {0,3}` in the marker productions
+ * already IS the exact column rule, and a tab-indented marker is correctly not
+ * a marker on its own line. What makes a tab-nested SUBLIST work is the dedent
+ * below, which spends part of the tab on the item's content column and leaves
+ * the residue inside that tolerance.
  */
 function leadingIndent(line: string): number {
-  const m = line.match(/^ +/)
-  return m ? m[0].length : 0
+  let column = 0
+  for (const ch of line) {
+    if (ch === ' ') column += 1
+    else if (ch === '\t') column += TAB_STOP - (column % TAB_STOP)
+    else break
+  }
+  return column
+}
+
+/**
+ * Strip exactly `columns` COLUMNS of leading indentation — the column-counting
+ * inverse of the serializer's `indentLines`, and the only place indentation is
+ * ever consumed as structure.
+ *
+ * A tab that STRADDLES the boundary is replaced by the columns it contributes
+ * past it (CommonMark's partially-consumed tab): dedenting `\t- child` by the
+ * 2-column content column yields `  - child`, which the marker-indent tolerance
+ * then reads as a real sublist. Everything from the first non-whitespace char
+ * on is copied verbatim, so a tab that is not spent on structure — one inside
+ * inline text, or inside fenced code content — is never rewritten. That is what
+ * keeps the expansion out of the interior of code blocks (#4052) without the
+ * dedent needing to know where a fence is.
+ *
+ * APPROXIMATION, stated precisely. Tab stops are counted from the start of the
+ * line as the parser currently sees it, and `collectListItem` re-bases that
+ * start on every nesting level. So for a line whose leading whitespace STILL
+ * holds a tab after the dedent, the stops shift by `columns % TAB_STOP` against
+ * a strict CommonMark reading, which counts from the original document column.
+ * No structural decision can differ: a surviving tab means column ≥ 4 either
+ * way, i.e. past the marker tolerance under both readings. Only the retained
+ * whitespace TEXT of such a line differs — `- p` / `\t\t- deep` keeps the
+ * second tab verbatim (`  \t- deep`) where full expansion would have written
+ * six spaces. Preserving the user's tab is the better of the two, and it is the
+ * same choice that keeps code-fence content intact.
+ */
+/**
+ * Rewrite a line's LEADING WHITESPACE RUN as the spaces it occupies in columns,
+ * leaving everything from the first non-whitespace character verbatim.
+ *
+ * Used by `parseParagraph` alone, because a paragraph is the ONE production
+ * that keeps a line's indentation as stored TEXT — every other production is
+ * anchored at column 0 or captures its content after a marker, and a fenced
+ * code block's content never reaches the dispatcher at all, so its tabs are
+ * untouched (#4052 requires exactly that).
+ *
+ * The rule this draws: leading whitespace is INDENTATION and is stored in
+ * columns; everything else is CONTENT and is stored byte for byte. Without it
+ * the parse/serialize pair has no fixed point for a tab-indented paragraph,
+ * which is a stronger failure than a rewritten tab: `collectListItem` captures
+ * such a paragraph as a preceding item's continuation and dedents it (turning
+ * the tab into spaces), while `indentLines` re-emits it with SPACES — so a
+ * `\t`-indented line survives pass one and is rewritten on pass two, i.e. the
+ * document keeps changing every time it is opened. Normalizing on the way IN
+ * moves that one rewrite into the import, where it is allowed.
+ *
+ * Only the leading run is touched, so a tab in the middle of a paragraph's text
+ * still round-trips verbatim.
+ */
+function expandLeadingIndent(line: string): string {
+  const rest = line.replace(/^[ \t]+/, '')
+  if (rest.length === line.length) return line
+  return ' '.repeat(leadingIndent(line)) + rest
+}
+
+function dedentColumns(line: string, columns: number): string {
+  let column = 0
+  let i = 0
+  while (i < line.length && column < columns) {
+    const ch = line[i]
+    if (ch === ' ') column += 1
+    else if (ch === '\t') column += TAB_STOP - (column % TAB_STOP)
+    else break
+    i++
+  }
+  const straddle = column > columns ? ' '.repeat(column - columns) : ''
+  return straddle + line.slice(i)
 }
 
 /**
@@ -631,7 +732,7 @@ function collectListItem(
   // beyond one content column belongs to the content, not to the structure —
   // and where that residue is itself a marker (a 4-space-nested import leaves
   // `  - child`), the marker-indent tolerance still reads it as a sub-list.
-  const nested = nestedRaw.map((line) => line.slice(contentColumn))
+  const nested = nestedRaw.map((line) => dedentColumns(line, contentColumn))
   return { textLines, nested, next: j }
 }
 
@@ -775,7 +876,10 @@ export function parseParagraph(
   const inlineNodes: InlineNode[] = []
   let j = i
   for (;;) {
-    const line = lines[j] as string
+    // A paragraph is the only production that stores a line's indentation as
+    // text, so it is the one place that indentation has to be normalized to
+    // columns — see `expandLeadingIndent`.
+    const line = expandLeadingIndent(lines[j] as string)
     if (j + 1 >= lines.length || trailingBackslashRun(line) % 2 === 0) {
       inlineNodes.push(...parseLine(line, depth))
       break
@@ -811,8 +915,53 @@ function dispatchBlockProduction(
   )
 }
 
+/**
+ * Split a document into lines, consuming CRLF endings (#4051).
+ *
+ * This is the ONE place line endings are normalized, and it is deliberately
+ * part of the split rather than a `replace` over the source: a CR is consumed
+ * only where it is a LINE ENDING, so a CR anywhere else is left untouched
+ * rather than silently deleted. Every block production is `^…$`-anchored
+ * against one of these lines, so a `\r` surviving on the end of a line defeats
+ * the production that should have matched it (`- a\r\n- b` came back as a
+ * paragraph `'- a\r'` plus a one-item list) AND lands inside a stored text
+ * node, where it survives into the database and back out. Doing it here rather
+ * than per-production is what makes that true of headings, fences, tables,
+ * rules and quotes at once, and keeps it true of any production added later.
+ *
+ * Two rules, both about what counts as a line ending:
+ *
+ *  - `\r\n` is one. A CR before a LF is never content.
+ *  - a CR at the very end of the input is one, and is dropped. That is the
+ *    shape a caller which already split the file on `\n` hands us for its last
+ *    block (`'- b\r'`), and it is also a CRLF document with no final newline.
+ *    Dropping it (rather than treating it as a break, which would add a phantom
+ *    empty paragraph) is what makes such a block parse as its LF twin does.
+ *
+ * A LONE CR elsewhere is CONTENT and is preserved verbatim. This diverges from
+ * CommonMark §2.3, which makes a bare CR a line ending: in a document written
+ * this decade a stray CR is far likelier to be a control character somebody
+ * pasted than a classic-Mac line break, and promoting it to a block boundary
+ * would be an unrecoverable rewrite of the user's text — whereas keeping it is
+ * recoverable, and round-trips. For that to be coherent, no production may use
+ * `.` to match line content (JavaScript's `.` excludes CR, so a `.`-matched
+ * production is unmatchable on a line holding one); they use `[^\n]`.
+ *
+ * A CRLF document therefore converges to the canonical LF form on the first
+ * parse. That is a NORMALIZATION, not a loss of content: the serializer emits
+ * `\n` only, so LF is already the stored form, and nothing writes back over the
+ * user's original file.
+ */
+function splitLines(markdown: string): string[] {
+  const lines = markdown.split(/\r?\n/)
+  const last = lines.at(-1) as string
+  if (last.endsWith('\r')) lines[lines.length - 1] = last.slice(0, -1)
+  return lines
+}
+
 export function parse(markdown: string, depth = 0): DocNode {
   if (markdown.length === 0) return { type: 'doc', content: [{ type: 'paragraph' }] }
+  const lines = splitLines(markdown)
   // Depth guard: cap recursion to prevent stack overflow on pathological input
   // (deeply nested blockquotes, nested links in link display text, etc.).
   // Beyond the cap, fall back to returning the remaining input as plain text
@@ -824,13 +973,14 @@ export function parse(markdown: string, depth = 0): DocNode {
       maxDepth: MAX_PARSE_DEPTH,
       length: markdown.length,
     })
+    // The truncated text is the line-ending-normalized input, not the raw one:
+    // the no-CR-in-a-text-node invariant holds on this path too.
     return {
       type: 'doc',
-      content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: lines.join('\n') }] }],
     }
   }
 
-  const lines = markdown.split('\n')
   const blocks: BlockLevelNode[] = []
   let i = 0
   while (i < lines.length) {

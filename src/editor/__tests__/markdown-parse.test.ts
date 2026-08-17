@@ -17,10 +17,13 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import {
+  blockquote,
   bold,
   bulletList,
+  codeBlock,
   doc,
   hardBreak,
+  heading,
   italic,
   listItem,
   orderedList,
@@ -601,5 +604,245 @@ describe('parse — the delimiter/data boundary at table row 1', () => {
     const rows = block?.type === 'table' ? block.content : undefined
     expect(rows).toHaveLength(3)
     expect(rows?.[1]?.content?.map((cell) => cell.content)).toEqual([[], []])
+  })
+})
+
+// -- #4051: CRLF line endings -------------------------------------------------
+// `parse` splits the document into lines, and every block production is
+// anchored `^…$` against one of them. A `\r` left on the end of a line by a
+// Windows-written document therefore defeats the production that should have
+// matched it — and, worse, lands INSIDE a stored text node, so it survives into
+// the database and back out.
+//
+// The rule: a CR that is part of a CRLF pair (or a CR in line-ending position
+// at end of input) is a LINE ENDING and is consumed as one; a CR anywhere else
+// is ordinary content and is preserved verbatim.
+
+/** Every stored text-node string in a parsed doc, depth-first. */
+function allStoredText(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap((v) => allStoredText(v))
+  if (value === null || typeof value !== 'object') return []
+  const node = value as { type?: string; text?: string; content?: unknown; attrs?: unknown }
+  const own = typeof node.text === 'string' ? [node.text] : []
+  return [...own, ...allStoredText(node.content), ...allStoredText(node.attrs)]
+}
+
+/**
+ * One document per block production, written with LF. Each is re-issued with
+ * CRLF endings and must parse to the IDENTICAL document — the productions are
+ * `^…$`-anchored, so this is the arm that fails today.
+ */
+const LF_CORPUS: readonly [string, string][] = [
+  ['a bullet list', '- a\n- b'],
+  ['a nested bullet list', '- parent\n  - child'],
+  ['an ordered list', '1. a\n2. b'],
+  ['a task list', '- [ ] a\n- [x] b'],
+  ['a heading then a paragraph', '# h\n\ntext'],
+  ['a blockquote', '> quoted\n> more'],
+  ['a callout', '> [!note] title\n> body'],
+  ['a fenced code block', '```ts\nconst a = 1\n```'],
+  ['a math block', '$$\nE = mc^2\n$$'],
+  ['a table', '| a | b |\n| --- | --- |\n| 1 | 2 |'],
+  ['a horizontal rule', 'a\n\n---\n\nb'],
+  ['a hard break', 'a\\\nb'],
+  ['two paragraphs', 'a\n\nb'],
+]
+
+describe('parse — CRLF line endings (#4051)', () => {
+  it.each(LF_CORPUS)('%s parses identically with CRLF endings', (_name, lf) => {
+    expect(parse(lf.replaceAll('\n', '\r\n'))).toEqual(parse(lf))
+  })
+
+  it.each(LF_CORPUS)('%s stores no CR in any text node', (_name, lf) => {
+    const stored = allStoredText(parse(lf.replaceAll('\n', '\r\n')))
+    expect(stored.filter((t) => t.includes('\r'))).toEqual([])
+  })
+
+  it.each(LF_CORPUS)('%s serializes identically from either ending', (_name, lf) => {
+    expect(serialize(parse(lf.replaceAll('\n', '\r\n')))).toBe(serialize(parse(lf)))
+  })
+
+  it('a CRLF bullet list is a list, not an escaped literal paragraph', () => {
+    expect(parse('- a\r\n- b')).toEqual(
+      doc(bulletList(listItem(paragraph(text('a'))), listItem(paragraph(text('b'))))),
+    )
+  })
+
+  it('a CRLF nested list nests', () => {
+    expect(parse('- parent\r\n  - child')).toEqual(
+      doc(
+        bulletList(
+          listItem(paragraph(text('parent')), bulletList(listItem(paragraph(text('child'))))),
+        ),
+      ),
+    )
+  })
+
+  it('a CRLF document with no trailing newline drops the final CR', () => {
+    // A caller that pre-split the file on `\n` hands the last block exactly
+    // this shape (`- b\r`); it is a line ending with no `\n` to pair with.
+    expect(parse('- a\r\n- b\r')).toEqual(parse('- a\n- b'))
+  })
+
+  // The other arm: a CR that is NOT in line-ending position is content. We do
+  // NOT follow CommonMark §2.3 (which makes a lone CR a line ending) — in a
+  // document written this decade a stray CR is far likelier to be a control
+  // char somebody pasted than a classic-Mac line break, and turning it into a
+  // block boundary would be an unrecoverable rewrite of the user's text.
+  it('a lone CR inside inline text is preserved, not eaten', () => {
+    expect(parse('a\rb')).toEqual(doc(paragraph(text('a\rb'))))
+  })
+
+  it('a lone CR does not stop a line from being a list marker', () => {
+    // `.` excludes `\r` in JavaScript, so a content matcher written `.` makes a
+    // marker line unmatchable the moment it holds a lone CR. Content matchers
+    // are `[^\n]` for exactly that reason.
+    expect(parse('- a\rb')).toEqual(doc(bulletList(listItem(paragraph(text('a\rb'))))))
+  })
+
+  it('a lone CR survives serialize(parse(·)) unchanged', () => {
+    expect(serialize(parse('a\rb'))).toBe('a\rb')
+  })
+})
+
+// -- #4052: tab-indented lists ------------------------------------------------
+// Indentation is measured in COLUMNS, not characters: a tab advances to the
+// next 4-column tab stop (CommonMark §2.2). Two consequences worth stating
+// because they are not obvious:
+//
+//  - A tab anywhere in a line's LEADING whitespace always lands the content at
+//    column ≥ 4, because a tab at column c < 4 advances to exactly 4. So the
+//    marker-indent tolerance (`MAX_MARKER_INDENT` = 3, spelled ` {0,3}` in
+//    every marker regex) is ALREADY the exact column rule — a tab-indented
+//    marker is not a marker, and the marker regexes need no `\t`.
+//  - What makes a tab-indented SUB-list work is the dedent: `collectListItem`
+//    strips one content column (2), which consumes half of the tab and leaves
+//    2 residual columns, landing the child inside that same tolerance. The
+//    tolerance is the single knob deciding both arms.
+
+describe('parse — tab-indented lists (#4052)', () => {
+  const parentWithChild = doc(
+    bulletList(listItem(paragraph(text('parent')), bulletList(listItem(paragraph(text('child')))))),
+  )
+
+  it('a tab-indented sub-list nests', () => {
+    expect(parse('- parent\n\t- child')).toEqual(parentWithChild)
+  })
+
+  it('a tab-indented sub-list parses as its 4-space twin does', () => {
+    expect(parse('- parent\n\t- child')).toEqual(parse('- parent\n    - child'))
+  })
+
+  // THE BOUNDARY OF THE APPROXIMATION, pinned rather than left to be
+  // discovered. `dedentColumns` leaves everything from the first non-whitespace
+  // char verbatim — that is what keeps a tab inside fenced code content intact
+  // — so a leading run that MIXES spaces and tabs across the dedent boundary
+  // hands the recursion a tab whose stop is now counted from the dedented
+  // column 0 instead of the document column. Strict CommonMark reads `  \t` as
+  // 4 columns, i.e. 2 past the item's content column, which lands inside the
+  // marker tolerance and makes a sublist; we read the surviving tab as 4
+  // columns from the new base, which is past it, so the line stays the item's
+  // continuation content. Fixing this needs the absolute column threaded
+  // through the recursion AND the marker productions taught to measure
+  // indentation in columns; the alternative that is cheap — materializing the
+  // rest of the leading run as spaces — silently rewrites a tab-indented line
+  // of a code block nested in a list item, which #4052 explicitly forbids.
+  // Every PURE-tab indent (the shape foreign outliners actually emit) is exact.
+  it('a leading run mixing spaces and tabs stays continuation content', () => {
+    // (The residue is stored as columns, not as the raw tab — see the
+    // leading-indent normalization pinned at the end of this block.)
+    const withResidue = doc(
+      bulletList(listItem(paragraph(text('parent')), paragraph(text('    - child')))),
+    )
+    expect(parse('- parent\n  \t- child')).toEqual(withResidue)
+    expect(parse('- parent\n   \t- child')).toEqual(withResidue)
+  })
+
+  it('a tab-indented sub-list is a fixpoint after import', () => {
+    const once = serialize(parse('- parent\n\t- child'))
+    expect(once).toBe('- parent\n  - child')
+    expect(serialize(parse(once))).toBe(once)
+  })
+
+  it('tab nesting composes to three levels', () => {
+    expect(parse('- a\n\t- b\n\t\t- c')).toEqual(parse('- a\n    - b\n        - c'))
+    expect(parse('- a\n\t- b\n\t\t- c')).toEqual(
+      doc(
+        bulletList(
+          listItem(
+            paragraph(text('a')),
+            bulletList(listItem(paragraph(text('b')), bulletList(listItem(paragraph(text('c')))))),
+          ),
+        ),
+      ),
+    )
+  })
+
+  it('an ordered and a task sub-list nest under a tab too', () => {
+    expect(parse('- parent\n\t1. child')).toEqual(
+      doc(
+        bulletList(
+          listItem(paragraph(text('parent')), orderedList(listItem(paragraph(text('child'))))),
+        ),
+      ),
+    )
+    expect(parse('- parent\n\t- [x] child')).toEqual(
+      doc(bulletList(listItem(paragraph(text('parent')), task('DONE', text('child'))))),
+    )
+  })
+
+  // The other arm: past the tolerance, a tab is not structure — the line stays
+  // a paragraph / the item's continuation content, never a marker.
+  it('a top-level tab-indented marker is not a marker — a tab is 4 columns', () => {
+    expect(parse('\t- x')).toEqual(parse('    - x'))
+    expect(parse('\t- x')).toEqual(doc(paragraph(text('    - x'))))
+  })
+
+  it('a doubly-tab-indented line stays continuation content, not a sub-list', () => {
+    // 8 columns; one content column of dedent leaves ≥ 4, past the tolerance.
+    expect(parse('- p\n\t\t- deep')).toEqual(
+      doc(bulletList(listItem(paragraph(text('p')), paragraph(text('    - deep'))))),
+    )
+  })
+
+  // A paragraph is the one production that keeps a line's indentation as
+  // stored TEXT, so that indentation — and only it — is normalized to columns:
+  // otherwise a tab-indented paragraph has no fixed point at all, because
+  // `collectListItem` captures it as a preceding item's continuation and
+  // dedents the tab away while the serializer re-emits the indent as spaces.
+  it('a paragraph stores its indentation as columns', () => {
+    expect(parse('\tx')).toEqual(doc(paragraph(text('    x'))))
+    expect(parse('  \tx')).toEqual(doc(paragraph(text('    x'))))
+    expect(serialize(parse('\tx'))).toBe('    x')
+    expect(serialize(parse(serialize(parse('\tx'))))).toBe('    x')
+  })
+
+  // Tabs that are not indentation are preserved verbatim — this is what keeps
+  // the normalization out of the interior of fenced code blocks without the
+  // parser needing to know where a fence is.
+  it('a tab inside inline text is untouched', () => {
+    expect(parse('a\tb')).toEqual(doc(paragraph(text('a\tb'))))
+    expect(serialize(parse('a\tb'))).toBe('a\tb')
+  })
+
+  it('tab-indented fenced code content is untouched at the top level', () => {
+    expect(parse('```\n\tcode\n```')).toEqual(doc(codeBlock('\tcode')))
+  })
+
+  it('tab-indented fenced code content is untouched inside a list item', () => {
+    expect(parse('- item\n  ```\n  \tcode\n  ```')).toEqual(
+      doc(bulletList(listItem(paragraph(text('item')), codeBlock('\tcode')))),
+    )
+  })
+
+  it('a tab-indented list inside a blockquote nests', () => {
+    expect(parse('> - parent\n> \t- child')).toEqual(
+      doc(blockquote(...(parentWithChild.content ?? []))),
+    )
+  })
+
+  it('a tab-indented heading is not a heading — its production is at column 0', () => {
+    expect(parse('\t# h')).toEqual(doc(paragraph(text('    # h'))))
+    expect(parse('# h')).toEqual(doc(heading(1, text('h'))))
   })
 })

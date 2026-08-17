@@ -108,7 +108,12 @@ export const MARKER_INDENT_SRC = ` {0,${MAX_MARKER_INDENT}}`
 // a task and round-trips. With content, a separating space is required.
 // The leading `MARKER_INDENT_SRC` is the CommonMark marker-indent tolerance
 // (see MAX_MARKER_INDENT); the indentation is not part of the task text.
-export const TASK_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] \\[([ xX/-])\\](?: (.*))?$`)
+// The text is matched with `[^\n]` rather than `.` because JavaScript's `.`
+// excludes CR (and U+2028/9): a `.`-matched production is silently unmatchable
+// on a line carrying one, which is the bug class behind #4051. Lines never
+// contain `\n` (see `splitLines` in `./parser`), so the two are otherwise the
+// same match.
+export const TASK_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] \\[([ xX/-])\\](?: ([^\\n]*))?$`)
 
 /**
  * Bullet (unordered) list: consecutive `- item` / `* item` lines.
@@ -124,9 +129,10 @@ export const TASK_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] \\[([ xX/-])\\
  *
  * The leading {@link MARKER_INDENT_SRC} is the CommonMark marker-indent
  * tolerance (see {@link MAX_MARKER_INDENT}); group 1 is the item text WITHOUT
- * it.
+ * it, matched with `[^\n]` rather than `.` for the reason given on
+ * {@link TASK_ITEM_RE}.
  */
-export const BULLET_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] (.*)$`)
+export const BULLET_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}[-*] ([^\\n]*)$`)
 // Matches a task line so the bullet production excludes it (both `- [ ] text`
 // and the empty `- [ ]` with no trailing space — kept in sync with
 // `TASK_ITEM_RE`, marker-indent tolerance included: both are built from

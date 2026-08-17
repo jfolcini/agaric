@@ -688,8 +688,13 @@ const arbForeignLine: fc.Arbitrary<string> = fc
   )
   .map(([indent, quote, body]) => `${quote}${indent}${body}`)
 
+const arbForeignLines: fc.Arbitrary<readonly string[]> = fc.array(arbForeignLine, {
+  minLength: 1,
+  maxLength: 8,
+})
+
 const arbForeignMarkdown: fc.Arbitrary<string> = fc
-  .tuple(fc.array(arbForeignLine, { minLength: 1, maxLength: 8 }), fc.constantFrom('\n', '\r\n'))
+  .tuple(arbForeignLines, fc.constantFrom('\n', '\r\n'))
   .map(([lines, eol]) => lines.join(eol))
 
 describe('property (#4019): foreign markdown import converges in one pass', () => {
@@ -700,6 +705,86 @@ describe('property (#4019): foreign markdown import converges in one pass', () =
         fc.pre(!hasKnownIssue4049Drift(md1))
         const md2 = serialize(parse(md1))
         expect(md2).toBe(md1)
+      }),
+      { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
+    )
+  })
+})
+
+// -- P4: the line ending is not part of the document (#4051) ------------------
+// The property above asserts only that a CRLF document CONVERGES; convergence
+// is satisfied by converging on the wrong document, which is exactly what a
+// `\r` left on the end of a line did (every `^…$` production missed, and the
+// `\r` stored inside the text node). The claim that actually needs pinning is
+// stronger and structural: the line ending carries no meaning at all.
+
+describe('property (#4051): a CRLF document parses as its LF twin', () => {
+  it('is structurally identical, and stores no CR', () => {
+    fc.assert(
+      fc.property(arbForeignLines, (lines) => {
+        const lf = lines.join('\n')
+        const parsed = parse(lf.replaceAll('\n', '\r\n'))
+        expect(parsed).toEqual(parse(lf))
+        expect(JSON.stringify(parsed)).not.toContain('\\r')
+      }),
+      { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
+    )
+  })
+
+  it('holds for a document whose last line has no newline to pair its CR with', () => {
+    fc.assert(
+      fc.property(arbForeignLines, (lines) => {
+        const lf = lines.join('\n')
+        expect(parse(`${lf.replaceAll('\n', '\r\n')}\r`)).toEqual(parse(lf))
+      }),
+      { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
+    )
+  })
+})
+
+// -- P5: a tab is a column, not a character (#4052) ---------------------------
+
+/**
+ * The same foreign lines, but indented with a single leading tab or with the
+ * spaces that tab occupies. A tab at column 0 advances to column 4
+ * (CommonMark §2.2), so the two must parse to the SAME document — that
+ * equivalence is what makes a tab-nested sublist import as a sublist.
+ *
+ * Deliberately restricted to ONE leading tab, and to documents with no code
+ * fence, because those are precisely the two places where our column
+ * arithmetic is not the strict-CommonMark one and must not be claimed to be:
+ *
+ *  - a fence's CONTENT keeps its tabs verbatim (they are content, not
+ *    indentation), so it is not equivalent to its space-expanded twin — that is
+ *    the behaviour #4052 asks for, pinned by example in `markdown-parse.test`;
+ *  - a SECOND tab is measured from the column the item dedent re-based to, not
+ *    from the document column, so its stop can differ by `contentColumn % 4` —
+ *    the approximation documented on `dedentColumns` and pinned by example.
+ */
+const arbTabIndentedPair: fc.Arbitrary<readonly [string, string]> = fc
+  .array(fc.tuple(fc.boolean(), arbForeignLine), { minLength: 1, maxLength: 8 })
+  .map((entries) => [
+    entries.map(([tabbed, line]) => (tabbed ? `\t${line}` : line)).join('\n'),
+    entries.map(([tabbed, line]) => (tabbed ? `    ${line}` : line)).join('\n'),
+  ])
+
+describe('property (#4052): a leading tab parses as the columns it occupies', () => {
+  it('a tab-indented document parses as its 4-column twin', () => {
+    fc.assert(
+      fc.property(arbTabIndentedPair, ([tabbed, spaced]) => {
+        fc.pre(!tabbed.includes('```'))
+        expect(parse(tabbed)).toEqual(parse(spaced))
+      }),
+      { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
+    )
+  })
+
+  it('and converges in one pass like any other foreign document', () => {
+    fc.assert(
+      fc.property(arbTabIndentedPair, ([tabbed]) => {
+        const md1 = serialize(parse(tabbed))
+        fc.pre(!hasKnownIssue4049Drift(md1))
+        expect(serialize(parse(md1))).toBe(md1)
       }),
       { numRuns: NESTING_NUM_RUNS, seed: NESTING_SEED },
     )

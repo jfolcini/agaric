@@ -190,6 +190,27 @@ Three requirements to actually get idempotence:
    six spaces or more (from a marker at column 0) also lands outside the
    tolerance and imports as paragraph text rather than as a sub-list — our own
    export never emits that, but a foreign document can.
+4. **Indentation is counted in COLUMNS, and a tab is a column count** — a tab
+   advances to the next 4-column stop (CommonMark §2.2), not to a fixed number
+   of spaces (`leadingIndent` / `dedentColumns`, `markdown-parse/parser.ts`;
+   #4052). Two consequences follow from the arithmetic above: a tab-indented
+   marker is *never* a marker on its own line (a tab inside leading whitespace
+   always reaches column 4, past the tolerance), while a tab-indented **child**
+   of an item at column 0 is a real sub-list, because one content column of
+   dedent spends half the tab and leaves two residual columns — the same two
+   the four-space case leaves. A tab that is not indentation (inside inline
+   text, or inside fenced code content) is stored byte for byte; a paragraph's
+   leading whitespace is indentation and is stored as the columns it occupies,
+   which is what gives a tab-indented paragraph a fixed point at all.
+5. **Line endings are not part of the document** — `parse` consumes `\r\n` as
+   one line ending (`splitLines`, `markdown-parse/parser.ts`; #4051), so a
+   document written by a Windows editor imports as its LF twin instead of
+   leaving a `\r` on every line, where it both defeats the `^…$`-anchored
+   productions and lands inside stored text. Import therefore normalises CRLF
+   to LF once, like every other normalisation on this list. A **lone** `\r` is
+   content, not a line ending — that diverges from CommonMark §2.3 deliberately,
+   because promoting a stray control character to a block boundary is not
+   recoverable whereas keeping it is.
 
 **Caveat — the coarse (multi-line) block option.** Intra-block soft breaks
 (`Shift+Enter`) and indentation-based child nesting both want indentation in
