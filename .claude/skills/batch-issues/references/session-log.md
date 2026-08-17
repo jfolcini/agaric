@@ -29,10 +29,14 @@ stores, or database tables, update the relevant section.
 
 ## Template
 
-The `## Session N — …` heading is the first line of the file; do not add a separate H1.
+The `# Session N — …` heading is the first line of the file — a real H1, one `#`, and
+nothing above it. This is enforced: the `session-log-numbering` pre-commit guard greps
+for `^#[[:space:]]+Session[[:space:]]+[0-9]+` in the staged file and rejects the commit
+with "no '# Session NNNN' heading found" if it is missing, so a `##` heading aborts the
+commit.
 
 ```text
-## Session N — <short title> (YYYY-MM-DD)
+# Session N — <short title> (YYYY-MM-DD)
 
 | Metadata | Value |
 |----------|-------|
