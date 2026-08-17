@@ -374,9 +374,9 @@ function splitRowOnUnescapedPipes(line: string): string[] {
 /**
  * GFM's actual delimiter cell: ONE or more dashes, with optional alignment
  * colons on either side. `---` (what `serializeTable` emits), `--`, `-`, `:-`,
- * `-:` and `:---:` all qualify. Requiring a dash in EVERY cell is what keeps a
- * row of EMPTY cells (`|  |`, serialized from an empty-cell table row)
- * classified as data (#3274).
+ * `-:` and `:---:` all qualify. Requiring a dash in every cell that carries
+ * ANY text is what keeps a row of EMPTY cells (`|  |`, serialized from an
+ * empty-cell table row) classified as data (#3274): it has no dash cell at all.
  */
 const DELIMITER_CELL = /^:?-+:?$/
 
@@ -390,11 +390,11 @@ const AMBIGUOUS_DELIMITER_CELL = /^-$/
 
 /**
  * The trimmed cells of a row, without the outer `| … |` empty segments. The
- * ONE definition of a row's cell boundaries: both `isSeparatorRow` (which
- * classifies the row) and `buildTableRows` (which builds it) go through here,
- * so the two can never come to disagree about where the columns are. At least
- * one cell always comes back, so a degenerate `|` line still yields an empty
- * cell (matching the original `.replace(…).split('|')` behaviour).
+ * ONE definition of a row's cell boundaries: `buildTableRows` calls it once per
+ * row and hands the SAME array to `isSeparatorRow`, so classifying and building
+ * can never come to disagree about where the columns are. At least one cell
+ * always comes back, so a degenerate `|` line still yields an empty cell
+ * (matching the original `.replace(…).split('|')` behaviour).
  */
 function rowCells(tableLine: string): string[] {
   const segments = splitRowOnUnescapedPipes(tableLine)
@@ -405,6 +405,8 @@ function rowCells(tableLine: string): string[] {
 
 /**
  * Is the row at index 1 of a table run the GFM delimiter row, or is it data?
+ * `cells` is that row's `rowCells`, passed in so the classification and the
+ * built row are literally the same split.
  *
  * #3274 made this test POSITIONAL — only index 1 can ever be a separator —
  * which is sound for markdown we produced ourselves, because `serializeTable`
@@ -418,13 +420,20 @@ function rowCells(tableLine: string): string[] {
  * data row that happens to be dashes", and the answer is the SHAPE of the
  * cells, not their width:
  *
- *   - the row must be a legal GFM delimiter row at all — every cell matching
- *     `DELIMITER_CELL`. This is GFM's own rule, so every delimiter an author
- *     can legally write (`--`, mixed `--- | -`, `:-`, `:---:`) is honoured,
- *     and so is our serializer's `---` per column, which is just one instance
- *     of it (a header-only table of ours serializes to `| a |` / `| --- |`
- *     and round-trips unchanged);
- *   - the sole carve-out is the row whose EVERY cell is a bare `-`
+ *   - the row must be a legal GFM delimiter row at all — every cell that
+ *     carries text matching `DELIMITER_CELL`, and at least one that does. This
+ *     is GFM's own rule, so every delimiter an author can legally write (`--`,
+ *     mixed `--- | -`, `:-`, `:---:`) is honoured, and so is our serializer's
+ *     `---` per column, which is just one instance of it (a header-only table
+ *     of ours serializes to `| a |` / `| --- |` and round-trips unchanged);
+ *   - an EMPTY cell alongside dash cells (`| A | B |` / `| --- |  |`) is
+ *     MALFORMED GFM, and it is read as a malformed DELIMITER rather than as
+ *     data. Nobody writes `---` as a value, so treating that row as content is
+ *     exactly the junk-row failure this rule exists to prevent (see the
+ *     cell-count discriminator below). An empty cell therefore neither
+ *     qualifies nor disqualifies a row: the cells carrying dashes decide it,
+ *     and a row of ONLY empty cells has none to decide with, so it stays data;
+ *   - the sole carve-out is the row whose every DASH cell is a bare `-`
  *     (`AMBIGUOUS_DELIMITER_CELL`) with NO rows following it. Only there do
  *     both readings stay plausible: `-` is the usual placeholder for an empty
  *     cell, and reading it as the delimiter would leave a header with no data
@@ -447,32 +456,34 @@ function rowCells(tableLine: string): string[] {
  *     a MALFORMED delimiter (`| A | B |` / `| --- |`) into a visible junk row —
  *     the very failure mode this rule exists to prevent.
  */
-function isSeparatorRow(tableLine: string, hasFollowingRows: boolean): boolean {
-  const cells = rowCells(tableLine)
-  if (cells.length === 0) return false
-  if (!cells.every((cell) => DELIMITER_CELL.test(cell))) return false
+function isSeparatorRow(cells: readonly string[], hasFollowingRows: boolean): boolean {
+  const written = cells.filter((cell) => cell !== '')
+  if (written.length === 0) return false
+  if (!written.every((cell) => DELIMITER_CELL.test(cell))) return false
   if (hasFollowingRows) return true
-  return !cells.every((cell) => AMBIGUOUS_DELIMITER_CELL.test(cell))
+  return !written.every((cell) => AMBIGUOUS_DELIMITER_CELL.test(cell))
 }
 
 function buildTableRows(tableLines: readonly string[], depth: number): TableRowNode[] {
   const rows: TableRowNode[] = []
   for (let r = 0; r < tableLines.length; r++) {
     const tableLine = tableLines[r] as string
+    // Split ONCE, then both classify and build from that one array, so the
+    // cells a row is built from cannot disagree with the cells it was judged
+    // by — structurally, not by convention.
+    const rawCells = rowCells(tableLine)
     // GFM's delimiter row is POSITIONAL, not content-based: only the row
     // immediately after the header (r === 1) can ever be a separator. The
     // previous code applied the dash/colon heuristic to EVERY row, so a
     // legitimate DATA row made entirely of dashes/colons (`| - | - |`)
     // anywhere else in the table was silently swallowed on reparse (#3274).
     // At index 1 the row is disambiguated by `isSeparatorRow` (#4003).
-    if (r === 1 && isSeparatorRow(tableLine, tableLines.length > 2)) continue
-    // The SAME `rowCells` split `isSeparatorRow` classified on, so the cells a
-    // row is built from can never disagree with the cells it was judged by.
-    // Only the `\|` → `|` unescape is applied on top, and only here: it runs
-    // BEFORE parseLine so pipes inside inline code spans and link URLs (which
-    // bypass scanEscape) are restored too, while the delimiter test wants the
-    // raw text (an escaped pipe is not a dash either way).
-    const cellTexts = rowCells(tableLine).map((c) => c.replace(/\\\|/g, '|'))
+    if (r === 1 && isSeparatorRow(rawCells, tableLines.length > 2)) continue
+    // Only the `\|` → `|` unescape is applied on top of that split, and only
+    // here: it runs BEFORE parseLine so pipes inside inline code spans and link
+    // URLs (which bypass scanEscape) are restored too, while the delimiter test
+    // wants the raw text (an escaped pipe is not a dash either way).
+    const cellTexts = rawCells.map((c) => c.replace(/\\\|/g, '|'))
     const isHeader = r === 0
     const cells = cellTexts.map((cellText) => buildTableCell(cellText, isHeader, depth))
     rows.push({ type: 'tableRow', content: cells })

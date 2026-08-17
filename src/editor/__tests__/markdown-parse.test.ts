@@ -556,4 +556,50 @@ describe('parse — the delimiter/data boundary at table row 1', () => {
     // arm asserts the shape directly rather than via `toEqual(doc(…))`.
     expect(rows?.[1]?.content?.map((cell) => cell.content)).toEqual([[], []])
   })
+
+  // An EMPTY cell alongside dash cells is a MALFORMED delimiter (GFM wants one
+  // cell per header column), not data — nobody writes `---` as a value. So an
+  // empty cell neither qualifies nor disqualifies the row: the DASH cells
+  // decide it, and the row of ONLY empty cells above still has no dash cell to
+  // decide with, so it stays data.
+  const SHORT_DELIMITERS: readonly [string, string][] = [
+    ['a trailing empty cell', '| --- |  |'],
+    ['a leading empty cell', '|  | --- |'],
+    ['an empty cell beside an aligned cell', '| :---: |  |'],
+  ]
+
+  it.each(SHORT_DELIMITERS)(
+    'row 1 (%s) is a malformed DELIMITER, not a junk data row, with NO rows following',
+    (_shape, delimiter) => {
+      expect(parse(`${HEADER}\n${delimiter}`)).toEqual(doc(table(headerRow())))
+    },
+  )
+
+  it.each(SHORT_DELIMITERS)(
+    'row 1 (%s) is a malformed DELIMITER, not a junk data row, when a data row FOLLOWS',
+    (_shape, delimiter) => {
+      expect(parse(`${HEADER}\n${delimiter}\n| a | b |`)).toEqual(
+        doc(table(headerRow(), dataRow('a', 'b'))),
+      )
+    },
+  )
+
+  it('a bare-dash cell beside an empty one, nothing following, is still DATA (#4003)', () => {
+    // The ambiguity carve-out judges the cells that carry dashes: every one of
+    // them is a bare `-`, so the placeholder reading wins as it does for
+    // `| - | - |`, and the row is kept rather than leaving an empty table.
+    const result = parse(`${HEADER}\n| - |  |`)
+    const block = result.content?.[0]
+    const rows = block?.type === 'table' ? block.content : undefined
+    expect(rows).toHaveLength(2)
+    expect(rows?.[1]?.content?.map((cell) => cell.content)).toEqual([[paragraph(text('-'))], []])
+  })
+
+  it('a row of EMPTY cells stays data even when rows FOLLOW it (#3274)', () => {
+    const result = parse(`${HEADER}\n|  |  |\n| a | b |`)
+    const block = result.content?.[0]
+    const rows = block?.type === 'table' ? block.content : undefined
+    expect(rows).toHaveLength(3)
+    expect(rows?.[1]?.content?.map((cell) => cell.content)).toEqual([[], []])
+  })
 })

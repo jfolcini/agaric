@@ -181,16 +181,18 @@ export function BlockListRenderer({
   // render is itself thrown away.
   //
   // The tradeoff, stated rather than hidden: this memo is strictly WEAKER than
-  // the render-time write it replaces. Between mount and the first passive-
-  // effect flush the ref is null, so a re-render landing inside that window
-  // mints a fresh `ListMarkerValue` where the old code would have reused one —
-  // a new context identity, hence one extra re-render of every marker consumer,
-  // which is exactly what #3277 exists to suppress. React flushes passive
-  // effects before starting new work in practice, so the window is theoretical;
-  // the reuse gate itself is unchanged, so from the first flush onward a
-  // content edit that leaves every marker untouched still republishes the same
-  // identity and leaves the memoized rows alone.
-  useEffect(() => {
+  // the render-time write it replaces. Between mount and the first effect flush
+  // the ref is null, so a re-render landing inside that window mints a fresh
+  // `ListMarkerValue` where the old code would have reused one — a new context
+  // identity, hence one extra re-render of every marker consumer, which is
+  // exactly what #3277 exists to suppress. `useLayoutEffect` is what keeps that
+  // window theoretical rather than merely unlikely: it runs before the browser
+  // paints and before this commit can schedule further work, so nothing the
+  // user can see renders while the ref is still null. The reuse gate itself is
+  // unchanged, so from the first flush onward a content edit that leaves every
+  // marker untouched still republishes the same identity and leaves the
+  // memoized rows alone.
+  useLayoutEffect(() => {
     prevMarkerRef.current = { listStyles, ordinals, value: listMarkerValue }
   }, [listStyles, ordinals, listMarkerValue])
 
