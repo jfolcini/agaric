@@ -23,6 +23,7 @@ import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { isConflict } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
+import { notifyTagRemoved, notifyTagRenamed } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import {
   clearTagColor,
@@ -158,6 +159,10 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         await purgeBlock(tagId)
         setTags((prev) => prev.filter((tag) => tag.tag_id !== tagId))
         useResolveStore.getState().set(tagId, '(deleted)', true)
+        // #4007 — the `#` picker caches the tag list once per space and had
+        // no delete signal at all; without this it keeps offering a purged
+        // tag for the rest of the session.
+        notifyTagRemoved(tagId)
       } catch (error) {
         logger.error('TagList', 'failed to delete tag', { tagId }, error)
         notify.error(t('tags.deleteFailed'))
@@ -188,6 +193,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           prev.map((tag) => (tag.tag_id === renameTarget.id ? { ...tag, name: trimmed } : tag)),
         )
         useResolveStore.getState().set(renameTarget.id, trimmed, false)
+        // #4007 — mirror the page-rename fan-out for the `#` picker's cache.
+        notifyTagRenamed(renameTarget.id, trimmed)
         notify.success(t('tags.renameSuccess'))
       } catch (error) {
         logger.warn(

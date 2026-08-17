@@ -24,6 +24,7 @@ import { announce } from '@/lib/announcer'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { isPairingWindowRejection } from '@/lib/pairing-rejections'
 import { forEachPageStore } from '@/stores/page-blocks'
@@ -120,6 +121,17 @@ function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
   // graph-structure signal so a mounted GraphView refetches (stale-while-
   // revalidate) instead of serving stale nodes/edges until the TTL.
   recordGraphStructureChange()
+
+  // #4007 — and they change page/tag NAMES. The picker's `pagesListRef` /
+  // `tagsListRef` caches are filled once per space and only learn about
+  // mutations that a local surface announces on the name-change bus, so a
+  // peer's rename or delete (or an MCP write) would otherwise keep being
+  // offered under the old name for the rest of the session. The event set
+  // here is unknown-shape — `changed_page_ids` carries owning-page ids, not
+  // titles, and says nothing about tags — so drop both caches and let the
+  // next picker read re-fetch, exactly as the resolve preload above does for
+  // chip titles.
+  invalidateNameCaches()
 }
 
 /** Map backend state strings to frontend SyncState enum. */

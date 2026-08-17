@@ -28,6 +28,8 @@ import { axe } from 'vitest-axe'
 import { emptyPage, makeBlock } from '@/__tests__/fixtures'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { TrashView } from '@/components/TrashView'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { MAX_TRASH_BATCH_IDS } from '@/lib/tauri/blocks'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -378,6 +380,68 @@ describe('TrashView', () => {
     await waitFor(() => {
       expect(screen.queryByText('to restore')).not.toBeInTheDocument()
     })
+  })
+
+  // #4007 — restoring a page/tag is the mirror of the delete the picker name
+  // caches already listen for: the page is offerable again, and those caches
+  // are filled once per space, so nothing else would ever put it back. The
+  // restored row's shape can't be folded in (an empty cache means "not
+  // fetched yet"), so the caches are dropped instead.
+  it('invalidates the picker name caches after restoring a page (#4007)', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock({
+      id: 'B1',
+      content: 'restored page',
+      block_type: 'page',
+      deleted_at: 1736899200000,
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
+      return undefined
+    })
+
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      render(<TrashView />)
+      await user.click(await screen.findByTestId('trash-restore-btn'))
+
+      await waitFor(() => expect(changes).toEqual([{ kind: 'invalidated' }]))
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('does NOT invalidate the picker name caches for a non-page/tag restore (#4007)', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock({
+      id: 'B1',
+      content: 'a plain block',
+      block_type: 'content',
+      deleted_at: 1736899200000,
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
+      if (cmd === 'list_trash') return { items: [block], next_cursor: null, has_more: false }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'restore_block') return { block_id: 'B1', restored_count: 1 }
+      return undefined
+    })
+
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      render(<TrashView />)
+      await user.click(await screen.findByTestId('trash-restore-btn'))
+
+      // The pickers only offer pages and tags — a content block coming back
+      // must not cost a full re-fetch of both name lists.
+      await waitFor(() => expect(toast.success).toHaveBeenCalled())
+      expect(changes).toEqual([])
+    } finally {
+      unsubscribe()
+    }
   })
 
   // ── Error handling ──────────────────────────────────────────────────

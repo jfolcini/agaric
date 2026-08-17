@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { type InvokeHandler, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -230,5 +232,44 @@ describe('usePageDeleteAction', () => {
       title: 'Space A title',
       deleted: false,
     })
+  })
+
+  // #4007 — the `[[` picker's page-name cache (`pagesListRef` in
+  // `useBlockResolve`) is a React ref, not a store, so this flow can only
+  // reach it through the name-change bus. Without these two emissions the
+  // picker keeps offering a deleted page for the rest of the session (and,
+  // after an Undo, keeps hiding a page that is back).
+  it('broadcasts the delete — and the Undo — to the picker name caches', async () => {
+    stubInvoke({
+      delete_block: () => ({
+        block_id: 'PAGE_1',
+        deleted_at: '2026-01-01T00:00:00Z',
+        descendants_affected: 0,
+      }),
+      restore_blocks_by_ids: () => ({ affected_count: 1 }),
+    })
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+    try {
+      const handle = renderHarness()
+      act(() => {
+        handle.api.requestDelete('PAGE_1', 'Doomed')
+      })
+      await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
+      await waitFor(() => expect(toast.success).toHaveBeenCalled())
+
+      expect(changes).toEqual([{ kind: 'removed', entity: 'page', id: 'PAGE_1' }])
+
+      act(() => {
+        lastUndoAction()()
+      })
+      await waitFor(() => expect(changes).toHaveLength(2))
+      // A restore ADDS a row back, and the bus has no "added" event: an empty
+      // cache means "not fetched yet", so inserting one row would latch a
+      // one-row list as the whole space. Hence drop, not patch.
+      expect(changes[1]).toEqual({ kind: 'invalidated' })
+    } finally {
+      unsubscribe()
+    }
   })
 })

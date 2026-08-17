@@ -21,8 +21,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
-import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchToolbar'
+import {
+  NAME_CACHE_FANOUT_MAX_IDS,
+  PageBrowserBatchToolbar,
+} from '@/components/pages/PageBrowserBatchToolbar'
 import { t } from '@/lib/i18n'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { getStarredPages } from '@/lib/starred-pages'
 import { setPropertyBatch } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
@@ -519,3 +524,67 @@ describe('PageBrowserBatchToolbar', () => {
 function screenPicker(): HTMLElement {
   return document.querySelector('[role="toolbar"]') as HTMLElement
 }
+
+// #4008 review note 3 — `notifyPageRemoved` is a SYNCHRONOUS fan-out: every
+// mounted `useBlockResolve` rebuilds its whole cached pages list with `filter`
+// per event. One event per trashed id, at the `MAX_TRASH_BATCH_IDS` cap of
+// 1000 and with the journal's several mounted `BlockTree`s, is tens of
+// millions of element copies on the UI thread with no yield. Above
+// `NAME_CACHE_FANOUT_MAX_IDS` the toolbar must collapse that into a single
+// `invalidateNameCaches()`.
+//
+// Both arms are asserted because each falsifies a different wrong fix: the
+// small-batch arm fails a "just always invalidate" simplification (which would
+// cost a `listAllPagesInSpace` round trip on every 3-page delete), and the
+// large-batch arm fails the unbounded per-id loop.
+describe('batch trash — name-cache fan-out (#4008 review note 3)', () => {
+  /** Subscribe to the real bus for the duration of one test. */
+  function recordChanges(): { changes: NameChange[]; unsubscribe: () => void } {
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+    return { changes, unsubscribe }
+  }
+
+  async function confirmTrash(ids: string[]): Promise<void> {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce(ids.length)
+    renderToolbar({ selectedIds: ids })
+    await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: ids })
+    })
+  }
+
+  it(`fires one removal event per id at ${NAME_CACHE_FANOUT_MAX_IDS} ids`, async () => {
+    const ids = Array.from({ length: NAME_CACHE_FANOUT_MAX_IDS }, (_, i) => `SMALL_${i}`)
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await confirmTrash(ids)
+      await waitFor(() => {
+        expect(changes).toHaveLength(ids.length)
+      })
+      expect(changes).toEqual(
+        ids.map((id) => ({ kind: 'removed', entity: 'page', id }) satisfies NameChange),
+      )
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it(`fires exactly one invalidation at ${NAME_CACHE_FANOUT_MAX_IDS + 1} ids`, async () => {
+    const ids = Array.from({ length: NAME_CACHE_FANOUT_MAX_IDS + 1 }, (_, i) => `BIG_${i}`)
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await confirmTrash(ids)
+      await waitFor(() => {
+        expect(changes).toHaveLength(1)
+      })
+      expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+    } finally {
+      unsubscribe()
+    }
+  })
+})

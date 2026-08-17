@@ -22,6 +22,7 @@
  * already current.
  */
 
+import { notifyPageRenamed } from '@/lib/name-change-bus'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { useTabsStore } from '@/stores/tabs'
@@ -29,7 +30,9 @@ import { useTabsStore } from '@/stores/tabs'
 /**
  * Record a page's new title in every store that holds a copy: the resolve
  * cache (chips / rich-content links), the tab stacks + labels, and the
- * active space's recents MRU.
+ * active space's recents MRU — then broadcast the rename to the picker's
+ * name caches (#4007), which are React refs rather than stores and so can
+ * only be reached through `@/lib/name-change-bus`.
  *
  * Call this AFTER the backend write commits — it does no IPC of its own.
  */
@@ -37,4 +40,5 @@ export function renamePage(pageId: string, title: string): void {
   useTabsStore.getState().renamePage(pageId, title)
   useRecentPagesStore.getState().renamePage(pageId, title)
   useResolveStore.getState().set(pageId, title, false)
+  notifyPageRenamed(pageId, title)
 }

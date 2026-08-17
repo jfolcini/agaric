@@ -41,6 +41,7 @@ import { announce } from '@/lib/announcer'
 import { isInvalidOperation } from '@/lib/app-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
+import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
 import type { BlockRow, PageResponse } from '@/lib/tauri'
@@ -232,6 +233,11 @@ export function TrashView(): React.ReactElement {
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         if (block.block_type === 'page' || block.block_type === 'tag') {
           useResolveStore.getState().set(block.id, block.content ?? t('common.untitled'), false)
+          // #4007 — a restored page/tag is offerable again, and the picker
+          // caches DROPPED it when it was trashed (or never saw it at all).
+          // They are filled once per space, so nothing else re-adds it: drop
+          // them and let the next picker read re-fetch.
+          invalidateNameCaches()
         }
         notify.success(t('trash.blockRestored'))
         announce(t('announce.blockRestored'))
@@ -280,11 +286,16 @@ export function TrashView(): React.ReactElement {
     let restored = 0
     try {
       restored = await restoreBlocksByIds(selectedBlocks.map((b) => b.id))
+      let restoredNamedEntity = false
       for (const block of selectedBlocks) {
         if (block.block_type === 'page' || block.block_type === 'tag') {
           useResolveStore.getState().set(block.id, block.content ?? t('common.untitled'), false)
+          restoredNamedEntity = true
         }
       }
+      // #4007 — same as the single-row restore above: the picker caches have
+      // no other way to learn a page/tag is offerable again.
+      if (restoredNamedEntity) invalidateNameCaches()
     } catch (err) {
       // Surface the failure (matching the single-item path) and KEEP the
       // selection so the user can retry — clearing it here would silently
@@ -429,6 +440,10 @@ export function TrashView(): React.ReactElement {
       clearSelection()
       setConfirmRestoreAll(false)
       if (result.affected_count > 0) {
+        // #4007 — "restore all" can bring back any number of pages/tags and
+        // reports only a count, so the picker caches cannot be patched; drop
+        // them and let the next picker read re-fetch.
+        invalidateNameCaches()
         notify.success(t('trash.allRestored', { count: result.affected_count }))
         announce(t('announce.allRestored', { count: result.affected_count }))
       }

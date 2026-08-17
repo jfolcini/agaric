@@ -22,6 +22,8 @@ import { PAGINATION_LIMIT } from '@/lib/constants'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { getPageDisplayName } from '@/lib/page-display'
 import { searchBlocksLimit } from '@/lib/safe-limit'
@@ -48,7 +50,8 @@ export interface UseBlockResolveReturn {
   onCreateTag: (name: string) => Promise<string>
   /** Ref to the pages list cache for search. Lazily filled by
    *  `searchPagesViaCache`, appended to by `onCreatePage` and the date
-   *  picker, and cleared on space switch (#732). */
+   *  picker, cleared on space switch (#732), and kept current across renames
+   *  and deletes by the name-change bus (#4007). */
   pagesListRef: React.RefObject<Array<{ id: string; title: string }>>
 }
 
@@ -283,6 +286,80 @@ function appendCreatePageOptionIfNeeded(
   })
 }
 
+// ── Name-cache invalidation (#4007) ─────────────────────────────────────
+//
+// Both picker caches are filled once per space, so a rename or delete
+// performed on any other surface used to keep being offered under the old
+// name until the next space switch. `@/lib/name-change-bus` carries those
+// mutations; the two appliers below fold one event into one cached list.
+//
+// A `removed` entry is dropped rather than blanked so the picker stops
+// offering it at all. Dropping the LAST entry leaves the list empty, which
+// both call sites read as "not fetched for this space yet" and re-fetch —
+// correct, if slightly eager: the backend has already committed the delete.
+
+/**
+ * A patched-in-place rename must also re-establish the ORDER the fetch
+ * returned, because both caches are served in list order: `searchPages`'s
+ * empty/short query slices the FIRST 20 rows off `pagesListRef`, and
+ * `searchTags` maps `tagsListRef` straight through. Patching a title without
+ * re-sorting leaves the renamed row parked in its OLD alphabetical slot — so
+ * a page renamed from `Zebra` to `Apple` stays invisible past row 20 in a
+ * space with more than 20 pages, which is the same "picker doesn't show the
+ * truth" symptom #4007 exists to remove.
+ *
+ * The comparators mirror the backend's `ORDER BY`:
+ *   - pages: `ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC`
+ *     (`src-tauri/src/commands/pages/listing.rs`) — case-insensitive, id
+ *     tie-break.
+ *   - tags: `ORDER BY tc.name` (`agaric-store/src/tag_query/query.rs`) —
+ *     SQLite's default BINARY collation, i.e. case-SENSITIVE code-point order.
+ * They are approximations, not byte-for-byte reimplementations of SQLite's
+ * collations (`NOCASE` folds ASCII only, `toLowerCase()` folds Unicode too),
+ * and they only run on a rename, so the worst case is a locally-renamed row
+ * landing one slot away from where a refetch would put it. Note the cache is
+ * not perfectly ordered to begin with — `onCreatePage` has always APPENDED a
+ * newly created page — so this restores the invariant for renames, it does
+ * not establish one that never existed.
+ */
+function comparePageRows(
+  a: { id: string; title: string },
+  b: { id: string; title: string },
+): number {
+  const at = a.title.toLowerCase()
+  const bt = b.title.toLowerCase()
+  if (at !== bt) return at < bt ? -1 : 1
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
+function compareTagRows(a: TagCacheRow, b: TagCacheRow): number {
+  if (a.name !== b.name) return a.name < b.name ? -1 : 1
+  return a.tag_id < b.tag_id ? -1 : a.tag_id > b.tag_id ? 1 : 0
+}
+
+/** Applies one page-scoped change to the `pagesListRef` list. */
+function applyPageNameChange(
+  list: Array<{ id: string; title: string }>,
+  change: NameChange,
+): Array<{ id: string; title: string }> {
+  if (change.kind === 'invalidated') return []
+  if (change.kind === 'removed') return list.filter((p) => p.id !== change.id)
+  // Bind before the closure: TypeScript's narrowing of `change` does not
+  // survive into the callback below.
+  const { id, name } = change
+  if (!list.some((p) => p.id === id)) return list
+  return list.map((p) => (p.id === id ? { ...p, title: name } : p)).toSorted(comparePageRows)
+}
+
+/** Applies one tag-scoped change to the `tagsListRef` list. */
+function applyTagNameChange(list: TagCacheRow[], change: NameChange): TagCacheRow[] {
+  if (change.kind === 'invalidated') return []
+  if (change.kind === 'removed') return list.filter((t) => t.tag_id !== change.id)
+  const { id, name } = change
+  if (!list.some((t) => t.tag_id === id)) return list
+  return list.map((t) => (t.tag_id === id ? { ...t, name } : t)).toSorted(compareTagRows)
+}
+
 export function useBlockResolve(): UseBlockResolveReturn {
   // Subscribe to version so the component re-renders when the cache updates,
   // keeping cacheRef.current fresh for the stable callbacks below.
@@ -324,6 +401,27 @@ export function useBlockResolve(): UseBlockResolveReturn {
           tagsListRef.current = []
         },
       ),
+    [],
+  )
+
+  // #4007 — the space-switch subscriber above was the ONLY invalidation
+  // either cache had. A page or tag renamed or deleted from another surface
+  // (PageHeader, undo/redo, the shared page-delete flow, the Tags view) stayed
+  // in the cache under its old name for the rest of the session, so the `[[`
+  // and `#` pickers kept offering a name that no longer exists — and, after a
+  // delete, an id that resolves to nothing. Subscribe both refs to the
+  // name-change bus so the very next picker read reflects the mutation,
+  // without dropping the cache the whole strategy exists to keep warm.
+  useEffect(
+    () =>
+      subscribeToNameChanges((change) => {
+        if (change.kind === 'invalidated' || change.entity === 'page') {
+          pagesListRef.current = applyPageNameChange(pagesListRef.current, change)
+        }
+        if (change.kind === 'invalidated' || change.entity === 'tag') {
+          tagsListRef.current = applyTagNameChange(tagsListRef.current, change)
+        }
+      }),
     [],
   )
 
@@ -588,7 +686,26 @@ export function useBlockResolve(): UseBlockResolveReturn {
       const newId = unwrap(await commands.createPageInSpace(null, label, currentSpaceId))
       // Populate resolve cache so the link chip shows the title immediately
       useResolveStore.getState().set(newId, label, false)
-      pagesListRef.current = [...pagesListRef.current, { id: newId, title: label }]
+      // #4008 review note 1 — append ONLY into an already-filled cache, the
+      // same guard `onCreateTag` carries below. An EMPTY `pagesListRef` is not
+      // "a space with no pages", it is the "not fetched for this space yet"
+      // state that makes `searchPagesViaCache` re-fetch; appending there flips
+      // it to "filled" with a single row and latches that one page as the
+      // whole space for the rest of the session.
+      //
+      // #4007 widened the window this needs: before, the cache emptied only on
+      // a space switch, and the switch is immediately followed by a fill.
+      // Now it also empties on every sync / MCP invalidation, every restore,
+      // and any delete that drops the last row — and a >2-char query takes the
+      // FTS path, which reads the cache but never fills it. So "invalidation,
+      // then type a long name, then Create new page" is an ordinary sequence
+      // that reaches an empty cache at create time.
+      //
+      // Skipping the append costs nothing: the next short query re-fetches
+      // from the backend, which has already committed this page (awaited above).
+      if (pagesListRef.current.length > 0) {
+        pagesListRef.current = [...pagesListRef.current, { id: newId, title: label }]
+      }
       return newId
     } catch (err) {
       logger.error('useBlockResolve', 'onCreatePage failed', { label }, err)

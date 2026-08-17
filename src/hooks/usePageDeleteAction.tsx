@@ -41,6 +41,7 @@ import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { invalidateNameCaches, notifyPageRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -145,6 +146,15 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
           // #3626 — the page is back; the calendar's cached journal-page
           // ranges predate the restore and would keep its dot hidden.
           invalidateCalendarPageDates()
+          // #4007 — same story for the picker name caches, which dropped the
+          // page on delete. A restore is the one mutation they can't fold in:
+          // an EMPTY cache means "not fetched for this space yet", so
+          // re-adding this one row would latch a one-row list as the whole
+          // space (and the restore cascades to descendants besides). Drop
+          // them and let the next picker read re-fetch. The title IS
+          // available here (`deletedTarget.title`, used two lines up) — it is
+          // the latch, not a missing title, that rules an insert out.
+          invalidateNameCaches()
           deletedTarget.onRestored?.(deletedTarget.id)
           notify.success(t('pageDeleteAction.restored'))
         })
@@ -168,6 +178,10 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
     try {
       unwrap(await commands.deleteBlock(id))
       setResolveDeletedStatus(target, true)
+      // #4007 — the `[[` picker's page-name cache is filled once per space
+      // and has no other delete signal; without this it keeps offering the
+      // deleted page for the rest of the session.
+      notifyPageRemoved(id)
       // #3626 — a deleted page must stop lighting up the calendar. The
       // journal's own DaySection routes its delete through here too, so this
       // one call covers every surface that can remove a journal page.
