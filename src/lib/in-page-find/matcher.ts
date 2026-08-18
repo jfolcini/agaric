@@ -13,7 +13,7 @@
  * Decorations on a single editor document. Agaric uses a **roving
  * editor** pattern: only the currently-focused block holds a
  * ProseMirror instance; every other block renders as static DOM (see
- * `src/components/StaticBlock.tsx`). A `DecorationSet` therefore
+ * `src/components/editor/StaticBlock.tsx`). A `DecorationSet` therefore
  * covers at most ONE block — not the whole page. To honour the
  * spirit of the constraint ("non-destructive, no DOM mutation, no
  * `dangerouslySetInnerHTML`") across both static blocks AND the active

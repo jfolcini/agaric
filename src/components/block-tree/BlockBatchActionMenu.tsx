@@ -9,7 +9,7 @@
  *
  * Extracted from BlockTree.tsx for file organization (F-22). Renamed from
  * `BlockContextMenu` to disambiguate from the floating long-press / right-click
- * menu in `src/components/BlockContextMenu.tsx`.
+ * menu in `src/components/editor/BlockContextMenu.tsx`.
  */
 
 import { Signal, Trash2, X } from 'lucide-react'

@@ -28,7 +28,7 @@ import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 
 /** Event name — must mirror `EVENT_SYNC_MDNS_DISABLED` in
- *  `src-tauri/src/sync_events.rs`. */
+ *  `src-tauri/agaric-sync/src/sync_events.rs`. */
 export const SYNC_MDNS_DISABLED_EVENT = 'sync:mdns_disabled'
 
 /** Live-event payload shape (`SyncEvent::MdnsDisabled`). */

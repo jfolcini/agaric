@@ -63,7 +63,7 @@ export interface SyncErrorPayload {
 
 /**
  * #2505 — payload of the `blocks:changed` event (Rust `BlocksChangedEvent`,
- * `src-tauri/src/sync_events.rs`). Emitted after an out-of-band local write —
+ * `src-tauri/agaric-sync/src/sync_events.rs`). Emitted after an out-of-band local write —
  * today an MCP read-write tool — commits, so open views reload the touched
  * pages. `changed_page_ids` carries the IDENTICAL semantics as
  * `SyncCompletePayload.changed_page_ids` (#1071), which is what lets this

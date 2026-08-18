@@ -3,7 +3,7 @@
  *
  * The backend join key is the **trace id** (32 lowercase hex chars) and the
  * **span id** (16 lowercase hex chars), exactly as `FrontendSpan` requires and
- * as `src-tauri/src/observability/propagation.rs` parses out of the
+ * as `src-tauri/agaric-observability/src/propagation.rs` parses out of the
  * `traceparent` header. We generate both from `crypto.getRandomValues` — a
  * portable primitive available on every webview target (WebKitGTK, WebView2,
  * WKWeb­View, Android) — so there is no Chromium-only dependency.

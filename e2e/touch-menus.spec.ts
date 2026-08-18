@@ -21,8 +21,8 @@
  * Touch gestures are driven via real `TouchEvent`s (`touchLongPress` in helpers)
  * because the long-press hook binds to React `onTouch*`, not the pointer stream.
  * `touchLongPress` defaults to a 550 ms hold — comfortably past the hook's
- * 400 ms `LONG_PRESS_DELAY` (see `src/hooks/useBlockTouchLongPress.ts` +
- * `src/hooks/__tests__/useBlockTouchLongPress.test.ts`); that is the SAME hold
+ * 400 ms `LONG_PRESS_DELAY` (see `src/components/block-tree/use-block-touch-long-press.ts` +
+ * `src/components/block-tree/__tests__/use-block-touch-long-press.test.ts`); that is the SAME hold
  * `touch-gestures.spec.ts` / `block-dnd-touch.spec.ts` rely on, so we inherit
  * the proven timing rather than invent our own.
  *

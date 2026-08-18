@@ -417,7 +417,11 @@ name = "doc citations point at tracked code"
 entry = "node scripts/check-doc-code-paths.mjs"
 language = "system"
 pass_filenames = false
-types = ["markdown"]
+# #4126: widened beyond markdown to `.ts`/`.tsx` COMMENTS (the same class of
+# dead citation recurs there — see scripts/check-doc-code-paths.mjs's header)
+# plus the baseline file itself, so editing the baseline without touching any
+# scanned source still re-validates it.
+files = '\.(md|ts|tsx)$|^scripts/doc-code-paths-baseline\.json$'
 stages = ["pre-commit"]
 
 # …and its #3962/#4017 source suite. This guard carries TWO working-tree
@@ -434,7 +438,12 @@ name = "doc-vs-code path guard source self-test (#4017 index vs working tree)"
 entry = "node scripts/check-doc-code-paths.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = '^scripts/(check-doc-code-paths\.mjs|lib/guard-file-source\.mjs|lib/git-scratch-guard\.(mjs|sh))$'
+# #4126: also keyed on `lib/js-scanner.mjs` — the shared tokenizer this
+# guard now delegates to for isolating `.ts`/`.tsx` COMMENTS from code — so
+# editing the tokenizer cannot silently defang the comment scan without
+# re-running this self-test. Mirrors `dead-symbol-citations-selftest`'s
+# rationale for the same class of dependency.
+files = '^scripts/(check-doc-code-paths\.mjs|lib/guard-file-source\.mjs|lib/git-scratch-guard\.(mjs|sh)|lib/js-scanner\.mjs)$'
 stages = ["pre-commit"]
 
 # Stale-citation guard (#2546). `docs/ARCHITECTURE.md` used to be a big
@@ -525,6 +534,56 @@ pass_filenames = false
 # See the sibling hook above: its own script AND the shared libraries it
 # delegates to, so editing `guard-file-source.mjs` cannot silently defang it.
 files = "^scripts/(check-dead-symbol-citations\\.mjs|lib/guard-file-source\\.mjs|lib/git-scratch-guard\\.(mjs|sh))$"
+stages = ["pre-commit"]
+
+# REMOVE AFTER marker guard (#4129). `migrate_personal_pages_to_work` carried
+# a doc comment naming its own kill-date ("REMOVE AFTER `0.3.0`") and it was
+# still exported, reachable and running an extra boot-time query six minor
+# versions and ~4 months later — removed only because a deep review happened
+# to read the comment. This hook fails any tracked `.rs`/`.ts`/`.tsx`/`.py`/
+# `.sh`/`.md` file that still carries a `REMOVE AFTER x.y.z` marker whose
+# version the current app manifest (`src-tauri/tauri.conf.json`, chosen
+# canonical — rationale in the script header) has reached or passed, with a
+# NUMERIC (never lexical) semver comparison. A `REMOVE AFTER` line that does
+# not parse as a plain `x.y.z` triple is flagged too — a marker that cannot
+# be found mechanically is the same failure mode by another name. Escape
+# hatch: bump the marker's own version, a visible reviewable edit.
+#
+# `files` below deliberately includes the FIVE version manifests themselves,
+# not just marker-carrying source: the real incident's two commits (marker
+# added, version bumped) were different commits, so a hook gated only on
+# "did a marker-shaped file change" would never have fired on the bump. Any
+# commit that touches a manifest — which every `bump-version.sh` commit
+# does, to all five in lockstep — re-scans the WHOLE tracked tree
+# (`pass_filenames = false`), independent of what else that commit touched.
+# A commit that skips hooks entirely is still caught by the existing CI
+# backstop: `prek run --all-files` in the `lint` job
+# (`.github/workflows/_validate.yml`) runs unconditionally whenever the push
+# is not docs-only, and a version bump never is — so this needed no
+# `.github/workflows/` change. Rules, the manifest choice and the marker
+# spelling: scripts/check-remove-after-markers.mjs.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "remove-after-markers"
+name = "no expired REMOVE AFTER markers (#4129)"
+entry = "node scripts/check-remove-after-markers.mjs"
+language = "system"
+pass_filenames = false
+files = '\.(rs|ts|tsx|py|sh|md)$|^(package(-lock)?\.json|src-tauri/(Cargo\.(toml|lock)|tauri\.conf\.json))$'
+stages = ["pre-commit"]
+
+# Self-test the guard's own falsifiable behaviour (an expired marker rejects,
+# a future one accepts, a malformed one is its own failure, numeric-not-
+# lexical comparison, and one index-vs-worktree pair) whenever the guard
+# script itself — or the shared libraries it delegates to — changes.
+[[repos.hooks]]
+id = "remove-after-markers-selftest"
+name = "REMOVE AFTER marker guard self-test (#4129)"
+entry = "node scripts/check-remove-after-markers.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/(check-remove-after-markers\\.mjs|lib/guard-file-source\\.mjs|lib/git-scratch-guard\\.(mjs|sh))$"
 stages = ["pre-commit"]
 
 # Frontend import-cycle guard (#761). The `src/` module graph was driven to

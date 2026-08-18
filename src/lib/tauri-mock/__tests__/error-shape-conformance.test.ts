@@ -5,7 +5,7 @@
  * enforces handler PRESENCE — every command in `bindings.ts` has a key in
  * `HANDLERS`. It says nothing about whether a handler's REJECTION matches
  * the `{ kind, message, code? }` `AppError` wire shape the real backend
- * sends (`src-tauri/src/error.rs`). A mock handler that throws a bare
+ * sends (`src-tauri/agaric-core/src/error.rs`). A mock handler that throws a bare
  * `Error('not found')` instead of an `AppError`-shaped rejection passes the
  * presence check, but any component test that exercises the failure path
  * through the mock and asserts `isNotFound(err)` / `isValidation(err)` /
