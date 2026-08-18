@@ -79,9 +79,14 @@
 // forgetting would be invisible in its absence (#4129's own framing).
 //
 // Heuristic:
-//   - Scan every tracked `*.rs`, `*.ts`, `*.tsx`, `*.py`, `*.sh`, `*.md`
-//     file (this script's own path excluded) for a line containing the
-//     literal substring `REMOVE AFTER`.
+//   - Scan every tracked `*.rs`, `*.ts`, `*.tsx`, `*.js`, `*.mjs`, `*.py`,
+//     `*.sh`, `*.md` file (this script's own path excluded) for a line
+//     containing the literal substring `REMOVE AFTER`. `*.js`/`*.mjs` are
+//     in scope so a marker left in a GUARD SCRIPT — `scripts/` itself — is
+//     as findable as one left in application source; the exclusion of
+//     THIS file's own path (see `SELF_PATH` below) is what keeps that from
+//     self-triggering on this header's own prose examples and the
+//     self-test fixtures' string literals below.
 //   - A line matching the canonical spelling records a marker; the CURRENT
 //     version is compared against it with NUMERIC per-component semver
 //     comparison (major, then minor, then patch, each as an integer —
@@ -139,9 +144,15 @@ const REPO_ROOT = (() => {
 
 const GIT_ENV = gitEnv(REPO_ROOT, process.env)
 
-// This file's own repo-relative path — excluded from the marker scan so
-// this header's own prose (which spells the canonical phrase, without a
-// real digit triple attached to it) can never self-trigger.
+// This file's own repo-relative path — excluded from the marker scan
+// because `SCAN_EXT_RE` below includes `.mjs`, and this file's own text
+// carries plenty of `REMOVE AFTER` occurrences that are not live markers:
+// the incident recap in the header (a canonical `` `0.3.0` `` triple, used
+// as a WORKED EXAMPLE), and the self-test fixtures further down, whose
+// string literals write canonical-looking and malformed-looking markers
+// (`0.1.0`, `9.9.9`, `0.10.0`, `1.2.3-beta`, …) into THIS source file even
+// though they are only ever materialised into throwaway scratch repos.
+// Without this exclusion this script would self-trigger.
 const SELF_PATH = 'scripts/check-remove-after-markers.mjs'
 
 // The canonical "current version" manifest — see the header's rationale.
@@ -150,7 +161,7 @@ const VERSION_MANIFEST = 'src-tauri/tauri.conf.json'
 // Historical archive, same exemption the citation guards use.
 const EXCLUDE_PATH_RE = /^docs\/session-log\//
 
-const SCAN_EXT_RE = /\.(rs|ts|tsx|py|sh|md)$/
+const SCAN_EXT_RE = /\.(rs|ts|tsx|js|mjs|py|sh|md)$/
 
 // The literal phrase, checked FIRST and cheaply per line before the
 // stricter parse below — this is what lets a near-miss (right phrase,
@@ -165,7 +176,18 @@ const MARKER_PHRASE_RE = /REMOVE AFTER/
 // component, `1.2.3.4`) — without it those forms would silently match on
 // their `1.2.3` PREFIX and be recorded as well-formed with the remainder
 // dropped, rather than reported as the malformed near-misses they are.
-const MARKER_STRICT_RE = /REMOVE AFTER\s+`?(\d+)\.(\d+)\.(\d+)(?!-|\.\d)`?/
+//
+// The lookahead's first branch is `[\d-]`, NOT a bare `-`: `(\d+)` is
+// GREEDY, and a bare `-` lookahead is defeated by backtracking whenever the
+// patch component has two or more digits. On `1.2.34-beta`, `(\d+)` first
+// takes `34`; the lookahead sees `-` and fails; the engine backtracks the
+// capture to `3`; the next character is `4` — neither `-` nor `.<digit>` —
+// so the (now too-narrow) lookahead passes, and the marker is silently
+// recorded as the well-formed `1.2.3`, with `4-beta` dropped. Excluding any
+// trailing DIGIT too (not just `-`) closes that: backtracking to any
+// shorter prefix still leaves a digit immediately after, which the
+// lookahead now also rejects. Same shape turns `1.0.12.4` into `1.0.1`.
+const MARKER_STRICT_RE = /REMOVE AFTER\s+`?(\d+)\.(\d+)\.(\d+)(?![\d-]|\.\d)`?/
 
 function scanTargets(tracked) {
   return tracked.filter((f) => {
@@ -465,6 +487,18 @@ function malformedScenarios(root) {
  * accepted with the remainder dropped. Markdown BOLD is not a canonical
  * wrapping (only backticks are) — a bold triple is malformed too, not a
  * near-miss the header fails to document.
+ *
+ * The two multi-digit-patch cases (`1.2.34-beta`, `1.0.12.4`) exist
+ * SEPARATELY from their single-digit siblings above for a reason: a bare
+ * `-` / `.` lookahead is defeated by BACKTRACKING once the patch component
+ * has two or more digits — `(\d+)` greedily takes `34`, the lookahead
+ * fails, the engine backtracks the capture to `3`, and the character now
+ * immediately after (`4`) satisfies a too-narrow lookahead, so the marker
+ * is silently recorded as well-formed `1.2.3` with the remainder dropped.
+ * Single-digit patches (`1.2.3-beta`, `1.2.3.4`) cannot exercise this —
+ * there is nothing shorter to backtrack `3` to — which is exactly why they
+ * passed against the shipped regex while this defect was live. These two
+ * cases are the ones that would have failed.
  */
 function nearMissFormScenarios(root) {
   return withScrubbedProcessEnv(root, () => {
@@ -474,6 +508,14 @@ function nearMissFormScenarios(root) {
       ['pre-release', '// REMOVE AFTER 1.2.3-beta\nexport const x = 1\n'],
       ['fourth component', '// REMOVE AFTER 1.2.3.4\nexport const x = 1\n'],
       ['bold wrapping', '// REMOVE AFTER **1.2.3**\nexport const x = 1\n'],
+      [
+        'pre-release, multi-digit patch (backtracking)',
+        '// REMOVE AFTER 1.2.34-beta\nexport const x = 1\n',
+      ],
+      [
+        'fourth component, multi-digit patch (backtracking)',
+        '// REMOVE AFTER 1.0.12.4\nexport const x = 1\n',
+      ],
     ]
     for (const [label, contents] of cases) {
       const dir = join(root, `near-miss-${label.replace(/\s+/g, '-')}`)
@@ -493,6 +535,106 @@ function nearMissFormScenarios(root) {
         `expected 1 naming a malformed marker in notes.ts, got ${result.status}: ${result.stderr}`,
       )
     }
+    return results
+  })
+}
+
+/**
+ * The two forms that MUST keep matching after the backtracking fix — this
+ * is the falsification half of `nearMissFormScenarios` above: tightening
+ * the lookahead to also exclude a trailing digit must not, as a side
+ * effect, start rejecting well-formed markers it used to accept.
+ *   - backtick-wrapped, the original incident's own spelling
+ *     (`` REMOVE AFTER `0.9.9` ``);
+ *   - the bare prose-sentence form, the exact shape the incident comment
+ *     used (`REMOVE AFTER 0.3.0. Removal trigger: …`) — a period directly
+ *     after the triple, no backtick, no wrapping at all.
+ * Both are given manifests at or past their marker version, so a pass here
+ * requires the marker to have been PARSED (not just "not reported
+ * malformed") — the expiry report names the exact marker version, which a
+ * silently-truncated or unmatched marker could not produce.
+ */
+function stillMatchesCanonicalScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+
+    const backtickDir = join(root, 'still-matches-backtick')
+    const backtickEnv = scrubbedGitEnv(root)
+    const backtickGit = initScratchRepo(backtickDir, backtickEnv)
+    mkdirSync(join(backtickDir, 'src-tauri'), { recursive: true })
+    writeFileSync(join(backtickDir, 'src-tauri', 'tauri.conf.json'), tauriConf('0.9.9'))
+    mkdirSync(join(backtickDir, 'src'), { recursive: true })
+    writeFileSync(
+      join(backtickDir, 'src', 'notes.ts'),
+      '// REMOVE AFTER `0.9.9`\nexport const x = 1\n',
+    )
+    backtickGit('add', '-A')
+    const backtickResult = run(backtickDir, backtickEnv, ['--worktree'])
+    record(
+      'backtick-wrapped `REMOVE AFTER `0.9.9`` still matches canonically and is reported expired, not malformed',
+      backtickResult.status === 1 &&
+        /0\.9\.9/.test(backtickResult.stderr) &&
+        !/not in the canonical/.test(backtickResult.stderr),
+      `expected 1 naming 0.9.9 without a malformed report, got ${backtickResult.status}: ${backtickResult.stderr}`,
+    )
+
+    const sentenceDir = join(root, 'still-matches-sentence')
+    const sentenceEnv = scrubbedGitEnv(root)
+    const sentenceGit = initScratchRepo(sentenceDir, sentenceEnv)
+    mkdirSync(join(sentenceDir, 'src-tauri'), { recursive: true })
+    writeFileSync(join(sentenceDir, 'src-tauri', 'tauri.conf.json'), tauriConf('0.9.8'))
+    mkdirSync(join(sentenceDir, 'src-tauri', 'src'), { recursive: true })
+    writeFileSync(
+      join(sentenceDir, 'src-tauri', 'src', 'migration.rs'),
+      '// REMOVE AFTER 0.3.0. Removal trigger: when `0.3.0` is cut, delete the\n' +
+        '// function and its helpers in the same commit that bumps the version.\n' +
+        'fn migrate_personal_pages_to_work() {}\n',
+    )
+    sentenceGit('add', '-A')
+    const sentenceResult = run(sentenceDir, sentenceEnv, ['--worktree'])
+    record(
+      'bare sentence form `REMOVE AFTER 0.3.0. Removal trigger: …` (the original incident) still matches and is reported expired, not malformed',
+      sentenceResult.status === 1 &&
+        /0\.3\.0/.test(sentenceResult.stderr) &&
+        !/not in the canonical/.test(sentenceResult.stderr),
+      `expected 1 naming 0.3.0 without a malformed report, got ${sentenceResult.status}: ${sentenceResult.stderr}`,
+    )
+
+    return results
+  })
+}
+
+/**
+ * `SCAN_EXT_RE` covers `.js`/`.mjs` so a marker left in a GUARD SCRIPT is as
+ * findable as one in application source — a fixture `.mjs` file under
+ * `scripts/` (NOT this guard's own `SELF_PATH`) with an expired marker must
+ * be reported, proving the extension is genuinely in scan scope rather than
+ * merely claimed in the header.
+ */
+function scriptExtensionScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+    const dir = join(root, 'script-extension')
+    const env = scrubbedGitEnv(root)
+    const git = initScratchRepo(dir, env)
+    mkdirSync(join(dir, 'src-tauri'), { recursive: true })
+    writeFileSync(join(dir, 'src-tauri', 'tauri.conf.json'), tauriConf('3.0.0'))
+    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    writeFileSync(
+      join(dir, 'scripts', 'some-other-guard.mjs'),
+      '// REMOVE AFTER 0.1.0 — delete this fixture guard once cut.\nconsole.log("guard")\n',
+    )
+    git('add', '-A')
+    const result = run(dir, env, ['--worktree'])
+    record(
+      'an expired marker inside a `.mjs` script (not this guard itself) is caught, not scan-exempt',
+      result.status === 1 &&
+        /0\.1\.0/.test(result.stderr) &&
+        /some-other-guard\.mjs/.test(result.stderr),
+      `expected 1 naming 0.1.0 in some-other-guard.mjs, got ${result.status}: ${result.stderr}`,
+    )
     return results
   })
 }
@@ -544,6 +686,8 @@ function selfTest() {
       ...numericComparisonScenarios(root),
       ...malformedScenarios(root),
       ...nearMissFormScenarios(root),
+      ...stillMatchesCanonicalScenarios(root),
+      ...scriptExtensionScenarios(root),
       ...sourceScenarios(root),
     ]
     let failures = 0

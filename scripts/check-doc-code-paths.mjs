@@ -373,6 +373,24 @@ function computeMisses() {
     return { exitCode: 0 }
   }
   const tracked = new Set(entries.paths)
+  // Every ANCESTOR DIRECTORY of every tracked path, built ONCE from
+  // `entries.paths` — not per candidate. A directory-shaped citation (a
+  // citing text that names a directory, not a file) resolves by asking
+  // whether that directory is itself present as some tracked file's
+  // ancestor, which this Set answers in O(1); the previous fallback
+  // instead spread `tracked` into a fresh array and linear-scanned it with
+  // `.some(startsWith(...))` for every directory-shaped candidate AND
+  // every genuine miss, paying O(n) per candidate on top of the O(n)
+  // materialisation itself.
+  const trackedDirs = new Set()
+  for (const path of entries.paths) {
+    const parts = path.split('/')
+    let prefix = ''
+    for (let i = 0; i < parts.length - 1; i++) {
+      prefix = prefix ? `${prefix}/${parts[i]}` : parts[i]
+      trackedDirs.add(prefix)
+    }
+  }
   const docs = listMarkdownFiles(entries.paths)
   const tsFiles = listTsFiles(entries.paths)
   if (docs.length === 0 && tsFiles.length === 0) {
@@ -403,13 +421,15 @@ function computeMisses() {
     for (const ref of extractCandidates(text)) {
       const resolved = resolveAgainstDoc(citingFile, ref)
       // Gated behind the exact-match result: the common case (a live
-      // citation) resolves on `tracked.has` alone, and must never pay for
-      // materialising the full tracked Set into an array — spreading it
-      // for EVERY candidate, exact hits included, is what made this O(n)
-      // per candidate once the #4126 widening added ~500 more candidates
-      // from TS/TSX comments on top of the Markdown set.
+      // citation) resolves on `tracked.has` alone. The fallback — a
+      // directory-shaped citation — answers from `trackedDirs`, the
+      // ancestor-directory Set built ONCE above, so neither branch pays to
+      // materialise or scan the full tracked Set per candidate; that O(n)
+      // per-candidate cost is what the #4126 widening (~500 more TS/TSX
+      // candidates on top of the Markdown set) made expensive enough to
+      // matter.
       const trackedExact = tracked.has(resolved)
-      const isTracked = trackedExact || [...tracked].some((t) => t.startsWith(`${resolved}/`))
+      const isTracked = trackedExact || trackedDirs.has(resolved)
       // The index IS the answer to "will this path exist in the commit", so
       // under `--cached` the tracked set alone decides. Under `--worktree`
       // the path must ALSO be on disk, which is what catches a tracked file
