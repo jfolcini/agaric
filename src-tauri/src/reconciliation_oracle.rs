@@ -1308,9 +1308,11 @@ pub async fn block_links_coverage(pool: &SqlitePool) -> Result<BlockLinksCoverag
 const BLOCK_LINKS_OWNER: &str = "reindex_block_links_conn (the single-pool writer, called both by the \
      ReindexBlockLinks task and IN-TRANSACTION by agaric-engine's \
      maintain_pages_cache_counts_after_op) / reindex_block_links_split (the \
-     read/write-split writer) — and, one level up, the arm of \
+     read/write-split writer) — one level up, the arm of \
      materializer::dispatch::invalidations_for_op that enqueues \
-     ReindexBlockLinks at all (only CreateBlock and EditBlock do). There is NO \
+     ReindexBlockLinks at all (only CreateBlock and EditBlock do) — plus \
+     recovery::cache_refresh's draft-recovery path, which enqueues it \
+     directly. There is NO \
      vault-wide rebuild_block_links: truncate_block_links' sole caller is \
      agaric-sync's snapshot-restore WIPE, so a row lost here is lost \
      PERMANENTLY for that block until its content is edited again — and every \
