@@ -19,6 +19,7 @@
 
 import {
   isAutolinkableUrl,
+  leadingIndent,
   LIST_NEST_INDENT,
   scanBareUrl,
   ULID_RE,
@@ -774,7 +775,7 @@ function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string
   // Recursively serialize each child block (via the shared block dispatch so
   // the grammar is enumerated in one place, #2219), then prefix every line
   // with "> ".
-  const inner = node.content.map((child) => serializeBlockNode(child, onUnknownNode)).join('\n')
+  const inner = serializeBlockSequence(node.content, onUnknownNode).join('\n')
   const lines = inner.split('\n')
   // Prepend [!TYPE] prefix to the first line when calloutType is set
   if (node.attrs?.calloutType) {
@@ -909,13 +910,16 @@ function serializeListItem(
   onUnknownNode?: (type: string) => void,
 ): string {
   const children = item.content ?? []
-  const parts = children.map((child, idx) => {
-    const serialized = serializeBlockNode(child, onUnknownNode)
+  // The item's children are a block SEQUENCE like any other, so a paragraph
+  // following a nested list inside the item needs the same leading-indent
+  // defusing (#4071/#4076) — the recursive parse of the item's nested lines
+  // sees exactly these strings, dedented back to column 0.
+  const parts = serializeBlockSequence(children, onUnknownNode, true).map((serialized, idx) =>
     // The first child sits on the marker line (no indent); every later block is
     // indented one level so it round-trips back into this item as nested content
     // rather than leaking out as a sibling block.
-    return idx === 0 ? serialized : indentLines(serialized, LIST_NEST_INDENT)
-  })
+    idx === 0 ? serialized : indentLines(serialized, LIST_NEST_INDENT),
+  )
   return `${marker}${parts.join('\n')}`
 }
 
@@ -996,7 +1000,101 @@ function serializeBlockNode(node: BlockLevelNode, onUnknownNode?: (type: string)
   return handler(node, onUnknownNode)
 }
 
+/**
+ * Serialize a SEQUENCE of sibling blocks — the doc's children, a blockquote's
+ * children, or a list item's children — defusing the one way a sibling can be
+ * swallowed by its predecessor on reparse (#4071, #4076).
+ *
+ * The hazard. A paragraph is the only block whose stored text can BEGIN with
+ * whitespace, and it is emitted verbatim; but indentation is also how a list
+ * item's nested content is spelled (`collectListItem` absorbs every following
+ * line indented to at least the item's content column). So a paragraph
+ * following a list, whose own text starts with one whole {@link
+ * LIST_NEST_INDENT} of whitespace, re-parses as that list's nested content:
+ * it is re-parented into the last item, dedented, and re-dispatched — which
+ * merges the list with whatever ordered list followed (renumbering it, #4071)
+ * and can re-read the dedented text as a different block kind entirely (a
+ * blockquote, #4076).
+ *
+ * Why it survives one pass and bites on the next — the reason both issues were
+ * reported as "converges only on the SECOND serialize". On the way IN, the
+ * list's markers may be indented (CommonMark's 1-3 space tolerance, or a
+ * deeper foreign indent), which pushes the item's content column past the
+ * paragraph's indent, so the parse correctly keeps them siblings. Serializing
+ * then NORMALIZES the markers to column 0, dropping the content column to 2 —
+ * and the very same paragraph, byte for byte, is now deep enough to be
+ * swallowed. The document that comes back is not the one that went out.
+ *
+ * The fix is to make the paragraph's leading whitespace unambiguously CONTENT:
+ * prefix a backslash escape, so the emitted line starts at column 0 and no
+ * indentation the parser sees is anything but structure. `\ ` (and `\<tab>`)
+ * decode back to the bare character (`isEscapableChar`), so the text is
+ * unchanged and the escape is stable under re-serialization.
+ *
+ * There are two ways the leading whitespace fails to come back, and the escape
+ * has to cover BOTH — accepting `\<tab>` in `isEscapableChar` without emitting
+ * it for the second would simply move the non-convergence rather than remove
+ * it (a foreign `\<tab>x` would decode to a tab-leading paragraph the
+ * serializer then emitted raw, which pass two expands to spaces):
+ *
+ *  1. ABSORPTION, after a list and at one whole nest level or more — the case
+ *     the two issues were filed for. Deliberately narrow: only a list absorbs a
+ *     following indented line (a heading, table, quote, fence or paragraph in
+ *     that position ends the run, so a paragraph after one of those keeps its
+ *     plain form), and less than one whole level is not nested content either
+ *     (#4019 pins `- x` + a paragraph ` a` as siblings, one space intact).
+ *  2. TAB EXPANSION, wherever the paragraph sits. A line's leading whitespace
+ *     run is rewritten by the parser as the COLUMNS it occupies
+ *     (`dedentColumns`, #4052), so a run containing a tab NEVER survives
+ *     verbatim — with or without a list in front of it. This one needs no
+ *     predecessor and no threshold.
+ *
+ * Hazard 2 is per LINE, not per block: a paragraph holding a `hardBreak` emits
+ * more than one line, and every one of them starts a line the parser measures.
+ * Absorption (hazard 1) is first-line-only by contrast — a run that already
+ * started at column 0 is a paragraph run, and its later lines are lazy
+ * continuations no list can claim.
+ *
+ * `skipFirst` is for a list item's children: its first child's FIRST line is
+ * emitted on the MARKER line, where neither hazard exists — the marker consumes
+ * the line start, so that text's own leading whitespace is not a line's leading
+ * whitespace at all (`- <tab>x` round-trips as-is) and there is no preceding
+ * sibling to absorb it. Its later lines are ordinary lines again.
+ */
+function serializeBlockSequence(
+  nodes: readonly BlockLevelNode[],
+  onUnknownNode?: (type: string) => void,
+  skipFirst = false,
+): string[] {
+  return nodes.map((node, idx) => {
+    const serialized = serializeBlockNode(node, onUnknownNode)
+    if (node.type !== 'paragraph') return serialized
+    const onMarkerLine = idx === 0 && skipFirst
+    const prev = nodes[idx - 1]
+    return serialized
+      .split('\n')
+      .map((line, lineIdx) => {
+        if (lineIdx === 0) {
+          return onMarkerLine || !needsWhitespaceDefuse(line, prev) ? line : `\\${line}`
+        }
+        // Continuation lines: tab expansion only (see above).
+        return LEADING_TAB_RE.test(line) ? `\\${line}` : line
+      })
+      .join('\n')
+  })
+}
+
+/** A leading whitespace run that contains a tab — hazard 2 above. */
+const LEADING_TAB_RE = /^ *\t/
+
+/** Whether a paragraph's first line needs its leading whitespace defused. */
+function needsWhitespaceDefuse(firstLine: string, prev: BlockLevelNode | undefined): boolean {
+  if (LEADING_TAB_RE.test(firstLine)) return true
+  if (!prev || (prev.type !== 'bulletList' && prev.type !== 'orderedList')) return false
+  return leadingIndent(firstLine) >= LIST_NEST_INDENT.length
+}
+
 export function serialize(doc: DocNode, onUnknownNode?: (type: string) => void): string {
   if (!doc.content || doc.content.length === 0) return ''
-  return doc.content.map((node) => serializeBlockNode(node, onUnknownNode)).join('\n')
+  return serializeBlockSequence(doc.content, onUnknownNode).join('\n')
 }

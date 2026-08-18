@@ -17,8 +17,10 @@
  */
 
 import {
+  leadingIndent,
   LIST_NEST_INDENT,
   scanBareUrl,
+  TAB_STOP,
   underscoreRunFlank,
   WORD_CHAR_RE,
 } from '@/editor/markdown-common'
@@ -522,45 +524,6 @@ export function parseHorizontalRule(lines: readonly string[], i: number): BlockP
 // of which includes the indentation. `[^\n]` rather than `.` for the item text:
 // see the note in `parseHeading`.
 const ORDERED_ITEM_RE = new RegExp(`^${MARKER_INDENT_SRC}(\\d+)\\. ([^\\n]*)$`)
-
-/**
- * Tab stop width for indentation (CommonMark §2.2). A tab does not stand for a
- * fixed number of spaces: it advances to the NEXT multiple of this, so its
- * width depends on the column it starts at.
- */
-const TAB_STOP = 4
-
-/**
- * The COLUMN at which a line's content begins — its indentation, counted the
- * way CommonMark counts it (§2.2): a space is one column, a tab advances to the
- * next {@link TAB_STOP} boundary. A line with no leading whitespace (an item
- * marker at this list's level) has indent 0; nested content lines emitted by
- * the serializer are indented by one whole `LIST_NEST_INDENT` per nesting level
- * (see `markdown-common.ts`).
- *
- * Counting COLUMNS rather than characters is the whole of the tab fix (#4052):
- * a tab-nested sublist (`- parent` / `\t- child`, the default in several
- * outliners) has indent 0 under a character count, so `collectListItem` never
- * saw the child as nested content and it degraded to a sibling paragraph.
- *
- * Note the consequence for MARKER-ness, which is why no marker regex needs to
- * learn about tabs: a tab inside a line's leading whitespace starts at some
- * column < {@link TAB_STOP} and therefore always lands the content at column
- * ≥ 4 — past `MAX_MARKER_INDENT` (3). So ` {0,3}` in the marker productions
- * already IS the exact column rule, and a tab-indented marker is correctly not
- * a marker on its own line. What makes a tab-nested SUBLIST work is the dedent
- * below, which spends part of the tab on the item's content column and leaves
- * the residue inside that tolerance.
- */
-function leadingIndent(line: string): number {
-  let column = 0
-  for (const ch of line) {
-    if (ch === ' ') column += 1
-    else if (ch === '\t') column += TAB_STOP - (column % TAB_STOP)
-    else break
-  }
-  return column
-}
 
 /**
  * Rewrite a line's LEADING WHITESPACE RUN as the spaces it occupies in columns,
@@ -1165,7 +1128,32 @@ function isEscapableChar(ch: string): boolean {
     // to `:`. Without this, a URL substring inside escaped literal text (e.g.
     // `\](https://x.com)`) would re-autolink on the next parse, breaking
     // serialize∘parse idempotence (#1441).
-    ch === ':'
+    ch === ':' ||
+    // A SPACE or TAB is escapable so the serializer can defuse a paragraph
+    // whose stored text begins with whitespace (#4071/#4076). Leading
+    // whitespace is the one thing that is both content (a paragraph stores it)
+    // and structure (it is how a list item's nested content is spelled), so a
+    // paragraph emitted after a list would be swallowed by it on reparse —
+    // see `serializeBlockSequence`. `\ ` puts a non-whitespace character at
+    // column 0, which settles the ambiguity in favour of content, and decodes
+    // back to the bare space/tab so nothing is added to the text.
+    //
+    // Only the escape is new: `escapeText` never emits `\ ` for an interior
+    // space, so this cannot change any previously serialized document — a
+    // literal backslash in stored text is exported as `\\`, which this reads
+    // back as one backslash before the space is even reached. What it does
+    // change is how a FOREIGN `\ ` imports, and reading it as a space is the
+    // same rule every other escapable char already follows.
+    //
+    // This is a deliberate divergence from CommonMark §2.4, which escapes only
+    // ASCII punctuation (`\ ` is a literal backslash there, and a trailing `\`
+    // is a hard break — which is what `scanEscape`'s end-of-input guard leaves
+    // it as). The cost is that the decoded whitespace is now storable, so the
+    // serializer has to be able to re-emit the escape in EVERY position it can
+    // decode in, not only the one it was added for: see `serializeBlockSequence`,
+    // whose tab arm exists precisely because `\<tab>` decodes here.
+    ch === ' ' ||
+    ch === '\t'
   )
 }
 

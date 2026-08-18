@@ -43,6 +43,50 @@ export const ULID_RE = /^[0-9A-Z]{26}$/
 export const LIST_NEST_INDENT = '  '
 
 /**
+ * Tab stop width for indentation (CommonMark §2.2). A tab does not stand for a
+ * fixed number of spaces: it advances to the NEXT multiple of this, so its
+ * width depends on the column it starts at.
+ */
+export const TAB_STOP = 4
+
+/**
+ * The COLUMN at which a line's content begins — its indentation, counted the
+ * way CommonMark counts it (§2.2): a space is one column, a tab advances to the
+ * next {@link TAB_STOP} boundary. A line with no leading whitespace (an item
+ * marker at its list's level) has indent 0; nested content lines emitted by the
+ * serializer are indented by one whole {@link LIST_NEST_INDENT} per level.
+ *
+ * Counting COLUMNS rather than characters is the whole of the tab fix (#4052):
+ * a tab-nested sublist (`- parent` / `\t- child`, the default in several
+ * outliners) has indent 0 under a character count, so `collectListItem` never
+ * saw the child as nested content and it degraded to a sibling paragraph.
+ *
+ * Note the consequence for MARKER-ness, which is why no marker regex needs to
+ * learn about tabs: a tab inside a line's leading whitespace starts at some
+ * column < {@link TAB_STOP} and therefore always lands the content at column
+ * ≥ 4 — past `MAX_MARKER_INDENT` (3). So ` {0,3}` in the marker productions
+ * already IS the exact column rule, and a tab-indented marker is correctly not
+ * a marker on its own line. What makes a tab-nested SUBLIST work is
+ * `dedentColumns`, which spends part of the tab on the item's content column
+ * and leaves the residue inside that tolerance.
+ *
+ * SHARED because the serializer needs the identical rule (#4071/#4076): it has
+ * to know whether the leading whitespace it is about to emit for a paragraph
+ * would come back as this many columns of list-continuation INDENTATION. Two
+ * copies of a column rule that must agree exactly is the drift these fixes are
+ * about, so there is one.
+ */
+export function leadingIndent(line: string): number {
+  let column = 0
+  for (const ch of line) {
+    if (ch === ' ') column += 1
+    else if (ch === '\t') column += TAB_STOP - (column % TAB_STOP)
+    else break
+  }
+  return column
+}
+
+/**
  * CommonMark-aligned flanking test for the contiguous `_` run containing
  * position `pos` of `src`. The flanking chars are taken from the FULL run in
  * both directions — `pos` may sit mid-run — so the rule always sees the run's
