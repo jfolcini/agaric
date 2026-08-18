@@ -41,6 +41,33 @@
 #             empty file: "we could not look" and "we looked and found
 #             nothing" are different facts.
 #
+# ─── A second, silent way to reach the same empty-by-construction bug ─────
+#
+# The bug documented above (a checkout that lands on the merge ref, base-tip
+# first parent) is not the only path to it. If `pr-overlap.yml`'s `compute`
+# job's trigger were ever changed to `pull_request_target` — the exact edit
+# `scripts/check-pr-overlap-trust-boundary.mjs` exists to police — its
+# ref-less checkout would land on the BASE branch instead (that trigger's
+# default, with no explicit head ref). For a FORK PR, `HEAD_SHA` (the
+# workflow's `github.event.pull_request.head.sha`) is then a commit this
+# script has never fetched — not in the object DB at all — so
+# `resolve_head`'s explicit-sha branch fails its `git rev-parse --verify`
+# and falls through to `git rev-parse HEAD`, which IS the base tip on that
+# checkout. `merge-base(base, base)` is base; `git diff base base` is empty;
+# exit 0. Reported as "computed, nothing diverged" — the same false
+# reassurance as the bug above, reached by a different door, and it degrades
+# FORK-ONLY, so a same-repo PR (where `head.sha` resolves fine) keeps
+# working and hides that the fork case is broken.
+#
+# `check-pr-overlap-trust-boundary.mjs`'s condition 3 — no write-scoped job
+# may hold a checkout without a base-pinned `ref:` — does NOT catch this
+# configuration: `compute` (the job this script runs in) holds `permissions:
+# contents: read`, no write scope of any kind, so condition 3 has nothing to
+# flag there. That guard polices TOKEN EXFILTRATION (a write-scoped job
+# running fork-authored code); this is a DATA-CORRECTNESS hazard in a job
+# that was never a write-scope risk in the first place, and nothing in this
+# repo mechanically pins it today.
+#
 # Usage:
 #   scripts/pr-overlap-diverged.sh <base-ref> [<head-sha>]
 #   scripts/pr-overlap-diverged.sh --print-head <base-ref> [<head-sha>]

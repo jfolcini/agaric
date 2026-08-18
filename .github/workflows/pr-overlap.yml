@@ -44,8 +44,9 @@ name: Open-PR file overlap (informational)
 # So the job is split by trust level instead of relying on the default:
 #
 #   * `compute` — the UNTRUSTED half. Checks out this PR's own commits
-#     (`refs/pull/N/merge`, fork-controlled for a fork PR), `permissions: {}`,
-#     NO `GH_TOKEN` anywhere in its environment. It can only compute facts
+#     (`refs/pull/N/merge`, fork-controlled for a fork PR), `permissions:
+#     contents: read` (no write scope of any kind), NO `GH_TOKEN` anywhere in
+#     its environment. It can only compute facts
 #     from git history already on disk and write them to a file; it has
 #     nothing to exfiltrate and no token to exfiltrate it with. Its one job:
 #     the base-divergence half (`scripts/pr-overlap-diverged.sh`), which needs
@@ -66,7 +67,7 @@ name: Open-PR file overlap (informational)
 #     still executed whatever `scripts/pr-overlap-diverged.sh` a fork PR's own
 #     checkout shipped, so its output is attacker-influenced text, not a
 #     verified fact. `post` never lets it near a shell: the download step only
-#     produces a FILE (`diverged.txt`), which is passed to
+#     produces a FILE (`artifact/diverged.txt`), which is passed to
 #     `node scripts/pr-file-overlap.mjs` as a `--diverged-from <path>` CLI
 #     argument — the filename, not the content — and the script reads and
 #     parses that file itself (`readFileSync` + line-split), the same way it
@@ -75,6 +76,18 @@ name: Open-PR file overlap (informational)
 #     comment body; the comment body is built by `node` and posted with
 #     `gh api -F body=@overlap.md`, which reads the file directly rather than
 #     expanding it on a command line.
+#
+# ─── Trade-off: `post` analyses `pr-file-overlap.mjs` from BEFORE this PR ──
+#
+# Because `post`'s checkout is pinned to `base.sha` (above), a PR that edits
+# `scripts/pr-file-overlap.mjs` itself — including its `RATCHET_PATTERNS` —
+# is analysed by the PRE-CHANGE version of that script, not the version the
+# PR ships. That includes `ratchets` and `basechanged`, the two outputs
+# `merge-result` below gates on: a PR editing the ratchet-detection logic is
+# judged by the old logic, on itself. Deliberate — the alternative is running
+# a fork PR's own script with a write-scoped token, which is the exact
+# arrangement #3967 removed — but worth stating plainly since this file
+# otherwise documents every trade-off of this kind.
 #
 # `merge-result` below is unaffected by this split — it already ran with
 # `permissions: contents: read` only, no write scope and no comment step, so
@@ -96,12 +109,26 @@ permissions:
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
   # compute — the UNTRUSTED half (#3967). Checks out this PR's own commits;
-  # `permissions: {}` and no `GH_TOKEN` anywhere below, so there is nothing
-  # here for fork-authored code in that checkout to reach for.
+  # `permissions: contents: read` (no write scope) and no `GH_TOKEN` anywhere
+  # below, so there is nothing here for fork-authored code in that checkout
+  # to reach for. Not `permissions: {}` — see the job's own comment.
   # ─────────────────────────────────────────────────────────────────────────
   compute:
     runs-on: ubuntu-24.04
-    permissions: {}
+    # `contents: read`, not `{}`: `actions/checkout` authenticates its clone
+    # with `github.token` regardless of the `permissions:` block, and zero
+    # scopes only happens to work because this repo is PUBLIC (unauthenticated
+    # clone of a public repo succeeds). On a private repo `permissions: {}`
+    # 403s the checkout — and that failure is exactly the silent one this PR
+    # is about: `compute` fails, `if-no-files-found: warn` means no error, no
+    # artifact, `post` still runs under `!cancelled()`, and the divergence
+    # half reports "not computed" forever while the lane stays green.
+    # `contents: read` has the identical security property this job cares
+    # about — the hazard #3967 removed is a WRITE-scoped token sharing a job
+    # with fork-authored code, and that stays absent either way — without
+    # coupling correctness to the repo's visibility setting.
+    permissions:
+      contents: read
     # Generous ceiling on a job whose real cost is seconds; if this ever fires,
     # something is retrying an API call, not computing an overlap.
     timeout-minutes: 10
@@ -156,13 +183,17 @@ jobs:
           if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
             git fetch --no-tags origin "$BASE_REF" || true
           fi
+          # No `computed=true`/`false` written to $GITHUB_OUTPUT here: this
+          # job declares no `outputs:` block and nothing ever read
+          # `steps.diverged.outputs.computed` (the #4005 review removed a
+          # job output from this same file for the same reason — presence of
+          # `diverged.txt` itself, checked by `post` below, is already the
+          # live signal).
           if bash scripts/pr-overlap-diverged.sh "$BASE_REF" "$HEAD_SHA" > diverged.tmp; then
             mv diverged.tmp diverged.txt
-            echo "computed=true" >> "$GITHUB_OUTPUT"
           else
             echo "divergence not computed; the post job's comment will say so" >&2
             rm -f diverged.tmp
-            echo "computed=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload the divergence result
@@ -252,11 +283,20 @@ jobs:
         # same tolerance the inline script below already applies to a missing
         # `diverged.txt`. Runs AFTER the checkout above — see that step's own
         # comment for why the order is load-bearing, not cosmetic.
+        #
+        # `path: artifact/`, not `.`: the checkout above just populated the
+        # workspace root with the TRUSTED tree this job runs
+        # `scripts/pr-file-overlap.mjs` from. Extracting the artifact into a
+        # separate subdirectory means the "post gets its script from the
+        # trusted base repo" invariant this file's header asserts is
+        # enforced by LAYOUT — `compute`'s untrusted data can only ever land
+        # under `artifact/`, never overwrite anything under `scripts/` —
+        # rather than by `compute`'s upload `path:` alone.
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pr-overlap-diverged-${{ github.event.pull_request.number }}
-          path: .
+          path: artifact/
 
       - name: Compute the overlap against every other open PR, and render
         id: overlap
@@ -272,21 +312,24 @@ jobs:
           # whole issue is about. This is GitHub's OWN computation of each
           # PR's changed files (the `gh pr list --json files` API), not code
           # any PR author runs, so it needs no special handling as untrusted
-          # input the way `diverged.txt` below does.
+          # input the way `artifact/diverged.txt` below does.
           if ! gh pr list --repo "$REPO" --state open --limit 50 \
               --json number,title,files > prs.json; then
             echo '[]' > prs.json
           fi
 
-          # `diverged.txt`, if `compute` produced one, is UNTRUSTED: it was
-          # written by a script `compute` read out of this PR's own (possibly
-          # fork-authored) checkout, running with no token but still capable
-          # of writing arbitrary text to its stdout. It is passed here as a
-          # FILENAME only — `pr-file-overlap.mjs` reads and line-splits the
-          # file itself — never expanded into this shell script or into the
-          # comment body via string interpolation.
+          # `artifact/diverged.txt`, if `compute` produced one, is UNTRUSTED:
+          # it was written by a script `compute` read out of this PR's own
+          # (possibly fork-authored) checkout, running with no token but
+          # still capable of writing arbitrary text to its stdout. It is
+          # passed here as a FILENAME only — `pr-file-overlap.mjs` reads and
+          # line-splits the file itself — never expanded into this shell
+          # script or into the comment body via string interpolation. It
+          # lives under `artifact/`, not the checkout root, so it can never
+          # collide with (or, on some other future edit, overwrite) anything
+          # under `scripts/` — see the download step's own comment.
           args=(--pr "$PR_NUMBER" --prs prs.json --comment-body overlap.md)
-          [ -f diverged.txt ] && args+=(--diverged-from diverged.txt)
+          [ -f artifact/diverged.txt ] && args+=(--diverged-from artifact/diverged.txt)
           node scripts/pr-file-overlap.mjs "${args[@]}"
           cat overlap.md >> "$GITHUB_STEP_SUMMARY"
 
