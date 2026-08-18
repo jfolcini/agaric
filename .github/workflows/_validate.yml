@@ -384,9 +384,9 @@ jobs:
           # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
           # covered by Acquire::*::Timeout, so without this it consumes the
           # whole `timeout-minutes` budget and reads as a code failure.
-          timeout 300 sudo apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once' >&2
-            timeout 300 sudo apt-get update
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update
           }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
@@ -1404,9 +1404,9 @@ jobs:
           # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
           # covered by Acquire::*::Timeout, so without this it consumes the
           # whole `timeout-minutes` budget and reads as a code failure.
-          timeout 300 sudo apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once' >&2
-            timeout 300 sudo apt-get update
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update
           }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
@@ -1542,9 +1542,12 @@ jobs:
           persist-credentials: false
 
       - name: Install lcov
-        # #4115: bound a stalled mirror (see the cargo-tests step).
+        # #4115: bound a stalled mirror. NOTE this job is `timeout-minutes: 10`,
+        # so the two-attempt 300s shape used elsewhere would BE the whole budget
+        # and the job would still be cancelled mid-step. One bounded attempt at
+        # 120s leaves room for the rest of the job to fail cleanly instead.
         run: |
-          timeout 300 sudo apt-get update || timeout 300 sudo apt-get update
+          sudo timeout 120 apt-get update
           sudo apt-get install -y lcov
 
       - name: Download shard coverage artifacts
@@ -1700,9 +1703,9 @@ jobs:
           # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
           # covered by Acquire::*::Timeout, so without this it consumes the
           # whole `timeout-minutes` budget and reads as a code failure.
-          timeout 300 sudo apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once' >&2
-            timeout 300 sudo apt-get update
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update
           }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \

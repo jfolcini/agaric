@@ -84,3 +84,18 @@ runs:
         sudo sed -i 's|https\?://archive\.ubuntu\.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
           /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
           /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+
+        # Say whether that actually matched. `|| true` above makes a total
+        # failure, a zero-match run and a successful rewrite indistinguishable,
+        # and a future image could move the suite to `security.ubuntu.com`,
+        # which this pattern does NOT match — that would silently reopen #4115.
+        azure_entries="$(grep -rhc 'azure\.archive\.ubuntu\.com' \
+          /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null \
+          | paste -sd+ - | bc 2>/dev/null || echo 0)"
+        remaining="$(grep -rhoE 'https?://[a-z.]*archive\.ubuntu\.com|https?://security\.ubuntu\.com' \
+          /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null \
+          | grep -v azure | sort -u | tr '\n' ' ' || true)"
+        echo "#4115: apt sources now name azure ${azure_entries} time(s)"
+        if [ -n "$remaining" ]; then
+          echo "::warning::#4115: non-Azure Ubuntu mirrors still in sources: ${remaining}"
+        fi
