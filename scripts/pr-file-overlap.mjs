@@ -937,31 +937,59 @@ function runSelfTest() {
   //    RED (the injected text lands on its own physical line, outside any
   //    code span) against a renderer that skips `escapeTableNewline`, and
   //    green with it.
+  //
+  //    `prs` carries a SECOND pull request (#4200) sharing the same evil
+  //    path, not just the PR under test: with only one entry in `prs`,
+  //    `others` in `computeOverlap` is empty, `overlaps` is empty, and
+  //    `renderComment` takes the `otherOpenPrs.length === 0` branch — so the
+  //    open-PR overlap table (the call site at `safePathCell(f)` inside the
+  //    `overlaps` loop) is never rendered, and every assertion below would
+  //    hold even if that call site were reverted to raw `${f}` interpolation.
+  //    The overlap table is also the site that actually matters: its paths
+  //    come straight from `gh pr list --json files`, the only source that can
+  //    deliver a raw newline; `divergedPaths` arrives via `split('\n')` over
+  //    `git diff --name-only` and can never contain one.
   {
     const evilPath = 'evil\n**NEWLINE-INJECTED**|also/evil.md'
     const r = computeOverlap({
       pr: 4141,
-      prs: [{ number: 4141, title: 'evil pr', files: [{ path: evilPath }] }],
+      prs: [
+        { number: 4141, title: 'evil pr', files: [{ path: evilPath }] },
+        { number: 4200, title: 'other open pr', files: [{ path: evilPath }] },
+      ],
       divergedPaths: [evilPath],
     })
     const body = renderComment(r)
-    const row = body.split('\n').find((l) => l.includes('also/evil.md'))
-    expect('the diverged-file row exists', typeof row === 'string', body)
-    if (typeof row === 'string') {
+    // The overlap table (section one) and the diverged-file table (section
+    // two, under this heading) both render a row for `also/evil.md` here;
+    // split so each call site is checked against its OWN row rather than
+    // the first match in the whole body.
+    const [overlapSection = '', divergedSection = ''] = body.split(
+      "#### Changed on `main` since this branch's base",
+    )
+    const overlapRow = overlapSection.split('\n').find((l) => l.includes('also/evil.md'))
+    const divergedRow = divergedSection.split('\n').find((l) => l.includes('also/evil.md'))
+    expect('the overlap-table row exists', typeof overlapRow === 'string', body)
+    expect('the diverged-file row exists', typeof divergedRow === 'string', body)
+    for (const [label, row] of [
+      ['overlap table', overlapRow],
+      ['diverged-file table', divergedRow],
+    ]) {
+      if (typeof row !== 'string') continue
       expect(
-        'the embedded newline did not split the row: the injected text stays on the SAME physical line as the rest of the path',
+        `${label}: the embedded newline did not split the row: the injected text stays on the SAME physical line as the rest of the path`,
         row.includes('NEWLINE-INJECTED'),
         JSON.stringify({ bodyLines: body.split('\n') }),
       )
       const unescapedPipes = row.replace(/\\\|/g, '').split('|').length - 1
       expect(
-        'the injected pipe does not add a table column (exactly 3 raw pipes: | path | annotation |)',
+        `${label}: the injected pipe does not add a table column (exactly 3 raw pipes: | path | annotation |)`,
         unescapedPipes === 3,
         row,
       )
       const stripped = stripCodeSpansForTest(row)
       expect(
-        'the injected bold payload is fully contained inside a code span, not left as live text',
+        `${label}: the injected bold payload is fully contained inside a code span, not left as live text`,
         !stripped.includes('NEWLINE-INJECTED'),
         JSON.stringify({ row, stripped }),
       )
