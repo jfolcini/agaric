@@ -35,6 +35,19 @@ export interface UseTauriEventListenerOptions {
    * handler to preserve per-module log shapes.
    */
   onError?: (err: unknown) => void
+  /**
+   * Invoked once `listen()` has resolved and the subscription is live, and
+   * only if the component is still mounted.
+   *
+   * `listen()` does not buffer: anything the backend emits between this hook's
+   * effect running and the promise resolving is delivered to nobody. A caller
+   * that compensates for that window by reading current state over IPC has to
+   * issue that read *here* rather than in its own mount effect — otherwise the
+   * read can be answered before the subscription exists, and an event that
+   * lands in between is lost by both paths at once. `useOsNetworkBlock` is the
+   * worked example.
+   */
+  onSubscribed?: () => void
 }
 
 /**
@@ -46,7 +59,10 @@ export interface UseTauriEventListenerOptions {
  *     flag — if the component unmounts before the promise settles, the
  *     resolved unlisten function is invoked immediately),
  *   - the `listen()` rejection path (via `onError` or the default
- *     `logger.warn` fallback).
+ *     `logger.warn` fallback),
+ *   - the "subscription is now live" moment (via `onSubscribed`), which is
+ *     the only safe point at which a caller can reconcile against the
+ *     unbuffered gap before it.
  *
  * `handler` and `onError` are read through refs so the listener is
  * never re-registered on each render even when callers pass inline
@@ -58,14 +74,16 @@ export function useTauriEventListener<T = unknown>(
   handler: (event: Event<T>) => void,
   options: UseTauriEventListenerOptions = {},
 ): void {
-  const { enabled = true, onError } = options
+  const { enabled = true, onError, onSubscribed } = options
   const handlerRef = useRef(handler)
   const onErrorRef = useRef(onError)
+  const onSubscribedRef = useRef(onSubscribed)
 
   // Keep the refs current on every render so the registered listener
   // always calls the latest handler / onError without re-subscribing.
   handlerRef.current = handler
   onErrorRef.current = onError
+  onSubscribedRef.current = onSubscribed
 
   useEffect(() => {
     if (!enabled) return
@@ -81,6 +99,9 @@ export function useTauriEventListener<T = unknown>(
           fn()
         } else {
           unlisten = fn
+          // Only now is the subscription live. Deliberately after `unlisten`
+          // is stored, so a callback that throws cannot strand the listener.
+          onSubscribedRef.current?.()
         }
       })
       .catch((err: unknown) => {

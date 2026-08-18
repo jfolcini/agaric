@@ -159,18 +159,93 @@ describe('useOsNetworkBlock', () => {
 })
 
 /**
- * #4035 — the mount-time read of the CURRENT status.
+ * #4035 — the read of the CURRENT status, issued once the listener is live.
  *
- * The daemon emits only on a transition and dedups process-globally, so the
- * second time the pairing dialog is opened during one continuous block there is
- * no event to hear. Everything below is about that dialog session: the banner
+ * The daemon emits only on a transition and dedups process-globally, so a hook
+ * that starts listening while a block is already in progress has no event to
+ * hear: the one event for that block is already spent, and the next will not
+ * come until the block ends. Everything below is about that case — the banner
  * has to appear from a query, and the query must not be able to invent, latch,
  * or resurrect a block.
+ *
+ * Note what is NOT here: nothing about a second pairing-dialog session.
+ * `PairingDialog` is mounted unconditionally by `DeviceManagement` and this
+ * hook's subscription is gated on Tauri's presence, not on the dialog being
+ * open, so closing and reopening the dialog neither unsubscribes nor resets
+ * `status`. `PairingDialog.test.tsx` pins that separately.
  */
-describe('useOsNetworkBlock — mount-time query', () => {
-  it('asks the daemon what is true now when it mounts', async () => {
+describe('useOsNetworkBlock — current-status query', () => {
+  it('asks the daemon what is true now when it subscribes', async () => {
     renderHook(() => useOsNetworkBlock())
     await waitFor(() => expect(mockGetOsNetworkBlockStatus).toHaveBeenCalledTimes(1))
+  })
+
+  /**
+   * The query runs from `onSubscribed`, not from a mount effect, and the
+   * difference is load-bearing rather than stylistic — see the sibling test
+   * below for the state it prevents.
+   */
+  it('does not query until listen() has resolved', async () => {
+    let resolveListen: (fn: () => void) => void = () => {}
+    mockListen.mockReturnValue(
+      new Promise<() => void>((resolve) => {
+        resolveListen = resolve
+      }),
+    )
+
+    renderHook(() => useOsNetworkBlock())
+    await waitFor(() => expect(mockListen).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(mockGetOsNetworkBlockStatus).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveListen(mockUnlisten)
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(mockGetOsNetworkBlockStatus).toHaveBeenCalledTimes(1))
+  })
+
+  /**
+   * The window a mount-time query opens, and the reason it is closed.
+   *
+   * `useTauriEventListener` does not buffer: anything emitted before `listen()`
+   * resolves reaches nobody. If a block *ends* inside that window the recovery
+   * event is the thing that is lost, `liveEventApplied` never becomes true, and
+   * a query issued at mount — while the block was still on — answers
+   * `blocked: true`. The banner it raises would then have nothing left to clear
+   * it: the next event is only the next transition. Querying after the
+   * subscription is live means the answer is never older than the gap.
+   */
+  it('does not strand a banner for a block that ended while it was subscribing', async () => {
+    let resolveListen: (fn: () => void) => void = () => {}
+    mockListen.mockReturnValue(
+      new Promise<() => void>((resolve) => {
+        resolveListen = resolve
+      }),
+    )
+    // What the daemon would answer at any given moment. Blocked while the
+    // subscription is still in flight…
+    let daemonStatus: OsNetworkBlockStatus = BLOCKED
+    mockGetOsNetworkBlockStatus.mockImplementation(() => Promise.resolve(ok(daemonStatus)))
+
+    const { result } = renderHook(() => useOsNetworkBlock())
+    await waitFor(() => expect(mockListen).toHaveBeenCalledTimes(1))
+
+    // …and the block ends before `listen()` resolves, so the recovery event is
+    // emitted into a void — no listener exists yet to receive it.
+    daemonStatus = NOT_BLOCKED
+
+    await act(async () => {
+      resolveListen(mockUnlisten)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(mockGetOsNetworkBlockStatus).toHaveBeenCalledTimes(1))
+    expect(result.current).toEqual({ blocked: false, reasonKey: null })
   })
 
   it('does not query outside Tauri, where no daemon can answer', async () => {
@@ -183,12 +258,12 @@ describe('useOsNetworkBlock — mount-time query', () => {
 
   /**
    * The regression this issue exists for: a block that started before this
-   * dialog mounted. No event will arrive — the daemon already reported it, to a
-   * listener that unmounted with the previous dialog session — so if the query
-   * does not raise the banner, nothing does, and the user is shown a clean UI on
-   * a device whose network is cut.
+   * hook subscribed. No event will arrive — the daemon spent the one event for
+   * that block before anything was listening, and its dedup means the next is
+   * the recovery — so if the query does not raise the banner, nothing does, and
+   * the user is shown a clean UI on a device whose network is cut.
    */
-  it('shows a block that was already in progress before it mounted', async () => {
+  it('shows a block that was already in progress before it subscribed', async () => {
     mockGetOsNetworkBlockStatus.mockResolvedValue(ok(BLOCKED))
 
     const { result } = renderHook(() => useOsNetworkBlock())
@@ -240,6 +315,8 @@ describe('useOsNetworkBlock — mount-time query', () => {
     await waitFor(() => {
       expect(mockListen).toHaveBeenCalledWith(SYNC_NETWORK_BLOCKED_EVENT, expect.any(Function))
     })
+    // The query must actually be in flight, or there is no race to lose.
+    await waitFor(() => expect(mockGetOsNetworkBlockStatus).toHaveBeenCalledTimes(1))
 
     // The daemon reports the recovery while the query is still unresolved…
     await emit({ blocked: false, reason_key: null })

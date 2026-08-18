@@ -14,12 +14,25 @@
  *
  * ## Why there IS a mount-time query (#4035), and why it is not a backfill
  *
- * The daemon emits only on a *transition*, and the dedup behind that rule is
- * process-global. So a user who sees the banner, closes the dialog and reopens
- * it **while still blocked** gets no event at all — the block was already
- * reported, to a listener that has since unmounted — and the second session
- * shows a clean UI on a device whose network is cut. That is #3852's failure
- * mode again, one dialog-open later.
+ * Note first what this is *not* about. The subscription below is not tied to
+ * the pairing dialog being open: `DeviceManagement` mounts `PairingDialog`
+ * unconditionally and the dialog's `if (!open) return null` sits after every
+ * hook, so this listener is really created when the Settings "Sync & Devices"
+ * tab mounts, and closing and reopening the dialog neither unsubscribes it nor
+ * resets `status`. A second dialog session on a still-live block already shows
+ * the banner with no query at all, and a test in `PairingDialog.test.tsx`
+ * pins that.
+ *
+ * The gap is a block that was **already in progress before this listener
+ * existed**. The daemon emits only on a *transition* and the dedup behind that
+ * rule is process-global, so the single event announcing such a block was
+ * emitted while nothing here was subscribed, and nothing further will be
+ * emitted until the block ends. That is the ordinary case, not an exotic one:
+ * a user reaches Settings → Sync & Devices *because* pairing stopped working,
+ * i.e. after the block started; and leaving that tab unmounts the listener, so
+ * coming back during one continuous block lands in the same silence. Without
+ * this query they are shown a clean pairing UI on a device whose network is
+ * cut — #3852's failure mode, one navigation later.
  *
  * The earlier note here argued against a backfill on the grounds that "a status
  * queried at mount could describe a block that ended seconds ago". That is an
@@ -29,11 +42,21 @@
  * repeats the event stream swallows. A block that ended produced a recovery
  * delivery, so the query answers `false` for it.
  *
- * One rule keeps it honest, pinned by a test in this hook's suite: a live event
- * that has already been applied wins over a query still in flight. The two race
- * by one IPC round trip, and the event is the newer fact — without that, a
- * mount-time read could resurrect a block the user just watched clear, which is
- * the small lie the earlier note was right to refuse.
+ * Two rules keep that honest, each pinned by a test in this hook's suite:
+ *
+ *  1. **The query is issued only once `listen()` has resolved**, via
+ *     `onSubscribed`. `useTauriEventListener` does not buffer, so anything the
+ *     daemon emits before the subscription is live is dropped. Querying at
+ *     mount instead would leave a window in which a *recovery* is lost while
+ *     the answer already in flight says `blocked: true` — a banner nothing
+ *     would ever clear, because the next event is only the next transition.
+ *     Subscribing first means every transition is either already reflected in
+ *     the answer or arrives as an event.
+ *  2. **A live event that has already been applied wins over a query still in
+ *     flight.** The two still race by one IPC round trip, and the event is the
+ *     newer fact — without this, the read could resurrect a block the user
+ *     just watched clear, which is the small lie the earlier note was right to
+ *     refuse.
  *
  * No-op outside Tauri (browser dev sessions without `__TAURI_INTERNALS__`).
  */
@@ -103,10 +126,19 @@ const CLEAR: UseOsNetworkBlockResult = { blocked: false, reasonKey: null }
 export function useOsNetworkBlock(): UseOsNetworkBlockResult {
   const enabled = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   const [status, setStatus] = useState<UseOsNetworkBlockResult>(CLEAR)
-  // Set as soon as a well-formed live event has been applied. The mount-time
-  // query below defers to it: the query and the first event race by exactly one
+  // Set as soon as a well-formed live event has been applied. The status query
+  // below defers to it: the query and a concurrent event race by exactly one
   // IPC round trip, and if the event wins that race it is the newer fact.
   const liveEventApplied = useRef(false)
+  // The query outlives the component if the tab unmounts mid-flight. Reset on
+  // mount, not just declared false, so a StrictMode remount re-arms it.
+  const unmounted = useRef(false)
+  useEffect(() => {
+    unmounted.current = false
+    return () => {
+      unmounted.current = true
+    }
+  }, [])
 
   useTauriEventListener<unknown>(
     SYNC_NETWORK_BLOCKED_EVENT,
@@ -125,6 +157,39 @@ export function useOsNetworkBlock(): UseOsNetworkBlockResult {
     },
     {
       enabled,
+      // #4035 — ask what is true NOW, and only once the subscription above is
+      // live. A block already in progress produced its one event before this
+      // listener existed, and the daemon's dedup means it will not produce
+      // another until the block ends, so this query is the only thing that can
+      // put the banner on screen for it. Running it from `onSubscribed` rather
+      // than a mount effect is what keeps it from stranding a banner: an event
+      // emitted before `listen()` resolves is dropped, and the one that hurts
+      // is a *recovery* — it would leave the query's `blocked: true` on screen
+      // with nothing left to clear it until the next transition.
+      onSubscribed: () => {
+        commands
+          .getOsNetworkBlockStatus()
+          .then((res) => {
+            const current = unwrap(res)
+            // A live event that has already been applied is the newer fact —
+            // it is also the only thing that can have moved `status` off CLEAR
+            // by now, so this guard is what makes the assignment below safe to
+            // apply in either direction rather than raise-only.
+            if (unmounted.current || liveEventApplied.current) return
+            // Narrowed exactly as the event path narrows, and for the same
+            // reason: a block with no key names no catalog entry, the hook has
+            // no fallback wording, and the alternative to ignoring it is an
+            // empty banner.
+            setStatus(
+              current.blocked && current.reason_key != null
+                ? { blocked: true, reasonKey: current.reason_key }
+                : CLEAR,
+            )
+          })
+          .catch((err: unknown) => {
+            logger.warn('DeviceManagement', 'getOsNetworkBlockStatus() rejected', undefined, err)
+          })
+      },
       onError: (err) => {
         logger.warn(
           'DeviceManagement',
@@ -135,39 +200,6 @@ export function useOsNetworkBlock(): UseOsNetworkBlockResult {
       },
     },
   )
-
-  // #4035 — ask what is true NOW. A block that is already in progress produced
-  // its one event before this dialog existed, and the daemon's dedup means it
-  // will not produce another until the block ends, so this query is the only
-  // thing that can put the banner on screen for a second dialog session.
-  useEffect(() => {
-    if (!enabled) return
-    let cancelled = false
-    commands
-      .getOsNetworkBlockStatus()
-      .then((res) => {
-        const current = unwrap(res)
-        // A live event that has already been applied is the newer fact — it is
-        // also the only thing that can have moved `status` off CLEAR by now, so
-        // this guard is what makes the assignment below safe to apply in either
-        // direction rather than raise-only.
-        if (cancelled || liveEventApplied.current) return
-        // Narrowed exactly as the event path narrows, and for the same reason:
-        // a block with no key names no catalog entry, the hook has no fallback
-        // wording, and the alternative to ignoring it is an empty banner.
-        setStatus(
-          current.blocked && current.reason_key != null
-            ? { blocked: true, reasonKey: current.reason_key }
-            : CLEAR,
-        )
-      })
-      .catch((err: unknown) => {
-        logger.warn('DeviceManagement', 'getOsNetworkBlockStatus() rejected', undefined, err)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [enabled])
 
   return status
 }

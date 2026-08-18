@@ -47,25 +47,28 @@
 //! [`blocked_transition`] answers the first, and its dedup makes it a bad
 //! answer to the second: a reading equal to the last one produces nothing, so
 //! the event stream is silent for the entire duration of a block after the
-//! first instant of it. A pairing dialog that mounts during that silence — the
-//! user closed the dialog and reopened it while still blocked — has nothing to
-//! render, which is the #3852 symptom exactly.
+//! first instant of it. A frontend listener that subscribes during that
+//! silence hears nothing and has nothing to render — and subscribing during
+//! the silence is the ordinary case, because the user opens the pairing UI
+//! *because* the network already stopped working. That is the #3852 symptom
+//! exactly, on a device the daemon has already correctly diagnosed.
 //!
 //! [`CURRENT_STATUS`] answers the second: it records **every** delivery, and
-//! [`current_status`] reads it for a UI that has just mounted. That is not the
-//! stale backfill #4034 ruled out. A stale backfill replays a past transition
-//! and can therefore describe a block that has ended; this reports the
-//! platform's most recent statement about the present, and the platform states
-//! the recovery too, so the value follows the block down.
+//! [`current_status`] reads it for a UI that has just started listening. That
+//! is not the stale backfill #4034 ruled out. A stale backfill replays a past
+//! transition and can therefore describe a block that has ended; this reports
+//! the platform's most recent statement about the present, and the platform
+//! states the recovery too, so the value follows the block down.
 //!
 //! Note that re-delivery on the Android side cannot substitute for this.
 //! `registerDefaultNetworkCallback` does re-deliver the current blocked status
 //! to a **freshly registered** callback (`onAvailable` "will always immediately
 //! be followed by … a call to `onBlockedStatusChanged`", per the platform
 //! javadoc), but the registration here is process-wide and made once — see
-//! `NetworkBlockMonitor.start` — and even if it were repeated per dialog mount,
-//! the re-delivered reading would be a repeat, and [`blocked_transition`] would
-//! swallow it. The fix has to be on the read side.
+//! `NetworkBlockMonitor.start` — and even if it were repeated whenever a
+//! listener appeared, the re-delivered reading would be a repeat, and
+//! [`blocked_transition`] would swallow it. The fix has to be on the read
+//! side.
 
 // JNI FFI is the only way to reach `ConnectivityManager`. The two `unsafe`
 // blocks below are justified inline and mirror `android_multicast`'s.
@@ -175,9 +178,9 @@ fn status_for(current: Option<bool>) -> OsNetworkBlockStatus {
 
 /// The OS network-block status as it stands **now** (#4035).
 ///
-/// Read by the `get_os_network_block_status` command so a pairing dialog that
-/// mounts mid-block renders the banner the transition-only event stream can no
-/// longer tell it about.
+/// Read by the `get_os_network_block_status` command so a frontend that starts
+/// listening mid-block renders the banner the transition-only event stream can
+/// no longer tell it about.
 ///
 /// A poisoned lock is recovered from rather than reported: the guarded value is
 /// a `bool` written by a single unconditional assignment, so no panic can leave
@@ -215,8 +218,9 @@ pub fn report_blocked_status(blocked: bool) {
     // Record what the platform just said BEFORE anything below can return
     // early, and unconditionally — including for the repeats the transition
     // rule swallows. This is what `current_status()` answers with (#4035), and
-    // a dialog mounting mid-block asks what is true now, not what was last
-    // emitted. Scoped so the guard is released before `REPORTER`'s is taken.
+    // a listener subscribing mid-block asks what is true now, not what was
+    // last emitted. Scoped so the guard is released before `REPORTER`'s is
+    // taken.
     {
         *CURRENT_STATUS
             .lock()

@@ -181,7 +181,8 @@ export const syncHandlers = {
   // ordinary private LAN does: nothing to warn about.
   get_bind_exposure_status: () => ({ internet_facing: null }),
 
-  // #4035 — the OS network-block status the pairing dialog reads on mount.
+  // #4035 — the OS network-block status the pairing UI reads once it is
+  // subscribed to `sync:network_blocked`.
   // Android's per-uid background firewall has no analogue in the mock (or on
   // any desktop host), so the honest answer is the one a device the OS has
   // said nothing about gives: not blocked, and therefore no banner key.

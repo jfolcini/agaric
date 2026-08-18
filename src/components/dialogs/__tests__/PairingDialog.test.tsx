@@ -164,9 +164,21 @@ const mockPeers = [
   },
 ]
 
+// #4035 (review note 4) — commands every mounted dialog issues on its own,
+// answered here so no individual test has to know about them. Without this,
+// `get_os_network_block_status` resolves `undefined` for any test that did not
+// name it, `unwrap` throws on the non-`Result`, and the rejection surfaces as a
+// `logger.warn` from a suite that has nothing to do with #4035. Explicit keys
+// in a call below still win — that is how the block-in-progress tests answer
+// `blocked: true`.
+const AMBIENT_INVOKES: Record<string, unknown> = {
+  get_os_network_block_status: { blocked: false, reason_key: null },
+}
+
 function mockInvokeByCommand(commands: Record<string, unknown>) {
+  const answers = { ...AMBIENT_INVOKES, ...commands }
   mockedInvoke.mockImplementation(async (cmd: string) => {
-    if (cmd in commands) return commands[cmd]
+    if (cmd in answers) return answers[cmd]
     return undefined
   })
 }
@@ -3084,14 +3096,10 @@ describe('PairingDialog', () => {
       if (!hadTauriInternals) {
         Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true })
       }
-      // #4035 — the hook now also queries the CURRENT block status on mount.
-      // Answer "not blocked" by default so these event-driven tests keep
-      // asserting on the event alone.
-      mockInvokeByCommand({
-        start_pairing: mockPairingInfo,
-        list_peer_refs: [],
-        get_os_network_block_status: { blocked: false, reason_key: null },
-      })
+      // `get_os_network_block_status` answers "not blocked" through
+      // `AMBIENT_INVOKES`, so these event-driven tests keep asserting on the
+      // event alone.
+      mockInvokeByCommand({ start_pairing: mockPairingInfo, list_peer_refs: [] })
     })
 
     afterEach(() => {
@@ -3135,14 +3143,54 @@ describe('PairingDialog', () => {
       })
     })
 
+    /**
+     * The close-and-reopen case, pinned because #4035 was originally written up
+     * as being about it. It is not: a second dialog session on a still-live
+     * block already showed the banner before this issue. `DeviceManagement`
+     * mounts this dialog unconditionally and `if (!open) return null` sits
+     * after every hook, so a close unmounts nothing; the subscription is gated
+     * on `__TAURI_INTERNALS__` rather than on `open`, so it survives, and so
+     * does the hook's `status`.
+     *
+     * The counts are what make that claim rather than merely illustrate it: the
+     * reopen issues no second `listen` and no second status query, and no event
+     * is emitted for it, so continuity of the listener is the only thing left
+     * that can explain the banner. Verified directly too — with the status
+     * query deleted from the hook entirely (i.e. `main`), everything here
+     * except the two count assertions still passes.
+     */
+    it('keeps the banner across a close and reopen, with no second listener or query', async () => {
+      const { rerender } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('Pair Device')
+      await waitFor(() => {
+        expect(mockListen).toHaveBeenCalledWith('sync:network_blocked', expect.any(Function))
+      })
+      await waitFor(() => expect(countInvokes('get_os_network_block_status')).toBe(1))
+
+      await emitNetworkBlock({ blocked: true, reason_key: 'pairing.osNetworkBlocked' })
+      expect(await screen.findByTestId('pairing-network-blocked')).toBeInTheDocument()
+
+      rerender(<PairingDialog open={false} onOpenChange={vi.fn()} />)
+      expect(screen.queryByTestId('pairing-network-blocked')).not.toBeInTheDocument()
+
+      rerender(<PairingDialog open onOpenChange={vi.fn()} />)
+      expect(await screen.findByTestId('pairing-network-blocked')).toBeInTheDocument()
+
+      expect(countInvokes('get_os_network_block_status')).toBe(1)
+      expect(
+        mockListen.mock.calls.filter(([name]) => name === 'sync:network_blocked'),
+      ).toHaveLength(1)
+    })
+
     // ---------------------------------------------------------------------
-    // #4035 — the SECOND dialog session on the same, still-live block.
+    // #4035 — a block ALREADY IN PROGRESS when this UI started listening.
     //
-    // The daemon reported the block once, to the first session's listener.
-    // Nothing will be emitted again until the block ends, so these tests emit
-    // NOTHING: everything on screen has to arrive through the mount-time
-    // query. Before #4035 the banner never appeared here and the user was
-    // shown a clean pairing UI on a device whose network was cut.
+    // The daemon spent the one event for that block before anything here was
+    // subscribed — the user is on this screen *because* the network already
+    // stopped working — and its dedup means the next event is the recovery.
+    // So these tests emit NOTHING: everything on screen has to arrive through
+    // the status query. Before #4035 the banner never appeared here and the
+    // user was shown a clean pairing UI on a device whose network was cut.
     // ---------------------------------------------------------------------
     it('shows the translated banner for a block already in progress, with no event at all', async () => {
       mockInvokeByCommand({
@@ -3164,7 +3212,7 @@ describe('PairingDialog', () => {
       expect(banner).not.toHaveTextContent('pairing.osNetworkBlocked')
     })
 
-    it('a recovery event still clears a banner the mount-time query raised', async () => {
+    it('a recovery event still clears a banner the status query raised', async () => {
       mockInvokeByCommand({
         start_pairing: mockPairingInfo,
         list_peer_refs: [],
