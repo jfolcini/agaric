@@ -1764,14 +1764,29 @@ jobs:
       # tauri-plugin-updater's updater.rs::verify_signature runs at install time,
       # here at build time, turns that silent post-release failure into a red
       # release job.
+      # #4115: this job installs one small package and shares none of the
+      # checkout -> prepare -> cache -> Tauri-stack shape of the other apt
+      # sites, which is why it was first left without prepare-apt. It is on the
+      # RELEASE path, though, so failing fast is a poor substitute for
+      # succeeding: prepare-apt's Azure mirror rewrite is the mitigation with
+      # the best evidence behind it (in both recorded stalls every Azure request
+      # completed and only archive.ubuntu.com hung), so it runs here too.
+      - name: Prepare apt (free dpkg lock, prefer the Azure mirror)
+        uses: ./.github/actions/prepare-apt
+
       - name: Install minisign
         run: |
           # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
           # covered by Acquire::*::Timeout, so without this it consumes the
           # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
+          #
+          # 120s, not the 300s used elsewhere: this job's budget is 20 minutes,
+          # the smallest of any apt site in the tree, and two 300s attempts
+          # would spend half of it before the updater payloads are even
+          # downloaded. Same reasoning as _validate.yml's coverage job.
+          sudo timeout 120 apt-get update || {
             echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update || {
+            sudo timeout 120 apt-get update || {
               echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
               exit 1
             }

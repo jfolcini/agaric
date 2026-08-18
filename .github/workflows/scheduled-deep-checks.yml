@@ -2040,6 +2040,17 @@ jobs:
         # `timeout-minutes: 60` budget.
         run: |
           for attempt in 1 2; do
+            # #4115: this bound is WEAKER than the sibling `sudo timeout 300
+            # apt-get update` sites, and the difference is worth knowing rather
+            # than assuming. `timeout` runs as the runner user; `npx` shells out
+            # to `sudo apt-get`, so the process actually holding the mirror
+            # connection runs as root and cannot be signalled from here — the
+            # same grandchild-under-sudo problem prepare-apt's own comment
+            # records. A hung apt therefore survives this SIGTERM and keeps the
+            # dpkg lock, so the retry below spends its full `fuser` wait first.
+            # Worst case stays bounded (~13 min of a 60-min budget) and is no
+            # worse than before, but do not read this as the same guarantee the
+            # apt-get sites have.
             if timeout 300 npx playwright install-deps chromium; then
               exit 0
             fi
