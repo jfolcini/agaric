@@ -2704,6 +2704,46 @@ pass_filenames = false
 files = '^(scripts/pr-overlap-diverged\.sh|scripts/lib/git-scratch-guard\.sh|\.github/workflows/pr-overlap\.yml)$'
 stages = ["pre-commit"]
 
+# pr-overlap-trust-boundary (#3967): the #3672 adversarial review found
+# pr-overlap.yml's (former) single `overlap` job holding `pull-requests:
+# write` in the same job that checked out this PR's own commits — for a fork
+# PR, code the fork author controls. It was not live only because GitHub
+# downgrades a fork `pull_request` run's token to read-only regardless of
+# `permissions:`, a mitigation that lives in GitHub's defaults, not in this
+# file, and survives only until the trigger becomes `pull_request_target`
+# (which gets no such downgrade). #3967 split the job into an untrusted
+# `compute` (permissions: {}, no GH_TOKEN, checks out the PR) and a trusted
+# `post` (pull-requests: write, never checks out PR-authored code) — a fact
+# about the file today that a comment cannot keep true on its own, per the
+# issue's own "comments going stale is the failure mode that caused a
+# separate blocking bug in this same batch". This guard checks it
+# mechanically instead: it fails only when BOTH hold at once — the workflow's
+# `on:` block names `pull_request_target` AND some step's checkout `ref:`
+# resolves to PR head content (`pull_request.head.*`, `github.head_ref`, or a
+# literal `refs/pull/<n>/(merge|head)`). A `pull_request_target` checkout with
+# no `ref:` override defaults to the BASE branch — the actual mitigation — so
+# the guard does not flag every use of the trigger, only the one shape that
+# reintroduces #3967's hazard.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "pr-overlap-trust-boundary"
+name = "pr-overlap.yml trust-boundary guard (#3967)"
+entry = "node scripts/check-pr-overlap-trust-boundary.mjs"
+language = "system"
+pass_filenames = false
+files = '^(\.github/workflows/pr-overlap\.yml|scripts/check-pr-overlap-trust-boundary\.mjs)$'
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "pr-overlap-trust-boundary-selftest"
+name = "pr-overlap.yml trust-boundary guard self-test (#3967 fixtures)"
+entry = "node scripts/check-pr-overlap-trust-boundary.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^(\.github/workflows/pr-overlap\.yml|scripts/check-pr-overlap-trust-boundary\.mjs)$'
+stages = ["pre-commit"]
+
 # pr-merge-result-check-selftest (#3672 steps 2/3): the overlap lane reports
 # which files two PRs share or which ratchet files diverged from `main` under
 # a branch — it deliberately never runs a guard on the MERGE RESULT itself,

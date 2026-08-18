@@ -25,6 +25,61 @@ name: Open-PR file overlap (informational)
 # `.github/workflows/branch-protection-assert.yml` — the comment step is
 # `continue-on-error` because a fork PR's GITHUB_TOKEN is read-only, and the
 # step summary is written unconditionally as the durable copy.
+#
+# ─── #3967 — the compute/post split ──────────────────────────────────────────
+#
+# The #3672 adversarial review flagged the original single `overlap` job:
+# it held `pull-requests: write` (to post the sticky comment) in the SAME job
+# that checked out this PR's own commits — a `pull_request` checkout is
+# `refs/pull/N/merge`, which for a fork PR is code the fork author controls.
+# Running fork-authored code in a job that also holds a write-scoped token is
+# the arrangement where a malicious PR can reach the token. It was not live —
+# GitHub issues a READ-ONLY `GITHUB_TOKEN` for a `pull_request` run from a
+# fork, regardless of what `permissions:` asks for — but that mitigation lives
+# entirely in GitHub's defaults, not in this file, and survives only until the
+# trigger changes to `pull_request_target` (which gets no such downgrade) or
+# a PAT gets added. A comment cannot enforce that it doesn't; see
+# `check-pr-overlap-trust-boundary.mjs` below for the guard that does.
+#
+# So the job is split by trust level instead of relying on the default:
+#
+#   * `compute` — the UNTRUSTED half. Checks out this PR's own commits
+#     (`refs/pull/N/merge`, fork-controlled for a fork PR), `permissions: {}`,
+#     NO `GH_TOKEN` anywhere in its environment. It can only compute facts
+#     from git history already on disk and write them to a file; it has
+#     nothing to exfiltrate and no token to exfiltrate it with. Its one job:
+#     the base-divergence half (`scripts/pr-overlap-diverged.sh`), which needs
+#     the actual PR branch's commit graph and cannot be done any other way.
+#     Uploads its result as an artifact — DATA, not a script, not a token.
+#
+#   * `post` — the TRUSTED half. Holds `pull-requests: write` (to post/PATCH
+#     the sticky comment). Never checks out this PR's commits: its checkout
+#     step below pins `ref: ${{ github.event.pull_request.base.sha }}` — a
+#     commit on the BASE branch, not attacker-controlled — specifically so it
+#     gets `scripts/pr-file-overlap.mjs` from the trusted base repo rather
+#     than from whatever version a fork PR shipped. It gets the OPEN-PR file
+#     lists straight from `gh pr list` (GitHub's own computation of what each
+#     PR touched, not code any PR author runs), and it gets `compute`'s
+#     divergence result from the artifact `compute` uploaded.
+#
+#     That artifact is UNTRUSTED INPUT: `compute` ran with no token, but it
+#     still executed whatever `scripts/pr-overlap-diverged.sh` a fork PR's own
+#     checkout shipped, so its output is attacker-influenced text, not a
+#     verified fact. `post` never lets it near a shell: the download step only
+#     produces a FILE (`diverged.txt`), which is passed to
+#     `node scripts/pr-file-overlap.mjs` as a `--diverged-from <path>` CLI
+#     argument — the filename, not the content — and the script reads and
+#     parses that file itself (`readFileSync` + line-split), the same way it
+#     already treats `prs.json`. Nothing in this workflow's `run:` steps
+#     string-interpolates the artifact's content into a shell command or a
+#     comment body; the comment body is built by `node` and posted with
+#     `gh api -F body=@overlap.md`, which reads the file directly rather than
+#     expanding it on a command line.
+#
+# `merge-result` below is unaffected by this split — it already ran with
+# `permissions: contents: read` only, no write scope and no comment step, so
+# it never had the arrangement #3967 is about; it now simply depends on `post`
+# instead of the old single `overlap` job for the two outputs it gates on.
 
 on:
   pull_request:
@@ -39,41 +94,17 @@ permissions:
   contents: read
 
 jobs:
-  overlap:
+  # ─────────────────────────────────────────────────────────────────────────
+  # compute — the UNTRUSTED half (#3967). Checks out this PR's own commits;
+  # `permissions: {}` and no `GH_TOKEN` anywhere below, so there is nothing
+  # here for fork-authored code in that checkout to reach for.
+  # ─────────────────────────────────────────────────────────────────────────
+  compute:
     runs-on: ubuntu-24.04
+    permissions: {}
     # Generous ceiling on a job whose real cost is seconds; if this ever fires,
     # something is retrying an API call, not computing an overlap.
     timeout-minutes: 10
-    # `ratchets`/`basechanged` are consumed by `merge-result` below, to
-    # decide whether it has anything to do — see that job for why "any
-    # overlap" is the wrong gate and these are the right one. `overlaps`
-    # (any shared file, ratchet or not) is NOT consumed by anything — it is
-    # informational only, surfaced for a human reading `gh run view`'s
-    # output alongside the sticky PR comment this job also posts, not a
-    # second gate sitting beside the two that are.
-    #
-    # `diverged` (the mine-FILTERED count) is NOT re-exported as a job
-    # output here (#4005 review): it has no consumer. `merge-result` below
-    # gates on `basechanged`, never `diverged`. The sticky comment does not
-    # read this job output either — it is rendered by `renderComment()`
-    # straight from `pr-file-overlap.mjs`'s own in-process `result` object
-    # and written to `--comment-body overlap.md` in the SAME step, before
-    # this `outputs:` block is even evaluated. `pr-file-overlap.mjs` still
-    # writes `diverged=` to its own `$GITHUB_OUTPUT` (kept for the script's
-    # own CLI contract and self-test), it is just not promoted past this job.
-    outputs:
-      overlaps: ${{ steps.overlap.outputs.overlaps }}
-      ratchets: ${{ steps.overlap.outputs.ratchets }}
-      # #3979: every path `main` has changed since this branch's merge base,
-      # UNFILTERED by whether this branch touches any of them. See
-      # `merge-result`'s own comment for why `diverged` (filtered to shared
-      # paths) alone let the gate skip the exact case it exists for.
-      basechanged: ${{ steps.overlap.outputs.basechanged }}
-    permissions:
-      contents: read
-      # Posting the informational comment. Read-only on fork PRs, which is why
-      # the comment step is `continue-on-error`.
-      pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,15 +112,19 @@ jobs:
           # branch and the base branch, and `pull_request` otherwise checks out
           # a depth-1 merge commit with nothing to compare against. Measured on
           # this repo's mutation lane, which already does this: 7–8s.
+          #
+          # No `ref:` override — the `pull_request` event's own default
+          # (`refs/pull/N/merge`) is exactly the fork-authored content this
+          # job needs to diff against, and is why this job carries NO token:
+          # see `check-pr-overlap-trust-boundary.mjs`, which fails if this
+          # trigger ever becomes `pull_request_target` while a checkout here
+          # still resolves to PR head content.
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Compute the overlap against every other open PR
-        id: overlap
+      - name: Compute this branch's divergence from main
+        id: diverged
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           # The PR's own head, NOT the `refs/pull/N/merge` commit the runner
@@ -99,15 +134,6 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -uo pipefail
-          # Every open PR including this one; the script filters `--pr` out.
-          # A failed read writes `[]`, which the script renders as "could not
-          # be computed" rather than as "no overlap" — the distinction this
-          # whole issue is about.
-          if ! gh pr list --repo "$REPO" --state open --limit 50 \
-              --json number,title,files > prs.json; then
-            echo '[]' > prs.json
-          fi
-
           # What the base branch has changed since this branch forked off it.
           # This is the half that catches the #3724 near-miss: #3717 had
           # already MERGED when #3724 opened, so no table over open pull
@@ -132,11 +158,133 @@ jobs:
           fi
           if bash scripts/pr-overlap-diverged.sh "$BASE_REF" "$HEAD_SHA" > diverged.tmp; then
             mv diverged.tmp diverged.txt
+            echo "computed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "divergence not computed; the comment will say so" >&2
+            echo "divergence not computed; the post job's comment will say so" >&2
             rm -f diverged.tmp
+            echo "computed=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Upload the divergence result
+        # No token, so this is the only way `post` (below) learns anything
+        # this job computed. `diverged.txt` is DATA — a list of paths — never
+        # a script and never executed; `post` treats even that as untrusted
+        # (see this file's own header). `if-no-files-found: warn`, not
+        # `error`: "not computed" is a real, tolerated outcome (the step
+        # above already logged why), not a failure of this job.
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-overlap-diverged-${{ github.event.pull_request.number }}
+          path: diverged.txt
+          if-no-files-found: warn
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # post — the TRUSTED half (#3967). Holds `pull-requests: write`; never
+  # checks out this PR's own commits — see the checkout step below.
+  # ─────────────────────────────────────────────────────────────────────────
+  post:
+    needs: compute
+    # `!cancelled()`, not `always()`: this workflow sets
+    # `concurrency.cancel-in-progress: true` above, and `always()` also fires
+    # on a run that was CANCELLED (superseded by a newer push), which would
+    # let this job post a comment for a stale head. `!cancelled()` still runs
+    # despite `compute` failing outright (its own steps are already tolerant
+    # of "not computed"; a hard failure — e.g. the checkout itself — should
+    # still let this job post the open-PR table with the divergence section
+    # reading "not computed", same as before this job existed). Same
+    # reasoning `merge-result` below applies to its own `needs:`.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      overlaps: ${{ steps.overlap.outputs.overlaps }}
+      ratchets: ${{ steps.overlap.outputs.ratchets }}
+      # #3979: every path `main` has changed since this branch's merge base,
+      # UNFILTERED by whether this branch touches any of them. See
+      # `merge-result`'s own comment for why `diverged` (filtered to shared
+      # paths) alone let the gate skip the exact case it exists for.
+      basechanged: ${{ steps.overlap.outputs.basechanged }}
+    permissions:
+      contents: read
+      # Posting the informational comment. Read-only on fork PRs, which is why
+      # the comment step is `continue-on-error` — kept even though this job no
+      # longer checks out fork-authored code, since GitHub's fork downgrade is
+      # unconditional on `pull_request` and costs nothing to keep relying on
+      # in addition to (not instead of) the structural split #3967 made.
+      pull-requests: write
+    steps:
+      - name: Checkout the TRUSTED script source
+        # MUST run before the artifact download below, not after: this is a
+        # fresh job with no pre-existing checkout, so `actions/checkout` finds
+        # no `.git` in the workspace and takes its "recreate" path, which
+        # deletes every entry the workspace directory already contains before
+        # cloning — `git-directory-helper.ts`'s `prepareExistingDirectory()`,
+        # `remove = true` because `!directoryExistsSync(path.join(repositoryPath,
+        # '.git'))`, then `for (const file of await fs.readdir(repositoryPath))
+        # await rmRF(...)`. Downloading the artifact FIRST, as an earlier
+        # revision of this job did, means this step silently deletes
+        # `diverged.txt` before the step below ever reads it — every run then
+        # reports the base-divergence half as "not computed", the exact #3724
+        # near-miss signal this workflow exists to carry, even on a run where
+        # `compute` uploaded a real result. Checking out first means the
+        # artifact download below lands in an already-populated (by this
+        # step, not by leftover job state) directory that `download-artifact`
+        # only adds to, never cleans.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # `ref:` pinned to the BASE branch commit GitHub recorded for this
+          # PR — a commit in THIS repo's own history, never the fork's. This
+          # is the one line that makes the split real: without it, the
+          # `pull_request` event's default checkout here would still resolve
+          # to `refs/pull/N/merge` (fork content) even though this job holds
+          # a write-scoped token, reintroducing the exact combination #3967
+          # removed. `check-pr-overlap-trust-boundary.mjs` polices the
+          # trigger side of that; this `ref:` is the checkout side.
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Download the divergence result
+        id: download-diverged
+        # Best-effort: `compute` may not have uploaded at all (e.g. its
+        # checkout step itself failed), and that must not fail THIS job —
+        # same tolerance the inline script below already applies to a missing
+        # `diverged.txt`. Runs AFTER the checkout above — see that step's own
+        # comment for why the order is load-bearing, not cosmetic.
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pr-overlap-diverged-${{ github.event.pull_request.number }}
+          path: .
+
+      - name: Compute the overlap against every other open PR, and render
+        id: overlap
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          # Every open PR including this one; the script filters `--pr` out.
+          # A failed read writes `[]`, which the script renders as "could not
+          # be computed" rather than as "no overlap" — the distinction this
+          # whole issue is about. This is GitHub's OWN computation of each
+          # PR's changed files (the `gh pr list --json files` API), not code
+          # any PR author runs, so it needs no special handling as untrusted
+          # input the way `diverged.txt` below does.
+          if ! gh pr list --repo "$REPO" --state open --limit 50 \
+              --json number,title,files > prs.json; then
+            echo '[]' > prs.json
+          fi
+
+          # `diverged.txt`, if `compute` produced one, is UNTRUSTED: it was
+          # written by a script `compute` read out of this PR's own (possibly
+          # fork-authored) checkout, running with no token but still capable
+          # of writing arbitrary text to its stdout. It is passed here as a
+          # FILENAME only — `pr-file-overlap.mjs` reads and line-splits the
+          # file itself — never expanded into this shell script or into the
+          # comment body via string interpolation.
           args=(--pr "$PR_NUMBER" --prs prs.json --comment-body overlap.md)
           [ -f diverged.txt ] && args+=(--diverged-from diverged.txt)
           node scripts/pr-file-overlap.mjs "${args[@]}"
@@ -171,14 +319,14 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # merge-result (#3672 steps 2/3) — the part `overlap` above deliberately
-  # does not do: actually verify the MERGE RESULT, not just report which
-  # files two PRs touch.
+  # merge-result (#3672 steps 2/3) — the part `compute`/`post` above
+  # deliberately do not do: actually verify the MERGE RESULT, not just report
+  # which files two PRs touch.
   #
   # Gated on `ratchets`/`basechanged`, NOT on `overlaps` (any shared file). An
-  # ordinary shared file is "a fact a human has to weigh" (see the `overlap`
-  # job's own header) — this lane must not manufacture unactionable red over
-  # it, same reasoning #3350 argues for `overlap` itself. `ratchets` IS a
+  # ordinary shared file is "a fact a human has to weigh" (see the `post` job's
+  # own header above) — this lane must not manufacture unactionable red over
+  # it, same reasoning #3350 argues for that job itself. `ratchets` IS a
   # whole-tree-ratchet-only count (`pr-file-overlap.mjs`'s `ratchetCount`).
   #
   # `basechanged` (#3979 fix; `pr-file-overlap.mjs`'s `baseChangedCount`) is
@@ -206,7 +354,7 @@ jobs:
   # `diverged` itself is left in `pr-file-overlap.mjs`'s own script output —
   # the sticky PR comment reads it there, in-process, via `renderComment()`,
   # not through this workflow's job outputs — but it is not re-exported as a
-  # job output of the `overlap` job (#4005 review): `divergedFiles` is by
+  # job output of the `post` job (#4005 review): `divergedFiles` is by
   # construction a subset of the unfiltered set `basechanged` counts, so
   # `diverged != '0'` can never be true while `basechanged == '0'`, and
   # nothing in this workflow ever read the job output anyway. Not exporting
@@ -233,6 +381,12 @@ jobs:
   # --all-files` here (#3672 comment 3's step 3, in full) needs the whole
   # toolchain this lane deliberately does not carry; see that script's own
   # header for the scoping rationale and how to extend it.
+  #
+  # This job was already unaffected by #3967: it has always run with
+  # `permissions: contents: read` only (no write scope, no comment step), so
+  # it never carried the write-token-plus-fork-checkout arrangement that
+  # issue removed from `overlap` (now `compute`/`post`). It depends on `post`
+  # below purely for the two outputs it gates on.
   #
   # What this does NOT do: gate a merge on its own — it is not in the
   # required-check list, so a red here is visible on the PR but not enforced.
@@ -270,7 +424,7 @@ jobs:
   # fixing on its own; a fact about how fresh its green actually is on the
   # one merge path where it matters most.
   merge-result:
-    needs: overlap
+    needs: post
     # `basechanged` is a count, or the literal `unknown` when
     # pr-overlap-diverged.sh could not compute it. `unknown` must TRIGGER this
     # job, not exempt it: the #3724 shape has no open-PR overlap at all
@@ -282,14 +436,14 @@ jobs:
     # node — see below); not running it costs the incident.
     #
     # `!cancelled()` is load-bearing, not decoration: WITHOUT it, `needs:
-    # overlap` alone means any FAILURE in `overlap` (it is deliberately
+    # post` alone means any FAILURE in `post` (it is deliberately
     # non-required, and its red is tolerated by design — see its own header)
     # skips this job entirely, silently, rather than evaluating the
     # condition below. That is the exact "reported nothing while looking
     # like it ran" shape the rest of this PR exists to close, one job edge
     # away from the cases already fixed inside `pr-merge-result-check.sh`
-    # itself. `needs.overlap.outputs.*` still reads as empty-string (not
-    # `'0'`) when `overlap` failed before writing outputs, and the `!= '0'`
+    # itself. `needs.post.outputs.*` still reads as empty-string (not
+    # `'0'`) when `post` failed before writing outputs, and the `!= '0'`
     # gate below already treats that as "run" — same as the `unknown` case
     # above.
     #
@@ -299,17 +453,17 @@ jobs:
     # `concurrency.cancel-in-progress: true` (top of this file), so a rapid
     # second push cancels the in-flight run for the FIRST push, whose
     # `merge-result` job `always()` would then still start against the now
-    # STALE head. `!cancelled()` keeps the "run despite overlap's tolerated
+    # STALE head. `!cancelled()` keeps the "run despite post's tolerated
     # failure" behaviour above without also resurrecting a superseded run.
     if: |
       !cancelled() && (
-        needs.overlap.outputs.ratchets != '0' ||
-        needs.overlap.outputs.basechanged != '0'
+        needs.post.outputs.ratchets != '0' ||
+        needs.post.outputs.basechanged != '0'
       )
     runs-on: ubuntu-24.04
     # Real cost is a checkout + one git merge + six short guard invocations
     # (three Python, two bash, one node) — generous ceiling for the same
-    # reason as `overlap`'s.
+    # reason as `compute`'s.
     timeout-minutes: 10
     permissions:
       contents: read
@@ -318,7 +472,7 @@ jobs:
         with:
           # Full history: scripts/pr-merge-result-check.sh needs the base
           # branch's commit graph to build a real merge, and the PR head's
-          # too. Same rationale as `overlap`'s checkout above.
+          # too. Same rationale as `compute`'s checkout above.
           fetch-depth: 0
           persist-credentials: false
 
@@ -327,7 +481,7 @@ jobs:
         # workflow run started, but `main` as of this instant — the base a
         # merge click would actually use.
         #
-        # `|| true`, matching the tolerant equivalent above in `overlap`
+        # `|| true`, matching the tolerant equivalent above in `compute`
         # (line 113): this runs after `persist-credentials: false`, so it is
         # an anonymous fetch with no fallback credential if the repo is
         # ever made private — a bare failure here would turn permanently red
@@ -346,7 +500,7 @@ jobs:
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           # The PR's own head, not the `refs/pull/N/merge` ref this checkout
-          # step actually landed on — same reason as `overlap`'s HEAD_SHA.
+          # step actually landed on — same reason as `compute`'s HEAD_SHA.
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -uo pipefail
