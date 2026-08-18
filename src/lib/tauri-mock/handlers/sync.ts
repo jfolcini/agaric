@@ -180,6 +180,12 @@ export const syncHandlers = {
   // ordinary private LAN does: nothing to warn about.
   get_bind_exposure_status: () => ({ internet_facing: null }),
 
+  // #4035 — the OS network-block status the pairing dialog reads on mount.
+  // Android's per-uid background firewall has no analogue in the mock (or on
+  // any desktop host), so the honest answer is the one a device the OS has
+  // said nothing about gives: not blocked, and therefore no banner key.
+  get_os_network_block_status: () => ({ blocked: false, reason_key: null }),
+
   // ---------------------------------------------------------------------------
   // Task properties (todo/priority/due/scheduled)
   // ---------------------------------------------------------------------------
@@ -263,6 +269,7 @@ export const syncHandlers = {
   | 'cancel_sync'
   | 'get_mdns_status'
   | 'get_bind_exposure_status'
+  | 'get_os_network_block_status'
   | 'update_peer_name'
   | 'set_peer_address'
   | 'get_mcp_status'

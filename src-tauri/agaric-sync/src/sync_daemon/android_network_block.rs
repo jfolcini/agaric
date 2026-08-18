@@ -38,6 +38,34 @@
 //! `Java_com_agaric_app_NetworkBlockMonitor_nativeOnBlockedStatusChanged` (in
 //! the app crate — only the `cdylib` root reliably exports symbols; see
 //! `src-tauri/src/android_jni.rs` for that argument in full).
+//!
+//! ## Two questions, two pieces of state (#4035)
+//!
+//! "What should I emit?" and "is it blocked now?" are different questions and
+//! this module keeps a separate answer for each.
+//!
+//! [`blocked_transition`] answers the first, and its dedup makes it a bad
+//! answer to the second: a reading equal to the last one produces nothing, so
+//! the event stream is silent for the entire duration of a block after the
+//! first instant of it. A pairing dialog that mounts during that silence — the
+//! user closed the dialog and reopened it while still blocked — has nothing to
+//! render, which is the #3852 symptom exactly.
+//!
+//! [`CURRENT_STATUS`] answers the second: it records **every** delivery, and
+//! [`current_status`] reads it for a UI that has just mounted. That is not the
+//! stale backfill #4034 ruled out. A stale backfill replays a past transition
+//! and can therefore describe a block that has ended; this reports the
+//! platform's most recent statement about the present, and the platform states
+//! the recovery too, so the value follows the block down.
+//!
+//! Note that re-delivery on the Android side cannot substitute for this.
+//! `registerDefaultNetworkCallback` does re-deliver the current blocked status
+//! to a **freshly registered** callback (`onAvailable` "will always immediately
+//! be followed by … a call to `onBlockedStatusChanged`", per the platform
+//! javadoc), but the registration here is process-wide and made once — see
+//! `NetworkBlockMonitor.start` — and even if it were repeated per dialog mount,
+//! the re-delivered reading would be a repeat, and [`blocked_transition`] would
+//! swallow it. The fix has to be on the read side.
 
 // JNI FFI is the only way to reach `ConnectivityManager`. The two `unsafe`
 // blocks below are justified inline and mirror `android_multicast`'s.
@@ -45,7 +73,7 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::sync_events::{SyncEvent, SyncEventSink};
+use crate::sync_events::{OsNetworkBlockStatus, SyncEvent, SyncEventSink};
 
 /// The i18n key naming the explanation shown to the user when blocked.
 ///
@@ -76,7 +104,9 @@ pub const BLOCKED_REASON_KEY: &str = "pairing.osNetworkBlocked";
 /// * **Only transitions.** `registerDefaultNetworkCallback` re-delivers the
 ///   current status on every network change, so an un-deduped forwarder would
 ///   emit on every Wi-Fi roam and every VPN flap. A banner that redraws
-///   constantly is one the user learns to ignore.
+///   constantly is one the user learns to ignore. The cost of the rule is that
+///   the stream says nothing for the whole duration of a block after its first
+///   instant, which is why [`current_status`] exists (#4035).
 /// * **A first reading of "not blocked" is not news.** It is the state every
 ///   healthy device is in, so emitting it would put this event — and the
 ///   listener cost behind it — on every boot to say nothing. `false` is worth
@@ -104,10 +134,61 @@ pub fn blocked_transition(previous: Option<bool>, now: bool) -> Option<SyncEvent
 /// `ConnectivityManager`, not by anything Agaric called.
 struct Reporter {
     sink: Arc<dyn SyncEventSink>,
+    /// The last status an **event** was emitted for. Exists to dedup the event
+    /// stream, and is lossy by design for that purpose: it stays `None`
+    /// through a first reading of `false` (which emits nothing) and is not
+    /// touched by the repeats [`blocked_transition`] swallows. Do not read it
+    /// to answer "is it blocked now" — that is [`CURRENT_STATUS`].
     last_reported: Mutex<Option<bool>>,
 }
 
 static REPORTER: OnceLock<Reporter> = OnceLock::new();
+
+/// The platform's most recent statement about this uid, or `None` if it has
+/// not made one (#4035).
+///
+/// Deliberately separate from [`Reporter::last_reported`] and deliberately
+/// outside [`REPORTER`]: it is written before the sink is consulted, so a
+/// reading that lands while the daemon is still dormant — before
+/// [`install_event_sink`] — still informs [`current_status`]. That is not the
+/// buffering #4034 ruled out; nothing is replayed to a listener later, and any
+/// change to this value arrives as its own delivery from the platform.
+static CURRENT_STATUS: Mutex<Option<bool>> = Mutex::new(None);
+
+/// Project the platform's most recent statement into the wire status.
+///
+/// Pure, so the "never heard from the platform" case is testable with no
+/// process-global in play. `None` and `Some(false)` give the same answer —
+/// a device that was never told it is blocked is not blocked — but they are
+/// not the same fact, which is why the global keeps them apart rather than
+/// defaulting to `false` at the write.
+fn status_for(current: Option<bool>) -> OsNetworkBlockStatus {
+    let blocked = current.unwrap_or(false);
+    OsNetworkBlockStatus {
+        blocked,
+        // Built from the same constant the event uses, so a backfilled block
+        // and a live one name the same catalog entry. `Some` exactly when
+        // blocked: there is no banner to label otherwise.
+        reason_key: blocked.then(|| BLOCKED_REASON_KEY.to_owned()),
+    }
+}
+
+/// The OS network-block status as it stands **now** (#4035).
+///
+/// Read by the `get_os_network_block_status` command so a pairing dialog that
+/// mounts mid-block renders the banner the transition-only event stream can no
+/// longer tell it about.
+///
+/// A poisoned lock is recovered from rather than reported: the guarded value is
+/// a `bool` written by a single unconditional assignment, so no panic can leave
+/// it half-written, and answering "blocked?" with an error would drop the
+/// warning this whole path exists to deliver.
+pub fn current_status() -> OsNetworkBlockStatus {
+    let current = *CURRENT_STATUS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    status_for(current)
+}
 
 /// Install the sink the OS block reports are routed to.
 ///
@@ -125,10 +206,23 @@ pub fn install_event_sink(sink: Arc<dyn SyncEventSink>) {
 /// Report a blocked-status reading from the platform.
 ///
 /// Called from the JNI callback on Android; called directly by tests. A reading
-/// that arrives before [`install_event_sink`] is dropped — there is nothing to
-/// deliver it to, and buffering it would surface a stale firewall state at an
-/// unrelated later moment.
+/// that arrives before [`install_event_sink`] emits no *event* — there is
+/// nothing to deliver it to, and buffering an event would surface a stale
+/// firewall state at an unrelated later moment. It still updates
+/// [`CURRENT_STATUS`], which is a fact about the present rather than a message
+/// waiting to be delivered.
 pub fn report_blocked_status(blocked: bool) {
+    // Record what the platform just said BEFORE anything below can return
+    // early, and unconditionally — including for the repeats the transition
+    // rule swallows. This is what `current_status()` answers with (#4035), and
+    // a dialog mounting mid-block asks what is true now, not what was last
+    // emitted. Scoped so the guard is released before `REPORTER`'s is taken.
+    {
+        *CURRENT_STATUS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(blocked);
+    }
+
     let Some(reporter) = REPORTER.get() else {
         tracing::debug!(
             blocked,
@@ -317,14 +411,108 @@ mod tests {
         );
     }
 
+    // -- #4035: the mount-time read of the CURRENT status --------------------
+
+    /// The question a dialog asks on mount, answered from a live block.
+    ///
+    /// The key is spelled out rather than compared to [`BLOCKED_REASON_KEY`]
+    /// for the same reason the event test spells it out: a constant-to-constant
+    /// assertion is a tautology, and what has to hold is that a *backfilled*
+    /// block names the same catalog entry a live one does.
+    #[test]
+    fn a_current_block_is_reported_with_the_same_key_the_event_carries() {
+        let status = status_for(Some(true));
+        assert!(status.blocked, "a live block must read as blocked");
+        assert_eq!(
+            status.reason_key.as_deref(),
+            Some("pairing.osNetworkBlocked"),
+            "a backfilled block must name the catalog entry a live one names"
+        );
+    }
+
+    /// Never heard from the platform is not a block.
+    ///
+    /// This is the case every non-Android platform is in permanently, and the
+    /// case Android is in until `ConnectivityManager` first speaks. Inventing a
+    /// block here would put a "keep your screen on" banner in front of every
+    /// desktop user — the failure #3852's fix was careful not to introduce, and
+    /// the one a mount-time read is most likely to reintroduce.
+    #[test]
+    fn silence_from_the_platform_is_not_a_block() {
+        let status = status_for(None);
+        assert!(
+            !status.blocked,
+            "a platform that has said nothing has not said 'blocked'"
+        );
+        assert!(
+            status.reason_key.is_none(),
+            "there is no banner to label, so there is no key, got {:?}",
+            status.reason_key
+        );
+    }
+
+    /// A block that ended reads as ended — the exact case #4034's "no stale
+    /// backfill" rule is about. The platform states the recovery, so the
+    /// recorded status follows it down and this query can never resurrect it.
+    #[test]
+    fn a_block_that_ended_is_not_reported() {
+        let status = status_for(Some(false));
+        assert!(
+            !status.blocked,
+            "the platform's most recent word was 'not blocked'"
+        );
+        assert!(status.reason_key.is_none());
+    }
+
+    /// The wire shape the frontend narrows on, pinned by literal field names.
+    ///
+    /// `reason_key` is snake_case (the enum's `rename_all` retags variants, not
+    /// fields) and `useOsNetworkBlock.ts` reads exactly that spelling off the
+    /// backfill. The absent `reason` matters as much as the present key: the
+    /// backfill must not become the one path that ships English prose to a
+    /// non-English user.
+    #[test]
+    fn the_backfill_payload_carries_a_key_and_no_english_prose() {
+        let json = serde_json::to_value(status_for(Some(true))).expect("serialize status");
+        assert_eq!(
+            json["blocked"], true,
+            "the frontend narrows on `blocked`, got: {json}"
+        );
+        assert_eq!(
+            json["reason_key"], "pairing.osNetworkBlocked",
+            "the backfill must name an i18n key the frontend can translate, got: {json}"
+        );
+        assert!(
+            json.get("reason").is_none(),
+            "no English prose may ride along on the backfill, got: {json}"
+        );
+    }
+
     /// End to end over the real reporting entry point — the function the JNI
     /// callback calls — including its process-global dedup state.
     ///
-    /// Deliberately the ONLY test that touches the global: a second one would
+    /// Deliberately the ONLY test that touches the globals: a second one would
     /// be order-dependent under a shared-process runner. The whole sequence
-    /// (install → healthy → block → repeat → recover) lives here instead.
+    /// (pre-sink → install → healthy → block → repeat → recover) lives here
+    /// instead, and it asserts on BOTH globals at each step, because the whole
+    /// point of #4035 is that they answer different questions.
     #[test]
-    fn report_blocked_status_emits_only_on_transitions() {
+    fn report_blocked_status_emits_only_on_transitions_but_always_records_the_current_status() {
+        // Before any sink exists. A reading here delivers no event — there is
+        // nothing to deliver it to — but it is still a statement about the
+        // present, so `current_status()` must have it. If the recording were
+        // moved below the sink check, this reddens.
+        report_blocked_status(true);
+        assert!(
+            current_status().blocked,
+            "a block reported while the daemon is dormant is still a live block"
+        );
+        report_blocked_status(false);
+        assert!(
+            !current_status().blocked,
+            "the recovery must land even with no sink installed"
+        );
+
         let typed = Arc::new(RecordingEventSink::new());
         let sink: Arc<dyn SyncEventSink> = typed.clone();
         install_event_sink(sink);
@@ -334,6 +522,10 @@ mod tests {
             typed.events().is_empty(),
             "a healthy first reading must emit nothing, got {:?}",
             typed.events()
+        );
+        assert!(
+            !current_status().blocked,
+            "a healthy reading must read back as healthy"
         );
 
         report_blocked_status(true); // the block
@@ -346,6 +538,20 @@ mod tests {
         );
         assert!(blocked_flag(&typed.events()[0]));
 
+        // #4035, the whole point: the second reading produced NO event, and a
+        // dialog mounting right now sees no event either — so the only thing
+        // that can tell it the network is cut is this query.
+        let status = current_status();
+        assert!(
+            status.blocked,
+            "a block the event stream has gone quiet about is still a block"
+        );
+        assert_eq!(
+            status.reason_key.as_deref(),
+            Some("pairing.osNetworkBlocked"),
+            "the query must name the banner's catalog entry"
+        );
+
         report_blocked_status(false); // recovery
         let events = typed.events();
         assert_eq!(
@@ -356,6 +562,16 @@ mod tests {
         assert!(
             !blocked_flag(&events[1]),
             "the second event must be the recovery"
+        );
+        let status = current_status();
+        assert!(
+            !status.blocked,
+            "the query must never outlive the block it describes"
+        );
+        assert!(
+            status.reason_key.is_none(),
+            "a cleared status has no banner to label, got {:?}",
+            status.reason_key
         );
     }
 }

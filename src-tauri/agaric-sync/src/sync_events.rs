@@ -291,6 +291,44 @@ pub struct BindExposureStatus {
 /// mirrors [`MdnsStatusState`].
 pub struct BindExposureStatusState(pub std::sync::Mutex<BindExposureStatus>);
 
+// ---------------------------------------------------------------------------
+// OS network-block status (#4035) — a mount-time read of the CURRENT block
+// ---------------------------------------------------------------------------
+
+/// #4035: what the platform says about this app's network **right now**.
+///
+/// Unlike [`MdnsStatus`] and [`BindExposureStatus`], this is not a record of a
+/// past emission, and it deliberately has no `…State` holder written by the
+/// event sink. [`SyncEvent::NetworkBlockedByOs`] fires only on a *transition*
+/// (`sync_daemon::android_network_block::blocked_transition`) and the dedup
+/// behind that rule is process-global, so a pairing dialog opened a second time
+/// during one continuous block receives no event at all: the block was already
+/// reported, to a listener that has since unmounted. That is #3852's failure
+/// mode — a clean UI on a device whose network is cut — moved one dialog-open
+/// later.
+///
+/// The answer is a read of the *current* status, not a replay of the last
+/// transition. #4034 declined a backfill because "a status queried at mount
+/// could describe a block that ended seconds ago"; that is an argument against
+/// replaying a past event, and this is not one. `blocked` is the most recent
+/// thing `onBlockedStatusChanged` said, updated on **every** delivery —
+/// including the repeats the event stream deliberately swallows — so it cannot
+/// outlive the block it describes: the platform delivers the recovery and this
+/// value follows it to `false`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct OsNetworkBlockStatus {
+    /// `true` while the platform's most recent statement about this uid is
+    /// "blocked". `false` also covers "the platform has never said anything":
+    /// a device that was never told it is blocked is not blocked, and on every
+    /// platform but Android that is the only value this can take.
+    pub blocked: bool,
+    /// The i18n key naming the explanation to show, `Some` exactly when
+    /// `blocked` — the same field, built from the same constant, as
+    /// [`SyncEvent::NetworkBlockedByOs`]'s, so the frontend narrows a backfill
+    /// and a live event through one code path instead of two.
+    pub reason_key: Option<String>,
+}
+
 /// Event emitted when block properties change (for panel invalidation).
 pub const EVENT_PROPERTY_CHANGED: &str = "block:properties-changed";
 

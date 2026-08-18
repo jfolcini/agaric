@@ -78,6 +78,10 @@ const ALLOWLIST = new Map([
     'clones a lock-guarded bind-exposure value; same shape as get_mdns_status (#3864)',
   ],
   [
+    'sync_cmds.rs:get_os_network_block_status',
+    'reads a process-global bool the JNI callback writes; no state, no I/O, nothing fallible (#4035)',
+  ],
+  [
     'mod.rs:is_flatpak',
     'trivial /.flatpak-info exists() check; no fallible work worth a span (#2974)',
   ],

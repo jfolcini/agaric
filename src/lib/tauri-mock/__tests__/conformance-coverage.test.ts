@@ -509,6 +509,7 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   get_recovery_status: 'no domain state — boot recovery status',
   get_mdns_status: 'no domain state — mDNS discovery status',
   get_bind_exposure_status: 'no domain state — sync endpoint bind exposure',
+  get_os_network_block_status: 'no domain state — OS per-uid network-block status',
   is_flatpak: 'no domain state — packaging/environment probe',
   get_mcp_status: 'no domain state — MCP server runtime status',
   get_mcp_rw_status: 'no domain state — MCP server runtime status',

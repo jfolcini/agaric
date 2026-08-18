@@ -551,6 +551,25 @@ export const commands = {
 	 *  `sync:internet_facing_bind` event essentially every time.
 	 */
 	getBindExposureStatus: () => typedError<BindExposureStatus, AppError>(__TAURI_INVOKE("get_bind_exposure_status")),
+	/**
+	 *  Tauri command: return whether the OS is blocking this app's traffic **right
+	 *  now** (#4035).
+	 * 
+	 *  The pairing dialog calls this on mount. Unlike the two commands above this
+	 *  is not a race fix: `SyncEvent::NetworkBlockedByOs` is emitted only on a
+	 *  *transition*, and the dedup behind that is process-global, so a dialog
+	 *  opened a second time during one continuous block gets no event no matter how
+	 *  early it subscribes. Without this query the second session shows a clean UI
+	 *  on a device whose network is cut — #3852's failure mode, one dialog-open
+	 *  later.
+	 * 
+	 *  Takes no managed state: the answer lives in the `android_network_block`
+	 *  process-global that the JNI callback writes, which is where the platform's
+	 *  statements land and the only place they are complete (the event stream drops
+	 *  every repeat). Returns "not blocked" on every non-Android platform, where
+	 *  nothing ever writes it.
+	 */
+	getOsNetworkBlockStatus: () => typedError<OsNetworkBlockStatus, AppError>(__TAURI_INVOKE("get_os_network_block_status")),
 	/**  Tauri command: batch-count agenda items per date. Delegates to [`count_agenda_batch_inner`]. */
 	countAgendaBatch: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppError>(__TAURI_INVOKE("count_agenda_batch", { dates, scope })),
 	/**  Tauri command: batch-count agenda items per (date, source). Delegates to [`count_agenda_batch_by_source_inner`]. */
@@ -2570,6 +2589,45 @@ export type NamedDateRange = "overdue" | "today" | "yesterday" | "this-week" | "
 export type OpRef = {
 	device_id: string,
 	seq: number,
+};
+
+/**
+ *  #4035: what the platform says about this app's network **right now**.
+ * 
+ *  Unlike [`MdnsStatus`] and [`BindExposureStatus`], this is not a record of a
+ *  past emission, and it deliberately has no `…State` holder written by the
+ *  event sink. [`SyncEvent::NetworkBlockedByOs`] fires only on a *transition*
+ *  (`sync_daemon::android_network_block::blocked_transition`) and the dedup
+ *  behind that rule is process-global, so a pairing dialog opened a second time
+ *  during one continuous block receives no event at all: the block was already
+ *  reported, to a listener that has since unmounted. That is #3852's failure
+ *  mode — a clean UI on a device whose network is cut — moved one dialog-open
+ *  later.
+ * 
+ *  The answer is a read of the *current* status, not a replay of the last
+ *  transition. #4034 declined a backfill because "a status queried at mount
+ *  could describe a block that ended seconds ago"; that is an argument against
+ *  replaying a past event, and this is not one. `blocked` is the most recent
+ *  thing `onBlockedStatusChanged` said, updated on **every** delivery —
+ *  including the repeats the event stream deliberately swallows — so it cannot
+ *  outlive the block it describes: the platform delivers the recovery and this
+ *  value follows it to `false`.
+ */
+export type OsNetworkBlockStatus = {
+	/**
+	 *  `true` while the platform's most recent statement about this uid is
+	 *  "blocked". `false` also covers "the platform has never said anything":
+	 *  a device that was never told it is blocked is not blocked, and on every
+	 *  platform but Android that is the only value this can take.
+	 */
+	blocked: boolean,
+	/**
+	 *  The i18n key naming the explanation to show, `Some` exactly when
+	 *  `blocked` — the same field, built from the same constant, as
+	 *  [`SyncEvent::NetworkBlockedByOs`]'s, so the frontend narrows a backfill
+	 *  and a live event through one code path instead of two.
+	 */
+	reason_key: string | null,
 };
 
 /**
