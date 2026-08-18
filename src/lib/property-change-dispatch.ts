@@ -105,8 +105,16 @@ export function ensurePropertyChangeDispatch(onError?: (err: unknown) => void): 
 /**
  * Test-only reset. Drops every registered target and clears the lazy-listener
  * flag so each test starts from a clean slate. Imported by the consumer
- * `_reset*ForTest` helpers so a single consumer reset returns the whole
- * dispatch chain to a pristine state.
+ * `_reset*ForTest` helpers, but it only resets what THIS module owns
+ * (`targets` and `listenerInitialized`) — it cannot clear the private
+ * `targetRegistered` latch each consumer keeps for itself
+ * (`property-keys-cache.ts`, `property-values-cache.ts`,
+ * `block-property-events.ts`). Calling only ONE consumer's `_reset*ForTest`
+ * clears this module's shared state (including the other consumers' targets,
+ * via `targets.clear()`) while leaving the other two consumers'
+ * `targetRegistered` latches `true`, so their next `ensure*Listener()` call
+ * short-circuits and does not re-register. A test that needs the whole
+ * dispatch chain pristine must call every consumer's own reset, not just one.
  */
 export function _resetPropertyChangeDispatchForTest(): void {
   targets.clear()

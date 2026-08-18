@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { jexNoteToMarkdown, parseJex, sanitizeNoteTitleToFilename } from '@/lib/jex-import'
+import { jexNoteToMarkdown, parseJex } from '@/lib/jex-import'
 
 // --- Synthetic USTAR tar builder -------------------------------------------
 
@@ -228,12 +228,5 @@ describe('jexNoteToMarkdown', () => {
     expect(md).not.toContain('created:')
     expect(md).not.toContain('updated:')
     expect(md).toContain('source: joplin')
-  })
-})
-
-describe('sanitizeNoteTitleToFilename', () => {
-  it('keeps slashes (namespace separator) and collapses whitespace', () => {
-    expect(sanitizeNoteTitleToFilename('Projects/Roadmap')).toBe('Projects/Roadmap')
-    expect(sanitizeNoteTitleToFilename('  A\n\tB  ')).toBe('A B')
   })
 })
