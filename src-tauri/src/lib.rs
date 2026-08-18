@@ -2893,6 +2893,45 @@ mod log_bridge_tests {
     }
 }
 
+/// #4080 Tier 1 — the boot path itself, not the pieces it is made of.
+///
+/// `init_logging` is reachable only from Tauri's setup hook, so until this
+/// module existed the whole sequence — bridge install, appender build, registry
+/// composition, subscriber install — ran for the first time on a user's
+/// machine. 0.9.7 shipped a build that aborted there on every launch, on every
+/// platform, with the entire Rust suite green and four release jobs reporting
+/// success. The tests above cover the halves in isolation; this one runs the
+/// sequence.
+#[cfg(test)]
+mod boot_path_tests {
+    /// Drives the real `init_logging` against a mock app and a throwaway
+    /// app-data dir. Pre-#4079 this call aborted the process with
+    /// `SetLoggerError`, so the assertions below are almost incidental — the
+    /// load-bearing claim is that the call returns at all.
+    ///
+    /// nextest runs each test in its own process, so this is a real boot from
+    /// clean globals and not a fight with another test's logger.
+    #[test]
+    fn init_logging_completes_the_real_boot_sequence() {
+        let app = tauri::test::mock_app();
+        let dir = tempfile::tempdir().expect("throwaway app-data dir");
+
+        // Pre-#4079 this panicked instead of returning.
+        super::init_logging(&app, dir.path());
+
+        assert!(
+            tracing::dispatcher::has_been_set(),
+            "boot must leave a live global subscriber behind; without one every `tracing` \
+             event in the process is dropped and the app runs blind"
+        );
+        assert!(
+            super::log_dir_for_app_data(dir.path()).is_dir(),
+            "boot must create the log directory beneath the app-data dir it was handed, or \
+             `agaric.log` and the bug-report bundle both resolve to a path that does not exist"
+        );
+    }
+}
+
 #[cfg(test)]
 mod log_directives_tests {
     use super::{build_log_directives, has_directive_for_target};
