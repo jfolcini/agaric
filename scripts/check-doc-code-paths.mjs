@@ -22,8 +22,10 @@
 //
 // Heuristic:
 //   - Scan every tracked `*.md` file under `docs/`, the repo root,
-//     `AGENTS.md`, `CONTRIBUTING.md`, `SECURITY.md`, `pending/`, PLUS every
-//     tracked `*.ts` / `*.tsx` file (comments only, see above).
+//     `AGENTS.md`, `CONTRIBUTING.md`, `SECURITY.md` (see `DOC_ROOTS` for the
+//     exact list — `pending/` is NOT one of these; that folder was retired
+//     and its files migrated to GitHub issues), PLUS every tracked `*.ts` /
+//     `*.tsx` file (comments only, see above).
 //   - Read each file from the copy the caller is actually judging — the
 //     STAGED INDEX during a commit, the WORKING TREE otherwise (#3962,
 //     swept here by #4017). `--cached` / `--worktree` force it; with
@@ -33,7 +35,10 @@
 //     scripts/lib/guard-file-source.mjs.
 //   - Extract candidate paths from inline-code spans (`` `path/...` `` —
 //     the dominant doc AND code-comment convention) AND from markdown link
-//     targets (`[label](relative/path)`) in `.md` files.
+//     targets (`[label](relative/path)`) — `extractCandidates` runs both
+//     extractions over EVERY judged text, `.md` body or `.ts`/`.tsx` comment
+//     span alike, so a `](path)` inside a JSDoc comment is a candidate too,
+//     not only inside a `.md` file.
 //   - For each candidate, check whether the path exists IN THAT SAME
 //     SOURCE. Strip any `#anchor`, `?query`, `:N` line-number suffix
 //     before checking.
@@ -150,10 +155,22 @@ function baselineKey(file, ref) {
   return `${file}\u0000${ref}`
 }
 
-function readBaseline() {
+// `lenientOnParseError` (Note 5): ONLY `updateBaseline` may pass this. A
+// baseline that fails to parse (an unresolved merge-conflict marker, say)
+// is treated as empty so `--update-baseline` can re-anchor it from scratch
+// — the remedy the `check` error message itself points at. `check` never
+// passes it: a commit must still hard-fail on a corrupt baseline rather
+// than silently running as if nothing were grandfathered.
+function readBaseline({ lenientOnParseError = false } = {}) {
   if (!existsSync(BASELINE_FILE)) return []
   const raw = readFileSync(BASELINE_FILE, 'utf8')
-  const parsed = JSON.parse(raw)
+  let parsed
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    if (lenientOnParseError) return []
+    throw new Error(`${BASELINE_FILE} is not valid JSON: ${err.message}`)
+  }
   if (!Array.isArray(parsed)) {
     throw new Error(`${BASELINE_FILE} must contain a JSON array`)
   }
@@ -385,9 +402,14 @@ function computeMisses() {
   const judge = (citingFile, text) => {
     for (const ref of extractCandidates(text)) {
       const resolved = resolveAgainstDoc(citingFile, ref)
+      // Gated behind the exact-match result: the common case (a live
+      // citation) resolves on `tracked.has` alone, and must never pay for
+      // materialising the full tracked Set into an array — spreading it
+      // for EVERY candidate, exact hits included, is what made this O(n)
+      // per candidate once the #4126 widening added ~500 more candidates
+      // from TS/TSX comments on top of the Markdown set.
       const trackedExact = tracked.has(resolved)
-      const trackedDir = [...tracked].some((t) => t === resolved || t.startsWith(`${resolved}/`))
-      const isTracked = trackedExact || trackedDir
+      const isTracked = trackedExact || [...tracked].some((t) => t.startsWith(`${resolved}/`))
       // The index IS the answer to "will this path exist in the commit", so
       // under `--cached` the tracked set alone decides. Under `--worktree`
       // the path must ALSO be on disk, which is what catches a tracked file
@@ -446,14 +468,17 @@ function check() {
   if (newMisses.length === 0 && staleEntries.length === 0 && scanErrors.length === 0) {
     return 0
   }
-  // Name the source with the verdict. A red the author cannot reproduce by
-  // opening the file is otherwise indistinguishable from a broken guard.
+  // Name the source with the verdict — on ANY failure, not just a new
+  // miss: a run failing purely on stale baseline entries still needs this,
+  // or it reports no source at all, which is exactly the "a red the author
+  // cannot reproduce by opening the file is otherwise indistinguishable
+  // from a broken guard" case this line exists to prevent.
+  process.stderr.write(`  (judged the ${describeSource(chosen.source)} — ${chosen.why})\n`)
   if (newMisses.length > 0) {
     const shown = newMisses.slice(0, 50)
     process.stderr.write(
       'ERROR: doc/comment citations reference paths missing from the tracked tree:\n',
     )
-    process.stderr.write(`  (judged the ${describeSource(chosen.source)} — ${chosen.why})\n`)
     for (const m of shown) {
       const onDisk = m.onDisk === null ? 'n/a' : String(m.onDisk)
       process.stderr.write(
@@ -495,6 +520,11 @@ function check() {
  *
  * Refuses to write (exit 2) when there is a scan error: a baseline
  * computed from a tree we could not fully read is not trustworthy.
+ *
+ * Note 5: reads the EXISTING baseline leniently — an unparseable file
+ * (e.g. a leftover merge-conflict marker) is treated as empty rather than
+ * a hard error, so this is the one path that can actually repair it. `check`
+ * never does this (see `readBaseline`'s own comment).
  */
 function updateBaseline() {
   const result = computeMisses()
@@ -511,7 +541,7 @@ function updateBaseline() {
   }
   let existing
   try {
-    existing = readBaseline()
+    existing = readBaseline({ lenientOnParseError: true })
   } catch (err) {
     process.stderr.write(`check-doc-code-paths: invocation error: ${err.message}\n`)
     return 2
@@ -764,6 +794,86 @@ function baselineScenarios(root) {
       stale.status === 1 && /stale/i.test(stale.stderr) && /grandfathered\.ts/.test(stale.stderr),
       `expected 1 naming a stale entry for grandfathered.ts, got ${stale.status}: ${stale.stderr}`,
     )
+    // A failure that is PURELY a stale baseline entry (zero new misses,
+    // zero scan errors) must still print the "(judged the …)" source
+    // attribution — the same fixture as above already has the guard red on
+    // a stale-only cause, so it doubles as this assertion too.
+    record(
+      'a stale-only failure (no new misses) still prints the judged-source line',
+      /\(judged the .+\)/.test(stale.stderr),
+      `expected a "(judged the …)" line, got: ${stale.stderr}`,
+    )
+    return results
+  })
+}
+
+/**
+ * Note 5 — `--update-baseline` must be able to repair a CORRUPT baseline
+ * (e.g. an unresolved merge-conflict marker), not just re-anchor a valid
+ * one. `check` must still hard-fail on the same corrupt file — treating it
+ * as empty belongs to `updateBaseline` alone, never to the read path a
+ * normal commit goes through.
+ */
+function corruptBaselineScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+    const dir = join(root, 'corrupt-baseline')
+    const env = scrubbedGitEnv(root)
+    const git = initScratchRepo(dir, env)
+    const run = (flags) => {
+      const r = spawnSync(process.execPath, [import.meta.filename, ...flags], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      })
+      return { status: r.status, stderr: r.stderr ?? '', stdout: r.stdout ?? '' }
+    }
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'real.ts'), 'export const REAL = 1\n')
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The pipeline lives in `src/real.ts` today, per `src/nowhere/deleted.ts`.\n',
+    )
+    const baselinePath = join(dir, 'scripts', 'doc-code-paths-baseline.json')
+    // An unresolved merge-conflict marker — unparseable JSON.
+    writeFileSync(
+      baselinePath,
+      '<<<<<<< HEAD\n[]\n=======\n[{"file":"x","ref":"y"}]\n>>>>>>> branch\n',
+    )
+    git('add', '-A')
+
+    const checkResult = run(['--worktree'])
+    record(
+      '`check` still hard-fails (exit 2) on an unparseable baseline — never silently empty',
+      checkResult.status === 2,
+      `expected 2, got ${checkResult.status}: ${checkResult.stderr}`,
+    )
+
+    const updateResult = run(['--update-baseline'])
+    record(
+      '`--update-baseline` treats the SAME corrupt file as empty and repairs it (the fix)',
+      updateResult.status === 0,
+      `expected 0, got ${updateResult.status}: ${updateResult.stderr}`,
+    )
+
+    const rewritten = JSON.parse(readFileSync(baselinePath, 'utf8'))
+    record(
+      'the repaired baseline re-anchors to the current real miss, discarding the conflict markers',
+      Array.isArray(rewritten) &&
+        rewritten.length === 1 &&
+        rewritten[0].file === 'README.md' &&
+        rewritten[0].ref === 'src/nowhere/deleted.ts',
+      `expected one entry for README.md → src/nowhere/deleted.ts, got: ${JSON.stringify(rewritten)}`,
+    )
+
+    const cleanCheck = run(['--worktree'])
+    record(
+      '`check` is green afterward — the repaired baseline covers the same miss',
+      cleanCheck.status === 0,
+      `expected 0, got ${cleanCheck.status}: ${cleanCheck.stderr}`,
+    )
     return results
   })
 }
@@ -790,6 +900,7 @@ function selfTest() {
     results.push(...linkTargetScenarios(root))
     results.push(...tsCommentScenarios(root))
     results.push(...baselineScenarios(root))
+    results.push(...corruptBaselineScenarios(root))
     let failures = 0
     for (const result of results) {
       if (result.ok) {

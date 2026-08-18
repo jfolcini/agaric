@@ -43,8 +43,10 @@
 // ─── Canonical marker spelling ───────────────────────────────────────────
 //
 // Exactly `REMOVE AFTER <x.y.z>` (all-caps, that literal phrase, a semver
-// TRIPLE — no `v` prefix, no pre-release suffix), optionally wrapped in
-// markdown backticks/bold, as the original comment used it. The regex
+// TRIPLE — no `v` prefix, no pre-release suffix, no extra `.w` component),
+// optionally wrapped in markdown backticks, as the original comment used
+// it. Markdown BOLD (`**1.2.3**`) is NOT a canonical wrapping — a bold
+// marker is reported malformed, same as any other near-miss. The regex
 // below is deliberately narrow: mechanical findability was the whole
 // design goal (#4129's own text — "the value is in the marker being
 // mechanically findable, so the format has to be fixed, not prose"), so a
@@ -157,8 +159,13 @@ const MARKER_PHRASE_RE = /REMOVE AFTER/
 // Canonical spelling: the phrase, whitespace, an optional opening
 // backtick, a semver TRIPLE, an optional closing backtick. No `v` prefix,
 // no pre-release suffix — `#4129`'s own text pins the format to keep it
-// mechanically findable.
-const MARKER_STRICT_RE = /REMOVE AFTER\s+`?(\d+)\.(\d+)\.(\d+)`?/
+// mechanically findable. The trailing negative lookahead END-ANCHORS the
+// triple: it refuses to match when the digits are immediately followed by
+// `-` (a pre-release suffix, `1.2.3-beta`) or `.<digit>` (a fourth
+// component, `1.2.3.4`) — without it those forms would silently match on
+// their `1.2.3` PREFIX and be recorded as well-formed with the remainder
+// dropped, rather than reported as the malformed near-misses they are.
+const MARKER_STRICT_RE = /REMOVE AFTER\s+`?(\d+)\.(\d+)\.(\d+)(?!-|\.\d)`?/
 
 function scanTargets(tracked) {
   return tracked.filter((f) => {
@@ -452,6 +459,45 @@ function malformedScenarios(root) {
 }
 
 /**
+ * The header/regex end-anchoring, both directions. A pre-release suffix
+ * (`1.2.3-beta`) and a fourth component (`1.2.3.4`) must NOT silently match
+ * on their `1.2.3` prefix — they are near-misses, reported malformed, not
+ * accepted with the remainder dropped. Markdown BOLD is not a canonical
+ * wrapping (only backticks are) — a bold triple is malformed too, not a
+ * near-miss the header fails to document.
+ */
+function nearMissFormScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+    const cases = [
+      ['pre-release', '// REMOVE AFTER 1.2.3-beta\nexport const x = 1\n'],
+      ['fourth component', '// REMOVE AFTER 1.2.3.4\nexport const x = 1\n'],
+      ['bold wrapping', '// REMOVE AFTER **1.2.3**\nexport const x = 1\n'],
+    ]
+    for (const [label, contents] of cases) {
+      const dir = join(root, `near-miss-${label.replace(/\s+/g, '-')}`)
+      const env = scrubbedGitEnv(root)
+      const git = initScratchRepo(dir, env)
+      mkdirSync(join(dir, 'src-tauri'), { recursive: true })
+      writeFileSync(join(dir, 'src-tauri', 'tauri.conf.json'), tauriConf('1.0.0'))
+      mkdirSync(join(dir, 'src'), { recursive: true })
+      writeFileSync(join(dir, 'src', 'notes.ts'), contents)
+      git('add', '-A')
+      const result = run(dir, env, ['--worktree'])
+      record(
+        `${label} does not match the canonical triple — reported malformed, not silently truncated`,
+        result.status === 1 &&
+          /not in the canonical/.test(result.stderr) &&
+          /notes\.ts/.test(result.stderr),
+        `expected 1 naming a malformed marker in notes.ts, got ${result.status}: ${result.stderr}`,
+      )
+    }
+    return results
+  })
+}
+
+/**
  * #3962 — index vs working tree, ONE targeted pair (not the full generic
  * battery — this guard's fixture needs TWO tracked files in lockstep, which
  * the shared single-file `runSourceScenarios` harness does not model): a
@@ -497,6 +543,7 @@ function selfTest() {
       ...expiryScenarios(root),
       ...numericComparisonScenarios(root),
       ...malformedScenarios(root),
+      ...nearMissFormScenarios(root),
       ...sourceScenarios(root),
     ]
     let failures = 0
