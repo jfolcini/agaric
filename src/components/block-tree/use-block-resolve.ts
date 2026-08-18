@@ -299,6 +299,15 @@ function appendCreatePageOptionIfNeeded(
 // correct, if slightly eager: the backend has already committed the delete.
 
 /**
+ * SQLite's `NOCASE` collation folds ONLY ASCII `A`-`Z`, unlike `String.
+ * toLowerCase()` which folds every cased Unicode character. Mirrors that
+ * exactly so `comparePageRows` matches `NOCASE` rather than approximating it.
+ */
+function foldAsciiUppercase(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => c.toLowerCase())
+}
+
+/**
  * A patched-in-place rename must also re-establish the ORDER the fetch
  * returned, because both caches are served in list order: `searchPages`'s
  * empty/short query slices the FIRST 20 rows off `pagesListRef`, and
@@ -316,36 +325,42 @@ function appendCreatePageOptionIfNeeded(
  *     SQLite's default BINARY collation, i.e. case-SENSITIVE UTF-8 BYTE order.
  *
  * `compareTagRows` compares raw UTF-8 bytes (`compareUtf8Bytes`), so it is an
- * exact match for BINARY — not an approximation. `comparePageRows` is still
- * only an approximation of `NOCASE`, and it diverges for TWO independent
- * reasons, not one:
- *   1. `NOCASE` folds ASCII only; `toLowerCase()` folds Unicode too, so a page
- *      whose title differs only in non-ASCII casing (Turkish İ/i, and similar)
- *      can land in the wrong slot.
- *   2. After the fold it still compares with `<`, i.e. UTF-16 code units —
- *      so the exact byte-order divergence #4057 fixed for tags is ALSO live
- *      for pages. `NOCASE` case-folds and then memcmps bytes, so page titles
- *      `Ａ` (U+FF21) and `🎯` sort in opposite orders backend-vs-frontend for
- *      precisely the reason described below `compareUtf8Bytes`.
- * Reason 2 is fixable here by folding and then calling `compareUtf8Bytes`;
- * reason 1 needs an ASCII-only fold to match `NOCASE`. Tracked in #4131 —
- * #4057 covered tags only, and this comment should not be read as saying
- * case-folding is the whole story.
+ * exact match for BINARY — not an approximation. `comparePageRows` USED TO be
+ * only an approximation of `NOCASE`, diverging for TWO independent reasons:
+ *   1. `NOCASE` folds ASCII only; `toLowerCase()` folded Unicode too, so a
+ *      page whose title differed only in non-ASCII casing (Turkish İ/i, and
+ *      similar) could land in the wrong slot. Fixed by `foldAsciiUppercase`,
+ *      an ASCII-only fold matching what `NOCASE` actually does.
+ *   2. After the fold it still compared with `<`, i.e. UTF-16 code units —
+ *      the exact byte-order divergence #4057 fixed for tags, also live for
+ *      pages: `NOCASE` case-folds and then memcmps bytes, so page titles
+ *      whose UTF-16 and UTF-8 orders disagree (a supplementary-plane
+ *      character vs. one in U+E000–U+FFFF) sorted in opposite orders
+ *      backend-vs-frontend. Fixed by reusing `compareUtf8Bytes` here too.
+ * Both fixed together (#4131) — fixing one and not the other would have left
+ * this docblock wrong again in a new way.
  *
- * Either comparator only runs on a rename, so the worst case for the
- * remaining `comparePageRows` approximation is a locally-renamed row landing
- * one slot away from where a refetch would put it. Note the cache is not
- * perfectly ordered to begin with — `onCreatePage` has always APPENDED a
- * newly created page — so this restores the invariant for renames, it does
- * not establish one that never existed.
+ * The exactness claim is about the COMPARATOR, not the end-to-end ordering.
+ * Two residual gaps live outside it and are tracked in #4138: the cache seeds
+ * `title: p.content ?? 'Untitled'`, so a NULL-content page sorts as
+ * `'Untitled'` here and as `''` (first) in SQLite; and both comparators still
+ * tiebreak on `a.id < b.id`, which is UTF-16 order where the backend's
+ * `b.id ASC` is BINARY — inert only because ids are ASCII today.
+ *
+ * Either comparator only runs on a rename, so the worst case for either
+ * comparator is a locally-renamed row landing one slot away from where a
+ * refetch would put it. Note the cache is not perfectly ordered to begin
+ * with — `onCreatePage` has always APPENDED a newly created page — so this
+ * restores the invariant for renames, it does not establish one that never
+ * existed.
  */
 function comparePageRows(
   a: { id: string; title: string },
   b: { id: string; title: string },
 ): number {
-  const at = a.title.toLowerCase()
-  const bt = b.title.toLowerCase()
-  if (at !== bt) return at < bt ? -1 : 1
+  const at = foldAsciiUppercase(a.title)
+  const bt = foldAsciiUppercase(b.title)
+  if (at !== bt) return compareUtf8Bytes(at, bt)
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
