@@ -20,8 +20,14 @@
 //
 // #3967 split the job in two instead of relying on the default: the job that
 // checks out PR-authored code (`compute`, below) now declares `permissions:
-// {}` and never sees `GH_TOKEN`; the job that holds `pull-requests: write`
-// (`post`) never checks out PR-authored code. That split is a structural
+// contents: read` — NO write scope of any kind — and never sees `GH_TOKEN`;
+// the job that holds `pull-requests: write` (`post`) never checks out
+// PR-authored code. (`contents: read` rather than `{}` because
+// `actions/checkout` authenticates its clone with `github.token` regardless
+// of the `permissions:` block, so `{}` 403s the checkout on a private repo;
+// `pr-overlap.yml`'s `compute` job carries that reasoning in full. What
+// matters to this guard is the absence of a WRITE scope, which both spellings
+// have.) That split is a structural
 // fact about THIS file today. Nothing stops it rotting the way the #3672
 // issue itself warned a PROSE note would: "a comment cannot enforce that,
 // and comments going stale is the failure mode that caused a separate
@@ -64,6 +70,13 @@
 //      which is the only way to prove it is not vacuous — see the
 //      self-test fixture that reverts this file's `compute`/`post` split
 //      back to one job and confirms THIS check (not 1+2) catches it.
+//      "Not vacuous" has to be asserted, not assumed: this check shipped
+//      once seeing ZERO checkout steps in `pr-overlap.yml`, because it
+//      required `- uses: actions/checkout@` on ONE line while the real
+//      file's only write-scoped checkout opens with `- name:`. So the
+//      self-test also pins that condition 3 REACHES a checkout step in the
+//      real file, and carries fixtures in that same `- name:`-first shape
+//      — see `findCheckoutSteps` and the last self-test block.
 //
 // (1 AND 2) is one failure mode; 3 is a second, independent one. Either
 // firing is a violation.
@@ -225,18 +238,48 @@ export function splitJobs(src) {
  * the caller can fall back to the workflow-level block (a job with no
  * override inherits it).
  *
+ * COMMENTS ARE STRIPPED FIRST. A `permissions:` block routinely explains
+ * itself — including by naming the scope it deliberately does NOT ask for
+ * ("dropped `pull-requests: write` here", the shape `pr-overlap.yml`'s own
+ * `compute` job comments about) — and reading that as a live write scope
+ * fails safe but produces a red nobody can explain from the file.
+ *
  * @param {string[]} jobBody
  */
 export function jobDeclaresWriteScope(jobBody) {
   const idx = jobBody.findIndex((l) => /^ {4}permissions:/.test(l))
   if (idx === -1) return null
-  const inline = /^ {4}permissions:\s*(\S.*)$/.exec(jobBody[idx])
+  const inline = /^ {4}permissions:\s*(\S.*)$/.exec(stripComment(jobBody[idx]))
   if (inline) return /write/.test(inline[1])
   for (let i = idx + 1; i < jobBody.length; i++) {
     if (/^ {0,4}\S/.test(jobBody[i])) break // dedented back out of the permissions block
-    if (/:\s*write\b/.test(jobBody[i])) return true
+    if (declaresWrite(jobBody[i])) return true
   }
   return false
+}
+
+/**
+ * `line` with any trailing `#` comment removed, and `''` for a whole-line
+ * comment. Deliberately naive about a `#` inside a quoted scalar: no
+ * `permissions:` or `ref:` value in a workflow carries one, and the failure
+ * direction of getting it wrong here is a value that reads as SHORTER, never
+ * as a write scope that is not there.
+ *
+ * @param {string} line
+ */
+function stripComment(line) {
+  const hash = line.indexOf('#')
+  return hash === -1 ? line : line.slice(0, hash)
+}
+
+/**
+ * Whether one line of a `permissions:` mapping grants a write scope
+ * (`contents: write`, `pull-requests: write`, …), ignoring comments.
+ *
+ * @param {string} line
+ */
+function declaresWrite(line) {
+  return /:\s*write\b/.test(stripComment(line))
 }
 
 /**
@@ -248,31 +291,101 @@ export function jobDeclaresWriteScope(jobBody) {
  * Step boundaries are found by indentation, not by a step counter: a step is
  * introduced by a line whose trimmed text starts with `- ` (a YAML sequence
  * item); the step's content ends at the next line whose indentation is no
- * deeper than that `-`.
+ * deeper than that `-`. The step is a checkout if `uses: actions/checkout@`
+ * appears ANYWHERE in that block — NOT only on the introducing line. That
+ * distinction is the whole reason this function exists in this shape: the
+ * earlier version required `- uses: actions/checkout@` on one line, and
+ * `pr-overlap.yml`'s own `post` job writes its checkout as `- name: …` with
+ * `uses:` seventeen lines further down, so the only write-scoped job in the
+ * file was invisible to condition 3 and the check asserted nothing. See the
+ * `NAME_FIRST_HEAD_REF_CHECKOUT` fixture, which mirrors that step shape
+ * deliberately, and the self-test block that pins condition 3 as reaching a
+ * checkout step in the real file at all.
+ *
+ * The `ref:` is read only from the step's own `with:` MAPPING, and only as a
+ * DIRECT child of it — not "the first `ref:` at any depth in the step". A
+ * `ref:` nested under some other `with:` key (a future option carrying its
+ * own mapping) is a different value entirely, and reading it as the
+ * checkout's ref would let a base-pinned nested value launder a ref-less —
+ * i.e. fork-content — checkout past condition 3.
  *
  * @param {string[]} jobBody
  */
 export function findCheckoutSteps(jobBody) {
   const steps = []
   for (let i = 0; i < jobBody.length; i++) {
-    const m = /^(\s*)-\s*uses:\s*actions\/checkout@/.exec(jobBody[i])
+    if (isCommentLine(jobBody[i])) continue
+    const m = /^(\s*)-\s/.exec(jobBody[i])
     if (!m) continue
     const indent = m[1].length
-    let ref = null
+
+    // The step's block: the introducing `- …` line plus every following line
+    // indented deeper than the `-`.
+    let end = jobBody.length
     for (let j = i + 1; j < jobBody.length; j++) {
-      const line = jobBody[j]
-      if (line.trim() === '') continue
-      const lineIndent = line.length - line.trimStart().length
-      if (lineIndent <= indent) break // next step, or end of this job's steps
-      const refMatch = /^\s*ref:\s*(.+)$/.exec(line)
-      if (refMatch) {
-        ref = refMatch[1].trim()
+      if (jobBody[j].trim() === '') continue
+      if (indentOf(jobBody[j]) <= indent) {
+        end = j
         break
       }
     }
-    steps.push({ stepLine: i, ref })
+    const block = jobBody.slice(i, end)
+
+    const isCheckout = block.some(
+      (line) => !isCommentLine(line) && /(?:^|\s)uses:\s*actions\/checkout@/.test(line),
+    )
+    if (!isCheckout) continue
+
+    // `refLine` is relative to the job body, like `stepLine`, and is `null`
+    // when the step declares no `ref:` — it exists because a `- name:`-first
+    // step's `ref:` can sit many lines below the line that introduces it, and
+    // a failure message naming only the step line points at a line that does
+    // not contain the value it quotes.
+    const { ref, refLine } = refFromWithMapping(block, indent)
+    steps.push({ stepLine: i, ref, refLine: refLine === null ? null : i + refLine })
   }
   return steps
+}
+
+/** Indentation width of `line`, in characters. @param {string} line */
+function indentOf(line) {
+  return line.length - line.trimStart().length
+}
+
+/** Whether `line` is a whole-line YAML comment. @param {string} line */
+function isCommentLine(line) {
+  return line.trim().startsWith('#')
+}
+
+/**
+ * The `ref:` value declared as a DIRECT child of a step's `with:` mapping,
+ * with its offset from the step's introducing line. Both are `null` if the
+ * step has no `with:` block or no `ref:` directly under it. See
+ * `findCheckoutSteps`' docstring for why "direct child" rather than "anywhere
+ * in the step".
+ *
+ * @param {string[]} block  the step's lines, starting at its `- …` line
+ * @param {number} stepIndent  indentation of that leading `-`
+ * @returns {{ ref: string | null, refLine: number | null }}
+ */
+function refFromWithMapping(block, stepIndent) {
+  const withIdx = block.findIndex(
+    (line) => !isCommentLine(line) && indentOf(line) > stepIndent && /^\s*with:\s*$/.test(line),
+  )
+  if (withIdx === -1) return { ref: null, refLine: null }
+  const withIndent = indentOf(block[withIdx])
+  let childIndent = null
+  for (let j = withIdx + 1; j < block.length; j++) {
+    const line = block[j]
+    if (line.trim() === '' || isCommentLine(line)) continue
+    const lineIndent = indentOf(line)
+    if (lineIndent <= withIndent) break // dedented back out of the with: mapping
+    if (childIndent === null) childIndent = lineIndent
+    if (lineIndent !== childIndent) continue // nested under some other with: key
+    const refMatch = /^\s*ref:\s*(.+)$/.exec(line)
+    if (refMatch) return { ref: refMatch[1].trim(), refLine: j }
+  }
+  return { ref: null, refLine: null }
 }
 
 /**
@@ -292,11 +405,12 @@ export function findWriteScopedUnsafeCheckouts(src) {
   const workflowPermissions = (() => {
     const idx = lines.findIndex((l) => l.startsWith('permissions:'))
     if (idx === -1) return false
-    const inline = /^permissions:\s*(\S.*)$/.exec(lines[idx])
+    // Comments stripped for the same reason as in `jobDeclaresWriteScope`.
+    const inline = /^permissions:\s*(\S.*)$/.exec(stripComment(lines[idx]))
     if (inline) return /write/.test(inline[1])
     for (let i = idx + 1; i < lines.length; i++) {
       if (/^\S/.test(lines[i])) break
-      if (/:\s*write\b/.test(lines[i])) return true
+      if (declaresWrite(lines[i])) return true
     }
     return false
   })()
@@ -313,6 +427,7 @@ export function findWriteScopedUnsafeCheckouts(src) {
       hits.push({
         job: jobName,
         line: headerLine + step.stepLine + 1,
+        refLine: step.refLine === null ? null : headerLine + step.refLine + 1,
         ref: step.ref,
       })
     }
@@ -383,7 +498,11 @@ export function renderVerdict(result) {
       'Offending job / checkout:',
     )
     for (const hit of result.unsafeWriteCheckouts) {
-      lines.push(`  job \`${hit.job}\`, line ${hit.line}: ref: ${hit.ref ?? '(none)'}`)
+      // The step's own line and the `ref:`'s line are quoted separately: a
+      // `- name:`-first checkout step declares its `ref:` well below the line
+      // that introduces the step, so one number cannot honestly stand for both.
+      const where = hit.refLine === null ? '(none)' : `${hit.ref} (line ${hit.refLine})`
+      lines.push(`  job \`${hit.job}\`, checkout step at line ${hit.line}: ref: ${where}`)
     }
     lines.push(
       "\nEither drop the write permission from that job, or pin its checkout's `ref:` to",
@@ -548,6 +667,107 @@ jobs:
           persist-credentials: false
 `
 
+// THE SHAPE OF THE FILE UNDER GUARD. `pr-overlap.yml`'s `post` job does not
+// write its checkout as `- uses: actions/checkout@…` on one line: it opens
+// with `- name: Checkout the TRUSTED script source`, spends seventeen lines
+// of comment on why the ordering is load-bearing, and only then reaches
+// `uses:` and `with:`. An earlier revision of \`findCheckoutSteps\` required
+// the `-` and the `uses:` on the SAME line, so it saw ZERO checkout steps in
+// \`post\` — the only write-scoped job in the file — and condition 3 asserted
+// nothing at all, while every fixture above (all `- uses:`-first) stayed
+// green and assertion 5 passed because the hazard was INVISIBLE rather than
+// absent. This fixture reproduces the real step shape and carries the
+// one-line head-ref edit that reinstates the #3967 arrangement; condition 3
+// must catch it.
+const NAME_FIRST_HEAD_REF_CHECKOUT = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout the TRUSTED script source
+        # A long comment between the step's \`- name:\` line and its \`uses:\`
+        # line, exactly as the real file has — this is the gap the old
+        # same-line regex fell into.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+`
+
+// The \`ref:\` this guard reads must be the checkout's OWN — a direct child of
+// the step's \`with:\` mapping — not merely the first \`ref:\` at any depth
+// inside the step block. Here the step declares NO checkout ref (so under
+// \`pull_request\` it takes the fork-controlled \`refs/pull/N/merge\` default,
+// the #3967 shape) while a DIFFERENT, base-pinned \`ref:\` sits nested under
+// another \`with:\` key. Reading that nested value as the checkout's ref would
+// launder this step past condition 3.
+const NESTED_REF_IS_NOT_THE_CHECKOUT_REF = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout the TRUSTED script source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # A hypothetical future option carrying its own mapping, whose
+          # \`ref:\` is NOT this checkout's ref.
+          fallback:
+            ref: \${{ github.event.pull_request.base.sha }}
+`
+
+// A `permissions:` block that NAMES a write scope in a comment while granting
+// none. `pr-overlap.yml`'s `compute` job comments about exactly this — why it
+// holds no write scope — and reading the comment as a live grant would make
+// condition 3 flag the untrusted job for the permission it deliberately does
+// not have. Fails safe, but produces a red no one can explain from the file.
+const COMMENT_IN_PERMISSIONS_IS_NOT_A_WRITE_SCOPE = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      # #3967 dropped \`pull-requests: write\` from this job — it runs
+      # fork-authored code and must hold nothing worth stealing.
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+`
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -659,6 +879,73 @@ function runSelfTest() {
       'main()-style output for this fixture is non-zero and names the job',
       rendered.exitCode === 1 && rendered.lines.some((l) => l.includes('`overlap`')),
       JSON.stringify(rendered),
+    )
+
+    // …and the same, on the step shape the REAL file actually uses: a
+    // `- name:`-first checkout whose `uses:` and `ref:` are many lines below
+    // the line introducing the step. Every fixture above is `- uses:`-first,
+    // which is precisely how condition 3 shipped vacuous once already — the
+    // fixtures did not mirror the file under guard.
+    const nameFirst = checkTrustBoundary(NAME_FIRST_HEAD_REF_CHECKOUT)
+    expect(
+      'a `- name:`-first checkout step (the shape the real file uses) is SEEN by condition 3',
+      nameFirst.violation === true &&
+        nameFirst.dangerous === false &&
+        nameFirst.unsafeWriteCheckouts.length === 1,
+      JSON.stringify(nameFirst),
+    )
+    expect(
+      'its head ref is read from the `with:` block several lines below that `- name:` line',
+      /pull_request\.head\.sha/.test(nameFirst.unsafeWriteCheckouts[0]?.ref ?? ''),
+      JSON.stringify(nameFirst.unsafeWriteCheckouts),
+    )
+
+    // The `ref:` must come from the step's own `with:` mapping, not from any
+    // deeper nesting under some other key.
+    const nested = checkTrustBoundary(NESTED_REF_IS_NOT_THE_CHECKOUT_REF)
+    expect(
+      'a base-pinned `ref:` nested under another `with:` key does not count as the checkout ref',
+      nested.violation === true &&
+        nested.unsafeWriteCheckouts.length === 1 &&
+        nested.unsafeWriteCheckouts[0]?.ref === null,
+      JSON.stringify(nested),
+    )
+  }
+
+  // 8. A write scope named only in a COMMENT inside a `permissions:` block is
+  //    not a granted scope — the same discipline assertion 6 applies to the
+  //    `on:` block, applied to the input condition 3 gates on.
+  {
+    const r = checkTrustBoundary(COMMENT_IN_PERMISSIONS_IS_NOT_A_WRITE_SCOPE)
+    expect(
+      'a comment naming `pull-requests: write` inside `permissions:` is not a write scope',
+      r.violation === false && r.unsafeWriteCheckouts.length === 0,
+      JSON.stringify(r),
+    )
+  }
+
+  // 9. THE WIRING PIN behind assertion 5: assertion 5 says the real file
+  //    PASSES, and a check that inspects nothing passes too. So assert that
+  //    condition 3 actually reaches a checkout step in this file — at least
+  //    one write-scoped job, and at least one checkout step inside it. This
+  //    is the assertion that would have failed on the revision where
+  //    `findCheckoutSteps` could not see `post`'s `- name:`-first step.
+  {
+    const src = readFileSync(WORKFLOW_PATH, 'utf8')
+    const jobs = splitJobs(src)
+    const writeScoped = Object.entries(jobs).filter(([, { body }]) => jobDeclaresWriteScope(body))
+    const inspected = writeScoped.flatMap(([name, { body }]) =>
+      findCheckoutSteps(body).map((step) => ({ job: name, ref: step.ref })),
+    )
+    expect(
+      'condition 3 inspects at least one checkout step in a write-scoped job of pr-overlap.yml',
+      writeScoped.length > 0 && inspected.length > 0,
+      `write-scoped jobs: ${JSON.stringify(writeScoped.map(([n]) => n))}, checkout steps inspected: ${inspected.length}`,
+    )
+    expect(
+      'and every one of those it inspects is pinned to the PR base ref',
+      inspected.every((s) => s.ref !== null && BASE_REF_PATTERNS.some((re) => re.test(s.ref))),
+      JSON.stringify(inspected),
     )
   }
 

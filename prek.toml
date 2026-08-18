@@ -2712,18 +2712,37 @@ stages = ["pre-commit"]
 # `permissions:`, a mitigation that lives in GitHub's defaults, not in this
 # file, and survives only until the trigger becomes `pull_request_target`
 # (which gets no such downgrade). #3967 split the job into an untrusted
-# `compute` (permissions: {}, no GH_TOKEN, checks out the PR) and a trusted
-# `post` (pull-requests: write, never checks out PR-authored code) — a fact
+# `compute` (permissions: contents: read — no write scope of any kind — no
+# GH_TOKEN, checks out the PR; `contents: read` rather than `{}` because
+# `actions/checkout` authenticates with `github.token` regardless of the
+# permissions block, see that job's own comment) and a trusted `post`
+# (pull-requests: write, never checks out PR-authored code) — a fact
 # about the file today that a comment cannot keep true on its own, per the
 # issue's own "comments going stale is the failure mode that caused a
 # separate blocking bug in this same batch". This guard checks it
-# mechanically instead: it fails only when BOTH hold at once — the workflow's
-# `on:` block names `pull_request_target` AND some step's checkout `ref:`
-# resolves to PR head content (`pull_request.head.*`, `github.head_ref`, or a
-# literal `refs/pull/<n>/(merge|head)`). A `pull_request_target` checkout with
-# no `ref:` override defaults to the BASE branch — the actual mitigation — so
-# the guard does not flag every use of the trigger, only the one shape that
-# reintroduces #3967's hazard.
+# mechanically instead, and fails on EITHER of two independent shapes:
+#
+#   * the workflow's `on:` block names `pull_request_target` AND some step's
+#     checkout `ref:` resolves to PR head content (`pull_request.head.*`,
+#     `github.head_ref`, or a literal `refs/pull/<n>/(merge|head)`). A
+#     `pull_request_target` checkout with no `ref:` override defaults to the
+#     BASE branch — the actual mitigation — so the guard does not flag every
+#     use of the trigger, only the one shape that reintroduces the hazard.
+#
+#   * independent of the trigger: any JOB declaring a write scope (its own
+#     `permissions:`, or the workflow-level block it inherits) contains an
+#     `actions/checkout` step whose `ref:` is not pinned to the PR's BASE
+#     commit — a ref-less checkout included, since under TODAY's plain
+#     `pull_request` trigger that already defaults to `refs/pull/N/merge`,
+#     fork-controlled content. This is the condition that catches collapsing
+#     `compute`/`post` back into one job, or moving `post`'s checkout off
+#     `base.sha`, WITHOUT any trigger change — i.e. the one that fires on the
+#     file as it stands rather than only after a hypothetical edit. A red
+#     naming a job and a checkout step line is this one, not the first.
+#
+# The guard's `--self-test` (the sibling hook below) pins both, plus that the
+# second condition actually REACHES a checkout step in `pr-overlap.yml` —
+# a check that inspects nothing passes just as quietly as a check that passes.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
