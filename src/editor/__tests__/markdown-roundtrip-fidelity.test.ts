@@ -402,3 +402,121 @@ describe('finding 13: task paragraph as first child of a listItem', () => {
     expect(parse(serialize(d))).toEqual(d)
   })
 })
+
+describe('#4071/#4076: markdown-string convergence on the SECOND pass', () => {
+  const passes = (s: string) => {
+    const once = serialize(parse(s))
+    return { once, twice: serialize(parse(once)) }
+  }
+
+  /**
+   * #4071. Two ordered lists separated by a paragraph whose own text is
+   * indented a whole nest level. The input's markers carry the CommonMark
+   * 3-space tolerance, which puts the first item's content column at 5 — past
+   * the paragraph's 4 — so the parse correctly keeps the three blocks siblings.
+   * Serializing NORMALIZES the markers to column 0, dropping the content column
+   * to 2, and the same paragraph is now deep enough to be swallowed as the
+   * item's nested content: the two lists fuse and the second renumbers
+   * (`1./1.` → `1./2.`) on the SECOND pass. The serializer defuses the
+   * paragraph's leading indent so the emitted line starts at column 0.
+   */
+  it('#4071: two ordered lists split by an indented paragraph converge in ONE pass', () => {
+    const { once, twice } = passes('   1. item\n    - item\n3. item')
+    expect(once).toBe('1. item\n\\    \\- item\n1. item')
+    expect(twice).toBe(once)
+    // and the structure survives: still THREE sibling blocks, not one list
+    expect((parse(once).content ?? []).map((b) => b.type)).toEqual([
+      'orderedList',
+      'paragraph',
+      'orderedList',
+    ])
+  })
+
+  /**
+   * #4076.1. The same defect one level in, with a tab: the tab-indented
+   * blockquote line is a sibling paragraph of a list whose markers are indented
+   * on the way in, and the list's own normalization pulls it inside the item on
+   * pass two — where the recursive parse re-reads the dedented text as a
+   * BLOCKQUOTE and only then expands the tabs. The reported top-level form
+   * (`> > > \t\t- item`) already converged in one pass; it is this
+   * nested-in-a-list form that the #4052 foreign-import property generated.
+   */
+  it('#4076.1: a tab-indented blockquote line after a list converges in ONE pass', () => {
+    const { once, twice } = passes('   - item\n\t    - item\n\t> > > \t\t- item\n- item')
+    expect(once).toBe('- item\n  - item\n\\    > > > \t\t- item\n- item')
+    expect(twice).toBe(once)
+  })
+
+  /**
+   * #4076.2 is NOT a convergence failure and is NOT fixed here — pinned so the
+   * distinction is on the record rather than rediscovered.
+   *
+   * `> > 3. item` converges in one pass; what it loses is the literal ordinal,
+   * which the parser discards and the serializer regenerates from position.
+   * That is the DOCUMENTED design, not an oversight: ordered numbers are
+   * computed from a block's position among its siblings, never stored
+   * (`docs/architecture/list-ergonomics.md` § Markdown round-trip, and
+   * `src/lib/list-ordinals.ts`, which recomputes them for the block tree).
+   * Carrying `start` through the markdown pair alone would make the two halves
+   * disagree — markdown would say `3.` where the editor renders `1.` — so it is
+   * a design change across the block model, not a serializer fix.
+   *
+   * Renumbering is lossy but IDEMPOTENT, which is why no property catches it.
+   */
+  it('#4076.2: an ordered list inside a blockquote renumbers from 1, and is stable', () => {
+    const { once, twice } = passes('> > 3. item')
+    expect(once).toBe('> > 1. item')
+    expect(twice).toBe(once)
+    // identical at the top level — nothing about this is blockquote-specific
+    expect(passes('3. item').once).toBe('1. item')
+  })
+
+  /**
+   * The OTHER half of the whitespace defuse, and the reason it cannot be
+   * conditioned on a preceding list. Making a space/tab escapable (so `\ ` can
+   * defuse the absorption above) also makes `\<tab>` decode — which is a way
+   * to put a REAL tab at the start of a paragraph's stored text, somewhere no
+   * plain markdown could put one. Emitted raw, that tab is leading whitespace
+   * again and the importer rewrites it as the columns it occupies, so the pair
+   * converges only on the second pass: exactly the defect these issues are
+   * about, moved rather than removed. Export therefore escapes a leading
+   * whitespace run containing a tab wherever the paragraph sits.
+   *
+   * An exhaustive sweep of every string of length ≤ 5 over
+   * `{\\, space, tab, -, \n, a, >, ., 1}` (66 429 strings) finds 1 531
+   * non-convergent without this arm and 0 with it.
+   */
+  it.each([
+    ['\\\tx', '\\\tx'],
+    ['\\\t- x', '\\\t- x'],
+    ['\\\t> q', '\\\t> q'],
+    ['\\ \tx', '\\ \tx'],
+    // decoded inside a list item, where the paragraph's neighbour is not a list
+    ['- a\n  \\\tx', '- a\n  \\\tx'],
+    // …and inside a blockquote, where the `> ` strip runs first
+    ['> \\\tx', '> \\\tx'],
+    // a hardBreak puts the tab on a CONTINUATION line, which is a line too
+    ['\\\n\\\t', '\\\n\\\t'],
+  ])('a decoded leading tab is re-escaped: %j converges in one pass', (input, expected) => {
+    const { once, twice } = passes(input)
+    expect(once).toBe(expected)
+    expect(twice).toBe(once)
+  })
+
+  it('a tab-leading paragraph round-trips as a DOC wherever it sits', () => {
+    const tabbed = paragraph(text('\tx'))
+    for (const d of [
+      doc(tabbed),
+      doc(paragraph(text('a')), tabbed),
+      doc(blockquote(tabbed)),
+      doc(bulletList(listItem(paragraph(text('a')), tabbed))),
+    ]) {
+      expect(parse(serialize(d))).toEqual(d)
+      expect(serialize(parse(serialize(d)))).toBe(serialize(d))
+    }
+    // …except on a list item's MARKER line, where the tab is not a line's
+    // leading whitespace at all and needs no escape.
+    expect(serialize(doc(bulletList(listItem(tabbed))))).toBe('- \tx')
+    expect(parse('- \tx')).toEqual(doc(bulletList(listItem(tabbed))))
+  })
+})

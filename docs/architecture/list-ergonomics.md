@@ -85,7 +85,7 @@ first-class inline decoration, not as native `<ul>` chrome.
 3. **Ordered numbers are computed**, not stored: the number is the block's
    position among consecutive same-`listStyle`, same-depth siblings, recomputed
    on reorder/insert. This mirrors the serializer, which already emits positional
-   `${idx + 1}.` and discards any parsed literal (`markdown-serialize.ts:922`,
+   `${idx + 1}.` and discards any parsed literal (`markdown-serialize.ts:926`,
    `markdown-parse/parser.ts:407` — the ordinal is regenerated, never preserved).
 4. **Nesting stays the block tree** (Tab / Shift-Tab → indent/dedent). No second
    indent mechanism inside a block. This retires the in-block PM list node
@@ -162,6 +162,23 @@ Three requirements to actually get idempotence:
    the way back in. Heading / blockquote / horizontal rule need no such
    widening — those productions are anchored at column 0.
 
+   **Escape leading whitespace too** (`serializeBlockSequence`,
+   `markdown-serialize.ts`; #4071/#4076). A paragraph is the only block whose
+   stored text can *begin* with whitespace, and leading whitespace is also how
+   a list item's nested content is spelled, so an unescaped one can be read
+   back as structure rather than content. Export therefore prefixes `\` to a
+   paragraph line whose leading whitespace would not survive the reparse — when
+   the paragraph follows a list sibling and its indent reaches a whole
+   `LIST_NEST_INDENT` (the item would swallow it, fusing two lists or
+   re-dispatching the dedented text as some other block), and whenever the
+   leading whitespace run contains a **tab** (the importer rewrites such a run
+   as the columns it occupies, so the bytes never come back — this arm applies
+   to every line of a multi-line paragraph, and at any position). `\<space>` and
+   `\<tab>` are escapable on import (`isEscapableChar`) and decode to the bare
+   character, so the escape is invisible in the document and stable under
+   re-export. It is a *visible* character in the exported file, which is the
+   deliberate trade: the alternative is silent re-parenting.
+
    **Latent bug to fix as part of this work:** `stripBlockMarker`
    (`src/lib/block-type-convert.ts`) strips `-` / `1.` **unconditionally**,
    so a plain block beginning with those characters loses them. The parser side
@@ -192,16 +209,21 @@ Three requirements to actually get idempotence:
    export never emits that, but a foreign document can.
 4. **Indentation is counted in COLUMNS, and a tab is a column count** — a tab
    advances to the next 4-column stop (CommonMark §2.2), not to a fixed number
-   of spaces (`leadingIndent` / `dedentColumns`, `markdown-parse/parser.ts`;
-   #4052). Two consequences follow from the arithmetic above: a tab-indented
+   of spaces (`leadingIndent`, `markdown-common.ts`, shared by both halves
+   since #4071; `dedentColumns`, `markdown-parse/parser.ts`; #4052). Two
+   consequences follow from the arithmetic above: a tab-indented
    marker is *never* a marker on its own line (a tab inside leading whitespace
    always reaches column 4, past the tolerance), while a tab-indented **child**
    of an item at column 0 is a real sub-list, because one content column of
    dedent spends half the tab and leaves two residual columns — the same two
    the four-space case leaves. A tab that is not indentation (inside inline
    text, or inside fenced code content) is stored byte for byte; a paragraph's
-   leading whitespace is indentation and is stored as the columns it occupies,
-   which is what gives a tab-indented paragraph a fixed point at all.
+   *unescaped* leading whitespace is indentation and is stored as the columns
+   it occupies, which is what gives a tab-indented foreign paragraph a fixed
+   point at all. An **escaped** leading tab (`\<tab>`, item 2 above) is content
+   and is stored as the tab — which is why export has to re-escape it, or the
+   next import would measure it as columns and the pair would converge only on
+   the second pass.
 5. **Line endings are not part of the document** — `parse` consumes `\r\n` as
    one line ending (`splitLines`, `markdown-parse/parser.ts`; #4051), so a
    document written by a Windows editor imports as its LF twin instead of

@@ -1440,7 +1440,13 @@ describe('list marker indent tolerance (#4019): CommonMark 0-3 spaces', () => {
       paragraph(text('     - [x] a')),
     )
     const md = serialize(afterList)
-    expect(md).toBe('- a\n     \\- \\[x\\] a')
+    // The leading `\` is the #4071/#4076 indent defuse — five spaces is a whole
+    // nest level and more, so without it the SIBLING paragraph re-parses as the
+    // item's nested content (dedented to three spaces, which is exactly why the
+    // marker escape has to be wider than the tolerance). With the defuse the
+    // marker escape and the sibling-ness are both preserved.
+    expect(md).toBe('- a\n\\     \\- \\[x\\] a')
+    expect(parse(md)).toEqual(afterList)
     expect(serialize(parse(md))).toBe(md)
   })
 
@@ -3197,7 +3203,18 @@ describe('#710 round-trip corruption family', () => {
 
       it('the #4049 repro is a strict fixpoint', () => {
         const d = doc(bulletList(listItem(paragraph(text('a')))), paragraph(text('  _ ')))
-        expect(serialize(d)).toBe('- a\n  \\_ ')
+        // The leading `\` is the #4071/#4076 indent defuse: a SIBLING paragraph
+        // after a list whose own text starts with a whole nest level of
+        // whitespace would otherwise re-parse as that item's nested content.
+        // Before the defuse this doc was byte-stable but structurally lossy —
+        // the paragraph came back re-parented into the item with its two spaces
+        // eaten, and only re-emitting it at the nest indent hid that in the
+        // bytes. Now the doc itself round-trips.
+        expect(serialize(d)).toBe('- a\n\\  \\_ ')
+        expect(parse(serialize(d))).toEqual(d)
+        expectByteStable('- a\n\\  \\_ ')
+        // A foreign (undefused) two-space line is still read as the item's
+        // nested content, and is still byte-stable from there.
         expectByteStable('- a\n  \\_ ')
         // the tab twin from the issue
         expectByteStable('- a\n  \\_\t')

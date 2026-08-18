@@ -71,33 +71,41 @@ const NUM_RUNS = 300
  *
  * THIS WIDENS THE PIN — it is not the status quo. Before this change only the
  * three nesting properties (`arbDeepListDoc` & friends, `NESTING_NUM_RUNS`)
- * carried a seed, `FOREIGN_IMPORT_SEED = 4019`; the two `NUM_RUNS = 300` properties —
+ * carried a seed; the two `NUM_RUNS = 300` properties —
  * "serialize→parse→serialize is a strict fixpoint" and "one parse pass reaches
- * the canonical fixed point" — ran UNSEEDED. All five now run at this single
+ * the canonical fixed point" — ran UNSEEDED. All of them now run at this single
  * seed, so the file explores strictly LESS random space than it used to, and
- * that reduction is precisely what keeps the three pre-existing violations
- * below from reddening CI. The trade is deliberate; the cost is real.
+ * that reduction is precisely what keeps the pre-existing violations below from
+ * reddening CI. The trade is deliberate; the cost is real.
  *
  * Unseeded exploration is only safe while the properties are true of the whole
  * generated space. They are not. A 200 000-run sweep (10 distinct random seeds
  * × 20 000 runs) of this file found three PRE-EXISTING violations, none of them
  * reachable through a change made here and none involving the `_` escape that
- * #4049 was about:
+ * #4049 was about. #4071 FIXED the first of the three:
  *
- *  1. `serialize(parse('   1. item\n    - item\n3. item'))` does not converge in
- *     one pass — two ordered lists separated by a nested item merge and
- *     renumber only on the SECOND pass (`1./1.` → `1./2.`). 7 of the 10 seeds.
+ *  1. FIXED (#4071/#4076). `serialize(parse('   1. item\n    - item\n3. item'))`
+ *     did not converge in one pass — two ordered lists separated by a sibling
+ *     paragraph merged and renumbered on the SECOND pass (`1./1.` → `1./2.`),
+ *     because serializing normalized the list markers to column 0 and thereby
+ *     dropped the item's content column below the paragraph's own leading
+ *     indent, so the paragraph was swallowed as nested content. 7 of the 10
+ *     seeds. The serializer now defuses that indent
+ *     (`serializeBlockSequence`), and a re-sweep at 12 seeds × 20 000 runs no
+ *     longer generates the shape.
  *  2. a link whose text starts with `!` as the first child of a blockquote
  *     re-reads as a callout label and normalizes its case:
- *     `> [!a](https://example.com)a` → `> [!A] (https://example.com)a`. 1 seed.
- *  3. a leading hardBreak in a table cell followed by `>` is not a fixpoint
- *     (the cell degrades the break to a space and then trims it). 1 seed.
+ *     `> [!a](https://example.com)a` → `> [!A] (https://example.com)a`.
+ *     Still live: seeds 1, 6 and 9 of the re-sweep.
+ *  3. a leading hardBreak in a table cell followed by `>` (or `#`) is not a
+ *     fixpoint (the cell degrades the break to a space and then trims it).
+ *     Still live: seeds 6, 10 and 12 of the re-sweep.
  *
  * So route 1 of #4059 (fix the bug, stay unseeded) is unavailable and route 2
  * applies: every `fc.assert` here is a deterministic replay, and new
  * exploration happens deliberately — bump this seed, or raise the run counts by
- * hand — rather than on an unrelated contributor's PR. Delete the pin when the
- * three violations above are fixed, not before.
+ * hand — rather than on an unrelated contributor's PR. Delete the pin when
+ * violations 2 and 3 are fixed, not before.
  *
  * `markdown-serializer.property.test.ts` stays UNSEEDED on purpose: the same
  * sweep (10 seeds × 20 000 runs, 40× its shipped 500) was green for all 58 of
@@ -106,26 +114,6 @@ const NUM_RUNS = 300
  * The value is the issue number, so its provenance is obvious.
  */
 const PROPERTY_SEED = 4059
-
-/**
- * The seed the three #4051/#4052 foreign-import properties were validated at.
- *
- * They are kept OFF `PROPERTY_SEED` deliberately. #4074 consolidated the five
- * roundtrip properties onto one seed; #4075 added these three at 4019, and each
- * PR was green alone. Their merge compiled only after renaming, and running
- * them at 4059 surfaces two convergence failures that have nothing to do with
- * tabs or CRLF:
- *
- *   * a tab in blockquote CONTENT (`> > > \t\t- item`) expands on pass two,
- *     because the blockquote strip runs before the column measurement;
- *   * an ordered list inside a blockquote (`> > 3. item`) renumbers to `1.`,
- *     the #4071 family — the parser does not carry `start` through.
- *
- * Both are reachable on `main` before either PR: 4019 simply never generated
- * the shapes. Filed as #4076; when it lands, delete this constant and let these
- * three join `PROPERTY_SEED`.
- */
-const FOREIGN_IMPORT_SEED = 4019
 
 // -- Generators ---------------------------------------------------------------
 
@@ -454,18 +442,51 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   // the two-space twin: the paragraph IS nested content of the item
   doc(bulletList(listItem(paragraph(text('\\')), paragraph(text('a'))))),
   // #4019, the marker-indent twin (found by fuzzing the same adjacency): a
-  // sibling paragraph indented past the parser's 3-space marker tolerance is
-  // absorbed as nested content and comes back DEDENTED into that tolerance, so
-  // the leading marker must be escaped at every indent, not only at 0-3.
+  // paragraph indented past the parser's 3-space marker tolerance can come back
+  // DEDENTED into that tolerance, so the leading marker must be escaped at
+  // every indent, not only at 0-3. As a SIBLING of the list the paragraph is no
+  // longer absorbed at all (#4071 defuses the indent), but the dedent is still
+  // real for a paragraph that is genuinely the item's nested content — the
+  // second seed — so the widened escape is still what keeps both stable.
   doc(bulletList(listItem(paragraph(text('a')))), paragraph(text('     - [x] a'))),
-  // #4049: the two-space residue of the same adjacency. The sibling paragraph
-  // IS absorbed here (two spaces is a full content column), so its text is
-  // re-emitted dedented — which moves the `_` from "preceded by a space" to the
-  // start of the text node. The inline-escape verdict must not notice; it keys
-  // on WORD-ness alone, and a space and a string edge are equally not-a-word.
+  doc(bulletList(listItem(paragraph(text('a')), paragraph(text('     - [x] a'))))),
+  // #4049: the same adjacency with a leading `_`. Nested inside the item (the
+  // second seed) the text is re-emitted dedented, which moves the `_` from
+  // "preceded by a space" to the start of the text node. The inline-escape
+  // verdict must not notice; it keys on WORD-ness alone, and a space and a
+  // string edge are equally not-a-word.
   doc(bulletList(listItem(paragraph(text('a')))), paragraph(text('  _ '))),
+  doc(bulletList(listItem(paragraph(text('a')), paragraph(text('  _ '))))),
   // …and its tab twin, from the same sweep.
   doc(bulletList(listItem(paragraph(text('a')))), paragraph(text('  _\t'))),
+  // #4071: a list, a sibling paragraph whose own text is indented a whole nest
+  // level, and a SECOND list. Serializing normalizes the markers to column 0,
+  // which drops the item's content column below the paragraph's indent — so
+  // before the defuse the paragraph was swallowed on reparse, the two lists
+  // fused into one and the second renumbered, on the SECOND pass only. Pinned
+  // for both list kinds: the ordered pair is what renumbers, and the bullet
+  // pair is what proves the fix is about the indent and not about numbering.
+  doc(
+    { type: 'orderedList', content: [listItem(paragraph(text('a')))] },
+    paragraph(text('    - item')),
+    { type: 'orderedList', content: [listItem(paragraph(text('b')))] },
+  ),
+  doc(
+    bulletList(listItem(paragraph(text('a')))),
+    paragraph(text('    > quoted')),
+    bulletList(listItem(paragraph(text('b')))),
+  ),
+  // #4071/#4076, the tab arm of the same defuse: a paragraph whose LEADING
+  // whitespace run holds a tab never comes back verbatim (the importer rewrites
+  // such a run as the columns it occupies), so it must be escaped wherever it
+  // sits — with no list in front of it, on a paragraph's CONTINUATION line, and
+  // as a list item's non-first child. These shapes are only reachable because
+  // `\<tab>` decodes; leaving them unescaped would have traded one
+  // second-pass convergence for another.
+  doc(paragraph(text('\tx'))),
+  doc(paragraph(text('a')), paragraph(text('\tx'))),
+  doc(paragraph(text('a'), hardBreak(), text('\tb'))),
+  doc(bulletList(listItem(paragraph(text('a')), paragraph(text('\tx'))))),
   // #4049, the table-cell arm found by the post-fix sweep: a cell TRIMS its
   // edge whitespace, so `_ ` comes back as `_`; and a hardBreak inside a cell
   // degrades to a space, so `text('_') · hardBreak · text('a')` comes back as
@@ -877,7 +898,7 @@ describe('property (#4051): a CRLF document parses as its LF twin', () => {
         // a backslash — passing for the wrong reason rather than failing.
         expect(allStoredText(parsed).filter((t) => t.includes('\r'))).toEqual([])
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: FOREIGN_IMPORT_SEED },
+      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
     )
   })
 
@@ -887,7 +908,7 @@ describe('property (#4051): a CRLF document parses as its LF twin', () => {
         const lf = lines.join('\n')
         expect(parse(`${lf.replaceAll('\n', '\r\n')}\r`)).toEqual(parse(lf))
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: FOREIGN_IMPORT_SEED },
+      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
     )
   })
 })
@@ -925,7 +946,7 @@ describe('property (#4052): a leading tab parses as the columns it occupies', ()
         fc.pre(!tabbed.includes('```'))
         expect(parse(tabbed)).toEqual(parse(spaced))
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: FOREIGN_IMPORT_SEED },
+      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
     )
   })
 
@@ -935,7 +956,7 @@ describe('property (#4052): a leading tab parses as the columns it occupies', ()
         const md1 = serialize(parse(tabbed))
         expect(serialize(parse(md1))).toBe(md1)
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: FOREIGN_IMPORT_SEED },
+      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
     )
   })
 })
