@@ -118,8 +118,11 @@ macro_rules! tag_inh_descendants_active {
 ///
 /// # #3944 — the seed deliberately does NOT filter `?1`
 ///
-/// This is the third exception to the module's "no walk touches a
-/// soft-deleted block" policy, and the least obvious one, so it is spelled
+/// `tag_inh_subtree_active!` is an exception to the module's "no walk
+/// touches a soft-deleted block" policy -- named rather than numbered,
+/// because the module header uses the same ordinal for
+/// `subtree_unfiltered` and an ordinal that points at two macros makes
+/// the exception list unusable as the authority it is meant to be. The least obvious one, so it is spelled
 /// out here rather than left to be rediscovered.
 ///
 /// The tempting change is to make this seed match
@@ -513,8 +516,13 @@ mod tests {
             ("ancestors_walk(1)", tag_inh_ancestors_walk!(1)),
         ] {
             let seed = body.split("UNION ALL").next().unwrap_or_default();
+            // Normalise whitespace and require the CONJUNCTION, not merely the
+            // presence of both tokens: `WHERE id = ?1 OR deleted_at IS NULL`
+            // contains both and reopens #3944 completely, so a `contains` pair
+            // would stay green on the exact rewrite this guard exists to stop.
+            let flat = seed.split_whitespace().collect::<Vec<_>>().join(" ");
             assert!(
-                seed.contains("?1") && seed.contains("deleted_at IS NULL"),
+                flat.contains("?1 AND deleted_at IS NULL") && !flat.contains(" OR "),
                 "#3944: {name}'s SEED must reject a soft-deleted `?1` — that \
                  CTE feeds INSERTs only, so an empty walk is exactly \
                  `rebuild_all`'s answer for a tombstoned subject; \
