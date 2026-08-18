@@ -228,8 +228,19 @@ pub(crate) async fn daemon_loop(
     // The addresses that decision was made from, handed to the bind's locality gate
     // rather than letting it enumerate the host a second time (#3869). The second sweep
     // could disagree with the first — an address lost to a DHCP renewal or a Wi-Fi roam
-    // between them — and `lan_only` would then refuse a bind this code had just chosen,
-    // failing the whole daemon where a host with no LAN at all comes up on loopback.
+    // between them — and `lan_only` would then refuse, on locality grounds, a bind this
+    // code had just chosen.
+    //
+    // This **narrows** that race, it does not close it. What it removes is the locality
+    // refusal: the gate is now answered from the same sweep that picked the address, so
+    // `BindAddressNotPrivate` is unreachable from here. The address can still go away
+    // between the sweep and the `bind` below, and when it does the kernel refuses with
+    // EADDRNOTAVAIL, `SyncService::bind` returns `ServiceBindError::Socket`, and the `?`
+    // on the next statement still fails the whole daemon. There is no loopback fallback
+    // on this path — `lan_bind_target` already committed to an address, and the fallback
+    // it owns is chosen before this point or not at all. The gain is that the failure is
+    // now the operating system reporting a fact rather than our own configuration layer
+    // rejecting an address it had itself selected a moment earlier.
     let host_addrs = bind_decision.host_addrs();
     let service = Arc::new(
         SyncService::bind(

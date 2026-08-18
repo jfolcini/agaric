@@ -1332,14 +1332,24 @@ mod tests {
     /// was passed. With a fresh sweep inside `lan_only` both calls answer `Configuration`
     /// and the second assertion goes red.
     ///
-    /// `240.0.0.1` is reserved space (RFC 1112 § 4): publicly routable as far as the gate
-    /// is concerned, and an address no machine anywhere has assigned to an interface — so
-    /// the OS refusal is deterministic rather than a fact about the machine running the
-    /// suite. A held address would bind for real, and one this host lacks would fail
-    /// identically under both shapes.
+    /// `8.8.8.8` is *genuinely* public — allocated, routed, and reachable — and no host
+    /// running this suite has it on an interface, so the OS refusal is deterministic
+    /// rather than a fact about the machine. A held address would bind for real, and one
+    /// this host lacks would fail identically under both shapes, which is why the address
+    /// has to be one no runner can hold.
+    ///
+    /// It was `240.0.0.1` (class E, RFC 1112 § 4), which is the more obviously
+    /// unassignable address and the wrong choice: whether the gate treats class E as
+    /// public is exactly what **#4106** says is a defect and will change. The moment it
+    /// does, `bind_locality_ok` short-circuits `true` for `240.0.0.1`, the `unvouched`
+    /// half below stops reaching `BindAddressNotPrivate` and gets `Socket` instead, and
+    /// this test goes red for a reason that has nothing to do with the wiring it covers.
+    /// `8.8.8.8` is public under every reading of the range table, so no fix to
+    /// [`is_publicly_routable`] can move it — and it is the same address `lan_only`'s own
+    /// docs use for "not on anyone's interface".
     #[tokio::test]
     async fn the_locality_gate_reads_the_host_addresses_the_caller_passed() {
-        let unheld: SocketAddr = "240.0.0.1:0".parse().expect("literal parses");
+        let unheld: SocketAddr = "8.8.8.8:0".parse().expect("literal parses");
 
         let vouched_for = SyncService::bind(
             unheld,
@@ -1350,7 +1360,7 @@ mod tests {
         )
         .await
         .map(|_| ())
-        .expect_err("no host holds 240.0.0.1, so the socket bind must fail");
+        .expect_err("this host does not hold 8.8.8.8, so the socket bind must fail");
         assert!(
             matches!(vouched_for, ServiceBindError::Socket(_)),
             "the caller's list vouched for this address, so the LAN-only configuration \
