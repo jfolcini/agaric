@@ -10,13 +10,23 @@
 //! Every CTE that walks the `parent_id` edge in this module — downwards to
 //! descendants, and (since #3926) upwards to ancestors — filters
 //! `deleted_at IS NULL` in the recursive member, so no walk passes THROUGH
-//! a soft-deleted block. Two justified exceptions:
+//! a soft-deleted block. Since #3944 `tag_inh_ancestors_walk!` additionally
+//! constrains `?1` itself, so that walk does not START at one either: a
+//! REMOVE rooted at a tombstone re-attributes nothing, which is
+//! [`rebuild_all`]'s answer for it. Three justified exceptions:
 //!
 //! * `remove_subtree_inherited` deliberately does NOT filter `deleted_at`
 //!   — it is called AFTER the blocks have been soft-deleted, so filtering
 //!   would miss the very rows we need to clean up.
+//! * `tag_inh_subtree_active!`'s SEED deliberately admits a soft-deleted
+//!   `?1` (#3944). Unlike the ancestor walk, that CTE also scopes
+//!   `recompute_subtree_inheritance`'s step-1 DELETEs, so emptying it for a
+//!   tombstoned root would stop the helper sweeping the root's LIVE
+//!   descendants — leaving rows a structural change below the tombstone had
+//!   already invalidated, i.e. MORE than the arbiter emits. The recursive
+//!   member still filters, so the walk never passes THROUGH a tombstone.
 //! * `remove_inherited_tag` step 2's hand-rolled `anc` CTE
-//!   (`incremental.rs:165`) also climbs `parent_id` with no `deleted_at`
+//!   (`incremental.rs:196`) also climbs `parent_id` with no `deleted_at`
 //!   filter. It stays safe for a different reason, not the recursive-member
 //!   filter: `anc` only ever climbs from a `descendants` row towards a
 //!   `taggers` row, and `descendants` (the CTE immediately above `anc`)

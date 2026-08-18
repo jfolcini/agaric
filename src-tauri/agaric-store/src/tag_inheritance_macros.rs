@@ -55,6 +55,15 @@
 //!   filters `b.deleted_at IS NULL` in the recursive member, so a walk
 //!   never passes THROUGH a soft-deleted block. The unfiltered subtree
 //!   variant is the documented purge-style exception.
+//! * Since #3944 `ancestors_walk` also constrains `?1` itself, so that
+//!   walk never STARTS at a soft-deleted block. It still emits its seed's
+//!   `parent_id` unfiltered — the #3944 filter is on the SUBJECT, not on
+//!   the ancestor emitted (#3926's property is unchanged). The rule does
+//!   NOT extend to `subtree_active`, whose seed must keep admitting a
+//!   tombstoned `?1`: that CTE also scopes `recompute_subtree_inheritance`'s
+//!   step-1 DELETEs, so emptying it would turn a repair pass over a
+//!   tombstone's LIVE subtree into a no-op. See the macro's own docs.
+//!   `subtree_unfiltered` is the third exception, for its own reason.
 //! * Every walk bounds depth at `MAX_TAG_INHERITANCE_DEPTH` (= 100). The
 //!   bound is inlined into the SQL string at macro expansion; see
 //!   `MAX_TAG_INHERITANCE_DEPTH` for the canonical Rust value. The
@@ -106,6 +115,45 @@ macro_rules! tag_inh_descendants_active {
 ///
 /// Filters `deleted_at IS NULL` in the recursive member, and bounds
 /// recursion at [`MAX_TAG_INHERITANCE_DEPTH`].
+///
+/// # #3944 — the seed deliberately does NOT filter `?1`
+///
+/// This is the third exception to the module's "no walk touches a
+/// soft-deleted block" policy, and the least obvious one, so it is spelled
+/// out here rather than left to be rediscovered.
+///
+/// The tempting change is to make this seed match
+/// [`tag_inh_ancestors_walk`]'s and require `?1` to be live, on the argument
+/// that a walk may no more START at a tombstone than pass THROUGH one. That
+/// argument does not transfer, because this CTE is not only an INSERT
+/// source: `recompute_subtree_inheritance` uses it for its two step-1
+/// DELETEs as well. Filtering the seed empties `subtree` for a tombstoned
+/// `?1`, which turns the whole helper into a NO-OP — and a no-op is wrong,
+/// because the recompute is a from-scratch repair pass over `?1`'s subtree,
+/// not merely a re-derivation of `?1`'s own rows. Rooted at a tombstone with
+/// a LIVE descendant subtree (the exact state the remote path produces), the
+/// filtered version leaves behind rows that a structural change strictly
+/// BELOW `?1` has since invalidated, so the incremental path yields MORE
+/// than [`crate::tag_inheritance::rebuild_all`] — a divergence in the
+/// opposite direction to the one #3944 set out to close. Pinned by
+/// `recompute_at_tombstone_after_structural_change_below_matches_rebuild_3944`,
+/// which fails if this seed is filtered.
+///
+/// "But the recompute is only ever rooted at the block that moved, and
+/// moving `?1` cannot change the structure below it" is the argument that
+/// makes the filter look safe. It is false at `loro_sync.rs`'s
+/// `TagScope::Subtrees(roots)` call-site: `resolve_tag_scope` dedupes a
+/// batch's structural roots to the TOP-MOST one, so a live descendant's move
+/// is covered by — and only by — a recompute rooted at its (possibly
+/// tombstoned) ancestor.
+///
+/// #3944 is closed instead by [`tag_inh_ancestors_walk`]'s seed filter
+/// alone, which is sound precisely because that CTE feeds INSERTs only.
+/// With it in place a recompute rooted at a tombstone inserts nothing from
+/// above (step 3's `ancestor_tags` is empty) and nothing FOR the tombstone
+/// (step 2's `tagged_descendants` rejects a soft-deleted tagger and only
+/// ever emits live children), while step 1 keeps its full, unchanged sweep.
+/// See `recompute_rooted_at_soft_deleted_block_matches_rebuild_3944`.
 ///
 /// CTE name `subtree(id, depth)`, recursive alias `s`. Caller must bind
 /// the seed block-id to position `?1`.
@@ -173,6 +221,30 @@ macro_rules! tag_inh_subtree_unfiltered {
 /// walk inside `recompute_subtree_inheritance` itself, which has always
 /// stopped at a deleted intermediate (`recompute_subtree_skips_deleted`).
 ///
+/// # #3944 — the seed also refuses to START at a soft-deleted `?1`
+///
+/// #3926 stopped the climb from passing THROUGH a tombstone; the seed still
+/// read `SELECT parent_id FROM blocks WHERE id = ?1` with no check on `?1`
+/// itself. For `A[#T] > R(deleted, #T) > D(live)`,
+/// `remove_inherited_tag(R, T)` therefore still found `A` and re-attributed
+/// `R`'s live descendant `D` to it — while `rebuild_all` yields nothing
+/// (`A`'s child `R` is filtered out as a descendant, and `R` fails
+/// `tagged.deleted_at IS NULL` as a tagger). Requiring `deleted_at IS NULL`
+/// on `?1` makes the walk empty for a tombstoned subject, which is the
+/// arbiter's answer: nothing above a tombstone reaches it or anything below
+/// it.
+///
+/// Note this filters the SUBJECT, not the emitted ancestor: the seed still
+/// emits `parent_id` unfiltered, so the #3926 property above (the first
+/// deleted ancestor is emitted as a row; only the climb stops) is unchanged,
+/// as is each consumer's own `JOIN blocks … WHERE deleted_at IS NULL`
+/// rejecting that ancestor as a tag source.
+///
+/// #3948 records that `remove_inherited_tag` step 2's hand-rolled `anc` CTE
+/// is deliberately unfiltered and safe by a `taggers ⊆ descendants`
+/// all-live-climb argument. That argument is specific to `anc` and does not
+/// extend to this seed.
+///
 /// Bounds recursion at [`MAX_TAG_INHERITANCE_DEPTH`].
 ///
 /// CTE name `ancestors(id, depth)`, recursive alias `a`. Caller must bind
@@ -181,7 +253,8 @@ macro_rules! tag_inh_subtree_unfiltered {
 macro_rules! tag_inh_ancestors_walk {
     (0) => {
         "ancestors(id, depth) AS ( \
-             SELECT parent_id AS id, 0 AS depth FROM blocks WHERE id = ?1 \
+             SELECT parent_id AS id, 0 AS depth FROM blocks \
+             WHERE id = ?1 AND deleted_at IS NULL \
              UNION ALL \
              SELECT b.parent_id, a.depth + 1 FROM blocks b \
              JOIN ancestors a ON b.id = a.id \
@@ -190,7 +263,8 @@ macro_rules! tag_inh_ancestors_walk {
     };
     (1) => {
         "ancestors(id, depth) AS ( \
-             SELECT parent_id AS id, 1 AS depth FROM blocks WHERE id = ?1 \
+             SELECT parent_id AS id, 1 AS depth FROM blocks \
+             WHERE id = ?1 AND deleted_at IS NULL \
              UNION ALL \
              SELECT b.parent_id, a.depth + 1 FROM blocks b \
              JOIN ancestors a ON b.id = a.id \
@@ -410,6 +484,56 @@ mod tests {
             !tag_inh_subtree_unfiltered!().contains("deleted_at"),
             "subtree_unfiltered runs after soft-delete and must not filter deleted_at",
         );
+    }
+
+    /// #3944 — `ancestors_walk`'s seed must refuse to START at a soft-deleted
+    /// `?1`, and the two SUBTREE walks' seeds must NOT.
+    ///
+    /// `active_walks_filter_deleted_at` above deliberately inspects only the
+    /// RECURSIVE member, because for `ancestors_walk` the seed's emitted
+    /// ancestor must stay unfiltered (#3926). That check therefore cannot see
+    /// the #3944 gap: a seed that admits the subject `?1` unconditionally, so
+    /// a remove rooted at a tombstone climbs to ancestors `rebuild_all` says
+    /// it cannot reach.
+    ///
+    /// The negative half is the load-bearing one, and it is asserted here
+    /// rather than left implicit because "make both root-seeded walks match"
+    /// is the natural-looking follow-up that this test exists to stop.
+    /// `subtree_active` scopes `recompute_subtree_inheritance`'s step-1
+    /// DELETEs as well as its INSERTs, so filtering its seed turns a recompute
+    /// rooted at a tombstone into a no-op and strands rows a structural change
+    /// below the tombstone invalidated
+    /// (`recompute_at_tombstone_after_structural_change_below_matches_rebuild_3944`).
+    /// `subtree_unfiltered` must not filter either — it runs after the
+    /// soft-delete.
+    #[test]
+    fn root_seeded_walks_filter_the_subject() {
+        for (name, body) in [
+            ("ancestors_walk(0)", tag_inh_ancestors_walk!(0)),
+            ("ancestors_walk(1)", tag_inh_ancestors_walk!(1)),
+        ] {
+            let seed = body.split("UNION ALL").next().unwrap_or_default();
+            assert!(
+                seed.contains("?1") && seed.contains("deleted_at IS NULL"),
+                "#3944: {name}'s SEED must reject a soft-deleted `?1` — that \
+                 CTE feeds INSERTs only, so an empty walk is exactly \
+                 `rebuild_all`'s answer for a tombstoned subject; \
+                 seed was: {seed}",
+            );
+        }
+        for (name, body) in [
+            ("subtree_active", tag_inh_subtree_active!()),
+            ("subtree_unfiltered", tag_inh_subtree_unfiltered!()),
+        ] {
+            let seed = body.split("UNION ALL").next().unwrap_or_default();
+            assert!(
+                !seed.contains("deleted_at"),
+                "#3944: {name}'s SEED must NOT filter `?1` — this CTE scopes a \
+                 DELETE, and emptying it for a tombstoned root turns a repair \
+                 pass over that root's LIVE subtree into a no-op; \
+                 seed was: {seed}",
+            );
+        }
     }
 
     /// Sanity-check the structural shape of every macro: each must be a
