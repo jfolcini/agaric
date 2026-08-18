@@ -1901,3 +1901,457 @@ async fn recompute_subtree_ranks_nearest_tagger_inside_subtree_3925() {
          emission order decide LW3925's provenance"
     );
 }
+
+// ======================================================================
+// #3944 — a walk must not START at a soft-deleted block either
+// ======================================================================
+//
+// #3919/#3925/#3926 covered the deleted ANCESTOR and the deleted
+// DESCENDANT. This is the deleted SUBJECT: the block the incremental
+// maintenance is rooted at. Both wrong writes came from
+// `tag_inh_ancestors_walk!`, which seeded `SELECT parent_id FROM blocks
+// WHERE id = ?1` with no check on `?1` —
+//
+//   * `recompute_subtree_inheritance(R)` on a soft-deleted `R` climbed to
+//     `R`'s tagging ancestors and cross-joined them onto `R`'s whole
+//     subtree, writing a row FOR the tombstone and re-deriving its live
+//     descendants' rows from an ancestor chain that is broken at `R`;
+//   * `remove_inherited_tag(R, T)` on a soft-deleted `R` likewise found
+//     `R`'s ancestors and re-attributed `R`'s live descendants to them.
+//
+// `rebuild_all` — the arbiter — does neither: `tag_inh_descendant_tags_full!`
+// propagates only through LIVE blocks, so nothing enters or crosses a
+// tombstone in either direction.
+//
+// The fix is ONE seed filter, on `tag_inh_ancestors_walk!` — the CTE that
+// feeds INSERTs only. `tag_inh_subtree_active!`'s seed keeps admitting a
+// tombstoned `?1` on purpose: it also scopes step 1's two DELETEs, and
+// emptying it makes a recompute rooted at a tombstone a no-op that strands
+// rows (`recompute_at_tombstone_after_structural_change_below_matches_rebuild_3944`
+// is the test that fails if someone "completes" the symmetry).
+//
+// Reachability is the remote/replay path, not the local command: the local
+// move guards (`move_block_inner` probes `deleted_at IS NULL` before
+// appending the op), but `OpType::MoveBlock` → `apply_move_block_via_loro` /
+// `apply_move_block_sql_only` call `recompute_subtree_inheritance(block_id)`
+// unconditionally, and `project_move_block_to_sql` has no `deleted_at`
+// filter — so a concurrent delete-on-A / move-on-B lands a recompute rooted
+// at a tombstone. `RemoveTag` carries no `RebuildTagInheritanceCache`
+// (#2669), so rows written on that path are DURABLE, not self-healing.
+
+/// #3944 — a recompute rooted at a soft-deleted block must equal
+/// `rebuild_all`'s answer, which is "nothing for the tombstone".
+///
+/// The issue's PROBE-E: `AP3944[#TG3944] > RQ3944(deleted)`. Step 3's
+/// ancestor walk found the live, tagged `AP3944` from a tombstoned seed and
+/// cross-joined it onto the subtree, inserting `(RQ3944, TG3944, AP3944)` —
+/// a row `rebuild_all` refuses. Reverting `tag_inh_ancestors_walk!(0)`'s
+/// #3944 seed filter reddens this test.
+#[tokio::test]
+async fn recompute_rooted_at_soft_deleted_block_matches_rebuild_3944() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TG3944", "tag", "tag", None).await;
+    insert_block(&pool, "AP3944", "page", "apex", None).await;
+    insert_block(&pool, "RQ3944", "content", "root", Some("AP3944")).await;
+    insert_tag_assoc(&pool, "AP3944", "TG3944").await;
+    soft_delete(&pool, "RQ3944").await;
+
+    // The arbiter's own answer, pinned independently of the convergence
+    // assertion: a tombstone inherits nothing.
+    rebuild_all(&pool).await.unwrap();
+    let canonical = get_inherited(&pool).await;
+    assert!(
+        canonical.is_empty(),
+        "#3944: rebuild_all propagates through LIVE blocks only, so the \
+         soft-deleted RQ3944 inherits nothing; got: {canonical:?}"
+    );
+
+    let mut conn = pool.acquire().await.unwrap();
+    recompute_subtree_inheritance(&mut conn, "RQ3944")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    assert!(
+        !incremental.iter().any(|(bid, _, _)| bid == "RQ3944"),
+        "#3944: a recompute rooted at the soft-deleted RQ3944 must not write \
+         an inherited row FOR it; got: {incremental:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#3944: the recompute's subtree seed must reject a soft-deleted root \
+         the same way `rebuild_all`'s descendant walk does"
+    );
+}
+
+/// #3944 (maintainer's widening) — `remove_inherited_tag` rooted at a
+/// soft-deleted block must likewise equal `rebuild_all`.
+///
+/// `AR3944[#TR3944] > RR3944(deleted, #TR3944) > DS3944(live)`. `rebuild_all`
+/// yields nothing: `AR3944`'s child `RR3944` is filtered out as a descendant,
+/// and `RR3944` fails `tagged.deleted_at IS NULL` as a tagger. But
+/// `remove_inherited_tag(RR3944, TR3944)` still reached `DS3944` via
+/// `descendants_active` and `AR3944` via `tag_inh_ancestors_walk!`'s
+/// unchecked seed, writing `(DS3944, …, AR3944)` at site 2 and
+/// `(RR3944, …, AR3944)` at site 3.
+///
+/// #3948 hardened the rest of that walk (the climb no longer passes THROUGH a
+/// tombstone) and left the seed alone; #3948's note that step 2's `anc` CTE is
+/// safe unfiltered rests on `taggers ⊆ descendants` forcing an all-live climb,
+/// an argument specific to `anc` that does not extend to either seed.
+#[tokio::test]
+async fn remove_tag_rooted_at_soft_deleted_block_matches_rebuild_3944() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TR3944", "tag", "tag", None).await;
+    insert_block(&pool, "AR3944", "page", "anc", None).await;
+    insert_block(&pool, "RR3944", "content", "root", Some("AR3944")).await;
+    insert_block(&pool, "DS3944", "content", "desc", Some("RR3944")).await;
+    insert_tag_assoc(&pool, "AR3944", "TR3944").await;
+    insert_tag_assoc(&pool, "RR3944", "TR3944").await;
+    soft_delete(&pool, "RR3944").await;
+
+    rebuild_all(&pool).await.unwrap();
+    let canonical = get_inherited(&pool).await;
+    assert!(
+        canonical.is_empty(),
+        "#3944: nothing crosses the soft-deleted RR3944 in either direction, \
+         so the arbiter's answer is empty; got: {canonical:?}"
+    );
+
+    // Project the remove (drop the direct edge), then run only the
+    // incremental maintenance the RemoveTag apply path runs.
+    sqlx::query("DELETE FROM block_tags WHERE block_id = 'RR3944' AND tag_id = 'TR3944'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    remove_inherited_tag(&mut conn, "RR3944", "TR3944")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    assert!(
+        rebuilt.is_empty(),
+        "precondition: with RR3944's direct tag gone the arbiter still yields \
+         nothing; got: {rebuilt:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#3944: `remove_inherited_tag` rooted at the soft-deleted RR3944 must \
+         not re-attribute DS3944 (site 2) or RR3944 itself (site 3) to \
+         AR3944 — RemoveTag has no RebuildTagInheritanceCache backstop \
+         (#2669), so such a row is DURABLE wrong state"
+    );
+}
+
+/// #3944 — tombstone root, all four `tag_inh_subtree_active!` call-sites at
+/// once: step 1's two DELETEs still sweep the tombstone's LIVE subtree, and
+/// steps 2 and 3 re-derive exactly what the arbiter computes for it.
+///
+/// `AX3944[#T1] > RB3944(deleted) > DL3944(live)[#T2] > EL3944(live)`.
+///
+/// A live descendant under a tombstone is exactly the shape the remote move
+/// path produces. The arbiter says `(EL3944, T2, DL3944)` and nothing else:
+/// `T1` cannot cross `RB3944`, and `DL3944`'s own tag still propagates
+/// downward through live blocks. Step 1 deletes that row and step 2 puts it
+/// straight back (`tagged_descendants` seeds from the live, in-subtree tagger
+/// `DL3944`); the divergence was step 3 ALSO cross-joining `T1` onto the whole
+/// subtree from above, which the ancestor walk's seed filter now prevents.
+#[tokio::test]
+async fn recompute_at_tombstone_keeps_live_descendant_inheritance_3944() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "T13944", "tag", "t1", None).await;
+    insert_block(&pool, "T23944", "tag", "t2", None).await;
+    insert_block(&pool, "AX3944", "page", "apex", None).await;
+    insert_block(&pool, "RB3944", "content", "root", Some("AX3944")).await;
+    insert_block(&pool, "DL3944", "content", "live-desc", Some("RB3944")).await;
+    insert_block(&pool, "EL3944", "content", "leaf", Some("DL3944")).await;
+    insert_tag_assoc(&pool, "AX3944", "T13944").await;
+    insert_tag_assoc(&pool, "DL3944", "T23944").await;
+    soft_delete(&pool, "RB3944").await;
+
+    rebuild_all(&pool).await.unwrap();
+    let canonical = get_inherited(&pool).await;
+    assert_eq!(
+        canonical,
+        vec![(
+            "EL3944".to_string(),
+            "T23944".to_string(),
+            "DL3944".to_string()
+        )],
+        "#3944: T13944 cannot cross the tombstone, but DL3944's own tag still \
+         reaches EL3944 through live blocks; got: {canonical:?}"
+    );
+
+    let mut conn = pool.acquire().await.unwrap();
+    recompute_subtree_inheritance(&mut conn, "RB3944")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    assert!(
+        !incremental.iter().any(|(_, tag, _)| tag == "T13944"),
+        "#3944: no block in the tombstoned root's subtree may inherit T13944 \
+         from above the tombstone; got: {incremental:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#3944: narrowing step 1's DELETE for a tombstoned root must leave the \
+         subtree's INTERNAL inheritance exactly as the arbiter computes it"
+    );
+}
+
+/// #3944 — DELETE-scope matrix, LIVE root: both of step 1's DELETEs must
+/// still sweep the WHOLE subtree, not merely the root itself.
+///
+/// The stale rows here sit on blocks OTHER than `?1` deliberately. An earlier
+/// draft of this test put both of them on the recompute root, which made it
+/// pass with each DELETE reduced to `... = ?1`: it asserted nothing about the
+/// `IN (SELECT id FROM subtree)` scope it claimed to pin. The fixture below
+/// fails if either subtree clause is dropped.
+///
+/// `OP3944[#T3] > { SB3944, MV3944 }`, `MV3944 > KD3944[#T4] > GC3944`, plus
+/// the untagged page `NP3944`. Then two structural changes are projected —
+/// `GC3944` moves out of the subtree (to `SB3944`) and `MV3944` moves under
+/// `NP3944` — and only the recompute rooted at the LIVE `MV3944` runs:
+///
+/// * site 1a (`block_id IN subtree`) must drop `(KD3944, T3, OP3944)` — a
+///   stale row on a DESCENDANT of the root, which `block_id = ?1` cannot see;
+/// * site 1b (`inherited_from IN subtree AND block_id NOT IN subtree`) must
+///   drop `(GC3944, T4, KD3944)` — attributed to a descendant of the root,
+///   which `inherited_from = ?1` cannot see either.
+///
+/// `(GC3944, T3, OP3944)` must SURVIVE: it is outside the subtree in both
+/// roles and still correct, so it also guards against over-deleting.
+#[tokio::test]
+async fn recompute_delete_scope_sweeps_the_whole_subtree_3944() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "T33944", "tag", "t3", None).await;
+    insert_block(&pool, "T43944", "tag", "t4", None).await;
+    insert_block(&pool, "OP3944", "page", "old-parent", None).await;
+    insert_block(&pool, "NP3944", "page", "new-parent", None).await;
+    insert_block(&pool, "SB3944", "content", "sibling", Some("OP3944")).await;
+    insert_block(&pool, "MV3944", "content", "mover", Some("OP3944")).await;
+    insert_block(&pool, "KD3944", "content", "kid", Some("MV3944")).await;
+    insert_block(&pool, "GC3944", "content", "grandkid", Some("KD3944")).await;
+    insert_tag_assoc(&pool, "OP3944", "T33944").await;
+    insert_tag_assoc(&pool, "KD3944", "T43944").await;
+
+    rebuild_all(&pool).await.unwrap();
+    let before = get_inherited(&pool).await;
+    assert!(
+        before.contains(&("KD3944".into(), "T33944".into(), "OP3944".into())),
+        "precondition: the kid — a DESCENDANT of the recompute root — inherits \
+         T3 from the root's old parent; got: {before:?}"
+    );
+    assert!(
+        before.contains(&("GC3944".into(), "T43944".into(), "KD3944".into())),
+        "precondition: the grandkid inherits T4 from the kid, i.e. from a \
+         block INSIDE the recompute root's subtree; got: {before:?}"
+    );
+
+    // Project both structural changes, then run only the recompute rooted at
+    // the (live) mover — the shape `TagScope::Subtrees` dedupes to.
+    sqlx::query("UPDATE blocks SET parent_id = 'SB3944' WHERE id = 'GC3944'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET parent_id = 'NP3944' WHERE id = 'MV3944'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    recompute_subtree_inheritance(&mut conn, "MV3944")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    assert!(
+        !incremental.contains(&("KD3944".into(), "T33944".into(), "OP3944".into())),
+        "#3944 site 1a: the DESCENDANT's stale T3 row must be swept by \
+         `block_id IN subtree`, which `block_id = ?1` would miss; \
+         got: {incremental:?}"
+    );
+    assert!(
+        !incremental.contains(&("GC3944".into(), "T43944".into(), "KD3944".into())),
+        "#3944 site 1b: the row attributed to an in-subtree DESCENDANT must be \
+         swept by `inherited_from IN subtree`, which `inherited_from = ?1` \
+         would miss; got: {incremental:?}"
+    );
+    assert!(
+        incremental.contains(&("GC3944".into(), "T33944".into(), "OP3944".into())),
+        "#3944: the grandkid's row from OUTSIDE the subtree in both roles is \
+         still correct and must not be swept; got: {incremental:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#3944: a LIVE root's DELETE scope is unchanged, and still equals the \
+         arbiter"
+    );
+}
+
+/// #3944 — DELETE-scope matrix, tombstone root: step 1 must still sweep the
+/// TOMBSTONE'S OWN rows.
+///
+/// A row whose `block_id` is a soft-deleted block, or whose `inherited_from`
+/// is one, is never in `rebuild_all`'s output — the arbiter propagates only
+/// through live blocks in both roles. Such a row is therefore unconditionally
+/// stale and needs no re-insert, and step 1 sweeps it because
+/// `tag_inh_subtree_active!`'s seed still admits a tombstoned `?1`. Filtering
+/// that seed empties `subtree` and this test goes red — it is one of the two
+/// pins on the negative half of the #3944 rule.
+///
+/// This is not hypothetical: `(RS3944, TS3944, AS3944)` is exactly the row
+/// pre-#3944 code wrote (the issue's PROBE-E), and `(OU3944, TS3944, RS3944)`
+/// the mirror one attributed to the tombstone. A vault upgraded past this fix
+/// still has them, and the next recompute rooted there heals both rather than
+/// leaving them for a whole-vault rebuild.
+#[tokio::test]
+async fn recompute_at_tombstone_sweeps_the_tombstones_own_rows_3944() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TS3944", "tag", "ts", None).await;
+    insert_block(&pool, "AS3944", "page", "apex", None).await;
+    insert_block(&pool, "RS3944", "content", "root", Some("AS3944")).await;
+    insert_block(&pool, "OU3944", "page", "outside", None).await;
+    insert_tag_assoc(&pool, "AS3944", "TS3944").await;
+    soft_delete(&pool, "RS3944").await;
+
+    // Legacy rows of exactly the two shapes pre-#3944 code could leave behind:
+    // one ON the tombstone, one attributed TO it.
+    sqlx::query(
+        "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) \
+         VALUES ('RS3944', 'TS3944', 'AS3944'), ('OU3944', 'TS3944', 'RS3944')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    recompute_subtree_inheritance(&mut conn, "RS3944")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    assert!(
+        rebuilt.is_empty(),
+        "precondition: the arbiter emits neither a row ON a tombstone nor one \
+         attributed TO it; got: {rebuilt:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#3944: step 1 must still sweep the tombstoned root's own rows once \
+         the seed filter empties `subtree` — they are unconditionally stale \
+         and nothing re-inserts them"
+    );
+}
+
+/// #3944 — the counter-test: `tag_inh_subtree_active!`'s seed must NOT filter
+/// `?1`, or a recompute rooted at a tombstone strands rows and the
+/// incremental path yields MORE than `rebuild_all`.
+///
+/// The symmetric-looking change — "make BOTH root-seeded walks refuse a
+/// soft-deleted `?1`" — is wrong, and wrong in a way no other test in this
+/// file catches. `tag_inh_subtree_active!` is not only an INSERT source: it
+/// scopes `recompute_subtree_inheritance`'s two step-1 DELETEs. Filtering its
+/// seed empties `subtree` for a tombstoned root, which turns the whole helper
+/// into a no-op — and a no-op is not the arbiter's answer, because the helper
+/// is a from-scratch REPAIR PASS over the root's subtree, and a tombstone can
+/// have a LIVE descendant subtree whose rows a structural change strictly
+/// BELOW it has invalidated.
+///
+/// `AX3944B[#T1] > RB3944B(deleted) > DL3944B(live)[#T2] > EL3944B(live)`,
+/// converged at `(EL3944B, T2, DL3944B)`. Then `EL3944B` moves out from under
+/// the tagged `DL3944B` to directly under the tombstone, so the arbiter's
+/// answer becomes empty — and only a recompute rooted at `RB3944B` can sweep
+/// the row, because `loro_sync`'s `TagScope::Subtrees` dedupes a batch's
+/// structural roots to the TOP-MOST one.
+///
+/// Measured on the three variants:
+///   * pre-#3944:                      incremental = 3 wrong rows  (AGREE=false)
+///   * with the `subtree_active` seed filtered: 1 stranded row     (AGREE=false)
+///   * shipped (ancestor seed only):   incremental = []            (AGREE=true)
+#[tokio::test]
+async fn recompute_at_tombstone_after_structural_change_below_matches_rebuild_3944() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "T13944B", "tag", "t1", None).await;
+    insert_block(&pool, "T23944B", "tag", "t2", None).await;
+    insert_block(&pool, "AX3944B", "page", "apex", None).await;
+    insert_block(&pool, "RB3944B", "content", "root", Some("AX3944B")).await;
+    insert_block(&pool, "DL3944B", "content", "live-desc", Some("RB3944B")).await;
+    insert_block(&pool, "EL3944B", "content", "leaf", Some("DL3944B")).await;
+    insert_tag_assoc(&pool, "AX3944B", "T13944B").await;
+    insert_tag_assoc(&pool, "DL3944B", "T23944B").await;
+    soft_delete(&pool, "RB3944B").await;
+
+    rebuild_all(&pool).await.unwrap();
+    let converged = get_inherited(&pool).await;
+    assert_eq!(
+        converged,
+        vec![(
+            "EL3944B".to_string(),
+            "T23944B".to_string(),
+            "DL3944B".to_string()
+        )],
+        "precondition: the tombstone's live subtree is converged with the \
+         arbiter before the move; got: {converged:?}"
+    );
+
+    // A structural change strictly BELOW the tombstone: the leaf leaves the
+    // tagged DL3944B and reattaches directly under the tombstoned root. Its
+    // inherited row is now stale and NOTHING else will sweep it — RemoveTag
+    // and MoveBlock carry no `RebuildTagInheritanceCache` fan-out (#2669).
+    sqlx::query("UPDATE blocks SET parent_id = 'RB3944B' WHERE id = 'EL3944B'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    recompute_subtree_inheritance(&mut conn, "RB3944B")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    assert!(
+        rebuilt.is_empty(),
+        "precondition: with the leaf out from under the only reachable tagger, \
+         the arbiter yields nothing; got: {rebuilt:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#3944: a recompute rooted at a TOMBSTONE must still sweep its LIVE \
+         subtree — filtering `tag_inh_subtree_active!`'s seed makes this a \
+         no-op and strands the leaf's stale row, which is a divergence in the \
+         opposite direction to the one #3944 closed"
+    );
+}

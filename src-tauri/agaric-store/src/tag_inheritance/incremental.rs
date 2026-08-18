@@ -70,6 +70,22 @@ pub async fn propagate_tag_to_descendants(
 /// `remove_tag_keeps_direct_holder_descendant_inheriting_3923` pin the
 /// convergence.
 ///
+/// #3944 — a soft-deleted `block_id`. Step 1's `DELETE … WHERE
+/// inherited_from = ?1` is unconditional and stays so (dropping rows
+/// attributed to a tombstoned tagger is what the arbiter wants). Steps 2
+/// and 3 must NOT re-attribute anything, though: for
+/// `A[#T] > R(deleted, #T) > D(live)`, `rebuild_all` yields nothing, while
+/// this helper used to reach `D` via `descendants_active` and `A` via
+/// `tag_inh_ancestors_walk!`'s then-unchecked seed, writing `(D, T, A)` at
+/// site 2 and `(R, T, A)` at site 3. The seed now requires `?1` to be live,
+/// so `nearest_ancestor` is empty for a tombstoned subject and both inserts
+/// are no-ops; site 3 additionally joins `blocks` on `?1` so its own
+/// projection states the rule. Step 2's in-subtree re-attribution is
+/// unaffected and stays correct under a tombstoned `?1`: it only ever
+/// attributes a live descendant to a live tagger STRICTLY below `?1`, which
+/// is a chain the arbiter propagates through. Pinned by
+/// `remove_tag_rooted_at_soft_deleted_block_matches_rebuild_3944`.
+///
 /// ## No backfill for pre-#3923 vaults — and why none is needed
 ///
 /// This PR does not migrate existing rows. A vault that hit the bug before
@@ -279,9 +295,24 @@ pub async fn remove_inherited_tag(
         // never holds the tag directly here — but it encoded the same wrong
         // rule, so it goes with the other two rather than being left as a trap
         // for whoever next reads this function.
+        //
+        // #3944: this insert names ?1 as a literal rather than selecting it
+        // from `blocks`, so it used to write a row on a soft-deleted subject —
+        // `rebuild_all` never emits a row whose `block_id` is a tombstone. The
+        // `blocks` join makes the projection state that rule locally. It is
+        // now redundant with `tag_inh_ancestors_walk!`'s own #3944 seed filter
+        // (a deleted ?1 makes `ancestors`, and hence `nearest_ancestor`,
+        // empty), and is kept for the same reason the sibling `NOT IN
+        // block_tag_inherited` guards are: the rule is legible at the call
+        // site instead of resting on a property of a CTE declared above it.
+        // Being redundant, it is also UNFALSIFIABLE — no test reddens if it is
+        // deleted, and none can while the seed filter above it stands. Treat
+        // it as documentation with a `WHERE` clause, not as a covered guard.
         "INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
          SELECT ?1, ?2, na.id \
-         FROM nearest_ancestor na",
+         FROM nearest_ancestor na \
+         JOIN blocks b ON b.id = ?1 \
+         WHERE b.deleted_at IS NULL",
     ))
     .bind(block_id)
     .bind(tag_id)
@@ -320,11 +351,54 @@ pub async fn remove_inherited_tag(
 ///   has always asserted that a deleted intermediate breaks inheritance
 ///   when recomputing from ABOVE it, and the same fixture recomputed from
 ///   BELOW used to give the opposite answer.
+/// * **#3944 — the SUBJECT.** Rooted at a TOMBSTONE, this helper used to
+///   write inherited rows FOR the tombstone and re-derive its live
+///   descendants' rows from an ancestor chain that is broken at the
+///   tombstone. The remote path reaches this — `move_block_inner` guards
+///   its root, but `apply_move_block_via_loro` /
+///   `apply_move_block_sql_only` call this helper unconditionally and
+///   `project_move_block_to_sql` has no `deleted_at` filter.
+///
+///   Both wrong writes came from step 3's ancestor walk, and both are
+///   closed by [`crate::tag_inh_ancestors_walk`]'s #3944 seed filter: with
+///   `root_id` deleted the walk is empty, so `ancestor_tags_nearest` is
+///   empty and step 3's CROSS JOIN inserts nothing — neither for the
+///   tombstone nor for anything under it. Step 2 was never a source: its
+///   `tagged_descendants` seed rejects a soft-deleted tagger and only ever
+///   emits LIVE children, so it re-derives exactly the in-subtree
+///   inheritance the arbiter computes. Pinned by
+///   `recompute_rooted_at_soft_deleted_block_matches_rebuild_3944` and
+///   `recompute_at_tombstone_keeps_live_descendant_inheritance_3944`.
+///
+///   **Step 1's DELETE scope is deliberately UNCHANGED**, and
+///   `tag_inh_subtree_active!`'s seed is deliberately left admitting a
+///   tombstoned `root_id` so that it stays that way. All four
+///   `tag_inh_subtree_active!` call-sites below share that CTE, so
+///   filtering its seed would empty `subtree` for a tombstoned root and
+///   turn this whole helper into a no-op. That is not equivalent to "the
+///   arbiter has nothing to say about a tombstone": the helper is a
+///   from-scratch repair pass over `root_id`'s subtree, and a tombstoned
+///   root can have a LIVE descendant subtree (exactly what the remote path
+///   produces) whose rows a structural change strictly BELOW `root_id` has
+///   invalidated. `loro_sync.rs`'s `TagScope::Subtrees(roots)` dedupes a
+///   batch's structural roots to the TOP-MOST one, so such a change is
+///   covered by — and only by — the recompute rooted at that possibly
+///   tombstoned ancestor. Skipping the sweep leaves the stale row and makes
+///   the incremental path yield MORE than the arbiter. Pinned by
+///   `recompute_at_tombstone_after_structural_change_below_matches_rebuild_3944`;
+///   `recompute_delete_scope_sweeps_the_whole_subtree_3944` keeps both
+///   DELETEs load-bearing for a live root.
 pub async fn recompute_subtree_inheritance(
     conn: &mut SqliteConnection,
     root_id: &str,
 ) -> Result<(), AppError> {
     // Step 1: Delete all inherited entries where block_id is in the subtree
+    //
+    // #3944: this scope is UNCHANGED, and `tag_inh_subtree_active!`'s seed is
+    // left admitting a soft-deleted `?1` precisely so that it can stay that
+    // way — `subtree` must still contain the root and its LIVE descendants
+    // when the root is a tombstone, or this sweep silently stops running for
+    // the one state the remote path actually produces. See the fn docstring.
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_subtree_active!(),
@@ -338,6 +412,11 @@ pub async fn recompute_subtree_inheritance(
     // Also delete entries where inherited_from is in the subtree
     // (other blocks outside the subtree shouldn't be affected, but entries
     // inherited FROM a subtree block that has been moved need cleanup)
+    //
+    // #3944: unchanged for the same reason as the sweep above — a row
+    // attributed to a block inside the subtree is stale whether or not the
+    // subtree's ROOT is a tombstone, and `rebuild_all` never attributes a row
+    // to a soft-deleted tagger at all.
     sqlx::query(concat!(
         "WITH RECURSIVE ",
         crate::tag_inh_subtree_active!(),
