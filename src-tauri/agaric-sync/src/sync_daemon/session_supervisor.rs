@@ -225,10 +225,28 @@ pub(crate) async fn daemon_loop(
         bind_decision.prefix_len,
         bind_decision.lan_ip,
     );
+    // The addresses that decision was made from, handed to the bind's locality gate
+    // rather than letting it enumerate the host a second time (#3869). The second sweep
+    // could disagree with the first — an address lost to a DHCP renewal or a Wi-Fi roam
+    // between them — and `lan_only` would then refuse, on locality grounds, a bind this
+    // code had just chosen.
+    //
+    // This **narrows** that race, it does not close it. What it removes is the locality
+    // refusal: the gate is now answered from the same sweep that picked the address, so
+    // `BindAddressNotPrivate` is unreachable from here. The address can still go away
+    // between the sweep and the `bind` below, and when it does the kernel refuses with
+    // EADDRNOTAVAIL, `SyncService::bind` returns `ServiceBindError::Socket`, and the `?`
+    // on the next statement still fails the whole daemon. There is no loopback fallback
+    // on this path — `lan_bind_target` already committed to an address, and the fallback
+    // it owns is chosen before this point or not at all. The gain is that the failure is
+    // now the operating system reporting a fact rather than our own configuration layer
+    // rejecting an address it had itself selected a moment earlier.
+    let host_addrs = bind_decision.host_addrs();
     let service = Arc::new(
         SyncService::bind(
             bind_addr,
             prefix_len,
+            &host_addrs,
             DnsResolver::default(),
             endpoint_secret,
         )
@@ -697,10 +715,12 @@ pub(crate) async fn daemon_loop(
 /// names the risk. Turning it into a refusal, or an opt-in, is a product decision and
 /// is deliberately not made here.
 ///
-/// The whole [`BindDecision`] is returned rather than the three fields
-/// `SyncService::bind` needs, because `internet_facing` is what
-/// [`handle_internet_facing_bind`] turns into the user-visible signal (#3864); a log
-/// line the daemon writes to a file nobody opens is not one.
+/// The whole [`BindDecision`] is returned rather than the fields `SyncService::bind`
+/// needs, because `internet_facing` is what [`handle_internet_facing_bind`] turns into
+/// the user-visible signal (#3864); a log line the daemon writes to a file nobody opens
+/// is not one. It also carries the interface enumeration itself, which `SyncService::bind`
+/// now takes so that `lan_only`'s locality gate answers from the *same* sweep that chose
+/// the address rather than a second one taken moments later (#3869).
 fn lan_bind_target() -> BindDecision {
     super::lan_interface::select_bind_target()
 }

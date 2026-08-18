@@ -90,7 +90,11 @@
 //! that never calls `establish` at all, and a spawned task aborted or unwound
 //! mid-handshake.
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, SecretKey,
@@ -102,7 +106,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use agaric_core::error::AppError;
 
 use crate::sync_constants::MAX_CONCURRENT_RESPONDER_SESSIONS;
-use crate::transport::endpoint::{LanBindError, lan_only};
+use crate::transport::endpoint::{LanBindError, lan_only_with_host_addrs};
 
 /// The ALPN every Agaric sync connection negotiates.
 ///
@@ -458,16 +462,28 @@ impl SyncService {
     /// module proves is the posture this service gets, and re-deriving any part of it
     /// would mean re-deriving the guard too.
     ///
+    /// # `host_addrs` (#3869)
+    ///
+    /// The addresses this host holds, as the caller enumerated them, for the locality gate
+    /// that decides whether a publicly-routable `bind` may be claimed. It is a parameter
+    /// rather than a `getifaddrs(3)` call inside [`lan_only`] because the daemon's caller
+    /// has **already** enumerated the host to pick `bind` in the first place: sweeping
+    /// again here opens a window in which an address can disappear between the two reads,
+    /// and the bind then fails as `BindAddressNotPrivate` rather than falling back to
+    /// loopback. Pass the list the bind address came from; `&[]` vouches for nothing,
+    /// which refuses a publicly-routable bind and admits any other.
+    ///
     /// # Errors
     /// [`ServiceBindError::Configuration`] if the address or prefix cannot support the
     /// LAN-only posture; [`ServiceBindError::Socket`] if iroh cannot bind.
     pub async fn bind(
         bind: SocketAddr,
         prefix_len: u8,
+        host_addrs: &[IpAddr],
         resolver: DnsResolver,
         secret: SecretKey,
     ) -> Result<Self, ServiceBindError> {
-        let endpoint = lan_only(bind, prefix_len, resolver)?
+        let endpoint = lan_only_with_host_addrs(bind, prefix_len, resolver, host_addrs)?
             // Without this the endpoint mints a fresh identity on every bind, which is
             // harmless for a test that dials itself and fatal for anything that stores
             // an `EndpointId` — see [`identity`](super::identity).
@@ -626,7 +642,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::transport::endpoint::RecordingResolver;
+    use crate::transport::endpoint::{RecordingResolver, lan_only};
 
     /// Hang detector, not a performance bound — a LAN handshake was measured at 0.07 s
     /// in the #3462 spike.
@@ -697,6 +713,7 @@ mod tests {
         SyncService::bind(
             lan_bind(),
             LAN_PREFIX,
+            &[],
             DnsResolver::custom(recorder.clone()),
             SecretKey::generate(),
         )
@@ -1277,6 +1294,7 @@ mod tests {
         let err = SyncService::bind(
             lan_bind(),
             0,
+            &[],
             DnsResolver::custom(RecordingResolver::new()),
             SecretKey::generate(),
         )
@@ -1299,6 +1317,88 @@ mod tests {
         );
     }
 
+    /// The locality gate reads the caller's list, not a fresh `getifaddrs(3)` (#3869).
+    ///
+    /// This is the wiring the bind-policy race fix rests on: the daemon enumerates the
+    /// host once to pick an address, and the gate that decides whether that address may
+    /// be claimed must answer from the *same* enumeration. Reverting the call inside
+    /// [`SyncService::bind`] to `lan_only` compiles and leaves every other test in this
+    /// file green, because they all bind loopback — which the gate waves through whatever
+    /// list it is given.
+    ///
+    /// A pair, because either half alone is satisfiable by the wrong code. `&[]` vouching
+    /// for nothing gives `Configuration`, and a list naming the bind address gives
+    /// `Socket` — the *operating system* refusing, which is proof the configuration layer
+    /// was passed. With a fresh sweep inside `lan_only` both calls answer `Configuration`
+    /// and the second assertion goes red.
+    ///
+    /// `8.8.8.8` is *genuinely* public — allocated, routed, and reachable — and no host
+    /// running this suite has it on an interface, so the OS refusal is deterministic
+    /// rather than a fact about the machine. A held address would bind for real, and one
+    /// this host lacks would fail identically under both shapes, which is why the address
+    /// has to be one no runner can hold.
+    ///
+    /// It was `240.0.0.1` (class E, RFC 1112 § 4), which is the more obviously
+    /// unassignable address and the wrong choice: whether the gate treats class E as
+    /// public is exactly what **#4106** says is a defect and will change. The moment it
+    /// does, `bind_locality_ok` short-circuits `true` for `240.0.0.1`, the `unvouched`
+    /// half below stops reaching `BindAddressNotPrivate` and gets `Socket` instead, and
+    /// this test goes red for a reason that has nothing to do with the wiring it covers.
+    /// `8.8.8.8` is public under every reading of the range table, so no fix to
+    /// [`is_publicly_routable`] can move it — and it is the same address `lan_only`'s own
+    /// docs use for "not on anyone's interface".
+    ///
+    /// Known flake shape, cannot pass falsely: the `vouched_for` half needs the kernel to
+    /// REFUSE a bind to an address this host does not hold. `net.ipv4.ip_nonlocal_bind=1`
+    /// (keepalived/HA images, some container hosts) disables that refusal, the bind
+    /// succeeds, and the `expect_err` panics. Ruling out a runner that *holds* `8.8.8.8`
+    /// is not enough on its own.
+    #[tokio::test]
+    async fn the_locality_gate_reads_the_host_addresses_the_caller_passed() {
+        let unheld: SocketAddr = "8.8.8.8:0".parse().expect("literal parses");
+        // A /24, not the shared `LAN_PREFIX` (/8). Nothing here depends on the
+        // width — the bind fails before a route is installed — but asking for
+        // `8.0.0.0/8` is the exact shape `lan_only`'s docs cite as WHY the
+        // locality check exists, so the fixture would read as contradicting the
+        // doc it sits under.
+        const UNHELD_PREFIX: u8 = 24;
+
+        let vouched_for = SyncService::bind(
+            unheld,
+            UNHELD_PREFIX,
+            &[unheld.ip()],
+            DnsResolver::custom(RecordingResolver::new()),
+            SecretKey::generate(),
+        )
+        .await
+        .map(|_| ())
+        .expect_err("this host does not hold 8.8.8.8, so the socket bind must fail");
+        assert!(
+            matches!(vouched_for, ServiceBindError::Socket(_)),
+            "the caller's list vouched for this address, so the LAN-only configuration \
+             was accepted and only the OS could refuse; got {vouched_for:?}"
+        );
+
+        let unvouched = SyncService::bind(
+            unheld,
+            UNHELD_PREFIX,
+            &[],
+            DnsResolver::custom(RecordingResolver::new()),
+            SecretKey::generate(),
+        )
+        .await
+        .map(|_| ())
+        .expect_err("an empty list vouches for nothing publicly routable");
+        assert!(
+            matches!(
+                unvouched,
+                ServiceBindError::Configuration(LanBindError::BindAddressNotPrivate { .. })
+            ),
+            "control: with nothing to vouch for it, the same address must be refused at \
+             the configuration layer; got {unvouched:?}"
+        );
+    }
+
     /// A port already in use must surface as a *socket* error.
     ///
     /// The complement of the test above, and the reason [`ServiceBindError`] has two
@@ -1313,6 +1413,7 @@ mod tests {
         let err = SyncService::bind(
             taken,
             LAN_PREFIX,
+            &[],
             DnsResolver::custom(RecordingResolver::new()),
             SecretKey::generate(),
         )

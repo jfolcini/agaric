@@ -188,6 +188,9 @@ impl ServiceHarness {
         let service = crate::transport::service::SyncService::bind(
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)),
             LOOPBACK_PREFIX,
+            // Loopback is never publicly routable, so the locality gate has nothing to
+            // vouch for and an empty list is the honest input here (#3869).
+            &[],
             DnsResolver::custom(RecordingResolver::new()),
             SecretKey::generate(),
         )
