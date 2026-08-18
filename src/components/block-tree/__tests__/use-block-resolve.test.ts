@@ -3035,12 +3035,18 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
   // puts the emoji's leading surrogate (0xD83C) below the PUA character's
   // single unit (0xE000); UTF-8 byte order puts the emoji's 4-byte lead
   // (0xF0) above the PUA character's 3-byte lead (0xEE). Verified directly:
-  //   bytes('') = [0xEE,0x80,0x80], bytes('🎯') = [0xF0,0x9F,0x8E,0xAF]
-  //   '' < '🎯' is false (UTF-16 compare puts the emoji first) — the bug
+  //   bytes(U+E000) = [0xEE,0x80,0x80], bytes('🎯') = [0xF0,0x9F,0x8E,0xAF]
+  //   U+E000 < U+1F3AF is false (UTF-16 compare puts the emoji first) — the bug
   //   0xEE < 0xF0 (UTF-8 byte compare puts the PUA char first) — the fix
+  // Escaped, not a bare literal. U+E000 is invisible, so an editor or a lint
+  // autofix that strips it would silently turn this title into '' — which sorts
+  // before the emoji under BOTH the old and the new comparator, leaving a test
+  // that passes against fully unfixed code. The escape makes tampering visible.
+  const PUA_E000 = '\u{E000}'
+
   it('a page renamed to a private-use-area title sorts before a supplementary-plane emoji, by UTF-8 bytes not UTF-16 code units', async () => {
     mockedListAllPagesInSpace.mockResolvedValueOnce([
-      pageRow('P_PUA', ''),
+      pageRow('P_PUA', PUA_E000),
       pageRow('P_EMOJI', 'unrelated'),
     ])
 
@@ -3060,7 +3066,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     // UTF-8 BINARY order: the PUA character (0xEE...) before the emoji (0xF0...).
-    expect(items.filter((i) => !i.isCreate).map((i) => i.label)).toEqual(['', '🎯'])
+    expect(items.filter((i) => !i.isCreate).map((i) => i.label)).toEqual([PUA_E000, '🎯'])
     expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
   })
 
