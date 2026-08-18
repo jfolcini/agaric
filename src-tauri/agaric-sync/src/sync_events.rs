@@ -301,11 +301,12 @@ pub struct BindExposureStatusState(pub std::sync::Mutex<BindExposureStatus>);
 /// past emission, and it deliberately has no `…State` holder written by the
 /// event sink. [`SyncEvent::NetworkBlockedByOs`] fires only on a *transition*
 /// (`sync_daemon::android_network_block::blocked_transition`) and the dedup
-/// behind that rule is process-global, so a pairing dialog opened a second time
-/// during one continuous block receives no event at all: the block was already
-/// reported, to a listener that has since unmounted. That is #3852's failure
-/// mode — a clean UI on a device whose network is cut — moved one dialog-open
-/// later.
+/// behind that rule is process-global, so a frontend that starts listening
+/// while a block is already in progress receives no event at all: the one
+/// event for that block was emitted before it subscribed, and the next will
+/// not come until the block ends. That is #3852's failure mode — a clean UI on
+/// a device whose network is cut — for exactly the user who went looking at
+/// the pairing screen *because* the network had already stopped working.
 ///
 /// The answer is a read of the *current* status, not a replay of the last
 /// transition. #4034 declined a backfill because "a status queried at mount

@@ -738,13 +738,15 @@ pub async fn get_bind_exposure_status(
 /// Tauri command: return whether the OS is blocking this app's traffic **right
 /// now** (#4035).
 ///
-/// The pairing dialog calls this on mount. Unlike the two commands above this
-/// is not a race fix: `SyncEvent::NetworkBlockedByOs` is emitted only on a
-/// *transition*, and the dedup behind that is process-global, so a dialog
-/// opened a second time during one continuous block gets no event no matter how
-/// early it subscribes. Without this query the second session shows a clean UI
-/// on a device whose network is cut — #3852's failure mode, one dialog-open
-/// later.
+/// The pairing UI calls this as soon as its `sync:network_blocked`
+/// subscription is live. Unlike the two commands above this is not a race fix:
+/// `SyncEvent::NetworkBlockedByOs` is emitted only on a *transition*, and the
+/// dedup behind that is process-global, so a listener that subscribes while a
+/// block is already in progress gets no event however early it subscribes —
+/// the one event for that block is already spent, and the next will not come
+/// until the block ends. Without this query the screen the user opened
+/// *because* pairing stopped working is a clean one, on a device whose network
+/// is cut: #3852's failure mode, arrived at from the other direction.
 ///
 /// Takes no managed state: the answer lives in the `android_network_block`
 /// process-global that the JNI callback writes, which is where the platform's

@@ -555,13 +555,15 @@ export const commands = {
 	 *  Tauri command: return whether the OS is blocking this app's traffic **right
 	 *  now** (#4035).
 	 * 
-	 *  The pairing dialog calls this on mount. Unlike the two commands above this
-	 *  is not a race fix: `SyncEvent::NetworkBlockedByOs` is emitted only on a
-	 *  *transition*, and the dedup behind that is process-global, so a dialog
-	 *  opened a second time during one continuous block gets no event no matter how
-	 *  early it subscribes. Without this query the second session shows a clean UI
-	 *  on a device whose network is cut — #3852's failure mode, one dialog-open
-	 *  later.
+	 *  The pairing UI calls this as soon as its `sync:network_blocked`
+	 *  subscription is live. Unlike the two commands above this is not a race fix:
+	 *  `SyncEvent::NetworkBlockedByOs` is emitted only on a *transition*, and the
+	 *  dedup behind that is process-global, so a listener that subscribes while a
+	 *  block is already in progress gets no event however early it subscribes —
+	 *  the one event for that block is already spent, and the next will not come
+	 *  until the block ends. Without this query the screen the user opened
+	 *  *because* pairing stopped working is a clean one, on a device whose network
+	 *  is cut: #3852's failure mode, arrived at from the other direction.
 	 * 
 	 *  Takes no managed state: the answer lives in the `android_network_block`
 	 *  process-global that the JNI callback writes, which is where the platform's
@@ -2598,11 +2600,12 @@ export type OpRef = {
  *  past emission, and it deliberately has no `…State` holder written by the
  *  event sink. [`SyncEvent::NetworkBlockedByOs`] fires only on a *transition*
  *  (`sync_daemon::android_network_block::blocked_transition`) and the dedup
- *  behind that rule is process-global, so a pairing dialog opened a second time
- *  during one continuous block receives no event at all: the block was already
- *  reported, to a listener that has since unmounted. That is #3852's failure
- *  mode — a clean UI on a device whose network is cut — moved one dialog-open
- *  later.
+ *  behind that rule is process-global, so a frontend that starts listening
+ *  while a block is already in progress receives no event at all: the one
+ *  event for that block was emitted before it subscribed, and the next will
+ *  not come until the block ends. That is #3852's failure mode — a clean UI on
+ *  a device whose network is cut — for exactly the user who went looking at
+ *  the pairing screen *because* the network had already stopped working.
  * 
  *  The answer is a read of the *current* status, not a replay of the last
  *  transition. #4034 declined a backfill because "a status queried at mount

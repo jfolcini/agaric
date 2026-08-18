@@ -8,7 +8,9 @@
  *     `listen()` resolves (the cancelled-flag race),
  *   - default error path logs via `logger.warn`,
  *   - custom `onError` overrides the default error path,
- *   - `enabled = false` is a full no-op (no listen, no cleanup).
+ *   - `enabled = false` is a full no-op (no listen, no cleanup),
+ *   - `onSubscribed` fires exactly when the subscription becomes live, and
+ *     never for a registration the component already unmounted out of.
  */
 
 import { renderHook } from '@testing-library/react'
@@ -162,6 +164,60 @@ describe('useTauriEventListener', () => {
     unmount()
 
     expect(mockUnlisten).not.toHaveBeenCalled()
+  })
+
+  /**
+   * `onSubscribed` exists so a caller can reconcile against the unbuffered gap
+   * before the subscription (see `useOsNetworkBlock`), which only works if it
+   * fires strictly *after* `listen()` resolves — not at mount.
+   */
+  it('calls onSubscribed only once listen() has resolved', async () => {
+    let resolveListen: (fn: () => void) => void = () => {}
+    mockListen.mockReturnValue(
+      new Promise<() => void>((resolve) => {
+        resolveListen = resolve
+      }),
+    )
+    const onSubscribed = vi.fn()
+
+    const { unmount } = renderHook(() =>
+      useTauriEventListener('test:event', vi.fn(), { onSubscribed }),
+    )
+
+    await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(1))
+    await Promise.resolve()
+    expect(onSubscribed).not.toHaveBeenCalled()
+
+    resolveListen(mockUnlisten)
+    await vi.waitFor(() => expect(onSubscribed).toHaveBeenCalledTimes(1))
+
+    unmount()
+  })
+
+  /**
+   * The cancelled-flag race, from `onSubscribed`'s side: a component that
+   * unmounted before `listen()` resolved has no subscription to reconcile
+   * against, and firing here would let it act on a listener already torn down.
+   */
+  it('does not call onSubscribed when the component unmounted first', async () => {
+    let resolveListen: (fn: () => void) => void = () => {}
+    mockListen.mockReturnValue(
+      new Promise<() => void>((resolve) => {
+        resolveListen = resolve
+      }),
+    )
+    const onSubscribed = vi.fn()
+
+    const { unmount } = renderHook(() =>
+      useTauriEventListener('test:event', vi.fn(), { onSubscribed }),
+    )
+    await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(1))
+
+    unmount()
+    resolveListen(mockUnlisten)
+    await vi.waitFor(() => expect(mockUnlisten).toHaveBeenCalledTimes(1))
+
+    expect(onSubscribed).not.toHaveBeenCalled()
   })
 
   it('does not re-register the listener when handler reference changes', async () => {
