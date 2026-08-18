@@ -15,7 +15,7 @@ use agaric_sync::device::DeviceId;
 use agaric_sync::pairing::PairingSession;
 use agaric_sync::pairing::{generate_qr_svg, pairing_qr_payload};
 use agaric_sync::sync_events::{
-    BindExposureStatus, BindExposureStatusState, MdnsStatus, MdnsStatusState,
+    BindExposureStatus, BindExposureStatusState, MdnsStatus, MdnsStatusState, OsNetworkBlockStatus,
 };
 use agaric_sync::sync_scheduler::SyncScheduler;
 
@@ -733,6 +733,28 @@ pub async fn get_bind_exposure_status(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     Ok(guard.clone())
+}
+
+/// Tauri command: return whether the OS is blocking this app's traffic **right
+/// now** (#4035).
+///
+/// The pairing dialog calls this on mount. Unlike the two commands above this
+/// is not a race fix: `SyncEvent::NetworkBlockedByOs` is emitted only on a
+/// *transition*, and the dedup behind that is process-global, so a dialog
+/// opened a second time during one continuous block gets no event no matter how
+/// early it subscribes. Without this query the second session shows a clean UI
+/// on a device whose network is cut — #3852's failure mode, one dialog-open
+/// later.
+///
+/// Takes no managed state: the answer lives in the `android_network_block`
+/// process-global that the JNI callback writes, which is where the platform's
+/// statements land and the only place they are complete (the event stream drops
+/// every repeat). Returns "not blocked" on every non-Android platform, where
+/// nothing ever writes it.
+#[tauri::command]
+#[specta::specta]
+pub fn get_os_network_block_status() -> Result<OsNetworkBlockStatus, AppError> {
+    Ok(agaric_sync::sync_daemon::android_network_block::current_status())
 }
 
 #[cfg(test)]

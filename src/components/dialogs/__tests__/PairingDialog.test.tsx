@@ -3084,7 +3084,14 @@ describe('PairingDialog', () => {
       if (!hadTauriInternals) {
         Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true })
       }
-      mockInvokeByCommand({ start_pairing: mockPairingInfo, list_peer_refs: [] })
+      // #4035 — the hook now also queries the CURRENT block status on mount.
+      // Answer "not blocked" by default so these event-driven tests keep
+      // asserting on the event alone.
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+        get_os_network_block_status: { blocked: false, reason_key: null },
+      })
     })
 
     afterEach(() => {
@@ -3126,6 +3133,73 @@ describe('PairingDialog', () => {
       await waitFor(() => {
         expect(screen.queryByTestId('pairing-network-blocked')).not.toBeInTheDocument()
       })
+    })
+
+    // ---------------------------------------------------------------------
+    // #4035 — the SECOND dialog session on the same, still-live block.
+    //
+    // The daemon reported the block once, to the first session's listener.
+    // Nothing will be emitted again until the block ends, so these tests emit
+    // NOTHING: everything on screen has to arrive through the mount-time
+    // query. Before #4035 the banner never appeared here and the user was
+    // shown a clean pairing UI on a device whose network was cut.
+    // ---------------------------------------------------------------------
+    it('shows the translated banner for a block already in progress, with no event at all', async () => {
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+        get_os_network_block_status: {
+          blocked: true,
+          reason_key: 'pairing.osNetworkBlocked',
+        },
+      })
+
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('Pair Device')
+
+      const banner = await screen.findByTestId('pairing-network-blocked')
+      expect(banner).toHaveTextContent(
+        'This device paused the app’s network access. Keep the screen on and this app open while pairing.',
+      )
+      expect(banner).not.toHaveTextContent('pairing.osNetworkBlocked')
+    })
+
+    it('a recovery event still clears a banner the mount-time query raised', async () => {
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+        get_os_network_block_status: {
+          blocked: true,
+          reason_key: 'pairing.osNetworkBlocked',
+        },
+      })
+
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('Pair Device')
+      expect(await screen.findByTestId('pairing-network-blocked')).toBeInTheDocument()
+
+      await emitNetworkBlock({ blocked: false, reason_key: null })
+      await waitFor(() => {
+        expect(screen.queryByTestId('pairing-network-blocked')).not.toBeInTheDocument()
+      })
+    })
+
+    it('the query-raised banner is accessible', async () => {
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+        get_os_network_block_status: {
+          blocked: true,
+          reason_key: 'pairing.osNetworkBlocked',
+        },
+      })
+
+      const { container } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('Pair Device')
+      await screen.findByTestId('pairing-network-blocked')
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 })
