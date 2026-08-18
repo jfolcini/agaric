@@ -133,10 +133,25 @@ jobs:
           toolchain: 1.95.0
           targets: ${{ matrix.target }}
 
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        # Linux-only: this composite action shells out to `sudo`/`apt`, which
+        # don't exist on the windows-2025-vs2026 / macos-15 matrix legs.
+        if: matrix.platform == 'ubuntu-24.04'
+        uses: ./.github/actions/prepare-apt
+
       - name: Install system dependencies (Linux)
         if: matrix.platform == 'ubuntu-24.04'
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update || {
+              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
+              exit 1
+            }
+          }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -1751,7 +1766,16 @@ jobs:
       # release job.
       - name: Install minisign
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update || {
+              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
+              exit 1
+            }
+          }
           sudo apt-get install -y minisign
       - name: Verify updater signatures against pinned pubkey
         env:

@@ -49,6 +49,26 @@
 # be re-verified at the point of use" — defence in depth for a hardcoded path,
 # a copy-pasted variable, or any other way a caller might defeat `new`.
 #
+# ─── Lifetime and cleanup (#3961) ───────────────────────────────────────
+#
+# THIS SCRIPT NEVER REMOVES ANYTHING. Each `new` leaves a 0700 directory in
+# `${TMPDIR:-/tmp}` for the OS to reap on reboot. That is the chosen policy,
+# not an oversight, and it is stated here so nobody has to infer it from the
+# absence of an `rm`.
+#
+# A reaper was considered and rejected for now. The whole point of the
+# allocator is that a path stays valid across a long, unbounded gap — the
+# incident it fixes is a `gh pr create --body-file` reading a path ~15 minutes
+# after `push.sh` started. Any reaper must therefore separate "abandoned" from
+# "still held by an agent mid-gate", and getting that wrong reintroduces #3731
+# in a worse form: a body file deleted underneath its owner rather than merely
+# overwritten. The ~15-minute figure from #3731 is one observation, not a
+# bound, so an age threshold would be an invented number.
+#
+# If cleanup does land later, it needs a test demonstrating it does NOT remove
+# a directory whose holder is still live — falsified against a naive
+# unconditional `rm -rf`, per #3961's acceptance criterion.
+#
 # ─── Usage ──────────────────────────────────────────────────────────────
 #
 #   file="$(scripts/scratch-file.sh new pr-body)"
