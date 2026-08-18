@@ -185,6 +185,14 @@ pub fn build_file_exporter(log_dir: &Path) -> Option<FileSpanExporter> {
 /// self-describing in time without cross-referencing the log. Only opaque ids,
 /// op-types, counts, durations, and the attribute key/values the
 /// instrumentation chose to attach appear — there is no app content here.
+///
+/// # Sanitization (#3975)
+///
+/// The name and every attribute value are routed through
+/// [`sanitize_inline`], the same escape [`format_log_record`] applies to its
+/// fields, so a `\n`/`\t`/`\\` embedded in either position cannot split or
+/// misalign a record — matching that function's "no field can ever split a
+/// record" guarantee, which previously held only for logs, not spans.
 fn format_span(span: &SpanData) -> String {
     use std::fmt::Write as _;
 
@@ -208,13 +216,13 @@ fn format_span(span: &SpanData) -> String {
     let _ = write!(
         line,
         "end={end}\tname={name}\ttrace={trace}\tspan={span_id}\tparent={parent}\tdur_ms={dur_ms:.3}\tstatus={status:?}",
-        name = span.name,
+        name = sanitize_inline(&span.name),
         trace = span.span_context.trace_id(),
         span_id = span.span_context.span_id(),
         status = span.status,
     );
     for kv in &span.attributes {
-        let _ = write!(line, "\t{}={}", kv.key, kv.value.as_str());
+        let _ = write!(line, "\t{}={}", kv.key, sanitize_inline(&kv.value.as_str()));
     }
     line.push('\n');
     line
@@ -379,6 +387,79 @@ impl LogExporter for FileLogExporter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use opentelemetry::KeyValue;
+    use opentelemetry::trace::{SpanContext, SpanId, SpanKind, Status};
+    use opentelemetry_sdk::trace::{SpanEvents, SpanLinks};
+    use std::time::SystemTime;
+
+    /// Build a minimal [`SpanData`] fixture with a caller-supplied name and
+    /// attribute set; every other field is a harmless default. Mirrors the
+    /// literal used by `opentelemetry_sdk`'s own `span_processor` tests.
+    fn test_span(name: &'static str, attributes: Vec<KeyValue>) -> SpanData {
+        SpanData {
+            span_context: SpanContext::empty_context(),
+            parent_span_id: SpanId::INVALID,
+            parent_span_is_remote: false,
+            span_kind: SpanKind::Internal,
+            name: name.into(),
+            start_time: SystemTime::now(),
+            end_time: SystemTime::now(),
+            attributes,
+            dropped_attributes_count: 0,
+            events: SpanEvents::default(),
+            links: SpanLinks::default(),
+            status: Status::Unset,
+            instrumentation_scope: opentelemetry::InstrumentationScope::default(),
+        }
+    }
+
+    /// #3975 — `format_span` must sanitize the span name and every attribute
+    /// value exactly like `format_log_record` does, so a `\n` embedded in
+    /// either position cannot forge an extra line in `traces/*.log`.
+    ///
+    /// This asserts the record's LINE COUNT / exact boundary (one trailing
+    /// `\n` and no other), not just that the output parses — a forged line
+    /// parses fine, so a parseability assertion would pass whether or not
+    /// the bug were fixed. Before the fix, this test fails with the
+    /// unsanitized line printed verbatim in the assertion message, which is
+    /// itself the forged second record: everything after the embedded `\n`
+    /// reads as a second, attacker-authored `end=…` line.
+    #[test]
+    fn format_span_sanitizes_name_and_attributes_so_a_newline_cannot_forge_a_line() {
+        let forged_attr_value = "real-value\nend=2099-01-01T00:00:00.000Z\tname=forged-by-attacker\t\
+             trace=deadbeefdeadbeefdeadbeefdeadbeef\tspan=cafebabecafebabe\t\
+             parent=-\tdur_ms=0.000\tstatus=Unset";
+        let span = test_span(
+            "legit.span\nname=forged-by-attacker",
+            vec![KeyValue::new("evil", forged_attr_value)],
+        );
+
+        let line = format_span(&span);
+
+        // format_span always appends exactly one trailing '\n'. If the name
+        // or an attribute value carries an unsanitized '\n', it adds another
+        // — collapsing the record's own line-terminator count is exactly
+        // what "no field can ever split a record" means in practice.
+        let newline_count = line.matches('\n').count();
+        assert_eq!(
+            newline_count, 1,
+            "a `\\n` in a span name or attribute value must not forge an \
+             extra record line in traces/*.log; got:\n{line}"
+        );
+
+        // Sanitization must escape, not silently drop, the offending bytes:
+        // the literal two-char form is still present in the single line.
+        assert!(
+            line.contains("legit.span\\nname=forged-by-attacker"),
+            "span name's embedded newline must be escaped to `\\n`, not \
+             dropped or left raw; got:\n{line}"
+        );
+        assert!(
+            line.contains("real-value\\nend=2099"),
+            "attribute value's embedded newline must be escaped to `\\n`, \
+             not dropped or left raw; got:\n{line}"
+        );
+    }
 
     #[test]
     fn build_file_exporter_creates_traces_subdir() {

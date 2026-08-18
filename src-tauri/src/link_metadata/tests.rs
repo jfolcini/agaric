@@ -833,6 +833,66 @@ fn resolve_url_handles_all_forms() {
         "https://example.com/path/icon.png",
         "relative should resolve against base directory"
     );
+    assert_eq!(
+        resolve_url("https://example.com", "favicon.ico"),
+        "https://example.com/favicon.ico",
+        "origin-only base (no path) must not have rfind('/') land on the \
+         `//` authority separator and promote the href to a hostname (#3282)"
+    );
+    assert_eq!(
+        resolve_url("https://user:pwd@example.com/path/page", "icon.png"),
+        "https://example.com/path/icon.png",
+        "a base carrying `user:pwd@` must have its userinfo stripped from \
+         the resolved URL regardless of which branch resolves the href"
+    );
+    assert_eq!(
+        resolve_url("https://example.com/page", "//user:pwd@cdn.com/icon.png"),
+        "https://cdn.com/icon.png",
+        "userinfo introduced by the HREF (not the base) must be stripped too"
+    );
+    assert_eq!(
+        resolve_url("https://user:pwd@[::1]:8443/page", "icon.png"),
+        "https://[::1]:8443/icon.png",
+        "stripping userinfo must keep an IPv6 literal host and its port intact"
+    );
+    assert_eq!(
+        resolve_url("https://example.com/@user/page", "icon.png"),
+        "https://example.com/@user/icon.png",
+        "an `@` in the PATH is not userinfo and must survive the strip"
+    );
+}
+
+/// #3282 — the userinfo strip must address the authority structurally,
+/// never by scanning the serialized URL for `://`.
+///
+/// `<link rel="icon" href="…">` is attacker-controlled, and `Url::join`
+/// resolves an absolute cannot-be-a-base href to itself. For such a
+/// result the FIRST `://` in the string sits inside the opaque payload,
+/// not after a scheme — so slicing there and running the authority-shaped
+/// `strip_userinfo` over the remainder silently deletes a `user@` from a
+/// `data:`/`mailto:` body. `Url::set_username` / `set_password` cannot
+/// reach a payload, and return `Err` (a no-op here) for exactly these
+/// schemes.
+#[test]
+fn resolve_url_does_not_mangle_cannot_be_a_base_payloads() {
+    assert_eq!(
+        resolve_url("https://example.com/", "data:text/plain,http://u@h/x"),
+        "data:text/plain,http://u@h/x",
+        "a `user@` inside a data: payload is not userinfo and must not be deleted"
+    );
+    assert_eq!(
+        resolve_url(
+            "https://example.com/",
+            "mailto:a@b.com?u=http://user@evil.com/p"
+        ),
+        "mailto:a@b.com?u=http://user@evil.com/p",
+        "a mailto: address and its query must survive the userinfo strip verbatim"
+    );
+    assert_eq!(
+        resolve_url("https://example.com/", "?q=http://u@h/x"),
+        "https://example.com/?q=http://u@h/x",
+        "a `user@` inside the QUERY of an http URL must survive the strip"
+    );
 }
 
 // ======================================================================

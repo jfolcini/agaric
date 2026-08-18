@@ -379,33 +379,50 @@ pub(super) fn extract_domain(url: &str) -> Option<String> {
 }
 
 /// Resolve a potentially relative URL against a base URL.
+///
+/// Delegates to `url::Url::join`, which implements RFC 3986 reference
+/// resolution for all four forms (absolute, protocol-relative,
+/// root-relative, relative) — unlike a hand-rolled `base.rfind('/')`
+/// against the raw base string, which mishandles origin-only bases: for
+/// `base = "https://example.com"`, `rfind('/')` lands on the second
+/// slash of the `//` authority separator (not a path boundary), turning
+/// a relative `href` like `favicon.ico` into `https://favicon.ico` — the
+/// href gets promoted to a hostname and the real host is lost.
+///
+/// The joined result has its userinfo stripped, so the
+/// credential-stripping policy `extract_origin` applies (see
+/// `strip_userinfo` above) no longer depends on which branch fired:
+/// `Url::join` carries a base's `user:pwd@` into every resolved form,
+/// including plain relative paths, which the previous hand-rolled
+/// relative-path arm never stripped at all.
+///
+/// The strip goes through [`url::Url::set_username`] /
+/// [`url::Url::set_password`] rather than the string-surgery
+/// `strip_userinfo` used by `extract_origin`. Both are correct on a raw
+/// `scheme://authority…` string, but `strip_userinfo` has to be handed
+/// the authority slice, and locating that slice in a *joined* URL by
+/// `find("://")` is wrong for cannot-be-a-base results: `href =
+/// "data:text/plain,http://u@h/x"` (an attacker-supplied `<link
+/// rel="icon">` resolves to itself) has its FIRST `://` inside the
+/// payload, so `u@` would be deleted from the data body. The setters
+/// address the authority structurally and cannot touch a path, query, or
+/// opaque payload; they return `Err` for URLs that have no userinfo slot
+/// at all (`mailto:`, `data:`, `file:`), which is exactly the no-op we
+/// want, hence the discarded results.
+///
+/// Falls back to the raw `href` when `base` does not parse or the join
+/// fails, matching the previous function's behaviour of returning `href`
+/// unchanged when it has nothing usable to resolve against.
 pub(super) fn resolve_url(base: &str, href: &str) -> String {
-    // Already absolute
-    if href.starts_with("http://") || href.starts_with("https://") {
+    let Ok(base_url) = url::Url::parse(base) else {
         return href.to_string();
-    }
-    // Protocol-relative
-    if href.starts_with("//") {
-        let scheme = if base.starts_with("https") {
-            "https:"
-        } else {
-            "http:"
-        };
-        return format!("{scheme}{href}");
-    }
-    // Root-relative
-    if href.starts_with('/') {
-        if let Some(origin) = extract_origin(base) {
-            return format!("{origin}{href}");
-        }
+    };
+    let Ok(mut joined) = base_url.join(href) else {
         return href.to_string();
-    }
-    // Relative path — resolve against base directory
-    if let Some(last_slash) = base.rfind('/') {
-        format!("{}/{href}", &base[..last_slash])
-    } else {
-        href.to_string()
-    }
+    };
+    let _ = joined.set_username("");
+    let _ = joined.set_password(None);
+    joined.to_string()
 }
 
 /// Decode common HTML entities.
