@@ -43,6 +43,8 @@
  * OUT OF SCOPE (still open on #2513): advanced ENML fidelity (part 3).
  */
 
+import { UNTITLED_PLACEHOLDER } from '@/lib/enex-import'
+
 /** A decoded resource attachment referenced by a note (#2513, part 2). */
 export interface JexResource {
   /** Vault-relative path used both as the markdown embed target and shipped `VaultFile.path`. */
@@ -85,9 +87,6 @@ export interface JexParseResult {
    */
   skipped: number
 }
-
-/** Placeholder title for a note whose first line (title) is empty. */
-export const UNTITLED_PLACEHOLDER = 'Untitled'
 
 /** Matches a Joplin item reference `:/<32-hex-id>` inside a markdown (image) link. */
 const JOPLIN_REF_RE = /(!?)\[([^\]]*)\]\(:\/([0-9a-fA-F]{32})\)/g
@@ -515,16 +514,6 @@ function pageTitleFor(
 ): string {
   const namespace = resolveFolderPath(raw.parentId, folders)
   return namespace.length > 0 ? `${namespace}/${raw.title}` : raw.title
-}
-
-/**
- * Sanitize a note's page title for use as the import filename. Mirrors the
- * `.enex` importer: KEEP `/` (namespace separator), collapse whitespace, and
- * fall back to {@link UNTITLED_PLACEHOLDER} for an empty result.
- */
-export function sanitizeNoteTitleToFilename(title: string): string {
-  const cleaned = title.replace(/\s+/g, ' ').trim()
-  return cleaned.length > 0 ? cleaned : UNTITLED_PLACEHOLDER
 }
 
 /**
