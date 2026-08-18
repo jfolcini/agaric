@@ -52,8 +52,8 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 > on the handset.
 >
 > **A full two-way sync end to end is still unverified (#3507)**: the
-> initiator-side apply that aborted on `blocks.parent_id` (#4083) was fixed after
-> that session and has not yet been exercised against two live devices. Nor has
+> initiator-side apply that aborted on `blocks.parent_id` (#4083) was fixed
+> afterwards and has not yet been exercised against two live devices. Nor has
 > a genuinely restrictive network: the fabric carried multicast fine and the two
 > blockers were host configuration on either end — though the fabric was not
 > blameless, since it was numbered out of *public* address space, and that is what
