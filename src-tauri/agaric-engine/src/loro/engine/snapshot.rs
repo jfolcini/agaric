@@ -618,6 +618,82 @@ impl LoroEngine {
             .collect()
     }
 
+    /// The strict ancestors of `block_ids` that are NOT themselves in
+    /// `block_ids`, deduplicated and ordered root-first (#4083).
+    ///
+    /// The inbound projection writes `blocks.parent_id`, a self-FK to
+    /// `blocks(id)`. `resolve_changed_blocks` hands the caller only the
+    /// blocks an import actually touched, depth-sorted so a changed parent is
+    /// projected before its changed child — but an ancestor the import did NOT
+    /// touch is simply assumed to already have a SQL row. When it does not (a
+    /// previous rolled-back apply, a `project_block_full_to_sql` warn-and-skip,
+    /// a purge), the child's upsert has a dangling `parent_id` and SQLite aborts
+    /// the whole transaction with `FOREIGN KEY constraint failed`. The engine
+    /// still holds those ancestors, so it can name them: the caller checks which
+    /// ones SQL is missing and projects those first.
+    ///
+    /// Ordering: each block's chain is emitted root-first, and a chain stops as
+    /// soon as it reaches an ancestor an earlier chain already walked (whose own
+    /// ancestors were therefore already emitted, ahead of it). So every returned
+    /// id appears after its own *returned* ancestors.
+    ///
+    /// That is NOT the same as a global parent-before-child order over
+    /// `returned ++ block_ids`, and callers must not assume it is: an ancestor
+    /// that is itself in `block_ids` is skipped (not returned) while the walk
+    /// keeps climbing past it, so a returned id whose parent is an INPUT id
+    /// precedes that parent in the concatenated sequence. On `AA→BB→CC→DD`,
+    /// `ancestors_outside(&["BB", "DD"])` is `["AA", "CC"]` — and `CC`'s parent
+    /// `BB` is projected after `CC` (see
+    /// `ancestors_outside_is_not_globally_depth_ordered_vs_the_input`). The
+    /// inbound projection tolerates this only because it runs the whole tx under
+    /// `PRAGMA defer_foreign_keys = ON`; that pragma is load-bearing for this
+    /// shape, not defence in depth. The `visited` set
+    /// also bounds the total work at O(inputs + distinct ancestors), so the
+    /// whole-tree changed set a snapshot import produces costs one parent hop
+    /// per block and returns nothing (every ancestor is in the input set).
+    ///
+    /// Ids absent from the live index are skipped: an input that is not live has
+    /// no chain to walk, and a non-live ancestor cannot be reached because the
+    /// walk climbs the live tree itself.
+    pub fn ancestors_outside(&self, block_ids: &[&str]) -> Vec<agaric_core::ulid::BlockId> {
+        let tree = self.tree();
+        let input: std::collections::HashSet<&str> = block_ids.iter().copied().collect();
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut out: Vec<agaric_core::ulid::BlockId> = Vec::new();
+        for block_id in block_ids {
+            let Some(&node) = self.index.get(*block_id) else {
+                continue;
+            };
+            let mut chain: Vec<agaric_core::ulid::BlockId> = Vec::new();
+            let mut cur = node;
+            // Same defensive hop bound as `tree_depth_of` / `has_ancestor_in`:
+            // the tree is convergent and cycle-free, so this never trips.
+            let mut hops = 0usize;
+            while let Some(TreeParentId::Node(p)) = tree.parent(cur) {
+                let Ok(meta) = tree.get_meta(p) else { break };
+                let Ok(parent_block_id) = read_string(&meta, FIELD_BLOCK_ID) else {
+                    break;
+                };
+                // Already walked by an earlier chain ⇒ so were all of ITS
+                // ancestors, and both are already in `out` ahead of us.
+                if !visited.insert(parent_block_id.clone()) {
+                    break;
+                }
+                if !input.contains(parent_block_id.as_str()) {
+                    chain.push(agaric_core::ulid::BlockId::from_trusted(&parent_block_id));
+                }
+                cur = p;
+                hops += 1;
+                if hops > 1_000_000 {
+                    break;
+                }
+            }
+            chain.reverse();
+            out.extend(chain);
+        }
+        out
+    }
+
     /// Number of `Node` ancestors of `block_id` (root depth = 0).
     fn tree_depth_of(&self, block_id: &str, tree: &LoroTree) -> usize {
         let Some(&node) = self.index.get(block_id) else {
@@ -1890,5 +1966,101 @@ mod incremental_detection_tests {
             let after = projected_state(&b);
             assert_rank_only_contract(&before, &after, &d, &format!("property walk round {round}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod parent_id_ancestor_tests {
+    //! #4083: `ancestors_outside` names the untouched ancestors of a changed
+    //! set so the inbound SQL projection can fill the `blocks.parent_id` self-FK
+    //! holes an incremental diff leaves behind.
+    use super::*;
+
+    fn ids(v: &[agaric_core::ulid::BlockId]) -> Vec<String> {
+        v.iter().map(|b| b.as_str().to_string()).collect()
+    }
+
+    /// AA (root) → BB → { CC, DD }.
+    fn chain() -> LoroEngine {
+        let mut e = LoroEngine::with_peer_id("DEV-A").unwrap();
+        e.apply_create_block("AA", "content", "root", None, 0)
+            .unwrap();
+        e.apply_create_block("BB", "content", "mid", Some("AA"), 0)
+            .unwrap();
+        e.apply_create_block("CC", "content", "leaf", Some("BB"), 0)
+            .unwrap();
+        e.apply_create_block("DD", "content", "leaf-2", Some("BB"), 1)
+            .unwrap();
+        e
+    }
+
+    /// A one-block changed set (the shape an incremental inbound update
+    /// produces) yields its WHOLE chain, root-first — the order the projection
+    /// needs for the `parent_id` self-FK.
+    #[test]
+    fn ancestors_outside_returns_the_whole_chain_root_first() {
+        let e = chain();
+        assert_eq!(ids(&e.ancestors_outside(&["CC"])), vec!["AA", "BB"]);
+    }
+
+    /// Two siblings share a chain: each ancestor is returned once, still
+    /// parent-before-child, and the second walk stops at the first already-
+    /// visited ancestor rather than re-climbing.
+    #[test]
+    fn ancestors_outside_dedupes_a_shared_chain() {
+        let e = chain();
+        assert_eq!(ids(&e.ancestors_outside(&["DD", "CC"])), vec!["AA", "BB"]);
+    }
+
+    /// Ancestors the import already changed are excluded (the caller projects
+    /// them anyway) — but the walk keeps climbing PAST them, or a changed
+    /// parent's own missing parent would still dangle.
+    #[test]
+    fn ancestors_outside_climbs_past_ancestors_in_the_changed_set() {
+        let e = chain();
+        assert_eq!(ids(&e.ancestors_outside(&["CC", "BB"])), vec!["AA"]);
+        assert!(
+            e.ancestors_outside(&["AA", "BB", "CC"]).is_empty(),
+            "a whole-tree changed set (snapshot import) needs no backfill"
+        );
+    }
+
+    /// The output is ordered parent-before-child among the ids it RETURNS, but
+    /// not relative to the input set: climbing past an in-input ancestor emits
+    /// that ancestor's descendants ahead of it. `AA→BB→CC→DD` with the changed
+    /// set `[BB, DD]` returns `["AA", "CC"]`, so the caller's `returned ++
+    /// changed` sequence is `[AA, CC, BB, DD]` — `CC` before its parent `BB`.
+    ///
+    /// Pinned deliberately: the inbound projection relies on `PRAGMA
+    /// defer_foreign_keys = ON` for exactly this shape, and a future reader who
+    /// believes the merged order is FK-safe would be entitled to delete the
+    /// pragma.
+    #[test]
+    fn ancestors_outside_is_not_globally_depth_ordered_vs_the_input() {
+        let mut e = LoroEngine::with_peer_id("DEV-A").unwrap();
+        e.apply_create_block("AA", "content", "root", None, 0)
+            .unwrap();
+        e.apply_create_block("BB", "content", "mid", Some("AA"), 0)
+            .unwrap();
+        e.apply_create_block("CC", "content", "deep", Some("BB"), 0)
+            .unwrap();
+        e.apply_create_block("DD", "content", "deepest", Some("CC"), 0)
+            .unwrap();
+        assert_eq!(
+            ids(&e.ancestors_outside(&["BB", "DD"])),
+            vec!["AA", "CC"],
+            "CC is returned even though its parent BB is only in the input set"
+        );
+    }
+
+    /// A root block has no ancestors, and an id the engine does not hold is
+    /// skipped rather than erroring — the caller's set can legitimately contain
+    /// neither-live nor-known ids.
+    #[test]
+    fn ancestors_outside_handles_roots_and_unknown_ids() {
+        let e = chain();
+        assert!(e.ancestors_outside(&["AA"]).is_empty());
+        assert!(e.ancestors_outside(&["NOPE"]).is_empty());
+        assert_eq!(ids(&e.ancestors_outside(&["NOPE", "CC"])), vec!["AA", "BB"]);
     }
 }

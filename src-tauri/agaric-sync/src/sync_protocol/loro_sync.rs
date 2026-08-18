@@ -713,6 +713,63 @@ pub async fn resolve_changed_page_ids(
     Ok(page_ids)
 }
 
+/// #4083 — name the rows behind a `(code: 787) FOREIGN KEY constraint failed`
+/// raised by the inbound projection tx.
+///
+/// SQLite's foreign-key error names neither the table, the column, nor the row:
+/// it reaches the caller as `AppError::Database` carrying nothing but the code,
+/// which is how this bug survived until a live two-device pairing produced it.
+/// Every `parent_id` the tx tried to write is known here, so re-check each one
+/// against the (rolled-back, i.e. pre-transaction) `blocks` table and log the
+/// dangling edges.
+///
+/// Diagnostics only: it never changes the outcome — the caller propagates the
+/// original error either way — and a probe that itself fails is skipped rather
+/// than masking the real failure. An empty `dangling_parent_edges` on a genuine
+/// 787 is itself informative: it means the violation came from something other
+/// than a changed block's parent (a `page_id` edge, or a Pass D purge whose
+/// deleted row was still referenced).
+async fn report_parent_fk_violation(
+    pool: &SqlitePool,
+    space_id: &SpaceId,
+    parent_edges: &[(&str, &str)],
+    err: &sqlx::Error,
+) {
+    // Only the FK code pays for the probes below; every other failure (busy,
+    // I/O, …) keeps its own reporting.
+    let is_fk_violation = err
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::code)
+        .is_some_and(|code| code == "787");
+    if !is_fk_violation {
+        return;
+    }
+    let mut dangling: Vec<String> = Vec::new();
+    for (block_id, parent_id) in parent_edges {
+        // dynamic-sql: static-string existence probe on the #4083 787 diagnostic
+        // path; runtime form keeps this cold error-only query off the macro cache.
+        let present: Option<i64> = sqlx::query_scalar("SELECT 1 FROM blocks WHERE id = ?")
+            .bind(*parent_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+        if present.is_none() {
+            dangling.push(format!("{block_id} -> {parent_id}"));
+        }
+    }
+    tracing::error!(
+        space_id = space_id.as_str(),
+        edges_checked = parent_edges.len(),
+        dangling_parent_edges = ?dangling,
+        error = %err,
+        "#4083: the inbound projection rolled back on a foreign-key violation; \
+         these `blocks.parent_id` edges point at ids the local `blocks` table \
+         does not hold (an empty list means the violating reference was not a \
+         changed block's parent)"
+    );
+}
+
 /// How the payload handed to [`import_and_project`] reached us — decides
 /// whether a complete no-op import diff may be trusted as "SQL is already
 /// consistent" (#2264 review; see the fn's "no-op short-circuit" docs).
@@ -1137,7 +1194,9 @@ pub(crate) async fn import_and_project(
     let noop_diff = changed_blocks.is_empty()
         && purged_blocks.is_empty()
         && matches!(&tag_scope, agaric_engine::loro::engine::TagScope::Subtrees(roots) if roots.is_empty());
-    let (changed_blocks, rank_only_blocks, tag_scope) = if noop_diff {
+    // `changed_blocks` is `mut` for the #4083 ancestor backfill below, which may
+    // prepend engine ancestors SQL has no row for.
+    let (mut changed_blocks, rank_only_blocks, tag_scope) = if noop_diff {
         let trusted = match delivery {
             // The replayed slot itself proves the projection never committed.
             InboundDeliveryKind::RecoveryReplay => false,
@@ -1229,7 +1288,7 @@ pub(crate) async fn import_and_project(
         .iter()
         .map(agaric_core::ulid::BlockId::as_str)
         .collect();
-    let block_states: Vec<_> = {
+    let (mut block_states, ancestor_candidates) = {
         let mut guard = registry.for_space(space_id, device_id)?;
         let engine = guard.engine_mut();
         // #1621: derive every block's `position` from a per-parent ordered-
@@ -1264,10 +1323,127 @@ pub(crate) async fn import_and_project(
             };
             states.push((snapshot, full_state));
         }
-        states
+        // #4083: the ancestors this import did NOT touch. `changed_blocks` is
+        // depth-sorted, so a changed PARENT is always projected before its
+        // changed child — but an untouched ancestor is merely ASSUMED to
+        // already have a `blocks` row, and `blocks.parent_id` is a self-FK.
+        // Named here (one cheap parent-hop walk, under the guard we already
+        // hold) so the SQL check below can tell which of them are missing.
+        let ancestor_candidates = engine.ancestors_outside(&block_id_refs);
+        (states, ancestor_candidates)
     };
 
+    // #4083 — heal the ancestor gap BEFORE the projection tx opens.
+    //
+    // The incremental diff path emits only the blocks the import touched; every
+    // untouched ancestor must already be in SQL. It may not be: a
+    // `project_block_full_to_sql` warn-and-skip, a purge, or a previously
+    // rolled-back `sync_apply_remote` all leave that hole — and the last one
+    // makes the failure self-perpetuating, because the retry re-imports the same
+    // blob and aborts on the same dangling `parent_id` (787), permanently
+    // blocking this direction of sync (a session is one-directional: only the
+    // INITIATOR applies remote data).
+    //
+    // The ancestor is NOT degraded to a NULL parent: that would silently
+    // reparent the block to the vault root with nothing to reconcile it
+    // afterwards (unlike `blocks.space_id`, which a boot backfill heals). The
+    // engine holds the real ancestor, so we project it for real, with its full
+    // state (core columns + properties + tags + soft-delete) — a row SQL never
+    // had needs all of it, not just the column the FK points at — and report it
+    // as changed so the caller's FTS / derived-cache fan-out covers it too.
+    //
+    // Cost in the healthy case (the overwhelmingly common one) is one existence
+    // probe per untouched ancestor and nothing else; the extra engine guard
+    // acquisition happens ONLY when a row is genuinely missing, so #540's
+    // "one acquisition for the whole projection" still holds on every normal
+    // apply. Runtime query form, like the #2264 probe above: a rare path that
+    // does not need to sit in the macro cache.
+    let mut missing_ancestors: Vec<agaric_core::ulid::BlockId> = Vec::new();
+    for candidate in &ancestor_candidates {
+        // dynamic-sql: static-string existence probe for the #4083 ancestor
+        // backfill; runtime form (like the #2264 probe above) keeps this rare
+        // path off the macro cache.
+        let present: Option<i64> = sqlx::query_scalar("SELECT 1 FROM blocks WHERE id = ?")
+            .bind(candidate.as_str())
+            .fetch_optional(pool)
+            .await?;
+        if present.is_none() {
+            missing_ancestors.push(candidate.clone());
+        }
+    }
+    // Known gap in this healing pass: Pass B writes the backfilled ancestor's
+    // own `block_tags`, but `tag_scope` was resolved from the import's subtree
+    // roots and does not include an ancestor sitting ABOVE them — so
+    // `block_tag_inherited` can stay stale for that ancestor until the next
+    // full rebuild. Strictly better than the abort this replaces, and recorded
+    // here so it is not rediscovered as a new defect.
+    if !missing_ancestors.is_empty() {
+        tracing::warn!(
+            space_id = space_id.as_str(),
+            missing_ancestors = ?missing_ancestors
+                .iter()
+                .map(agaric_core::ulid::BlockId::as_str)
+                .collect::<Vec<_>>(),
+            "#4083: inbound projection found engine ancestors with no `blocks` \
+             row; projecting them ahead of the changed set so the changed \
+             blocks' parent_id self-FK resolves"
+        );
+        let missing_refs: Vec<&str> = missing_ancestors
+            .iter()
+            .map(agaric_core::ulid::BlockId::as_str)
+            .collect();
+        let mut ancestor_states: Vec<_> = {
+            let mut guard = registry.for_space(space_id, device_id)?;
+            let engine = guard.engine_mut();
+            let snapshots = engine.read_blocks_bulk(&missing_refs)?;
+            let mut states = Vec::with_capacity(missing_refs.len());
+            for (block_id, snapshot) in missing_refs.iter().zip(snapshots) {
+                let full_state = Some((
+                    engine.read_all_properties_typed(block_id)?,
+                    engine.read_tags(block_id)?,
+                    engine.read_deleted_at(block_id)?,
+                ));
+                states.push((snapshot, full_state));
+            }
+            states
+        };
+        // Root-first ancestors, then the depth-sorted changed set.
+        //
+        // NOTE: the concatenation is NOT globally parent-before-child, and does
+        // not need to be. `ancestors_outside` climbs PAST an ancestor that is
+        // itself in the changed set, so on `AA→BB→CC→DD` with changed `[BB, DD]`
+        // it returns `[AA, CC]` and the merged order is `[AA, CC, BB, DD]` —
+        // `CC` before its parent `BB`. That commits only because this whole tx
+        // runs under `PRAGMA defer_foreign_keys = ON` below, which is therefore
+        // load-bearing for the backfill, not merely defence in depth
+        // (`apply_remote_backfills_interleaved_ancestor_gap_4083` is the shape
+        // that reddens if it is removed). Re-sorting the union by engine depth
+        // would need a third guard acquisition to answer "how deep is this id",
+        // which is what the deferral buys us out of.
+        ancestor_states.append(&mut block_states);
+        block_states = ancestor_states;
+        let mut merged = missing_ancestors;
+        merged.append(&mut changed_blocks);
+        changed_blocks = merged;
+    }
+
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "sync_apply_remote").await?;
+    // #4083: defer FK enforcement to COMMIT for the WHOLE projection tx, not
+    // just the Pass D purge that used to set it locally. Every write below
+    // touches a self-referential `blocks(id)` FK (`parent_id`, `page_id`) or a
+    // FK into `blocks`, and the passes run in an order chosen for other reasons
+    // (properties before tags before soft-delete before purge). Deferring makes
+    // intra-transaction ordering structurally irrelevant and collapses the
+    // whole projection into ONE commit-time check: a genuinely inconsistent
+    // result still aborts (the FK is not weakened — nothing is degraded to
+    // NULL), but a merely inconvenient write order no longer can.
+    // Auto-resets at COMMIT/ROLLBACK, so it never leaks to the next user of
+    // this pooled connection.
+    // dynamic-sql: a PRAGMA has no `sqlx::query!` macro form (nothing to
+    // compile-check against the schema).
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut *tx)
+        .await?;
 
     // Pass A — core columns + properties.  This upserts EVERY changed
     // block (including the tag blocks themselves), so all `blocks` rows
@@ -1412,7 +1588,22 @@ pub(crate) async fn import_and_project(
             .await?;
     }
 
-    tx.commit().await?;
+    // #4083: with FK enforcement deferred to COMMIT, this is where a dangling
+    // reference surfaces — as a bare `(code: 787) FOREIGN KEY constraint
+    // failed` naming neither table nor row. Name the offending edges before
+    // propagating, so the next occurrence is diagnosable from the log alone
+    // instead of from a live two-device pairing.
+    if let Err(err) = tx.commit().await {
+        let parent_edges: Vec<(&str, &str)> = block_states
+            .iter()
+            .filter_map(|(snapshot, _)| {
+                let snapshot = snapshot.as_ref()?;
+                Some((snapshot.block_id.as_str(), snapshot.parent_id.as_deref()?))
+            })
+            .collect();
+        report_parent_fk_violation(pool, space_id, &parent_edges, &err).await;
+        return Err(err.into());
+    }
 
     // R9: fan the Pass-C tombstones out to the ENGINE for every stamped
     // block whose engine meta still says "live". The SQL cascade/sweep can

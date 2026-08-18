@@ -448,6 +448,12 @@ pub async fn project_purge_blocks_to_sql(
     if block_ids.is_empty() {
         return Ok(());
     }
+    // #4083: the inbound-sync caller now sets this for its WHOLE projection tx
+    // (SQLite resets it at COMMIT/ROLLBACK, and setting it twice is idempotent).
+    // It stays here because this is a self-contained public helper: its
+    // documented contract is that the DELETE set below is safe in any FK order
+    // on whatever connection it is handed, tx or autocommit, and that must not
+    // become the caller's responsibility.
     sqlx::query("PRAGMA defer_foreign_keys = ON")
         .execute(&mut *conn)
         .await?;
@@ -951,7 +957,19 @@ pub async fn project_block_full_to_sql(
         // branch must NOT clobber a non-page block's already-resolved
         // `page_id`, so it only overwrites for pages (`page_id = id`).
         let page_id = (snap.block_type == "page").then_some(snap.block_id.as_str());
-        sqlx::query!(
+        // #4083: `parent_id` is bound RAW — deliberately. It is a self-FK to
+        // `blocks(id)`, and the `(SELECT id FROM spaces WHERE id = ?)` guard
+        // used for `space_id` one line down must NOT be copied onto it: a
+        // dangling parent would then resolve to NULL, silently reparenting the
+        // block to the vault root, and — unlike `space_id`, which a boot
+        // backfill reconciles once the space block arrives — nothing would ever
+        // put it back. A clean abort is the correct outcome for a genuinely
+        // unresolvable parent; the callers' job is to make sure the parent IS
+        // resolvable (the inbound sync path projects any engine ancestor SQL is
+        // missing before this pass, and defers FK enforcement to commit so
+        // intra-transaction ordering cannot matter). All this call adds is a
+        // diagnosable log line: SQLite's 787 names neither table nor row.
+        let result = sqlx::query!(
             "INSERT INTO blocks \
                  (id, block_type, content, parent_id, position, space_id, page_id) \
              VALUES (?, ?, ?, ?, ?, (SELECT id FROM spaces WHERE id = ?), ?) \
@@ -973,7 +991,27 @@ pub async fn project_block_full_to_sql(
             space_id_str,
         )
         .execute(&mut *conn)
-        .await?;
+        .await;
+        if let Err(err) = result {
+            if err
+                .as_database_error()
+                .and_then(sqlx::error::DatabaseError::code)
+                .is_some_and(|code| code == "787")
+            {
+                tracing::error!(
+                    space_id = %space_id.as_str(),
+                    block_id = %snap.block_id,
+                    parent_id = ?parent_id,
+                    "#4083: projecting a block's core columns hit a FOREIGN KEY \
+                     violation; `parent_id` is the only reference here that can \
+                     dangle, so a parent id absent from `blocks` is the likely \
+                     cause — but note `page_id` is also an unguarded \
+                     `REFERENCES blocks(id)` in this statement, so rule it out \
+                     rather than assuming (the tx is aborted; nothing was written)"
+                );
+            }
+            return Err(err.into());
+        }
         Ok(())
     } else {
         tracing::warn!(
@@ -4475,5 +4513,124 @@ mod tests {
         assert_eq!(pos(&pool, DEAD).await, Some(2));
         assert_eq!(pos(&pool, C1).await, Some(3));
         assert_eq!(pos(&pool, C3).await, Some(4));
+    }
+
+    /// #4083 — under the inbound tx's `defer_foreign_keys = ON`, a block may be
+    /// projected BEFORE its parent and still commit.
+    ///
+    /// This is the property that makes intra-transaction ordering irrelevant to
+    /// the `blocks.parent_id` self-FK, so no future pass reordering (or a
+    /// changed set that arrives out of depth order) can reintroduce the 787.
+    /// Without the pragma the child's INSERT aborts immediately — asserted
+    /// below on a second connection, so the test fails if the deferral ever
+    /// stops being what carries this.
+    #[tokio::test]
+    async fn project_block_full_child_before_parent_commits_under_deferred_fk() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = agaric_store::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let parent = snapshot(BLOCK_A, "content", "parent", None, 1);
+        let child = snapshot(BLOCK_B, "content", "child", Some(BLOCK_A), 1);
+
+        // Control: the same child-first order WITHOUT the pragma aborts on the
+        // spot with the FK violation this issue is about.
+        let mut plain = pool.begin().await.expect("begin plain");
+        let err = project_block_full_to_sql(
+            &mut plain,
+            &space,
+            &BlockId::from_trusted(BLOCK_B),
+            Some(&child),
+        )
+        .await
+        .expect_err("a dangling parent_id must not be accepted without deferral");
+        assert!(
+            format!("{err}").contains("FOREIGN KEY constraint failed"),
+            "expected the parent_id self-FK violation, got: {err}"
+        );
+        plain.rollback().await.expect("rollback plain");
+
+        // Deferred: child first, parent second, one commit — no abort.
+        let mut tx = pool.begin().await.expect("begin deferred");
+        sqlx::query("PRAGMA defer_foreign_keys = ON")
+            .execute(&mut *tx)
+            .await
+            .expect("defer");
+        project_block_full_to_sql(
+            &mut tx,
+            &space,
+            &BlockId::from_trusted(BLOCK_B),
+            Some(&child),
+        )
+        .await
+        .expect("child projects before its parent exists");
+        project_block_full_to_sql(
+            &mut tx,
+            &space,
+            &BlockId::from_trusted(BLOCK_A),
+            Some(&parent),
+        )
+        .await
+        .expect("parent projects second");
+        tx.commit().await.expect("both rows resolve at commit");
+
+        let parent_of_child: Option<String> =
+            sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+                .bind(BLOCK_B)
+                .fetch_one(&pool)
+                .await
+                .expect("child row");
+        assert_eq!(
+            parent_of_child.as_deref(),
+            Some(BLOCK_A),
+            "the child keeps its real parent"
+        );
+    }
+
+    /// #4083 — deferring FK enforcement must NOT weaken it.
+    ///
+    /// A parent that is missing at COMMIT (not merely written later in the tx)
+    /// still aborts the whole transaction. In particular the projection must
+    /// never adopt the `(SELECT id FROM spaces WHERE id = ?)` trick used for
+    /// `space_id` one column over: resolving a dangling `parent_id` to NULL
+    /// would silently reparent the block to the vault root, and unlike
+    /// `space_id` no boot backfill reconciles it afterwards. A clean abort with
+    /// nothing written is the correct outcome.
+    #[tokio::test]
+    async fn deferred_fk_still_aborts_a_dangling_parent_id_and_never_nulls_it() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = agaric_store::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let orphan = snapshot(BLOCK_B, "content", "child", Some(BLOCK_A), 1);
+
+        let mut tx = pool.begin().await.expect("begin");
+        sqlx::query("PRAGMA defer_foreign_keys = ON")
+            .execute(&mut *tx)
+            .await
+            .expect("defer");
+        project_block_full_to_sql(
+            &mut tx,
+            &space,
+            &BlockId::from_trusted(BLOCK_B),
+            Some(&orphan),
+        )
+        .await
+        .expect("deferral lets the statement through");
+        let err = tx
+            .commit()
+            .await
+            .expect_err("a parent that never arrives must abort at COMMIT");
+        assert!(
+            format!("{err}").contains("FOREIGN KEY constraint failed"),
+            "expected the deferred FK violation, got: {err}"
+        );
+
+        let landed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(BLOCK_B)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(
+            landed, 0,
+            "the tx rolled back whole: no row, and above all no row silently \
+             reparented to the vault root with parent_id = NULL"
+        );
     }
 }

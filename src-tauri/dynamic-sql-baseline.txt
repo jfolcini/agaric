@@ -43,7 +43,7 @@
 1 src-tauri/agaric-sync/src/snapshot/create.rs
 4 src-tauri/agaric-sync/src/snapshot/restore.rs
 11 src-tauri/agaric-sync/src/sync_files.rs
-2 src-tauri/agaric-sync/src/sync_protocol/loro_sync.rs
+5 src-tauri/agaric-sync/src/sync_protocol/loro_sync.rs
 2 src-tauri/agaric-sync/src/sync_protocol/operations.rs
 2 src-tauri/src/commands/agenda.rs
 2 src-tauri/src/commands/attachments.rs

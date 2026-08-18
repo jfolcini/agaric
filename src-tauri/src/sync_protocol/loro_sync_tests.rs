@@ -5216,3 +5216,218 @@ async fn per_row_fallback_charges_one_boot_not_two_3226() {
     );
     mat.shutdown();
 }
+
+/// #4083 — an inbound incremental update whose changed block has an ANCESTOR
+/// that SQL no longer holds must still project.
+///
+/// Shape (reproduced live on the first two-device pair): the initiator applies
+/// an `Update`, whose changed set is the sparse `resolve_changed_blocks` delta —
+/// only the blocks the import actually touched. Any untouched ancestor must
+/// already have a `blocks` row. It may not: a previous `sync_apply_remote`
+/// rollback (this very failure), a prior `project_block_full_to_sql`
+/// warn-and-skip, or a purge all leave that gap. Pass A then upserts the child
+/// with `parent_id` pointing at a row that does not exist and SQLite aborts the
+/// whole projection tx with `(code: 787) FOREIGN KEY constraint failed` — which
+/// leaves the gap in place, so the next delivery of the same blob fails the
+/// same way.
+///
+/// Here the gap is created directly (delete the child row, then the parent row —
+/// SQLite will not let them go in the other order) and the remote then edits
+/// ONLY the child, so the parent is genuinely absent from the changed set.
+#[tokio::test]
+async fn apply_remote_backfills_ancestor_missing_from_sql_parent_id_4083() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+
+    let registry_a = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+        let e = g.engine_mut();
+        e.apply_create_block(BLOCK_A, "content", "grandparent", None, 0)
+            .expect("create A");
+        e.apply_create_block(BLOCK_B, "content", "parent", Some(BLOCK_A), 0)
+            .expect("create B");
+        e.apply_create_block(BLOCK_C, "content", "child", Some(BLOCK_B), 0)
+            .expect("create C");
+    }
+    let registry_b = seed_receiver_via_snapshot(&pool, &registry_a, &space).await;
+
+    // The gap: B's SQL lost the whole ancestor chain of C while its ENGINE
+    // still holds it (exactly what a rolled-back `sync_apply_remote` leaves).
+    for id in [BLOCK_C, BLOCK_B, BLOCK_A] {
+        sqlx::query("DELETE FROM blocks WHERE id = ?")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("open the ancestor gap");
+    }
+
+    // Remote edits ONLY the deepest block → changed set = [C].
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+        g.engine_mut()
+            .apply_edit_content(BLOCK_C, 0, 0, "x")
+            .expect("edit C");
+    }
+    let outcome = round_trip_update(&pool, &registry_a, &registry_b, &space).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Imported { .. }),
+        "the update must apply, got {outcome:?}"
+    );
+
+    // The child landed WITH its real parent — never NULL-degraded to the vault
+    // root (that would silently reparent it, and nothing reconciles it later).
+    let (content, parent): (String, Option<String>) =
+        sqlx::query_as("SELECT content, parent_id FROM blocks WHERE id = ?")
+            .bind(BLOCK_C)
+            .fetch_one(&pool)
+            .await
+            .expect("child row must exist");
+    assert_eq!(content, "xchild", "the inbound edit projected");
+    assert_eq!(
+        parent.as_deref(),
+        Some(BLOCK_B),
+        "#4083: the child keeps its engine parent — a dangling parent_id must \
+         never be degraded to NULL"
+    );
+
+    // …and the whole missing ancestor chain was backfilled from the engine,
+    // not just the immediate parent.
+    let grandparent: Option<String> =
+        sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(BLOCK_B)
+            .fetch_one(&pool)
+            .await
+            .expect("parent row must be backfilled");
+    assert_eq!(
+        grandparent.as_deref(),
+        Some(BLOCK_A),
+        "#4083: the walk must climb the whole chain, not one level"
+    );
+    let root_content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("root row must be backfilled");
+    assert_eq!(root_content, "grandparent");
+}
+
+/// #4083 — the shape where the ancestor backfill's own output order is NOT
+/// parent-before-child, and only the tx-wide `PRAGMA defer_foreign_keys = ON`
+/// carries it.
+///
+/// `ancestors_outside` climbs PAST an ancestor that is itself in the changed
+/// set, so on `A→B→C→D` with changed `[B, D]` it returns `[A, C]`. Prepended,
+/// the projection order is `[A, C, B, D]` — `C` is upserted with
+/// `parent_id = B` before `B`'s own row exists. With FK enforcement immediate
+/// that is a `(code: 787)` abort on the spot; deferred to COMMIT it resolves.
+///
+/// This is the test that reddens if the pragma is deleted as "unused defence in
+/// depth" — without it the sibling test above still passes (its backfill order
+/// happens to be root-first), so this shape is the only local witness.
+#[tokio::test]
+async fn apply_remote_backfills_interleaved_ancestor_gap_4083() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+
+    let registry_a = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+        let e = g.engine_mut();
+        e.apply_create_block(BLOCK_A, "content", "a", None, 0)
+            .expect("create A");
+        e.apply_create_block(BLOCK_B, "content", "b", Some(BLOCK_A), 0)
+            .expect("create B");
+        e.apply_create_block(BLOCK_C, "content", "c", Some(BLOCK_B), 0)
+            .expect("create C");
+        e.apply_create_block(BLOCK_D, "content", "d", Some(BLOCK_C), 0)
+            .expect("create D");
+    }
+    let registry_b = seed_receiver_via_snapshot(&pool, &registry_a, &space).await;
+
+    // Open the gap across the WHOLE chain (deepest first — the FK forbids the
+    // other order), so every one of A/B/C/D is absent from SQL.
+    for id in [BLOCK_D, BLOCK_C, BLOCK_B, BLOCK_A] {
+        sqlx::query("DELETE FROM blocks WHERE id = ?")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("open the ancestor gap");
+    }
+
+    // Remote edits B and D but NOT C: changed = [B, D], untouched ancestors of
+    // that set = [A, C] — and C's parent B is in the changed set, i.e. later.
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+        let e = g.engine_mut();
+        e.apply_edit_content(BLOCK_B, 0, 0, "x").expect("edit B");
+        e.apply_edit_content(BLOCK_D, 0, 0, "y").expect("edit D");
+    }
+    let outcome = round_trip_update(&pool, &registry_a, &registry_b, &space).await;
+    assert!(
+        matches!(outcome, ApplyOutcome::Imported { .. }),
+        "the update must apply, got {outcome:?}"
+    );
+
+    // Every link of the chain landed with its real parent — none NULL-degraded.
+    for (id, want_parent) in [
+        (BLOCK_A, None),
+        (BLOCK_B, Some(BLOCK_A)),
+        (BLOCK_C, Some(BLOCK_B)),
+        (BLOCK_D, Some(BLOCK_C)),
+    ] {
+        let got: Option<String> = sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("row {id} must exist: {e}"));
+        assert_eq!(got.as_deref(), want_parent, "parent_id of {id}");
+    }
+
+    // The untouched ancestor C was backfilled from the ENGINE with its real
+    // content (not an empty placeholder), and the edited blocks carry the edit.
+    for (id, want) in [
+        (BLOCK_A, "a"),
+        (BLOCK_B, "xb"),
+        (BLOCK_C, "c"),
+        (BLOCK_D, "yd"),
+    ] {
+        let got: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("row {id} must exist: {e}"));
+        assert_eq!(got, want, "content of {id}");
+    }
+
+    // A backfilled ancestor is a full row, not a stub: same `space_id`
+    // resolution as the changed block it was reached from, and alive (the
+    // engine holds no tombstone for it).
+    let (space_of_c, deleted_c): (Option<String>, Option<i64>) =
+        sqlx::query_as("SELECT space_id, deleted_at FROM blocks WHERE id = ?")
+            .bind(BLOCK_C)
+            .fetch_one(&pool)
+            .await
+            .expect("C row");
+    let space_of_d: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(BLOCK_D)
+        .fetch_one(&pool)
+        .await
+        .expect("D row");
+    assert_eq!(
+        space_of_c, space_of_d,
+        "the backfilled ancestor must resolve its space exactly like a changed block"
+    );
+    assert_eq!(deleted_c, None, "the backfilled ancestor must be alive");
+
+    // And SQLite agrees the tree has no dangling edges left.
+    let violations = sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(&pool)
+        .await
+        .expect("foreign_key_check");
+    assert!(
+        violations.is_empty(),
+        "post-apply FK check must be clean, got {} violation row(s)",
+        violations.len()
+    );
+}
