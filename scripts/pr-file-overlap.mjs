@@ -234,7 +234,15 @@ function escapeTableNewline(text) {
  * @param {string} text
  */
 function escapeTablePipe(text) {
-  return String(text).replace(/\|/g, '\\|')
+  // Backslashes FIRST, then pipes. Escaping `|` while leaving `\` alone is
+  // incomplete escaping (CodeQL js/incomplete-sanitization): a path already
+  // containing `\` would have that backslash absorbed as the escape for the
+  // pipe we just added, so the pipe re-emerges unescaped one nesting level
+  // down. GFM's cell scanner happens to absorb `\\|` as `\` + `\|` today, so
+  // this was cosmetic rather than a live column break — but the ordering is
+  // what makes it true rather than incidental, and it also stops a
+  // pre-escaped pipe losing a backslash in the rendered text.
+  return String(text).replace(/\\/g, '\\\\').replace(/\|/g, '\\|')
 }
 
 /**
