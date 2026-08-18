@@ -75,7 +75,7 @@ The port is not uniformly an improvement, and the regressions are load-bearing e
 
 The failure was that during a first-ever pair `peer_refs` is empty, so only the mDNS-resolve branch could start an outbound session — and its already-discovered short-circuit returned before `pairing_pending` was consulted, giving one initiation opportunity per peer per process lifetime, which the pairing dialog spent on open before the user had typed. #3535 reorders the clauses so a pending pairing outranks the already-discovered guard, and removes the matching short-circuit in `process_discovery_event`.
 
-Nothing in this document should be read as saying the QUIC port *by itself* makes pairing work — and note that pairing still has not been observed against two live devices (#3507), so the evidence for it is unit tests rather than an observation.
+Nothing in this document should be read as saying the QUIC port *by itself* makes pairing work. A first-ever pair has since been observed against two live devices — a Linux desktop and an Android phone, both 0.9.8, on 2026-08-17 — so the evidence is no longer unit tests alone. Be precise about what that run covers: pairing and the first inbound session, not a verified two-way sync, and only after a VPN tunnel and a default-deny host firewall were cleared on the desktop. The initiator-side apply that aborted on `blocks.parent_id` (#4083) was fixed afterwards and has not been re-exercised on hardware.
 
 ## Protocol
 
