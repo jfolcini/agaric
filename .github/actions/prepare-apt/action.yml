@@ -59,3 +59,28 @@ runs:
 
         # Repair any half-finished dpkg state a killed background job left behind.
         sudo dpkg --configure -a || true
+
+        # #4115: point every suite at the Azure mirror.
+        #
+        # The runner images ship a sources list that mixes hosts: most suites
+        # resolve to `azure.archive.ubuntu.com`, but some entries (in practice
+        # `noble-security`, and `noble-updates`/`noble-backports` on some
+        # images) point at the public `archive.ubuntu.com`. When that host
+        # stalls, `apt-get update` hangs holding the connection open, and
+        # `Acquire::*::Timeout` does NOT bound it — the connection is
+        # established and then produces no bytes, which is not the failure mode
+        # that timeout covers.
+        #
+        # Measured, three times in one night across two PRs and four job types
+        # (`lint`, `playwright`, `mcp-tests`, `cargo-tests`): every
+        # `azure.archive.ubuntu.com` request completed while
+        # `https://archive.ubuntu.com/ubuntu/dists/noble-security/InRelease`
+        # produced its header line and then nothing for 29-33 minutes, until the
+        # job hit its own `timeout-minutes` and GitHub reported it as
+        # `cancelled` — i.e. it reads as a code failure on the PR.
+        #
+        # The Azure mirror is inside the runner's own network, so this is also
+        # the faster path when both are healthy.
+        sudo sed -i 's|https\?://archive\.ubuntu\.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+          /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+          /etc/apt/sources.list.d/*.sources 2>/dev/null || true
