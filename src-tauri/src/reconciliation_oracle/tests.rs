@@ -1140,3 +1140,554 @@ async fn page_link_cache_reconciles_and_reports_an_unmaintained_rollup() {
         "only NESTED_PAGE -> PAGE_B should survive, flagged tgt_deleted, got {end:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `block_links` ITSELF — the base table, audited against block CONTENT (#3955)
+// ---------------------------------------------------------------------------
+//
+// Every other artefact in this module folds `block_links` as ground truth, so
+// a wrong row in it produced a CONSISTENT wrong answer on both sides of their
+// diffs. These tests cover the artefact that gives it an independent expected
+// side, and — per the issue's acceptance criterion — the state #3903 was
+// about: a same-space link whose target `space_id` is not yet stamped.
+//
+// Ids are 26-char Crockford base-32 because the link grammar demands it:
+// `[[…]]` around anything other than exactly 26 uppercase alphanumerics is not
+// a token, so a fixture with short ids would parse to ZERO tokens and every
+// assertion below would pass vacuously.
+
+const BL_SPACE: &str = "01SPACE3955000000000000000";
+const BL_SRC_PAGE: &str = "01SRCPAGE39550000000000000";
+const BL_SRC: &str = "01SRCBLOCK3955000000000000";
+const BL_TGT_PAGE: &str = "01TGTPAGE39550000000000000";
+/// The #3903 target: on a page in the source's space, but its OWN `space_id`
+/// column is still NULL — the window between the block committing and
+/// `SetBlockPageId`'s `set_block_space_id_from_parent` stamping it.
+const BL_TGT_PENDING: &str = "01TGTPEND39550000000000000";
+/// The control: same page, `space_id` already materialised. This one survived
+/// the pre-#3894 filter, which is why a fixture containing only this target
+/// cannot tell the broken subquery from the fixed one.
+const BL_TGT_STAMPED: &str = "01TGTSTMP39550000000000000";
+const BL_OTHER_SPACE: &str = "01XSPACE395500000000000000";
+const BL_OTHER_PAGE: &str = "01XPAGE3955000000000000000";
+const BL_OTHER_BLOCK: &str = "01XBLOCK395500000000000000";
+
+/// A page block. `page_id = id` is forced by the `page_id_self_for_pages`
+/// CHECK (migration 0085).
+async fn bl_insert_page(pool: &sqlx::SqlitePool, id: &str, space: Option<&str>) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES (?, 'page', ?, NULL, 1, ?, ?)",
+    )
+    .bind(id)
+    .bind(id)
+    .bind(id)
+    .bind(space)
+    .execute(pool)
+    .await
+    .expect("seed page block");
+}
+
+/// Register a space. `blocks.space_id REFERENCES spaces(id)` and
+/// `spaces.id REFERENCES blocks(id)` (migration 0089), so the block must
+/// already exist and the registry row must exist before anything points at it.
+async fn bl_register_space(pool: &sqlx::SqlitePool, id: &str) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("register space");
+}
+
+async fn bl_insert_content(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    page: &str,
+    space: Option<&str>,
+    content: &str,
+) {
+    // dynamic-sql: test-only fixture seed (not a production query path).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES (?, 'content', ?, ?, 1, ?, ?)",
+    )
+    .bind(id)
+    .bind(content)
+    .bind(page)
+    .bind(page)
+    .bind(space)
+    .execute(pool)
+    .await
+    .expect("seed content block");
+}
+
+/// Overwrite a block's content WITHOUT running any reindex — the state between
+/// the apply landing and whichever maintainer the dispatch table enqueued.
+async fn bl_set_content(pool: &sqlx::SqlitePool, id: &str, content: &str) {
+    // dynamic-sql: test-only fault injection (not a production query path).
+    sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+        .bind(content)
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("rewrite block content");
+}
+
+/// Read the stored edge set, so a test can assert on the TABLE and not only on
+/// the oracle's opinion of it.
+async fn bl_stored_targets(pool: &sqlx::SqlitePool, source: &str) -> Vec<String> {
+    // dynamic-sql: static SQL, test-only read-back.
+    let mut rows: Vec<String> =
+        sqlx::query_scalar("SELECT target_id FROM block_links WHERE source_id = ?")
+            .bind(source)
+            .fetch_all(pool)
+            .await
+            .expect("read block_links");
+    rows.sort();
+    rows
+}
+
+/// The #3903 fixture: one source in a space linking three targets — one whose
+/// space resolves only through the owning-page fallback, one already stamped,
+/// and one genuinely in another space.
+///
+/// Nothing is reindexed here: the vault starts in the state a `block_links`
+/// oracle must be able to see through, i.e. content that names edges the table
+/// does not hold.
+async fn bl_fixture() -> (sqlx::SqlitePool, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("block_links.db"))
+        .await
+        .expect("init_pool");
+
+    // The space markers are themselves blocks (spaces.id REFERENCES blocks).
+    bl_insert_page(&pool, BL_SPACE, None).await;
+    bl_register_space(&pool, BL_SPACE).await;
+    bl_insert_page(&pool, BL_OTHER_SPACE, None).await;
+    bl_register_space(&pool, BL_OTHER_SPACE).await;
+
+    bl_insert_page(&pool, BL_SRC_PAGE, Some(BL_SPACE)).await;
+    bl_insert_page(&pool, BL_TGT_PAGE, Some(BL_SPACE)).await;
+    bl_insert_page(&pool, BL_OTHER_PAGE, Some(BL_OTHER_SPACE)).await;
+
+    // `space_id` LEFT NULL on purpose — the pre-`SetBlockPageId` window.
+    bl_insert_content(&pool, BL_TGT_PENDING, BL_TGT_PAGE, None, "pending").await;
+    bl_insert_content(
+        &pool,
+        BL_TGT_STAMPED,
+        BL_TGT_PAGE,
+        Some(BL_SPACE),
+        "stamped",
+    )
+    .await;
+    bl_insert_content(
+        &pool,
+        BL_OTHER_BLOCK,
+        BL_OTHER_PAGE,
+        Some(BL_OTHER_SPACE),
+        "elsewhere",
+    )
+    .await;
+
+    bl_insert_content(
+        &pool,
+        BL_SRC,
+        BL_SRC_PAGE,
+        Some(BL_SPACE),
+        &format!("see [[{BL_TGT_PENDING}]] and (({BL_TGT_STAMPED})) and [[{BL_OTHER_BLOCK}]]"),
+    )
+    .await;
+
+    (pool, dir)
+}
+
+/// **The acceptance criterion of #3955.** `block_links` is a BASE table to
+/// every other artefact here, so the only thing that can make it auditable is
+/// an expected side derived from something else — the link tokens in
+/// `blocks.content`, resolved the way `reindex_block_links` resolves them.
+///
+/// Everything this pins:
+///
+/// * the MISSING arm fires on content that names edges the table does not hold
+///   (#3903's shape, and #3296's, and any forgotten `ReindexBlockLinks`
+///   enqueue);
+/// * production's own writer settles it — the fold agrees with
+///   `reindex_block_links` on a vault with a page-fallback target, a stamped
+///   target and a cross-space target, so it can be trusted to report a bug
+///   rather than hold a different opinion;
+/// * the cross-space target is expected to be ABSENT, so an oracle that simply
+///   forgot the filter would report a false MISSING here rather than passing;
+/// * the coverage counters make the fixture's #3903 relevance an ASSERTION:
+///   `page_fallback_space_targets` is the one number that distinguishes the
+///   pre-#3894 subquery from the post-#3894 one, and a fixture with zero of
+///   them audits nothing about this defect however many edges it checks.
+///
+/// **Reverting #3894 reddens this test at the final
+/// `assert_block_links_reconciled`** — the pre-fix target subquery reads only
+/// `blocks.space_id`, resolves `BL_TGT_PENDING` to NULL, `NULL = ?3` is falsy,
+/// and the same-space edge is dropped from the table while the from-content
+/// rebuild still expects it. That is the whole point: before this artefact
+/// existed, that loss was invisible to `reconcile`, because the missing row was
+/// missing from the expected AND the actual side of every diff that folded
+/// `block_links`.
+#[tokio::test]
+async fn block_links_oracle_audits_the_base_table_against_content_3955() {
+    let (pool, _dir) = bl_fixture().await;
+
+    // NON-VACUITY, by value. Three tokens are parsed; two are derivable edges
+    // (the cross-space one is correctly not); exactly one of them can only
+    // resolve through the owning-page fallback.
+    let before = block_links_coverage(&pool).await.expect("coverage");
+    assert_eq!(
+        before,
+        BlockLinksCoverage {
+            block_links_rows: 0,
+            content_link_tokens: 3,
+            derivable_edges: 2,
+            space_filtered_sources: 1,
+            page_fallback_space_targets: 1,
+        },
+        "the fixture must arm the cross-space filter AND contain a target whose space \
+         resolves ONLY through the owning-page fallback — without that last one the \
+         pre-#3894 subquery and the post-#3894 one are indistinguishable"
+    );
+
+    // NON-VACUITY by VALUE, not just by size: a fold that dropped the space
+    // filter would still report "2 edges" if it also dropped the page-fallback
+    // target, so the identities are pinned.
+    assert_eq!(
+        rebuild_block_links_from_content(&pool)
+            .await
+            .expect("from-content rebuild"),
+        [
+            (BL_SRC.to_owned(), BL_TGT_PENDING.to_owned()),
+            (BL_SRC.to_owned(), BL_TGT_STAMPED.to_owned()),
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>(),
+        "the expected side must contain BOTH same-space targets — including the one \
+         whose space resolves only through its owning page — and NOT the cross-space one"
+    );
+
+    // Direction 1 — MISSING. The edges are in the content; no maintainer ran.
+    let missing = block_links_reconciliation_failure(&pool, "content written, no reindex ran")
+        .await
+        .expect("oracle must report the unmaintained edges");
+    assert!(
+        missing.contains("block_links.row") && missing.contains("no row in block_links"),
+        "expected a missing-row divergence, got:\n{missing}"
+    );
+    assert!(
+        missing.contains("in 2 place(s)"),
+        "both derivable edges must be reported — and the CROSS-SPACE token must not \
+         be, got:\n{missing}"
+    );
+    assert!(
+        !missing.contains(BL_OTHER_BLOCK),
+        "the cross-space target is correctly absent from block_links; reporting it \
+         would mean the oracle dropped the filter it is auditing, got:\n{missing}"
+    );
+
+    // Production's writer settles it. This is the whole claim: a from-CONTENT
+    // rebuild and `reindex_block_links` agree.
+    agaric_store::cache::reindex_block_links(&pool, BL_SRC)
+        .await
+        .expect("reindex_block_links");
+
+    // THE BLIND SPOT ITSELF, asserted rather than described. Settle every
+    // roll-up production would settle and the PRE-EXISTING oracle is green —
+    // and it stays green with #3894 reverted, because `block_links` is a base
+    // table to both of its link artefacts: the dropped row is missing from the
+    // expected AND the actual side, so the wrong answer is consistent. That is
+    // why the assertion below cannot be replaced by `assert_reconciled`.
+    settle_pages_cache(&pool).await;
+    settle_page_link_cache_rebuild(&pool)
+        .await
+        .expect("page_link_cache rebuild");
+    assert_reconciled(
+        &pool,
+        "every roll-up settled — reconcile() sees nothing here",
+    )
+    .await;
+
+    // #3955 ACCEPTANCE, and FIRST on purpose: this must be the assertion that
+    // fires on a tree with #3894 reverted, naming `BL_SRC -> BL_TGT_PENDING`
+    // as a row the content demands and the table does not hold. A raw
+    // read-back of `block_links` would catch the same regression, but catching
+    // it is not the claim — the claim is that the ORACLE can express it, so the
+    // oracle has to be what speaks first.
+    assert_block_links_reconciled(&pool, "after production's own reindex").await;
+
+    // Corroboration: the same fact read straight off the table, so a green
+    // oracle here cannot be a bug in the oracle agreeing with a bug in the
+    // writer.
+    assert_eq!(
+        bl_stored_targets(&pool, BL_SRC).await,
+        // `bl_stored_targets` sorts; "…PEND…" sorts before "…STMP…".
+        vec![BL_TGT_PENDING.to_owned(), BL_TGT_STAMPED.to_owned()],
+        "both same-space targets must land — the unstamped one via the owning-page \
+         fallback (#3903) — and the cross-space one must not"
+    );
+
+    let after = block_links_coverage(&pool).await.expect("coverage");
+    assert_eq!(
+        (after.block_links_rows, after.derivable_edges),
+        (2, 2),
+        "the writer must materialise exactly the folded edges, got {after:?}"
+    );
+}
+
+/// **The EXTRA arm.** A row the live source's content no longer names.
+///
+/// Scoped to production's DELETE rule exactly — `old_targets` MINUS the parsed
+/// tokens, with no existence and no space predicate — so this is the one
+/// direction the writer is unconditionally responsible for. The state is a
+/// real one: an `EditBlock` landed and its `ReindexBlockLinks` has not run (or
+/// was never enqueued, the #3296 shape one arm over).
+#[tokio::test]
+async fn block_links_oracle_reports_a_row_the_content_no_longer_names_3955() {
+    let (pool, _dir) = bl_fixture().await;
+    agaric_store::cache::reindex_block_links(&pool, BL_SRC)
+        .await
+        .expect("reindex_block_links");
+    assert_block_links_reconciled(&pool, "settled fixture").await;
+
+    // Drop ONE token; keep the other, so the divergence cannot be "the whole
+    // source went away" and has to name the individual edge.
+    bl_set_content(&pool, BL_SRC, &format!("only (({BL_TGT_STAMPED})) now")).await;
+
+    let extra = block_links_reconciliation_failure(&pool, "token removed, no reindex ran")
+        .await
+        .expect("oracle must report the stale edge");
+    assert!(
+        extra.contains("in 1 place(s)"),
+        "exactly the de-referenced edge must be reported, got:\n{extra}"
+    );
+    assert!(
+        extra.contains(&format!("{BL_SRC} -> {BL_TGT_PENDING}"))
+            && extra.contains("a row in block_links")
+            && extra.contains("no block_links row"),
+        "expected an EXTRA-row divergence naming the de-referenced pair, got:\n{extra}"
+    );
+
+    agaric_store::cache::reindex_block_links(&pool, BL_SRC)
+        .await
+        .expect("reindex_block_links");
+    assert_block_links_reconciled(&pool, "after the reindex dropped the stale edge").await;
+    assert_eq!(
+        bl_stored_targets(&pool, BL_SRC).await,
+        vec![BL_TGT_STAMPED.to_owned()],
+        "the reindex must delete exactly the token that left the content"
+    );
+}
+
+/// **The two windows the artefact deliberately leaves open**, pinned so they
+/// are a decision rather than an accident.
+///
+/// Production's writer runs on ONE trigger: a change to the source's content.
+/// Nothing re-runs it when the world around the source changes, so a
+/// soft-deleted TARGET and a soft-deleted SOURCE both leave rows behind that
+/// no maintainer will ever remove. Those rows are the SETTLED state — the
+/// roll-up is built to carry them (`rebuild_page_link_cache` flags
+/// `tgt_deleted` rather than dropping the edge, and excludes deleted sources
+/// with its own `WHERE sb.deleted_at IS NULL`) — so an artefact that reported
+/// them would fire on every ordinary block deletion and be muted within a week.
+///
+/// Both halves are independently falsifiable, and by the SPECIFIC mistake each
+/// exists to prevent — not by an arbitrary break:
+///
+/// * scoping the EXTRA arm's token read by liveness (i.e. "faithfully"
+///   transcribing production's `SELECT content … WHERE deleted_at IS NULL`,
+///   which is the obvious refactor) makes a tombstoned source derive zero
+///   tokens and reddens the second half with its whole outbound set;
+/// * dropping the target-liveness guard from the from-content fold makes the
+///   dead target's edge derivable again — silently repairing the first half —
+///   which the `derivable_edges` assertions catch by value.
+#[tokio::test]
+async fn block_links_oracle_leaves_the_unreindexed_windows_alone_3955() {
+    let (pool, _dir) = bl_fixture().await;
+    agaric_store::cache::reindex_block_links(&pool, BL_SRC)
+        .await
+        .expect("reindex_block_links");
+    assert_block_links_reconciled(&pool, "settled fixture").await;
+
+    // Window 1 — the TARGET is soft-deleted. The from-content rebuild stops
+    // deriving the edge (the writer's EXISTS guard requires a live target),
+    // but the row survives and must NOT be reported.
+    soft_delete_block(&pool, BL_TGT_PENDING).await;
+    assert_eq!(
+        bl_stored_targets(&pool, BL_SRC).await.len(),
+        2,
+        "a soft delete leaves block_links alone — only a PURGE cascades (0061)"
+    );
+    let coverage = block_links_coverage(&pool).await.expect("coverage");
+    assert_eq!(
+        (coverage.block_links_rows, coverage.derivable_edges),
+        (2, 1),
+        "the rebuild must genuinely stop deriving the dead target's edge, so this is a \
+         real asymmetry the arms are choosing not to report, got {coverage:?}"
+    );
+    assert_block_links_reconciled(&pool, "link target soft-deleted, row retained").await;
+
+    // Window 2 — the SOURCE is soft-deleted. No delete arm enqueues
+    // `ReindexBlockLinks`, so both of its rows stay; the EXTRA arm must skip
+    // them rather than report the source's whole outbound set.
+    soft_delete_block(&pool, BL_SRC).await;
+    let coverage = block_links_coverage(&pool).await.expect("coverage");
+    assert_eq!(
+        (coverage.block_links_rows, coverage.derivable_edges),
+        (2, 0),
+        "a tombstoned source derives nothing, so its two surviving rows are exactly \
+         what an unscoped EXTRA arm would (wrongly) report, got {coverage:?}"
+    );
+    assert_block_links_reconciled(&pool, "link source soft-deleted, rows retained").await;
+}
+
+/// The oracle's link grammar is a TRANSCRIPTION of
+/// `agaric_store::cache::ULID_LINK_RE`, not a call to it — that is what stops
+/// a production grammar change from moving the expected side with it silently.
+///
+/// The cost of a transcription is drift, so it is pinned: if the two ever
+/// disagree on any of these, the fix is to update the oracle's literal
+/// DELIBERATELY, not to discover it as a wave of unexplained divergences on a
+/// real vault.
+///
+/// The corpus is the edge cases, not the happy path: exact length (25 and 27
+/// characters must NOT match), lowercase, mixed delimiters, and the `#[ULID]`
+/// tag-ref form that is a DIFFERENT artefact's token and must not be captured
+/// here.
+#[test]
+fn oracle_link_grammar_matches_production_3955() {
+    const OK: &str = "01ABCDEFGHJKMNPQRSTVWXYZ00";
+    const SHORT: &str = "01ABCDEFGHJKMNPQRSTVWXYZ0";
+    const LONG: &str = "01ABCDEFGHJKMNPQRSTVWXYZ000";
+    let corpus = [
+        format!("[[{OK}]]"),
+        format!("(({OK}))"),
+        format!("[[{OK}))"),
+        format!("(({OK}]]"),
+        format!("[[{SHORT}]]"),
+        format!("[[{LONG}]]"),
+        format!("[[{}]]", OK.to_lowercase()),
+        format!("#[{OK}]"),
+        format!("[{OK}]"),
+        format!("prefix [[{OK}]] infix (({OK})) suffix"),
+        format!("[[{OK}]][[{OK}]]"),
+        String::new(),
+    ];
+    for text in &corpus {
+        let mine: Vec<String> = super::ORACLE_LINK_TOKEN_RE
+            .captures_iter(text)
+            .map(|c| c[1].to_owned())
+            .collect();
+        let theirs: Vec<String> = agaric_store::cache::ULID_LINK_RE
+            .captures_iter(text)
+            .map(|c| c[1].to_owned())
+            .collect();
+        assert_eq!(
+            mine, theirs,
+            "the oracle's transcribed link grammar has drifted from \
+             agaric_store::cache::ULID_LINK_RE on {text:?} — update the oracle's literal \
+             deliberately (see ORACLE_LINK_TOKEN_RE's rustdoc)"
+        );
+    }
+    // The corpus is only worth anything if it distinguishes: assert the two
+    // NEGATIVE shapes really are negative, so a regex that matched everything
+    // would fail here rather than agreeing with production vacuously.
+    assert!(super::ORACLE_LINK_TOKEN_RE.captures(&corpus[4]).is_none());
+    assert_eq!(
+        super::ORACLE_LINK_TOKEN_RE
+            .captures_iter(&corpus[9])
+            .count(),
+        2
+    );
+}
+
+/// The measurement behind the LANE decision (#3955), kept `#[ignore]`d so the
+/// per-PR suite does not pay for it — `scheduled-deep-checks.yml`'s
+/// `--run-ignored=only` sweep runs it, where it is expected to PASS.
+///
+/// Every other rebuild in this module folds columns; this one runs a regex over
+/// every block's full content, which is why the artefact is a separate entry
+/// point rather than another arm of `reconcile` (called after EVERY op of
+/// EVERY generated chain in the B6 property). This seeds a vault an order of
+/// magnitude larger than any directed fixture and prints the cost so the claim
+/// is a number rather than an intuition.
+///
+/// No wall-clock budget is asserted: a weekly lane on shared CI runners is the
+/// wrong place for a timing gate (see the existing perf gates, which are sized
+/// against measured values on dedicated runs). What IS asserted is that the
+/// sweep is non-vacuous and green at scale, which is what would catch a fold
+/// that only happens to be right on a seven-block fixture.
+#[tokio::test]
+#[ignore = "deep-checks lane: seeds a 2000-block vault to measure the content re-parse"]
+async fn block_links_oracle_scale_sweep_3955() {
+    const PAGES: usize = 20;
+    const BLOCKS_PER_PAGE: usize = 100;
+
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("scale.db"))
+        .await
+        .expect("init_pool");
+
+    bl_insert_page(&pool, BL_SPACE, None).await;
+    bl_register_space(&pool, BL_SPACE).await;
+
+    let mut ids = Vec::new();
+    for p in 0..PAGES {
+        let page = format!("01PAGE{p:020}");
+        bl_insert_page(&pool, &page, Some(BL_SPACE)).await;
+        for b in 0..BLOCKS_PER_PAGE {
+            let id = format!("01BLK{p:03}{b:018}");
+            assert_eq!(id.len(), 26, "seed ids must be token-shaped");
+            // Half the blocks leave `space_id` NULL, so the owning-page
+            // fallback is on the hot path of the sweep rather than an edge case.
+            let space = if b % 2 == 0 { Some(BL_SPACE) } else { None };
+            bl_insert_content(&pool, &id, &page, space, "body").await;
+            ids.push(id);
+        }
+    }
+    // Chain every block to the next: one token each, so the edge count scales
+    // with the vault instead of being a constant handful.
+    for (i, id) in ids.iter().enumerate() {
+        let target = &ids[(i + 1) % ids.len()];
+        bl_set_content(&pool, id, &format!("body [[{target}]]")).await;
+        agaric_store::cache::reindex_block_links(&pool, id)
+            .await
+            .expect("reindex_block_links");
+    }
+
+    let started = std::time::Instant::now();
+    let divergences = reconcile_block_links(&pool)
+        .await
+        .expect("block_links reconcile");
+    let elapsed = started.elapsed();
+
+    let coverage = block_links_coverage(&pool).await.expect("coverage");
+    println!(
+        "block_links oracle scale sweep: {} blocks, {} edges, reconcile_block_links took {:?} \
+         ({coverage:?})",
+        ids.len() + PAGES + 1,
+        coverage.derivable_edges,
+        elapsed,
+    );
+    assert_eq!(
+        (coverage.derivable_edges, coverage.block_links_rows),
+        (
+            i64::try_from(ids.len()).unwrap(),
+            i64::try_from(ids.len()).unwrap()
+        ),
+        "every chained block must contribute exactly one audited edge, got {coverage:?}"
+    );
+    assert!(
+        coverage.page_fallback_space_targets > 0,
+        "half the targets must resolve only through the owning-page fallback, got {coverage:?}"
+    );
+    assert!(
+        divergences.is_empty(),
+        "a vault settled by production's own writer must reconcile; first: {:?}",
+        divergences.first()
+    );
+}
