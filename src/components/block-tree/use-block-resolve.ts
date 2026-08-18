@@ -84,8 +84,19 @@ function formatNamespacedLabel(title: string): {
   return { label, breadcrumb }
 }
 
+/**
+ * #4138 — the single render site for the `'Untitled'` placeholder. Cache
+ * seeds (`searchPagesViaCache`'s fallback fetch, below) store the RAW title
+ * (`''` for NULL content), matching the backend's `COALESCE(b.content, '')`
+ * so `comparePageRows` sorts a NULL-content page exactly where a refetch
+ * would. Baking `'Untitled'` into the stored title instead (the pre-#4138
+ * shape) made it sort under `U` locally and under `''` (first) on the
+ * backend — the seed silently drifted from the comparator #4134/#4131 made
+ * exact. The placeholder still needs to be SHOWN, so it is applied here,
+ * once, at display time, rather than at every seed site.
+ */
 function makePagePickerItem(id: string, title: string): PickerItem {
-  const { label, breadcrumb } = formatNamespacedLabel(title)
+  const { label, breadcrumb } = formatNamespacedLabel(title === '' ? 'Untitled' : title)
   return { id, label, icon: FileText, breadcrumb }
 }
 
@@ -112,7 +123,11 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
     const spaceId = useSpaceStore.getState().currentSpaceId
     if (spaceId == null) return []
     const pages = unwrap(await commands.listAllPagesInSpace(requireActiveScope(spaceId), null))
-    source = pages.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
+    // #4138 — seed the RAW title (`''` for NULL content), matching the
+    // backend's `COALESCE(b.content, '')` `ORDER BY`. The `'Untitled'`
+    // placeholder is applied at the render site (`makePagePickerItem`)
+    // instead, so it never leaks into the sort key or the search-match text.
+    source = pages.map((p) => ({ id: p.id, title: p.content ?? '' }))
     // #732 — only persist the lazy fill while the active space is still
     // the one the fetch was issued for. A space switch mid-flight would
     // otherwise re-seed the just-invalidated cache with the OLD space's
@@ -340,12 +355,25 @@ function foldAsciiUppercase(s: string): string {
  * Both fixed together (#4131) — fixing one and not the other would have left
  * this docblock wrong again in a new way.
  *
- * The exactness claim is about the COMPARATOR, not the end-to-end ordering.
- * Two residual gaps live outside it and are tracked in #4138: the cache seeds
- * `title: p.content ?? 'Untitled'`, so a NULL-content page sorts as
- * `'Untitled'` here and as `''` (first) in SQLite; and both comparators still
- * tiebreak on `a.id < b.id`, which is UTF-16 order where the backend's
- * `b.id ASC` is BINARY — inert only because ids are ASCII today.
+ * The exactness claim is about the COMPARATOR. #4138 closed three residual
+ * gaps that sat outside it, split from the #4134 review so they'd be tracked
+ * rather than lost:
+ *   1. The cache seed used to write `title: p.content ?? 'Untitled'`, so a
+ *      NULL-content page sorted as `'Untitled'` here vs. `''` (first) in
+ *      SQLite. Fixed by seeding the raw `''` and moving the placeholder to
+ *      `makePagePickerItem`, the render site (see its docblock).
+ *   2. Both comparators tiebroke on `a.id < b.id` / `a.tag_id < b.tag_id`,
+ *      UTF-16 order, where the backend's `id ASC` is BINARY. Inert while ids
+ *      are ULIDs (ASCII-only), but nothing enforces that alphabet, so fixed
+ *      by reusing `compareUtf8Bytes` for the id tiebreak too.
+ *   3. The equality gate compared JS-string `!==` while the comparison
+ *      compared UTF-8 bytes. `TextEncoder` maps every unpaired surrogate to
+ *      U+FFFD, so two titles differing ONLY in lone surrogates were `!==`
+ *      (gate passed) yet encoded to identical bytes — `compareUtf8Bytes`
+ *      returned 0 and was returned directly, silently skipping the id
+ *      tiebreak below it. Fixed by dropping the `!==` gate entirely and
+ *      falling through to the id tiebreak whenever the title/name byte
+ *      comparison itself returns 0.
  *
  * Either comparator only runs on a rename, so the worst case for either
  * comparator is a locally-renamed row landing one slot away from where a
@@ -360,8 +388,9 @@ function comparePageRows(
 ): number {
   const at = foldAsciiUppercase(a.title)
   const bt = foldAsciiUppercase(b.title)
-  if (at !== bt) return compareUtf8Bytes(at, bt)
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+  const titleCmp = compareUtf8Bytes(at, bt)
+  if (titleCmp !== 0) return titleCmp
+  return compareUtf8Bytes(a.id, b.id)
 }
 
 // #4057 — JS `<` on strings compares UTF-16 CODE UNITS; SQLite's default
@@ -389,8 +418,9 @@ function compareUtf8Bytes(a: string, b: string): number {
 }
 
 function compareTagRows(a: TagCacheRow, b: TagCacheRow): number {
-  if (a.name !== b.name) return compareUtf8Bytes(a.name, b.name)
-  return a.tag_id < b.tag_id ? -1 : a.tag_id > b.tag_id ? 1 : 0
+  const nameCmp = compareUtf8Bytes(a.name, b.name)
+  if (nameCmp !== 0) return nameCmp
+  return compareUtf8Bytes(a.tag_id, b.tag_id)
 }
 
 /** Applies one page-scoped change to the `pagesListRef` list. */
