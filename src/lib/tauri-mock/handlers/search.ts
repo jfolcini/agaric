@@ -1132,14 +1132,28 @@ function searchHasStructuralFilter(filter: Record<string, unknown>): boolean {
  * The structurally-filtered, live block set every arm draws its candidates
  * from — the mock's stand-in for `apply_structural_filters`'s WHERE clauses.
  * See the `search_blocks` handler docstring for which clauses are modelled.
+ *
+ * `honourBlockType` defaults to `true` for `search_blocks`. #4065 item 1 —
+ * `search_blocks_partitioned` reuses this same structural set (`parentId` /
+ * `tagIds` / `scope` → `space_id`) but must pass `false`: its `filter`'s
+ * `block_type_filter` is DOCUMENTED as ignored there (`queries.rs:657-663`,
+ * "the partitioning IS the block-type split") — the two `pages` /
+ * `blocks` scans apply their own `block_type = 'page'` pre-filter (or none)
+ * downstream instead, mirroring `fts_fetch_rows`'s per-scan `block_type`
+ * argument (`partitioned.rs:165-212`).
  */
-function searchStructuralCandidates(filter: Record<string, unknown>): Record<string, unknown>[] {
+function searchStructuralCandidates(
+  filter: Record<string, unknown>,
+  honourBlockType = true,
+): Record<string, unknown>[] {
   const scope = filter['scope'] as { kind?: string; space_id?: string } | undefined
   // An omitted `scope` deserialises to `SpaceScope::default()` = `Global`,
   // which applies NO space filter — not a never-matching empty one.
   const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
   const parentId = (filter['parentId'] as string | null | undefined) ?? null
-  const blockTypeFilter = (filter['blockTypeFilter'] as string | null | undefined) ?? null
+  const blockTypeFilter = honourBlockType
+    ? ((filter['blockTypeFilter'] as string | null | undefined) ?? null)
+    : null
   const tagIds = (filter['tagIds'] as string[] | undefined) ?? []
   return [...blocks.values()].filter((b) => {
     if (b['deleted_at']) return false
@@ -1479,17 +1493,26 @@ function searchIdDescPage(
  * `search_blocks_partitioned` (#4030 item 1: `search_fts_partitioned` passes
  * `None` for the cursor and the command answers `next_cursor: None`, but the
  * ORDER and the `limit + 1` probe are `search_fts`'s own).
+ *
+ * Takes `{ b, stripped }` PAIRS, not raw blocks (#4065 item 4). Every caller
+ * has already run {@link stripForFts} once to build its candidate set (the
+ * match-narrowing filter, or the structural scan `search_blocks_partitioned`
+ * shares between its two partitions); recomputing it here — as this used to —
+ * struck a page-typed `search_blocks_partitioned` candidate a second and
+ * third time per request (once per partition it lands in), on top of the
+ * once already spent narrowing it. Behaviour-neutral: the rank VALUE is
+ * unchanged, only how many times it is computed.
  */
 function searchFtsRankedPage(
-  candidates: Record<string, unknown>[],
+  candidates: Array<{ b: Record<string, unknown>; stripped: string }>,
   foldedQuery: string,
   cursor: SearchCursor | null,
   limit: number,
 ): SearchPageResponse {
   let ranked = candidates
-    .map((b) => ({
+    .map(({ b, stripped }) => ({
       b,
-      rank: approximateFtsRank(stripForFts(b['content'] as string | null), foldedQuery),
+      rank: approximateFtsRank(stripped, foldedQuery),
     }))
     .toSorted((x, y) => x.rank - y.rank || (x.b['id'] as string).localeCompare(y.b['id'] as string))
   if (cursor != null) {
@@ -1881,10 +1904,13 @@ export const searchHandlers = {
     }
 
     // The FTS5 MATCH: a case-folded (NOT diacritic-folded) test over each
-    // block's `fts_blocks.stripped` text — see `stripForFts` (#3938).
-    const ftsCandidates = candidates.filter((b) =>
-      matchesFtsIndex(stripForFts(b['content'] as string | null), query),
-    )
+    // block's `fts_blocks.stripped` text — see `stripForFts` (#3938). Stripped
+    // ONCE here and carried alongside `b` (#4065 item 4) — arm 4 and arm 5
+    // below both rank off it via {@link searchFtsRankedPage}, which used to
+    // recompute it a second time per hit.
+    const ftsCandidates = candidates
+      .map((b) => ({ b, stripped: stripForFts(b['content'] as string | null) }))
+      .filter((c) => matchesFtsIndex(c.stripped, query))
 
     // Arm 4 — every toggle off: the FTS5 candidate set IS the answer,
     // rank-ordered and `(rank, id)`-keyset paginated (`search_fts`).
@@ -1905,7 +1931,7 @@ export const searchHandlers = {
     // the whole of #3938: it is the only observable difference between the two
     // arms, and modelling `strip_for_fts` is what made it expressible here.
     const re = buildSearchRegex(query, filter, true)
-    const survivors = ftsCandidates.filter((b) => searchRegexMatches(re, b))
+    const survivors = ftsCandidates.filter((c) => searchRegexMatches(re, c.b))
     // `fts_fetch_post_filtered_page` (`fts/search/post_filter.rs:228-250`) pages
     // the SURVIVOR set on the same `(rank, id)` keyset, minting
     // `Cursor::for_id_and_rank` from the last RETURNED survivor — so this arm
@@ -1940,19 +1966,60 @@ export const searchHandlers = {
     // {@link searchFtsRankedPage} models for `search_blocks`, which is why the
     // partitions go through that seam rather than a sort spelled again here.
     // `partitioned.rs:55-60` documents both partitions as "in rank order".
+    //
+    // #4065 item 1 — `filter` used to be read no further than `query` /
+    // `pageLimit` / `blockLimit`, so this scan was UNSCOPED where
+    // `search_blocks` honours `scope`. It now shares
+    // {@link searchStructuralCandidates} with `search_blocks` for `parentId` /
+    // `tagIds` / `scope` (→ `space_id`) — the fields
+    // `search_blocks_partitioned_inner` also threads into `fts_fetch_rows` on
+    // both partitions (`queries.rs:663-678`, `partitioned.rs:165-212`) —
+    // called with `honourBlockType: false`, because `filter.block_type_filter`
+    // is DOCUMENTED as ignored on this command (`queries.rs:657-663`: "the
+    // partitioning IS the block-type split"). Page-name globs and the
+    // `MetadataPredicates` bundle stay unmodelled here too, for the same
+    // reason `search_blocks`'s docstring gives for leaving them out there.
     const a = args as Record<string, unknown>
     const query = (a['query'] as string) ?? ''
+    const filter = (a['filter'] as Record<string, unknown> | undefined) ?? {}
     const pageLimit = (a['pageLimit'] as number) ?? 0
     const blockLimit = (a['blockLimit'] as number) ?? 0
-    const empty = { items: [], next_cursor: null, has_more: false }
+
+    // #4065 item 2 — `search_blocks_partitioned_inner`'s BE-2 guard
+    // (`queries.rs:735-741`) rejects either limit outside
+    // `[0, MAX_SEARCH_RESULTS]` BEFORE dispatch, so an over-cap `blockLimit`
+    // used to be served rather than refused. `0` is legal HERE (unlike
+    // `search_blocks`'s `[1, 200]` `PageRequest::new` range) — see
+    // `partitioned.rs:237-238`'s explicit `page_limit_usize > 0 && …` clause,
+    // which is what makes this a DIFFERENT guard from the one #4030 item 4
+    // added to `search_blocks`, not the same one reused.
+    if (
+      !(Number.isInteger(pageLimit) && pageLimit >= 0 && pageLimit <= SEARCH_MAX_RESULTS) ||
+      !(Number.isInteger(blockLimit) && blockLimit >= 0 && blockLimit <= SEARCH_MAX_RESULTS)
+    ) {
+      throw validationRejection(
+        `partitioned search limits must each be in [0, ${SEARCH_MAX_RESULTS}]; ` +
+          `got page_limit=${pageLimit}, block_limit=${blockLimit}`,
+      )
+    }
+
+    // #4065 item 3 — every OTHER path on this command sets `total_count: null`
+    // (`queries.rs:783-796`'s `PageResponse`s do); this short circuit used to
+    // leave the key off entirely, so a consumer reading it got `undefined`
+    // here and `null` everywhere else.
+    const empty = { items: [], next_cursor: null, has_more: false, total_count: null }
     if (!query) return { pages: empty, blocks: empty }
 
-    const matching = [...blocks.values()].filter(
-      (b) =>
-        !(b['deleted_at'] as string | null) &&
-        matchesFtsIndex(stripForFts(b['content'] as string | null), query),
-    )
-    const pagesAll = matching.filter((b) => (b['block_type'] as string) === 'page')
+    const structural = searchStructuralCandidates(filter, false)
+    // #4065 item 4 — stripped ONCE per structural candidate and carried
+    // alongside `b`, not recomputed per partition. This used to run
+    // `stripForFts` again inside {@link searchFtsRankedPage} for EACH
+    // partition a row landed in — three times total for a page-typed match
+    // (once here, once for `blocks`, once for `pages`).
+    const matching = structural
+      .map((b) => ({ b, stripped: stripForFts(b['content'] as string | null) }))
+      .filter((c) => matchesFtsIndex(c.stripped, query))
+    const pagesAll = matching.filter((c) => (c.b['block_type'] as string) === 'page')
 
     // Two INDEPENDENT scans, each capped at its own limit — not one scan
     // partitioned afterwards (`partitioned.rs:17-27`: the one-scan shape could
