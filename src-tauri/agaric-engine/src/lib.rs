@@ -92,18 +92,16 @@ pub mod block_ops;
 pub mod recurrence;
 
 /// The spaces-bootstrap sibling core (#2621 THE INVERSION) — the
-/// transaction-scoped inner core of the boot-time spaces bootstrap +
-/// Personal→Work migration: the seeded-space ULID/accent consts, the
-/// idempotent seeded-block / `is_space` / `accent_color` writers, the batched
-/// page-space backfill, the orphan-tag majority-space assignment, and the
-/// one-shot Personal→Work migration helpers. Builds on the sibling
+/// transaction-scoped inner core of the boot-time spaces bootstrap: the
+/// seeded-space ULID/accent consts, the idempotent seeded-block /
+/// `is_space` / `accent_color` writers, the batched page-space backfill,
+/// and the orphan-tag majority-space assignment. Builds on the sibling
 /// `block_ops` writer (`set_property_in_tx`) and the store
 /// (`agaric_store::{op_log, op, db}`); carries the spaces `sqlx::query!` sites.
-/// The app keeps the `CommandTx` / `Materializer` orchestration behind
-/// unchanged shims (`crate::spaces::bootstrap::{bootstrap_spaces,
-/// migrate_personal_pages_to_work}`) and re-exports the consts +
-/// `migrate_orphan_tags_to_space` at `crate::spaces::…` so those call sites
-/// resolve unchanged.
+/// The app keeps the `CommandTx` / `Materializer` orchestration behind an
+/// unchanged shim (`crate::spaces::bootstrap::bootstrap_spaces`) and
+/// re-exports the consts + `migrate_orphan_tags_to_space` at
+/// `crate::spaces::…` so those call sites resolve unchanged.
 pub mod spaces;
 
 /// The op-log DAG-traversal core (#2621 THE INVERSION) — the edit-chain /

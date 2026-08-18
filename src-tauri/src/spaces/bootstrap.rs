@@ -8,22 +8,27 @@
 //!
 //! #2621 THE INVERSION: the neutral, transaction-scoped inner core (the
 //! seeded-block / `is_space` / `accent_color` writers, the batched
-//! page-space backfill, the orphan-tag majority-space assignment, and the
-//! one-shot Personal→Work migration helpers) moved DOWN into
-//! [`agaric_engine::spaces`] so it depends *down* on the block-write core
-//! and the store with no upward `spaces → commands` edge. This module keeps
-//! the `CommandTx` / `Materializer` orchestrators (`bootstrap_spaces` /
-//! `migrate_personal_pages_to_work`) app-side behind unchanged shims: they
-//! open the transaction, forward `&mut sqlx::Transaction` to the engine
-//! helpers, drain the returned op records into the tx's pending queue, and
-//! drive commit + post-commit materializer dispatch exactly as before.
+//! page-space backfill, and the orphan-tag majority-space assignment) moved
+//! DOWN into [`agaric_engine::spaces`] so it depends *down* on the
+//! block-write core and the store with no upward `spaces → commands` edge.
+//! This module keeps the `CommandTx` / `Materializer` orchestrator
+//! (`bootstrap_spaces`) app-side behind an unchanged shim: it opens the
+//! transaction, forwards `&mut sqlx::Transaction` to the engine helpers,
+//! drains the returned op records into the tx's pending queue, and drives
+//! commit + post-commit materializer dispatch exactly as before.
+//!
+//! #3282: the one-shot Personal→Work migration that used to live here
+//! (`migrate_personal_pages_to_work`, plus the engine-side
+//! `migration_marker_set` / `pages_to_migrate` / `MIGRATION_THRESHOLD_ULID`
+//! helpers) is gone. Its own doc block said to delete it once `0.3.0` was
+//! cut; the removal landed at 0.9.8 instead. It was marker-gated, so it had
+//! long since been a no-op on every device that booted any release since.
 
 use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
-use agaric_engine::block_ops::set_property_in_tx;
 use agaric_store::op_log::OpRecord;
 
 // #2621 THE INVERSION: re-export the moved consts + the tag migrator at the
@@ -36,15 +41,14 @@ use agaric_store::op_log::OpRecord;
 // space constants live in `agaric-engine`; this module re-exports them so the
 // app-side bootstrap stays their single canonical `crate::spaces::…` entry.
 pub use agaric_engine::spaces::{
-    MIGRATION_THRESHOLD_ULID, SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID,
-    SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID, migrate_orphan_tags_to_space,
+    SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID, SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID,
+    migrate_orphan_tags_to_space,
 };
 
-// The inner-core helpers driven by the shims below now live in the engine.
+// The inner-core helpers driven by the shim below now live in the engine.
 use agaric_engine::spaces::{
     ensure_accent_color_property, ensure_is_space_property, ensure_space_block,
-    is_bootstrap_complete, migrate_pages_to_personal_space_batched, migration_marker_set,
-    pages_to_migrate, pages_without_space,
+    is_bootstrap_complete, migrate_pages_to_personal_space_batched, pages_without_space,
 };
 
 /// Bootstrap the two seeded spaces and migrate existing pages into Personal.
@@ -197,146 +201,6 @@ pub async fn bootstrap_spaces(
     Ok(())
 }
 
-/// One-shot migration: move every pre-existing Personal page
-/// into the Work space.
-///
-/// # Kill-date plan
-///
-/// **REMOVE AFTER `0.3.0`.** This entire function (plus
-/// [`agaric_engine::spaces::migration_marker_set`] and
-/// [`agaric_engine::spaces::pages_to_migrate`], plus the
-/// [`MIGRATION_THRESHOLD_ULID`] constant)
-/// is one-shot maintainer-only cruft: it exists solely to retro-fit pages
-/// in the maintainer's pre-`MIGRATION_THRESHOLD_ULID` (= 2026-04-26)
-/// vault into the Work space. On any device that has already booted at
-/// least once after this migration shipped, the marker fast-path makes it
-/// a pure no-op. Fresh installs created after the threshold cannot have
-/// candidate pages and the loop body never fires either.
-///
-/// **Removal trigger:** when `0.3.0` is cut, delete the function and its
-/// helpers in the same commit that bumps the version. Old DBs that have
-/// somehow never booted into a `0.2.x` build (unlikely) will need a
-/// manual schema reset (re-import from snapshot or wipe `~/.local/share/
-/// com.agaric.app/notes.db`); document that in the `0.3.0` release notes.
-/// The associated entry and 08-MISC-015
-/// can be closed at the same time.
-///
-/// The version target is intentionally conservative — `0.3.0` gives every
-/// active vault several minor releases to migrate naturally. If the
-/// installed-base inflection point arrives sooner (e.g. by the `0.2.x`
-/// series), the doc comment can be tightened then.
-///
-/// # Behaviour
-///
-/// Runs at boot AFTER `bootstrap_spaces` has finished. The migration is
-/// gated by two independent guards so it is safe to call on every boot
-/// and on every install scenario:
-///
-/// 1. **Marker fast-path.** If the seeded Personal space block already
-///    carries `personal_to_work_migration_v1 = "true"`, the migration
-///    has already run on this device — return immediately.
-/// 2. **Time threshold.** Only pages whose `id < MIGRATION_THRESHOLD_ULID`
-///    are candidates. Fresh installs after this code ships will only
-///    have post-threshold ULIDs, so the loop body never fires.
-///
-/// For each candidate page, an op-emitting `set_property` write rebinds
-/// `space` from `SPACE_PERSONAL_ULID` to `SPACE_WORK_ULID`. The
-/// materializer's UPSERT on `(block_id, key)` converges the local row
-/// inside the same transaction, and the op replicates to peer devices
-/// via the normal sync path. The marker is set on the same transaction
-/// so a single commit either wires up the entire migration or none of
-/// it.
-///
-/// Raw SQL `UPDATE` is intentionally avoided per AGENTS.md invariant #1
-/// (op log is append-only) — the bootstrap precedent (`pages_without_space`
-/// → `SetProperty` ops) is the model.
-///
-/// # Errors
-///
-/// Any database error is propagated. Failure is non-fatal at the call
-/// site (the maintainer's vault simply won't migrate this boot and will
-/// retry on the next one), but practically it should never fail because
-/// the only writes are op_log appends + property UPSERTs that are
-/// already covered by `bootstrap_spaces`'s tests.
-pub async fn migrate_personal_pages_to_work(
-    pool: &SqlitePool,
-    device_id: &str,
-    materializer: &Materializer,
-) -> Result<(), AppError> {
-    let state = materializer.loro_state();
-    // Guard #1 — marker fast-path. Read the marker from outside any
-    // transaction so the common (already-migrated) case skips the
-    // BEGIN IMMEDIATE round-trip entirely.
-    if migration_marker_set(pool).await? {
-        tracing::debug!("personal_to_work_migration_v1 marker present; skipping");
-        return Ok(());
-    }
-
-    // (#110) — `CommandTx` so the page-rebind + marker
-    // `set_property` ops are coupled to a post-commit cache dispatch.
-    let mut tx = CommandTx::begin_immediate(pool, "migrate_personal_pages_to_work").await?;
-
-    // Re-check the marker inside the transaction. Two concurrent boots
-    // can both pass the outer fast-path; BEGIN IMMEDIATE serialises
-    // them and the loser sees the marker the winner committed and
-    // becomes a no-op.
-    if migration_marker_set(&mut **tx).await? {
-        tx.rollback().await?;
-        tracing::debug!(
-            "personal_to_work_migration_v1 marker observed inside tx; concurrent peer won"
-        );
-        return Ok(());
-    }
-
-    let pages = pages_to_migrate(&mut tx).await?;
-    let pages_moved = pages.len();
-    for page_id in pages {
-        let (_block, record) = set_property_in_tx(
-            &mut tx,
-            state,
-            device_id,
-            page_id,
-            "space",
-            None,
-            None,
-            None,
-            Some(SPACE_WORK_ULID.to_owned()),
-            None,
-        )
-        .await?;
-        tx.enqueue_background(record);
-    }
-
-    // Mark complete on the seeded Personal space block. Re-uses the
-    // existing `text` value type — system-internal markers are
-    // advisory and do not require a `property_definitions` row (same
-    // pattern as `is_space = "true"` itself).
-    let (_block, marker_record) = set_property_in_tx(
-        &mut tx,
-        state,
-        device_id,
-        SPACE_PERSONAL_ULID.to_owned(),
-        "personal_to_work_migration_v1",
-        Some("true".to_owned()),
-        None,
-        None,
-        None,
-        None,
-    )
-    .await?;
-    tx.enqueue_background(marker_record);
-
-    tx.commit_and_dispatch(materializer).await?;
-
-    tracing::info!(
-        pages_moved,
-        threshold = MIGRATION_THRESHOLD_ULID,
-        marker_set = true,
-        "personal_to_work_migration_v1 complete"
-    );
-    Ok(())
-}
-
 /// (#110) test helper: run [`bootstrap_spaces`] with a
 /// throwaway [`Materializer`] that is shut down immediately after the
 /// call. The seeded-space + page-migration tests assert on the
@@ -350,19 +214,6 @@ pub(crate) async fn bootstrap_spaces_for_test(
 ) -> Result<(), AppError> {
     let mat = Materializer::new(pool.clone());
     let result = bootstrap_spaces(pool, device_id, &mat).await;
-    mat.shutdown();
-    result
-}
-
-/// (#110) test helper: run [`migrate_personal_pages_to_work`]
-/// with a throwaway [`Materializer`]. See [`bootstrap_spaces_for_test`].
-#[cfg(test)]
-pub(crate) async fn migrate_personal_pages_to_work_for_test(
-    pool: &SqlitePool,
-    device_id: &str,
-) -> Result<(), AppError> {
-    let mat = Materializer::new(pool.clone());
-    let result = migrate_personal_pages_to_work(pool, device_id, &mat).await;
     mat.shutdown();
     result
 }

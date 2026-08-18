@@ -1,16 +1,21 @@
 //! Spaces bootstrap core (#2621 THE INVERSION).
 //!
 //! The neutral, transaction-scoped inner core of the boot-time spaces
-//! bootstrap + Personal→Work migration, moved down from the app crate's
-//! `spaces::bootstrap` module so it depends *down* on the block-write core
+//! bootstrap, moved down from the app crate's `spaces::bootstrap` module so
+//! it depends *down* on the block-write core
 //! ([`crate::block_ops::set_property_in_tx`]) and the store
 //! (`agaric_store::{op_log, op, db}`) with no upward app edge.
 //!
-//! The app crate keeps the `CommandTx` / `Materializer` orchestrators
-//! (`bootstrap_spaces` / `migrate_personal_pages_to_work`) behind unchanged
-//! shims, which open the transaction, forward `&mut sqlx::Transaction` to these
-//! helpers, drain the returned op records into the tx's pending queue, and
-//! drive commit + post-commit materializer dispatch exactly as before.
+//! The app crate keeps the `CommandTx` / `Materializer` orchestrator
+//! (`bootstrap_spaces`) behind an unchanged shim, which opens the
+//! transaction, forwards `&mut sqlx::Transaction` to these helpers, drains
+//! the returned op records into the tx's pending queue, and drives commit +
+//! post-commit materializer dispatch exactly as before.
+//!
+//! #3282: the one-shot Personal→Work migration's selector helpers
+//! (`migration_marker_set`, `pages_to_migrate`, `MIGRATION_THRESHOLD_ULID`)
+//! used to live here too. They were deleted with their app-side caller,
+//! whose doc block had said to delete them once `0.3.0` was cut.
 //!
 //! Every helper here takes an already-open executor (a `&mut sqlx::Transaction`,
 //! a generic `Executor`, or a `&SqlitePool`) — none of them touch `CommandTx`
@@ -56,25 +61,6 @@ pub const SPACE_PERSONAL_DEFAULT_ACCENT: &str = "accent-emerald";
 
 /// Default accent color token for the seeded "Work" space.
 pub const SPACE_WORK_DEFAULT_ACCENT: &str = "accent-blue";
-
-/// One-shot migration threshold.
-///
-/// ULID corresponding to the UTC timestamp `2026-04-26T22:00:00Z`
-/// (`1_777_240_800_000` ms since the Unix epoch). Computed via
-/// `ulid::Ulid::from_parts(1_777_240_800_000_u64, 0).to_string()` so the
-/// timestamp portion (first 10 Crockford-base32 chars) is the lowest
-/// possible ULID at that instant and the random portion is all-zero —
-/// this gives a deterministic lower bound that is identical on every
-/// build and every device.
-///
-/// Pages whose `id < MIGRATION_THRESHOLD_ULID` were created BEFORE this
-/// migration shipped (and so belong to the maintainer's existing vault).
-/// Pages whose `id >= MIGRATION_THRESHOLD_ULID` were created AFTER —
-/// fresh-install pages which must NOT be touched by the migration.
-///
-/// The `migration_threshold_ulid_parses_as_valid_ulid` test guards
-/// against typos.
-pub const MIGRATION_THRESHOLD_ULID: &str = "01KQ5WWYR00000000000000000";
 
 /// Fast-path idempotency check. Returns `true` when both seeded space
 /// blocks exist AND both already carry `is_space = "true"`. Any other
@@ -410,67 +396,6 @@ pub async fn pages_without_space(
                    AND value_text = 'true'
              )
            ORDER BY b.id"#,
-    )
-    .fetch_all(&mut **tx)
-    .await?;
-    Ok(rows.into_iter().map(|r| r.id).collect())
-}
-
-/// Marker fast-path query: does the seeded Personal space block already
-/// carry `personal_to_work_migration_v1 = "true"`?
-///
-/// (f) / 08-MISC-009: parameterised on `sqlx::Executor` so the
-/// same body serves both the outer pool-borrowing fast-path call and the
-/// inner BEGIN IMMEDIATE second-check call (`&mut *tx` reborrows the
-/// transaction's underlying connection). Replaced the
-/// pool-vs-tx-duplicated `migration_marker_set` /
-/// `migration_marker_set_in_tx` pair.
-pub async fn migration_marker_set<'e, E>(executor: E) -> Result<bool, AppError>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
-{
-    let row = sqlx::query_scalar!(
-        r#"SELECT 1 as "v: i32" FROM block_properties
-           WHERE block_id = ?
-             AND key = 'personal_to_work_migration_v1'
-             AND value_text = 'true'"#,
-        SPACE_PERSONAL_ULID,
-    )
-    .fetch_optional(executor)
-    .await?;
-    Ok(row.is_some())
-}
-
-/// Return every live, non-conflict, non-space page that:
-/// - has `id < MIGRATION_THRESHOLD_ULID` (created before this migration
-///   shipped — protects fresh installs);
-/// - currently has a `space` property pointing at `SPACE_PERSONAL_ULID`.
-///
-/// The `is_space != "true"` exclusion keeps a hypothetical user-created
-/// space block (carrying both `is_space = "true"` and `space = Personal`)
-/// from being moved. The seeded space blocks themselves do not carry a
-/// `space` property and so are naturally excluded by the JOIN.
-pub async fn pages_to_migrate(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-) -> Result<Vec<String>, AppError> {
-    let rows = sqlx::query!(
-        // #533 Phase 2: a page's space is `blocks.space_id`, not a
-        // `block_properties(key='space')` row. Select pre-threshold pages
-        // currently in Personal via the column.
-        r#"SELECT b.id as "id!: String" FROM blocks b
-           WHERE b.block_type = 'page'
-             AND b.deleted_at IS NULL
-             AND b.space_id = ?
-             AND b.id < ?
-             AND NOT EXISTS (
-                 SELECT 1 FROM block_properties s
-                 WHERE s.block_id = b.id
-                   AND s.key = 'is_space'
-                   AND s.value_text = 'true'
-             )
-           ORDER BY b.id"#,
-        SPACE_PERSONAL_ULID,
-        MIGRATION_THRESHOLD_ULID,
     )
     .fetch_all(&mut **tx)
     .await?;

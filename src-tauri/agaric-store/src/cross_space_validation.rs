@@ -182,10 +182,12 @@ pub async fn validate_content_refs_in_space(
 /// # `space` key exemption
 ///
 /// The `space` property itself is intentionally allowed to change —
-/// this is how pages move between spaces (e.g. the Personal→Work
-/// migration in `migrate_personal_pages_to_work`). The enforcement
-/// gate only applies to user-defined ref properties (`linked_page`,
-/// `project`, etc.).
+/// this is how pages move between spaces, both when the user reassigns
+/// one (a `set_property` op on [`crate::op::SPACE_PROPERTY_KEY`]) and
+/// when the boot backfill claims an unscoped page for Personal
+/// (`agaric_engine::spaces::migrate_pages_to_personal_space_batched`).
+/// The enforcement gate only applies to user-defined ref properties
+/// (`linked_page`, `project`, etc.).
 pub async fn validate_ref_property_cross_space(
     conn: &mut sqlx::SqliteConnection,
     source_block_id: &BlockId,
@@ -490,13 +492,14 @@ mod tests {
 
     #[tokio::test]
     async fn ref_property_space_key_exempts_cross_space_target() {
-        // #2239: the `space` property itself is the migration carve-out —
+        // #2239: the `space` property itself is the space-move carve-out —
         // pointing it at a block in a DIFFERENT space is exactly how a page
-        // moves between spaces (`migrate_personal_pages_to_work`). The
-        // cross-space gate MUST exempt `SPACE_PROPERTY_KEY` even when the
-        // source and target live in different spaces. Every other ref key
-        // rejects that same shape (`ref_property_rejects_cross_space`), so
-        // this pins the exemption the migration depends on.
+        // moves between spaces (a user reassignment, or the boot backfill
+        // `migrate_pages_to_personal_space_batched`). The cross-space gate
+        // MUST exempt `SPACE_PROPERTY_KEY` even when the source and target
+        // live in different spaces. Every other ref key rejects that same
+        // shape (`ref_property_rejects_cross_space`), so this pins the
+        // exemption every space move depends on.
         let (pool, _dir) = test_pool().await;
         seed_spaces(&pool).await;
         let page_p = BlockId::new().to_string();

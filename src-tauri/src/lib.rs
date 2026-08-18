@@ -479,6 +479,25 @@ pub struct LogGuard(pub tracing_appender::non_blocking::WorkerGuard);
 /// The tracing-appender setup in [`run`] must use this helper (rather than
 /// deriving the path some other way) so the on-disk log files cannot
 /// diverge from the OS-correct app-data location across platforms. See.
+///
+/// #3246 — the helper exists because TWO paths have to agree on this
+/// directory, not one:
+///
+/// - the WRITE path — `init_logging`, called from [`run`] — which points the
+///   rolling file appender at it;
+/// - the READ path — `commands::bug_report`, which enumerates `agaric.log*`
+///   (and the OTel signal subdirectories) beneath it, both for the
+///   recent-error tail in `collect_bug_report_metadata_inner` and for the ZIP
+///   bundle in `read_logs_for_report`.
+///
+/// If those two ever diverge — a different subdirectory name on one side, or
+/// one of them resolving the app-data dir without
+/// [`crate::app_paths::resolve_app_data_dir`] — nothing errors. The write path
+/// keeps logging and the read path keeps finding an empty or absent directory,
+/// so every bug report silently ships with NO logs. The failure is invisible
+/// where it happens and only surfaces later, as a bug report nobody can act
+/// on. `log_dir_write_path_and_bug_report_read_path_agree` pins the pair
+/// end-to-end.
 pub fn log_dir_for_app_data(app_data_dir: &std::path::Path) -> std::path::PathBuf {
     app_data_dir.join("logs")
 }
@@ -1251,35 +1270,33 @@ fn surface_recovery_status<R: tauri::Runtime>(
 /// post-draft-recovery cache refresh.
 ///
 /// Mirrors the original inline ordering exactly: the off-critical-path spawn
-/// (link-metadata GC, FTS / `block_tag_refs` gating, personal→work migration)
-/// is created first, then `RebuildPageIds` / `CleanupOrphanedAttachments` are
-/// enqueued, then caches for recovered drafts are refreshed synchronously.
+/// (link-metadata GC, FTS / `block_tag_refs` gating) is created first, then
+/// `RebuildPageIds` / `CleanupOrphanedAttachments` are enqueued, then caches
+/// for recovered drafts are refreshed synchronously.
 fn spawn_boot_maintenance(
     pools: &db::DbPools,
-    device_id: &str,
     materializer: &materializer::Materializer,
     report: &recovery::RecoveryReport,
 ) {
     use materializer::MaterializeTask;
 
-    // startup-latency-backend Phase 1: move four best-effort boot
+    // startup-latency-backend Phase 1: move the best-effort boot
     // items off the synchronous critical path. These don't gate
-    // any user IPC — link-metadata GC is purely cleanup, the
+    // any user IPC — link-metadata GC is purely cleanup and the
     // FTS / `block_tag_refs` gating is a one-shot "schedule the
     // rebuild if the table is empty" check (the rebuild itself
-    // is already a background materializer task), and the
-    // personal→work migration is a one-shot maintainer-only no-op
-    // for fresh installs. Releasing the foreground queue earlier
-    // means the first user action (a `list_blocks` for the
-    // journal) doesn't compete with these maintenance reads.
+    // is already a background materializer task). Releasing the
+    // foreground queue earlier means the first user action (a
+    // `list_blocks` for the journal) doesn't compete with these
+    // maintenance reads.
     //
-    // `migrate_personal_pages_to_work` MUST run after
-    // `bootstrap_spaces` (its comment is explicit). The spawn
-    // below happens AFTER `bootstrap_spaces` returns successfully,
-    // so the ordering invariant is preserved.
+    // #3282: this spawn used to carry a fourth item, the one-shot
+    // personal→work page migration, which had to run after
+    // `bootstrap_spaces`. That migration is deleted, so the ordering
+    // constraint it imposed on this spawn is gone with it — nothing
+    // here depends on `bootstrap_spaces` any more.
     {
         let write_pool = pools.write.clone();
-        let device_id_owned = device_id.to_owned();
         let materializer_handle = materializer.clone();
         tauri::async_runtime::spawn(async move {
             // Clean up stale link metadata entries (>30 days, non-auth).
@@ -1359,22 +1376,6 @@ fn spawn_boot_maintenance(
                         );
                     }
                 }
-            }
-
-            // One-shot Personal→Work migration for the
-            // maintainer's vault. Hardcoded-ULID-gated so fresh
-            // installs are a no-op. Non-fatal; next boot retries.
-            if let Err(e) = spaces::migrate_personal_pages_to_work(
-                &write_pool,
-                &device_id_owned,
-                &materializer_handle,
-            )
-            .await
-            {
-                tracing::warn!(
-                    error = %e,
-                    "failed to run personal_to_work_migration_v1 — will retry on next boot",
-                );
             }
         });
     }
@@ -2382,7 +2383,7 @@ pub fn run() {
 
                 // Best-effort boot maintenance (off-critical-path spawn + the
                 // remaining synchronous enqueues + post-draft-recovery refresh).
-                spawn_boot_maintenance(&pools, &device_id, &materializer, &report);
+                spawn_boot_maintenance(&pools, &materializer, &report);
 
                 // Long-running background tasks: sweepers, maintenance daemon,
                 // periodic Loro snapshot.
@@ -3243,26 +3244,99 @@ mod log_dir_tests {
         );
     }
 
-    /// Integration-style regression test for.
+    /// #3246 — the log-dir divergence guard, re-pointed at the pair that
+    /// still exists.
     ///
-    /// Before the fix, `run()` computed the log directory from `HOME`
-    /// (Linux XDG layout) instead of `app.path().app_data_dir()`, so on
-    /// macOS / Windows the tracing-appender log location diverged from the
-    /// OS-correct app-data directory. The fix routes `run()` through
-    /// `log_dir_for_app_data()`; this test verifies the helper's output
-    /// matches the expected `<app_data_dir>/logs` shape.
+    /// `log_dir_for_app_data` is a single source of truth precisely because
+    /// two independent paths have to land on the same directory: `init_logging`
+    /// WRITES the rolling log file beneath it, and `commands::bug_report` READS
+    /// that file back out of it. The original version of this test guarded the
+    /// pair `run()` / `get_log_dir`. #3240 deleted `get_log_dir`, and what was
+    /// left asserted `<app_data>/logs` a second time — a restatement of
+    /// `log_dir_for_app_data_appends_logs_subdir`, not a guard.
+    ///
+    /// Asserting that both callers invoke the same helper would be vacuous:
+    /// textually, they already do. What can actually drift is everything the
+    /// two sides own SEPARATELY — the appender's rotation + `filename_prefix`
+    /// on the write side (which yields `agaric.log.YYYY-MM-DD`, not the plain
+    /// `agaric.log` the read side tries first) against the filenames
+    /// `recent_errors_from_log_dir` looks for, and either side deriving its
+    /// app-data directory by a different route. So this test drives the real
+    /// write path and then the real read path over the SAME app-data
+    /// directory, and asserts the second one finds what the first one wrote.
+    ///
+    /// The failure mode it exists to catch is silent: no error anywhere, just
+    /// bug reports that ship with no logs in them.
+    ///
+    /// `init_logging` installs the process-global subscriber, so this test
+    /// needs a clean process — which nextest, the arbiter here, gives every
+    /// test. The precondition is asserted rather than assumed so a
+    /// shared-process runner fails with the reason instead of a mystery.
     #[test]
-    fn log_dir_matches_app_data_dir_contract() {
-        // Take a Tauri-resolved `app_data_dir` and append "logs" via the
-        // helper, matching what any caller (e.g. `run()`) does.
-        let simulated_app_data = std::env::temp_dir().join("agaric-bug34-test");
-        let log_dir = log_dir_for_app_data(&simulated_app_data);
+    fn log_dir_write_path_and_bug_report_read_path_agree() {
+        assert!(
+            !tracing::dispatcher::has_been_set(),
+            "this test needs a clean process: it installs the global subscriber via the real \
+             `init_logging`, and a subscriber set by an earlier test in the same process would \
+             swallow the probe line and make the assertions below meaningless"
+        );
 
-        // Expect `data_dir.join("logs")`.
-        let expected = simulated_app_data.join("logs");
-        assert_eq!(
-            log_dir, expected,
-            "tracing-appender log dir must equal <app_data_dir>/logs"
+        let app = tauri::test::mock_app();
+        let app_data = TempDir::new().expect("app-data dir");
+        let device_id = "logdir-contract-device";
+
+        // WRITE path: the real boot sequence, pointed at `app_data`. It picks
+        // the directory, the filename, and the rotation scheme.
+        super::init_logging(&app, app_data.path());
+        tracing::error!("bug-report log-dir contract probe");
+
+        // READ path: the real bug-report entry point, handed the SAME app-data
+        // directory and left to locate the logs on its own.
+        let read_back = || {
+            crate::commands::collect_bug_report_metadata_inner(
+                app_data.path(),
+                device_id.to_owned(),
+                None,
+                &[],
+            )
+            .expect("bug-report metadata collection must succeed")
+            .recent_errors
+        };
+
+        // The non-blocking appender hands the line to a worker thread, so poll
+        // for it instead of guessing a sleep duration. Measured: the very first
+        // `read_back()` already sees the line (whole test < 0.1s), so 5s is
+        // ~60x headroom and also caps what a genuine regression costs.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut found = read_back();
+        while found.is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            found = read_back();
+        }
+
+        assert!(
+            !found.is_empty(),
+            "the bug-report read path found no ERROR lines under {} even though the real \
+             `init_logging` write path had just logged one there — the two paths have diverged \
+             and every bug report from this build ships with empty logs",
+            app_data.path().display()
+        );
+
+        // Negative control: the read path is genuinely resolving the directory
+        // from the app-data dir it was handed, not finding logs regardless.
+        let unrelated = TempDir::new().expect("unrelated app-data dir");
+        let from_elsewhere = crate::commands::collect_bug_report_metadata_inner(
+            unrelated.path(),
+            device_id.to_owned(),
+            None,
+            &[],
+        )
+        .expect("bug-report metadata collection must succeed")
+        .recent_errors;
+        assert!(
+            from_elsewhere.is_empty(),
+            "a different app-data dir must yield no log lines, otherwise the positive assertion \
+             above proves nothing about which directory was read; got {from_elsewhere:?}"
         );
     }
 }

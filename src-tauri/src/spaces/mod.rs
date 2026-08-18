@@ -21,8 +21,8 @@ pub mod bootstrap;
 // `agaric_store::cross_space_validation::…` call site compiling unchanged.
 
 pub use bootstrap::{
-    MIGRATION_THRESHOLD_ULID, SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID,
-    SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID, bootstrap_spaces, migrate_personal_pages_to_work,
+    SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID, SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID,
+    bootstrap_spaces,
 };
 
 #[cfg(test)]
