@@ -1384,10 +1384,18 @@ async fn block_links_oracle_audits_the_base_table_against_content_3955() {
         "both derivable edges must be reported — and the CROSS-SPACE token must not \
          be, got:\n{missing}"
     );
+    // Asserted over the DIVERGENCE SET, not the formatted report: the report
+    // renders only `divergences.first()`, and `BL_OTHER_BLOCK` sorts after
+    // `BL_TGT_PENDING`, so a fold that dropped the cross-space filter would
+    // still produce a string not containing it. Checking the string here would
+    // be vacuous with respect to the claim this comment makes.
+    let divergences = reconcile_block_links(&pool)
+        .await
+        .expect("reconcile_block_links");
     assert!(
-        !missing.contains(BL_OTHER_BLOCK),
+        !divergences.iter().any(|d| d.key.contains(BL_OTHER_BLOCK)),
         "the cross-space target is correctly absent from block_links; reporting it \
-         would mean the oracle dropped the filter it is auditing, got:\n{missing}"
+         would mean the oracle dropped the filter it is auditing, got:\n{divergences:#?}"
     );
 
     // Production's writer settles it. This is the whole claim: a from-CONTENT
