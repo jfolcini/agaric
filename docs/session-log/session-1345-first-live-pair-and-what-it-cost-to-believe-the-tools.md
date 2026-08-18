@@ -4,7 +4,8 @@
 |----------|-------|
 | **Date** | 2026-08-18 |
 | **Subagents** | 3 build + 4 review + 1 discovery |
-| **Items closed** | `#4083`, `#4084`, `#4085`, `#3869`, `#4095` (PRs open, not yet merged) |
+| **Items closed** | `#4083`, `#4084`, `#4085`, `#4095` (PRs open, not yet merged) |
+| **Items partially addressed** | `#3869` — items 2+3 and the cellular half of item 1; the `ap0` half is inverted, not fixed (see `#4108`) |
 | **Items modified** | `#4037` (surfaced open questions), `#4099` (added TOCTOU note) |
 | **Tests added** | +8 (frontend) / +19 (backend) |
 | **Files touched** | 14 |

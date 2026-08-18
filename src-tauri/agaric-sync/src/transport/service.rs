@@ -1347,13 +1347,25 @@ mod tests {
     /// `8.8.8.8` is public under every reading of the range table, so no fix to
     /// [`is_publicly_routable`] can move it — and it is the same address `lan_only`'s own
     /// docs use for "not on anyone's interface".
+    ///
+    /// Known flake shape, cannot pass falsely: the `vouched_for` half needs the kernel to
+    /// REFUSE a bind to an address this host does not hold. `net.ipv4.ip_nonlocal_bind=1`
+    /// (keepalived/HA images, some container hosts) disables that refusal, the bind
+    /// succeeds, and the `expect_err` panics. Ruling out a runner that *holds* `8.8.8.8`
+    /// is not enough on its own.
     #[tokio::test]
     async fn the_locality_gate_reads_the_host_addresses_the_caller_passed() {
         let unheld: SocketAddr = "8.8.8.8:0".parse().expect("literal parses");
+        // A /24, not the shared `LAN_PREFIX` (/8). Nothing here depends on the
+        // width — the bind fails before a route is installed — but asking for
+        // `8.0.0.0/8` is the exact shape `lan_only`'s docs cite as WHY the
+        // locality check exists, so the fixture would read as contradicting the
+        // doc it sits under.
+        const UNHELD_PREFIX: u8 = 24;
 
         let vouched_for = SyncService::bind(
             unheld,
-            LAN_PREFIX,
+            UNHELD_PREFIX,
             &[unheld.ip()],
             DnsResolver::custom(RecordingResolver::new()),
             SecretKey::generate(),
@@ -1369,7 +1381,7 @@ mod tests {
 
         let unvouched = SyncService::bind(
             unheld,
-            LAN_PREFIX,
+            UNHELD_PREFIX,
             &[],
             DnsResolver::custom(RecordingResolver::new()),
             SecretKey::generate(),
