@@ -42,15 +42,16 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 - **Offline / foreground awareness**: a device that goes offline stops trying immediately; a device that backgrounds skips its resync ticks until foreground. Coming back online retries immediately.
 - **Wire**: QUIC (over UDP), encrypted with TLS 1.3. CRDT operations, snapshots and attachment bytes all flow over the same connection.
 
-> **A first-ever pair has now been observed on real hardware** (2026-08-17): a
-> Linux desktop and an Android phone, both on 0.9.8 and on the same WiFi,
-> completed a first pair over QUIC, the responder logging that it accepted an
-> unpaired device on a verified passphrase proof. Two things had to be cleared
-> on the desktop first and neither was Agaric — a VPN tunnel that swallowed every
-> unicast dial, and a default-deny host firewall (both are pitfalls below).
-> **A full two-way sync end to end is still unverified**: the initiator-side
-> apply that aborted on `blocks.parent_id` (#4083) was fixed after that session
-> and has not yet been exercised against two live devices.
+> **A first-ever pair has now been observed on real hardware**: a Linux desktop
+> and an Android phone, both on 0.9.8 and on the same WiFi, completed a first
+> pair over QUIC, the responder logging that it accepted an unpaired device on a
+> verified passphrase proof. Two things had to be cleared on the desktop first
+> and neither was Agaric — a VPN tunnel that swallowed every unicast dial, and a
+> default-deny host firewall (both are pitfalls below).
+> **A full two-way sync end to end is still unverified (#3507)**: the
+> initiator-side apply that aborted on `blocks.parent_id` (#4083) was fixed after
+> that session and has not yet been exercised against two live devices. Nor has
+> a genuinely restrictive network — the run above was a cooperative home LAN.
 
 ## Snapshot catch-up
 
@@ -74,9 +75,9 @@ In **DeviceManagement** you can per-peer:
 ## Pitfalls to know
 
 - **Both devices must be on the same local network — always, and for a first pair specifically it must also carry multicast.** Agaric does not relay over the internet, and pairing for the first time requires working mDNS multicast between the two devices — that's currently the only way a device learns how to dial the other. If multicast doesn't reach (an isolated guest WiFi, AP/client isolation, multicast disabled on the router, two subnets), there's no way to complete a first pair — not even by typing an address, since the manual-address field only appears for a peer you've already paired.
-- **A VPN can swallow the LAN even when both devices are on the same WiFi.** If the tunnel is not bypassable, whether your LAN escapes it depends on the address range the router hands out: a LAN numbered out of *public* address space is treated as internet-bound and routed into the tunnel. That range can look local without being private — `192.160.x.x` is one digit from `192.168.x.x` and is public. Link-local multicast (`224.0.0.251`, which mDNS uses) still escapes, which makes the symptom distinctive and misleading: **discovery works and every connection attempt dies** — the other device appears in your list and no sync ever starts. Turning the VPN off is the test.
+- **A VPN can swallow the LAN even when both devices are on the same WiFi.** If the tunnel is not bypassable, whether your LAN escapes it depends on the address range the router hands out: a LAN numbered out of *public* address space is treated as internet-bound and routed into the tunnel. That range can look local without being private — `192.160.x.x` is one digit from `192.168.x.x` and is public. Link-local multicast (`224.0.0.251`, which mDNS uses) still escapes, which makes the symptom distinctive and misleading: **discovery works and every connection attempt dies** — the other device appears in your list and no sync ever starts. Turning the VPN off is the test — though note the same symptom has had other causes: binding the wrong interface (a Docker bridge, a VM bridge, a tunnel) produced it too, until #3853.
 - **The manual address is not an across-network route.** Once paired, a peer's row in Device Management gains a manual `host:port` field, but it only helps for a peer on the same subnet Agaric bound — typically one that hasn't re-announced over mDNS yet. The sync endpoint is deliberately LAN-confined: it installs no relays and binds a single subnet as a non-default route, so a destination outside that subnet has no socket to leave by and the dial cannot be attempted at all. A VPN- or internet-routed address will not work.
-- **First-launch firewall prompt** (especially on macOS): allow incoming connections so peers can reach Agaric. Agaric listens on **UDP**, and on a port the operating system picks fresh at each launch — so a hand-written rule has to allow the application, not a fixed TCP port. On Linux there is no prompt at all: a `ufw` or firewalld default-deny policy drops the inbound half silently, and since the port moves every launch the workable rule allows UDP from the peer on the shared interface (`ufw allow in on <iface> from <peer-ip>`) rather than naming a port.
+- **First-launch firewall prompt** (especially on macOS): allow incoming connections so peers can reach Agaric. Agaric listens on **UDP**, and on a port the operating system picks fresh at each launch — so a hand-written rule has to allow the application, not a fixed TCP port. On Linux there is no prompt at all: a `ufw` or firewalld default-deny policy drops the inbound half silently, and since the port moves every launch the workable rule allows UDP from the peer on the shared interface (`ufw allow in on <iface> proto udp from <peer-ip>`) rather than naming a port.
 - **mDNS on Android needs multicast — built in.** Some routers disable multicast; if your other devices can see each other on the network but Agaric can't, that's the likely cause.
 - **TOFU on first pair.** If you re-install Agaric on a peer and its app data is wiped, the device comes back with a different cryptographic identity — you'll need to unpair and re-pair.
 - **Upgrading from a pre-QUIC build re-establishes trust once.** Existing pairings survive the upgrade, but the old certificate could not be converted into the new key, so each pair silently re-learns the other's identity on its first sync after the update. Do the first post-upgrade sync on a network you trust.
