@@ -1217,10 +1217,10 @@ fn fold_block_links_from_content(blocks: &[BaseBlock]) -> BTreeSet<(String, Stri
             if target.deleted_at.is_some() {
                 continue;
             }
-            if let Some(space) = source_space.as_deref() {
-                if fold_block_space(&by_id, &target_id).as_deref() != Some(space) {
-                    continue;
-                }
+            if let Some(space) = source_space.as_deref()
+                && fold_block_space(&by_id, &target_id).as_deref() != Some(space)
+            {
+                continue;
             }
             out.insert((source.id.clone(), target_id));
         }
