@@ -317,11 +317,20 @@ function appendCreatePageOptionIfNeeded(
  *
  * `compareTagRows` compares raw UTF-8 bytes (`compareUtf8Bytes`), so it is an
  * exact match for BINARY — not an approximation. `comparePageRows` is still
- * only an approximation of `NOCASE`: `NOCASE` folds ASCII only, `toLowerCase()`
- * folds Unicode too, so a page whose title differs only in non-ASCII casing
- * (e.g. Turkish İ/i, German ß/ss-adjacent forms) can still land one slot away
- * from where a refetch would put it. #4057 fixed `compareTagRows`; the
- * `comparePageRows` divergence remains open and undocumented-as-fixed.
+ * only an approximation of `NOCASE`, and it diverges for TWO independent
+ * reasons, not one:
+ *   1. `NOCASE` folds ASCII only; `toLowerCase()` folds Unicode too, so a page
+ *      whose title differs only in non-ASCII casing (Turkish İ/i, and similar)
+ *      can land in the wrong slot.
+ *   2. After the fold it still compares with `<`, i.e. UTF-16 code units —
+ *      so the exact byte-order divergence #4057 fixed for tags is ALSO live
+ *      for pages. `NOCASE` case-folds and then memcmps bytes, so page titles
+ *      `Ａ` (U+FF21) and `🎯` sort in opposite orders backend-vs-frontend for
+ *      precisely the reason described below `compareUtf8Bytes`.
+ * Reason 2 is fixable here by folding and then calling `compareUtf8Bytes`;
+ * reason 1 needs an ASCII-only fold to match `NOCASE`. Tracked in #4131 —
+ * #4057 covered tags only, and this comment should not be read as saying
+ * case-folding is the whole story.
  *
  * Either comparator only runs on a rename, so the worst case for the
  * remaining `comparePageRows` approximation is a locally-renamed row landing
