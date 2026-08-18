@@ -2032,37 +2032,29 @@ jobs:
             playwright-${{ runner.os }}-
 
       - name: Install Playwright system deps
-        # #4115: `install-deps` apt-installs system libs/fonts, which hangs on
-        # the same stalled-mirror failure mode as the explicit `apt-get
-        # update` calls above (see `Prepare apt` step and _validate.yml's
-        # playwright job, whose retry shape this mirrors). Bound each attempt
-        # and retry once rather than let it silently burn this job's
-        # `timeout-minutes: 60` budget.
-        run: |
-          for attempt in 1 2; do
-            # #4115: this bound is WEAKER than the sibling `sudo timeout 300
-            # apt-get update` sites, and the difference is worth knowing rather
-            # than assuming. `timeout` runs as the runner user; `npx` shells out
-            # to `sudo apt-get`, so the process actually holding the mirror
-            # connection runs as root and cannot be signalled from here — the
-            # same grandchild-under-sudo problem prepare-apt's own comment
-            # records. A hung apt therefore survives this SIGTERM and keeps the
-            # dpkg lock, so the retry below spends its full `fuser` wait first.
-            # Worst case stays bounded (~13 min of a 60-min budget) and is no
-            # worse than before, but do not read this as the same guarantee the
-            # apt-get sites have.
-            if timeout 300 npx playwright install-deps chromium; then
-              exit 0
-            fi
-            echo "::warning::#4115: playwright install-deps attempt ${attempt} stalled or failed (possible hung apt mirror); waiting for apt lock before retry"
-            for _ in $(seq 1 60); do
-              sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || break
-              sleep 3
-            done
-            sudo dpkg --configure -a || true
-          done
-          echo "::error::#4115: playwright install-deps failed after 2 attempts (likely a hung Ubuntu mirror)"
-          exit 1
+        # #4115: deliberately UNBOUNDED, unlike the `apt-get update` sites in
+        # this file. A 300s cap was tried and reverted: `_validate.yml:1220`
+        # records `install-deps` taking 760s (12.7 min) on a slow-but-healthy
+        # Ubuntu mirror, and the 20 -> 30 minute job bump was paid specifically
+        # to absorb that. Any cap below the observed runtime converts a slow
+        # pass into a hard red, which is a worse failure than the one #4115 is
+        # about — and picking a number above it (900s?) would be inventing a
+        # bound from a single observation.
+        #
+        # Two further reasons a wrapper here is weaker than it looks: `timeout`
+        # runs as the runner user while `npx` shells out to `sudo apt-get`, so
+        # the SIGTERM cannot reach the root grandchild actually holding the
+        # mirror connection (prepare-apt's own comment records this); and this
+        # job, unlike _validate.yml's playwright job, has no
+        # `/var/cache/apt/archives/*.deb` cache, so it pays the full ~33 MB
+        # download every run.
+        #
+        # The mitigation that does apply is prepare-apt's Azure mirror rewrite,
+        # which this job already runs — and which is the one with evidence
+        # behind it: in both recorded stalls every Azure request completed and
+        # only archive.ubuntu.com hung. Bounding this step properly needs the
+        # .deb cache first; tracked in #4115.
+        run: npx playwright install-deps chromium
 
       - name: Install Playwright browser binaries (on cache miss)
         if: steps.playwright-cache.outputs.cache-hit != 'true'
