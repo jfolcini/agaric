@@ -54,10 +54,11 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 > **A full two-way sync end to end is still unverified (#3507)**: the
 > initiator-side apply that aborted on `blocks.parent_id` (#4083) was fixed after
 > that session and has not yet been exercised against two live devices. Nor has
-> a genuinely restrictive network: the *fabric* was an ordinary home LAN that
-> carried multicast fine, and the two blockers were host configuration on either
-> end — an isolated guest network, AP/client isolation and two subnets all remain
-> untested. The run is recorded in
+> a genuinely restrictive network: the fabric carried multicast fine and the two
+> blockers were host configuration on either end — though the fabric was not
+> blameless, since it was numbered out of *public* address space, and that is what
+> made the phone's VPN treat the whole subnet as internet-bound. An isolated guest
+> network, AP/client isolation and two subnets all remain untested. The run is recorded in
 > [`session-1345`](../session-log/session-1345-first-live-pair-and-what-it-cost-to-believe-the-tools.md).
 
 ## Snapshot catch-up
