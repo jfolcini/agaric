@@ -160,9 +160,21 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update || {
+              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
+              exit 1
+            }
+          }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -250,9 +262,21 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update || {
+              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
+              exit 1
+            }
+          }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -553,9 +577,21 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update || {
+              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
+              exit 1
+            }
+          }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -790,9 +826,21 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update || {
+              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
+              exit 1
+            }
+          }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -1350,9 +1398,21 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
       - name: Install system dependencies
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update || {
+              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
+              exit 1
+            }
+          }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -1652,7 +1712,16 @@ jobs:
         # (Tauri crates pull in the webkit/gtk stack) — the pre-commit prek
         # hooks themselves don't compile anything.
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update || {
+              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
+              exit 1
+            }
+          }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -1839,7 +1908,16 @@ jobs:
         # Same Tauri stack as the lint / cargo-tests / mcp-tests jobs in
         # _validate.yml — webkit/gtk/ssl/rsvg/soup + mold for fast linking.
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update || {
+              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
+              exit 1
+            }
+          }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -1954,6 +2032,28 @@ jobs:
             playwright-${{ runner.os }}-
 
       - name: Install Playwright system deps
+        # #4115: deliberately UNBOUNDED, unlike the `apt-get update` sites in
+        # this file. A 300s cap was tried and reverted: `_validate.yml:1220`
+        # records `install-deps` taking 760s (12.7 min) on a slow-but-healthy
+        # Ubuntu mirror, and the 20 -> 30 minute job bump was paid specifically
+        # to absorb that. Any cap below the observed runtime converts a slow
+        # pass into a hard red, which is a worse failure than the one #4115 is
+        # about — and picking a number above it (900s?) would be inventing a
+        # bound from a single observation.
+        #
+        # Two further reasons a wrapper here is weaker than it looks: `timeout`
+        # runs as the runner user while `npx` shells out to `sudo apt-get`, so
+        # the SIGTERM cannot reach the root grandchild actually holding the
+        # mirror connection (prepare-apt's own comment records this); and this
+        # job, unlike _validate.yml's playwright job, has no
+        # `/var/cache/apt/archives/*.deb` cache, so it pays the full ~33 MB
+        # download every run.
+        #
+        # The mitigation that does apply is prepare-apt's Azure mirror rewrite,
+        # which this job already runs — and which is the one with evidence
+        # behind it: in both recorded stalls every Azure request completed and
+        # only archive.ubuntu.com hung. Bounding this step properly needs the
+        # .deb cache first; tracked in #4115.
         run: npx playwright install-deps chromium
 
       - name: Install Playwright browser binaries (on cache miss)
