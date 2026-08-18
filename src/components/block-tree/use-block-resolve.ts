@@ -340,6 +340,13 @@ function foldAsciiUppercase(s: string): string {
  * Both fixed together (#4131) — fixing one and not the other would have left
  * this docblock wrong again in a new way.
  *
+ * The exactness claim is about the COMPARATOR, not the end-to-end ordering.
+ * Two residual gaps live outside it and are tracked in #4138: the cache seeds
+ * `title: p.content ?? 'Untitled'`, so a NULL-content page sorts as
+ * `'Untitled'` here and as `''` (first) in SQLite; and both comparators still
+ * tiebreak on `a.id < b.id`, which is UTF-16 order where the backend's
+ * `b.id ASC` is BINARY — inert only because ids are ASCII today.
+ *
  * Either comparator only runs on a rename, so the worst case for either
  * comparator is a locally-renamed row landing one slot away from where a
  * refetch would put it. Note the cache is not perfectly ordered to begin
