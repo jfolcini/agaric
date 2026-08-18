@@ -52,6 +52,7 @@
 //! | `blocks.page_id` (page OWNERSHIP) | `blocks` | `set_block_page_id_from_parent_in_tx` (create arm) / `rederive_page_and_space_ids` (move arm) / `rebuild_page_ids` (vault-wide arm) |
 //! | `pages_cache.{inbound_link_count,child_block_count}` | `blocks`, `block_links` | `maintain_pages_cache_counts_after_op` (sync arms) / `rebuild_pages_cache_counts` (deferred cohort arm) |
 //! | `page_link_cache` (the page-level `block_links` roll-up) | `blocks`, `block_links` | `reindex_page_link_cache_for_block` (the `ReindexBlockLinks` task — the SOLE per-block writer) / `rebuild_page_link_cache` (the `RebuildPageLinkCache` task) |
+//! | `block_links` ITSELF (#3955) | `blocks` — **`blocks.content`**, not `block_links` | `reindex_block_links_conn` / `reindex_block_links_split` (the ONLY writers; there is no vault-wide rebuild) — audited by [`reconcile_block_links`], NOT by [`reconcile`] |
 //!
 //! Deliberately **not** covered here — see the follow-up issues: the agenda
 //! cache, the projected-agenda cache, `block_tag_refs`,
@@ -86,6 +87,29 @@
 //! agreed on, which is what makes the count comparison meaningful rather than
 //! self-confirming.
 //!
+//! # `block_links` used to be a base table with no independent expected side (#3955)
+//!
+//! Two artefacts above fold `block_links` as GROUND TRUTH, and so does the
+//! only vault-wide maintainer that exists (`rebuild_page_link_cache_impl`
+//! reads `FROM block_links bl` — it rolls *up from* the table and never
+//! re-parses content). A wrong row in `block_links` therefore produced a
+//! CONSISTENT wrong answer on both sides of every diff above: the divergence
+//! was not merely unlikely to be generated, it was arithmetically impossible
+//! for [`reconcile`] to express. #3903 — the pushed-down cross-space filter
+//! dropping same-space links whose target `space_id` was not yet stamped — is
+//! exactly that shape, and every oracle run stayed green throughout.
+//!
+//! [`reconcile_block_links`] closes it the way #3654 closed the same class for
+//! `blocks.page_id`: by auditing the table against an INDEPENDENT source —
+//! here the link tokens in `blocks.content`, resolved by a Rust transcription
+//! of `reindex_block_links`' rules — rather than against a derivation that
+//! already trusts it.
+//!
+//! It is a SEPARATE entry point, deliberately **not** folded into
+//! [`reconcile`]. See [`reconcile_block_links`] for the lane decision and for
+//! the two eventual-consistency windows that make it a triaged deep check
+//! rather than a per-op gate.
+//!
 //! # Eventual consistency is part of the contract, not an excuse
 //!
 //! Two of the maintenance arms are deliberately DEFERRED in production:
@@ -107,8 +131,10 @@
 #![cfg(test)]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::LazyLock;
 
 use agaric_core::error::AppError;
+use regex::Regex;
 use sqlx::SqlitePool;
 
 // ---------------------------------------------------------------------------
@@ -264,9 +290,19 @@ struct BaseBlock {
     /// `'page'` / `'content'` / `'tag'` (CHECK `block_type_valid`, 0085).
     block_type: String,
     /// A page with no content has no title and therefore no cache row.
+    ///
+    /// #3955: it is also the INDEPENDENT source for `block_links` — the
+    /// `[[ULID]]` / `((ULID))` tokens the reindexer parses out of it are the
+    /// only thing in the schema that says what that table's rows must be.
     content: Option<String>,
     /// `None` = live. `blocks.deleted_at` is epoch-ms INTEGER (migration 0080).
     deleted_at: Option<i64>,
+    /// The denormalised space membership (migration 0086, re-pointed at the
+    /// `spaces` registry by 0089). NULL until `SetBlockPageId`'s
+    /// `set_block_space_id_from_parent` stamps it post-commit — which is the
+    /// whole reason `block_links`' cross-space filter needs the owning-page
+    /// fallback (#3903), and therefore why this column is dumped at all.
+    space_id: Option<String>,
 }
 
 /// One `attachments` row, reduced to the columns the blob store depends on.
@@ -286,6 +322,7 @@ type BaseBlockRow = (
     String,
     Option<String>,
     Option<i64>,
+    Option<String>,
 );
 
 async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
@@ -297,20 +334,21 @@ async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
     // a copy of the code it audits.
     // dynamic-sql: static SQL, test-only oracle base-table dump.
     let rows = sqlx::query_as::<_, BaseBlockRow>(
-        "SELECT id, parent_id, page_id, block_type, content, deleted_at FROM blocks",
+        "SELECT id, parent_id, page_id, block_type, content, deleted_at, space_id FROM blocks",
     )
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
         .map(
-            |(id, parent_id, page_id, block_type, content, deleted_at)| BaseBlock {
+            |(id, parent_id, page_id, block_type, content, deleted_at, space_id)| BaseBlock {
                 id,
                 parent_id,
                 page_id,
                 block_type,
                 content,
                 deleted_at,
+                space_id,
             },
         )
         .collect())
@@ -1027,6 +1065,420 @@ pub async fn settle_page_link_cache_for_op(
         }
     }
     Ok(ran)
+}
+
+// ---------------------------------------------------------------------------
+// Artefact 6 — `block_links` ITSELF, re-derived from block CONTENT (#3955)
+// ---------------------------------------------------------------------------
+
+/// The `[[ULID]]` / `((ULID))` link-token grammar — **transcribed**, not
+/// borrowed from `agaric_store::cache::ULID_LINK_RE`.
+///
+/// This is the one place the independence claim is weakest and it is stated
+/// rather than hidden: the token grammar IS the specification of what a link
+/// is, so a second copy of it cannot be "derived from first principles" the
+/// way an aggregate can. What the transcription buys is that production cannot
+/// change the grammar and take the oracle with it silently — a widened
+/// production regex reddens this artefact until someone updates this literal
+/// DELIBERATELY. `oracle_link_grammar_matches_production_3955` in `tests.rs`
+/// pins the two against a corpus so that drift is a named test failure rather
+/// than a wave of unexplained divergences.
+///
+/// Crockford base-32, exactly 26 uppercase alphanumerics; mixed delimiters
+/// (`[[ULID))`) match, exactly as production's does.
+static ORACLE_LINK_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:\[\[|\(\()([0-9A-Z]{26})(?:\]\]|\)\))").expect("invalid oracle link regex")
+});
+
+/// The distinct link targets one block's content names.
+///
+/// # One deliberate departure from production's read
+///
+/// `reindex_block_links_conn` reads `SELECT content FROM blocks WHERE id = ?
+/// AND deleted_at IS NULL` and treats a missing row as empty content, so its
+/// rule for a TOMBSTONED source is "every outbound row must go". This fold
+/// reads the raw `content` column instead, with no liveness scope.
+///
+/// That single difference is what keeps the EXTRA arm of
+/// [`reconcile_block_links`] usable: no delete arm enqueues
+/// `ReindexBlockLinks` (only `CreateBlock` and `EditBlock` do), so a
+/// soft-deleted block's rows survive by design — `rebuild_page_link_cache`
+/// excludes them at ROLL-UP time with its own `WHERE sb.deleted_at IS NULL`
+/// rather than expecting them to be gone. Transcribing production's
+/// live-scoped read here would therefore report every ordinary block deletion
+/// as a pile of EXTRA rows, and an oracle that fires on every delete gets
+/// muted. `block_links_oracle_leaves_the_unreindexed_windows_alone_3955` pins
+/// this: restoring the live scope reddens it.
+///
+/// A NULL content column still means "no tokens" — hence `unwrap_or_default`
+/// rather than an early return.
+fn fold_content_link_targets(content: Option<&str>) -> BTreeSet<String> {
+    ORACLE_LINK_TOKEN_RE
+        .captures_iter(content.unwrap_or_default())
+        .map(|cap| cap[1].to_owned())
+        .collect()
+}
+
+/// Resolve one block's space, folded in Rust from the `blocks` dump.
+///
+/// Transcribed from `agaric_store::space::resolve_block_space` (#533 Phase 2):
+///
+/// ```sql
+/// SELECT COALESCE(b.space_id, p.space_id)
+///   FROM blocks b
+///   LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL
+///  WHERE b.id = ?1 AND b.deleted_at IS NULL
+/// ```
+///
+/// Every term is load-bearing and every one of them is the reason #3903
+/// existed, so none of it is optional:
+///
+/// * the INPUT block must be live — a tombstone resolves to `None` (invariant
+///   #9);
+/// * its OWN `space_id` wins when present;
+/// * otherwise the OWNING PAGE's `space_id` is the fallback, and that page
+///   must itself be live (the `LEFT JOIN` predicate) — this is the term the
+///   pre-#3894 target-side subquery omitted, so a target inside the
+///   `SetBlockPageId` stamping window resolved `NULL`, `NULL = ?3` was falsy,
+///   and a legitimate SAME-space link was dropped;
+/// * a `page_id` pointing at a row that is not in `blocks` yields `None` (the
+///   `LEFT JOIN` produces no match).
+///
+/// Post-#3894 both sides of production's filter use this shape — the source by
+/// CALLING `resolve_block_space`, the target through a mirrored subquery. The
+/// oracle uses one fold for both, which is what makes the asymmetry #3903 was
+/// about expressible: production having two copies is exactly how they drifted.
+fn fold_block_space(by_id: &BTreeMap<&str, &BaseBlock>, block_id: &str) -> Option<String> {
+    let block = by_id.get(block_id)?;
+    if block.deleted_at.is_some() {
+        return None;
+    }
+    if let Some(own) = block.space_id.as_deref() {
+        return Some(own.to_owned());
+    }
+    let page = by_id.get(block.page_id.as_deref()?)?;
+    if page.deleted_at.is_some() {
+        return None;
+    }
+    page.space_id.clone()
+}
+
+/// Recompute the whole `block_links` edge set from `blocks.content` alone.
+///
+/// The rules are `reindex_block_links_conn`'s INSERT rules, transcribed:
+///
+/// * the SOURCE block must be live — a tombstoned source reads as empty
+///   content and contributes nothing;
+/// * a candidate target is a distinct `[[ULID]]` / `((ULID))` token in that
+///   content (self-links included: nothing excludes `source == target`);
+/// * the TARGET must EXIST in `blocks` and be live (the `WHERE EXISTS
+///   (SELECT 1 FROM blocks WHERE id = je.value AND deleted_at IS NULL)`
+///   guard — the FK is not relied on, and invariant #9 keeps tombstones out);
+/// * the cross-space filter: when the source's resolved space is `NULL` every
+///   target passes (`?3 IS NULL`); otherwise the target's resolved space must
+///   EQUAL it, with an unresolvable target space (`NULL = ?3` → falsy) dropped.
+///
+/// Folded in Rust over ONE flat `blocks` dump. Nothing is pushed into SQLite —
+/// in particular the space resolution is [`fold_block_space`], not a
+/// re-expression of production's correlated subquery, because that subquery is
+/// precisely what was wrong in #3903.
+///
+/// # What this does NOT claim
+///
+/// It re-derives what the writers WOULD insert against the CURRENT state of
+/// `blocks`. It is not a claim that production ever recomputes this set: there
+/// is no vault-wide `rebuild_block_links` (`truncate_block_links`' sole caller
+/// is `agaric-sync`'s snapshot-restore wipe), and the per-block reindexer is a
+/// DIFF driven by content change alone. The gap between the two is real and is
+/// enumerated on [`reconcile_block_links`].
+pub async fn rebuild_block_links_from_content(
+    pool: &SqlitePool,
+) -> Result<BTreeSet<(String, String)>, AppError> {
+    Ok(fold_block_links_from_content(&dump_blocks(pool).await?))
+}
+
+fn fold_block_links_from_content(blocks: &[BaseBlock]) -> BTreeSet<(String, String)> {
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+
+    let mut out = BTreeSet::new();
+    for source in blocks {
+        if source.deleted_at.is_some() {
+            continue;
+        }
+        let targets = fold_content_link_targets(source.content.as_deref());
+        if targets.is_empty() {
+            continue;
+        }
+        let source_space = fold_block_space(&by_id, &source.id);
+        for target_id in targets {
+            let Some(target) = by_id.get(target_id.as_str()) else {
+                continue;
+            };
+            if target.deleted_at.is_some() {
+                continue;
+            }
+            if let Some(space) = source_space.as_deref() {
+                if fold_block_space(&by_id, &target_id).as_deref() != Some(space) {
+                    continue;
+                }
+            }
+            out.insert((source.id.clone(), target_id));
+        }
+    }
+    out
+}
+
+/// How much of the `block_links` artefact's subject matter EXISTS in a given
+/// database — the same "a green oracle must not be a green vacuum" discipline
+/// [`OracleCoverage`] enforces for the roll-up artefacts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockLinksCoverage {
+    /// Rows in `block_links` — what the incremental writers produced.
+    pub block_links_rows: i64,
+    /// `(live source, token)` pairs parsed out of `blocks.content`, BEFORE any
+    /// existence or space filtering. Zero means the vault contains no link
+    /// syntax at all and the whole artefact compared `{} == {}`.
+    pub content_link_tokens: i64,
+    /// Edges the from-content rebuild says MUST exist — the expected side.
+    pub derivable_edges: i64,
+    /// Live source blocks carrying link tokens whose resolved space is
+    /// non-NULL, i.e. the sources for which the cross-space filter is ARMED at
+    /// all. With zero of these every target passes (`?3 IS NULL`) and the
+    /// filter — the thing #3903 was about — is not under test.
+    pub space_filtered_sources: i64,
+    /// Token targets whose OWN `space_id` is NULL but whose owning page
+    /// carries one, i.e. targets that can only resolve through the
+    /// owning-page fallback.
+    ///
+    /// This is the #3903 non-vacuity counter and the sharpest one here: a
+    /// fixture with zero of these leaves the pre-#3894 subquery and the
+    /// post-#3894 one indistinguishable, so the artefact could not tell them
+    /// apart however many other edges it audited.
+    pub page_fallback_space_targets: i64,
+}
+
+/// Count what the `block_links` artefact is actually auditing.
+pub async fn block_links_coverage(pool: &SqlitePool) -> Result<BlockLinksCoverage, AppError> {
+    let blocks = dump_blocks(pool).await?;
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+
+    let mut content_link_tokens: i64 = 0;
+    let mut space_filtered_sources: i64 = 0;
+    let mut fallback_targets: BTreeSet<String> = BTreeSet::new();
+    for source in &blocks {
+        if source.deleted_at.is_some() {
+            continue;
+        }
+        let targets = fold_content_link_targets(source.content.as_deref());
+        if targets.is_empty() {
+            continue;
+        }
+        content_link_tokens += i64::try_from(targets.len()).unwrap_or(i64::MAX);
+        if fold_block_space(&by_id, &source.id).is_some() {
+            space_filtered_sources += 1;
+        }
+        for target_id in targets {
+            let Some(target) = by_id.get(target_id.as_str()) else {
+                continue;
+            };
+            if target.space_id.is_none() && fold_block_space(&by_id, &target_id).is_some() {
+                fallback_targets.insert(target_id);
+            }
+        }
+    }
+
+    // Folded from the SAME functions the artefact uses, never counted in SQL:
+    // "the fixture covers this" and "the oracle audited this" must come from
+    // one computation so they cannot drift apart.
+    let derivable_edges =
+        i64::try_from(fold_block_links_from_content(&blocks).len()).unwrap_or(i64::MAX);
+    let block_links_rows = i64::try_from(dump_block_links(pool).await?.len()).unwrap_or(i64::MAX);
+
+    Ok(BlockLinksCoverage {
+        block_links_rows,
+        content_link_tokens,
+        derivable_edges,
+        space_filtered_sources,
+        page_fallback_space_targets: i64::try_from(fallback_targets.len()).unwrap_or(i64::MAX),
+    })
+}
+
+/// The maintenance site that owns every `block_links` divergence — there is
+/// exactly one pair of writers and no vault-wide repair behind them.
+const BLOCK_LINKS_OWNER: &str = "reindex_block_links_conn (the single-pool writer, called both by the \
+     ReindexBlockLinks task and IN-TRANSACTION by agaric-engine's \
+     maintain_pages_cache_counts_after_op) / reindex_block_links_split (the \
+     read/write-split writer) — and, one level up, the arm of \
+     materializer::dispatch::invalidations_for_op that enqueues \
+     ReindexBlockLinks at all (only CreateBlock and EditBlock do). There is NO \
+     vault-wide rebuild_block_links: truncate_block_links' sole caller is \
+     agaric-sync's snapshot-restore WIPE, so a row lost here is lost \
+     PERMANENTLY for that block until its content is edited again — and every \
+     other link artefact (pages_cache.inbound_link_count, page_link_cache) \
+     folds this table as ground truth, so the loss is consistent on both sides \
+     of their diffs and invisible to reconcile()";
+
+/// Diff `block_links` against a from-CONTENT rebuild — the artefact that makes
+/// a base table auditable (#3955).
+///
+/// # Why this is separate from [`reconcile`], and which lane it runs in
+///
+/// **Lane: the scheduled deep-checks lane / directed drivers — NOT the per-op
+/// `reconcile` path.** Three reasons, in increasing order of importance:
+///
+/// 1. **Cost.** Every other rebuild here folds columns; this one runs a regex
+///    over every block's full content. [`reconcile`] is called after EVERY op
+///    of EVERY generated chain in `apply_reproject_proptest`'s B6 property, so
+///    the re-parse would be paid O(cases × ops × vault-bytes) times on the
+///    per-PR gate for a check whose failures need triage anyway.
+/// 2. **`reconcile`'s own fixtures write `block_links` rows directly**, with
+///    no matching content token — that is the whole point of
+///    `insert_block_link` in `tests.rs`, which models the in-tx arm writing an
+///    edge that no background maintainer has rolled up yet. Folding this
+///    artefact into `reconcile` would report every one of those as an EXTRA
+///    row, i.e. it would break the roll-up artefact's fixtures for a reason
+///    that is not a defect.
+/// 3. **The two windows below are triage, not a gate.** They are real
+///    permanent-loss shapes of the #3903 family, so they must NOT be
+///    suppressed — but a per-PR gate that reddens on them would get muted, and
+///    a muted oracle is worse than the blind spot it replaced.
+///
+/// # The two windows this artefact deliberately does not close
+///
+/// Production's writer is a DIFF driven by ONE trigger — a change to the
+/// source block's content. Nothing re-runs it when the world around the source
+/// changes. So the from-content rebuild and the stored table can legitimately
+/// disagree in two directions, and each arm below is scoped to the rule the
+/// writer actually implements:
+///
+/// * **MISSING** (expected edge, no row). Sound for the shape it exists to
+///   catch — the insert-time filter dropping an edge it should have kept
+///   (#3903). It CAN also fire when the target only became linkable after the
+///   source's last reindex: the target was created later, or its `space_id`
+///   was stamped later. Those are not false positives — they are the same
+///   permanent loss arriving by a different route, since nothing will reindex
+///   that source again — but they are findings to triage, not a regression
+///   signal, which is what puts this artefact in a scheduled lane.
+/// * **EXTRA** (row, no token). Scoped to production's DELETE rule: the writer
+///   deletes `old_targets - parsed_tokens`, with NO existence and NO space
+///   predicate. So a row is EXTRA only when its source's `content` column
+///   names no such token. Rows whose target has since been soft-deleted, or
+///   has since moved space, are NOT reported: production never re-evaluates
+///   them, `rebuild_page_link_cache` is built to carry them (it flags
+///   `tgt_deleted` rather than dropping the edge), and reporting them would
+///   make this artefact fire on every ordinary block deletion. Rows under a
+///   soft-deleted SOURCE fall out for the same reason, via the one deliberate
+///   departure documented on [`fold_content_link_targets`]: the token read is
+///   NOT liveness-scoped the way production's is.
+///
+/// A row whose token is present but whose target is now dead or cross-space
+/// therefore satisfies neither arm — that gap is the window, and it is stated
+/// here rather than papered over.
+///
+/// Divergences come back MISSING-first, each arm sorted by `(source, target)`,
+/// so `first` is deterministic.
+pub async fn reconcile_block_links(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
+    let blocks = dump_blocks(pool).await?;
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+    let expected = fold_block_links_from_content(&blocks);
+    let stored: BTreeSet<(String, String)> = dump_block_links(pool).await?.into_iter().collect();
+
+    let mut out = Vec::new();
+
+    // --- MISSING: content says the edge exists, the table does not ----------
+    for (source_id, target_id) in expected.difference(&stored) {
+        let source_space = fold_block_space(&by_id, source_id);
+        out.push(Divergence {
+            artefact: "block_links.row",
+            key: format!("{source_id} -> {target_id}"),
+            expected: format!(
+                "a block_links row: the live source's content carries the token, the \
+                 target exists and is live, and both resolve to space {} (source) / {} \
+                 (target)",
+                source_space.as_deref().unwrap_or("NULL"),
+                fold_block_space(&by_id, target_id)
+                    .as_deref()
+                    .unwrap_or("NULL"),
+            ),
+            actual: "no row in block_links".to_owned(),
+            owner: BLOCK_LINKS_OWNER,
+        });
+    }
+
+    // --- EXTRA: the table holds an edge the source's content never named ---
+    for (source_id, target_id) in &stored {
+        let Some(source) = by_id.get(source_id.as_str()) else {
+            // Unstorable: `block_links.source_id` is `NOT NULL REFERENCES
+            // blocks(id) ON DELETE CASCADE` (migration 0061) with foreign keys
+            // ON, so a purge takes the row with it. Skipped for the same
+            // reason `rebuild_page_link_cache_from_base` skips an absent
+            // source page: folding a divergence here would report a
+            // permanent, unfixable one on any vault carrying rows from a
+            // historical `foreign_keys = OFF` window.
+            continue;
+        };
+        // Deliberately UNSCOPED by liveness — see `fold_content_link_targets`.
+        // A tombstoned source keeps its rows (no delete arm reindexes), so
+        // reading the raw `content` column rather than production's
+        // `WHERE deleted_at IS NULL` read is what stops this arm firing on
+        // every ordinary block deletion. An explicit `deleted_at` skip here
+        // would be dead code: a soft delete does not touch `content`, so the
+        // tokens are still there and this `contains` already skips the row —
+        // verified by deleting the skip and watching
+        // `block_links_oracle_leaves_the_unreindexed_windows_alone_3955` stay
+        // GREEN. What that test DOES falsify is the departure itself: scope
+        // this read by liveness and it reddens.
+        if fold_content_link_targets(source.content.as_deref()).contains(target_id) {
+            continue;
+        }
+        out.push(Divergence {
+            artefact: "block_links.row",
+            key: format!("{source_id} -> {target_id}"),
+            expected: "no block_links row (the source block's content column names no \
+                       such [[ULID]] / ((ULID)) token, so the reindexer's DELETE arm — \
+                       old_targets MINUS parsed tokens — must have removed it)"
+                .to_owned(),
+            actual: "a row in block_links".to_owned(),
+            owner: BLOCK_LINKS_OWNER,
+        });
+    }
+
+    Ok(out)
+}
+
+/// The formatted first `block_links` divergence, or `None` when the table
+/// agrees with a from-content rebuild.
+///
+/// Mirrors [`reconciliation_failure`] but reports under its own banner, so a
+/// failure is never mistaken for one of the roll-up artefacts: this one names
+/// a BASE table, and its owner list is a pair of writers with no vault-wide
+/// repair behind them.
+pub async fn block_links_reconciliation_failure(
+    pool: &SqlitePool,
+    context: &str,
+) -> Option<String> {
+    let divergences = match reconcile_block_links(pool).await {
+        Ok(d) => d,
+        Err(e) => {
+            return Some(format!(
+                "block_links oracle could not read the database at [{context}]: {e}"
+            ));
+        }
+    };
+    let first = divergences.first()?;
+    Some(format!(
+        "BLOCK_LINKS RECONCILIATION FAILED at [{context}]\n  \
+         block_links disagrees with a from-CONTENT rebuild in {} place(s); first:\n    {first}",
+        divergences.len(),
+    ))
+}
+
+/// Panic with the first `block_links` divergence unless the table equals its
+/// from-content rebuild.
+pub async fn assert_block_links_reconciled(pool: &SqlitePool, context: &str) {
+    if let Some(report) = block_links_reconciliation_failure(pool, context).await {
+        panic!("{report}");
+    }
 }
 
 // ---------------------------------------------------------------------------
