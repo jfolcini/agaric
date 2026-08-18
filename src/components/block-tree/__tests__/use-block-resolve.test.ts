@@ -2920,6 +2920,75 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
   })
 
+  // #4057 — JS `<` compares UTF-16 code units; SQLite's default BINARY
+  // collation (the tags `ORDER BY tc.name` query) compares UTF-8 bytes. The
+  // two orders disagree specifically when a supplementary-plane character
+  // (U+10000+, e.g. an emoji — UTF-16 leading surrogate 0xD800-0xDBFF) is
+  // compared against a BMP character whose code point is 0xE000-0xFFFF
+  // (e.g. fullwidth Latin 'Ａ', U+FF21): UTF-16 code-unit order places the
+  // emoji FIRST (0xD83C < 0xFF21), but UTF-8 byte order places it LAST
+  // (its 4-byte encoding leads with 0xF0, which is greater than 'Ａ's
+  // 3-byte encoding's 0xEF lead byte). Verified directly:
+  //   new TextEncoder().encode('Ａ') → [239, 188, 161]  (leads with 0xEF)
+  //   new TextEncoder().encode('🎯') → [240, 159, 142, 175]  (leads with 0xF0)
+  // 239 < 240, so BINARY (and the fixed comparator) sorts 'Ａ' before '🎯'.
+  it('a tag renamed to a supplementary-plane character sorts by UTF-8 bytes, not UTF-16 code units', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('T_BMP', 'Ａ'),
+      tagRow('T_EMOJI', 'unrelated'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('')
+    })
+
+    act(() => {
+      notifyTagRenamed('T_EMOJI', '🎯')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    // SQLite BINARY order: 'Ａ' (0xEF...) before '🎯' (0xF0...).
+    expect(items.filter((i) => !i.isCreate).map((i) => i.label)).toEqual(['Ａ', '🎯'])
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  // #4057 — `compareUtf8Bytes` must reproduce memcmp-style BINARY ordering
+  // for an equal-byte-prefix pair that differs only in length: SQLite sorts
+  // the SHORTER string first ('ab' < 'abc'), which is also what the byte
+  // loop falls through to (`aBytes.length - bBytes.length`) once every byte
+  // up to the shorter length has compared equal.
+  it('a tag renamed to an equal-prefix, shorter name sorts before the longer one it prefixes', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('T_LONG', 'abc'),
+      tagRow('T_SHORT', 'unrelated'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('')
+    })
+
+    act(() => {
+      notifyTagRenamed('T_SHORT', 'ab')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    // SQLite BINARY order: 'ab' (shorter, equal prefix) before 'abc'.
+    expect(items.filter((i) => !i.isCreate).map((i) => i.label)).toEqual(['ab', 'abc'])
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+  })
+
   it('a page deleted elsewhere stops being offered on the next read', async () => {
     mockedListAllPagesInSpace.mockResolvedValueOnce([
       pageRow('P_DEL', 'Doomed Page'),

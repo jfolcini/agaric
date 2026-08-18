@@ -39,6 +39,7 @@ import { queryClient } from '@/lib/query-client'
 import type { HistoryEntry, OpRef, PageResponse } from '@/lib/tauri'
 import { editBlock, getBlock, getBlockHistory } from '@/lib/tauri'
 import { forEachPageStore, storeOwnsBlock } from '@/stores/page-blocks'
+import { renamePage } from '@/stores/page-rename'
 import { useUndoStore } from '@/stores/undo'
 
 interface HistoryPanelProps {
@@ -235,11 +236,21 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   // Sub-fix 4: restore is reversible — capture the current block
   // content BEFORE applying the historical version so the success toast can
   // offer a one-click `t('action.undo')` that re-applies the captured snapshot.
+  //
+  // #4056 — `isPage` is threaded in from `handleRestore`'s own snapshot read
+  // (rather than re-fetched here) so the undo path branches on the SAME
+  // block-type determination as the restore it is undoing, with no second
+  // `getBlock` IPC. When the block is a page, `editBlock` only ever writes
+  // the raw block row; the title fan-out (tabs, recents, resolve cache, the
+  // `[[`/`#` picker's name-change bus) is a SEPARATE step every other rename
+  // surface performs via `renamePage` (`@/stores/page-rename`) — it does no
+  // IPC of its own, so this call does not double-write the block.
   const handleUndoRestore = useCallback(
-    async (targetBlockId: string, previousContent: string) => {
+    async (targetBlockId: string, previousContent: string, isPage: boolean) => {
       try {
         const resp = await editBlock(targetBlockId, previousContent)
         applyRestoredContentToStore(targetBlockId, previousContent, resp.op_refs)
+        if (isPage) renamePage(targetBlockId, previousContent)
         notify.success(t('history.restoreUndone'))
       } catch (err) {
         logger.error('HistoryPanel', 'Failed to undo restore', { blockId: targetBlockId }, err)
@@ -268,13 +279,21 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         return
       }
       try {
-        // Snapshot the current block content for the toast's Undo action.
-        // We tolerate a missing snapshot (e.g. fresh block, transient IPC
-        // glitch) — the restore still proceeds, just without an Undo offer.
+        // Snapshot the current block content for the toast's Undo action, and
+        // its `block_type` alongside it (#4056): the same `getBlock` read
+        // tells us whether this restore is a PAGE title revert, so the
+        // fan-out branch below and the Undo action share one determination
+        // rather than a second IPC round trip. We tolerate a missing
+        // snapshot (e.g. fresh block, transient IPC glitch) — the restore
+        // still proceeds, just without an Undo offer (and, in that same
+        // degraded case, without the fan-out determination — see the
+        // `isPage` doc below).
         let previousContent: string | null = null
+        let isPage = false
         try {
           const current = await getBlock(blockId)
           previousContent = current.content ?? ''
+          isPage = current.block_type === 'page'
         } catch (snapshotErr) {
           logger.warn(
             'HistoryPanel',
@@ -286,6 +305,17 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
 
         const resp = await editBlock(blockId, toText)
         applyRestoredContentToStore(blockId, toText, resp.op_refs)
+        // #4056 — a restored PAGE block's `content` IS its title. `editBlock`
+        // only ever writes the raw block row, so without this the picker's
+        // name caches, open tabs, and recents keep offering the pre-revert
+        // title. `renamePage` (`@/stores/page-rename`) is the documented
+        // fan-out entry point every other rename surface routes through
+        // (`PageHeader.tsx`, `useUndoShortcuts.ts`); it does no IPC of its
+        // own, so calling it here does not double-write the block that
+        // `editBlock` just wrote. Ordinary (non-page) blocks restored from
+        // this same panel must NOT take this branch — hence gating on the
+        // block's own `block_type`, not on the panel.
+        if (isPage) renamePage(blockId, toText)
 
         if (previousContent != null) {
           const captured = previousContent
@@ -293,7 +323,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
             action: {
               label: t('action.undo'),
               onClick: () => {
-                handleUndoRestore(blockId, captured)
+                handleUndoRestore(blockId, captured, isPage)
               },
             },
           })
