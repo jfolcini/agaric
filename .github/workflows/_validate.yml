@@ -381,7 +381,13 @@ jobs:
         # (clippy, cargo-deny, sqlx prepare's compile pass, etc).
         # Activated via the .cargo/config.toml under the linux runner.
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update
+          }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -1395,7 +1401,13 @@ jobs:
         # Same apt list as the `lint` sibling — both jobs compile Rust and
         # need the webkit/gtk/ssl/rsvg/soup stack plus mold for fast linking.
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update
+          }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -1530,7 +1542,13 @@ jobs:
           persist-credentials: false
 
       - name: Install lcov
-        run: sudo apt-get update && sudo apt-get install -y lcov
+        # #4115: bound a stalled mirror. NOTE this job is `timeout-minutes: 10`,
+        # so the two-attempt 300s shape used elsewhere would BE the whole budget
+        # and the job would still be cancelled mid-step. One bounded attempt at
+        # 120s leaves room for the rest of the job to fail cleanly instead.
+        run: |
+          sudo timeout 120 apt-get update
+          sudo apt-get install -y lcov
 
       - name: Download shard coverage artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1682,7 +1700,13 @@ jobs:
         # links against the webkit/gtk/ssl/rsvg/soup stack via its
         # transitive deps, and mold accelerates the link step.
         run: |
-          sudo apt-get update
+          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
+          # covered by Acquire::*::Timeout, so without this it consumes the
+          # whole `timeout-minutes` budget and reads as a code failure.
+          sudo timeout 300 apt-get update || {
+            echo '::warning::apt-get update stalled or failed; retrying once'
+            sudo timeout 300 apt-get update
+          }
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
