@@ -2989,6 +2989,87 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
   })
 
+  // #4131, cause 1 — `NOCASE` folds ASCII `A`-`Z` only; `String.toLowerCase()`
+  // folds every cased Unicode character. The Kelvin sign 'K' (U+212A) is not
+  // ASCII, so `NOCASE` leaves it untouched and its raw UTF-8 bytes
+  // (0xE2 0x84 0xAA) sort AFTER 'z' (0x7A). `toLowerCase()` instead folds it
+  // to 'k' (U+006B), which then sorts BEFORE 'z'. Verified directly:
+  //   'K'.toLowerCase() === 'k', so 'k' < 'z' (0x6B < 0x7A) — the bug's order
+  //   an ASCII-only fold leaves 'K' as U+212A — bytes [0xE2,0x84,0xAA] > 'z's
+  //   [0x7A] — the fixed order
+  // Both sides of this pair are BMP characters compared one code unit deep,
+  // so this isolates the fold divergence from the byte-order one (#4057):
+  // the pair would sort identically under either compare strategy once
+  // folded the same way.
+  it('a page renamed to a Kelvin-sign title sorts after z, by ASCII-only fold not Unicode', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_Z', 'z'),
+      pageRow('P_K', 'unrelated'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+
+    act(() => {
+      renamePage('P_K', 'K') // Kelvin sign, NOT ascii 'K'
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    // NOCASE order: 'z' before the Kelvin sign.
+    expect(items.filter((i) => !i.isCreate).map((i) => i.label)).toEqual(['z', 'K'])
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  // #4131, cause 2 — the #4057 byte-order divergence, still live for pages
+  // before this fix. Neither side of this pair has a case mapping (a
+  // Private-Use-Area character and a dart emoji both fold to themselves
+  // under BOTH `toLowerCase()` and an ASCII-only fold), so this isolates the
+  // byte-order divergence from the fold one above. UTF-16 code-unit order
+  // puts the emoji's leading surrogate (0xD83C) below the PUA character's
+  // single unit (0xE000); UTF-8 byte order puts the emoji's 4-byte lead
+  // (0xF0) above the PUA character's 3-byte lead (0xEE). Verified directly:
+  //   bytes(U+E000) = [0xEE,0x80,0x80], bytes('🎯') = [0xF0,0x9F,0x8E,0xAF]
+  //   U+E000 < U+1F3AF is false (UTF-16 compare puts the emoji first) — the bug
+  //   0xEE < 0xF0 (UTF-8 byte compare puts the PUA char first) — the fix
+  // Escaped, not a bare literal. U+E000 is invisible, so an editor or a lint
+  // autofix that strips it would silently turn this title into '' — which sorts
+  // before the emoji under BOTH the old and the new comparator, leaving a test
+  // that passes against fully unfixed code. The escape makes tampering visible.
+  const PUA_E000 = '\u{E000}'
+
+  it('a page renamed to a private-use-area title sorts before a supplementary-plane emoji, by UTF-8 bytes not UTF-16 code units', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_PUA', PUA_E000),
+      pageRow('P_EMOJI', 'unrelated'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+
+    act(() => {
+      renamePage('P_EMOJI', '🎯')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    // UTF-8 BINARY order: the PUA character (0xEE...) before the emoji (0xF0...).
+    expect(items.filter((i) => !i.isCreate).map((i) => i.label)).toEqual([PUA_E000, '🎯'])
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+  })
+
   it('a page deleted elsewhere stops being offered on the next read', async () => {
     mockedListAllPagesInSpace.mockResolvedValueOnce([
       pageRow('P_DEL', 'Doomed Page'),
