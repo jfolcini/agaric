@@ -41,7 +41,7 @@ export function mapPeerRefToInfo(row: PeerRef): PeerInfo {
 
 // Frontend periodic-sync cadence and exponential-backoff caps.
 //
-// NOTE on dual schedulers: the backend (`src-tauri/src/sync_scheduler.rs`)
+// NOTE on dual schedulers: the backend (`src-tauri/agaric-sync/src/sync_scheduler.rs`)
 // runs its own per-peer exponential backoff (1s → 60s) and is the
 // authoritative scheduler — it owns retries, per-peer mutexes, jitter,
 // and silent rejection of redundant invocations. This frontend trigger

@@ -26,7 +26,7 @@ import { getDebugMode } from '@/stores/useDebugStore'
 
 /**
  * Leading `AppError` Display prefixes (mirrors the `#[error("… : {0}")]`
- * attributes in `src-tauri/src/error.rs`). Stripped for readability; the
+ * attributes in `src-tauri/agaric-core/src/error.rs`). Stripped for readability; the
  * informative remainder — including any embedded validation code or
  * `(err: <id>)` suffix — is kept.
  */

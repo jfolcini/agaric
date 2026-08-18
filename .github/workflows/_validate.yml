@@ -663,8 +663,7 @@ jobs:
             skips+=(actionlint zizmor shellcheck skip-ci-verify-guard)
           fi
           if [ "$docs" != true ]; then
-            skips+=(markdownlint md-link-targets doc-vs-code-paths \
-              session-log-numbering)
+            skips+=(markdownlint md-link-targets session-log-numbering)
           fi
 
           # Compound (AND) rules: a shared hook is skipped only when EVERY
@@ -677,7 +676,7 @@ jobs:
               no-retired-pending-doc-refs)
           fi
           if [ "$docs" != true ] && [ "$fe" != true ] && [ "$be" != true ]; then
-            skips+=(architecture-citations)
+            skips+=(architecture-citations doc-vs-code-paths)
           fi
           if [ "$fe" != true ] && [ "$ci" != true ]; then
             skips+=(check-json)

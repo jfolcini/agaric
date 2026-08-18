@@ -39,7 +39,7 @@ export const BLOCK_EVENTS = {
 /**
  * Cross-process Tauri event name emitted by the materializer after a block's
  * properties change — mirrors `EVENT_PROPERTY_CHANGED` in
- * `src-tauri/src/sync_events.rs`. Single source of truth: previously
+ * `src-tauri/agaric-sync/src/sync_events.rs`. Single source of truth: previously
  * re-declared independently in `property-keys-cache.ts`,
  * `property-values-cache.ts`, and `block-property-events.ts`, all of which now
  * import it from here.

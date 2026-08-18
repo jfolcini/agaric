@@ -1,0 +1,17 @@
+[
+  {
+    "file": "src/components/SearchPanel/searchFilterParams.ts",
+    "ref": "src-tauri/agaric-store/src/fts/search.rs",
+    "reason": "Not a plain path move: the #882 crate split turned `fts/search.rs` into a `fts/search/` directory of submodules, AND the cited `add_tags_all` builder the comment describes is itself retired per `src-tauri/agaric-store/src/fts/search/fetch.rs:233` (\"the `add_tags_all` builder is retired — every search path...\"). Repointing to a submodule would still misdescribe current behaviour; the comment's claim needs re-authoring, not a path swap."
+  },
+  {
+    "file": "src/components/ui/icon-button.tsx",
+    "ref": "src/test/render.tsx",
+    "reason": "No such wrapper exists anywhere in the tree today (checked via `find src -iname render.tsx` and a broader search for a shared TooltipProvider test-render helper). The citation may describe a wrapper that was never built or was removed without a trace; there is no obvious correct target to repoint to."
+  },
+  {
+    "file": "src/stores/recent-pages.ts",
+    "ref": "src/lib/recent-pages.ts",
+    "reason": "Prose intentionally describes a REMOVED file (\"the former `lib/recent-pages.ts`\", \"the now-removed `lib/recent-pages.ts`\", used 8 times in this file as historical context for the consolidated store). The file is deliberately gone, not moved; there is no current path to repoint to without rewriting the historical narrative itself."
+  }
+]

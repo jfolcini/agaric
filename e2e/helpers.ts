@@ -899,7 +899,7 @@ export async function saveBlock(page: Page, via: 'Enter' | 'Escape' = 'Enter') {
 // dnd-kit drag helpers — split by sensor (#926 f6).
 //
 // The product wires ONE @dnd-kit PointerSensor whose activation constraint is
-// chosen at runtime by pointer coarseness (`src/hooks/useBlockDnD.ts`):
+// chosen at runtime by pointer coarseness (`src/components/block-tree/use-block-dnd.ts`):
 //
 //   - FINE pointer (mouse / desktop): `{ distance: 8 }` — the drag activates as
 //     soon as the pointer travels 8 px. There is NO time delay, so the desktop
