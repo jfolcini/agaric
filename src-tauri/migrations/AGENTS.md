@@ -64,6 +64,8 @@ CREATE TABLE example (
 
 Rationale: range scans on staleness windows are direct integer comparisons (`WHERE updated_at_ms <= ?`), with no `strftime` parsing and no `Z` vs `+00:00` lex-collation hazard. SQLite INTEGER columns sort and range-scan natively without relying on every writer producing the same `YYYY-MM-DDTHH:MM:SS.sssZ` shape that the legacy TEXT encoding required.
 
+**Known exceptions — a column that is half of a pair.** `peer_refs.streamed_at` (0111) is deliberately not `streamed_at_ms`. It is always read *paired* with `synced_at`, and suffixing one half of a pair implies the two encodings differ when they do not — the UI renders `MAX(synced_at, streamed_at)`. `0075`'s rebuild kept the siblings (`synced_at`, `last_reset_at`) unsuffixed for the same reason. No hook enforces the suffix, so this is a judgement call rather than a bypass; a new timestamp column that is *not* half of an existing unsuffixed pair should still take `_ms`.
+
 Precedent: `loro_doc_state.updated_at` (migration 0052) and `app_settings.updated_at` (migration 0053) already follow this shape. Phase 2 of #109 has since completed: the legacy TEXT timestamp columns — `materializer_retry_queue.created_at` (0077), `op_log.created_at` (0079), `blocks.deleted_at` (0080), `attachments.created_at` (0081), and `block_drafts.updated_at` (0082) — are now INTEGER epoch-ms. `crate::now_rfc3339()` is retained only for non-DB use (logs, display). See the root [`AGENTS.md`](../../AGENTS.md) §Database for the complete migrated-column list (keep the two in sync).
 
 ### Calendar dates are TEXT `YYYY-MM-DD` — and stay that way (#588)

@@ -760,6 +760,7 @@ mod tests {
             last_hash: None,
             last_sent_hash: None,
             synced_at,
+            streamed_at: None,
             reset_count: 0,
             last_reset_at: None,
             cert_hash: None,
@@ -775,6 +776,46 @@ mod tests {
         let peers = vec![pr("peer-a", None), pr("peer-b", None)];
         let due = sched.peers_due_for_resync(&peers);
         assert_eq!(due.len(), 2);
+    }
+
+    /// #4084 — `streamed_at` is bookkeeping, not scheduling input.
+    ///
+    /// A responder-only device now stamps `streamed_at` on every inbound
+    /// session, and the tempting next step is to treat a fresh one as "not
+    /// due". That is #610's starvation bug wearing a new column name: under
+    /// sustained one-way activity the initiator refreshes our `streamed_at`
+    /// every tick, so we would never find it overdue and would never pull its
+    /// state. This peer streamed to us one millisecond ago and is still due.
+    ///
+    /// BOTH `synced_at` shapes are pinned, because the two plausible
+    /// `streamed_at`-aware rewrites fail differently. A "MAX(synced_at,
+    /// streamed_at) is the staleness basis" rewrite breaks on the
+    /// never-pulled peer; a "keep `None => true`, but freshen an existing
+    /// `synced_at` with `streamed_at`" rewrite only breaks on the
+    /// stale-`synced_at` peer, and would sail past a test that pinned the
+    /// first case alone.
+    #[test]
+    fn peers_due_for_resync_ignores_streamed_at_4084() {
+        let sched = SyncScheduler::with_intervals(DEFAULT_DEBOUNCE, Duration::from_secs(60));
+        let just_now = agaric_store::db::now_ms();
+
+        // (a) never pulled from this peer, streamed to it one ms ago.
+        let mut never_pulled = pr("peer-a", None);
+        never_pulled.streamed_at = Some(just_now);
+
+        // (b) pulled from it long ago (well past the 60 s interval), streamed
+        // to it one ms ago — the sustained one-way-activity shape.
+        let mut stale_pull = pr("peer-b", Some(just_now - 3_600_000));
+        stale_pull.streamed_at = Some(just_now);
+
+        let due = sched.peers_due_for_resync(&[never_pulled, stale_pull]);
+        assert_eq!(
+            due,
+            vec!["peer-a".to_string(), "peer-b".to_string()],
+            "#4084/#610: a peer we just streamed to is still due for OUR pull, \
+             whether or not we ever pulled from it — the scheduler reads \
+             synced_at and only synced_at"
+        );
     }
 
     #[test]

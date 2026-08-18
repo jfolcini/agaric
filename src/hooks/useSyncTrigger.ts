@@ -4,6 +4,7 @@ import { mapBackendState } from '@/hooks/useSyncEvents'
 import { announce } from '@/lib/announcer'
 import { i18n } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
+import { lastSyncActivityAt } from '@/lib/peer-sync-activity'
 // #3715 — moved down to `lib` when the pairing mutation queue became its
 // second caller; a lib module may not import a hook (tier layering).
 import { runWithTimeout } from '@/lib/promise-timeout'
@@ -20,13 +21,20 @@ import { useSyncStore } from '@/stores/sync'
  * reflects the SAME paired devices the working `PairingDialog` /
  * `DeviceManagement` components read via `listPeerRefs()`.
  *
- * `synced_at` is backend epoch-ms (or null); `PeerInfo.lastSyncedAt` is the
+ * The source is backend epoch-ms (or null); `PeerInfo.lastSyncedAt` is the
  * ISO-string form the store documents and its tests assert.
+ *
+ * #4084: it reads `MAX(synced_at, streamed_at)`, matching the device list.
+ * `synced_at` alone is the puller's clock — a device that only ever succeeds
+ * as responder never advances it (#610 forbids the streamer touching it), so
+ * the StatusPanel and sidebar status dot showed "never synced" for a peer that
+ * was syncing on every tick.
  */
 export function mapPeerRefToInfo(row: PeerRef): PeerInfo {
+  const lastActivity = lastSyncActivityAt(row)
   return {
     peerId: row.peer_id,
-    lastSyncedAt: row.synced_at != null ? new Date(row.synced_at).toISOString() : null,
+    lastSyncedAt: lastActivity != null ? new Date(lastActivity).toISOString() : null,
     resetCount: row.reset_count,
   }
 }

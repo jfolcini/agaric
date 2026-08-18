@@ -4777,3 +4777,117 @@ async fn out_of_order_records_are_reported_once_per_device_per_batch_3740() {
          throttling loses the magnitude. Captured: {logged}"
     );
 }
+
+// ── #4085 — initiator-side SyncEvent identity ───────────────────────
+
+/// Every emitted [`SyncEvent`] clones `session.remote_device_id`. That field
+/// used to be populated only by the `HeadExchange` **arm** — and `HeadExchange`
+/// is initiator-*sent* / responder-*received* — so on the initiator it stayed
+/// `String::new()` for the whole session, until the completion backfill in
+/// `resolve_remote_peer_id`. Result: every `Progress` and every early `Error`
+/// an initiator emitted carried `remote_device_id: ""`, and any UI keyed on
+/// that field mis-attributed or dropped initiator-side progress and failure.
+///
+/// `with_expected_remote_id` now seeds the field from the identity the daemon
+/// already dialled, so the *first* event carries a real id. This asserts the
+/// first event specifically — a test that only checked the terminal event
+/// would have passed before the fix.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initiator_events_carry_the_peer_id_from_the_first_event_4085() {
+    use agaric_sync::sync_events::{RecordingEventSink, SyncEvent};
+    use std::sync::Arc;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    let sink = Arc::new(RecordingEventSink::new());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone())
+        .with_expected_remote_id("remote-dev".into())
+        .with_event_sink(Box::new(sink.clone()));
+
+    // `start()` is the initiator's very first act and emits the session's
+    // first Progress event — before any inbound message exists.
+    let _head_exchange = orch.start().await.unwrap();
+
+    let events = sink.events();
+    let first = events.first().expect("start() must emit a Progress event");
+    match first {
+        SyncEvent::Progress {
+            remote_device_id, ..
+        } => assert_eq!(
+            remote_device_id, "remote-dev",
+            "#4085: the FIRST initiator event must carry the real peer id, not \
+             the empty string it used to carry until session completion"
+        ),
+        other => panic!("expected the first event to be Progress, got {other:?}"),
+    }
+
+    // An error arriving before completion must be attributable too — this is
+    // the "Sync failed" event the peer-keyed UI reads.
+    let _ = orch
+        .handle_message(SyncMessage::Error {
+            message: "peer went away".into(),
+        })
+        .await
+        .unwrap();
+
+    let events = sink.events();
+    let err_peer = events
+        .iter()
+        .find_map(|e| match e {
+            SyncEvent::Error {
+                remote_device_id, ..
+            } => Some(remote_device_id.clone()),
+            _ => None,
+        })
+        .expect("an Error event must be emitted");
+    assert_eq!(
+        err_peer, "remote-dev",
+        "#4085: an initiator-side Error must be attributable to a peer"
+    );
+
+    assert!(
+        events.iter().all(
+            |e| !matches!(e, SyncEvent::Progress { remote_device_id, .. }
+                | SyncEvent::Error { remote_device_id, .. } if remote_device_id.is_empty())
+        ),
+        "no emitted event may carry an empty remote_device_id: {events:?}"
+    );
+
+    materializer.shutdown();
+}
+
+/// The seeding must not change *resolution*, only its timing. A cert-less
+/// session (no `expected_remote_id` — the in-memory test shape) still learns
+/// the peer from the advertised heads, and a session with neither still
+/// refuses to key `peer_refs` on an empty `peer_id`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn certless_session_still_resolves_the_peer_from_heads_4085() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+    orch.handle_message(SyncMessage::HeadExchange {
+        heads: vec![DeviceHead {
+            device_id: "heads-dev".into(),
+            seq: 1,
+            hash: "abc".into(),
+        }],
+        loro_vvs: vec![],
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
+        op_log_batch_chunked: false,
+        pairing_proof: None,
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        orch.session().remote_device_id,
+        "heads-dev",
+        "with no expected_remote_id the advertised heads are still the source \
+         of the peer identity"
+    );
+
+    materializer.shutdown();
+}

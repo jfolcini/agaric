@@ -464,8 +464,30 @@ export const commands = {
 	/**
 	 *  Most recent successful sync, in milliseconds since the UNIX epoch
 	 *  (UTC); `None` = never synced. #109 Phase 2: was an RFC 3339 string.
+	 * 
+	 *  This is the **puller's** clock: it advances only when WE pulled this
+	 *  peer's state into our store (#610 — a streamer that advanced it would
+	 *  make itself permanently not-overdue and starve the reverse direction).
+	 *  A device that only ever succeeds as responder therefore leaves it
+	 *  `None` forever; [`Self::streamed_at`] is the other half of the picture.
 	 */
 	synced_at: number | null,
+	/**
+	 *  Most recent session in which we STREAMED our state to this peer, in
+	 *  milliseconds since the UNIX epoch (UTC); `None` = never streamed
+	 *  (migration 0111, #4084).
+	 * 
+	 *  The counterpart to [`Self::synced_at`], recording the direction that
+	 *  column deliberately cannot. Together they answer "when did anything
+	 *  last move between us" — the device list renders
+	 *  `MAX(synced_at, streamed_at)` so a responder-only peer stops reading as
+	 *  "never synced".
+	 * 
+	 *  The scheduler (`peers_due_for_resync`) still reads `synced_at` **only**:
+	 *  treating a recent stream as "not due" would reintroduce exactly the
+	 *  #610 starvation this column exists to avoid.
+	 */
+	streamed_at: number | null,
 	reset_count: number,
 	/**
 	 *  Most recent protocol reset, in milliseconds since the UNIX epoch
@@ -2850,8 +2872,30 @@ export type PeerRef = {
 	/**
 	 *  Most recent successful sync, in milliseconds since the UNIX epoch
 	 *  (UTC); `None` = never synced. #109 Phase 2: was an RFC 3339 string.
+	 * 
+	 *  This is the **puller's** clock: it advances only when WE pulled this
+	 *  peer's state into our store (#610 — a streamer that advanced it would
+	 *  make itself permanently not-overdue and starve the reverse direction).
+	 *  A device that only ever succeeds as responder therefore leaves it
+	 *  `None` forever; [`Self::streamed_at`] is the other half of the picture.
 	 */
 	synced_at: number | null,
+	/**
+	 *  Most recent session in which we STREAMED our state to this peer, in
+	 *  milliseconds since the UNIX epoch (UTC); `None` = never streamed
+	 *  (migration 0111, #4084).
+	 * 
+	 *  The counterpart to [`Self::synced_at`], recording the direction that
+	 *  column deliberately cannot. Together they answer "when did anything
+	 *  last move between us" — the device list renders
+	 *  `MAX(synced_at, streamed_at)` so a responder-only peer stops reading as
+	 *  "never synced".
+	 * 
+	 *  The scheduler (`peers_due_for_resync`) still reads `synced_at` **only**:
+	 *  treating a recent stream as "not due" would reintroduce exactly the
+	 *  #610 starvation this column exists to avoid.
+	 */
+	streamed_at: number | null,
 	reset_count: number,
 	/**
 	 *  Most recent protocol reset, in milliseconds since the UNIX epoch

@@ -26,6 +26,7 @@ function makePeer(overrides: Partial<PeerRef> = {}): PeerRef {
     peer_id: 'peer-abc-1234567890',
     last_hash: null,
     last_sent_hash: null,
+    streamed_at: null,
     synced_at: null,
     reset_count: 0,
     last_reset_at: null,
@@ -449,5 +450,56 @@ describe('PeerListItem', () => {
       expect(input).toBeInTheDocument()
       expect(input.getAttribute('aria-label')).toBeTruthy()
     })
+  })
+})
+
+/**
+ * #4084 — a responder-only device must not read as "never synced".
+ *
+ * A sync session is one-directional and #610 deliberately forbids the
+ * streamer advancing `synced_at`, so a device that only ever succeeds as
+ * RESPONDER leaves that column NULL forever while syncing perfectly. The row
+ * renders `MAX(synced_at, streamed_at)` instead.
+ */
+describe('PeerListItem — last-sync activity (#4084)', () => {
+  it('shows a relative time for a peer that has only ever been streamed to', () => {
+    const peer = makePeer({
+      device_name: 'Android Phone',
+      synced_at: null,
+      streamed_at: Date.now() - 5 * 60 * 1000,
+    })
+
+    render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    expect(screen.queryByText(/Never synced/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Last:/)).toBeInTheDocument()
+  })
+
+  it('still shows "never synced" when neither direction has ever run', () => {
+    const peer = makePeer({ device_name: 'Fresh Pair', synced_at: null, streamed_at: null })
+
+    render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    expect(screen.getByText(/Last:.*Never synced/)).toBeInTheDocument()
+  })
+
+  it('remains interactive and a11y-clean for a responder-only peer', async () => {
+    const user = userEvent.setup()
+    const onSyncNow = vi.fn()
+    const peer = makePeer({
+      device_name: 'Android Phone',
+      synced_at: null,
+      streamed_at: Date.now() - 60_000,
+    })
+
+    const { container } = render(
+      <PeerListItem peer={peer} {...defaultProps} onSyncNow={onSyncNow} />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /Sync Now/i }))
+    expect(onSyncNow).toHaveBeenCalledWith('peer-abc-1234567890')
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 })

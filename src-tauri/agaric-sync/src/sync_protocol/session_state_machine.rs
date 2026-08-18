@@ -71,16 +71,24 @@ use agaric_store::peer_refs;
 ///
 /// # Field invariants
 ///
-/// * **`remote_device_id`** is `None` until the first
-///   [`SyncMessage::HeadExchange`] is processed. After that it holds
-///   the first non-self `device_id` advertised in the remote's heads
-///   list — or `Some(String::new())` if the remote only carried our
-///   own device's heads (a peer that has never originated its own
-///   ops). On `SyncComplete`, an empty `remote_device_id` is
-///   back-filled from `expected_remote_id` (set by the daemon from
-///   the mTLS / mDNS peer identity); if neither is available the
-///   session transitions to [`SyncState::Failed`] rather than write a
-///   Bogus `peer_id = ""` row to `peer_refs`.
+/// * **`remote_device_id`** is seeded at construction from
+///   `expected_remote_id` whenever the daemon supplied one (#4085 —
+///   see [`SyncOrchestrator::with_expected_remote_id`]), which is
+///   every production session. Only a cert-less in-memory test session
+///   starts it as `None`; there it is filled by the first
+///   [`SyncMessage::HeadExchange`] processed, holding the first
+///   non-self `device_id` advertised in the remote's heads list — or
+///   `Some(String::new())` if the remote only carried our own
+///   device's heads (a peer that has never originated its own ops).
+///   On `SyncComplete`, a still-empty `remote_device_id` is back-filled
+///   from `expected_remote_id`; if neither is available the session
+///   transitions to [`SyncState::Failed`] rather than write a bogus
+///   `peer_id = ""` row to `peer_refs`.
+///
+///   `session.remote_device_id` (the `String` every emitted
+///   [`SyncEvent`](crate::sync_events::SyncEvent) clones) tracks it, so
+///   a production session's events carry a real peer id from the very
+///   first `Progress` rather than from completion.
 ///
 /// * **`expected_remote_id`** is set once at construction by the
 ///   daemon (via [`SyncOrchestrator::with_expected_remote_id`]) and is
@@ -126,16 +134,6 @@ pub struct SyncOrchestrator {
     host: Arc<dyn ApplyHost>,
     pub state: SyncState,
     session: SyncSession,
-    /// Always `None` under the current loro-vv protocol (#490 M1).
-    ///
-    /// The field was intended to capture the hash of the last op shipped to
-    /// the remote, but the loro-vv send path (`head_exchange_outgoing_loro`)
-    /// never assigns it — `complete_sync_in_tx` therefore always writes
-    /// `peer_refs.last_sent_hash = ""`. The field is kept as a placeholder
-    /// for a future per-peer hash-tracking implementation; the empty-string
-    /// value is the correct sentinel that `peer_refs::update_on_sync`
-    /// expects when no op-hash-delta was tracked this session.
-    last_sent_hash: Option<String>,
     /// Pending [`LoroSyncMessage`]s queued for streaming. Populated
     /// when entering [`SyncState::StreamingOps`] from
     /// [`agaric_engine::loro::shared`] (one message per registered space — a
@@ -235,7 +233,6 @@ impl SyncOrchestrator {
             device_id,
             host: host.into(),
             state: SyncState::Idle,
-            last_sent_hash: None,
             pending_loro_messages: VecDeque::new(),
             remote_device_id: None,
             expected_remote_id: None,
@@ -290,11 +287,44 @@ impl SyncOrchestrator {
         out
     }
 
-    /// Set the expected remote device_id for peer identity validation.
+    /// Set the authoritative remote device_id for this session.
     ///
-    /// When set, the orchestrator will reject HeadExchange messages where
-    /// the remote device_id does not match this value.
+    /// When set, this value **wins**: the `HeadExchange` arm takes it verbatim
+    /// instead of deriving an id from the peer's advertised heads. It does NOT
+    /// reject anything — there is no comparison against the advertised heads
+    /// and no error path, because #2481 made the heads an unreliable identity
+    /// (a peer advertises the frontier of *every* device it holds, so the
+    /// first non-self head belongs to a third device as often as to the peer),
+    /// and rejecting on a disagreement would false-fail a legitimate
+    /// multi-device peer. The heads are consulted only when this is `None` —
+    /// the cert-less in-memory test path.
+    ///
+    /// # Why this seeds the session's `remote_device_id` too (#4085)
+    ///
+    /// `remote_device_id` used to be assigned in exactly one place before
+    /// completion — the `HeadExchange` arm — and `HeadExchange` is
+    /// initiator-**sent** / responder-**received**. On the initiator it was
+    /// therefore `None` for the entire session *by construction*, so
+    /// `session.remote_device_id` stayed `String::new()` until the completion
+    /// backfill in [`Self::resolve_remote_peer_id`]. Every
+    /// [`SyncEvent`](crate::sync_events::SyncEvent) emitted before that — every
+    /// `Progress`, and every `Error` on a session that failed early — carried
+    /// `remote_device_id: ""`, so any UI keyed on that field mis-attributed or
+    /// dropped initiator-side progress and failure for the whole session.
+    ///
+    /// The daemon already knows who it dialled (`session_supervisor` passes the
+    /// peer id it selected), and the `HeadExchange` arm already *prefers*
+    /// `expected_remote_id` over the advertised heads when both are present —
+    /// so seeding here changes no resolution outcome, it just makes the value
+    /// available from frame 0 instead of from completion.
+    ///
+    /// Deliberately NOT fixed by adding a `device_id` field to `HeadExchange`:
+    /// that wire change was considered and rejected in #3511's review (the
+    /// field would arrive *after* the connection is accepted, and it costs a
+    /// wire field forever).
     pub fn with_expected_remote_id(mut self, peer_id: String) -> Self {
+        self.session.remote_device_id = peer_id.clone();
+        self.remote_device_id = Some(peer_id.clone());
         self.expected_remote_id = Some(peer_id);
         self
     }
@@ -807,7 +837,15 @@ impl SyncOrchestrator {
                 // initiator also reaches this arm (the responder short-circuits
                 // straight to SyncComplete); it never streamed, so it records
                 // (it has synced with the peer's — empty — state).
-                if !self.streamed_to_peer {
+                //
+                // #4084: the streamer is not exempt from bookkeeping, only from
+                // `synced_at`. It stamps `streamed_at` instead — the same event,
+                // recorded in the column the scheduler does NOT read — so a
+                // device that only ever succeeds as responder stops looking
+                // like a device that has never synced.
+                if self.streamed_to_peer {
+                    self.record_stream_in_tx(&peer_id).await?;
+                } else {
                     self.record_pull_in_tx(&peer_id, &last_hash).await?;
                 }
 
@@ -986,6 +1024,18 @@ impl SyncOrchestrator {
     /// so the event sink sees a real id. Returns `None` when neither is
     /// available — the caller must then refuse to write a bogus
     /// Empty-`peer_id` row.
+    ///
+    /// # Log level (#4085)
+    ///
+    /// The fallback used to WARN. It fired on 100% of initiator sessions —
+    /// `remote_device_id` was structurally `None` in that role — which is the
+    /// shape of alert that trains readers to ignore the level. Since
+    /// [`Self::with_expected_remote_id`] seeds both fields, taking this branch
+    /// at all now means the id was cleared or was never learned, and the
+    /// daemon-supplied identity is doing exactly the job it exists for: that is
+    /// a DEBUG. The genuinely surprising case — completing a session with no
+    /// identity from *either* source, which the caller turns into a failed
+    /// session rather than a bogus `peer_id = ""` row — keeps the WARN.
     fn resolve_remote_peer_id(&mut self) -> Option<String> {
         if let Some(id) = self.remote_device_id.as_deref()
             && !id.is_empty()
@@ -994,18 +1044,27 @@ impl SyncOrchestrator {
         }
         match self.expected_remote_id.as_deref() {
             Some(id) if !id.is_empty() => {
-                tracing::warn!(
+                tracing::debug!(
                     device_id = %self.device_id,
                     expected_remote_id = id,
                     "remote_device_id was empty at session completion; \
-                     falling back to expected_remote_id from mTLS/mDNS"
+                     falling back to expected_remote_id from the authenticated \
+                     peer identity"
                 );
                 // Backfill so the event sink sees a real peer id.
                 self.remote_device_id = Some(id.to_owned());
                 self.session.remote_device_id = id.to_owned();
                 Some(id.to_owned())
             }
-            _ => None,
+            _ => {
+                tracing::warn!(
+                    device_id = %self.device_id,
+                    "session completed with no remote device_id from either the \
+                     HeadExchange or the daemon-supplied peer identity; refusing \
+                     to key peer_refs bookkeeping on an empty peer_id"
+                );
+                None
+            }
         }
     }
 
@@ -1021,13 +1080,38 @@ impl SyncOrchestrator {
     /// orchestrator runs serially per peer, so lock contention is bounded;
     /// the tx exists for crash atomicity, not concurrency.
     async fn record_pull_in_tx(&self, peer_id: &str, last_hash: &str) -> Result<(), AppError> {
-        // #490 M1: `last_sent_hash` is always None under the loro-vv send
-        // path; the empty-string sentinel is what `peer_refs::update_on_sync`
-        // expects when no op-hash delta was tracked this session.
-        let last_sent_hash = self.last_sent_hash.clone().unwrap_or_default();
+        // #490 M1: no per-peer sent-hash delta is tracked under the loro-vv
+        // send path, and the empty string is the sentinel
+        // `peer_refs::update_on_sync` documents for exactly that ("we sent
+        // nothing trackable this session"). `snapshot_transfer` passes the same
+        // literal for the same reason.
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
-        complete_sync_in_tx(&mut tx, peer_id, last_hash, &last_sent_hash).await?;
+        complete_sync_in_tx(&mut tx, peer_id, last_hash, "").await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// #4084: record the post-session bookkeeping for a session in which WE
+    /// streamed our state to the peer — ensure the peer row exists and stamp
+    /// `peer_refs.streamed_at`. **Only the streamer calls this**, and it is
+    /// the exact complement of [`Self::record_pull_in_tx`].
+    ///
+    /// It deliberately does **not** touch `synced_at` / `last_hash`. #610: the
+    /// scheduler measures staleness from `synced_at`, so a streamer that
+    /// refreshed it would make itself permanently not-overdue toward a peer it
+    /// pulled nothing from, starving the reverse direction. Recording the
+    /// stream in its own column keeps the scheduler's input untouched while
+    /// making the row honest: a responder-only device previously wrote no
+    /// progress at all and was indistinguishable from one that had never
+    /// synced.
+    ///
+    /// Ensure-row + stamp share one `BEGIN IMMEDIATE` transaction for the same
+    /// crash-atomicity reason as the pull path.
+    async fn record_stream_in_tx(&self, peer_id: &str) -> Result<(), AppError> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
+        peer_refs::update_on_stream_in_tx(&mut tx, peer_id).await?;
         tx.commit().await?;
         Ok(())
     }

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT peer_id, last_hash, last_sent_hash, synced_at,\n                  reset_count as \"reset_count!: i64\", last_reset_at, cert_hash,\n                  device_name, last_address, endpoint_id\n           FROM peer_refs\n           WHERE peer_id != ''\n           ORDER BY synced_at DESC",
+  "query": "SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,\n                  reset_count as \"reset_count!: i64\", last_reset_at, cert_hash,\n                  device_name, last_address, endpoint_id\n           FROM peer_refs WHERE endpoint_id = ? AND peer_id != ''",
   "describe": {
     "columns": [
       {
@@ -48,8 +48,19 @@
         }
       },
       {
-        "name": "reset_count!: i64",
+        "name": "streamed_at",
         "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "streamed_at"
+          }
+        }
+      },
+      {
+        "name": "reset_count!: i64",
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -60,7 +71,7 @@
       },
       {
         "name": "last_reset_at",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -71,7 +82,7 @@
       },
       {
         "name": "cert_hash",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -82,7 +93,7 @@
       },
       {
         "name": "device_name",
-        "ordinal": 7,
+        "ordinal": 8,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -93,7 +104,7 @@
       },
       {
         "name": "last_address",
-        "ordinal": 8,
+        "ordinal": 9,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -104,7 +115,7 @@
       },
       {
         "name": "endpoint_id",
-        "ordinal": 9,
+        "ordinal": 10,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -115,10 +126,11 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false,
+      true,
       true,
       true,
       true,
@@ -130,5 +142,5 @@
       true
     ]
   },
-  "hash": "0345b24993b362031b12e81d27421da15697c4636acc5dc133829d33b90ba155"
+  "hash": "03985eb2cd8e775710f09d6bedecab4b745a9f815979cb1fcf492b0ead42b51f"
 }

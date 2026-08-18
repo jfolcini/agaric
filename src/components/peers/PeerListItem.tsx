@@ -23,6 +23,7 @@ import { truncateId } from '@/lib/format'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { lastSyncActivityAt } from '@/lib/peer-sync-activity'
 
 export interface PeerListItemProps {
   peer: PeerRef
@@ -48,6 +49,9 @@ export function PeerListItem({
   const { t } = useTranslation()
   const [addrOpen, setAddrOpen] = useState(false)
   const [addrInput, setAddrInput] = useState('')
+
+  // #4084 — see the comment at the render site.
+  const lastActivityAt = lastSyncActivityAt(peer)
 
   // Real-time format validation for the address popover.
   // Empty input returns null so the freshly-opened popover stays quiet;
@@ -108,10 +112,17 @@ export function PeerListItem({
             </p>
           )}
           <p className="text-xs text-muted-foreground">
+            {/*
+              #4084 — the later of `synced_at` (we pulled) and `streamed_at`
+              (they pulled from us), not `synced_at` alone. A session is
+              one-directional and #610 forbids the streamer advancing
+              `synced_at`, so a device that only ever succeeds as responder
+              used to render "never synced" while syncing perfectly.
+            */}
             {t('device.lastSyncedAt', {
               time:
-                peer.synced_at != null
-                  ? formatRelativeTime(peer.synced_at, t)
+                lastActivityAt != null
+                  ? formatRelativeTime(lastActivityAt, t)
                   : t('sidebar.lastSyncedNever'),
             })}
           </p>

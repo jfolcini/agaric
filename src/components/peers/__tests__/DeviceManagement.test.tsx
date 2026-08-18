@@ -22,7 +22,12 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { comparePeers, DeviceManagement } from '@/components/peers/DeviceManagement'
+import { DeviceManagement } from '@/components/peers/DeviceManagement'
+// #4084 (review): `comparePeers` moved to `@/lib/peer-sync-activity` so the
+// pairing dialog's list can apply the same order without importing
+// `DeviceManagement` (which imports `PairingDialog`, which renders
+// `PairingPeersList` — a cycle).
+import { comparePeers } from '@/lib/peer-sync-activity'
 import { PREFERENCES } from '@/lib/preferences'
 import type { PeerRef } from '@/lib/tauri'
 
@@ -122,6 +127,7 @@ const mockPeers = [
     peer_id: 'peer-abc-1234567890',
     last_hash: 'hash1',
     last_sent_hash: null,
+    streamed_at: null,
     synced_at: Date.now() - 5 * 60 * 1000,
     reset_count: 0,
     last_reset_at: null,
@@ -133,6 +139,7 @@ const mockPeers = [
     peer_id: 'peer-def-0987654321',
     last_hash: null,
     last_sent_hash: null,
+    streamed_at: null,
     synced_at: null,
     reset_count: 1,
     last_reset_at: 1735689600000, // 2025-01-01T00:00:00Z
@@ -620,6 +627,7 @@ describe('DeviceManagement', () => {
             peer_id: 'peer-1',
             last_hash: null,
             last_sent_hash: null,
+            streamed_at: null,
             synced_at: null,
             reset_count: 0,
             last_reset_at: null,
@@ -646,6 +654,7 @@ describe('DeviceManagement', () => {
             peer_id: 'peer-1',
             last_hash: null,
             last_sent_hash: null,
+            streamed_at: null,
             synced_at: null,
             reset_count: 0,
             last_reset_at: null,
@@ -656,6 +665,7 @@ describe('DeviceManagement', () => {
             peer_id: 'peer-2',
             last_hash: null,
             last_sent_hash: null,
+            streamed_at: null,
             synced_at: null,
             reset_count: 0,
             last_reset_at: null,
@@ -697,6 +707,7 @@ describe('DeviceManagement', () => {
           peer_id: 'PEER01',
           last_hash: null,
           last_sent_hash: null,
+          streamed_at: null,
           synced_at: null,
           reset_count: 0,
           last_reset_at: null,
@@ -723,6 +734,7 @@ describe('DeviceManagement', () => {
             peer_id: 'peer-1',
             last_hash: null,
             last_sent_hash: null,
+            streamed_at: null,
             synced_at: null,
             reset_count: 0,
             last_reset_at: null,
@@ -733,6 +745,7 @@ describe('DeviceManagement', () => {
             peer_id: 'peer-2',
             last_hash: null,
             last_sent_hash: null,
+            streamed_at: null,
             synced_at: null,
             reset_count: 0,
             last_reset_at: null,
@@ -853,6 +866,7 @@ describe('DeviceManagement', () => {
           peer_id: 'peer-named-1',
           last_hash: null,
           last_sent_hash: null,
+          streamed_at: null,
           synced_at: null,
           reset_count: 0,
           last_reset_at: null,
@@ -888,6 +902,7 @@ describe('DeviceManagement', () => {
           peer_id: 'peer-3',
           last_hash: null,
           last_sent_hash: null,
+          streamed_at: null,
           synced_at: 1735862400000, // 2025-01-03T00:00:00Z
           reset_count: 0,
           last_reset_at: null,
@@ -898,6 +913,7 @@ describe('DeviceManagement', () => {
           peer_id: 'peer-1',
           last_hash: null,
           last_sent_hash: null,
+          streamed_at: null,
           synced_at: 1735689600000, // 2025-01-01T00:00:00Z
           reset_count: 0,
           last_reset_at: null,
@@ -908,6 +924,7 @@ describe('DeviceManagement', () => {
           peer_id: 'peer-2',
           last_hash: null,
           last_sent_hash: null,
+          streamed_at: null,
           synced_at: 1735776000000, // 2025-01-02T00:00:00Z
           reset_count: 0,
           last_reset_at: null,
@@ -934,6 +951,7 @@ describe('DeviceManagement', () => {
       peer_id: 'peer-x',
       last_hash: null,
       last_sent_hash: null,
+      streamed_at: null,
       synced_at: null,
       reset_count: 0,
       last_reset_at: null,
@@ -972,6 +990,24 @@ describe('DeviceManagement', () => {
       const never = row({ peer_id: 'z', synced_at: null })
       expect(sign(comparePeers(synced, never))).toBe(-1)
       expect(sign(comparePeers(never, synced))).toBe(1)
+    })
+
+    // #4084: key 3 is MAX(synced_at, streamed_at). A responder-only device
+    // never advances synced_at (#610 forbids the streamer touching it), so
+    // sorting on synced_at alone buried an actively-syncing peer among the
+    // genuinely-never-synced ones.
+    it('sorts a responder-only peer by its streamed_at, not last', () => {
+      const streamedRecently = row({ peer_id: 's', synced_at: null, streamed_at: 2000 })
+      const pulledLongAgo = row({ peer_id: 'p', synced_at: 1000, streamed_at: null })
+      expect(sign(comparePeers(streamedRecently, pulledLongAgo))).toBe(-1)
+      expect(sign(comparePeers(pulledLongAgo, streamedRecently))).toBe(1)
+    })
+
+    it('still sorts a peer with neither timestamp last', () => {
+      const streamedOnly = row({ peer_id: 's', synced_at: null, streamed_at: 1000 })
+      const never = row({ peer_id: 'z', synced_at: null, streamed_at: null })
+      expect(sign(comparePeers(streamedOnly, never))).toBe(-1)
+      expect(sign(comparePeers(never, streamedOnly))).toBe(1)
     })
 
     it('breaks ties deterministically on peer_id', () => {
@@ -1166,6 +1202,7 @@ describe('DeviceManagement', () => {
           peer_id: 'ABCDEFGHIJKLMNOP',
           last_hash: null,
           last_sent_hash: null,
+          streamed_at: null,
           synced_at: null,
           reset_count: 0,
           last_reset_at: null,
