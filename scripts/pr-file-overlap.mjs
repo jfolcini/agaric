@@ -203,6 +203,79 @@ export function computeOverlap({ pr, prs = [], divergedPaths = null }) {
   }
 }
 
+/**
+ * Replace a line break with a visible placeholder so a table row — and the
+ * code span wrapped around it — cannot be split across more than one
+ * physical line.
+ *
+ * GFM tables are parsed one physical line per row, and a code span's fence
+ * matching (`codeSpan` below) only holds within a single line: a `\n`
+ * embedded in an interpolated path ends the row (and the code span with it)
+ * right there, and everything after the break is parsed as ordinary
+ * markdown — no longer pipe-escaped by `escapeTablePipe`, no longer
+ * fenced by `codeSpan` — in a fresh table row of its own. Unlike a stray
+ * backtick or pipe, a real line break cannot be represented literally
+ * inside a table cell at all, so this runs first, before either of the
+ * other two escapes, which both assume single-line input. See #4141.
+ *
+ * @param {string} text
+ */
+function escapeTableNewline(text) {
+  return String(text).replace(/\r\n|\r|\n/g, '␤')
+}
+
+/**
+ * Escape a `|` so GFM's table-cell splitter does not read it as a column
+ * delimiter. Table rows are split on unescaped pipes BEFORE any inline
+ * markdown (code spans included) is parsed, so this has to run regardless of
+ * what ends up wrapping the text — a pipe inside a code span still breaks
+ * the table.
+ *
+ * @param {string} text
+ */
+function escapeTablePipe(text) {
+  return String(text).replace(/\|/g, '\\|')
+}
+
+/**
+ * Wrap `text` in an inline code span that a backtick inside `text` cannot
+ * close early. `path` values interpolated here are attacker-controlled (a
+ * PR's own changed-file list, or what `main` diverged since this branch's
+ * base — #4141), so a single-backtick fence cannot assume the content holds
+ * no backtick: doing so lets a path close the span and render the remainder
+ * as live markdown in a comment posted by `github-actions[bot]`. Per
+ * CommonMark, a code span's closing fence must match its opening fence's
+ * exact backtick-run length, so choosing a fence one longer than the
+ * longest backtick run already in `text` makes early closure impossible; a
+ * single space of padding is added when the content starts or ends with a
+ * backtick (or is empty), which is what stops that edge backtick from
+ * fusing with the fence.
+ *
+ * @param {string} text
+ */
+function codeSpan(text) {
+  const s = String(text)
+  const runs = s.match(/`+/g) ?? []
+  const fenceLen = Math.max(0, ...runs.map((r) => r.length)) + 1
+  const fence = '`'.repeat(fenceLen)
+  const pad = s.startsWith('`') || s.endsWith('`') || s.length === 0
+  return pad ? `${fence} ${s} ${fence}` : `${fence}${s}${fence}`
+}
+
+/**
+ * A file path rendered as a safe table-cell code span: newlines collapsed
+ * first (so the result is guaranteed to be one physical line, which the
+ * other two escapes both assume), then pipe-escaped (so the table structure
+ * holds regardless of what wraps the text), then wrapped in a self-widening
+ * code span (so an embedded backtick cannot escape into live markdown). See
+ * #4141.
+ *
+ * @param {string} path
+ */
+function safePathCell(path) {
+  return codeSpan(escapeTablePipe(escapeTableNewline(path)))
+}
+
 /** The sticky comment body. */
 export function renderComment(result) {
   const { pr, changedFiles, otherOpenPrs, overlaps, ratchetCount } = result
@@ -238,7 +311,7 @@ export function renderComment(result) {
     lines.push('| other PR | shared files |', '| --- | --- |')
     for (const o of overlaps) {
       const files = o.shared
-        .map((f) => (isRatchetFile(f) ? `**\`${f}\`** ⚠️ ratchet` : `\`${f}\``))
+        .map((f) => (isRatchetFile(f) ? `**${safePathCell(f)}** ⚠️ ratchet` : safePathCell(f)))
         .join('<br>')
       lines.push(`| #${o.number} | ${files} |`)
     }
@@ -284,7 +357,7 @@ export function renderComment(result) {
     // Pinned by an assertion in the self-test.
     lines.push('| file | |', '| --- | --- |')
     for (const f of result.divergedFiles) {
-      lines.push(`| \`${f}\` | ${isRatchetFile(f) ? '⚠️ **ratchet**' : ''} |`)
+      lines.push(`| ${safePathCell(f)} | ${isRatchetFile(f) ? '⚠️ **ratchet**' : ''} |`)
     }
     lines.push('')
   }
@@ -812,11 +885,118 @@ function runSelfTest() {
     )
   }
 
+  // 7. #4141: a diverged-file PATH is attacker-controlled — the `compute` job
+  //    checks out PR-authored code and runs `scripts/pr-overlap-diverged.sh`
+  //    from it — and lands interpolated straight into a markdown code span in
+  //    the sticky comment. A backtick in the path closes the span early and
+  //    the remainder renders as LIVE markdown in a comment posted by
+  //    `github-actions[bot]`; a pipe breaks the table. Falsification, not
+  //    just an assertion: this must be demonstrably RED against the
+  //    unescaped renderer before the fix lands, and green after.
+  {
+    const evilPath = 'evil`**INJECTED**`|also/evil.md'
+    const r = computeOverlap({
+      pr: 4141,
+      prs: [{ number: 4141, title: 'evil pr', files: [{ path: evilPath }] }],
+      divergedPaths: [evilPath],
+    })
+    const body = renderComment(r)
+    const row = body.split('\n').find((l) => l.includes('also/evil.md'))
+    expect('the diverged-file row exists', typeof row === 'string', body)
+    if (typeof row === 'string') {
+      // Table cells are split on unescaped `|` before any inline markdown
+      // (including code spans) is parsed, so a stray pipe from the path adds
+      // a phantom column regardless of what surrounds it. A well-formed
+      // `| path | annotation |` row carries exactly 3 raw (non-`\|`) pipes.
+      const unescapedPipes = row.replace(/\\\|/g, '').split('|').length - 1
+      expect(
+        'the injected pipe does not add a table column (exactly 3 raw pipes: | path | annotation |)',
+        unescapedPipes === 3,
+        row,
+      )
+      // Approximate CommonMark code-span stripping: repeatedly remove a
+      // backtick-delimited span (open fence, content, matching-length close
+      // fence). What survives is what would render as ordinary markdown text
+      // outside any code span — if the injected bold marker is still in
+      // there, it renders live.
+      const stripped = stripCodeSpansForTest(row)
+      expect(
+        'the injected backtick-bold payload is fully contained inside a code span, not left as live text',
+        !stripped.includes('INJECTED'),
+        JSON.stringify({ row, stripped }),
+      )
+    }
+  }
+
+  // 8. #4141: a newline embedded in a path is the sharpest version of the
+  //    same hazard. A GFM table row — and the code span wrapped around it —
+  //    is parsed one physical line at a time, so a literal `\n` in the path
+  //    ends the row right there; the remainder becomes a FRESH table row of
+  //    its own, no longer inside any code span and no longer pipe-escaped
+  //    by anything on THIS row. Falsification: this must be demonstrably
+  //    RED (the injected text lands on its own physical line, outside any
+  //    code span) against a renderer that skips `escapeTableNewline`, and
+  //    green with it.
+  {
+    const evilPath = 'evil\n**NEWLINE-INJECTED**|also/evil.md'
+    const r = computeOverlap({
+      pr: 4141,
+      prs: [{ number: 4141, title: 'evil pr', files: [{ path: evilPath }] }],
+      divergedPaths: [evilPath],
+    })
+    const body = renderComment(r)
+    const row = body.split('\n').find((l) => l.includes('also/evil.md'))
+    expect('the diverged-file row exists', typeof row === 'string', body)
+    if (typeof row === 'string') {
+      expect(
+        'the embedded newline did not split the row: the injected text stays on the SAME physical line as the rest of the path',
+        row.includes('NEWLINE-INJECTED'),
+        JSON.stringify({ bodyLines: body.split('\n') }),
+      )
+      const unescapedPipes = row.replace(/\\\|/g, '').split('|').length - 1
+      expect(
+        'the injected pipe does not add a table column (exactly 3 raw pipes: | path | annotation |)',
+        unescapedPipes === 3,
+        row,
+      )
+      const stripped = stripCodeSpansForTest(row)
+      expect(
+        'the injected bold payload is fully contained inside a code span, not left as live text',
+        !stripped.includes('NEWLINE-INJECTED'),
+        JSON.stringify({ row, stripped }),
+      )
+    }
+  }
+
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
     process.exit(2)
   }
   console.log('self-test: all assertions passed')
+}
+
+/**
+ * Test-only approximation of CommonMark code-span stripping: repeatedly
+ * removes an opening run of backticks, its content, and the next run of
+ * backticks of the SAME length (the closing fence), leaving unmatched
+ * backticks (which CommonMark renders as literal, inert characters) in
+ * place. Used only to falsify #4141 — real rendering is left to GitHub.
+ *
+ * @param {string} text
+ */
+function stripCodeSpansForTest(text) {
+  let s = text
+  for (;;) {
+    const open = /`+/.exec(s)
+    if (!open) return s
+    const fence = open[0]
+    const afterOpen = open.index + fence.length
+    const closeRe = new RegExp(`\`{${fence.length}}(?!\`)`)
+    const closeMatch = closeRe.exec(s.slice(afterOpen))
+    if (!closeMatch) return s // unmatched backticks: literal, inert, leave as-is
+    const end = afterOpen + closeMatch.index + closeMatch[0].length
+    s = s.slice(0, open.index) + s.slice(end)
+  }
 }
 
 // Entry-point check (#3373): realpath BOTH sides — `import.meta.filename` is a
