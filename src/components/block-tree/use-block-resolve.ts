@@ -313,12 +313,29 @@ function appendCreatePageOptionIfNeeded(
  *     (`src-tauri/src/commands/pages/listing.rs`) — case-insensitive, id
  *     tie-break.
  *   - tags: `ORDER BY tc.name` (`agaric-store/src/tag_query/query.rs`) —
- *     SQLite's default BINARY collation, i.e. case-SENSITIVE code-point order.
- * They are approximations, not byte-for-byte reimplementations of SQLite's
- * collations (`NOCASE` folds ASCII only, `toLowerCase()` folds Unicode too),
- * and they only run on a rename, so the worst case is a locally-renamed row
- * landing one slot away from where a refetch would put it. Note the cache is
- * not perfectly ordered to begin with — `onCreatePage` has always APPENDED a
+ *     SQLite's default BINARY collation, i.e. case-SENSITIVE UTF-8 BYTE order.
+ *
+ * `compareTagRows` compares raw UTF-8 bytes (`compareUtf8Bytes`), so it is an
+ * exact match for BINARY — not an approximation. `comparePageRows` is still
+ * only an approximation of `NOCASE`, and it diverges for TWO independent
+ * reasons, not one:
+ *   1. `NOCASE` folds ASCII only; `toLowerCase()` folds Unicode too, so a page
+ *      whose title differs only in non-ASCII casing (Turkish İ/i, and similar)
+ *      can land in the wrong slot.
+ *   2. After the fold it still compares with `<`, i.e. UTF-16 code units —
+ *      so the exact byte-order divergence #4057 fixed for tags is ALSO live
+ *      for pages. `NOCASE` case-folds and then memcmps bytes, so page titles
+ *      `Ａ` (U+FF21) and `🎯` sort in opposite orders backend-vs-frontend for
+ *      precisely the reason described below `compareUtf8Bytes`.
+ * Reason 2 is fixable here by folding and then calling `compareUtf8Bytes`;
+ * reason 1 needs an ASCII-only fold to match `NOCASE`. Tracked in #4131 —
+ * #4057 covered tags only, and this comment should not be read as saying
+ * case-folding is the whole story.
+ *
+ * Either comparator only runs on a rename, so the worst case for the
+ * remaining `comparePageRows` approximation is a locally-renamed row landing
+ * one slot away from where a refetch would put it. Note the cache is not
+ * perfectly ordered to begin with — `onCreatePage` has always APPENDED a
  * newly created page — so this restores the invariant for renames, it does
  * not establish one that never existed.
  */
@@ -332,8 +349,32 @@ function comparePageRows(
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
+// #4057 — JS `<` on strings compares UTF-16 CODE UNITS; SQLite's default
+// BINARY collation (what the tags `ORDER BY tc.name` query uses) compares
+// UTF-8 BYTES. The two agree everywhere EXCEPT when a supplementary-plane
+// character (U+10000+, encoded in UTF-16 as a surrogate pair whose leading
+// unit is 0xD800-0xDBFF) is compared against a BMP character whose code
+// point falls in 0xE000-0xFFFF: UTF-16 code-unit order puts the
+// supplementary character first (0xD800-0xDBFF < 0xE000-0xFFFF), while
+// UTF-8 byte order puts it last (its 4-byte encoding starts with
+// 0xF0-0xF4, which is greater than the 3-byte encoding's 0xE0-0xEF lead
+// byte for that BMP range). Comparing raw UTF-8 bytes sidesteps the
+// surrogate-pair encoding entirely and matches BINARY exactly.
+const utf8Encoder = new TextEncoder()
+
+function compareUtf8Bytes(a: string, b: string): number {
+  const aBytes = utf8Encoder.encode(a)
+  const bBytes = utf8Encoder.encode(b)
+  const len = Math.min(aBytes.length, bBytes.length)
+  for (let i = 0; i < len; i++) {
+    const diff = (aBytes[i] as number) - (bBytes[i] as number)
+    if (diff !== 0) return diff < 0 ? -1 : 1
+  }
+  return aBytes.length - bBytes.length
+}
+
 function compareTagRows(a: TagCacheRow, b: TagCacheRow): number {
-  if (a.name !== b.name) return a.name < b.name ? -1 : 1
+  if (a.name !== b.name) return compareUtf8Bytes(a.name, b.name)
   return a.tag_id < b.tag_id ? -1 : a.tag_id > b.tag_id ? 1 : 0
 }
 
