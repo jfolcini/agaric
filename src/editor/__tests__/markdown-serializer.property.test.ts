@@ -9,7 +9,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { parse, serialize } from '@/editor/markdown-serializer'
+import { markSetFromMarks, parse, serialize } from '@/editor/markdown-serializer'
 import type {
   CodeBlockNode,
   DocNode,
@@ -526,8 +526,8 @@ function leadingItalicStartsOnWhitespace(block: ParagraphNode): boolean {
   // `code` is exclusive (backticks, no star) and `link` wraps the span in
   // `[`…`](url)`, so neither can put a bare `* ` at the line start.
   if (marks.some((m) => m.type === 'code' || m.type === 'link')) return false
-  const types = new Set(marks.map((m) => m.type))
-  return types.size === 1 && types.has('italic')
+  const emphasis = markSetFromMarks(marks)
+  return emphasis.size === 1 && emphasis.has('italic')
 }
 
 /**

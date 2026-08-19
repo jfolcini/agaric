@@ -441,7 +441,7 @@ function serializeInlineText(child: TextNode, activeMarks: Set<string>): string 
  * Italic alone (mod all-space plain text before it — the same widened
  * tolerance `serializeParagraph`'s dash/digit escapes use, since a nested
  * paragraph's indent can dedent BACK into the marker's 0-3-space tolerance),
- * opening onto a space, is the only vulnerable shape. {@link isVulnerable}
+ * opening onto a space, is the only vulnerable shape. {@link isVulnerableItalicOpen}
  * below therefore has to look past `markSetFromMarks` (which reports only the
  * five emphasis marks) and reject `code`/`link` explicitly.
  *
@@ -473,12 +473,18 @@ function defuseLeadingItalicMarker(content: readonly InlineNode[]): InlineNode[]
 
   // The maximal contiguous run that keeps italic continuously active from `i`
   // (an atom or a mark change ends it — same boundary `emitMarkTransition`
-  // would close the delimiter at).
+  // would close the delimiter at). A `code` or `link` mark ends it too, even
+  // though the node still carries `italic`: `isVulnerableItalicOpen` rejects
+  // both (code is exclusive, link wraps the whole span), so a node bearing
+  // either is never part of the vulnerable span and must not be pulled into
+  // this walk — otherwise `consumingLeadingSpace` stays true into a `code`
+  // node's own text and the leading-space split below cuts it into two spans.
   let runEnd = i
   while (
     runEnd < content.length &&
     content[runEnd]?.type === 'text' &&
-    ((content[runEnd] as TextNode).marks ?? []).some((m) => m.type === 'italic')
+    ((content[runEnd] as TextNode).marks ?? []).some((m) => m.type === 'italic') &&
+    !((content[runEnd] as TextNode).marks ?? []).some((m) => m.type === 'code' || m.type === 'link')
   ) {
     runEnd++
   }
@@ -525,7 +531,7 @@ function isVulnerableItalicOpen(node: InlineNode | undefined): node is TextNode 
 }
 
 /** Pull the bold/italic/strike/highlight/underline subset out of a mark list. */
-function markSetFromMarks(marks: readonly PMMark[]): Set<string> {
+export function markSetFromMarks(marks: readonly PMMark[]): Set<string> {
   const desired = new Set<string>()
   for (const m of marks) {
     if (

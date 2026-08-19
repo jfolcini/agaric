@@ -878,6 +878,26 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
   })
 
   /**
+   * A vulnerable-italic sibling (`italic(' ')`, whitespace all the way
+   * through) immediately followed by an italic+code node used to stay in the
+   * SAME run: the walk that computes `runEnd` required only `type === 'text'`
+   * plus an `italic` mark, so it did not stop at the code node the way
+   * `isVulnerableItalicOpen` itself does. `consumingLeadingSpace` — still
+   * true from the first (all-space) node — then ran into the code node's own
+   * text and split its leading space out in front of the backticks, turning
+   * ONE code span (`' x'`) into TWO (`' '` and `'x'`). The run must end at
+   * the code node exactly like `isVulnerableItalicOpen` rejects it, so the
+   * code node is untouched and stays a single span.
+   */
+  it('a code node in the same italic run is not split — the run stops at it, like isVulnerableItalicOpen rejects it', () => {
+    const d = doc(paragraph(italic(' '), text(' x', [{ type: 'italic' }, { type: 'code' }])))
+    const md = serialize(d)
+    expect(md).toBe(' `  x `')
+    expect(parse(md)).toEqual(doc(paragraph(text(' '), text(' x', [{ type: 'code' }]))))
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  /**
    * The boundary move has to carry the WHOLE italic run, not just the node it
    * starts on: the run's later nodes keep the mark, and a nested mark opening
    * inside it still emits its delimiters in the order `emitMarkTransition`
