@@ -19,11 +19,18 @@
 # -----
 #
 #   scripts/bump-version.sh <new-version> [--commit] [--tag] [--push]
+#   scripts/bump-version.sh --check-identity
+#   scripts/bump-version.sh --self-test
 #
 #   <new-version>     Semver triple, e.g. `0.1.16`. No leading `v`.
 #   --commit          Stage the 5 changed files and create a release commit.
 #   --tag             Create the `<new-version>` git tag (requires --commit).
 #   --push            Push main + the new tag to origin (requires --tag).
+#   --check-identity  Only check that the configured git identity can produce
+#                     a commit GitHub will mark verified (#3745, #4082), then
+#                     exit. Nothing is edited, committed or pushed.
+#   --self-test       Run the identity/verification suite against fakes and
+#                     exit. Touches neither the host nor the repository.
 #
 # Examples
 # --------
@@ -38,6 +45,792 @@
 #   scripts/bump-version.sh 0.1.16 --commit --tag
 
 set -euo pipefail
+
+# ── Release identity and signature verification (#3745, #4082) ──────────────
+#
+# The bump commit is the ONLY commit that reaches `main` without a squash
+# merge, so it is the only one whose local git identity is ever tested.
+# Every other commit's identity is laundered by the merge — GitHub re-signs
+# squash commits with its own web-flow key, so they land `verified=true`
+# whatever `user.email` says.
+#
+# 0.9.4 (#3745) and 0.9.8 (#4082) both landed a correctly GPG-signed bump
+# commit that GitHub reported as `verified=false, reason=unverified_email`.
+# The signature was good and made with the configured key; the commit was
+# authored as `t <t@t.t>`, which is neither a user ID on that key nor a
+# verified address on the account. GitHub binds a signature to an identity
+# through the COMMITTER ADDRESS, so without that binding the "Commits must
+# have verified signatures" rule is BYPASSED rather than satisfied, and the
+# release tag — the root every SLSA attestation the release workflow
+# produces describes — names a commit that cannot be attributed. The same
+# address lands in the commit's `Signed-off-by` trailer too
+# (scripts/dco-signoff.sh reads the same config), so the DCO asserts an
+# identity that does not exist.
+#
+# Two gates, both fail-closed:
+#
+#   1. BEFORE the commit — `release_require_identity` refuses to bump when
+#      the configured identity provably cannot verify. It asserts a
+#      property; it does not choose an identity. WHICH address a release is
+#      cut under is a maintainer decision (it must be both a user ID on the
+#      signing key and a verified email on the GitHub account), so no
+#      address, key or bot account is hardcoded here.
+#   2. AFTER the push — `release_require_verified_commit` asks GitHub
+#      itself, BETWEEN the `main` push and the tag push. The tag push is the
+#      point of no return (release.yml publishes with no approval gate), so
+#      a commit that landed unverified stops the release before it starts
+#      rather than after. The bypass block scrolls past in a wall of push
+#      output; it survived 0.9.4 and 0.9.8 — and probably 0.9.3 — precisely
+#      because nothing ever asserted on it.
+#
+# Neither gate has a bypass flag, deliberately. The defect is that a release
+# push bypasses branch protection; an escape hatch here would reproduce it.
+
+# Attempts / delay for the post-push verification query. Overridable only so
+# the self-test below does not have to sleep; the retry exists for an API
+# read-after-write blip, and a definitive `verified:false` is never retried.
+RELEASE_VERIFY_ATTEMPTS="${RELEASE_VERIFY_ATTEMPTS:-3}"
+RELEASE_VERIFY_DELAY="${RELEASE_VERIFY_DELAY:-2}"
+
+# The colon-delimited listing for `user.signingkey`, read ONCE so the three
+# checks below cannot end up describing different keys.
+release_key_records() {
+  gpg --list-keys --with-colons -- "$1" 2>/dev/null
+}
+
+# How many PRIMARY keys `user.signingkey` resolved to. `git commit -S` passes
+# the configured id straight to gpg, and a short id or a bare email can name
+# more than one key in a keyring — measured on gpg 2.4.4, two keys sharing a
+# UID address answer one `gpg --list-keys <address>` with two `pub` records.
+# gpg then picks one, which need not be the key whose UID the comparison
+# below matched, so the gate would pass on a signature that cannot bind.
+release_key_count() {
+  printf '%s\n' "$1" | grep -c '^pub:' || true
+}
+
+# The PRIMARY key's own validity character (`r` revoked, `e` expired, `u`
+# ultimately valid, …). Measured on gpg 2.4.4, a revoked or expired primary
+# key stamps `r`/`e` on its UID records too, so the UID filter below already
+# rejects both — but that mirroring is a gpg behaviour rather than a
+# guarantee, and "no usable user ID" is the wrong diagnosis to hand someone
+# whose key has simply lapsed. Read it explicitly and name the condition.
+release_key_validity() {
+  printf '%s\n' "$1" | awk -F: '$1 == "pub" { print $2; exit }'
+}
+
+# Emails carried by the USABLE user IDs in a colon-delimited key listing,
+# lower-cased, one per line. Revoked (`r`) and expired (`e`) UIDs are
+# excluded: GitHub will not bind a signature to them, so counting them here
+# would make the gate pass on exactly the configuration that fails at the
+# push.
+release_key_uid_emails() {
+  printf '%s\n' "$1" |
+    awk -F: '$1 == "uid" && $2 != "r" && $2 != "e" { print $10 }' |
+    sed -n 's/^[^<]*<\([^>]*\)>.*$/\1/p' |
+    tr '[:upper:]' '[:lower:]' |
+    sort -u
+}
+
+# The email in one of git's resolved identity strings (`Name <email> ts tz`).
+# Read through `git var` rather than `git config --get user.email` on
+# purpose: `git var` reports the address the commit will ACTUALLY carry,
+# including a `GIT_COMMITTER_EMAIL` override or an `includeIf` config that
+# `--get user.email` does not see.
+release_ident_email() {
+  git var "$1" 2>/dev/null |
+    sed -n 's/^[^<]*<\([^>]*\)>.*$/\1/p' |
+    tr '[:upper:]' '[:lower:]'
+}
+
+# Prints a one-line diagnosis and returns 1 when the configured identity
+# cannot produce a commit GitHub will mark verified; silent, returns 0,
+# otherwise. Same shape as verify-ci-equivalent.sh's `node_deps_problem`.
+release_identity_problem() {
+  local name config_email committer_email format key records matches uids
+  name="$(git config --get user.name 2>/dev/null || true)"
+  config_email="$(git config --get user.email 2>/dev/null || true)"
+
+  if [ -z "$name" ]; then
+    printf 'git `user.name` is not set, so the release commit has no author name and the DCO trailer cannot be written.\n'
+    return 1
+  fi
+  if [ -z "$config_email" ]; then
+    printf 'git `user.email` is not set, so the release commit would be attributed to a guessed address.\n'
+    return 1
+  fi
+
+  config_email="$(printf '%s' "$config_email" | tr '[:upper:]' '[:lower:]')"
+  committer_email="$(release_ident_email GIT_COMMITTER_IDENT)"
+  if [ -z "$committer_email" ]; then
+    printf 'git could not resolve a committer identity (`git var GIT_COMMITTER_IDENT` produced no address).\n'
+    return 1
+  fi
+  # The DCO trailer is written from `user.email` (scripts/dco-signoff.sh)
+  # while the signature binds to the committer address. If they disagree the
+  # sign-off asserts a different identity from the one that signed, which is
+  # the third symptom reported in #4082.
+  if [ "$config_email" != "$committer_email" ]; then
+    printf 'the Signed-off-by trailer would say <%s> (user.email) while the commit is committed as <%s>; the DCO would assert a different identity from the one that signed.\n' \
+      "$config_email" "$committer_email"
+    return 1
+  fi
+
+  format="$(git config --get gpg.format 2>/dev/null || true)"
+  : "${format:=openpgp}"
+  if [ "$format" != openpgp ]; then
+    # SSH / X.509 signing has no user-ID list to compare against, so this
+    # gate has nothing to assert. The post-push check is then the only gate,
+    # and it is authoritative — do not invent a local rule for a format
+    # whose binding we cannot inspect.
+    return 0
+  fi
+
+  key="$(git config --get user.signingkey 2>/dev/null || true)"
+  if [ -z "$key" ]; then
+    printf '`user.signingkey` is not set, so `git commit -S` cannot pick a key deterministically and the signature may not bind to <%s>.\n' \
+      "$committer_email"
+    return 1
+  fi
+
+  # An openpgp signature that cannot be made is not a milder problem than one
+  # that cannot bind, and "no usable user ID" would send the maintainer
+  # hunting a key defect that does not exist.
+  if ! command -v gpg >/dev/null 2>&1; then
+    printf '`gpg` is not on PATH, so `git commit -S` cannot make an openpgp signature at all and signing key %s cannot be inspected. Install gnupg, or set `gpg.format` to the scheme this machine actually signs with.\n' \
+      "$key"
+    return 1
+  fi
+
+  records="$(release_key_records "$key")"
+
+  matches="$(release_key_count "$records")"
+  if [ "$matches" -gt 1 ]; then
+    printf '`user.signingkey` (%s) matches %s keys in this keyring, so `git commit -S` cannot pick one deterministically: gpg may sign with a key that does not carry <%s>, and the commit would then land verified=false. Set user.signingkey to a full 40-character fingerprint.\n' \
+      "$key" "$matches" "$committer_email"
+    return 1
+  fi
+
+  case "$(release_key_validity "$records")" in
+    r*)
+      printf 'signing key %s is REVOKED, so nothing it signs can be verified by anyone. Configure a current key.\n' "$key"
+      return 1
+      ;;
+    e*)
+      printf 'signing key %s has EXPIRED, so `git commit -S` will refuse to sign with it. Extend its expiry (`gpg --quick-set-expire`) and re-upload the public key to GitHub, or configure a current key.\n' "$key"
+      return 1
+      ;;
+  esac
+
+  uids="$(release_key_uid_emails "$records")"
+  if [ -z "$uids" ]; then
+    printf 'signing key %s has no usable (non-revoked, non-expired) user ID with an email address, so GitHub cannot bind its signatures to any account.\n' \
+      "$key"
+    return 1
+  fi
+  if ! printf '%s\n' "$uids" | grep -Fxq "$committer_email"; then
+    printf 'committer address <%s> is not a user ID on signing key %s (its usable UIDs: %s). GitHub binds a GPG signature through the committer address, so the commit would land verified=false / unverified_email and the "Commits must have verified signatures" rule would be bypassed rather than satisfied.\n' \
+      "$committer_email" "$key" "$(printf '%s' "$uids" | tr '\n' ' ')"
+    return 1
+  fi
+
+  return 0
+}
+
+# Remedy text. Deliberately names no address, key or account: which identity
+# a release is cut under is the maintainer's call (#3745 lists the options),
+# and guessing it here would silently change who is trusted to push to main.
+release_identity_remedy() {
+  cat <<'REMEDY'
+  Point git at an identity that BOTH the signing key and the GitHub account carry:
+
+      git config user.name  "<the account's display name>"
+      git config user.email "<an address that is a user ID on the signing key AND
+                              a verified email on the GitHub account>"
+
+  To see the candidates:
+      gpg --list-keys "$(git config --get user.signingkey)"   # the key's user IDs
+      gh api user/emails --jq '.[] | select(.verified) | .email'   # verified account emails
+
+  (That second command needs the `user` token scope and answers 404 without it;
+  `gh auth refresh -h github.com -s user` grants it. The account's verified
+  addresses are also listed at https://github.com/settings/emails.)
+
+  If the address you want is verified on the account but missing from the key, add it
+  as a UID (`gpg --quick-add-uid`) and re-upload the public key to GitHub. Choosing
+  WHICH address (personal, or the account's `users.noreply.github.com` form) is a
+  maintainer decision this script deliberately does not make for you.
+REMEDY
+}
+
+release_require_identity() {
+  local problem
+  if problem="$(release_identity_problem)"; then
+    return 0
+  fi
+  echo "ERROR: refusing to cut a release with an identity that cannot verify (#3745, #4082):" >&2
+  echo "       $problem" >&2
+  release_identity_remedy >&2
+  exit 1
+}
+
+# Ask GitHub whether an object's signature verified. Prints `<verified>|<reason>`
+# (e.g. `true|valid`, `false|unverified_email`), or nothing when the API gave
+# no answer at all — which is treated as a failure, not as a pass.
+release_github_verification() {
+  local api_path="$1" jq_prefix="$2" jq_expr
+  jq_expr="$jq_prefix | [(.verified | tostring), (.reason // \"unknown\")] | join(\"|\")"
+  gh api "$api_path" --jq "$jq_expr" 2>/dev/null || true
+}
+
+# Fail loudly unless GitHub reports the object as verified. <label> names the
+# object in the messages; <api-path> and <jq-prefix> locate its verification
+# block (a commit's hangs off `.commit`, a tag object's off the root).
+release_require_verified() {
+  local label="$1" api_path="$2" jq_prefix="$3"
+  local attempt=1 answer='' verified reason
+  while :; do
+    answer="$(release_github_verification "$api_path" "$jq_prefix")"
+    case "$answer" in
+      'true|'* | 'false|'*) break ;;
+    esac
+    if [ "$attempt" -ge "$RELEASE_VERIFY_ATTEMPTS" ]; then
+      echo "ERROR: could not read GitHub's signature verification for the $label" >&2
+      echo "       (GET $api_path returned no usable answer after $RELEASE_VERIFY_ATTEMPTS attempts)." >&2
+      echo "       Failing closed: an unread verification is not a passed one (#3745)." >&2
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    if [ "$RELEASE_VERIFY_DELAY" != 0 ]; then
+      sleep "$RELEASE_VERIFY_DELAY"
+    fi
+  done
+
+  verified="${answer%%|*}"
+  reason="${answer#*|}"
+  if [ "$verified" != true ]; then
+    echo "ERROR: GitHub reports the $label as UNVERIFIED (reason: $reason)." >&2
+    echo "       The signature rule on main was BYPASSED, not satisfied — which is the" >&2
+    echo "       defect #3745 and #4082 describe, not a passing release." >&2
+    release_identity_remedy >&2
+    return 1
+  fi
+  printf '✓ GitHub verified the %s (reason: %s).\n' "$label" "$reason"
+  return 0
+}
+
+release_require_verified_commit() {
+  release_require_verified "release commit $1" "repos/{owner}/{repo}/commits/$1" '.commit.verification'
+}
+
+# The annotated tag is signed with the same key and carries the same tagger
+# address, so it fails and passes for the same reasons as the commit (#3745).
+# Its verification lives on the tag OBJECT, which has to be resolved from the
+# ref first.
+release_require_verified_tag() {
+  local tag="$1" object_sha
+  # `// empty` because `--jq '.object.sha'` on a body that has no `.object`
+  # — a 404's `{"message":"Not Found"}`, a rate-limit body — prints the
+  # literal string `null`, which is not empty. Without it the guard below
+  # never fires on the commonest failure shape and the tag lookup goes on to
+  # ask for the object named `null`: still fail-closed, but diagnosed as an
+  # unreadable verification rather than as a tag that is not there.
+  object_sha="$(gh api "repos/{owner}/{repo}/git/ref/tags/$tag" --jq '.object.sha // empty' 2>/dev/null || true)"
+  if [ -z "$object_sha" ]; then
+    echo "ERROR: could not resolve the pushed tag '$tag' on origin to a tag object." >&2
+    echo "       Failing closed: an unread verification is not a passed one (#3745)." >&2
+    return 1
+  fi
+  release_require_verified "release tag $tag" "repos/{owner}/{repo}/git/tags/$object_sha" '.verification'
+}
+
+
+# ── self-test ───────────────────────────────────────────────────────────────
+# Behavioural suite for the identity gate and the post-push verification
+# above, wired as the `release-identity-selftest` prek hook. Everything it
+# touches is a fake: `gpg` and `gh` are shadowed on PATH and `HOME` points at
+# a throwaway directory, so no key is read, no API is called and neither the
+# host nor the real repository is mutated. Runs before argument parsing, so
+# it is fast and cannot reach a single manifest edit.
+if [ "${1:-}" = "--self-test" ]; then
+  st_scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # Absolutised NOW: the suite cd's into its scratch directory below, and the
+  # ratchets at the end read this file back off disk.
+  st_self="$st_scripts_dir/$(basename "${BASH_SOURCE[0]}")"
+  # A self-test that reads git config is exactly the #3722 shape: an ambient
+  # GIT_DIR (which a prek hook exports) OUTRANKS the working directory, so
+  # every `git config --get` below would read the REAL repository's local
+  # config — including the `t@t.t` this file exists to reject — and the
+  # fixtures would be silently ignored.
+  # Sourced with an explicit empty argument: `.` passes the CALLER's positional
+  # parameters through when given none, so the bare form would hand the helper
+  # our own `--self-test` and run ITS suite in this process — which exports a
+  # GIT_DIR on purpose, as its "without the guard" demonstration, and leaves
+  # the scrub below refusing to run.
+  # shellcheck source=scripts/lib/git-scratch-guard.sh
+  . "$st_scripts_dir/lib/git-scratch-guard.sh" ''
+
+  st_tmp="$(mktemp -d -t bump-version-selftest.XXXXXX)"
+  trap 'rm -rf "$st_tmp"' EXIT
+  git_scratch_guard "$st_tmp"
+
+  st_fail=0
+  st_ok() { printf '  ok   - %s\n' "$1"; }
+  st_bad() {
+    printf '  FAIL - %s: %s\n' "$1" "$2" >&2
+    st_fail=1
+  }
+
+  # ── fakes ─────────────────────────────────────────────────────────────
+  st_bin="$st_tmp/bin"
+  mkdir -p "$st_bin"
+
+  # Fake gpg. Emits colon-format records for FAKE_GPG_KEY only. One `pub`
+  # record per FAKE_GPG_PUBS line carrying that line's validity character, so
+  # an expired or revoked PRIMARY key and an id that resolves to MORE THAN ONE
+  # key are both expressible; the UIDs come from FAKE_GPG_UIDS as
+  # `<validity>|<user id>` lines, so a revoked or expired UID can be modelled
+  # exactly as gpg reports it. Only the fields the production code reads are
+  # populated — this is a model of gpg's answer, not of gpg.
+  cat >"$st_bin/gpg" <<'FAKE_GPG'
+#!/usr/bin/env bash
+set -uo pipefail
+key="${*: -1}"
+[ "$key" = "${FAKE_GPG_KEY:-}" ] || exit 2
+while IFS= read -r validity; do
+  [ -n "$validity" ] || continue
+  printf 'pub:%s:255:22:%s:1700000000:::u:::scESC::::::23::0:\n' "$validity" "$key"
+done <<<"${FAKE_GPG_PUBS:-u}"
+while IFS='|' read -r validity uid; do
+  [ -n "$validity" ] || continue
+  printf 'uid:%s::::1700000000::0000::%s::::::::::0:\n' "$validity" "$uid"
+done <<<"${FAKE_GPG_UIDS:-}"
+FAKE_GPG
+
+  # Fake gh. Serves a canned body per API path and evaluates the REAL `--jq`
+  # expression through the real jq, so the production jq programme is what is
+  # under test rather than a paraphrase of it.
+  cat >"$st_bin/gh" <<'FAKE_GH'
+#!/usr/bin/env bash
+set -uo pipefail
+[ "${1:-}" = api ] || exit 64
+api_path="$2"
+jq_expr=''
+if [ "${3:-}" = --jq ]; then jq_expr="${4:-}"; fi
+body_file="$FAKE_GH_DIR/$(printf '%s' "$api_path" | tr '/{}' '___')"
+[ -f "$body_file" ] || exit 1
+if [ -n "$jq_expr" ]; then
+  jq -r "$jq_expr" <"$body_file"
+else
+  cat "$body_file"
+fi
+FAKE_GH
+
+  chmod +x "$st_bin/gpg" "$st_bin/gh"
+  PATH="$st_bin:$PATH"
+  export PATH
+
+  # Hardening: everything below is only safe because these fakes shadow the
+  # real binaries. If PATH construction ever regressed, the suite would start
+  # reading the maintainer's real keyring and calling the real GitHub API.
+  for st_cmd in gpg gh; do
+    st_resolved="$(command -v "$st_cmd" || true)"
+    if [ "$st_resolved" != "$st_bin/$st_cmd" ]; then
+      echo "not ok - refusing to run: '$st_cmd' resolves to '${st_resolved:-<nothing>}'," >&2
+      echo "         not the fake in $st_bin." >&2
+      exit 1
+    fi
+  done
+  st_ok 'fakes shadow gpg and gh (no real key or API is reachable)'
+
+  # `HOME` is where git looks for the only config file that can now reach it
+  # (the scrub above removed GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM and the
+  # rest), and GIT_CONFIG_NOSYSTEM closes /etc/gitconfig. Without both, the
+  # maintainer's own `user.signingkey` leaks into the cases that assert its
+  # ABSENCE and those cases pass for the wrong reason.
+  HOME="$st_tmp/home"
+  mkdir -p "$HOME"
+  export HOME
+  GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_NOSYSTEM
+  cd "$st_tmp"
+
+  st_config() { # <name> <email> [<signingkey>] [<gpg.format>]
+    {
+      printf '[user]\n'
+      if [ -n "$1" ]; then printf '\tname = %s\n' "$1"; fi
+      if [ -n "$2" ]; then printf '\temail = %s\n' "$2"; fi
+      if [ -n "${3:-}" ]; then printf '\tsigningkey = %s\n' "$3"; fi
+      if [ -n "${4:-}" ]; then printf '[gpg]\n\tformat = %s\n' "$4"; fi
+    } >"$HOME/.gitconfig"
+  }
+
+  # Assert the gate's verdict. <expect> is `accept` or `reject`; on `reject`
+  # the diagnosis must also contain <needle>, so a case cannot pass by being
+  # rejected for an unrelated reason.
+  st_identity() { # <expect> <label> [<needle>]
+    local expect="$1" label="$2" needle="${3:-}" problem=''
+    if problem="$(release_identity_problem)"; then
+      if [ "$expect" = accept ]; then
+        st_ok "$label"
+      else
+        st_bad "$label" 'accepted, expected rejection'
+      fi
+      return 0
+    fi
+    if [ "$expect" = accept ]; then
+      st_bad "$label" "rejected: $problem"
+    elif [ -n "$needle" ] && [ "${problem#*"$needle"}" = "$problem" ]; then
+      st_bad "$label" "rejected, but the diagnosis never mentions '$needle': $problem"
+    else
+      st_ok "$label"
+    fi
+  }
+
+  FAKE_GPG_KEY='6CD11759A20B6111'
+  export FAKE_GPG_KEY
+  # One healthy primary key unless a case says otherwise (7b-7d).
+  FAKE_GPG_PUBS='u'
+  export FAKE_GPG_PUBS
+
+  # 1. THE DEFECT (#3745 at 0.9.4, #4082 at 0.9.8), reproduced exactly: a
+  #    good signature from a key whose UID is the maintainer's real address,
+  #    on a commit committed as the placeholder `t <t@t.t>`. GitHub answers
+  #    `unverified_email`; this gate must answer before the push.
+  FAKE_GPG_UIDS='u|Javier Folcini <jfolcini86@gmail.com>'
+  export FAKE_GPG_UIDS
+  st_config 't' 't@t.t' "$FAKE_GPG_KEY"
+  st_identity reject 'placeholder t@t.t is rejected (the 0.9.4 / 0.9.8 defect)' 't@t.t'
+
+  # 2. The identity the key actually carries is accepted.
+  st_config 'Javier Folcini' 'jfolcini86@gmail.com' "$FAKE_GPG_KEY"
+  st_identity accept 'a committer address that is a UID on the signing key is accepted'
+
+  # 3. Address comparison is case-insensitive — RFC-wise the domain is, and
+  #    GitHub folds case, so rejecting here would be a false red. Asserted in
+  #    BOTH directions: with only the config side folded, dropping the fold on
+  #    the key side leaves every assertion green.
+  st_config 'Javier Folcini' 'JFolcini86@Gmail.com' "$FAKE_GPG_KEY"
+  st_identity accept 'a mixed-case committer address matches its lower-case UID'
+  FAKE_GPG_UIDS='u|Javier Folcini <JFolcini86@Gmail.com>'
+  st_config 'Javier Folcini' 'jfolcini86@gmail.com' "$FAKE_GPG_KEY"
+  st_identity accept 'a lower-case committer address matches its mixed-case UID'
+  FAKE_GPG_UIDS='u|Javier Folcini <jfolcini86@gmail.com>'
+
+  # 3c. …and the match is EXACT, not a substring. `grep -Fxq` is what makes it
+  #     so, and with `-Fx` weakened to `-F` every other case in this suite
+  #     stays green — so the strictness of the single comparison the whole
+  #     gate rests on would be unpinned. A UID that merely CONTAINS the
+  #     committer address belongs to somebody else, and GitHub binds to it no
+  #     more than to a UID that has nothing to do with the address.
+  FAKE_GPG_UIDS='u|Someone Else <notjfolcini86@gmail.com>'
+  st_config 'Javier Folcini' 'jfolcini86@gmail.com' "$FAKE_GPG_KEY"
+  st_identity reject 'a UID that merely CONTAINS the committer address does not match it' \
+    'is not a user ID'
+  FAKE_GPG_UIDS='u|Javier Folcini <jfolcini86@gmail.com>'
+
+  # 4. A REVOKED UID does not count. GitHub will not bind to it, so counting
+  #    it would make the gate pass on the configuration that fails at push.
+  #    A second, usable UID keeps the "key has no usable UID at all" branch
+  #    out of the way, so this case can only pass on the exclusion itself.
+  FAKE_GPG_UIDS='u|Javier Folcini <other@example.invalid>
+r|Javier Folcini <jfolcini86@gmail.com>'
+  st_config 'Javier Folcini' 'jfolcini86@gmail.com' "$FAKE_GPG_KEY"
+  st_identity reject 'a revoked UID does not satisfy the gate' 'is not a user ID'
+
+  # 5. An EXPIRED UID likewise.
+  FAKE_GPG_UIDS='u|Javier Folcini <other@example.invalid>
+e|Javier Folcini <jfolcini86@gmail.com>'
+  st_identity reject 'an expired UID does not satisfy the gate' 'is not a user ID'
+
+  # 5b. The exclusion is a FILTER, not a blanket. The same address on a
+  #     revoked UID *and* a usable one is still bindable through the usable
+  #     one, so it must be accepted — a rule of "reject any address that
+  #     appears in a revoked UID" would satisfy cases 4 and 5 and be wrong.
+  FAKE_GPG_UIDS='r|Javier Folcini <jfolcini86@gmail.com>
+u|Javier Folcini <jfolcini86@gmail.com>'
+  st_config 'Javier Folcini' 'jfolcini86@gmail.com' "$FAKE_GPG_KEY"
+  st_identity accept 'an address carried by BOTH a revoked and a usable UID is accepted'
+
+  FAKE_GPG_UIDS='u|Javier Folcini <jfolcini86@gmail.com>'
+
+  # 6. No signing key: `git commit -S` would pick one by guesswork.
+  st_config 'Javier Folcini' 'jfolcini86@gmail.com' ''
+  st_identity reject 'a missing user.signingkey is rejected' 'signingkey'
+
+  # 7. A key gpg does not know about yields no UIDs at all.
+  st_config 'Javier Folcini' 'jfolcini86@gmail.com' 'DEADBEEFDEADBEEF'
+  st_identity reject 'a signing key with no usable UID is rejected' 'DEADBEEFDEADBEEF'
+
+  # 7b. An EXPIRED PRIMARY KEY. gpg 2.4.4 stamps the expiry on the UID records
+  #     too (measured), so the UID filter alone would already reject this —
+  #     but it would blame the user IDs for a key that has simply lapsed, and
+  #     that mirroring is a gpg behaviour rather than a promise. Modelled with
+  #     USABLE UIDs precisely so only the `pub` record can reject it.
+  FAKE_GPG_PUBS='e'
+  st_config 'Javier Folcini' 'jfolcini86@gmail.com' "$FAKE_GPG_KEY"
+  st_identity reject 'an expired signing key is rejected, and named as expired' 'EXPIRED'
+
+  # 7c. A REVOKED PRIMARY KEY, the same way.
+  FAKE_GPG_PUBS='r'
+  st_identity reject 'a revoked signing key is rejected, and named as revoked' 'REVOKED'
+
+  # 7d. An AMBIGUOUS `user.signingkey`. `git commit -S` hands the configured
+  #     id straight to gpg, and a short id or a bare email can name two keys
+  #     in one keyring (measured on gpg 2.4.4: two keys sharing a UID address
+  #     answer one `--list-keys <address>` with two `pub` records). gpg then
+  #     picks one, which need not be the key whose UID matched — so accepting
+  #     here would pass a signature that cannot bind. Both UIDs stay usable
+  #     and matching, so only the key COUNT can reject this.
+  FAKE_GPG_PUBS='u
+u'
+  st_identity reject 'a user.signingkey resolving to more than one key is rejected' \
+    'matches 2 keys'
+  FAKE_GPG_PUBS='u'
+
+  # 7e. gpg ABSENT. Without its own branch the diagnosis is "no usable user
+  #     ID", which sends a maintainer on a fresh machine hunting a key defect
+  #     that does not exist — and this gate has no bypass flag, so a
+  #     misleading message is the whole of the remedy. PATH is narrowed to
+  #     symlinks of the commands the gate reaches BEFORE the gpg probe, so the
+  #     real gpg is not merely shadowed here, it is unreachable.
+  st_nogpg="$st_tmp/nogpg"
+  mkdir -p "$st_nogpg"
+  for st_cmd in git sed tr awk sort grep; do
+    ln -sf "$(command -v "$st_cmd")" "$st_nogpg/$st_cmd"
+  done
+  # Subshell for the same reason as case 9: `st_fail` set inside cannot
+  # propagate out, so the subshell's exit status carries the verdict.
+  if ! (
+    PATH="$st_nogpg"
+    export PATH
+    if command -v gpg >/dev/null 2>&1; then
+      st_bad 'gpg absent is diagnosed as gpg absent' \
+        'gpg is still reachable on the narrowed PATH; the case would prove nothing'
+    else
+      st_identity reject 'gpg absent is diagnosed as gpg absent, not as a key defect' \
+        'not on PATH'
+    fi
+    [ "$st_fail" = 0 ]
+  ); then
+    st_fail=1
+  fi
+
+  # 8. Missing name / email — the DCO trailer cannot be written from either.
+  st_config '' 'jfolcini86@gmail.com' "$FAKE_GPG_KEY"
+  st_identity reject 'an unset user.name is rejected' 'user.name'
+  st_config 'Javier Folcini' '' "$FAKE_GPG_KEY"
+  st_identity reject 'an unset user.email is rejected' 'user.email'
+
+  # 9. #4082's third symptom: the sign-off says one identity and the commit
+  #    is committed as another. `GIT_COMMITTER_EMAIL` is the sharpest way to
+  #    produce that split, and `git var` is why the gate can see it at all.
+  st_config 'Javier Folcini' 'jfolcini86@gmail.com' "$FAKE_GPG_KEY"
+  # In a subshell, because the override has to be exported for `git var` to
+  # see it and must not leak into the cases below. `st_fail` set in there
+  # cannot propagate out, so the subshell's own exit status carries the
+  # verdict instead — without that trailing test the case printed FAIL and
+  # the suite still exited 0.
+  if ! (
+    export GIT_COMMITTER_EMAIL='someone-else@example.invalid'
+    st_identity reject 'a committer address that disagrees with the DCO trailer is rejected' 'Signed-off-by'
+    [ "$st_fail" = 0 ]
+  ); then
+    st_fail=1
+  fi
+
+  # 10. SSH signing has no UID list to compare against, so the gate asserts
+  #     only what it can see and leaves the post-push check authoritative.
+  st_config 'Javier Folcini' 'jfolcini86@gmail.com' '' 'ssh'
+  st_identity accept 'ssh signing skips the UID comparison rather than inventing a rule'
+
+  st_config 'Javier Folcini' 'jfolcini86@gmail.com' "$FAKE_GPG_KEY"
+
+  # ── post-push verification ────────────────────────────────────────────
+  FAKE_GH_DIR="$st_tmp/gh"
+  mkdir -p "$FAKE_GH_DIR"
+  export FAKE_GH_DIR
+  RELEASE_VERIFY_DELAY=0
+  RELEASE_VERIFY_ATTEMPTS=2
+
+  st_gh_body() { printf '%s' "$2" >"$FAKE_GH_DIR/$(printf '%s' "$1" | tr '/{}' '___')"; }
+
+  # 11. GitHub says verified — the release proceeds.
+  st_gh_body 'repos/{owner}/{repo}/commits/2e10dd82' \
+    '{"commit":{"verification":{"verified":true,"reason":"valid"}}}'
+  if release_require_verified_commit 2e10dd82 >/dev/null 2>&1; then
+    st_ok 'a commit GitHub reports as verified passes the post-push gate'
+  else
+    st_bad 'a commit GitHub reports as verified passes the post-push gate' 'rejected'
+  fi
+
+  # 12. The 0.9.8 answer verbatim. This is the assertion that never existed:
+  #     the bypass block scrolled past and three releases shipped on it.
+  st_gh_body 'repos/{owner}/{repo}/commits/2e10dd82' \
+    '{"commit":{"verification":{"verified":false,"reason":"unverified_email"}}}'
+  st_out="$(release_require_verified_commit 2e10dd82 2>&1)" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" = 0 ]; then
+    st_bad 'an unverified commit fails the post-push gate' 'accepted verified=false'
+  elif [ "${st_out#*unverified_email}" = "$st_out" ]; then
+    st_bad 'an unverified commit fails the post-push gate' "reason not reported: $st_out"
+  else
+    st_ok 'an unverified commit fails the post-push gate, naming the reason'
+  fi
+
+  # 13. No answer at all is a FAILURE, not a pass — an unread verification
+  #     has established nothing. A SHA that was never given a canned body, so
+  #     the case cannot silently re-read case 12's: an earlier draft deleted
+  #     the body by re-deriving the fake's filename, got the mangling wrong,
+  #     and passed against the `verified:false` payload it meant to remove.
+  if release_require_verified_commit 00000000deadbeef >/dev/null 2>&1; then
+    st_bad 'an unreadable verification fails closed' 'accepted with no answer from the API'
+  else
+    st_ok 'an unreadable verification fails closed'
+  fi
+
+  # 13b. The shapes a real failure actually arrives in. `gh api --jq` treats a
+  #      404 body and a rate-limit body as ordinary JSON, so "the API
+  #      answered" and "the API answered THIS" are different questions; and
+  #      `.verified` on a missing verification block is jq's `null`, which
+  #      must not read as a pass. One canned path, rewritten per shape.
+  st_no_pass() { # <label> <body>
+    st_gh_body 'repos/{owner}/{repo}/commits/deadc0de' "$2"
+    if release_require_verified_commit deadc0de >/dev/null 2>&1; then
+      st_bad "$1" 'accepted — the gate passed without ever reading verified=true'
+    else
+      st_ok "$1"
+    fi
+  }
+  st_no_pass 'an empty API body cannot pass the post-push gate' ''
+  st_no_pass 'a 404 body cannot pass the post-push gate' \
+    '{"message":"Not Found","status":"404"}'
+  st_no_pass 'a rate-limit body cannot pass the post-push gate' \
+    '{"message":"API rate limit exceeded for user ID 1."}'
+  st_no_pass 'a commit body with no verification block cannot pass the post-push gate' \
+    '{"commit":{"message":"chore(release): bump version to 0.9.8"}}'
+
+  # 14. The tag object is checked the same way, through the ref (#3745 —
+  #     `tag.gpgsign` makes the tag fail for exactly the same reason).
+  st_gh_body 'repos/{owner}/{repo}/git/ref/tags/0.9.8' '{"object":{"sha":"aaaa1111"}}'
+  st_gh_body 'repos/{owner}/{repo}/git/tags/aaaa1111' \
+    '{"verification":{"verified":false,"reason":"unverified_email"}}'
+  if release_require_verified_tag 0.9.8 >/dev/null 2>&1; then
+    st_bad 'an unverified tag fails the post-push gate' 'accepted verified=false'
+  else
+    st_ok 'an unverified tag fails the post-push gate'
+  fi
+  st_gh_body 'repos/{owner}/{repo}/git/tags/aaaa1111' \
+    '{"verification":{"verified":true,"reason":"valid"}}'
+  if release_require_verified_tag 0.9.8 >/dev/null 2>&1; then
+    st_ok 'a verified tag passes the post-push gate'
+  else
+    st_bad 'a verified tag passes the post-push gate' 'rejected'
+  fi
+
+  # 14b. A tag ref that does not resolve to an object is not a verified tag.
+  #      Same fail-closed rule one step earlier in the chain: the ref lookup
+  #      is a second place the API can decline to answer.
+  #      Asserted on the DIAGNOSIS, not just the exit status: with the
+  #      early return deleted the tag lookup still fails closed one step
+  #      later, on the empty object path — so a status-only assertion would
+  #      stay green while the branch it names had gone.
+  st_gh_body 'repos/{owner}/{repo}/git/ref/tags/0.9.9' '{"message":"Not Found"}'
+  st_out="$(release_require_verified_tag 0.9.9 2>&1)" && st_rc=0 || st_rc=$?
+  if [ "$st_rc" = 0 ]; then
+    st_bad 'a tag ref that resolves to no object fails closed' 'accepted with no tag object'
+  elif [ "${st_out#*could not resolve}" = "$st_out" ]; then
+    st_bad 'a tag ref that resolves to no object fails closed' \
+      "failed, but not on the ref lookup: $st_out"
+  else
+    st_ok 'a tag ref that resolves to no object fails closed, naming the ref lookup'
+  fi
+
+  # ── wiring ratchets ───────────────────────────────────────────────────
+  # The cases above prove the functions behave; these prove the script still
+  # CALLS them, in the one order that matters. Without them the gates could
+  # be deleted from the flow with every assertion above still green.
+  #
+  # Only the production half of the file is scanned — everything from the
+  # argument parser down — so the pattern strings written here cannot match
+  # themselves and make a ratchet tautological.
+  st_production() { sed -n '/^# ── Argument parsing/,$p' "$st_self" | grep -vE '^[[:space:]]*#'; }
+  # `|| true` because of `pipefail`: a pattern that matches NOTHING makes the
+  # pipeline fail, and `set -e` would then kill the suite with exit 1 and no
+  # diagnosis at all — the "no line matches /…/" branch below was unreachable
+  # until this was added.
+  st_where() { st_production | grep -nE "$1" | head -1 | cut -d: -f1 || true; }
+
+  st_prod_lines="$(st_production | wc -l)"
+  if [ "$st_prod_lines" -lt 100 ]; then
+    st_bad 'the ratchets scan a real production slice' \
+      "only $st_prod_lines lines matched; the ratchets below would be vacuous"
+  else
+    st_ok "the ratchets scan a real production slice ($st_prod_lines lines)"
+  fi
+
+  st_order() { # <label> <earlier-pattern> <later-pattern>
+    local label="$1" first second
+    first="$(st_where "$2")"
+    second="$(st_where "$3")"
+    if [ -z "$first" ]; then
+      st_bad "$label" "no line matches /$2/"
+    elif [ -z "$second" ]; then
+      st_bad "$label" "no line matches /$3/"
+    elif [ "$first" -ge "$second" ]; then
+      st_bad "$label" "/$2/ is at line $first, /$3/ at $second — wrong order"
+    else
+      st_ok "$label"
+    fi
+  }
+
+  st_order 'the identity gate runs before the signed commit' \
+    'release_require_identity$' '^git commit -S'
+  st_order 'the main push is followed by the commit verification' \
+    '^git push --no-verify origin main$' 'release_require_verified_commit "'
+  st_order 'the commit is verified BEFORE the tag push (the point of no return)' \
+    'release_require_verified_commit "' '^git push --no-verify origin "\$NEW_VERSION"$'
+  st_order 'the tag push is followed by the tag verification' \
+    '^git push --no-verify origin "\$NEW_VERSION"$' 'release_require_verified_tag "'
+
+  # release.sh's preflight is only a fast-fail — the gate above is what makes
+  # the release safe — but it is the difference between learning about a bad
+  # identity now and learning about it after a 5-10 minute release build, and
+  # nothing else would notice it going away.
+  st_release_sh() { grep -vE '^[[:space:]]*#' "$st_scripts_dir/release.sh"; }
+  st_release_where() { st_release_sh | grep -nE "$1" | head -1 | cut -d: -f1 || true; }
+  st_check_at="$(st_release_where 'bump-version\.sh --check-identity')"
+  st_build_at="$(st_release_where 'verify-release-build\.sh$')"
+  if [ -z "$st_check_at" ]; then
+    st_bad 'release.sh checks the identity before it spends minutes on a build' \
+      'release.sh never runs `bump-version.sh --check-identity`'
+  elif [ -z "$st_build_at" ]; then
+    st_bad 'release.sh checks the identity before it spends minutes on a build' \
+      'release.sh never runs verify-release-build.sh'
+  elif [ "$st_check_at" -ge "$st_build_at" ]; then
+    st_bad 'release.sh checks the identity before it spends minutes on a build' \
+      "--check-identity is at line $st_check_at, the build at $st_build_at"
+  else
+    st_ok 'release.sh checks the identity before it spends minutes on a build'
+  fi
+
+  if [ "$st_fail" != 0 ]; then
+    echo 'release identity self-test FAILED' >&2
+    exit 1
+  fi
+  echo 'release identity self-test passed'
+  exit 0
+fi
+
+# ── Identity preflight (--check-identity) ───────────────────────────────────
+# Exposed as a flag so scripts/release.sh can fail on a bad identity BEFORE
+# it spends 5-10 minutes on the local release build, and so the check can be
+# run on its own from a fresh clone or a new machine.
+if [ "${1:-}" = "--check-identity" ]; then
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$REPO_ROOT" ]; then cd "$REPO_ROOT"; fi
+  release_require_identity
+  echo "✓ release identity can produce a commit GitHub will verify."
+  exit 0
+fi
 
 # ── Argument parsing ────────────────────────────────────────────────────────
 
@@ -124,6 +917,24 @@ if [ "$DO_COMMIT" -eq 1 ]; then
     echo "       Switch with 'git checkout main' and re-run." >&2
     exit 1
   fi
+fi
+
+# Identity gate (#3745, #4082) — see the header block. Placed here, before a
+# single manifest is edited, so a placeholder identity costs nothing but the
+# error message rather than a half-bumped tree to clean up.
+if [ "$DO_COMMIT" -eq 1 ]; then
+  release_require_identity
+fi
+
+# The post-push verification below is not optional, so neither is `gh`. A
+# release that cannot be verified must not be cut: failing here is the whole
+# point (#3745 — "release.sh should verify it rather than trust it").
+if [ "$DO_PUSH" -eq 1 ] && ! command -v gh >/dev/null 2>&1; then
+  echo "ERROR: required command 'gh' not found in PATH." >&2
+  echo "       --push verifies with GitHub that the pushed commit and tag landed" >&2
+  echo "       with verified signatures; without gh that check cannot run, and an" >&2
+  echo "       unrun check is not a passed one." >&2
+  exit 1
 fi
 
 # ── Read current version ────────────────────────────────────────────────────
@@ -312,7 +1123,39 @@ fi
 # --no-verify; that's an explicit maintainer decision — release commits
 # go straight to main.
 git push --no-verify origin main
+
+# Between the two pushes, deliberately. The TAG push is the point of no
+# return — release.yml publishes with no approval gate — so a bump commit
+# that landed unverified stops the release before it starts rather than
+# after. This is the assertion #3745 asked for: the "Bypassed rule
+# violations" block scrolls past in a wall of push output, which is exactly
+# why 0.9.4 and 0.9.8 both shipped on it unread (and, per #3745, probably
+# 0.9.3 before them).
+RELEASE_SHA="$(git rev-parse HEAD)"
+if ! release_require_verified_commit "$RELEASE_SHA"; then
+  echo "       The bump commit is on main but NO TAG WAS PUSHED, so no release was" >&2
+  echo "       cut and nothing has been published. If GitHub answered verified=false," >&2
+  echo "       fix the identity and land a new bump on top; do not retry the tag until" >&2
+  echo "       it reports verified=true." >&2
+  echo "       If instead the answer was UNREADABLE (an outage, a rate limit), nothing" >&2
+  echo "       is wrong with the commit: the local tag $NEW_VERSION already exists, so" >&2
+  echo "       re-ask and resume from the tag push once it answers. Do NOT re-run" >&2
+  echo "       scripts/release.sh — it refuses on a version the manifests already hold:" >&2
+  echo "         gh api repos/{owner}/{repo}/commits/$RELEASE_SHA --jq .commit.verification" >&2
+  exit 1
+fi
+
 git push --no-verify origin "$NEW_VERSION"
+
+# The annotated tag is signed with the same key and carries the same tagger
+# address, so it fails for the same reason the commit does. By here the
+# workflow has already started, so this one is loud rather than preventive.
+if ! release_require_verified_tag "$NEW_VERSION"; then
+  echo "       The tag is pushed and the Release workflow is ALREADY RUNNING." >&2
+  echo "       Cancel it before the publish-release job if this must not ship:" >&2
+  echo "         https://github.com/jfolcini/agaric/actions/workflows/release.yml" >&2
+  exit 1
+fi
 
 echo "Pushed main + tag $NEW_VERSION to origin."
 echo "GitHub Actions will now run the Release workflow:"

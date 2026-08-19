@@ -15,6 +15,9 @@
 #      Skip with --skip-verify-build.
 #   3. Bump all 5 version manifests in lockstep, commit (GPG-signed), tag
 #      (GPG-signed), and push main + the tag (scripts/bump-version.sh).
+#      bump-version.sh refuses to commit under an identity that cannot
+#      verify, and asks GitHub to confirm the pushed commit's signature
+#      BEFORE it pushes the tag (#3745, #4082).
 #   4. The pushed tag triggers .github/workflows/release.yml, which builds
 #      every platform, drafts the GitHub Release, and then PUBLISHES it.
 #
@@ -150,6 +153,15 @@ if git ls-remote --exit-code --tags origin "refs/tags/$NEW_VERSION" >/dev/null 2
   echo "         git push --delete origin $NEW_VERSION" >&2
   exit 1
 fi
+
+# ── Preflight: the release identity can produce a verifiable commit ─────────
+#
+# Asked here rather than at the commit so it costs the error message instead
+# of the 5-10 minute local release build below. bump-version.sh asserts the
+# same thing again immediately before it commits — this is the fast-fail, not
+# the gate.
+echo "→ checking the release identity (#3745, #4082)"
+scripts/bump-version.sh --check-identity
 
 # ── Confirm ─────────────────────────────────────────────────────────────────
 

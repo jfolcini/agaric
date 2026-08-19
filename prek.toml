@@ -3231,6 +3231,28 @@ pass_filenames = false
 files = '^scripts/(verify-ci-equivalent|push|test-skip-ci-verify-guard)\.sh$'
 stages = ["pre-commit"]
 
+# release-identity-selftest (#3745, #4082): the release bump is the only
+# commit that reaches `main` without a squash merge, so it is the only one
+# whose local git identity is ever tested — and it landed `verified=false /
+# unverified_email` on 0.9.4 and again on 0.9.8, bypassing the "Commits must
+# have verified signatures" rule rather than satisfying it. bump-version.sh
+# now refuses to commit under an identity that cannot verify and asks GitHub
+# to confirm the pushed commit before it pushes the tag. Both gates are
+# invisible until a release is cut, which is the worst possible moment to
+# discover one has been deleted, so the suite (fake gpg + fake gh, plus
+# ratchets on the call ORDER) runs at commit time instead. Fast and
+# side-effect-free: no key is read, no API is called, no manifest is touched.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "release-identity-selftest"
+name = "release identity + signature verification self-test"
+entry = "bash scripts/bump-version.sh --self-test"
+language = "system"
+pass_filenames = false
+files = '^(scripts/(bump-version|release|dco-signoff)\.sh|scripts/lib/git-scratch-guard\.sh)$'
+stages = ["pre-commit"]
+
 # verify-ci-equivalent-selftest (#3257): Phase E's sqlx probe databases
 # used a machine-global fixed /tmp path, so two concurrent pushes from
 # different worktrees — this project's standard parallel-batch workflow —
