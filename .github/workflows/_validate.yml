@@ -380,21 +380,19 @@ jobs:
         # `mold` is added to speed up the linker step on the Rust builds
         # (clippy, cargo-deny, sqlx prepare's compile pass, etc).
         # Activated via the .cargo/config.toml under the linux runner.
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
@@ -1338,7 +1336,14 @@ jobs:
             if [ "${status}" -eq 0 ]; then
               exit 0
             fi
-            if [ "${status}" -eq 124 ]; then
+            if [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; then
+              # 137, not just 124 (#4163). `timeout -k` exits 124 when the
+              # child dies on the SIGTERM, but the SIGKILL path exits 137 --
+              # measured on coreutils 9.4 against a TERM-ignoring child:
+              # `timeout -k 1 2` -> exit 137, elapsed 3s. Testing 124 alone
+              # missed precisely the case `-k` was added for, and would have
+              # skipped the stray-clearing below in it.
+              #
               # `timeout` runs as the runner user and SIGTERMs only its direct
               # child (npx), so the root `apt-get` grandchild survives -- still
               # hung on the mirror AND still holding the lock. Without clearing
@@ -1469,21 +1474,19 @@ jobs:
       - name: Install system dependencies
         # Same apt list as the `lint` sibling — both jobs compile Rust and
         # need the webkit/gtk/ssl/rsvg/soup stack plus mold for fast linking.
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
@@ -1611,13 +1614,19 @@ jobs:
           persist-credentials: false
 
       - name: Install lcov
-        # #4115: bound a stalled mirror. NOTE this job is `timeout-minutes: 10`,
-        # so the two-attempt 300s shape used elsewhere would BE the whole budget
-        # and the job would still be cancelled mid-step. One bounded attempt at
-        # 120s leaves room for the rest of the job to fail cleanly instead.
-        run: |
-          sudo timeout 120 apt-get update
-          sudo apt-get install -y lcov
+        # 120s, not the 300s default: this job is `timeout-minutes: 10`, so two
+        # 300s attempts would BE the whole budget. Before #4163 this site had no
+        # retry at all AND no `::error::` marker, so its 124 surfaced as the bare
+        # `Process completed with exit code 124` the issue reports (job
+        # 95981259083). It now gets the same two advisory attempts as every other
+        # site, and `lcov` installs from the image's own lists when they suffice.
+        # #4163: `apt-get update` is ADVISORY inside this action -- the install,
+        # not the index refresh, decides this step. See the action for the trace.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            lcov
+          update-timeout: '120'
 
       - name: Download shard coverage artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1768,21 +1777,19 @@ jobs:
         # Same apt list as cargo-tests / lint — the agaric-mcp crate
         # links against the webkit/gtk/ssl/rsvg/soup stack via its
         # transitive deps, and mold accelerates the link step.
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
