@@ -32,12 +32,72 @@
 // real rather than hypothetical). This file is exempt too: it necessarily
 // contains the offending patterns as detector fixtures.
 //
-// Exemptions are PER RULE where one rule is enough. The two file-source
-// helpers are waived from rule 1 alone (`SCRUB_EXEMPT_BASENAMES`) and are
-// still enumerated, opened and judged by rule 2 — because a file skipped
-// before either rule runs cannot honestly be described as "still caught if it
-// ever built a fixture", and that sentence is the whole justification for
-// excusing it.
+// ─── The four design calls (#4043, #4044, #4045, #4064) ──────────────────
+//
+// Each of these is a decision this file used to make silently, by the shape
+// of a regex, so the next reader had to infer it. They are stated here
+// because the answer is not derivable from the code — only visible in it.
+//
+// 1. A COMMAND-SCOPED SCRUB COUNTS, WHEN THE COMMAND IT SCOPES IS `git`
+//    (#4043). `env -u GIT_INDEX_FILE git …`, `env -i PATH=$PATH git -C "$d"
+//    init` and `GIT_DIR= GIT_WORK_TREE= git -C "$d" init` are all working
+//    private scrubs of a git command's environment — the same defect as a
+//    process-wide `unset`, spelled per-command, and `env -u` is the idiom
+//    someone who already knows about #3722 reaches for first. They are rule-1
+//    matches.
+//
+//    Scrubbing some OTHER program's environment is NOT a fixture scrub and is
+//    not matched. `scripts/test-py-guard-file-source.sh` runs
+//    `env -u GIT_INDEX_FILE python3 <guard>` six times: that is pinning the
+//    INPUT of the guard under test (these guards resolve their source FROM
+//    `GIT_INDEX_FILE`, so a leaked one would turn every "auto" assertion into
+//    an index read and the suite would pass without testing the default), on
+//    top of a `git_scratch_guard` it already calls. No git command runs under
+//    that environment, so nothing about it is a copy of the fixture scrub.
+//    Requiring `git` on the same logical line is what draws that line, and it
+//    is the reason that file needs no exemption.
+//
+// 2. A DYNAMIC `import()` COUNTS AS WIRING (#4044). `await import('…/
+//    git-scratch-guard.mjs')` was reported as "without wiring itself … at
+//    all" — a false red whose remedy the author had already applied. The
+//    symmetric objection (a dynamic import is weaker evidence than a static
+//    one, because it may never be evaluated) does not discriminate: this
+//    guard ALREADY cannot prove the helper is called before the first git
+//    command, for any import form. Under that stated limitation static and
+//    dynamic are the same evidence, so treating them differently would be
+//    precision the guard does not have.
+//
+// 3. RULE 1 APPLIES TO `.py` ONLY WHERE RULE 2 ALSO DOES (#4045, #4064).
+//    There is no Python sibling of the scrubber, so `sourcesSharedGuard(…,
+//    'py')` is `false` unconditionally and rule 1 for Python read as "no
+//    Python file may touch a `GIT_` variable", with nothing to point at as
+//    the remedy — a rule no file can satisfy is not a rule, it is a tax.
+//    `scripts/lib/guard_file_source.py` paid it: removing a foreign
+//    `GIT_INDEX_FILE` from a subprocess environment is the one place that
+//    decides which INDEX a guard reads, and it needed an exemption for it.
+//    Rule 1 for `.py` is therefore scoped to files that ALSO build a fixture
+//    — where the message rule 2 already prints ("write it in Node or shell,
+//    or add the Python sibling") is the remedy, and the hand-rolled scrub is
+//    the #3722 shape rather than ordinary environment handling.
+//
+//    NOT widened to `.sh`/`.mjs`: those languages HAVE a helper, so rule 1's
+//    message names a real remedy there, and a script that scrubs by hand for
+//    a fixture it built some other way (`git clone`, a tarball) is a case
+//    only rule 1 can see.
+//
+// 4. `not-a-fixture-scrub: <reason>` REPLACES THE EXEMPTION LIST (#4064). A
+//    set of basenames in this file grew an entry every time a legitimate
+//    `GIT_` removal appeared elsewhere, and it excused the WHOLE file's
+//    rule 1 rather than the one statement that earned it. The pragma is a
+//    trailing comment on the scrub line itself, carries a mandatory reason,
+//    and waives rule 1 for THAT LINE ONLY:
+//
+//      delete out.GIT_INDEX_FILE // not-a-fixture-scrub: <why>
+//
+//    Its one live user is `scripts/lib/guard-file-source.mjs`'s `gitEnv`.
+//    A bare `not-a-fixture-scrub:` with no reason does not waive anything —
+//    the reason is the whole mechanism, and a pragma that could be typed
+//    without one would be the exemption list again, distributed.
 //
 // ─── Why `.mjs` and `.py` are scanned, not just `.sh` (#4015) ─────────────
 //
@@ -120,36 +180,6 @@ const EXEMPT_BASENAMES = new Set([
   'check-git-fixture-isolation.mjs',
 ])
 
-/** Exempt from RULE 1 ONLY (the hand-rolled-scrub detector). The file is
- * still enumerated, still opened, and rule 2 (`git` … `init`) still judges
- * it.
- *
- * `guard_file_source.py` and its Node twin `guard-file-source.mjs` (#4017)
- * are the one place per language that decides which INDEX a guard reads, and
- * doing that means removing a foreign `GIT_INDEX_FILE` from a subprocess
- * environment (`git_env` / `gitEnv`) — which rule 1 cannot tell apart from a
- * private copy of the fixture scrub, because textually it is the same
- * statement. Note this is a PAIR, not a special case: the two files are
- * ports of each other, and the second one arrived by this guard flagging it.
- *
- * Exempt DELIBERATELY and narrowly, rather than reworded to slip past the
- * detector: `{k: v for k, v in env.items() if k != …}` would pass this scan
- * today, and writing it that way to avoid a true positive is the evasion this
- * guard exists to make expensive.
- *
- * PER-RULE, not per-file, because the narrower exemption is the one whose
- * justification is true. The claim worth making about this file is that it
- * builds no fixture and would be caught if it ever did — and a basename in
- * `EXEMPT_BASENAMES` is skipped by `listGuardedScripts` before either rule
- * runs, so under a total exemption that claim was false: the file would never
- * have been read. Rule 2 is left live so the sentence describes the code.
- *
- * The general shape — that rule 1 reads as "no file outside the shared
- * scrubber may touch a GIT_ variable", with no way to say "this removal is
- * not a fixture scrub" other than an exemption — is a real over-reach, filed
- * as #4064 along with rule 2's missing same-call requirement.
- */
-const SCRUB_EXEMPT_BASENAMES = new Set(['guard_file_source.py', 'guard-file-source.mjs'])
 const EXCLUDED_DIR_NAMES = new Set(['node_modules', '__pycache__', '.git'])
 
 /** Extension -> language tag. The scanned corpus is exactly these keys, and
@@ -297,31 +327,99 @@ function joinContinuations(text) {
 const GIT_ENV_VAR_RE =
   /\b(GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_OBJECT_DIRECTORY|GIT_COMMON_DIR|GIT_NAMESPACE)\b/
 
+/** The per-statement waiver (design call 4). A TRAILING comment — `#` or
+ * `//` — on the scrub line, carrying a non-empty reason. Trailing rather
+ * than own-line because `stripLineComments` deletes whole comment lines
+ * before any detector sees them, so a pragma on its own line would be gone
+ * by the time this runs; and per-line rather than per-file because "this one
+ * removal is not a fixture scrub" is the only claim that is ever true.
+ *
+ * The `\S` is load-bearing: a bare `not-a-fixture-scrub:` waives nothing. */
+const NOT_A_FIXTURE_SCRUB_RE = /(?:#|\/\/)\s*not-a-fixture-scrub:\s*\S/
+
+/** Spellings that identify a line as a SCRUB STATEMENT but do not themselves
+ * name the variable — the line must ALSO name one of `GIT_ENV_VAR_RE`.
+ *
+ *   sh   `unset GIT_DIR …`; `export -n GIT_DIR` (removing a name from the
+ *        export list is, to a child process, the same thing as unsetting it)
+ *   mjs  `delete env.GIT_DIR`, `delete process.env['GIT_INDEX_FILE']`, and
+ *        `env.GIT_DIR = undefined` — Node's `child_process` DROPS an
+ *        `undefined` env value, so the assignment is the same scrub as the
+ *        deletion (#4045)
+ *   py   `del os.environ["GIT_DIR"]`, `env.pop("GIT_WORK_TREE", None)`
+ */
+const SCRUB_STATEMENT_RE = {
+  sh: /^\s*unset\b|\bexport\s+-n\b/,
+  mjs: /\bdelete\s+[\w$.[\]'"]*GIT_|GIT_\w+(?:['"`]\s*\])?\s*(?<![=!<>])=(?!=)\s*(?:undefined|null)\b/,
+  py: /\b(?:del\s+[\w.[\]'"]*GIT_|\.pop\s*\(\s*['"]GIT_)/,
+}
+
+/** Spellings that are SELF-IDENTIFYING: the pattern names the variable (or
+ * the `GIT_` prefix) itself, so no separate `GIT_ENV_VAR_RE` test applies —
+ * `env -i` names nothing at all, and a prefix filter names a prefix rather
+ * than any one variable.
+ *
+ *   sh   `env -u GIT_DIR git …`, `env -i … git …`, `GIT_DIR= … git …` — the
+ *        command-scoped scrubs of design call 1. Each requires `git` on the
+ *        same logical line: scrubbing another program's environment is not a
+ *        fixture scrub.
+ *   mjs  `k.startsWith('GIT_')` — the filtering spelling of the same scrub.
+ *   py   `k.startswith("GIT_")`, and a `for … if …` comprehension keyed on a
+ *        `GIT_` name (`{k: v for k, v in env.items() if k != "GIT_DIR"}`) —
+ *        arguably the most idiomatic Python spelling, and previously the
+ *        documented way to reword a true positive until it passed (#4045).
+ *
+ * The comprehension form is matched per LOGICAL LINE, deliberately, and so
+ * does not see one wrapped across physical lines. That is a stated bound,
+ * not an oversight: the alternative — an N-character window over raw text —
+ * is precisely the defect #4064 filed against the argv-array detector, and
+ * reintroducing it here to catch a wrapped comprehension would trade a known
+ * false negative for an unbounded false positive.
+ */
+const SCRUB_SELF_EVIDENT_RE = {
+  sh: new RegExp(
+    [
+      // `env [-flags…] -u GIT_FOO … git …`
+      /\benv\b[^\n]*?\s-u\s+GIT_\w+[^\n]*\bgit\b/.source,
+      // `env [assignments…] -i … git …`
+      /\benv\s(?:[^\n]*\s)?-i(?![\w-])[^\n]*\bgit\b/.source,
+      // `GIT_DIR= GIT_WORK_TREE= git …` — an env-prefix assignment to EMPTY.
+      // A non-empty one (`GIT_INDEX_FILE=.git/index cmd`) REDIRECTS git
+      // rather than scrubbing it and is not this.
+      /(?:^|[\s;&|(])GIT_(?:DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|COMMON_DIR|NAMESPACE)=(?:''|"")?(?=\s)[^\n]*\bgit\b/
+        .source,
+    ].join('|'),
+  ),
+  mjs: /\bstartsWith\s*\(\s*['"`]GIT_/,
+  py: /\bstartswith\s*\(\s*['"]GIT_|\bfor\b[^\n]*\bif\b[^\n]*['"]GIT_/,
+}
+
 /**
  * A hand-rolled scrub: a statement that removes at least one of the
  * git-context variables that outrank `git -C <dir>` (#3722) from the
  * environment, in whichever way the language spells that. This is what every
  * one of the four incidents' fixes looked like BEFORE being migrated to the
  * shared helper — each is a legitimate, working scrub, and each is exactly
- * the private copy this guard exists to stop from reappearing.
- *
- *   sh   `unset GIT_DIR …`
- *   mjs  `delete env.GIT_DIR`, `delete process.env['GIT_INDEX_FILE']`
- *   py   `del os.environ["GIT_DIR"]`, `env.pop("GIT_WORK_TREE", None)`
+ * the private copy this guard exists to stop from reappearing. The spellings
+ * are enumerated on `SCRUB_STATEMENT_RE` and `SCRUB_SELF_EVIDENT_RE`.
  *
  * Comments are stripped first, for the reason `stripLineComments` gives: the
  * shared helper's own prose names every one of these variables, and so does
- * every migrated script's header.
+ * every migrated script's header. What survives that strip is a TRAILING
+ * comment on a code line, which is exactly where the `not-a-fixture-scrub:`
+ * pragma lives.
  */
 export function hasHandRolledGitEnvUnset(text, lang = 'sh') {
   const joined = joinContinuations(stripLineComments(text, lang))
-  const statementRe =
-    lang === 'mjs'
-      ? /\bdelete\s+[\w$.[\]'"]*GIT_/
-      : lang === 'py'
-        ? /\b(?:del\s+[\w.[\]'"]*GIT_|\.pop\s*\(\s*['"]GIT_)/
-        : /^\s*unset\b/
-  return joined.split('\n').some((line) => statementRe.test(line) && GIT_ENV_VAR_RE.test(line))
+  const statementRe = SCRUB_STATEMENT_RE[lang] ?? SCRUB_STATEMENT_RE.sh
+  const selfEvidentRe = SCRUB_SELF_EVIDENT_RE[lang] ?? SCRUB_SELF_EVIDENT_RE.sh
+  return joined
+    .split('\n')
+    .some(
+      (line) =>
+        !NOT_A_FIXTURE_SCRUB_RE.test(line) &&
+        ((statementRe.test(line) && GIT_ENV_VAR_RE.test(line)) || selfEvidentRe.test(line)),
+    )
 }
 
 /**
@@ -338,8 +436,34 @@ export function hasHandRolledGitEnvUnset(text, lang = 'sh') {
  *      the word `init`, so shape 1's regex is blind to it — scanning `.mjs`
  *      with only shape 1 would be a scanner that reports "checked" while
  *      unable to see the dominant spelling in the language it just started
- *      checking. The window is deliberately generous (400 chars, newlines
- *      included) because the array is routinely wrapped across lines.
+ *      checking.
+ *
+ * Shape 2 requires the two literals to be in the SAME CALL (#4064). It was
+ * `/(['"`])git\1[\s\S]{0,400}?(['"`])init\2/` — quote-anchored on both
+ * halves, so `gitignore`/`initialise` could not satisfy either, but with no
+ * same-call requirement at all: ANY quoted `git` and ANY quoted `init`
+ * within 400 characters matched, across statement and even function
+ * boundaries. Measured, before the fix:
+ *
+ *     subprocess.run(["git", "rev-parse", "--show-toplevel"], check=True)
+ *     BASELINE = os.path.join(root, "init", "baseline.json")
+ *
+ * was reported as a Python fixture-builder and its author advised to "write
+ * the fixture in Node or shell" — about a file that spawns no fixture. That
+ * is a guard telling someone to restructure working code, which is the
+ * failure mode most likely to get a guard disabled; and this file already
+ * conceded that both `.py` scripts passing at the time did so BY LUCK, being
+ * one nearby `"init"` away from a false red.
+ *
+ * `argvGitInit` replaces the character window with a bracket scan: from a
+ * quoted `git` in argument position, walk forward tracking nesting depth and
+ * stop at the close of the ENCLOSING group. A quoted `init` seen before that
+ * close is in the same call; one seen after it is in a different one. That
+ * covers both real spellings — `execFileSync('git', ['init', …])`, where
+ * `git` is the file argument and `init` is inside a nested array, and
+ * `subprocess.run(["git", …, "init"])`, where both are elements of one list
+ * — and no full parser is needed. The header's "textual regexes cannot
+ * defeat deliberate obfuscation" limitation is unchanged by this.
  *
  * Comments are stripped first (see `stripLineComments`), and continuations
  * are joined (mirroring `hasHandRolledGitEnvUnset`) — `git -C "$dir" \` +
@@ -351,10 +475,74 @@ export function hasFixtureGitInit(text, lang = 'sh') {
   const body = joinContinuations(stripLineComments(text, lang))
   if (/\bgit\s+(-C\s+\S+\s+)?init\b/.test(body)) return true
   if (lang === 'sh') return false
-  // `'git'` as a whole string literal, then `'init'` as a whole string
-  // literal within the same call. Both are anchored to the quote characters
-  // so a substring (`gitignore`, `initialise`) cannot satisfy either half.
-  return /(['"`])git\1[\s\S]{0,400}?(['"`])init\2/.test(body)
+  return argvGitInit(body)
+}
+
+/** The string literal opening at `i`, as `{ value, end }` with `end` the
+ * index of its LAST delimiter character, or null when it is unterminated.
+ * Triple-quoted Python literals are read whole so a `"""` cannot be misread
+ * as an empty `""` followed by a stray quote. Escapes are consumed so a
+ * literal `\'` does not end the string early. */
+function readStringLiteral(text, i) {
+  const triple = text.slice(i, i + 3)
+  if (triple === '"""' || triple === "'''") {
+    const close = text.indexOf(triple, i + 3)
+    return close === -1 ? null : { value: text.slice(i + 3, close), end: close + 2 }
+  }
+  const quote = text[i]
+  let value = ''
+  for (let j = i + 1; j < text.length; j += 1) {
+    const c = text[j]
+    if (c === '\\') {
+      value += text[j + 1] ?? ''
+      j += 1
+      continue
+    }
+    if (c === quote) return { value, end: j }
+    value += c
+  }
+  return null
+}
+
+const QUOTE_CHARS = new Set(['"', "'", '`'])
+/** A quoted `git` in ARGUMENT position — immediately after a `(`, `[` or `,`
+ * — which is where the file argument of a spawn and the first element of an
+ * argv array both sit. A `const GITBIN = 'git'` is not in argument position
+ * and is the indirection the header already documents as out of reach. */
+const ARGV_GIT_RE = /(?<=[([,]\s*)(['"`])git\1/g
+
+/** Whether any quoted `git` in argument position has a quoted `init` inside
+ * the SAME call — see `hasFixtureGitInit`. The walk descends into nested
+ * groups and ends at the first close that has no matching open, which is the
+ * end of the group enclosing the `git`; a `git` at top level with no
+ * enclosing group therefore matches nothing, because it is in no call. */
+function argvGitInit(body) {
+  ARGV_GIT_RE.lastIndex = 0
+  for (let m = ARGV_GIT_RE.exec(body); m !== null; m = ARGV_GIT_RE.exec(body)) {
+    if (initInSameCall(body, m.index + m[0].length)) return true
+  }
+  return false
+}
+
+function initInSameCall(body, from) {
+  let depth = 0
+  for (let i = from; i < body.length; i += 1) {
+    const c = body[i]
+    if (QUOTE_CHARS.has(c)) {
+      const literal = readStringLiteral(body, i)
+      // Unterminated: stop this walk rather than guess where the call ends.
+      if (literal === null) return false
+      if (literal.value === 'init') return true
+      i = literal.end
+      continue
+    }
+    if (c === '(' || c === '[' || c === '{') depth += 1
+    else if (c === ')' || c === ']' || c === '}') {
+      if (depth === 0) return false
+      depth -= 1
+    }
+  }
+  return false
 }
 
 /**
@@ -384,14 +572,23 @@ export function sourcesSharedGuard(text, lang = 'sh') {
     // joining does not do for JS — so the specifier is matched against the
     // WHOLE stripped body for `import`, anchored on the statement keyword.
     const body = stripLineComments(text, lang)
+    const escaped = basename.replace('.', '\\.')
     const importRe = new RegExp(
-      `(?:^|\\n)\\s*import[\\s\\S]{0,200}?from\\s*['"\`][^'"\`]*${basename.replace('.', '\\.')}`,
+      `(?:^|\\n)\\s*import[\\s\\S]{0,200}?from\\s*['"\`][^'"\`]*${escaped}`,
     )
-    const requireRe = new RegExp(`require\\s*\\(\\s*['"\`][^'"\`]*${basename.replace('.', '\\.')}`)
-    const bareImportRe = new RegExp(
-      `(?:^|\\n)\\s*import\\s*['"\`][^'"\`]*${basename.replace('.', '\\.')}`,
+    const requireRe = new RegExp(`require\\s*\\(\\s*['"\`][^'"\`]*${escaped}`)
+    const bareImportRe = new RegExp(`(?:^|\\n)\\s*import\\s*['"\`][^'"\`]*${escaped}`)
+    // A DYNAMIC import (#4044). `import(` rather than `import '`/`import {`,
+    // so it is matched wherever it appears — `await import(…)` inside a
+    // function is the whole point of the form and is on no statement line of
+    // its own. Counted as wiring: see design call 2 in the header.
+    const dynamicImportRe = new RegExp(`\\bimport\\s*\\(\\s*['"\`][^'"\`]*${escaped}`)
+    return (
+      importRe.test(body) ||
+      requireRe.test(body) ||
+      bareImportRe.test(body) ||
+      dynamicImportRe.test(body)
     )
-    return importRe.test(body) || requireRe.test(body) || bareImportRe.test(body)
   }
   return lines.some((line) => {
     const trimmed = line.trim()
@@ -411,12 +608,12 @@ export function sourcesSharedGuard(text, lang = 'sh') {
 // ---------------------------------------------------------------------------
 
 /** Every `.sh`, `.mjs` and `.py` file under `dir`, recursively, as
- * `{ path, lang, text, scrubExempt }` with `path` relative to `dir`
- * (posix-separated, so messages are stable across platforms) — except the
- * canonical helpers and this file, which are exempt from everything (see the
- * header). `scrubExempt` marks the files `SCRUB_EXEMPT_BASENAMES` excuses
- * from rule 1 only; they are enumerated and read like any other file so
- * rule 2 still judges them. Sorted for deterministic output. */
+ * `{ path, lang, text }` with `path` relative to `dir` (posix-separated, so
+ * messages are stable across platforms) — except the canonical helpers and
+ * this file, which are exempt from everything (see the header). There is no
+ * per-file rule-1 exemption any more: a legitimate `GIT_` removal says so at
+ * the statement, with `not-a-fixture-scrub: <reason>` (#4064). Sorted for
+ * deterministic output. */
 export function listGuardedScripts(dir) {
   const out = []
   const walk = (d) => {
@@ -440,7 +637,6 @@ export function listGuardedScripts(dir) {
         path: relative(dir, full).split(sep).join('/'),
         lang: SCANNED_EXTENSIONS.get(ext),
         text: readFileSync(full, 'utf8'),
-        scrubExempt: SCRUB_EXEMPT_BASENAMES.has(entry.name),
       })
     }
   }
@@ -471,11 +667,14 @@ const HAZARD =
  * through the shared guard for its language. */
 export function checkFixtureIsolation(files) {
   const problems = []
-  for (const { path, lang, text, scrubExempt = false } of files) {
+  for (const { path, lang, text } of files) {
     const helper = SHARED_GUARD_FOR[lang]
-    // Rule 1 only is waived for a `SCRUB_EXEMPT_BASENAMES` file; rule 2 below
-    // runs on it exactly as it runs on everything else.
-    if (!scrubExempt && hasHandRolledGitEnvUnset(text, lang)) {
+    const buildsFixture = hasFixtureGitInit(text, lang)
+    // Rule 1 speaks to a language with a shared helper to point at. Python
+    // has none, so it applies there only to a file that ALSO builds a
+    // fixture — where rule 2's message carries the remedy. Design call 3.
+    const rule1Applies = helper !== null || buildsFixture
+    if (rule1Applies && hasHandRolledGitEnvUnset(text, lang)) {
       problems.push(
         `${path}: hand-rolls its own git-environment scrub instead of using ` +
           `${helper ?? 'a shared helper'} (#3722) — every private copy of this scrub is ` +
@@ -484,7 +683,7 @@ export function checkFixtureIsolation(files) {
           '`withScrubbedProcessEnv`/`initScratchRepo`) instead.',
       )
     }
-    if (hasFixtureGitInit(text, lang) && !sourcesSharedGuard(text, lang)) {
+    if (buildsFixture && !sourcesSharedGuard(text, lang)) {
       problems.push(
         helper === null
           ? `${path}: builds a git fixture (\`git\` … \`init\`) from Python, and there is no ` +
@@ -841,6 +1040,189 @@ function selfTestDetection({ check }) {
     'py: an `r`-prefixed docstring is recognised as line-initial (the prefix is stepped back over)',
     '',
   )
+
+  // ── #4064: the argv-array detector's SAME-CALL requirement ──────────────
+  //
+  // The pre-fix regex asked only for a quoted `git` and a quoted `init`
+  // within 400 characters of raw text, so two unrelated calls satisfied it.
+  // Both arms, because a detector that stopped matching argv arrays entirely
+  // would satisfy the first assertion alone and re-blind the scan to the
+  // dominant spelling in the two languages #4015 widened it to cover.
+  check(
+    hasFixtureGitInit(
+      'subprocess.run(["git", "rev-parse", "--show-toplevel"], check=True)\n' +
+        'BASELINE = os.path.join(root, "init", "baseline.json")\n',
+      'py',
+    ) === false,
+    'py: a quoted `git` and a quoted `init` in DIFFERENT calls are not a fixture init — the ' +
+      'window is the enclosing call, not 400 characters of text (#4064)',
+    '',
+  )
+  check(
+    hasFixtureGitInit("execFileSync('git', ['rev-parse'])\nconst p = join(d, 'init')\n", 'mjs') ===
+      false,
+    'mjs: the same, in the other language — an `init` in a later, unrelated call does not make ' +
+      'the earlier `git` spawn a fixture builder',
+    '',
+  )
+  check(
+    hasFixtureGitInit(
+      'subprocess.run(\n  [\n    "git",\n    "-C", d,\n    "init",\n  ],\n  check=True,\n)\n',
+      'py',
+    ) === true,
+    'py: an argv array WRAPPED across lines is still one call and is still detected — the ' +
+      'bracket scan crosses newlines, so narrowing the window did not narrow the real spelling',
+    '',
+  )
+  check(
+    hasFixtureGitInit("execFileSync('git', [...base, 'init'], { cwd: d })\n", 'mjs') === true,
+    'mjs: an `init` NESTED deeper inside the same call is still in that call (the scan descends ' +
+      'into groups, it does not stop at the first bracket)',
+    '',
+  )
+  check(
+    hasFixtureGitInit("const GITBIN = 'git'\nrun(GITBIN, ['init'])\n", 'mjs') === false,
+    'mjs: a quoted `git` that is not in ARGUMENT position is not an argv spawn — the ' +
+      'command-name indirection the header documents as out of reach, unchanged',
+    '',
+  )
+
+  // ── #4043: command-scoped scrubs, and the line design call 1 draws ──────
+  //
+  // Each pair is "in front of a git command" versus "in front of something
+  // else". A detector that matched `env -u` unconditionally would satisfy
+  // every first arm and would flag scripts/test-py-guard-file-source.sh six
+  // times over for pinning the INPUT of the guard it is testing.
+  check(
+    hasHandRolledGitEnvUnset('env -u GIT_INDEX_FILE git -C "$d" init -q\n') === true,
+    'sh: `env -u GIT_*` in front of a git command is a private copy of the scrub (#4043)',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('env -u GIT_INDEX_FILE python3 "$@" >/dev/null 2>&1\n') === false,
+    'sh: `env -u GIT_*` in front of some OTHER program is not a fixture scrub — the live shape ' +
+      'in scripts/test-py-guard-file-source.sh, and the reason it needs no exemption',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('env -i PATH=$PATH git -C "$d" init -q\n') === true,
+    'sh: `env -i` in front of a git command scrubs every git variable at once and is detected, ' +
+      'even though it NAMES none of them',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset(
+      'env -i "PATH=$sandbox" "HOME=$home" AWK= "$bash_bin" -c "cd \\"$HOME\\""\n',
+    ) === false,
+    'sh: an `env -i` sandbox around a non-git command is not a fixture scrub (the live shape in ' +
+      'scripts/zizmor-hook.sh)',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('GIT_DIR= GIT_WORK_TREE= git -C "$d" init -q\n') === true,
+    'sh: an env-prefix assignment to EMPTY in front of a git command is a scrub',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('GIT_INDEX_FILE=.git/index python3 "$@"\n') === false,
+    'sh: a NON-empty env-prefix assignment REDIRECTS git rather than scrubbing it, and is not ' +
+      'flagged (the shape scripts/test-py-guard-file-source.sh uses to plant a commit in flight)',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('export -n GIT_DIR\n') === true &&
+      hasHandRolledGitEnvUnset('export -n SOME_OTHER_VAR\n') === false,
+    'sh: `export -n GIT_DIR` removes it from the export list — to a child process the same thing ' +
+      'as unsetting it — and the same statement on an unrelated variable is not a false positive',
+    '',
+  )
+
+  // ── #4045: the two spellings rule 1 could not see ───────────────────────
+  check(
+    hasHandRolledGitEnvUnset('env.GIT_DIR = undefined\n', 'mjs') === true &&
+      hasHandRolledGitEnvUnset("env['GIT_INDEX_FILE'] = undefined\n", 'mjs') === true,
+    'mjs: assigning `undefined` is the same scrub as deleting — child_process DROPS an ' +
+      'undefined env value (#4045)',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('if (env.GIT_DIR === undefined) return null\n', 'mjs') === false,
+    'mjs: COMPARING against undefined is not assigning it — the arm that keeps the assignment ' +
+      'pattern from matching every file that reads a git variable',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset(
+      'e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}\n',
+      'py',
+    ) === true &&
+      hasHandRolledGitEnvUnset('e = {k: v for k, v in env.items() if k != "GIT_DIR"}\n', 'py') ===
+        true,
+    'py: a `GIT_`-filtering comprehension is a scrub — both the prefix and the named-variable ' +
+      'spelling, the second of which this file used to document as a way to pass the scan',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('e = {k: v for k, v in env.items() if k != "HOME"}\n', 'py') === false,
+    'py: a comprehension filtering something OTHER than a git variable is not a false positive',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset(
+      "const e = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')))\n",
+      'mjs',
+    ) === true,
+    'mjs: the filtering spelling, ported — closing the Python evasion and leaving the Node twin ' +
+      'open would just move it',
+    '',
+  )
+
+  // ── #4064: the per-statement pragma ─────────────────────────────────────
+  check(
+    hasHandRolledGitEnvUnset(
+      'delete out.GIT_INDEX_FILE // not-a-fixture-scrub: decides which INDEX a guard reads\n',
+      'mjs',
+    ) === false,
+    'a `not-a-fixture-scrub:` pragma WITH a reason waives rule 1 for that statement',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('delete out.GIT_INDEX_FILE // not-a-fixture-scrub:\n', 'mjs') === true,
+    'a BARE pragma with no reason waives nothing — the reason is the entire mechanism, and a ' +
+      'pragma typeable without one is the exemption list again, distributed',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset(
+      'delete env.GIT_DIR\ndelete env.GIT_INDEX_FILE // not-a-fixture-scrub: reason\n',
+      'mjs',
+    ) === true,
+    'the pragma is PER STATEMENT, not per file — an unannotated scrub on another line is still ' +
+      'reported (the whole complaint against the basename exemption it replaces)',
+    '',
+  )
+  check(
+    hasHandRolledGitEnvUnset('del env["GIT_INDEX_FILE"]  # not-a-fixture-scrub: reason\n', 'py') ===
+      false,
+    'the pragma works in Python too, with the comment marker that language uses',
+    '',
+  )
+
+  // ── #4044: a dynamic import is wiring ───────────────────────────────────
+  check(
+    sourcesSharedGuard("const g = await import('./lib/git-scratch-guard.mjs')\n", 'mjs') === true,
+    'mjs: a DYNAMIC import of the Node helper counts as wiring (#4044) — the guard cannot prove ' +
+      'call order for a STATIC import either, so the two are the same evidence',
+    '',
+  )
+  check(
+    sourcesSharedGuard("// const g = await import('./lib/git-scratch-guard.mjs')\n", 'mjs') ===
+      false &&
+      sourcesSharedGuard("const g = await import('./lib/git-scratch-guard.sh')\n", 'mjs') === false,
+    'mjs: a COMMENTED dynamic import is not wiring, and neither is a dynamic import of the ' +
+      'SHELL sibling — the widening did not turn `import(` into a wildcard',
+    '',
+  )
 }
 
 /** `checkFixtureIsolation` against real files on disk, not just parsed
@@ -989,35 +1371,100 @@ function selfTestDiskScan({ check }) {
       '"""trailing"""',
       '',
     ].join('\n')
-    // (p) the PER-RULE exemption, both arms. `SCRUB_EXEMPT_BASENAMES` waives
-    // rule 1 for this basename and nothing else, so:
-    //   - a file that only scrubs is clean…
-    const scrubExemptPy = [
+    // ── The #4043/#4044/#4045/#4064 cases. Every one is a PAIR: the file
+    // that must be reported and the file that must not, because each of
+    // these fixes either widens a detector (where the risk is a false red)
+    // or narrows one (where the risk is a false green).
+    //
+    // (p) Python that scrubs and builds NO fixture -> clean. There is no
+    // Python sibling of the scrubber, so rule 1 for `.py` had no remedy to
+    // name and read as "no Python file may touch a GIT_ variable"; the real
+    // scripts/lib/guard_file_source.py needed an exemption for exactly this.
+    // Rule 1 for `.py` is now scoped to files that also build a fixture.
+    const scrubOnlyPy = [
       'import os',
       'env = dict(os.environ)',
       'del env["GIT_INDEX_FILE"]',
       '',
     ].join('\n')
-    //   - …and the same basename BUILDING A FIXTURE is still reported, by
-    //     rule 2, which is the claim the exemption's justification makes. A
-    //     basename in `EXEMPT_BASENAMES` is skipped before either rule runs,
-    //     so under a total exemption this file would be silently clean.
-    const scrubExemptWithFixturePy = [
+    // (q) …and the SAME scrub in a Python file that DOES build a fixture is
+    // reported by both rules — the scoping is a scoping, not a removal. The
+    // scrub is spelled as a `GIT_`-filtering comprehension, which rule 1
+    // could not see at all and which this file used to document as the way
+    // to reword a true positive until it passed (#4045).
+    const scrubAndFixturePy = [
       'import os, subprocess',
-      'env = dict(os.environ)',
-      'del env["GIT_INDEX_FILE"]',
-      'subprocess.run(["git", "-C", str(tmp), "init", "-q"], check=True)',
+      'env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}',
+      'subprocess.run(["git", "-C", str(tmp), "init", "-q"], env=env, check=True)',
       '',
     ].join('\n')
-    //   - …and the same, per language: the exemption is a PAIR (`git_env` /
-    //     `gitEnv`), so the Node twin is asserted too. Its rule-2 message is
-    //     a different sentence from Python's, and an exemption proven in one
-    //     language only is an exemption half-proven.
-    const scrubExemptWithFixtureMjs = [
-      "import { execFileSync } from 'node:child_process'",
+    // (r) the Node half of the same question, and the arm that keeps (p)
+    // honest: `.mjs` HAS a shared helper, so rule 1 there still applies to a
+    // file that builds no fixture. If the Python scoping had been written as
+    // a general rule this file would go silently clean.
+    const scrubOnlyMjs = [
       'const env = { ...process.env }',
-      'delete env.GIT_INDEX_FILE',
-      "execFileSync('git', ['init', '-q'], { cwd: dir, env })",
+      'delete env.GIT_DIR',
+      "console.log('no fixture here')",
+      '',
+    ].join('\n')
+    // (s) …and the same statement carrying the `not-a-fixture-scrub:` pragma
+    // is clean. This is the mechanism that REPLACED the basename exemption
+    // list: the justification lives beside the statement, and waives that
+    // statement only.
+    const pragmaMjs = [
+      'const env = { ...process.env }',
+      'delete env.GIT_INDEX_FILE // not-a-fixture-scrub: picks which index this guard reads',
+      "console.log('no fixture here')",
+      '',
+    ].join('\n')
+    // (t) THE #4064 CASE: a Python file carrying a quoted `git` and a quoted
+    // `init` in UNRELATED calls. The pre-fix detector matched any pair within
+    // 400 characters of raw text, so this file was told to "write the fixture
+    // in Node or shell" — about a file that spawns no fixture at all.
+    const unrelatedCallsPy = [
+      'import os, subprocess',
+      'subprocess.run(["git", "rev-parse", "--show-toplevel"], check=True)',
+      'BASELINE = os.path.join(root, "init", "baseline.json")',
+      '',
+    ].join('\n')
+    // (u) THE #4044 CASE: a `.mjs` wired to the Node helper through a DYNAMIC
+    // import, building a fixture. Reported as "without wiring itself … at
+    // all" — a false red whose remedy the author had already applied.
+    const dynamicImportMjs = [
+      "const { initScratchRepo } = await import('./lib/git-scratch-guard.mjs')",
+      'const git = initScratchRepo(dir)',
+      "execFileSync('git', ['init', '-q'], { cwd: dir })",
+      '',
+    ].join('\n')
+    // (v) THE #4045 `.mjs` CASE: a scrub spelled as an assignment rather than
+    // a deletion. `child_process` drops an `undefined` env value, so the two
+    // are the same scrub; only one of them was detected.
+    const assignUndefinedMjs = [
+      "import { initScratchRepo } from './lib/git-scratch-guard.mjs'",
+      'const env = { ...process.env }',
+      'env.GIT_DIR = undefined',
+      'env.GIT_INDEX_FILE = undefined',
+      '',
+    ].join('\n')
+    // (w) THE #4043 CASE: a command-scoped scrub in front of a GIT command.
+    // The file sources the helper, so rule 2 is satisfied and rule 1 is the
+    // only thing that can report it — which it could not, in this spelling.
+    const envScrubSh = [
+      '#!/usr/bin/env bash',
+      '. "$(dirname "$0")/lib/git-scratch-guard.sh"',
+      'env -u GIT_DIR -u GIT_WORK_TREE git -C "$tmp" init -q -b main',
+      '',
+    ].join('\n')
+    // (x) …and the line design call 1 draws: the same `env -u` in front of
+    // some OTHER program. Nothing about that is a copy of the fixture scrub,
+    // and scripts/test-py-guard-file-source.sh does it six times to pin the
+    // INPUT of the guard under test. Without this arm the widening in (w)
+    // would flag a working, documented file.
+    const envScrubOtherSh = [
+      '#!/usr/bin/env bash',
+      '. "$(dirname "$0")/lib/git-scratch-guard.sh"',
+      'env -u GIT_INDEX_FILE python3 "$guard" --cached "$file" >/dev/null 2>&1',
       '',
     ].join('\n')
 
@@ -1036,11 +1483,17 @@ function selfTestDiskScan({ check }) {
     writeFileSync(join(dir, 'unrelated.py'), unrelatedPy, 'utf8')
     writeFileSync(join(dir, 'docstring-prose.py'), docstringPy, 'utf8')
     writeFileSync(join(dir, 'closing-delimiter.py'), closingDelimiterPy, 'utf8')
-    writeFileSync(join(dir, 'guard_file_source.py'), scrubExemptPy, 'utf8')
+    writeFileSync(join(dir, 'scrub-only.py'), scrubOnlyPy, 'utf8')
+    writeFileSync(join(dir, 'scrub-and-fixture.py'), scrubAndFixturePy, 'utf8')
+    writeFileSync(join(dir, 'scrub-only.mjs'), scrubOnlyMjs, 'utf8')
+    writeFileSync(join(dir, 'pragma.mjs'), pragmaMjs, 'utf8')
+    writeFileSync(join(dir, 'unrelated-calls.py'), unrelatedCallsPy, 'utf8')
+    writeFileSync(join(dir, 'dynamic-import.mjs'), dynamicImportMjs, 'utf8')
+    writeFileSync(join(dir, 'assign-undefined.mjs'), assignUndefinedMjs, 'utf8')
+    writeFileSync(join(dir, 'env-scrub.sh'), envScrubSh, 'utf8')
+    writeFileSync(join(dir, 'env-scrub-other.sh'), envScrubOtherSh, 'utf8')
     writeFileSync(join(dir, 'notes.md'), naive, 'utf8') // unscanned extension, ignored
     mkdirSync(join(dir, 'lib'))
-    writeFileSync(join(dir, 'lib', 'guard_file_source.py'), scrubExemptWithFixturePy, 'utf8')
-    writeFileSync(join(dir, 'lib', 'guard-file-source.mjs'), scrubExemptWithFixtureMjs, 'utf8')
     // The shared helpers themselves, even dropped in a scanned tree, are
     // exempt — they necessarily contain the raw `git init` this guard looks
     // for, and the raw scrub.
@@ -1064,27 +1517,16 @@ function selfTestDiskScan({ check }) {
 
     const files = listGuardedScripts(dir)
     check(
-      files.length === 18,
-      'the scan finds all 18 scoped .sh/.mjs/.py files, excluding the .md, the two shared ' +
+      files.length === 24,
+      'the scan finds all 24 scoped .sh/.mjs/.py files, excluding the .md, the two shared ' +
         'helpers and the guard itself',
       JSON.stringify(files.map((f) => f.path)),
     )
     check(
-      files.filter((f) => f.lang === 'mjs').length === 6 &&
-        files.filter((f) => f.lang === 'py').length === 6,
+      files.filter((f) => f.lang === 'mjs').length === 9 &&
+        files.filter((f) => f.lang === 'py').length === 7,
       'the .mjs and .py files are actually opened — the scan is no longer .sh-only (#4015)',
       JSON.stringify(files.map((f) => `${f.path}:${f.lang}`)),
-    )
-    check(
-      files.filter((f) => f.scrubExempt).length === 3 &&
-        files.every(
-          (f) =>
-            f.scrubExempt ===
-            (f.path.endsWith('guard_file_source.py') || f.path.endsWith('guard-file-source.mjs')),
-        ),
-      'a rule-1-exempt basename is still ENUMERATED (a totally exempt one never appears at all) ' +
-        '— the precondition for rule 2 judging it',
-      JSON.stringify(files.map((f) => `${f.path}:${f.scrubExempt}`)),
     )
 
     const problems = checkFixtureIsolation(files)
@@ -1169,31 +1611,70 @@ function selfTestDiskScan({ check }) {
         'the spawn away',
       JSON.stringify(problems),
     )
+    // ── The #4043/#4044/#4045/#4064 assertions, on disk.
     check(
-      !problems.some((p) => p.startsWith('guard_file_source.py:')),
-      'a rule-1-exempt basename that only hand-rolls a scrub is clean (the exemption works)',
+      !problems.some((p) => p.startsWith('scrub-only.py:')),
+      'a .py that hand-rolls a scrub and builds NO fixture is clean — rule 1 for Python named no ' +
+        'remedy (there is no Python sibling) and so read as "no Python file may touch a GIT_ ' +
+        'variable"; the real guard_file_source.py needed an exemption for exactly this (#4045)',
       JSON.stringify(problems),
     )
     check(
-      problems.some(
-        (p) => p.startsWith('lib/guard_file_source.py:') && /no Python sibling/.test(p),
-      ) && !problems.some((p) => p.startsWith('lib/guard_file_source.py: hand-rolls')),
-      'the SAME exempt basename BUILDING A FIXTURE is still flagged, by rule 2 and not rule 1 — ' +
-        'the exemption is per-rule, so the sentence justifying it ("rule 2 is what would catch ' +
-        'it if that ever changed") is true of the code',
+      problems.some((p) => p.startsWith('scrub-and-fixture.py: hand-rolls')) &&
+        problems.some((p) => p.startsWith('scrub-and-fixture.py:') && /no Python sibling/.test(p)),
+      'the SAME Python scrub in a file that DOES build a fixture is reported by both rules — the ' +
+        'scoping is a scoping, not a removal, and the scrub is the `GIT_`-filtering comprehension ' +
+        'rule 1 could not see at all',
       JSON.stringify(problems),
     )
     check(
-      problems.some(
-        (p) => p.startsWith('lib/guard-file-source.mjs:') && /without wiring itself to/.test(p),
-      ) && !problems.some((p) => p.startsWith('lib/guard-file-source.mjs: hand-rolls')),
-      'the Node half of the exempt PAIR behaves the same way — rule 1 waived, rule 2 live, with ' +
-        "the .mjs remedy in the message rather than Python's",
+      problems.some((p) => p.startsWith('scrub-only.mjs: hand-rolls')),
+      'a .mjs that hand-rolls a scrub and builds no fixture is STILL flagged — `.mjs` has a ' +
+        'helper to point at, so the Python scoping must not have been written as a general rule',
       JSON.stringify(problems),
     )
     check(
-      problems.length === 11,
-      'exactly the eleven offending files are reported, nothing else',
+      !problems.some((p) => p.startsWith('pragma.mjs:')),
+      'the same statement carrying `not-a-fixture-scrub: <reason>` is clean — the per-statement ' +
+        'waiver that replaced the basename exemption list (#4064)',
+      JSON.stringify(problems),
+    )
+    check(
+      !problems.some((p) => p.startsWith('unrelated-calls.py:')),
+      'THE #4064 CASE: a .py with a quoted `git` and a quoted `init` in UNRELATED calls is ' +
+        'clean — the pre-fix detector matched any pair within 400 characters and advised its ' +
+        'author to "write the fixture in Node or shell" about a file that spawns none',
+      JSON.stringify(problems),
+    )
+    check(
+      !problems.some((p) => p.startsWith('dynamic-import.mjs:')),
+      'THE #4044 CASE: a .mjs wired to the Node helper through a DYNAMIC import is clean — it ' +
+        'was reported as "without wiring itself … at all", with a remedy already applied',
+      JSON.stringify(problems),
+    )
+    check(
+      problems.some((p) => p.startsWith('assign-undefined.mjs: hand-rolls')),
+      'THE #4045 .mjs CASE: `env.GIT_DIR = undefined` is the same scrub as `delete env.GIT_DIR` ' +
+        '— child_process drops an undefined env value — and is now flagged like it',
+      JSON.stringify(problems),
+    )
+    check(
+      problems.some((p) => p.startsWith('env-scrub.sh: hand-rolls')) &&
+        !problems.some((p) => p.startsWith('env-scrub.sh:') && /without wiring/.test(p)),
+      'THE #4043 CASE: `env -u GIT_* … git … init` is a private copy of the scrub, reported by ' +
+        'rule 1 — the file sources the helper, so rule 1 is the only rule that can see it',
+      JSON.stringify(problems),
+    )
+    check(
+      !problems.some((p) => p.startsWith('env-scrub-other.sh:')),
+      'the line design call 1 draws: the same `env -u GIT_INDEX_FILE` in front of some OTHER ' +
+        'program is not a fixture scrub and is clean — scripts/test-py-guard-file-source.sh does ' +
+        'this six times to pin the INPUT of the guard under test',
+      JSON.stringify(problems),
+    )
+    check(
+      problems.length === 14,
+      'exactly the fourteen problems are reported, nothing else',
       JSON.stringify(problems),
     )
   } finally {
