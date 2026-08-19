@@ -4835,7 +4835,7 @@ async fn peer_refs_0107_endpoint_id_add_preserves_existing_rows_3464() {
              (peer_id, last_hash, last_sent_hash, synced_at, reset_count, \
               last_reset_at, cert_hash, device_name, last_address, loro_vv_bytes) \
              VALUES ('PEER3464A', 'h-recv', 'h-sent', 1700000000000, 3, \
-                     1700000001000, ?, \"Javier's Phone\", '192.168.1.9:7777', ?)",
+                     1700000001000, ?, 'Javier''s Phone', '192.168.1.9:7777', ?)",
     )
     .bind("a".repeat(64))
     .bind(&vv)
@@ -5582,7 +5582,7 @@ async fn peer_refs_0111_streamed_at_add_preserves_existing_rows_4084() {
               last_reset_at, cert_hash, device_name, last_address, loro_vv_bytes, \
               endpoint_id) \
              VALUES ('PEER4084A', 'h-recv', 'h-sent', 1700000000000, 3, \
-                     1700000001000, ?, \"Javier's Phone\", '192.168.1.9:7777', ?, ?)",
+                     1700000001000, ?, 'Javier''s Phone', '192.168.1.9:7777', ?, ?)",
     )
     .bind("a".repeat(64))
     .bind(&vv)
