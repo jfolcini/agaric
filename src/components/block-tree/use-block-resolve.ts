@@ -98,19 +98,45 @@ function formatNamespacedLabel(title: string): {
  * placeholder still needs to be SHOWN, so it is applied here, once, at
  * display time, rather than at every seed site.
  *
- * Two `'Untitled'` literals elsewhere in this file are deliberately NOT
- * routed through here, because neither receives the `''` cache-seed shape
- * this helper is written against (#4150 review):
- *   - `mergeAliasPrefixMatches` builds a COMPOSITE label
- *     (`'<title> (alias: <alias>)'`) from an alias row whose title is the
- *     backend's raw nullable `blocks.content` (no `COALESCE`), so it maps
- *     `null`, not `''`.
+ * One `'Untitled'` literal elsewhere in this file is deliberately NOT routed
+ * through `untitledOr` (below), because it doesn't receive the `''`
+ * cache-seed shape that helper is written against (#4150 review):
  *   - `searchBlockRefs` renders BLOCK content for the `((` picker, a
  *     different surface with its own truncation rules — not a page title.
+ *     (#4153 still routes its two literals through `translate(...)` for
+ *     i18n, just without the trimmed-empty test below.)
  */
 function makePagePickerItem(id: string, title: string): PickerItem {
-  const { label, breadcrumb } = formatNamespacedLabel(title === '' ? 'Untitled' : title)
+  const { label, breadcrumb } = formatNamespacedLabel(untitledOr(title))
   return { id, label, icon: FileText, breadcrumb }
+}
+
+/**
+ * #4153 — shared "what does the user see for this title" normalisation,
+ * used to DISPLAY a page title (`makePagePickerItem`, `mergeAliasPrefixMatches`).
+ *
+ * Deliberately NOT used as a search-match key: #4152 (whether a NULL-content
+ * page should be findable by typing its displayed "Untitled" placeholder) is
+ * an open product question, not a defect — see the issue and #4154, which
+ * filed it without implementing it. Matching on the placeholder here would
+ * decide that question as a side effect of this fix, which is out of scope.
+ *
+ * Two independent pre-existing gaps, fixed together because they live in
+ * the same test:
+ *   1. Trimmed, not exact-empty (`=== ''` / `?? ''`) — a whitespace-only
+ *      title (`'   '`, `'\n'`) is not `=== ''`, so the old exact-empty test
+ *      rendered it as a blank, unlabelled picker row instead of the
+ *      placeholder. `BlockZoomBar` already gets this right for the zoom
+ *      label (`stripped.length > 0 ? stripped : t('block.untitled')`) —
+ *      this is that same convention, applied here.
+ *   2. Routed through `translate(...)` (the module-scope i18n singleton,
+ *      since these are free functions with no `useTranslation()` hook
+ *      context) instead of the hardcoded English literal, matching every
+ *      other 'Untitled' surface in the app (`TemplatePicker`, `DuePanel`,
+ *      `BlockZoomBar`, `PageBrowser`'s filter editors).
+ */
+function untitledOr(title: string | null): string {
+  return title === null || title.trim() === '' ? translate('block.untitled') : title
 }
 
 /**
@@ -274,7 +300,10 @@ async function mergeAliasPrefixMatches(matches: PickerItem[], q: string): Promis
       existingPageIds.add(pageId)
       aliasItems.push({
         id: pageId,
-        label: `${title ?? 'Untitled'} (alias: ${alias})`,
+        // #4153 — trimmed + i18n'd, via the same `untitledOr` the render
+        // site uses (see its docblock: whitespace-only titles, not just
+        // `null`, and the localised placeholder, not the English literal).
+        label: `${untitledOr(title)} (alias: ${alias})`,
         isAlias: true,
         aliasText: alias,
       })
@@ -722,7 +751,12 @@ export function useBlockResolve(): UseBlockResolveReturn {
       const results: PickerItem[] = resp.items
         .filter((b) => b.deleted_at === null)
         .map((b) => {
-          const content = b.content ?? 'Untitled'
+          // #4153 — i18n'd (was a hardcoded English literal). Left as an
+          // exact-`null` test, not `untitledOr`'s trimmed one: this maps
+          // BLOCK content for the `((` picker, a different surface with its
+          // own truncation rules — not a page title (see `makePagePickerItem`'s
+          // docblock).
+          const content = b.content ?? translate('block.untitled')
           const firstLine = content.split('\n')[0] as string
           const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine
           const parentTitle = b.parent_id
@@ -736,7 +770,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
         useResolveStore.getState().batchSet(
           results.map((r) => {
             const block = resp.items.find((b) => b.id === r.id)
-            return { id: r.id, title: block?.content ?? 'Untitled', deleted: false }
+            return {
+              id: r.id,
+              title: block?.content ?? translate('block.untitled'),
+              deleted: false,
+            }
           }),
         )
       }
