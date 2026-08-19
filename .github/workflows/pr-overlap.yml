@@ -568,14 +568,41 @@ jobs:
           cache: npm
 
       - name: Install npm dependencies
-        # `.npmrc` sets `ignore-scripts=true` repo-wide (#816), so this does
-        # NOT execute dependency lifecycle scripts — which matters more here
-        # than in `_validate.yml`, because this job is one of the two in this
-        # workflow that checks out PR-authored code. It holds `contents:
-        # read` and no secrets (see the trust-boundary guard,
-        # scripts/check-pr-overlap-trust-boundary.mjs), and it still should
-        # not be running a fork's postinstall.
-        run: npm ci
+        # `.npmrc` sets `ignore-scripts=true` repo-wide (#816) — but the copy IN
+        # FORCE here is the MERGED tree's own: this checkout has no `ref:`, so
+        # it resolves to `refs/pull/N/merge`, and a PR can edit `.npmrc` to set
+        # `ignore-scripts=false` before this step ever runs. That is not NEW
+        # exposure — not a guarantee this comment alone can make — the job
+        # already executes PR-authored code elsewhere: the merged tree's own
+        # guard scripts (python3/bash/node), and now, since #4078, its
+        # `package.json`'s `typecheck` script, which is an arbitrary command.
+        # It holds only `contents: read`, sets `persist-credentials: false`,
+        # and references no secrets (see the trust-boundary guard,
+        # scripts/check-pr-overlap-trust-boundary.mjs). #3967 is recent enough
+        # that a false reassurance in this file is worth correcting (#4169).
+        #
+        # #4169 follow-up 1: every OTHER failure mode in this lane routes
+        # through pr-merge-result-check.sh and renders a "Merge-result check:
+        # VERIFIED NOTHING" summary. A bare `run: npm ci` did not — a registry
+        # blip, an engine-strict rejection, or a lockfile npm cannot install
+        # turned this job red at a step with no summary at all, one step
+        # upstream of the script that exists to model exactly that gap. Wrapped
+        # so an install failure renders through the same contract instead of
+        # bypassing it.
+        run: |
+          if ! npm ci; then
+            {
+              echo "### Merge-result check: VERIFIED NOTHING"
+              echo
+              echo "\`npm ci\` failed in this job's own checkout — a registry blip, an"
+              echo "engine-strict rejection, or a lockfile npm could not install. The merge"
+              echo "result was never computed: this is a runner-side gap, not a verdict on"
+              echo "the PR. See the npm error in the job log above; fix the runner or the"
+              echo "PR's dependencies, then re-run."
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "::error::pr-merge-result-check: npm ci failed — verified nothing, see #4169"
+            exit 1
+          fi
 
       - name: Verify the merge result (ratchet guards + typecheck)
         env:
