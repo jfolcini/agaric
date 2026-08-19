@@ -96,6 +96,48 @@ npm run format:toml      # taplo — fixes TOML (a `taplo fmt --check` failure i
 
 Prefer formatting only the files you changed (as above), since `npm run format` is `oxfmt --write .` — a whole-repo reformat that can produce large unrelated diffs; reserve it for intentional repo-wide passes. (`just fmt` runs both commands above.) Either way, oxfmt only touches JS/TS/JSON and never reformats TOML, so a `taplo fmt --check` hook failure must be fixed with `npm run format:toml`. The `format:toml` script needs the `taplo` binary on `PATH` (`cargo install taplo-cli --locked`).
 
+### Marking code with a removal deadline
+
+Code that must be deleted once the repo reaches a specific version — a
+one-off migration, a temporary workaround — gets a marker comment naming
+that version, so its deletion is mechanically findable instead of relying
+on someone remembering at release time (#4129). The `remove-after-markers`
+pre-commit hook scans tracked `.rs`/`.ts`/`.tsx`/`.js`/`.mjs`/`.py`/`.sh`/`.md`
+files and fails once the current app version (`src-tauri/tauri.conf.json`)
+reaches or passes the marker's version, or if a line names the marker phrase
+without the exact canonical form below.
+
+The canonical spelling — the two-word phrase in capitals, then a plain
+semver triple (no `v` prefix, no pre-release suffix, no fourth component),
+optionally wrapped in backticks:
+
+```rust
+// REMOVE AFTER 0.3.0. Removal trigger: when 0.3.0 is cut, delete this
+// migration and its helpers in the same commit that bumps the version.
+fn migrate_personal_pages_to_work() {}
+```
+
+A line that names the phrase but not a well-formed triple is reported as
+**malformed**, not silently accepted — the whole point of the marker is
+that its deadline is mechanically comparable, so a description in place of
+a version guards nothing:
+
+```rust
+// REMOVE AFTER x.y.z, once the replacement API ships — malformed, not a
+// real deadline, and the hook fails the same way it would on a typo.
+```
+
+To keep a marker one release longer, bump its version in place — a small,
+reviewable diff. There is no CLI opt-out flag.
+
+(Both examples above sit inside this file's own fenced code blocks, which
+the hook does not scan as live markers (#4146) — see
+`scripts/check-remove-after-markers.mjs` for why documenting the convention
+doesn't trip it. Outside a fence, even naming the bare phrase in prose — the
+two capitalized words in the paragraph above this one, spelled out — would
+trip the same malformed check this section is explaining, which is exactly
+why it isn't spelled out there.)
+
 Every change must:
 
 1. Keep `prek run --all-files` green. The hooks cover oxlint + oxfmt + tsc, vitest, cargo fmt / clippy / nextest / deny / machete, sqruff, license-checker, and the rest of the surface — `prek.toml` is the source of truth.

@@ -904,9 +904,16 @@ jobs:
   # docs-lint (#833) — the docs-only counterpart to `lint`. Runs ONLY on a
   # provably docs-only diff (the full `lint` job is skipped then) and runs
   # just the cheap doc-relevant prek hooks — markdownlint, the markdown
-  # link/citation checks, typos, and lychee — with no Rust toolchain,
-  # clippy, cargo-deny, cargo-audit, or sqlx-prepare. This keeps docs
-  # actually linted on the fast path instead of waving them through.
+  # link/citation checks, typos, remove-after-markers, and lychee — with no
+  # Rust toolchain, clippy, cargo-deny, cargo-audit, or sqlx-prepare. This
+  # keeps docs actually linted on the fast path instead of waving them
+  # through.
+  #
+  # remove-after-markers (#4129) is in this list because it scans `.md` too
+  # (#4147): without it, a docs-only PR that adds an expired `REMOVE AFTER`
+  # marker to a design note merged clean, uncaught by the guard that claims
+  # `.md` coverage unconditionally. It is a fast Node scan (no cargo, no
+  # network), so it costs the fast path almost nothing.
   #
   # EXACTLY ONE of {lint, docs-lint} runs per PR (they have opposite
   # docs_only conditions). validate-all requires BOTH (a skipped sibling is
@@ -985,12 +992,16 @@ jobs:
           restore-keys: |
             lychee-${{ runner.os }}-
 
-      - name: Run doc-only prek hooks (markdownlint, link/citation, typos)
+      - name: Run doc-only prek hooks (markdownlint, link/citation, typos, remove-after-markers)
         # Pass the hook ids positionally so prek runs ONLY this reduced set —
         # the prek.toml config itself is untouched (#833 constraint).
+        # remove-after-markers is included so a docs-only PR gets the same
+        # `.md` REMOVE AFTER coverage the full `lint` job gives every other
+        # PR (#4147) — it needs no toolchain beyond the Node/git already set
+        # up above.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: prek run --all-files markdownlint md-link-targets doc-vs-code-paths typos
+        run: prek run --all-files markdownlint md-link-targets doc-vs-code-paths typos remove-after-markers
 
       - name: Run lychee link check (pre-push-staged hook)
         # lychee is staged `pre-push` in prek.toml, so it needs the explicit
