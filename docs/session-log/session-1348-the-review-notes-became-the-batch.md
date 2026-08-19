@@ -5,7 +5,7 @@
 | **Date** | 2026-08-18 → 2026-08-19 |
 | **Subagents** | 5 build (2 of them resumed after an interruption) |
 | **Items closed** | `#4071`, `#4133`, `#4141`, `#4126`, `#4129`, `#3967`, `#4138`, `#4065` |
-| **Items shipped, PR open** | PR #4155 (`#4140` guard hardening), PR #4157 (this log), PR #4158 (`#4036`, `#3939`), PR #4160 (`#4072`), PR #4162 (`#4078`) |
+| **Items shipped, PR open** | PR #4155 (hardens the guard PR #4140 added), PR #4157 (this log), PR #4158 (`#4036`, `#3939`), PR #4160 (`#4072`), PR #4162 (`#4078`) |
 | **PRs merged** | #4149, #4145, #4136, #4140, #4150, #4151, #4154 |
 | **Items filed** | `#4152`, `#4153`, `#4156`, `#4159`, `#4161` |
 
@@ -210,7 +210,7 @@ markdown-fixpoint section above; #4162's is the one below.
 
 ### Process notes
 
-**Bounding the merge on approval recency.** Each of the six merges checked that the
+**Bounding the merge on approval recency.** Each of the seven merges checked that the
 approval's `submittedAt` post-dated the head commit's `committedDate` before merging.
 #4140 in particular had four reviews — `APPROVED`, `APPROVED`, `CHANGES_REQUESTED`,
 `APPROVED` — where taking "has an approval" at face value would have merged over an
