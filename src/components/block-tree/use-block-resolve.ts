@@ -98,8 +98,8 @@ function formatNamespacedLabel(title: string): {
  * placeholder still needs to be SHOWN, so it is applied here, once, at
  * display time, rather than at every seed site.
  *
- * One `'Untitled'` literal elsewhere in this file is deliberately NOT routed
- * through `untitledOr` (below), because it doesn't receive the `''`
+ * One call SITE elsewhere in this file — two literals — is deliberately NOT
+ * routed through `untitledOr` (below), because it doesn't receive the `''`
  * cache-seed shape that helper is written against (#4150 review):
  *   - `searchBlockRefs` renders BLOCK content for the `((` picker, a
  *     different surface with its own truncation rules — not a page title.
@@ -126,9 +126,10 @@ function makePagePickerItem(id: string, title: string): PickerItem {
  *   1. Trimmed, not exact-empty (`=== ''` / `?? ''`) — a whitespace-only
  *      title (`'   '`, `'\n'`) is not `=== ''`, so the old exact-empty test
  *      rendered it as a blank, unlabelled picker row instead of the
- *      placeholder. `BlockZoomBar` already gets this right for the zoom
- *      label (`stripped.length > 0 ? stripped : t('block.untitled')`) —
- *      this is that same convention, applied here.
+ *      placeholder. `BlockZoomBar` already applies the same TEST for the
+ *      zoom label (`stripped.length > 0 ? stripped : t('block.untitled')`),
+ *      though it goes on to render the STRIPPED value; a picker row keeps
+ *      the raw title, so `'  foo  '` still shows its surrounding space.
  *   2. Routed through `translate(...)` (the module-scope i18n singleton,
  *      since these are free functions with no `useTranslation()` hook
  *      context) instead of the hardcoded English literal, matching every
