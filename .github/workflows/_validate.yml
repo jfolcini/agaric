@@ -1321,6 +1321,43 @@ jobs:
         # the `apt-get` that install-deps shells out to) is not a substitute: it
         # does not bound a connection that establishes and then produces no
         # bytes, as prepare-apt's own comment records.
+        #
+        # #4170: the bound above is real, but it was NOT the verdict it was
+        # being used as. Measured, run 32296204297 (2026-08-19), jobs
+        # 96208038360 and 96208038198 (`validate / playwright (2)` and `(3)`)
+        # -- red on a diff that touches one frontend hook and no CI, with
+        # `APT_CACHE_HIT: true` and `Cache restored ... 20 MB` of .debs
+        # immediately above. Both attempts end on the same line:
+        #
+        #   Get:3 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+        #   Get:4 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+        #   Get:5 https://archive.ubuntu.com/ubuntu noble-security InRelease
+        #   ##[warning]playwright install-deps attempt N exceeded 300s
+        #
+        # i.e. InRelease INDEX files -- neither attempt ever reached a package
+        # download or an unpack. `install-deps` shells out to `apt-get update`
+        # before it installs, and that refresh is precisely the phase the .deb
+        # cache does NOT accelerate; #4167's own description records the same
+        # observation ("a cache hit does NOT avoid mirror contact ...  because
+        # it runs its own `apt-get update`"). So the healthy cache-hit samples
+        # the 300s was derived from (11, 11, 14, 21, 27, 72s) are all
+        # healthy-MIRROR samples too, and on a degraded mirror the bound fires
+        # in a phase it was never measured against. Shard 1 of that same run,
+        # same commit, drew a healthy runner and passed the suite -- the code
+        # was never in question.
+        #
+        # The fix keeps the bound and adds no attempt: it is now a FAST-FAIL
+        # for attempt 1 (kill a stalled mirror early, clear the strays) rather
+        # than a verdict, and attempt 2 -- already the last one -- runs
+        # unbounded and decides. That is the contract
+        # `.github/actions/apt-install` ships for every other apt site in the
+        # tree ("an update that does not finish is a WARNING and the install
+        # runs anyway ... Only the INSTALL decides"), which #4167 could not
+        # apply here because `install-deps` fuses update and install into one
+        # opaque command. Unbounded is also exactly what the .deb-cache-MISS
+        # path does today, and what the 20 -> 30 minute budget bump above was
+        # paid for (the 760s cold-mirror observation). NO timing number in
+        # this step is new, and the attempt count is still 2.
         env:
           APT_CACHE_HIT: ${{ steps.apt-deb-cache.outputs.cache-hit }}
         run: |
@@ -1332,12 +1369,22 @@ jobs:
             echo "::notice::apt .deb cache miss -- install-deps left unbounded (760s cold-mirror observation, #4163)"
           fi
 
+          # #4170: `timed_out` is the sticky one -- it survives across attempts
+          # so the exit code below can tell "the mirror stalled" apart from
+          # "apt said no". `status` is re-initialised per attempt inside the
+          # loop and is only read after it as the last attempt's code.
+          timed_out=0
+
           for attempt in 1 2; do
             # Capture via `|| status=$?`, not `$?` after an `if`: a false `if`
             # with no `else` exits 0 per POSIX, so reading `$?` there would
             # report success and never take the 124 branch below.
             status=0
-            if [ -n "${bound}" ]; then
+            # #4170: bound attempt 1 only. Attempt 2 is the last one and is
+            # always unbounded -- see the note above. On a .deb-cache MISS
+            # `bound` is empty and BOTH attempts are unbounded, exactly as
+            # before.
+            if [ -n "${bound}" ] && [ "${attempt}" -eq 1 ]; then
               # -k: `timeout` otherwise SIGTERMs and then waits on the child
               # indefinitely, which is not a bound at all.
               timeout -k 30 "${bound}" npx playwright install-deps chromium || status=$?
@@ -1345,9 +1392,13 @@ jobs:
               npx playwright install-deps chromium || status=$?
             fi
             if [ "${status}" -eq 0 ]; then
+              if [ "${timed_out}" -eq 1 ]; then
+                echo "::notice::#4170: install-deps completed on the unbounded attempt after the ${bound}s bound fired inside its apt-get update; the mirror was slow, not the diff."
+              fi
               exit 0
             fi
-            if [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; then
+            if [ -n "${bound}" ] && [ "${attempt}" -eq 1 ] \
+               && { [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; }; then
               # 137, not just 124 (#4163). `timeout -k` exits 124 when the
               # child dies on the SIGTERM, but the SIGKILL path exits 137 --
               # measured on coreutils 9.4 against a TERM-ignoring child:
@@ -1360,7 +1411,8 @@ jobs:
               # hung on the mirror AND still holding the lock. Without clearing
               # it the wait below spins its full 180s and attempt 2 races
               # attempt 1. prepare-apt records the same hazard.
-              echo "::warning::playwright install-deps attempt ${attempt} exceeded ${bound}s (mirror stall); clearing strays and retrying"
+              timed_out=1
+              echo "::warning::playwright install-deps attempt ${attempt} exceeded ${bound}s (mirror stall, likely inside its apt-get update); clearing strays, the next and final attempt is unbounded"
               sudo pkill -TERM -x apt-get 2>/dev/null || true
               sleep 5
               sudo pkill -KILL -x apt-get 2>/dev/null || true
@@ -1378,8 +1430,25 @@ jobs:
             done
             sudo dpkg --configure -a || true
           done
-          echo "::error::playwright install-deps failed after 2 attempts"
-          exit 1
+          # #4170: mirror-stalled and still failing is INFRA, not a red diff.
+          # Same distinction, marker and code as `.github/actions/apt-install`:
+          # 75 is sysexits.h EX_TEMPFAIL and is not 1, so the exit code in the
+          # job log is itself the diagnosis.
+          if [ "${timed_out}" -eq 1 ]; then
+            echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: playwright install-deps stalled on the Ubuntu mirror and then failed (exit ${status}). Rerun the job. (#4170)"
+            {
+              echo "### Playwright system deps could not install (infra, not this diff)"
+              echo
+              echo "\`npx playwright install-deps chromium\` exceeded its \`${bound}s\` bound inside its own \`apt-get update\`, and the unbounded retry then failed with exit \`${status}\`."
+              echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            exit 75
+          fi
+
+          # The mirror was fine and install-deps still failed: an ordinary
+          # failure, reported with its own status and nothing invented.
+          echo "::error::playwright install-deps failed after 2 attempts (exit ${status})"
+          exit "${status}"
 
       - name: Install Playwright browser binaries (on cache miss)
         if: steps.playwright-cache.outputs.cache-hit != 'true'
