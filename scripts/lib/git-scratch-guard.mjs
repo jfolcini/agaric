@@ -1098,6 +1098,38 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
       own.status === 1 && namesFile(own),
       `expected 1 naming ${file}, got ${own.status}: ${own.stderr}`,
     )
+
+    // An INHERITED GIT_DIR must not let the ownership probe answer about the
+    // FOREIGN repository (#4061). `indexBelongsTo` asks `git -C <repoRoot>
+    // rev-parse --absolute-git-dir`, and an ambient GIT_DIR outranks `-C`
+    // (measured: `GIT_DIR=<other>/.git git -C <root> rev-parse
+    // --absolute-git-dir` answers about <other>, not <root>). A real commit
+    // hook running INSIDE `foreignDir` would leave BOTH GIT_DIR and
+    // GIT_INDEX_FILE exported from it — the shape below — and before the fix
+    // the leaked GIT_DIR made the probe answer about `foreignDir`, so
+    // GIT_INDEX_FILE (also naming a path under that same leaked git dir)
+    // compared EQUAL to it: a false ACCEPT of the foreign index as belonging
+    // to `dir`, silently defeating the refusal checked just above.
+    const foreignWithGitDir = {
+      GIT_DIR: join(foreignDir, '.git'),
+      GIT_INDEX_FILE: join(foreignDir, '.git', 'index'),
+    }
+    const autoWithGitDir = run(dir, env, [], foreignWithGitDir)
+    check(
+      'foreign index: an inherited GIT_DIR must not make the probe answer about the OTHER repo (#4061)',
+      autoWithGitDir.status === 2 && /different repository/.test(autoWithGitDir.stderr),
+      `expected 2 naming a different repository, got ${autoWithGitDir.status}: ${autoWithGitDir.stderr}`,
+    )
+    // THE CONTROL: --worktree sidesteps AUTO (and therefore the probe)
+    // entirely, so it must stay green under the very same leaked GIT_DIR —
+    // the refusal above is about the ambiguous index, not a guard that has
+    // stopped working under a foreign GIT_DIR.
+    const wtWithGitDir = run(dir, env, ['--worktree'], foreignWithGitDir)
+    check(
+      'foreign index: …and --worktree is unaffected by the same leaked GIT_DIR',
+      wtWithGitDir.status === 0,
+      `expected 0, got ${wtWithGitDir.status}: ${wtWithGitDir.stderr}`,
+    )
   }
 
   // ── 10. A LINKED WORKTREE — see `verifyLinkedWorktreeOwnership`, which is

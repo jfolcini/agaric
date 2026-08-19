@@ -137,12 +137,28 @@ path that is simply not in the commit.
 
 ─── Cost ───────────────────────────────────────────────────────────────
 
-One `git cat-file blob <sha>` spawn per file read from the index, cached
-per path. That is affordable precisely because of the AUTO rule: the
-whole-tree runs (`prek run --all-files`, CI, a manual invocation) have no
-`GIT_INDEX_FILE` and so never take this path at all. The index path only
-runs inside a real commit hook, where the file list is the commit's
-changed set — tens of files, not thousands.
+`read()` costs one `git cat-file blob <sha>` spawn per file read from the
+index, cached per path. That is affordable precisely because of the AUTO
+rule: the whole-tree runs (`prek run --all-files`, CI, a manual invocation)
+have no `GIT_INDEX_FILE` and so never take this path at all. For
+`check-raw-tx.py` and `check-command-arity.py`, and for
+`check-dynamic-sql.py`'s marker check, the index path only runs inside a
+real commit hook, where the file list is the commit's changed set — tens of
+files, not thousands.
+
+That is NOT true of `check-dynamic-sql.py`'s orphan sweep (#4063): it is
+deliberately GLOBAL over the baseline — an entry naming a file that is
+going away must be reclaimed, and prek's changed-file list omits deletions
+— so under the index it used to cost one `_blob` spawn per baseline entry
+(~70 today) on every commit that touches a scanned `.rs` file, independent
+of how small that commit is. `read_many` exists for exactly this shape: it
+warms the cache for several paths through chunked `git cat-file --batch`
+calls — one spawn per `_CAT_FILE_CHUNK` paths rather than one per path —
+mirroring `readFromIndex`/`parseBatchStream` in the `.mjs` sibling
+verbatim, including the fail-closed handling of a desynchronised stream or
+a `missing` object (see `_read_batch`). A caller with more than a handful
+of paths to read should call it first; `read()` on each path afterwards is
+then a cache hit.
 """
 
 from __future__ import annotations
@@ -160,6 +176,29 @@ SOURCE_WORKTREE = "worktree"
 # belongs to that repository, never to the root whose `$GIT_DIR` contains it.
 # See `_index_belongs_to`; the `.mjs` twin spells this `NESTED_GIT_DIRS`.
 _NESTED_GIT_DIRS = frozenset({"worktrees", "modules"})
+
+# The variables through which an inherited git context can redirect the
+# ownership probe in `_index_belongs_to` away from `root`, despite `-C root`
+# (#4061). `GIT_INDEX_FILE` is deliberately absent: it is the value under
+# test, not ambient context to strip, and `rev-parse --absolute-git-dir`
+# never consults it. A subset of `GIT_SCRATCH_LEAK_VARS`
+# (`scripts/lib/git-scratch-guard.sh`) — that list scrubs a whole fixture's
+# environment for a battery of git subcommands; this one scrubs a single
+# `rev-parse --absolute-git-dir` call for the variables that can change its
+# answer.
+_PROBE_SCRUB_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_NAMESPACE",
+)
+
+# `read_many`'s chunk size (#4063), matching `CAT_FILE_CHUNK` in the `.mjs`
+# sibling exactly, for the same reason: peak memory is bounded by the
+# chunk rather than by however many paths a caller passes, and one spawn per
+# chunk of this many paths — rather than one per path — is the whole point.
+_CAT_FILE_CHUNK = 500
 
 
 class UsageError(Exception):
@@ -182,6 +221,17 @@ class AmbiguousSourceError(Exception):
     guess available here, so there is no guess: the caller is told to say
     which copy it means with `--worktree` or `--cached`, and the guard exits
     2 until it does.
+
+    This holds UNCONDITIONALLY — not only while the ambient environment
+    carries no `GIT_DIR` of its own. It used to hold only in that narrower
+    case: `_index_belongs_to`'s ownership probe ran under the ambient
+    environment, and an inherited `GIT_DIR` outranks `-C root`, so a
+    `GIT_DIR` exported alongside a foreign `GIT_INDEX_FILE` could make the
+    probe answer about that foreign repository and accept its index as this
+    one's (#4061). The probe now scrubs its own environment of exactly the
+    variables that could redirect it, so the guarantee this exception exists
+    to state — a foreign index is refused, never silently read — is true
+    regardless of what the caller's shell happens to have exported.
     """
 
 
@@ -248,17 +298,49 @@ def _index_belongs_to(index_file: str, root: Path) -> bool:
     checkout's index read from a worktree, and a worktree's index read from
     the main checkout. Pinned there, and by scenario 10 of
     `runSourceScenarios`.
+
+    ─── An inherited GIT_DIR outranks -C too (#4061) ────────────────────
+
+    `-C root` tells THIS `git` command where to look — but an ambient
+    `GIT_DIR` outranks it (measured on git 2.43: `GIT_DIR=<other>/.git git
+    -C <root> rev-parse --absolute-git-dir` answers about `<other>`, not
+    `root`). So with both `GIT_DIR` and `GIT_INDEX_FILE` exported from
+    ANOTHER repository — exactly what a real commit hook leaves in the
+    environment of that repository — the leaked `GIT_DIR` made this probe
+    answer about that other repository, and `index_file` (also naming a
+    path under that same leaked git dir) then compared EQUAL to it: a false
+    ACCEPT of a foreign index as belonging to `root`, silently defeating the
+    exit-2 refusal `AmbiguousSourceError` exists to raise.
+
+    The probe's OWN environment is scrubbed of `_PROBE_SCRUB_VARS` before
+    this call for exactly that reason — asking "what repository is at this
+    path" is a question no ambient git context should get to answer on
+    `root`'s behalf. Nothing else about the caller's environment changes:
+    `git_env` still binds the rest of it, and still strips only
+    `GIT_INDEX_FILE`, and only when this probe (now honest about `root`)
+    says it does not belong.
+
+    Measured before this fix, in a two-repository scratch fixture with
+    `GIT_DIR` and `GIT_INDEX_FILE` both exported from the second: AUTO
+    accepted the foreign index as belonging to the first, and the guard
+    exited 0 over a staged violation it never read. Pinned in section 5 of
+    `scripts/test-py-guard-file-source.sh` and scenario 9 of
+    `runSourceScenarios`.
     """
     path = Path(index_file)
     if not path.is_absolute():
         path = Path.cwd() / path
     path = Path(os.path.normpath(path))
+    probe_env = dict(os.environ)
+    for name in _PROBE_SCRUB_VARS:
+        probe_env.pop(name, None)
     try:
         out = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
             capture_output=True,
             text=True,
             check=False,
+            env=probe_env,
         )
     except OSError:
         return False
@@ -289,9 +371,17 @@ def git_env(root: Path, env) -> dict:
     commit hook (where the exported index IS this tree's, often a
     `next-index-<pid>.lock` that MUST be honoured) and
     `pr-merge-result-check.sh` (where it is somebody else's and must not
-    be). Belonging decides, and nothing else is stripped — a foreign
-    `GIT_DIR`/`GIT_WORK_TREE` is out of scope here and would already have
-    made `root` itself wrong.
+    be). Belonging decides, and nothing else is stripped from the
+    environment returned HERE — a foreign `GIT_DIR`/`GIT_WORK_TREE` in
+    `env` is out of scope for this function and left exactly as given.
+
+    That is safe only because `_index_belongs_to`'s OWN probe no longer
+    trusts a leaked `GIT_DIR` either (#4061): before that fix, "belonging
+    decides" was true in name only — a `GIT_DIR` exported alongside a
+    foreign `GIT_INDEX_FILE` could make the probe answer about that foreign
+    repository and accept its index as `root`'s. The probe scrubs its own
+    environment for that one call; this function's own contract (leave
+    `env` otherwise untouched) is unaffected.
     """
     out = dict(env)
     index_file = out.get("GIT_INDEX_FILE")
@@ -509,6 +599,144 @@ class FileSource:
         self._blobs[rel] = text
         return text
 
+    def read_many(self, rels) -> None:
+        """Warm the blob cache for several paths at once (#4063).
+
+        A no-op under the working tree: a disk read is already a single
+        syscall with no spawn to amortize, so there is nothing here to
+        batch. Under the index it is `_blob`'s per-call `git cat-file blob
+        <sha>` collapsed into chunked `git cat-file --batch` calls — one
+        spawn per `_CAT_FILE_CHUNK` paths, not one per path — so a caller
+        that is about to `read()` many paths (`check-dynamic-sql.py`'s
+        orphan sweep, global over the baseline: ~70 entries today, one spawn
+        each before this existed) can pay for it once up front. `read()`
+        afterwards is a cache hit for every path this warmed; it is
+        unaffected for any path this did not (already cached, no stage-0
+        blob, or not passed here at all).
+
+        Ports `readFromIndex`/`parseBatchStream` from the `.mjs` sibling
+        (`scripts/lib/guard-file-source.mjs`) verbatim in behaviour,
+        including the fail-closed handling `_read_batch`/`_parse_batch`
+        describe: a malformed stream or a `missing` object raises `GitError`
+        rather than silently leaving the remainder of the chunk unread.
+        """
+        if self.source != SOURCE_INDEX:
+            return
+        entries = self._entries()
+        wanted: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for rel in rels:
+            if rel in seen or rel in self._blobs:
+                continue
+            seen.add(rel)
+            entry = entries.get(rel)
+            if entry is None or entry[0] == "160000":
+                continue
+            wanted.append((rel, entry[1]))
+        for i in range(0, len(wanted), _CAT_FILE_CHUNK):
+            self._read_batch(wanted[i : i + _CAT_FILE_CHUNK])
+
+    def _read_batch(self, chunk: list[tuple[str, str]]) -> None:
+        """Run ONE `git cat-file --batch` over `chunk` and cache every body.
+
+        Split out of `read_many` only so the chunking loop stays readable;
+        see `read_many` for what this is for and `_parse_batch` for the
+        framing it trusts git to honour.
+        """
+        stdin = ("\n".join(sha for _, sha in chunk) + "\n").encode("utf-8")
+        out = subprocess.run(
+            ["git", "cat-file", "--batch"],
+            cwd=self.repo_root,
+            env=self.env,
+            input=stdin,
+            capture_output=True,
+            check=False,
+        )
+        if out.returncode != 0:
+            raise GitError(
+                f"`git cat-file --batch` failed over {len(chunk)} path(s) "
+                f"(exit {out.returncode}): "
+                f"{out.stderr.decode('utf-8', 'replace').strip()}\n"
+                "  The index names these blobs, so this is a damaged or "
+                "unreadable object store — the staged content cannot be read."
+            )
+        self._parse_batch(out.stdout, chunk)
+
+    def _parse_batch(self, data: bytes, chunk: list[tuple[str, str]]) -> None:
+        """Walk ONE `cat-file --batch` response against the chunk that made it.
+
+        The Python twin of `parseBatchStream` in the `.mjs` sibling — same
+        framing, same two failure modes, same reason each one THROWS rather
+        than abandoning the rest of the chunk to a silent skip. See that
+        function's docstring for why: in short, a `break` here used to leave
+        up to `_CAT_FILE_CHUNK` staged paths absent from `self._blobs` with
+        no fallback behind them, which is the loudest possible version of
+        the "unscanned file" failure this whole module exists to prevent — a
+        guard that exits 0 having read almost nothing. `<oid> missing` is
+        thrown too, for the same #4046 reason `_blob` already throws on it:
+        the sha came out of the index moments earlier, so the object store
+        not having it is damage, not a benign per-file answer, and the
+        working-tree copy would be DIFFERENT content offered under a verdict
+        claiming the index.
+        """
+        off = 0
+        n = len(chunk)
+        for i, (rel, sha) in enumerate(chunk):
+            nl = data.find(b"\n", off)
+            if nl == -1:
+                raise GitError(
+                    "`git cat-file --batch` desynchronised: the stream ended "
+                    f"before the header for '{rel}'. {n - i} of {n} staged "
+                    "path(s) in this batch would have gone unread, so the "
+                    "read is abandoned rather than reported clean."
+                )
+            header = data[off:nl].decode("utf-8", "replace")
+            off = nl + 1
+            parts = header.split(" ")
+            if len(parts) >= 2 and parts[1] == "missing":
+                raise GitError(
+                    f"`git cat-file --batch`: the index names blob {sha} for "
+                    f"'{rel}', but the object store does not have it. The "
+                    "staged content cannot be read, and the copy on disk is "
+                    "different content — reporting it under a verdict "
+                    "claiming the index would be a verdict about a file "
+                    "nobody staged, so the read is abandoned rather than "
+                    "re-aimed."
+                )
+            if len(parts) < 3:
+                raise GitError(
+                    "`git cat-file --batch` desynchronised: header "
+                    f"{header!r} for '{rel}' carries no readable size. "
+                    f"{n - i} of {n} staged path(s) in this batch would have "
+                    "gone unread, so the read is abandoned rather than "
+                    "reported clean."
+                )
+            try:
+                size = int(parts[2])
+            except ValueError:
+                raise GitError(
+                    "`git cat-file --batch` desynchronised: header "
+                    f"{header!r} for '{rel}' carries no readable size. "
+                    f"{n - i} of {n} staged path(s) in this batch would have "
+                    "gone unread, so the read is abandoned rather than "
+                    "reported clean."
+                ) from None
+            if off + size > len(data):
+                raise GitError(
+                    "`git cat-file --batch` desynchronised: the payload for "
+                    f"'{rel}' claims {size} bytes but only {len(data) - off} "
+                    f"remain. {n - i} of {n} staged path(s) in this batch "
+                    "would have gone unread, so the read is abandoned rather "
+                    "than reported clean."
+                )
+            # `size == 0` (a zero-byte tracked file) sets `""` deliberately —
+            # see `read`'s note that None is not the empty string. `off`
+            # still advances by 1 past the LF git writes after the payload,
+            # empty or not.
+            if parts[1] == "blob":
+                self._blobs[rel] = data[off : off + size].decode("utf-8", "replace")
+            off += size + 1
+
     # -- public API -------------------------------------------------------
 
     def exists(self, rel: str) -> bool:
@@ -550,6 +778,23 @@ class FileSource:
         disk, so `exists()` said "not in the commit" while `read()` handed
         back the 68-entry ceiling being deleted, and the ratchet judged the
         commit against a baseline that commit removes.
+
+        AN UNDECODABLE FILE IS LOSSY-DECODED, NOT SKIPPED (#4062). Both
+        sources now agree here: `_blob` has always turned invalid UTF-8 into
+        U+FFFD replacement characters (`out.stdout.decode("utf-8",
+        "replace")`), so a tracked file with a bad byte was SCANNED under
+        `--cached` and silently SKIPPED under `--worktree` — the same
+        divergence #4048 exists to close, arriving through the decoder
+        instead of the source choice. `errors="replace"` here matches `_blob`
+        and the `.mjs` sibling (`readFileSync(…, 'utf8')` /
+        `Buffer.toString('utf8')` are both lossy-replace on both its
+        sources), so `errors="replace"` should make a decode failure
+        unreachable here. `UnicodeError` (the broader class, not just
+        `UnicodeDecodeError`) stays in the `except` regardless, as a second
+        line of defence rather than a claim that no decode path can ever
+        raise — `OSError`, a genuinely unreadable file, is the case that
+        still must answer None either way. An unscanned file is the failure
+        this module exists to prevent; a mangled-but-scanned one is not.
         """
         if self.source == SOURCE_INDEX:
             if rel in self._entries():
@@ -558,8 +803,8 @@ class FileSource:
                 return None
             # UNMERGED — fall through to the conflicted copy on disk.
         try:
-            return (self.repo_root / rel).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+            return (self.repo_root / rel).read_text(encoding="utf-8", errors="replace")
+        except (OSError, UnicodeError):
             return None
 
     def list_paths(self, prefix: str, suffix: str = "") -> list[str]:
