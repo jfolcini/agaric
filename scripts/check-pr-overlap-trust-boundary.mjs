@@ -77,9 +77,33 @@
 //      self-test also pins that condition 3 REACHES a checkout step in the
 //      real file, and carries fixtures in that same `- name:`-first shape
 //      — see `findCheckoutSteps` and the last self-test block.
+//   4. Independent of both the trigger AND the `permissions:` block: does any
+//      job holding a checkout that is NOT base-pinned (the same "untrusted
+//      content" predicate condition 3 uses) reference `secrets.` anywhere —
+//      in an `env:`, a `with:`, a `run:`, anywhere? Conditions 1–3 read
+//      `permissions:` and nothing else, which leaves the OTHER half of this
+//      header's own thesis uncovered: it names a PAT alongside the trigger
+//      flip as the way the GitHub fork-downgrade mitigation dies, and a PAT
+//      is not a `permissions:` scope. `GH_TOKEN: ${{ secrets.A_PAT }}` added
+//      to `compute` reinstates the #3967 arrangement exactly — a
+//      write-capable credential sitting in the job that runs fork-authored
+//      code — while `compute`'s `permissions: contents: read` stays
+//      untouched and conditions 1–3 stay green on it.
+//      `secrets.GITHUB_TOKEN` is NOT exempted: under `pull_request` from a
+//      fork it is read-only only because of the very GitHub default #3967
+//      stopped relying on, and the structural answer (`post` holds the
+//      token, `compute` holds the untrusted checkout) needs no token in
+//      `compute` at all. A workflow-level `env:` counts too — it is
+//      inherited by every job, so a secret declared once above `jobs:` lands
+//      in the untrusted job just the same.
+//      What this does NOT cover: a secret reaching the untrusted job by a
+//      route with no `secrets.` token in this file — a `with:` input on a
+//      third-party action that fetches its own credential, an OIDC exchange,
+//      a value carried in from a reusable workflow's `secrets: inherit`.
+//      Those need a different check; this one closes the one-line edit.
 //
-// (1 AND 2) is one failure mode; 3 is a second, independent one. Either
-// firing is a violation.
+// (1 AND 2) is one failure mode; 3 and 4 are two more, independent of it and
+// of each other. Any of them firing is a violation.
 //
 // Usage:
 //   node scripts/check-pr-overlap-trust-boundary.mjs
@@ -111,6 +135,12 @@ const HEAD_REF_PATTERNS = [
 // the one shape of checkout condition 3 (below) accepts inside a
 // write-scoped job.
 const BASE_REF_PATTERNS = [/pull_request\.base\.(?:sha|ref)/]
+
+// Any reference to the `secrets` context: `secrets.GITHUB_TOKEN`,
+// `secrets.A_PAT`, or the index form `secrets['A_PAT']`. Condition 4 (below)
+// rejects all of them inside a job holding a non-base-pinned checkout — see
+// this file's header for why `GITHUB_TOKEN` is not carved out.
+const SECRET_REFERENCE = /\bsecrets\s*(?:\.\s*[A-Za-z_][A-Za-z0-9_-]*|\[)/
 
 /**
  * Extract the top-level `on:` block's raw text (from the `on:` line up to,
@@ -191,6 +221,19 @@ export function findHeadCheckoutRefs(src) {
  * is every line after that up to the next such header, or a line that
  * dedents back to column 0 (the next top-level workflow key).
  *
+ * COMMENT LINES ARE NOT JOB HEADERS, for the same reason `extractOnBlock`
+ * drops comments before matching a trigger name. `pr-overlap.yml` separates
+ * its jobs with two-space-indented prose banners, and one of those ending in
+ * a colon (`  # …what follows is a note about its contract:`) matched the
+ * header regex — inventing a PHANTOM job that owns the rest of the REAL
+ * job's body. The phantom declares no `permissions:` of its own, so it
+ * inherits the workflow-level block (`contents: read`), so condition 3 skips
+ * it — and the real job, now truncated to whatever preceded the comment,
+ * has no checkout steps left to inspect. A write-scoped job checking out
+ * fork content would pass silently. The body lines are still pushed to the
+ * job they were already in, so every `headerLine + offset` line number
+ * stays exact.
+ *
  * Throws — a wiring failure, not a violation — if the file has no top-level
  * `jobs:` block, same discipline as `extractOnBlock`.
  *
@@ -214,7 +257,7 @@ export function splitJobs(src) {
   for (let i = jobsStart + 1; i < lines.length; i++) {
     const line = lines[i]
     if (/^\S/.test(line)) break // dedented back to a top-level key; jobs: block is over
-    const header = /^ {2}(\S[^:]*):\s*$/.exec(line)
+    const header = isCommentLine(line) ? null : /^ {2}(\S[^:]*):\s*$/.exec(line)
     if (header) {
       flush()
       name = header[1]
@@ -364,6 +407,17 @@ function isCommentLine(line) {
  * `findCheckoutSteps`' docstring for why "direct child" rather than "anywhere
  * in the step".
  *
+ * THE VALUE IS COMMENT-STRIPPED, like every other value this guard reads
+ * (`jobDeclaresWriteScope`, `declaresWrite`). Condition 3 accepts a checkout
+ * whose `ref:` merely CONTAINS `pull_request.base.…` — a substring test, not
+ * an equality one, because the real value is an interpolation with
+ * surrounding `${{ }}` — so an unstripped trailing comment is a free pass:
+ * `ref: ${{ github.event.pull_request.head.sha }}  # unlike base.sha, this
+ * is head` reads as base-pinned and walks past the check while checking out
+ * fork content. A `ref:` line whose value is ENTIRELY a comment is treated
+ * as no `ref:` at all — no override means the event's default ref, which is
+ * the fail-closed reading.
+ *
  * @param {string[]} block  the step's lines, starting at its `- …` line
  * @param {number} stepIndent  indentation of that leading `-`
  * @returns {{ ref: string | null, refLine: number | null }}
@@ -382,8 +436,11 @@ function refFromWithMapping(block, stepIndent) {
     if (lineIndent <= withIndent) break // dedented back out of the with: mapping
     if (childIndent === null) childIndent = lineIndent
     if (lineIndent !== childIndent) continue // nested under some other with: key
-    const refMatch = /^\s*ref:\s*(.+)$/.exec(line)
-    if (refMatch) return { ref: refMatch[1].trim(), refLine: j }
+    const refMatch = /^\s*ref:\s*(.*)$/.exec(stripComment(line))
+    if (refMatch) {
+      const value = refMatch[1].trim()
+      return value === '' ? { ref: null, refLine: null } : { ref: value, refLine: j }
+    }
   }
   return { ref: null, refLine: null }
 }
@@ -422,14 +479,83 @@ export function findWriteScopedUnsafeCheckouts(src) {
     const writeScoped = own === null ? workflowPermissions : own
     if (!writeScoped) continue
     for (const step of findCheckoutSteps(body)) {
-      const basePinned = step.ref !== null && BASE_REF_PATTERNS.some((re) => re.test(step.ref))
-      if (basePinned) continue
+      if (isBasePinned(step.ref)) continue
       hits.push({
         job: jobName,
         line: headerLine + step.stepLine + 1,
         refLine: step.refLine === null ? null : headerLine + step.refLine + 1,
         ref: step.ref,
       })
+    }
+  }
+  return hits
+}
+
+/**
+ * Whether a checkout `ref:` value (as `findCheckoutSteps` returns it, `null`
+ * for a step with no `ref:` of its own) pins the checkout to the PR's BASE —
+ * a commit in this repo's own history, never a fork's. `null` is NOT base
+ * pinned: no override means the triggering event's default ref, which under
+ * `pull_request` is `refs/pull/N/merge`, i.e. fork-controlled content.
+ *
+ * Shared by conditions 3 and 4 so "the untrusted job" means the identical
+ * thing in both — a job that already passes condition 3 by pinning its
+ * checkout is not the job a secret must be kept out of.
+ *
+ * @param {string | null} ref
+ */
+function isBasePinned(ref) {
+  return ref !== null && BASE_REF_PATTERNS.some((re) => re.test(ref))
+}
+
+/**
+ * Every `secrets.` reference, with its 1-based line number, in `lines`.
+ * Comments are stripped first: this file's own prose (and `pr-overlap.yml`'s)
+ * discusses tokens at length, and a comment SAYING `secrets.GITHUB_TOKEN` is
+ * not a job holding one.
+ *
+ * @param {string[]} lines
+ * @returns {{ offset: number, text: string }[]}  offset is 0-based into `lines`
+ */
+function findSecretReferences(lines) {
+  const hits = []
+  lines.forEach((line, i) => {
+    const bare = stripComment(line)
+    if (SECRET_REFERENCE.test(bare)) hits.push({ offset: i, text: bare.trim() })
+  })
+  return hits
+}
+
+/**
+ * Condition 4 (see this file's header): every `secrets.` reference sitting in
+ * a job that holds a checkout which is not base-pinned — the job running
+ * fork-authored content. Independent of `permissions:` entirely, which is the
+ * point: a PAT is a credential the `permissions:` block never mentions, so
+ * conditions 1–3 cannot see the PAT half of the hazard this guard's header
+ * names.
+ *
+ * A `secrets.` reference in the workflow PREAMBLE (anything above `jobs:` —
+ * in practice a workflow-level `env:`) is inherited by every job, so it is
+ * reported against each untrusted job with `scope: 'workflow'`, quoting the
+ * preamble line it actually lives on.
+ *
+ * @param {string} src
+ */
+export function findSecretsInUntrustedJobs(src) {
+  const jobs = splitJobs(src) // throws on a file with no `jobs:` — a wiring failure
+  const lines = src.split('\n')
+  const jobsStart = lines.findIndex((l) => /^jobs:\s*$/.test(l))
+  const preambleHits = findSecretReferences(lines.slice(0, jobsStart))
+
+  const hits = []
+  for (const [jobName, { body, headerLine }] of Object.entries(jobs)) {
+    const untrusted = findCheckoutSteps(body).some((step) => !isBasePinned(step.ref))
+    if (!untrusted) continue
+    for (const hit of findSecretReferences(body)) {
+      hits.push({ job: jobName, line: headerLine + hit.offset + 1, text: hit.text, scope: 'job' })
+    }
+    for (const hit of preambleHits) {
+      hits.push({ job: jobName, line: hit.offset + 1, text: hit.text, scope: 'workflow' })
     }
   }
   return hits
@@ -447,11 +573,16 @@ export function checkTrustBoundary(src) {
   const dangerous = declaresDangerousTrigger(onBlock)
   const headRefs = dangerous ? findHeadCheckoutRefs(src) : []
   const unsafeWriteCheckouts = findWriteScopedUnsafeCheckouts(src)
+  const secretsInUntrustedJobs = findSecretsInUntrustedJobs(src)
   return {
     dangerous,
     headRefs,
     unsafeWriteCheckouts,
-    violation: (dangerous && headRefs.length > 0) || unsafeWriteCheckouts.length > 0,
+    secretsInUntrustedJobs,
+    violation:
+      (dangerous && headRefs.length > 0) ||
+      unsafeWriteCheckouts.length > 0 ||
+      secretsInUntrustedJobs.length > 0,
   }
 }
 
@@ -508,6 +639,25 @@ export function renderVerdict(result) {
       "\nEither drop the write permission from that job, or pin its checkout's `ref:` to",
       '`github.event.pull_request.base.sha` and move any PR-specific data through an artifact',
       'from a job with no write scope — see the `compute`/`post` split this file uses today.',
+    )
+  }
+  if (result.secretsInUntrustedJobs.length > 0) {
+    lines.push(
+      'ERROR: a job whose checkout is NOT pinned to the PR base ref — i.e. a job running',
+      'fork-authored content — references the `secrets` context. That is the #3967 hazard by',
+      'its other route: a credential in the same job as untrusted code. `permissions:` says',
+      'nothing about it, so conditions 1-3 above stay green while the mitigation is gone.',
+      '`secrets.GITHUB_TOKEN` counts: it is read-only on a fork PR only because of the GitHub',
+      'default #3967 deliberately stopped depending on. Offending job / reference:',
+    )
+    for (const hit of result.secretsInUntrustedJobs) {
+      const where = hit.scope === 'workflow' ? ' (workflow-level, inherited by every job)' : ''
+      lines.push(`  job \`${hit.job}\`, line ${hit.line}${where}: ${hit.text}`)
+    }
+    lines.push(
+      '\nMove whatever needs the secret into a job that does NOT check out PR content (pin that',
+      "job's checkout to `github.event.pull_request.base.sha`) and pass results between the two",
+      'as an artifact — see the `compute`/`post` split this file uses today.',
     )
   }
   return { lines, exitCode: 1 }
@@ -768,6 +918,194 @@ jobs:
           persist-credentials: false
 `
 
+// CONDITION 4's FALSIFICATION. `pr-overlap.yml`'s `compute` job, unchanged
+// except for the one edit this file's header calls the OTHER way the fork
+// downgrade dies: a PAT handed to the job that runs fork-authored code. The
+// `permissions:` block still says `contents: read`; the trigger is still
+// plain `pull_request`; conditions 1, 2 and 3 all see a clean file. Only a
+// check that reads `secrets.` catches this.
+const SECRET_PAT_IN_UNTRUSTED_JOB = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Post the table from here, it is simpler
+        env:
+          GH_TOKEN: \${{ secrets.A_PAT_WITH_WRITE }}
+        run: gh pr comment "$PR_NUMBER" --body-file table.md
+`
+
+// The SIBLING ACCEPTANCE for condition 4: `pr-overlap.yml`'s real `post` job
+// holds \`secrets.GITHUB_TOKEN\` and must keep holding it. It is allowed to,
+// because its checkout is pinned to the PR BASE — it is the TRUSTED half of
+// the split. Condition 4 must not flag it, or the guard forbids the very
+// arrangement #3967 introduced.
+const SECRET_IN_BASE_PINNED_JOB_IS_FINE = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout the TRUSTED script source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Post the table
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: gh pr comment "$PR_NUMBER" --body-file table.md
+`
+
+// A secret named only in a COMMENT inside the untrusted job — the shape
+// `pr-overlap.yml`'s `compute` job actually carries, which explains at length
+// which token it does NOT hold. Reading that as a live reference fails safe
+// but produces a red nobody can explain from the file, the same objection
+// `COMMENT_IN_PERMISSIONS_IS_NOT_A_WRITE_SCOPE` pins for condition 3.
+const SECRET_NAMED_ONLY_IN_A_COMMENT = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      # No \`GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}\` anywhere in this job —
+      # #3967 moved everything that needs a token into \`post\`.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+`
+
+// The same hazard declared one level up: a workflow-level \`env:\` is inherited
+// by EVERY job, so a secret placed there reaches the untrusted checkout
+// without appearing anywhere inside the job's own body.
+const WORKFLOW_LEVEL_SECRET_ENV = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: \${{ secrets.A_PAT_WITH_WRITE }}
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+`
+
+// COMMENT EVASION ON THE \`ref:\` VALUE. Condition 3 accepts a \`ref:\` that
+// CONTAINS \`pull_request.base.sha\` — a substring test, because the real value
+// is an interpolation. Without comment-stripping, a trailing comment MENTIONING
+// the base ref makes a head checkout read as base-pinned: the write-scoped job
+// checks out fork content and the guard prints OK. Every other value this
+// guard reads already routes through \`stripComment\`; this one did not.
+const HEAD_REF_LAUNDERED_BY_A_TRAILING_COMMENT = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout the PR's own content
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.pull_request.head.sha }} # not github.event.pull_request.base.sha, we need the real diff
+          persist-credentials: false
+`
+
+// A TWO-SPACE-INDENTED COMMENT ENDING IN A COLON is not a job header.
+// \`pr-overlap.yml\` separates its jobs with exactly this kind of prose banner,
+// so this line is in the file's own idiom. Read as a header, it invents a
+// phantom job that inherits the workflow-level \`contents: read\` (it declares
+// no \`permissions:\` of its own) and swallows the rest of \`post\`'s body — so
+// the write-scoped job below has no checkout left to inspect and its
+// unpinned checkout belongs to a job condition 3 skips. Silent false
+// negative: this fixture is a REAL violation that a phantom-job split
+// reports as clean.
+const COMMENT_LINE_IS_NOT_A_JOB_HEADER = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+  # A banner comment in this file's own prose idiom, ending in a colon —
+  # about \`post\` above and what follows, not a new job. On its contract:
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+`
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -946,6 +1284,174 @@ function runSelfTest() {
       'and every one of those it inspects is pinned to the PR base ref',
       inspected.every((s) => s.ref !== null && BASE_REF_PATTERNS.some((re) => re.test(s.ref))),
       JSON.stringify(inspected),
+    )
+  }
+
+  // 10. CONDITION 4 IS NOT VACUOUS: a PAT added to the untrusted job. Every
+  //     other condition stays green on this fixture — the `permissions:`
+  //     block is untouched `contents: read` and the trigger is plain
+  //     `pull_request` — which is the whole point: before condition 4, this
+  //     edit reinstated the #3967 arrangement with zero reaction from this
+  //     guard.
+  {
+    const r = checkTrustBoundary(SECRET_PAT_IN_UNTRUSTED_JOB)
+    expect(
+      'a PAT in the job holding the unpinned (fork-content) checkout IS flagged',
+      r.violation === true && r.secretsInUntrustedJobs.length === 1,
+      JSON.stringify(r),
+    )
+    expect(
+      'and it is flagged by condition 4 ALONE — trigger and permissions are untouched',
+      r.dangerous === false && r.headRefs.length === 0 && r.unsafeWriteCheckouts.length === 0,
+      JSON.stringify(r),
+    )
+    expect(
+      'the offending job, line and text are named',
+      r.secretsInUntrustedJobs[0]?.job === 'compute' &&
+        r.secretsInUntrustedJobs[0]?.scope === 'job' &&
+        /secrets\.A_PAT_WITH_WRITE/.test(r.secretsInUntrustedJobs[0]?.text ?? '') &&
+        SECRET_PAT_IN_UNTRUSTED_JOB.split('\n')[r.secretsInUntrustedJobs[0].line - 1]?.includes(
+          'A_PAT_WITH_WRITE',
+        ),
+      JSON.stringify(r.secretsInUntrustedJobs),
+    )
+    const rendered = renderVerdict(r)
+    expect(
+      'main()-style output for the PAT fixture is non-zero and names the job',
+      rendered.exitCode === 1 && rendered.lines.some((l) => l.includes('`compute`')),
+      JSON.stringify(rendered),
+    )
+
+    // The same secret one level up, in a workflow-level `env:` inherited by
+    // every job — invisible to a scan of the job body alone.
+    const wf = checkTrustBoundary(WORKFLOW_LEVEL_SECRET_ENV)
+    expect(
+      'a workflow-level `env:` secret is charged to the untrusted job that inherits it',
+      wf.violation === true &&
+        wf.secretsInUntrustedJobs.length === 1 &&
+        wf.secretsInUntrustedJobs[0]?.job === 'compute' &&
+        wf.secretsInUntrustedJobs[0]?.scope === 'workflow',
+      JSON.stringify(wf),
+    )
+  }
+
+  // 11. CONDITION 4's TWO ACCEPTANCES, so it does not simply ban the word
+  //     `secrets`: the TRUSTED half of the split (base-pinned checkout) may
+  //     hold `secrets.GITHUB_TOKEN` — that is the arrangement #3967 built —
+  //     and a secret NAMED IN A COMMENT is not a secret held.
+  {
+    const trusted = checkTrustBoundary(SECRET_IN_BASE_PINNED_JOB_IS_FINE)
+    expect(
+      '`secrets.GITHUB_TOKEN` in a job whose checkout is base-pinned is NOT a violation',
+      trusted.violation === false && trusted.secretsInUntrustedJobs.length === 0,
+      JSON.stringify(trusted),
+    )
+    const commented = checkTrustBoundary(SECRET_NAMED_ONLY_IN_A_COMMENT)
+    expect(
+      'a `secrets.` reference inside a COMMENT in the untrusted job is not a secret held',
+      commented.violation === false && commented.secretsInUntrustedJobs.length === 0,
+      JSON.stringify(commented),
+    )
+  }
+
+  // 12. THE `ref:` COMMENT EVASION: a head checkout whose trailing comment
+  //     mentions the base ref must not read as base-pinned. Before
+  //     `refFromWithMapping` stripped comments, `BASE_REF_PATTERNS`
+  //     substring-matched the comment and condition 3 waved the step through.
+  {
+    const r = checkTrustBoundary(HEAD_REF_LAUNDERED_BY_A_TRAILING_COMMENT)
+    expect(
+      'a head `ref:` with a trailing comment mentioning the base ref is still flagged',
+      r.violation === true && r.unsafeWriteCheckouts.length === 1,
+      JSON.stringify(r),
+    )
+    expect(
+      "the reported ref is the comment-stripped value, so the failure message quotes what's live",
+      r.unsafeWriteCheckouts[0]?.ref === '${{ github.event.pull_request.head.sha }}',
+      JSON.stringify(r.unsafeWriteCheckouts),
+    )
+  }
+
+  // 13. A TWO-SPACE COMMENT ENDING IN `:` IS NOT A JOB HEADER. Two
+  //     assertions, because the second one alone would not say WHY: first
+  //     that `splitJobs` reports exactly the one real job, then that the
+  //     violation this fixture actually contains is still seen. Read as a
+  //     header, the comment forks a phantom job that inherits `contents:
+  //     read`, owns the checkout, and is skipped by condition 3 — so the
+  //     fixture reports clean.
+  {
+    const jobs = splitJobs(COMMENT_LINE_IS_NOT_A_JOB_HEADER)
+    expect(
+      'a 2-space-indented comment ending in `:` does not become a phantom job',
+      JSON.stringify(Object.keys(jobs)) === JSON.stringify(['post']),
+      JSON.stringify(Object.keys(jobs)),
+    )
+    const r = checkTrustBoundary(COMMENT_LINE_IS_NOT_A_JOB_HEADER)
+    expect(
+      'and the write-scoped job below that comment keeps its unpinned checkout, and is flagged',
+      r.violation === true &&
+        r.unsafeWriteCheckouts.length === 1 &&
+        r.unsafeWriteCheckouts[0]?.job === 'post' &&
+        r.unsafeWriteCheckouts[0]?.ref === null,
+      JSON.stringify(r),
+    )
+  }
+
+  // 14. THE WIRING PIN behind condition 4 on the REAL file, the same
+  //     discipline assertion 9 applies to condition 3: "no secrets found" is
+  //     also what a check that classifies NO job as untrusted would report.
+  //     So assert that `pr-overlap.yml` really does contain a job condition 4
+  //     considers untrusted (it does: `compute`, whose ref-less checkout is
+  //     the fork-content one by design), and that the file's real
+  //     `secrets.GITHUB_TOKEN` uses live in a job that is NOT one of those.
+  {
+    const src = readFileSync(WORKFLOW_PATH, 'utf8')
+    const jobs = splitJobs(src)
+    const untrusted = Object.entries(jobs)
+      .filter(([, { body }]) => findCheckoutSteps(body).some((step) => !isBasePinned(step.ref)))
+      .map(([name]) => name)
+    expect(
+      'condition 4 classifies at least one job of pr-overlap.yml as holding untrusted content',
+      untrusted.length > 0,
+      `untrusted jobs: ${JSON.stringify(untrusted)}`,
+    )
+    const secretsAnywhere = findSecretReferences(src.split('\n'))
+    expect(
+      'and the file does carry real `secrets.` references — in the trusted job only',
+      secretsAnywhere.length > 0 && findSecretsInUntrustedJobs(src).length === 0,
+      `secret lines: ${JSON.stringify(secretsAnywhere.map((h) => h.offset + 1))}`,
+    )
+  }
+
+  // 15. THE ONE LINE-NUMBER CITATION `pr-overlap.yml` MAKES ABOUT ITSELF.
+  //     `merge-result`'s fetch step justifies its `|| true` by pointing at
+  //     "the tolerant equivalent above in `compute` (line N)". That number
+  //     was written before #3967 split the job in two and pointed, after the
+  //     split, at a COMMENT line in `compute`'s banner — a citation that
+  //     reads as precise and is not. `check-doc-code-paths.mjs` polices
+  //     backticked PATH citations in `.md`/`.ts`/`.tsx`, and none of that
+  //     reaches a bare `(line N)` inside a `.yml` comment, so this file's
+  //     one self-citation is pinned here: the cited line must actually be
+  //     the tolerant `git fetch … || true`, and must actually be inside
+  //     `compute`. Same argument as the rest of this guard — the #3672 issue
+  //     it descends from is about a comment that went stale unnoticed.
+  {
+    const src = readFileSync(WORKFLOW_PATH, 'utf8')
+    const lines = src.split('\n')
+    const anchor = lines.findIndex((l) => /tolerant equivalent above in `compute`/.test(l))
+    const citation =
+      anchor === -1 ? null : /\(line (\d+)\)/.exec(lines.slice(anchor, anchor + 3).join('\n'))
+    const citedLine = citation === null ? null : lines[Number(citation[1]) - 1]
+    const compute = splitJobs(src).compute
+    const inCompute =
+      citation !== null &&
+      compute !== undefined &&
+      Number(citation[1]) > compute.headerLine &&
+      Number(citation[1]) <= compute.headerLine + compute.body.length
+    expect(
+      "pr-overlap.yml's `(line N)` self-citation points at `compute`'s tolerant `git fetch … || true`",
+      citedLine !== null && inCompute && /git fetch .*\|\| true/.test(citedLine),
+      `anchor line ${anchor + 1}, citation ${citation?.[1] ?? '(none)'}, cited text: ${JSON.stringify(citedLine)}`,
     )
   }
 

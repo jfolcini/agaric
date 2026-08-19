@@ -525,7 +525,7 @@ jobs:
         # merge click would actually use.
         #
         # `|| true`, matching the tolerant equivalent above in `compute`
-        # (line 113): this runs after `persist-credentials: false`, so it is
+        # (line 184): this runs after `persist-credentials: false`, so it is
         # an anonymous fetch with no fallback credential if the repo is
         # ever made private — a bare failure here would turn permanently red
         # with no diagnostic, on every PR, forever. `fetch-depth: 0` on the
