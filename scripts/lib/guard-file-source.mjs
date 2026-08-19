@@ -300,7 +300,11 @@ export function indexBelongsTo(indexFile, repoRoot) {
 export function gitEnv(repoRoot, env = process.env) {
   const out = { ...env }
   if (out.GIT_INDEX_FILE && !indexBelongsTo(out.GIT_INDEX_FILE, repoRoot)) {
-    delete out.GIT_INDEX_FILE
+    // The pragma below is check-git-fixture-isolation.mjs's per-statement
+    // waiver (#4064), replacing the basename exemption this file used to
+    // need. It waives rule 1 for THIS LINE only; rule 2 still judges the
+    // file, so a fixture built here would still be reported.
+    delete out.GIT_INDEX_FILE // not-a-fixture-scrub: drops a FOREIGN index (#4017), builds no fixture
   }
   return out
 }
