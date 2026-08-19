@@ -289,26 +289,21 @@ jobs:
         # workflows produce identical bundles.
         # `mold` is added for faster linking on the cargo tauri build below
         # (PEND-37). Activated via `.cargo/config.toml.example` copy below.
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update || {
-              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
-              exit 1
-            }
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            libappindicator3-dev \
-            patchelf \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            libappindicator3-dev
+            patchelf
+            pkg-config
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)

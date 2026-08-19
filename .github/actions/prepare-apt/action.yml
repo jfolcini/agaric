@@ -60,42 +60,60 @@ runs:
         # Repair any half-finished dpkg state a killed background job left behind.
         sudo dpkg --configure -a || true
 
-        # #4115: point every suite at the Azure mirror.
+        # ── #4115's Azure mirror rewrite lived here; #4163 REMOVED it ───────
         #
-        # The runner images ship a sources list that mixes hosts: most suites
-        # resolve to `azure.archive.ubuntu.com`, but some entries (in practice
-        # `noble-security`, and `noble-updates`/`noble-backports` on some
-        # images) point at the public `archive.ubuntu.com`. When that host
-        # stalls, `apt-get update` hangs holding the connection open, and
-        # `Acquire::*::Timeout` does NOT bound it — the connection is
-        # established and then produces no bytes, which is not the failure mode
-        # that timeout covers.
+        # It ran `sed 's|https\?://archive\.ubuntu\.com/ubuntu|http://azure.
+        # archive.ubuntu.com/ubuntu|g'` over /etc/apt/sources.list and
+        # /etc/apt/sources.list.d/. Two independent things are wrong with it,
+        # both read off production logs rather than reasoned about:
         #
-        # Measured, three times in one night across two PRs and four job types
-        # (`lint`, `playwright`, `mcp-tests`, `cargo-tests`): every
-        # `azure.archive.ubuntu.com` request completed while
-        # `https://archive.ubuntu.com/ubuntu/dists/noble-security/InRelease`
-        # produced its header line and then nothing for 29-33 minutes, until the
-        # job hit its own `timeout-minutes` and GitHub reported it as
-        # `cancelled` — i.e. it reads as a code failure on the PR.
+        # 1. IT MATCHED NOTHING. The ubuntu-24.04 image points apt at a
+        #    MIRRORLIST: the sources say `mirror+file:/etc/apt/apt-mirrors.txt`
+        #    and the hostnames live in THAT file, which the sed never opened.
+        #    The action's own self-check reported this and nobody read it. In
+        #    job 95978698511 (`validate / cargo-tests (1)`, run 32223573172,
+        #    06:29:44Z) and again 80 minutes later in job 95996544264
+        #    (`validate / lint`, run 32229591417, 07:49:59Z) it printed
         #
-        # The Azure mirror is inside the runner's own network, so this is also
-        # the faster path when both are healthy.
-        sudo sed -i 's|https\?://archive\.ubuntu\.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
-          /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
-          /etc/apt/sources.list.d/*.sources 2>/dev/null || true
-
-        # Say whether that actually matched. `|| true` above makes a total
-        # failure, a zero-match run and a successful rewrite indistinguishable,
-        # and a future image could move the suite to `security.ubuntu.com`,
-        # which this pattern does NOT match — that would silently reopen #4115.
-        azure_entries="$(grep -rhc 'azure\.archive\.ubuntu\.com' \
-          /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null \
-          | paste -sd+ - | bc 2>/dev/null || echo 0)"
-        remaining="$(grep -rhoE 'https?://[a-z.]*archive\.ubuntu\.com|https?://security\.ubuntu\.com' \
-          /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null \
-          | grep -v azure | sort -u | tr '\n' ' ' || true)"
-        echo "#4115: apt sources now name azure ${azure_entries} time(s)"
-        if [ -n "$remaining" ]; then
-          echo "::warning::#4115: non-Azure Ubuntu mirrors still in sources: ${remaining}"
+        #        #4115: apt sources now name azure 0
+        #        0 time(s)
+        #
+        #    i.e. zero matches — and the companion
+        #    `::warning::#4115: non-Azure Ubuntu mirrors still in sources`
+        #    never rendered in either job either, so `archive.ubuntu.com` was
+        #    not in those files to begin with. Meanwhile the very next step in
+        #    both jobs logged `Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist
+        #    [144 B]` and then fetched from hosts named nowhere in what the sed
+        #    scanned. A rewrite that edits neither the file apt reads nor any
+        #    string apt used cannot have been the mitigation #4115 credited.
+        #
+        # 2. ITS PREMISE IS BACKWARDS TODAY. #4115 recorded "every Azure
+        #    request completed while archive.ubuntu.com hung". On 2026-08-19 it
+        #    was the other way round in every job examined. Counting host lines
+        #    in job 95996544264: 68 `Ign` against `azure.archive.ubuntu.com`,
+        #    and 8 successful `Hit`/`Get` against `archive.ubuntu.com`. Azure
+        #    was the sick host; the public archive was the one that answered.
+        #    So had the sed worked, it would have pinned apt to the dead mirror
+        #    and deleted the fallback that was rescuing those runs.
+        #
+        # What actually recovers a stall is therefore the image's OWN
+        # `mirror+file` failover, measured at T+62s from apt's first attempt to
+        # the first byte off the fallback (job 95978698511: 06:29:46 start ->
+        # 06:30:48 `Hit: https://archive.ubuntu.com noble InRelease`). Nothing
+        # here should second-guess it.
+        #
+        # What replaces the rewrite is a DIAGNOSTIC. It changes no apt state;
+        # it prints the mirror configuration so the next stall is readable
+        # straight from the job log instead of being re-derived from scratch —
+        # which is what the deleted self-check was for, except that this one
+        # looks in the file the hostnames are actually in.
+        echo "#4163: ubuntu mirror configuration apt will use —"
+        if [ -r /etc/apt/apt-mirrors.txt ]; then
+          sed 's|^|  apt-mirrors.txt: |' /etc/apt/apt-mirrors.txt || true
+        else
+          echo "  (no /etc/apt/apt-mirrors.txt — this image does not use a mirrorlist)"
         fi
+        grep -rhoE 'https?://[A-Za-z0-9.-]*(archive|security)\.ubuntu\.com' \
+          /etc/apt/sources.list /etc/apt/sources.list.d/ \
+          /etc/apt/apt-mirrors.txt 2>/dev/null \
+          | sort | uniq -c | sed 's|^|  host: |' || true

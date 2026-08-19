@@ -141,26 +141,21 @@ jobs:
 
       - name: Install system dependencies (Linux)
         if: matrix.platform == 'ubuntu-24.04'
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update || {
-              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
-              exit 1
-            }
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            libappindicator3-dev \
-            patchelf \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            libappindicator3-dev
+            patchelf
+            pkg-config
             xvfb
 
       - name: Setup Node.js
@@ -1768,30 +1763,24 @@ jobs:
       # checkout -> prepare -> cache -> Tauri-stack shape of the other apt
       # sites, which is why it was first left without prepare-apt. It is on the
       # RELEASE path, though, so failing fast is a poor substitute for
-      # succeeding: prepare-apt's Azure mirror rewrite is the mitigation with
-      # the best evidence behind it (in both recorded stalls every Azure request
-      # completed and only archive.ubuntu.com hung), so it runs here too.
-      - name: Prepare apt (free dpkg lock, prefer the Azure mirror)
+      # succeeding, and prepare-apt's dpkg-lock handling applies here as much
+      # as anywhere. (The Azure mirror rewrite this comment used to cite as the
+      # reason was removed by #4163 — it had been matching nothing, and the
+      # host it preferred was the sick one. See the action.)
+      - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
 
       - name: Install minisign
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          #
-          # 120s, not the 300s used elsewhere: this job's budget is 20 minutes,
-          # the smallest of any apt site in the tree, and two 300s attempts
-          # would spend half of it before the updater payloads are even
-          # downloaded. Same reasoning as _validate.yml's coverage job.
-          sudo timeout 120 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 120 apt-get update || {
-              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
-              exit 1
-            }
-          }
-          sudo apt-get install -y minisign
+        # 120s, not the 300s default: this job's budget is 20 minutes, the
+        # smallest of any apt site in the tree, and two 300s attempts would
+        # spend half of it. Same reasoning as _validate.yml's coverage job.
+        # #4163: `apt-get update` is ADVISORY inside this action -- the install,
+        # not the index refresh, decides this step. See the action for the trace.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            minisign
+          update-timeout: '120'
       - name: Verify updater signatures against pinned pubkey
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

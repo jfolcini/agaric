@@ -1,0 +1,168 @@
+name: apt install (mirror-tolerant)
+description: >-
+  Install apt packages on a GitHub-hosted runner without letting an unhealthy
+  Ubuntu mirror red the PR as a code failure. `apt-get update` is attempted
+  twice under a bound; an update that does not finish is a WARNING and the
+  install runs anyway against the image's existing package lists. Only the
+  INSTALL decides the step's exit status, and an install that fails after a
+  never-completed update exits 75 (not 1) so "this job could not run" is
+  distinguishable from "this job failed".
+inputs:
+  packages:
+    description: >-
+      Whitespace/newline-separated package names to install. Names only —
+      anything that is not `[A-Za-z0-9][A-Za-z0-9.+_-]*` is rejected rather
+      than passed to apt as a flag.
+    required: true
+  update-timeout:
+    description: >-
+      Seconds to bound each `apt-get update` attempt. Default 300 is the
+      repo-wide value #4115 established; pass 120 in short-budget jobs, as
+      _validate.yml's cargo-coverage and release.yml's generate-latest-json
+      already did before this action existed. NOT a new number either way.
+    required: false
+    default: '300'
+runs:
+  using: composite
+  steps:
+    - name: apt-get update (bounded, advisory) then install
+      shell: bash
+      # `inputs.*` reaches the script through `env:`, never through `${{ }}`
+      # interpolated into the script text (zizmor template-injection).
+      env:
+        APT_PACKAGES: ${{ inputs.packages }}
+        APT_UPDATE_TIMEOUT: ${{ inputs.update-timeout }}
+      run: |
+        set -uo pipefail
+
+        # ── Why an update that does not finish is NOT fatal (#4163) ──────────
+        #
+        # Measured, run 32223573172 (2026-08-19), jobs 95978698511
+        # (`validate / cargo-tests (1)`) and 95981259083
+        # (`validate / cargo-coverage`) — both red with
+        # `Process completed with exit code 124` on a diff containing zero
+        # Rust. Their logs do NOT show a hung mirror. They show apt WORKING:
+        #
+        #   06:29:46  Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist
+        #   06:30:16  Ign: http://azure.archive.ubuntu.com …  (T+30s)
+        #   …          5 retries, backoff 1,2,4,8,16s
+        #   06:30:48  Hit: https://archive.ubuntu.com noble InRelease  (T+62s)
+        #   06:30:49  Get: …-updates / -backports / -security InRelease
+        #   06:34:46  ##[error]Process completed with exit code 124   (T+300s)
+        #
+        # i.e. the runner image points apt at a MIRRORLIST
+        # (`deb mirror+file:/etc/apt/apt-mirrors.txt`), the primary
+        # (azure.archive.ubuntu.com) was the sick host, apt failed over to
+        # archive.ubuntu.com on its own at T+62s, and was still pulling the
+        # Packages indices from that slower public mirror when OUR 300s cap
+        # killed it. Attempt 2 repeated the identical trace and was killed at
+        # its own T+300. So the cap, not the mirror, is what produced the red
+        # check — the same failure mode #4164's review rejected a flat cap for.
+        #
+        # Raising the cap would mean inventing a bound from one degraded day.
+        # This action does not raise it. It stops treating "the index refresh
+        # did not finish" as fatal: the runner image ships a populated
+        # /var/lib/apt/lists (the `Hit:` above is apt saying its local copy was
+        # already current), several of these jobs additionally restore the
+        # .debs themselves from `actions/cache`, and so `apt-get install` very
+        # often succeeds with no fresh index at all. If it does, the job CAN
+        # run and belongs green. If it does not, the install's own error is the
+        # honest one to report.
+
+        set -f  # no globbing while the package list is word-split
+        # shellcheck disable=SC2206
+        pkgs=( ${APT_PACKAGES} )
+        set +f
+
+        if [ "${#pkgs[@]}" -eq 0 ]; then
+          echo "::error::apt-install: \`packages\` is empty. \`apt-get install -y\` with no arguments exits 0 having installed nothing, so the job would fail later and elsewhere."
+          exit 1
+        fi
+        for p in "${pkgs[@]}"; do
+          case "$p" in
+            [A-Za-z0-9]*) ;;
+            *) echo "::error::apt-install: refusing package name '$p' — names must start alphanumeric, so a stray flag cannot reach apt."; exit 1 ;;
+          esac
+        done
+
+        update_status=0
+        for attempt in 1 2; do
+          update_status=0
+          # -k is load-bearing, and was verified rather than assumed: with a
+          # child that does not die on SIGTERM, plain `timeout N` SIGTERMs and
+          # then waits on it forever (measured: an outer `timeout -k 1 8`
+          # around `timeout 2` returned 124, i.e. the inner one never came
+          # back). So `timeout` without -k is not a bound at all.
+          sudo timeout -k 30 "${APT_UPDATE_TIMEOUT}" apt-get update || update_status=$?
+
+          if [ "${update_status}" -eq 0 ]; then
+            break
+          fi
+
+          # 124 AND 137. `timeout -k` exits 124 when the child honours the
+          # SIGTERM, but 137 when the SIGKILL is what ends it — measured on
+          # coreutils 9.4, `timeout -k 1 2` against a TERM-ignoring child:
+          # exit 137, elapsed 3s. Testing only for 124 (as the sibling
+          # playwright step in _validate.yml still does) misses exactly the
+          # case -k was added for.
+          case "${update_status}" in
+            124|137)
+              echo "::warning::apt-get update attempt ${attempt} exceeded ${APT_UPDATE_TIMEOUT}s (exit ${update_status}); the Ubuntu mirror is slow or down, this is not the diff"
+              # `sudo timeout` makes apt-get timeout's DIRECT child, so the
+              # signal does reach it — unlike the `timeout … npx … sudo
+              # apt-get` shape prepare-apt warns about. The kills are belt and
+              # braces for a KILLed apt-get's orphaned acquire methods.
+              sudo pkill -TERM -x apt-get 2>/dev/null || true
+              sleep 5
+              sudo pkill -KILL -x apt-get 2>/dev/null || true
+              sudo pkill -KILL -x dpkg 2>/dev/null || true
+              ;;
+            *)
+              echo "::warning::apt-get update attempt ${attempt} failed (exit ${update_status})"
+              ;;
+          esac
+
+          # Same three locks and the same ≤180s budget prepare-apt polls: an
+          # apt-get killed by name does not reap a dpkg child, and dpkg holds
+          # /var/lib/dpkg/lock, which a lock-frontend-only poll cannot see.
+          for _ in $(seq 1 60); do
+            sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock \
+                   /var/lib/apt/lists/lock >/dev/null 2>&1 || break
+            sleep 3
+          done
+          sudo dpkg --configure -a || true
+        done
+
+        if [ "${update_status}" -ne 0 ]; then
+          echo "::warning::#4163: apt-get update did not complete in 2 attempts; installing from the package lists already on the image. The install below, not the refresh, decides this step."
+        fi
+
+        install_status=0
+        sudo apt-get install -y "${pkgs[@]}" || install_status=$?
+
+        if [ "${install_status}" -eq 0 ]; then
+          if [ "${update_status}" -ne 0 ]; then
+            echo "::notice::#4163: installed from the image's existing package lists after a mirror-bound apt-get update; job proceeds."
+          fi
+          exit 0
+        fi
+
+        if [ "${update_status}" -ne 0 ]; then
+          # Distinct code, distinct marker — the #4163 ask, and the same
+          # reasoning scripts/pr-merge-result-check.sh applies when it refuses
+          # to render "could not run" as "failed". 75 is sysexits.h
+          # EX_TEMPFAIL and is not 1, so `Process completed with exit code 75`
+          # in the job log is itself the diagnosis.
+          echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: apt-get update never completed and apt-get install then failed (exit ${install_status}). Ubuntu mirror problem — rerun the job. (#4163)"
+          {
+            echo "### apt could not run (infra, not this diff)"
+            echo
+            echo '`apt-get update` timed out twice at'" \`${APT_UPDATE_TIMEOUT}s\` and the install then failed with exit \`${install_status}\`."
+            echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          exit 75
+        fi
+
+        # The index refreshed fine and the install still failed: an ordinary
+        # failure, reported with apt's own status and nothing invented.
+        exit "${install_status}"

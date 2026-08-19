@@ -164,24 +164,19 @@ jobs:
         uses: ./.github/actions/prepare-apt
 
       - name: Install system dependencies
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update || {
-              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
-              exit 1
-            }
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
@@ -266,24 +261,19 @@ jobs:
         uses: ./.github/actions/prepare-apt
 
       - name: Install system dependencies
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update || {
-              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
-              exit 1
-            }
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
@@ -581,24 +571,19 @@ jobs:
         uses: ./.github/actions/prepare-apt
 
       - name: Install system dependencies
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update || {
-              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
-              exit 1
-            }
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
@@ -830,24 +815,19 @@ jobs:
         uses: ./.github/actions/prepare-apt
 
       - name: Install system dependencies
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update || {
-              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
-              exit 1
-            }
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
@@ -1402,24 +1382,19 @@ jobs:
         uses: ./.github/actions/prepare-apt
 
       - name: Install system dependencies
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update || {
-              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
-              exit 1
-            }
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
@@ -1711,24 +1686,19 @@ jobs:
         # Needed for the `cargo sqlx prepare --check` compile passes below
         # (Tauri crates pull in the webkit/gtk stack) — the pre-commit prek
         # hooks themselves don't compile anything.
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update || {
-              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
-              exit 1
-            }
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
@@ -1907,24 +1877,19 @@ jobs:
       - name: Install system dependencies
         # Same Tauri stack as the lint / cargo-tests / mcp-tests jobs in
         # _validate.yml — webkit/gtk/ssl/rsvg/soup + mold for fast linking.
-        run: |
-          # #4115: bound a stalled mirror. A hung `InRelease` fetch is not
-          # covered by Acquire::*::Timeout, so without this it consumes the
-          # whole `timeout-minutes` budget and reads as a code failure.
-          sudo timeout 300 apt-get update || {
-            echo '::warning::apt-get update stalled or failed; retrying once'
-            sudo timeout 300 apt-get update || {
-              echo '::error::#4115: apt-get update failed twice — likely a hung Ubuntu mirror, not this diff.'
-              exit 1
-            }
-          }
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            pkg-config \
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
@@ -2049,11 +2014,19 @@ jobs:
         # `/var/cache/apt/archives/*.deb` cache, so it pays the full ~33 MB
         # download every run.
         #
-        # The mitigation that does apply is prepare-apt's Azure mirror rewrite,
-        # which this job already runs — and which is the one with evidence
-        # behind it: in both recorded stalls every Azure request completed and
-        # only archive.ubuntu.com hung. Bounding this step properly needs the
-        # .deb cache first; tracked in #4115.
+        # This note used to end by pointing at prepare-apt's Azure mirror
+        # rewrite as "the mitigation with evidence behind it". #4163 deleted
+        # that rewrite: its own self-check had been printing `apt sources now
+        # name azure 0` (jobs 95978698511 and 95996544264), because the
+        # ubuntu-24.04 image keeps its mirror hostnames in
+        # /etc/apt/apt-mirrors.txt and the sed only ever read
+        # /etc/apt/sources.list*. And the direction was inverted: in job
+        # 95996544264, azure.archive.ubuntu.com was `Ign`d 68 times while
+        # archive.ubuntu.com answered. So there is no mirror mitigation to
+        # credit here — what recovers a stall is the image's own `mirror+file`
+        # failover, and this step's real exposure is still the missing
+        # `/var/cache/apt/archives/*.deb` cache. Bounding it properly needs
+        # that cache first; tracked in #4115.
         run: npx playwright install-deps chromium
 
       - name: Install Playwright browser binaries (on cache miss)
