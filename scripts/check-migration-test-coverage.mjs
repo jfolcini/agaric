@@ -221,7 +221,15 @@ export function extractTestNames(files) {
   // wrong by opening the file) rather than a fail-open one, but a guard that
   // cries wolf on real, already-covered migrations is a guard people learn
   // to route around.
-  const re = /#\[(?:tokio::)?test(?:\([^)]*\))?\]\s*(?:\r?\n\s*)+(?:async\s+)?fn\s+([A-Za-z0-9_]+)/g
+  // `[^\S\r\n]*\r?\n\s*` and NOT `\s*(?:\r?\n\s*)+`: the latter lets `\s*`
+  // and the `\r?\n` group both match a newline, so the engine has an
+  // exponential number of ways to split a run of blank lines between them
+  // and backtracks catastrophically on input like `#[test]` followed by many
+  // newlines and no `fn` (CodeQL js/redos, high). Restricting the first
+  // stretch to HORIZONTAL whitespace makes the split unambiguous, and the
+  // trailing `\s*` still absorbs any number of blank or indented lines.
+  const re =
+    /#\[(?:tokio::)?test(?:\([^)]*\))?\][^\S\r\n]*\r?\n\s*(?:async\s+)?fn\s+([A-Za-z0-9_]+)/g
   for (const file of files) {
     if (!existsSync(file)) continue
     const src = readFileSync(file, 'utf8')
@@ -578,6 +586,26 @@ function selfTest() {
         'a correctly-named test in a file OUTSIDE the documented set does not count',
         r.exitCode === 1 && r.lines.some((l) => /- 0002 —/.test(l)),
         JSON.stringify(r),
+      )
+    }
+
+    // 7b. The attribute->fn regex terminates on adversarial input. The
+    //     earlier `\s*(?:\r?\n\s*)+` shape let two subexpressions both
+    //     claim a newline, so a `#[test]` followed by a long run of blank
+    //     lines and no `fn` backtracked exponentially (CodeQL js/redos,
+    //     high). A migration test file is repo-controlled, so this was a
+    //     hang risk rather than a reachable attack, but the bound is what
+    //     keeps the rewrite from being undone by a later "simplification".
+    {
+      const evilPath = join(root, 'redos-probe.rs')
+      writeFileSync(evilPath, `#[test]\n${'\n'.repeat(60_000)}`)
+      const started = Date.now()
+      const found = extractTestNames([evilPath])
+      const elapsedMs = Date.now() - started
+      record(
+        'a `#[test]` followed by 60k blank lines and no `fn` terminates promptly (#4144 redos)',
+        found.length === 0 && elapsedMs < 2_000,
+        `matches=${found.length} elapsedMs=${elapsedMs}`,
       )
     }
 
