@@ -196,4 +196,24 @@ describe('search_blocks_partitioned — item 4: content is stripped once per can
 
     expect(reads.count()).toBe(1)
   })
+
+  // #4159 item 2 landed a second consumer of `content` on this exact path —
+  // the `PALETTE_CONTENT_PREVIEW_CAP` truncation — so the invariant needs a
+  // case that actually REACHES it. The row above is 12 codepoints and returns
+  // from the cap untouched, which would leave a re-reading implementation
+  // green here; this one is over the cap and takes the truncating branch,
+  // where both a `row['content']` length probe AND a `{ ...row }` spread would
+  // show up as a second read.
+  it('still reads content once on a row the preview cap truncates', () => {
+    const b = makeBlock(PAGE, 'page', '', null, 0)
+    blocks.set(PAGE, b)
+    const reads = instrumentContent(b, `gizmo ${'w'.repeat(1000)}`)
+
+    const res = partitioned({ query: 'gizmo' })
+
+    expect(reads.count()).toBe(1)
+    // ...and the truncation really did happen, so the assertion above is not
+    // passing because the cap silently did nothing.
+    expect(res.pages.items[0]?.['content']).toHaveLength(512)
+  })
 })
