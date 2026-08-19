@@ -470,13 +470,64 @@ function paragraphStartsWithAmbiguousSyntax(block: ParagraphNode): boolean {
   // #1436: a paragraph whose SERIALIZED form begins with a bullet marker
   // (`- ` / `* `) reparses as a bulletList. The marker can come either from
   // literal text (`- foo`) OR from an emphasis DELIMITER landing at column 0
-  // followed by a space (`italic(' ')` → `* *`, `bold(' ')` → `** **`). The
-  // leading-text inspection above cannot see delimiter-induced markers, so
-  // serialize the paragraph and test the actual emitted prefix. (Literal `- `
-  // is escaped to `\- ` by the serializer, so a literal-dash paragraph is NOT
-  // flagged here — only the genuinely ambiguous delimiter-space case is.)
+  // followed by a space. `bold(' ')` → `** **` is safe (the second `*` is not
+  // the marker's space), and #4156 removed the one delimiter shape that was
+  // not — but a stray literal marker some OTHER shape produces still lands
+  // here, so the probe stays.
+  // The leading-text inspection above cannot see delimiter-induced markers,
+  // so serialize the paragraph and test the actual emitted prefix. (Literal
+  // `- ` is escaped to `\- ` by the serializer, so a literal-dash paragraph is
+  // NOT flagged here — only a genuinely ambiguous delimiter-space case is.)
   if (/^[-*] /.test(serializeParagraphForAmbiguity(block))) return true
+  // #4156: an italic run leading a paragraph (mod an all-space plain-text
+  // prefix — the same marker-indent tolerance the `- `/`* ` escapes above
+  // account for) and starting with a space USED to serialize into exactly
+  // that `* ` bullet marker (`italic(' a')` → `* a*`). It no longer does —
+  // `defuseLeadingItalicMarker` moves the mark's open boundary past the
+  // leading whitespace, or drops it if the run is whitespace all the way
+  // through — but that normalization is itself a structural change (a mark
+  // boundary moving, a text node splitting) this property's doc-IDENTITY bar
+  // does not tolerate, same as every other shape excluded here. Mirrors only
+  // the TRIGGER condition (not the transform) directly on the source doc,
+  // since there is nothing serialized yet to inspect at this point. It has to
+  // mirror it EXACTLY, or the exclusion silently covers more than the
+  // serializer changes: the shapes the serializer leaves alone are still
+  // identity-preserving and must stay under this property.
+  if (leadingItalicStartsOnWhitespace(block)) return true
   return false
+}
+
+/**
+ * The #4156 trigger condition — see the call site above, and
+ * `defuseLeadingItalicMarker` / `isVulnerableItalicOpen` in
+ * `markdown-serialize.ts` for the production original this mirrors. These
+ * generated blocks are always TOP-LEVEL doc children (`hasStructuralAmbiguity`
+ * walks `doc.content` only), which is a line start the parser dispatches, so
+ * the serializer's `atLineStart` gate is always on here; the one context test
+ * that still has to be mirrored is the task marker, which a paragraph carries
+ * on itself.
+ */
+function leadingItalicStartsOnWhitespace(block: ParagraphNode): boolean {
+  // A task's own `- [ ] ` marker consumes the line start.
+  if (block.attrs?.todoState) return false
+  const content = block.content ?? []
+  let i = 0
+  while (
+    i < content.length &&
+    (content[i] as InlineNode).type === 'text' &&
+    ((content[i] as TextNode).marks ?? []).length === 0 &&
+    /^ *$/.test((content[i] as TextNode).text)
+  ) {
+    i++
+  }
+  const node = content[i]
+  if (!node || node.type !== 'text' || !node.text.startsWith(' ')) return false
+  const marks = node.marks ?? []
+  // `code` is exclusive (backticks, no star) and `link` wraps the span in
+  // `[`…`](url)`, so neither can put a bare `* ` at the line start.
+  if (marks.some((m) => m.type === 'code' || m.type === 'link')) return false
+  const types = new Set(marks.map((m) => m.type))
+  return types.size === 1 && types.has('italic')
 }
 
 /**
