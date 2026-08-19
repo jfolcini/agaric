@@ -481,7 +481,19 @@ def orphan_entries(baseline: dict[str, int]) -> list[str]:
     whole-file `#![cfg(test)]` module. Cheap (a stat plus, at most, one
     read per entry) and global, so an orphan cannot hide in a file nobody
     happens to be touching.
+
+    GLOBAL is exactly what made this sweep expensive under the index
+    (#4063): every surviving entry (~70 today) reached `read_source` ->
+    `SOURCE.read` -> `_blob`, one `git cat-file blob <sha>` spawn each, on
+    every commit that touched a scanned `.rs` file — independent of how
+    small that commit was. `read_many` below warms `SOURCE`'s cache for the
+    whole baseline through chunked `git cat-file --batch` calls before the
+    loop reads any of them, so `is_test_only_module(read_source(path))` is a
+    cache hit; under the working tree (`--update-baseline`, a manual run)
+    it is a no-op, since a disk read has no spawn to amortize in the first
+    place.
     """
+    SOURCE.read_many(baseline)
     orphans: list[str] = []
     for rel in sorted(baseline):
         path = REPO_ROOT / rel

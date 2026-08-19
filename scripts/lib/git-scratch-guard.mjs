@@ -1073,11 +1073,17 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
       auto.status === 2 && /different repository/.test(auto.stderr),
       `expected 2 naming a different repository, got ${auto.status}: ${auto.stderr}`,
     )
+    // Stage the working tree DIRTY right before this run: a `status === 0`
+    // check against a fixture whose disk copy is already clean cannot tell
+    // "the guard scanned `dir` and found nothing" from "the guard enumerated
+    // nothing at all under the leaked `GIT_INDEX_FILE`". Requiring exit 1
+    // over a real, findable violation proves the scan is genuine.
+    writeFileSync(join(dir, file), `${badLine}\n`)
     const wt = run(dir, env, ['--worktree'], foreign)
     check(
-      'foreign index: --worktree resolves the ambiguity and judges the files on disk',
-      wt.status === 0,
-      `expected 0, got ${wt.status}: ${wt.stderr}`,
+      'foreign index: --worktree resolves the ambiguity and genuinely judges the files on disk',
+      wt.status === 1 && namesFile(wt),
+      `expected 1 naming ${file}, got ${wt.status}: ${wt.stderr}`,
     )
     // The env-binding half: `cwd` does NOT decide which index git reads, so
     // without `gitEnv` this `--cached` run enumerated the FOREIGN index — a
@@ -1097,6 +1103,54 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
       "foreign index: the tree's OWN index still auto-selects the index (a discrimination)",
       own.status === 1 && namesFile(own),
       `expected 1 naming ${file}, got ${own.status}: ${own.stderr}`,
+    )
+
+    // An INHERITED GIT_DIR must not let the ownership probe answer about the
+    // FOREIGN repository (#4061). `indexBelongsTo` asks `git -C <repoRoot>
+    // rev-parse --absolute-git-dir`, and an ambient GIT_DIR outranks `-C`
+    // (measured: `GIT_DIR=<other>/.git git -C <root> rev-parse
+    // --absolute-git-dir` answers about <other>, not <root>). A real commit
+    // hook running INSIDE `foreignDir` would leave BOTH GIT_DIR and
+    // GIT_INDEX_FILE exported from it — the shape below — and before the fix
+    // the leaked GIT_DIR made the probe answer about `foreignDir`, so
+    // GIT_INDEX_FILE (also naming a path under that same leaked git dir)
+    // compared EQUAL to it: a false ACCEPT of the foreign index as belonging
+    // to `dir`, silently defeating the refusal checked just above.
+    const foreignWithGitDir = {
+      GIT_DIR: join(foreignDir, '.git'),
+      GIT_INDEX_FILE: join(foreignDir, '.git', 'index'),
+    }
+    const autoWithGitDir = run(dir, env, [], foreignWithGitDir)
+    check(
+      'foreign index: an inherited GIT_DIR must not make the probe answer about the OTHER repo (#4061)',
+      autoWithGitDir.status === 2 && /different repository/.test(autoWithGitDir.stderr),
+      `expected 2 naming a different repository, got ${autoWithGitDir.status}: ${autoWithGitDir.stderr}`,
+    )
+    // --worktree sidesteps AUTO (and therefore the ownership probe) entirely,
+    // so it must not inherit AUTO's exit-2 refusal under the same leaked
+    // GIT_DIR — that much this asserts, and truthfully: `dir`'s working tree
+    // is ALREADY dirty here (staged above, by the `wt` check earlier in this
+    // block), so a guard that genuinely scanned `dir` would exit 1, not 0.
+    //
+    // It exits 0. This is NOT the #4061 probe's doing (that fix is scoped to
+    // `indexBelongsTo`, which AUTO alone consults) — it is `gitEnv()`
+    // (guard-file-source.mjs) leaving the leaked `GIT_DIR` itself in the env
+    // it hands `listTrackedEntries`, so `git ls-files` falls back to
+    // `GIT_DIR`'s OWN default index and enumerates `foreignDir`'s tracked
+    // files instead of `dir`'s — silently judging the WRONG repository as
+    // clean, for `--cached` and `--worktree` alike. Confirmed by direct
+    // reproduction against this exact guard; tracked as the `.mjs` half of
+    // the ambient-`GIT_DIR` gap already filed against `git_env()`'s Python
+    // twin (issue comment on the #4061 follow-up, referencing PR #4179).
+    // This assertion therefore documents CURRENT behaviour rather than
+    // claiming the strength `wt` above genuinely has under a narrower leak
+    // (`GIT_INDEX_FILE` alone) — it is not yet a real discrimination, and
+    // must not be read as one until that gap is closed.
+    const wtWithGitDir = run(dir, env, ['--worktree'], foreignWithGitDir)
+    check(
+      'foreign index: …and --worktree does not inherit exit 2 under the same leaked GIT_DIR (known gap: it silently enumerates foreignDir, not dir — see git_env follow-up)',
+      wtWithGitDir.status === 0,
+      `expected 0, got ${wtWithGitDir.status}: ${wtWithGitDir.stderr}`,
     )
   }
 
