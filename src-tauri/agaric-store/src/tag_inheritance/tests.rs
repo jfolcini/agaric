@@ -2355,3 +2355,125 @@ async fn recompute_at_tombstone_after_structural_change_below_matches_rebuild_39
          opposite direction to the one #3944 closed"
     );
 }
+
+// ======================================================================
+// #4121 — the deleted SUBJECT, on the AddTag side
+// ======================================================================
+//
+// #3944 closed the deleted-subject direction for `recompute_subtree_inheritance`
+// and `remove_inherited_tag` via `tag_inh_ancestors_walk!`'s seed.
+// `propagate_tag_to_descendants` is the mirror on the AddTag side: it walks
+// DOWN from `?1` through `tag_inh_descendants_active!`, whose recursive member
+// has always filtered `b.deleted_at IS NULL` while its seed admitted a
+// tombstoned `?1` — so a remote AddTag against a locally-deleted block
+// attributed the tag to a tombstoned tagger.
+//
+// Same soundness argument as #3944, and the same trap avoided: the filter is
+// safe HERE because `descendants_active` feeds INSERTs only at both of its
+// call-sites. `remove_inherited_tag` step 1's DELETE is keyed on
+// `inherited_from = ?1` and never consulted the CTE, so no repair scope
+// narrows — unlike `tag_inh_subtree_active!`, which scopes two DELETEs and
+// must keep admitting a tombstoned root.
+
+/// #4121 — `propagate_tag_to_descendants` rooted at a soft-deleted block must
+/// equal `rebuild_all`'s answer, which is "nothing".
+///
+/// Fixture `RT4121(deleted, #TG4121) > DC4121(live)`. Pre-fix the helper
+/// walked `RT4121`'s live child and inserted `(DC4121, TG4121, RT4121)` — an
+/// inherited row whose `inherited_from` is a tombstone. `rebuild_all`'s
+/// `tag_inh_descendant_tags_full!` seed carries `tagged.deleted_at IS NULL`
+/// and emits nothing. Reverting `tag_inh_descendants_active!`'s #4121 seed
+/// filter reddens this test.
+#[tokio::test]
+async fn propagate_tag_rooted_at_soft_deleted_block_matches_rebuild_4121() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TG4121", "tag", "tag", None).await;
+    insert_block(&pool, "PG4121", "page", "page", None).await;
+    insert_block(&pool, "RT4121", "content", "root", Some("PG4121")).await;
+    insert_block(&pool, "DC4121", "content", "desc", Some("RT4121")).await;
+    insert_tag_assoc(&pool, "RT4121", "TG4121").await;
+    soft_delete(&pool, "RT4121").await;
+
+    // The arbiter's own answer, pinned independently of the convergence
+    // assertion: a tombstoned tagger propagates nothing.
+    rebuild_all(&pool).await.unwrap();
+    let canonical = get_inherited(&pool).await;
+    assert!(
+        canonical.is_empty(),
+        "#4121: `rebuild_all` requires `tagged.deleted_at IS NULL`, so the \
+         soft-deleted RT4121 propagates nothing; got: {canonical:?}"
+    );
+
+    // Exactly what the AddTag apply path runs after the `block_tags` insert
+    // (`apply_add_tag_via_loro` / `apply_add_tag_sql_only`).
+    let mut conn = pool.acquire().await.unwrap();
+    propagate_tag_to_descendants(&mut conn, "RT4121", "TG4121")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    assert!(
+        !incremental.iter().any(|(_, _, from)| from == "RT4121"),
+        "#4121: no inherited row may attribute a tag to the tombstoned \
+         RT4121; got: {incremental:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#4121: `propagate_tag_to_descendants`'s descendant seed must reject a \
+         soft-deleted subject the same way `rebuild_all`'s descendant walk \
+         rejects a soft-deleted tagger"
+    );
+}
+
+/// #4121 non-regression, the half the seed filter must NOT break: a LIVE
+/// subject still propagates through its whole live subtree, and still stops at
+/// a soft-deleted intermediate.
+///
+/// The #3944 lesson is that a seed filter can silently empty a walk that was
+/// doing real work. `descendants_active` is INSERT-only so there is no DELETE
+/// scope to strand, but the INSERT itself must keep working — a filter written
+/// on the wrong alias (e.g. constraining the emitted CHILD twice instead of the
+/// subject) would still pass the macro-shape guard while emptying this case.
+#[tokio::test]
+async fn propagate_tag_from_live_subject_still_reaches_descendants_4121() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TL4121", "tag", "tag", None).await;
+    insert_block(&pool, "RL4121", "page", "root", None).await;
+    insert_block(&pool, "CA4121", "content", "child-a", Some("RL4121")).await;
+    insert_block(&pool, "GA4121", "content", "grandchild", Some("CA4121")).await;
+    // A soft-deleted sibling branch: neither it nor anything under it may be
+    // reached, exactly as `rebuild_all` refuses to walk through a tombstone.
+    insert_block(&pool, "CB4121", "content", "child-b", Some("RL4121")).await;
+    insert_block(&pool, "GB4121", "content", "grandchild-b", Some("CB4121")).await;
+    insert_tag_assoc(&pool, "RL4121", "TL4121").await;
+    soft_delete(&pool, "CB4121").await;
+
+    let mut conn = pool.acquire().await.unwrap();
+    propagate_tag_to_descendants(&mut conn, "RL4121", "TL4121")
+        .await
+        .unwrap();
+    drop(conn);
+    let incremental = get_inherited(&pool).await;
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    let inherits_from_root =
+        |id: &str| (id.to_string(), "TL4121".to_string(), "RL4121".to_string());
+    assert_eq!(
+        incremental,
+        vec![inherits_from_root("CA4121"), inherits_from_root("GA4121")],
+        "#4121: a live subject must still propagate to its whole live subtree \
+         and to nothing across the tombstoned CB4121; got: {incremental:?}"
+    );
+    assert_eq!(
+        incremental, rebuilt,
+        "#4121: the live-subject case must stay converged with the arbiter"
+    );
+}
