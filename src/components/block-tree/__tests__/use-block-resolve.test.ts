@@ -797,7 +797,48 @@ describe('searchPages — short query (<=2 chars)', () => {
     expect(result.current.pagesListRef.current).toEqual([{ id: 'P20', title: 'Cached Page' }])
   })
 
-  it('handles null content as "Untitled"', async () => {
+  // #4138 item 1 — the cache SEED must store the raw title (`''` for NULL
+  // content, matching the backend's `COALESCE(b.content, '')`), not the
+  // `'Untitled'` placeholder. The placeholder is applied only at the render
+  // site (`makePagePickerItem`), so it must still appear in the picker
+  // label even though it is no longer part of the stored/searched title.
+  it('seeds pagesListRef with the raw empty title for NULL content, not the "Untitled" placeholder', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      {
+        id: 'P30',
+        content: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    // Render site: still shows the "Untitled" placeholder.
+    expect(items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'P30', label: 'Untitled' })]),
+    )
+    // Cache seed: stores the RAW empty title, not the placeholder — this is
+    // what `comparePageRows` sorts on, and what must match the backend's
+    // `COALESCE(b.content, '')`.
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P30', title: '' }])
+  })
+
+  // #4138 item 1, continued — a direct consequence of the seed no longer
+  // baking "Untitled" text into the title: a short-query substring search
+  // for "un" used to match a NULL-content page (because its stored title
+  // literally contained the substring "un"), even though the backend's own
+  // full-text index has nothing to match ("un" doesn't appear anywhere in a
+  // NULL/empty content column). Confirms the placeholder no longer leaks
+  // into the searchable text.
+  it('does NOT match a NULL-content page by searching its "Untitled" placeholder text', async () => {
     mockedListAllPagesInSpace.mockResolvedValueOnce([
       {
         id: 'P30',
@@ -816,11 +857,7 @@ describe('searchPages — short query (<=2 chars)', () => {
       items = await result.current.searchPages('un')
     })
 
-    // "Untitled" contains "un"
-    expect(items).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: 'P30', label: 'Untitled' })]),
-    )
-    expect(result.current.pagesListRef.current).toEqual([{ id: 'P30', title: 'Untitled' }])
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).not.toContain('P30')
   })
 
   it('returns all pages (up to 20) for empty query string', async () => {
@@ -2800,7 +2837,7 @@ describe('searchPages — fuzzy matching', () => {
 // "fix" the bug by disabling caching and these tests fail too.
 
 describe('picker name caches — rename & delete invalidation (#4007)', () => {
-  function pageRow(id: string, content: string) {
+  function pageRow(id: string, content: string | null) {
     return {
       id,
       content,
@@ -3044,6 +3081,15 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
   // that passes against fully unfixed code. The escape makes tampering visible.
   const PUA_E000 = '\u{E000}'
 
+  // #4138 item 3 — a LONE (unpaired) surrogate. `TextEncoder` maps EVERY
+  // unpaired surrogate to U+FFFD on encode, so these two distinct JS strings
+  // (`!==` in JS) encode to IDENTICAL UTF-8 bytes. Verified directly:
+  //   '\uD800' !== '\uDFFF'                → true (distinct JS strings)
+  //   new TextEncoder().encode('\uD800')   → Uint8Array [239,191,189] (U+FFFD)
+  //   new TextEncoder().encode('\uDFFF')   → Uint8Array [239,191,189] (SAME bytes)
+  const LONE_HI = '\uD800'
+  const LONE_LO = '\uDFFF'
+
   it('a page renamed to a private-use-area title sorts before a supplementary-plane emoji, by UTF-8 bytes not UTF-16 code units', async () => {
     mockedListAllPagesInSpace.mockResolvedValueOnce([
       pageRow('P_PUA', PUA_E000),
@@ -3068,6 +3114,182 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     // UTF-8 BINARY order: the PUA character (0xEE...) before the emoji (0xF0...).
     expect(items.filter((i) => !i.isCreate).map((i) => i.label)).toEqual([PUA_E000, '🎯'])
     expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  // #4138 item 1 — the cache SEED must carry the backend's sort key
+  // (`COALESCE(b.content, '') `, i.e. `''` for NULL content), not the
+  // `'Untitled'` DISPLAY placeholder. Seeding the placeholder text sorted a
+  // NULL-content page under `U` locally, while the backend (and, after the
+  // fix, this comparator) sorts it FIRST. Verified directly against the
+  // fixed `comparePageRows` (folding is a no-op for both inputs here):
+  //   seed 'Untitled' → sorted ids: ['P_A', 'P_NULL', 'P_Z']  (the bug)
+  //   seed ''          → sorted ids: ['P_NULL', 'P_A', 'P_Z']  (the fix)
+  it('a NULL-content page sorts FIRST after a resort, not alphabetically under "Untitled"', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_NULL', null),
+      pageRow('P_A', 'Apple'),
+      pageRow('P_Z', 'unrelated'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+
+    // Force a resort of the WHOLE cache via an unrelated rename, same as
+    // every other test in this block.
+    act(() => {
+      renamePage('P_Z', 'Zebra')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    expect(items.filter((i) => !i.isCreate).map((i) => i.label)).toEqual([
+      'Untitled',
+      'Apple',
+      'Zebra',
+    ])
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  // #4138 item 2 — the id tiebreak must compare UTF-8 BYTES (matching the
+  // backend's `id ASC`, BINARY collation), not UTF-16 code units — the same
+  // divergence class #4057/#4131 fixed for titles, one level down at the
+  // tiebreak. Two EQUAL titles force the comparator through the tiebreak.
+  // Verified directly:
+  //   bytes('\u{E000}') = [0xEE,0x80,0x80]     (leads 0xEE)
+  //   bytes('🎯')        = [0xF0,0x9F,0x8E,0xAF] (leads 0xF0)
+  //   '🎯' < '\u{E000}' (UTF-16 code-unit '<')  → true (0xD83C < 0xE000) — the bug
+  //   0xEE < 0xF0 (UTF-8 byte compare)          → PUA id sorts first — the fix
+  it('two pages with EQUAL titles tiebreak on id by UTF-8 bytes, not UTF-16 code units', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('🎯', 'dup'),
+      pageRow(PUA_E000, 'dup'),
+      pageRow('P_THIRD', 'unrelated'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+
+    act(() => {
+      renamePage('P_THIRD', 'zzz-third')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    const dupIds = items.filter((i) => i.label === 'dup').map((i) => i.id)
+    expect(dupIds).toEqual([PUA_E000, '🎯'])
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  // #4138 item 2, tag variant — same shape, `compareTagRows`.
+  it('two tags with EQUAL names tiebreak on tag_id by UTF-8 bytes, not UTF-16 code units', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('🎯', 'dup'),
+      tagRow(PUA_E000, 'dup'),
+      tagRow('T_THIRD', 'unrelated'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('')
+    })
+
+    act(() => {
+      notifyTagRenamed('T_THIRD', 'zzz-third')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    const dupIds = items.filter((i) => i.label === 'dup').map((i) => i.id)
+    expect(dupIds).toEqual([PUA_E000, '🎯'])
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  // #4138 item 3 — the OLD gate compared JS-string equality (`at !== bt`)
+  // while the comparison itself compares UTF-8 bytes. Two titles differing
+  // ONLY in lone surrogates are `!==` in JS (gate passes) yet encode to
+  // IDENTICAL bytes (see `LONE_HI`/`LONE_LO` above), so the old code took
+  // the `!==` branch, got `compareUtf8Bytes(...) === 0`, and returned that
+  // 0 directly — skipping the id tiebreak entirely and leaving the pair in
+  // whatever order `toSorted` (stable) happened to feed it, INSTEAD of the
+  // id-decided order. Verified directly against both comparators, id order
+  // chosen so old (stable, ties untouched) and new (id-decided) diverge:
+  //   OLD: ['P_THIRD', 'P_ZLATE', 'P_AEARLY']  (original order preserved — the bug)
+  //   NEW: ['P_THIRD', 'P_AEARLY', 'P_ZLATE']  (id tiebreak swaps them — the fix)
+  it('two page titles differing only in lone surrogates fall through to the id tiebreak instead of comparing equal', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_ZLATE', LONE_LO),
+      pageRow('P_AEARLY', LONE_HI),
+      pageRow('P_THIRD', 'unrelated'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+
+    act(() => {
+      renamePage('P_THIRD', 'zzz-third')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual([
+      'P_THIRD',
+      'P_AEARLY',
+      'P_ZLATE',
+    ])
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+  })
+
+  // #4138 item 3, tag variant — same shape, `compareTagRows`.
+  it('two tag names differing only in lone surrogates fall through to the tag_id tiebreak instead of comparing equal', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('T_ZLATE', LONE_LO),
+      tagRow('T_AEARLY', LONE_HI),
+      tagRow('T_THIRD', 'unrelated'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('')
+    })
+
+    act(() => {
+      notifyTagRenamed('T_THIRD', 'zzz-third')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual([
+      'T_THIRD',
+      'T_AEARLY',
+      'T_ZLATE',
+    ])
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
   })
 
   it('a page deleted elsewhere stops being offered on the next read', async () => {
