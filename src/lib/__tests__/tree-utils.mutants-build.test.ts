@@ -4,8 +4,16 @@
  * `computeSelectionRoots`:
  *   - tree-utils.ts:14  [StringLiteral]        SENTINEL_ID
  *   - tree-utils.ts:85  [EqualityOperator]      depth > MAX_TREE_DEPTH guard
- *   - tree-utils.ts:186 [ConditionalExpression] selected.size === 0 early return
- *   - tree-utils.ts:192 [ArrayDeclaration]      const ancestorStack: string[] = []
+ *   - tree-utils.ts:193 [ConditionalExpression] selected.size === 0 early return
+ *   - tree-utils.ts:199 [ArrayDeclaration]      const ancestorStack: string[] = []
+ *
+ * #3765 — the two `computeSelectionRoots` line citations above were off by
+ * -7 (this file said 186/192; the actual current lines, re-verified against
+ * the live `STRYKER_MODULE=tree-utils` run and by grepping the literal
+ * expressions, are 193/199) — an earlier edit elsewhere in `tree-utils.ts`
+ * shifted everything below it in the file. Corrected here and in the two
+ * inline notes at the bottom of this file; the arguments themselves are
+ * untouched (the `computeSelectionRoots` body did not change).
  *
  * Owned by this file only — do not add cases here for other survivors in
  * this module (sibling agents own those in separate files).
@@ -93,8 +101,8 @@ describe('buildFlatTree depth guard (MAX_TREE_DEPTH boundary)', () => {
   })
 })
 
-// ── tree-utils.ts:186 [ConditionalExpression] selected.size === 0 ────────
-// ── tree-utils.ts:192 [ArrayDeclaration] ancestorStack init ──────────────
+// ── tree-utils.ts:193 [ConditionalExpression] selected.size === 0 ────────
+// ── tree-utils.ts:199 [ArrayDeclaration] ancestorStack init ──────────────
 
 describe('computeSelectionRoots', () => {
   it('returns [] for an empty selection', () => {
@@ -128,7 +136,7 @@ describe('computeSelectionRoots', () => {
     const roots = computeSelectionRoots(items, selected)
 
     // A forced-true (or === -> !== flipped) ConditionalExpression mutant
-    // at line 186 would short-circuit to `[]` here since selected.size !== 0
+    // at line 193 would short-circuit to `[]` here since selected.size !== 0
     // — asserting the real, non-empty, order-preserving root set kills it.
     expect(roots).toEqual(['root1', 'root2', 'root3'])
   })
@@ -140,18 +148,25 @@ describe('computeSelectionRoots', () => {
 })
 
 /*
- * Note on tree-utils.ts:192 [ArrayDeclaration]:
+ * Note on tree-utils.ts:199:35 [ArrayDeclaration]:
  * `const ancestorStack: string[] = []` mutates to a non-empty seeded array
  * (e.g. `['Stryker was here!']`). This is an EQUIVALENT mutant: every valid
  * input to computeSelectionRoots is a full DFS-flattened list, so items[0]
  * always has depth 0 (documented invariant of buildFlatTree's output). The
  * very first loop iteration executes `ancestorStack.length = item.depth`
- * (line 196) BEFORE any read of the array's contents (line 199's `.some()`),
+ * (line 203) BEFORE any read of the array's contents (line 206's `.some()`),
  * which for depth 0 truncates the array back to length 0 — destroying any
  * seeded placeholder before it can ever be observed. No valid fixture can
  * distinguish the mutant from the original without contriving a selected id
  * equal to Stryker's literal placeholder string, which is not a realistic
  * test.
+ *
+ * Every real caller reinforces the same conclusion independently of the
+ * differential sweep below: `use-block-dnd.ts`, `use-block-tree-keyboard-
+ * shortcuts.ts`, and `block-clipboard.ts` all pass `state.blocks` — the
+ * FULL-PAGE flat array straight out of `buildFlatTree` — never a hand-built
+ * or sliced subset, so a non-depth-0 first item is not just untested but
+ * unreachable from any call site in this codebase.
  *
  * Re-confirmed for #3765 by differential execution (original vs mutant over
  * 885 205 generated inputs, including lists whose FIRST item has depth > 0 —

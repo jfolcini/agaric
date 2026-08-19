@@ -6,8 +6,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { logger } from '@/lib/logger'
 import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
+import { wouldCreateMoveCycle } from '@/stores/page-blocks-move'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -1387,6 +1389,99 @@ describe('PageBlockStore', () => {
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'A1', 'B'])
     })
 
+    // #3759 — `wouldCreateMoveCycle` rejects UP FRONT and logs a warning
+    // BEFORE returning null; the presence check below it (previous test)
+    // reaches the SAME null/reload outcome for a DIFFERENT reason and never
+    // logs. Asserting the exact warning call is the only way to prove the
+    // cycle-guard branch itself ran, since both paths converge on "reload".
+    it('rejects a cyclic move via the wouldCreateMoveCycle guard and logs a warning before falling back to reload', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      // Requesting to move A under itself — the simplest cycle
+      // `wouldCreateMoveCycle` rejects (`orderedIds.includes(wantParent)`).
+      mockedInvoke.mockResolvedValueOnce(batchResp(['A'], 'A'))
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 1 }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 2 }),
+        ]),
+      )
+
+      await store.getState().moveBlocks(['A'], 'A', 0)
+
+      expect(reloaded()).toBe(true)
+      expect(warnSpy).toHaveBeenCalledWith(
+        'page-blocks-move',
+        'moveBlocks: rejected — newParentId would create a cycle',
+        { orderedIds: ['A'], wantParent: 'A' },
+      )
+      warnSpy.mockRestore()
+    })
+
+    // #3759 — the presence check is the SOLE catch-all for a moved id that no
+    // longer exists in local `blocks` AT ALL by commit time — as opposed to a
+    // CYCLE (caught by `wouldCreateMoveCycle` above, which never fires here:
+    // 'C' is absent, not a self/descendant match). Documented directly in
+    // `reconcileBatchMove`'s own comment: "an id absent from `blocks`
+    // entirely ... is likewise not a concern [for the cycle guard] ... the
+    // presence check below remains the (sole, necessary) catch-all for that".
+    // The pre-filter in the `moveBlocks` reducer (`ids.filter((id) =>
+    // order.has(id))`) only runs against the CALL-TIME snapshot, so a
+    // concurrent write landing AFTER that filter but BEFORE the batch IPC
+    // resolves can still drop an already-`ordered` id out of `state.blocks`
+    // by the time `reconcileBatchMove` reads it at commit time.
+    it('falls back to a reload when a moved id vanishes from local state entirely by commit time (not a cycle)', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'C', position: 3, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      let resolveBatch!: (v: unknown) => void
+      mockedInvoke.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveBatch = resolve
+          }),
+      )
+      // Queued for the reload the presence check will trigger.
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 1 }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 2 }),
+        ]),
+      )
+
+      const moving = store.getState().moveBlocks(['A', 'C'], 'PAGE_1', 1)
+
+      // A concurrent sync load lands mid-flight and drops C from local state
+      // — no cycle involved, C simply no longer exists by the time the batch
+      // resolves.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+        ],
+      })
+
+      // Backend still echoes success for BOTH requested ids — it processed
+      // the request before C's local removal landed.
+      resolveBatch(batchResp(['A', 'C'], 'PAGE_1'))
+      await moving
+
+      // Without the presence check, C would silently vanish from the
+      // committed tree instead of triggering a reconciling reload.
+      expect(reloaded()).toBe(true)
+    })
+
     // #976 finding 4 — the `moveBlocks` docstring requires callers pass the
     // SELECTION ROOTS only (a nested descendant must NOT be listed; it travels
     // inside its ancestor's subtree). The implementation performs NO such
@@ -1527,4 +1622,51 @@ describe('PageBlockStore', () => {
       expect(store.getState().blocksById.get('B')).toBe(untouchedB)
     })
   })
+})
+
+// #3759 — direct unit coverage for `wouldCreateMoveCycle`, per its own doc
+// comment ("Exported for direct unit coverage"): pin the pure predicate's
+// branches here instead of reaching them only indirectly through `moveBlocks`
+// three call-frames away, where a broken check surfaces as a silent tree
+// scramble rather than a failing assertion at the source.
+describe('wouldCreateMoveCycle', () => {
+  it('is not a cycle when the requested parent is root (null)', () => {
+    const a = makeBlock({ id: 'A', parent_id: null, depth: 0 })
+    expect(wouldCreateMoveCycle([a], ['A'], null)).toBe(false)
+  })
+
+  it('is not a cycle when the requested parent is unrelated to the moved roots', () => {
+    const a = makeBlock({ id: 'A', parent_id: null, depth: 0 })
+    const x = makeBlock({ id: 'X', parent_id: null, depth: 0 })
+    expect(wouldCreateMoveCycle([a, x], ['A'], 'X')).toBe(false)
+  })
+
+  it('is a cycle when the requested parent IS one of the moved roots (self-parent)', () => {
+    const a = makeBlock({ id: 'A', parent_id: null, depth: 0 })
+    expect(wouldCreateMoveCycle([a], ['A'], 'A')).toBe(true)
+  })
+
+  // Also distinguishes `.some` from `.every` (only A's subtree contains D)
+  // and the per-id lambda from a constant-`undefined` stand-in (only a real
+  // per-id `.has(wantParent)` check can find D under A but not under B).
+  it('is a cycle when the requested parent is a DESCENDANT of only ONE of several moved roots', () => {
+    const a = makeBlock({ id: 'A', parent_id: null, depth: 0 })
+    const d = makeBlock({ id: 'D', parent_id: 'A', depth: 1 })
+    const b = makeBlock({ id: 'B', parent_id: null, depth: 0 })
+    expect(wouldCreateMoveCycle([a, d, b], ['A', 'B'], 'D')).toBe(true)
+  })
+
+  // EQUIVALENCE — the `if (wantParent == null) return false` guard skipped
+  // outright (Stryker's `if (false)` ConditionalExpression mutant at this
+  // line): `orderedIds` is always `readonly string[]` and every `FlatBlock.id`
+  // is always a `string`, so for `wantParent === null`, both
+  // `orderedIds.includes(null)` and `getDragDescendants(...).has(null)` are
+  // ALWAYS false regardless of `blocks`/`orderedIds` content (no string ever
+  // `===` `null`) — the fall-through path converges on the exact same `false`
+  // the early return would have produced. Killing this would require an id
+  // that is literally `null` at runtime, contradicting the `string[]`
+  // contract every real caller (and this suite) respects. Confirmed by
+  // applying the mutation by hand and running this file plus
+  // `page-blocks.move-reparent.test.ts`: unchanged green (not the proof
+  // itself — the argument above is — just consistent with it).
 })
