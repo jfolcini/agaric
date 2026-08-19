@@ -187,17 +187,27 @@ export const linksHandlers = {
     // `list_unlinked_references_inner`).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    // #4159 item 3 — the TITLE lookup is guarded:
+    // `SELECT content FROM blocks WHERE id = ?1 AND block_type = 'page' AND
+    // deleted_at IS NULL` (`agaric-store/src/backlink/grouped.rs:588-591`),
+    // and the guard is there so a conflict-copy page id never resolves to a
+    // title that drives the search. `fetch_optional` answering `None` is not
+    // an early return on the backend: `title` falls back to the empty string
+    // (`:594-598`) and the ALIAS half still runs. So a `pageId` naming a
+    // content block or a soft-deleted page contributes NO title term here,
+    // exactly as it contributes none there — while a live alias row on that
+    // same id still searches, because `SELECT alias FROM page_aliases WHERE
+    // page_id = ?1` (`:601-605`) carries neither predicate on either side.
+    //
+    // This replaces a `blocks.get(pageId)` that applied neither predicate AND
+    // early-returned on a miss, so it was wrong in both directions: a
+    // content-block id searched on that block's text, and an id with only an
+    // alias row answered empty.
     const page = blocks.get(pageId)
-    if (!page)
-      return {
-        groups: [],
-        next_cursor: null,
-        has_more: false,
-        total_count: 0,
-        filtered_count: 0,
-        truncated: false,
-      }
-    const pageTitle = (page['content'] as string) ?? ''
+    const pageTitle =
+      page && page['block_type'] === 'page' && !page['deleted_at']
+        ? ((page['content'] as string | null) ?? '')
+        : ''
     // #4036 item 1 — the needle set is the page TITLE **OR** every one of its
     // `page_aliases` rows, not the title alone. `eval_unlinked_references`
     // builds `terms` from the sanitized title and then from each sanitized,

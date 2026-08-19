@@ -10,6 +10,8 @@
  */
 
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
+import { asciiLowercase, pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
+import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import {
   type PageMetaRow,
   type TypedHandlers,
@@ -20,6 +22,7 @@ import {
   fbqTagFilterMatches,
   linkTokenRe,
   metaRowMatchesExpr,
+  metaRowMatchesFilter,
   rawOpLogLastEditedAt,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
@@ -1068,6 +1071,67 @@ interface SearchPageResponse {
  *  rejects a larger explicit `limit` against (`queries.rs:239-245`). */
 const SEARCH_MAX_RESULTS = 100
 
+/**
+ * `PALETTE_CONTENT_PREVIEW_CAP` (`fts/search/partitioned.rs:53`) — the
+ * codepoint prefix of `content` the palette's display-only partitioned scan
+ * ships per row.
+ *
+ * #4159 item 2. It is a PER-CALLER argument, not a global one, and the
+ * asymmetry is the point: `search_with_toggles_partitioned` passes it only on
+ * the all-toggles-off arm, where `content` is a snippet FALLBACK and no
+ * post-filter runs (`toggle_filter.rs:455-478`). The `case_sensitive` /
+ * `whole_word` arm passes `None` — FULL content — precisely so its literal
+ * regex can still match past codepoint 512 instead of silently dropping the
+ * row (`:499-521`). The regex arm passes `None` too (`:389-405`), and so does
+ * the blank-query filter-only arm (`:1244-1272`). `search_blocks` (the FE/IPC
+ * path) passes `None` on every arm; only the MCP `search` tool caps there.
+ */
+const PALETTE_CONTENT_PREVIEW_CAP = 512
+
+/**
+ * SQL `substr(b.content, 1, n)` over a TEXT column — the first `n` CODEPOINTS,
+ * never a split multi-byte character (`partitioned.rs:38-41`). Spread-iterating
+ * the string is JS's codepoint iteration, so a surrogate pair counts once here
+ * and once there; `slice(0, n)` would count it twice and could halve a pair.
+ *
+ * Returns the row UNTOUCHED when it is already within the cap (and when
+ * `content` is absent), so only the rows the backend would actually truncate
+ * are copied — the copy matters because `items` otherwise holds the live store
+ * objects and a truncation applied in place would corrupt the mock's blocks.
+ *
+ * ## Why this does not re-read `content`
+ *
+ * #4065 item 4 (shipped in #4151) made the partitioned handler read each
+ * candidate's `content` EXACTLY ONCE per request, and pinned it with a
+ * counting getter installed over the property. Two things here would have
+ * quietly cost a second read and undone that:
+ *
+ *  1. reading `row['content']` to find the length — hence `content` is passed
+ *     IN, the same value the caller already handed to `stripForFts`;
+ *  2. `{ ...row, content: cut }` — an object spread copies own ENUMERABLE
+ *     properties, which invokes the `content` getter. So the copy is built by
+ *     key instead: `Object.keys` does not invoke getters, and `content` is
+ *     skipped in the loop and written from the already-read value.
+ *
+ * The property order the by-key copy produces is `row`'s own insertion order
+ * (with `content` re-appended at the end when the source lacked it, which
+ * `makeBlock` never does), and nothing on this path reads a row positionally.
+ */
+function capPaletteContent(
+  row: Record<string, unknown>,
+  content: string | null,
+): Record<string, unknown> {
+  if (typeof content !== 'string') return row
+  const points = [...content]
+  if (points.length <= PALETTE_CONTENT_PREVIEW_CAP) return row
+  const cut: Record<string, unknown> = {}
+  for (const key of Object.keys(row)) {
+    if (key !== 'content') cut[key] = row[key]
+  }
+  cut['content'] = points.slice(0, PALETTE_CONTENT_PREVIEW_CAP).join('')
+  return cut
+}
+
 /** `pagination::MAX_PAGE_SIZE` (`agaric-store/src/pagination/mod.rs:55`) — the
  *  upper end of the range `PageRequest::new` accepts, checked BEFORE
  *  {@link SEARCH_MAX_RESULTS} and in a different function, hence the two
@@ -1143,18 +1207,264 @@ function searchHasStructuralFilter(
 }
 
 /**
+ * #4159 item 1 — `prepare_metadata`
+ * (`agaric-store/src/fts/metadata_filter.rs:156-236`) as the
+ * `FilterPrimitive` leaves `StructuralFilterBuilder::add_metadata` splices
+ * from the resulting bundle (`fts/filter_builder.rs:634-712`).
+ *
+ * The two stages are folded into one pass because the mock has no SQL to
+ * emit: `prepare_metadata` resolves the wire `SearchFilter` fields into a
+ * `MetadataPredicates`, and `add_metadata` then turns each non-empty field of
+ * that bundle into exactly one `FilterPrimitive`. Emitting the primitives
+ * directly skips the intermediate struct and lands on the shape
+ * {@link metaRowMatchesFilter} — the conformance-guarded per-primitive
+ * evaluator the advanced-query path already runs — reads.
+ *
+ * Field-by-field, matching `add_metadata`'s own call order:
+ *
+ *  - `stateFilter` / `excludedStateFilter` → one `State` primitive each, the
+ *    include with `exclude: false` and the exclude with `exclude: true`
+ *    (`filter_builder.rs:658-669`). The `none` sentinel
+ *    (`eq_ignore_ascii_case`, `metadata_filter.rs:163-169` / `:181-187`) is
+ *    split OUT of `values` and into `is_null`;
+ *  - `priorityFilter` / `excludedPriorityFilter` → the same two-primitive
+ *    shape over `Priority` (`:676-687`);
+ *  - `propertyFilters` / `excludedPropertyFilters` → one `HasProperty` each,
+ *    with the TYPED value inference `add_property_predicate` applies
+ *    (`:429-462`) — see {@link searchInferPropertyValue};
+ *  - `dueFilter` / `scheduledFilter` → `DueDate` / `Scheduled`, the wire
+ *    `DateFilter` resolved against TODAY and then mapped through
+ *    `meta_date_to_primitive` (`:80-98`) — see {@link searchResolveDateFilter};
+ *  - `lastEdited` → `LastEdited`, carried verbatim (`metadata_filter.rs:234`).
+ *
+ * An empty set emits NOTHING, mirroring each `add_*_via_projection`'s early
+ * return, so `metadata.length === 0` is exactly `MetadataPredicates::is_empty`
+ * (`metadata_filter.rs:124-141`) and the candidate scan can skip the whole
+ * block.
+ *
+ * NOT modelled, deliberately and narrowly: `prepare_metadata`'s two
+ * VALIDATION refusals — an empty (trimmed) `prop:` key
+ * (`metadata_filter.rs:211-221`) and an unparseable date / unknown bucket
+ * (`:240-256`) — both of which are `AppError::Validation` raised BEFORE any
+ * arm is picked. Modelling the predicates without them means a malformed
+ * filter over-returns here where the backend refuses; it does not mean a
+ * silently different result set for a WELL-FORMED one, which is the
+ * divergence #4159 item 1 is about.
+ */
+function searchMetadataPrimitives(filter: Record<string, unknown>): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = []
+  const pushMembership = (type: 'State' | 'Priority', raw: unknown, exclude: boolean): void => {
+    const { values, isNull } = searchSplitNoneSentinel(raw)
+    // `add_state_via_projection` / `add_priority_via_projection` return
+    // without emitting when there is no predicate at all.
+    if (values.length === 0 && !isNull) return
+    out.push({ type, values, is_null: isNull, exclude })
+  }
+  pushMembership('State', filter['stateFilter'], false)
+  pushMembership('State', filter['excludedStateFilter'], true)
+  pushMembership('Priority', filter['priorityFilter'], false)
+  pushMembership('Priority', filter['excludedPriorityFilter'], true)
+
+  const pushProperties = (raw: unknown, exclude: boolean): void => {
+    for (const pf of (raw as Array<Record<string, unknown>> | undefined) ?? []) {
+      // BE-8 — the KEY is bound trimmed (`filter_builder.rs:434-437`).
+      const key = ((pf['key'] as string | undefined) ?? '').trim()
+      const value = (pf['value'] as string | undefined) ?? ''
+      const predicate =
+        value === ''
+          ? { type: exclude ? 'NotExists' : 'Exists' }
+          : { type: exclude ? 'Ne' : 'Eq', value: searchInferPropertyValue(value) }
+      out.push({ type: 'HasProperty', key, predicate })
+    }
+  }
+  pushProperties(filter['propertyFilters'], false)
+  pushProperties(filter['excludedPropertyFilters'], true)
+
+  const due = searchResolveDateFilter(filter['dueFilter'])
+  if (due !== null) out.push({ type: 'DueDate', predicate: due })
+  const scheduled = searchResolveDateFilter(filter['scheduledFilter'])
+  if (scheduled !== null) out.push({ type: 'Scheduled', predicate: scheduled })
+
+  const lastEdited = filter['lastEdited'] as Record<string, unknown> | null | undefined
+  if (lastEdited != null) out.push({ type: 'LastEdited', spec: lastEdited })
+  return out
+}
+
+/**
+ * Split the `none` sentinel out of a `state:` / `priority:` value list, the
+ * way `prepare_metadata` does (`metadata_filter.rs:162-196`).
+ *
+ * The comparison is `eq_ignore_ascii_case`, so {@link asciiLowercase} rather
+ * than `String.toLowerCase` — the latter folds beyond ASCII and would treat a
+ * non-ASCII spelling as the sentinel where the backend keeps it as a literal
+ * custom state.
+ */
+function searchSplitNoneSentinel(raw: unknown): { values: string[]; isNull: boolean } {
+  const values: string[] = []
+  let isNull = false
+  for (const s of (raw as string[] | undefined) ?? []) {
+    if (asciiLowercase(s) === 'none') isNull = true
+    else values.push(s)
+  }
+  return { values, isNull }
+}
+
+/**
+ * `infer_property_value` (`fts/filter_builder.rs:120-132`) — the
+ * #properties-typed-always rule that picks the ONE `block_properties` column a
+ * `prop:KEY=VALUE` search token compares against: finite `f64` → `Num`, else
+ * ISO `YYYY-MM-DD` → `Date`, else `Text`. `Ref` is never inferred.
+ *
+ * The numeric test is a Rust-`f64`-grammar regex rather than a bare `Number()`
+ * because the two accept different strings: `Number()` also takes `0x10`,
+ * `Infinity`, leading/trailing whitespace and the empty string (as `0`), none
+ * of which `str::parse::<f64>()` accepts as a finite number. Getting that
+ * wrong routes a value to `value_num` where the backend routes it to
+ * `value_text`, which matches nothing.
+ */
+function searchInferPropertyValue(raw: string): Record<string, unknown> {
+  if (/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(raw)) {
+    const n = Number(raw)
+    if (Number.isFinite(n)) return { type: 'Num', value: n }
+  }
+  if (isIsoDate(raw)) return { type: 'Date', value: raw }
+  return { type: 'Text', value: raw }
+}
+
+/**
+ * `resolve_date_filter` + `resolve_named_range`
+ * (`agaric-store/src/fts/metadata_filter.rs:240-318`) composed with
+ * `meta_date_to_primitive` (`fts/filter_builder.rs:80-98`): the wire
+ * `DateFilter` (`{ named }` | `{ op: { op, date } }`) resolved straight to the
+ * `DatePredicate` shape {@link metaRowMatchesFilter}'s `DueDate` / `Scheduled`
+ * arms read. `null` for an absent filter (no primitive emitted).
+ *
+ * `today` is the LOCAL date — `chrono::Local::now().date_naive()`
+ * (`metadata_filter.rs:149`) — so the ISO strings are built from
+ * `getFullYear` / `getMonth` / `getDate` and never from `toISOString`, which
+ * would shift the day by one either side of UTC for most of the world.
+ *
+ * Weeks are Mon..Sun (`resolve_named_range`'s own note, `:261-262`).
+ *
+ * An unknown bucket keyword resolves to `null` here where the backend raises
+ * `InvalidDateFilter`; see {@link searchMetadataPrimitives} on the two
+ * validation refusals this seam leaves to the backend.
+ */
+function searchResolveDateFilter(raw: unknown): Record<string, unknown> | null {
+  const df = raw as Record<string, unknown> | null | undefined
+  if (df == null) return null
+  const op = df['op'] as Record<string, unknown> | undefined
+  if (op !== undefined) {
+    const date = op['date'] as string
+    switch (op['op'] as string) {
+      case 'lt': {
+        return { type: 'Before', date }
+      }
+      case 'lte': {
+        return { type: 'OnOrBefore', date }
+      }
+      case 'eq': {
+        return { type: 'On', date }
+      }
+      case 'gte': {
+        return { type: 'OnOrAfter', date }
+      }
+      case 'gt': {
+        return { type: 'After', date }
+      }
+      default: {
+        return null
+      }
+    }
+  }
+  const today = new Date()
+  const iso = (d: Date): string =>
+    `${String(d.getFullYear()).padStart(4, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const shifted = (days: number): Date => {
+    const d = new Date(today)
+    d.setDate(d.getDate() + days)
+    return d
+  }
+  // `Weekday::num_days_from_monday()` — JS weeks start on Sunday, so rotate.
+  const mondayOffset = -((today.getDay() + 6) % 7)
+  const between = (from: Date, to: Date): Record<string, unknown> => ({
+    type: 'Between',
+    from: iso(from),
+    to: iso(to),
+  })
+  switch (df['named'] as string) {
+    case 'none': {
+      return { type: 'IsNull' }
+    }
+    case 'today': {
+      return between(today, today)
+    }
+    case 'yesterday': {
+      return between(shifted(-1), shifted(-1))
+    }
+    case 'overdue': {
+      return { type: 'Before', date: iso(today) }
+    }
+    case 'older': {
+      // The 30-day window `resolve_named_range` spells out (`:283-290`).
+      return { type: 'Before', date: iso(shifted(-30)) }
+    }
+    case 'this-week': {
+      return between(shifted(mondayOffset), shifted(mondayOffset + 6))
+    }
+    case 'next-week': {
+      return between(shifted(mondayOffset + 7), shifted(mondayOffset + 13))
+    }
+    case 'this-month': {
+      const first = new Date(today.getFullYear(), today.getMonth(), 1)
+      // First of next month minus a day — `resolve_named_range`'s own recipe.
+      const last = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+      return between(first, last)
+    }
+    default: {
+      return null
+    }
+  }
+}
+
+/**
+ * The `pages_cache` title a page-name glob resolves against, or `null` when
+ * the owning page has no row there.
+ *
+ * `rebuild_pages_cache` populates it from `block_type = 'page' AND deleted_at
+ * IS NULL AND content IS NOT NULL` (`agaric-store/src/cache/pages.rs:34-41`),
+ * so all three predicates gate the lookup — a soft-deleted or content-less
+ * page is absent from the cache and its blocks satisfy neither half of the
+ * `IN` / `NOT IN` pair by membership.
+ */
+function searchPagesCacheTitle(pageId: string): string | null {
+  const page = blocks.get(pageId)
+  if (!page || page['block_type'] !== 'page' || page['deleted_at']) return null
+  return (page['content'] as string | null) ?? null
+}
+
+/**
  * The structurally-filtered, live block set every arm draws its candidates
- * from — the mock's stand-in for `apply_structural_filters`'s WHERE clauses.
- * See the `search_blocks` handler docstring for which clauses are modelled.
+ * from — the mock's stand-in for `apply_structural_filters`'s WHERE clauses
+ * (`toggle_filter.rs:1021-1049`), now covering every one of them.
+ *
+ * #4159 item 1 — it used to model `parentId` / `tagIds` / `scope` /
+ * `blockTypeFilter` and stop there, while {@link searchHasStructuralFilter}
+ * counted the page-name globs and the whole metadata bundle as well. The two
+ * halves disagreeing is not a documentation gap: a blank query whose only
+ * filter is (say) `stateFilter` took the FILTERED arm and then returned EVERY
+ * live in-scope block recency-ordered, where the backend returns only the
+ * state-matching ones. #4158 made that reachable on
+ * `search_blocks_partitioned` too, which is what turned a latent gap into two.
  *
  * `honourBlockType` defaults to `true` for `search_blocks`. #4065 item 1 —
- * `search_blocks_partitioned` reuses this same structural set (`parentId` /
- * `tagIds` / `scope` → `space_id`) but must pass `false`: its `filter`'s
- * `block_type_filter` is DOCUMENTED as ignored there (`queries.rs:657-663`,
- * "the partitioning IS the block-type split") — the two `pages` /
- * `blocks` scans apply their own `block_type = 'page'` pre-filter (or none)
- * downstream instead, mirroring `fts_fetch_rows`'s per-scan `block_type`
- * argument (`partitioned.rs:165-212`).
+ * `search_blocks_partitioned` reuses this same structural set but must pass
+ * `false`: its `filter`'s `block_type_filter` is DOCUMENTED as ignored there
+ * (`queries.rs:657-663`, "the partitioning IS the block-type split") — the two
+ * `pages` / `blocks` scans apply their own `block_type = 'page'` pre-filter (or
+ * none) downstream instead, mirroring `fts_fetch_rows`'s per-scan `block_type`
+ * argument (`partitioned.rs:165-212`). No other field is conditional: the
+ * globs and the metadata predicates reach BOTH commands' scans.
  */
 function searchStructuralCandidates(
   filter: Record<string, unknown>,
@@ -1169,6 +1479,14 @@ function searchStructuralCandidates(
     ? ((filter['blockTypeFilter'] as string | null | undefined) ?? null)
     : null
   const tagIds = (filter['tagIds'] as string[] | undefined) ?? []
+  const includeGlobs = (filter['includePageGlobs'] as string[] | undefined) ?? []
+  const excludeGlobs = (filter['excludePageGlobs'] as string[] | undefined) ?? []
+  const metadata = searchMetadataPrimitives(filter)
+  // `rawOpLogLastEditedAt` linearly scans `opLog` with a `JSON.parse` per
+  // entry, and only the `LastEdited` primitive reads the stamp — so pay for it
+  // per row ONLY when such a primitive is in play (the same reason
+  // {@link rawLastEditedOf} memoizes it on the advanced-query path).
+  const needsLastEdited = metadata.some((p) => p['type'] === 'LastEdited')
   return [...blocks.values()].filter((b) => {
     if (b['deleted_at']) return false
     if (!fbqInSpace(b, spaceId)) return false
@@ -1180,8 +1498,70 @@ function searchStructuralCandidates(
       const own = blockTags.get(b['id'] as string)
       if (!own || !tagIds.every((t) => own.has(t))) return false
     }
+    if (includeGlobs.length > 0 || excludeGlobs.length > 0) {
+      // `b.page_id [NOT ]IN (SELECT page_id FROM pages_cache WHERE LOWER(title)
+      // GLOB ?)` — `SearchProjection::compile_path_glob`
+      // (`filters/primitive.rs:1372-1399`), OR-joined across the include list
+      // and AND-joined across the exclude list
+      // (`filter_builder.rs:575-616`).
+      //
+      // A NULL `page_id` makes BOTH `IN` and `NOT IN` evaluate to NULL, so the
+      // row is dropped either way — not kept by the exclude half. (Pages
+      // themselves always carry `page_id = id`; migration 0073 promoted that
+      // to a CHECK constraint.)
+      const pageId = (b['page_id'] as string | null) ?? null
+      if (pageId === null) return false
+      const title = searchPagesCacheTitle(pageId)
+      if (includeGlobs.length > 0) {
+        if (title === null) return false
+        if (!includeGlobs.some((p) => pageGlobFilterMatches(p, title, false))) return false
+      }
+      // Absent from `pages_cache` → not a member of the excluded set either,
+      // so `NOT IN` holds and the row survives the exclude half.
+      if (title !== null && !excludeGlobs.every((p) => pageGlobFilterMatches(p, title, true))) {
+        return false
+      }
+    }
+    if (metadata.length > 0) {
+      const row = searchMetadataRow(b, needsLastEdited)
+      if (!metadata.every((p) => metaRowMatchesFilter(row, p))) return false
+    }
     return true
   })
+}
+
+/**
+ * The `PageMetaRow` view of one candidate block that the metadata primitives
+ * read — every column `add_metadata`'s clauses touch, and nothing else.
+ *
+ * NOT {@link buildPageMetaRow}: that one needs the block's descendant list and
+ * the whole link-edge set to fill `inboundLinkCount` / `childBlockCount` /
+ * `hasOutboundLink` / `flags`, and no metadata primitive reads any of them
+ * (`Stub` / `Orphan` / `HasNoInboundLinks` are advanced-query-only leaves that
+ * `prepare_metadata` cannot produce). Building it per candidate would make the
+ * structural scan quadratic for fields the scan never looks at, so the four
+ * are left at their inert zero values.
+ */
+function searchMetadataRow(b: Record<string, unknown>, withLastEdited: boolean): PageMetaRow {
+  const id = b['id'] as string
+  return {
+    id,
+    blockType: (b['block_type'] as string | null) ?? 'page',
+    content: (b['content'] as string | null) ?? null,
+    parentId: (b['parent_id'] as string | null) ?? null,
+    position: (b['position'] as number | null) ?? null,
+    deletedAt: null,
+    todoState: (b['todo_state'] as string | null) ?? null,
+    priority: (b['priority'] as string | null) ?? null,
+    dueDate: (b['due_date'] as string | null) ?? null,
+    scheduledDate: (b['scheduled_date'] as string | null) ?? null,
+    pageId: (b['page_id'] as string | null) ?? null,
+    lastModifiedAt: withLastEdited ? rawOpLogLastEditedAt(id) : null,
+    inboundLinkCount: 0,
+    childBlockCount: 0,
+    hasOutboundLink: false,
+    flags: { hasTags: false, hasTodo: false, hasScheduled: false, hasDue: false },
+  }
 }
 
 /** `ORDER BY b.id DESC` — ULID prefixes are time-sortable, so this is the
@@ -1882,16 +2262,15 @@ export const searchHandlers = {
    * ## What is modelled, and what is not
    *
    * The structural predicate mirrors `apply_structural_filters`'s clause set
-   * only as far as `parentId` / `tagIds` / `scope` / `blockTypeFilter`. The
-   * page-name GLOBS and the `MetadataPredicates` bundle (state / priority /
-   * due / scheduled / property / last-edited) are NOT applied — modelling
-   * them means reimplementing `prepare_metadata`, whose date arms resolve
-   * against `chrono::Local::now()`. They ARE counted by
-   * {@link searchHasStructuralFilter}, because that predicate selects which
-   * ARM runs and getting the arm wrong is the larger error. A query carrying
-   * only a glob or a metadata filter therefore reaches the right arm here and
-   * then over-returns; no conformance step drives one, which is exactly why
-   * the gap should be closed by a step rather than trusted.
+   * in full: `parentId` / `tagIds` / `scope` / `blockTypeFilter`, the
+   * page-name GLOBS, and the `MetadataPredicates` bundle (state / priority /
+   * due / scheduled / property / last-edited). #4159 item 1 — the last two
+   * groups used to be counted by {@link searchHasStructuralFilter} and then
+   * NOT applied by {@link searchStructuralCandidates}, so a query carrying
+   * only a glob or a metadata filter reached the right arm and then
+   * over-returned. What is still left to the backend is `prepare_metadata`'s
+   * two VALIDATION refusals (an empty `prop:` key, an unparseable date) — see
+   * {@link searchMetadataPrimitives}.
    *
    * The FTS5 candidate set is {@link matchesFtsIndex} over
    * {@link stripForFts}'s text (#3938) — the same `fts_blocks.stripped` column
@@ -2185,16 +2564,22 @@ export const searchHandlers = {
       }
     }
 
-    // #4065 item 4 — stripped ONCE per structural candidate and carried
-    // alongside `b`, not recomputed per partition. This used to run
-    // `stripForFts` again inside {@link searchFtsRankedPage} for EACH
-    // partition a row landed in — three times total for a page-typed match
-    // (once here, once for `blocks`, once for `pages`).
+    // #4065 item 4 — `content` READ once and stripped once per structural
+    // candidate, both carried alongside `b`, not recomputed per partition.
+    // This used to run `stripForFts` again inside {@link searchFtsRankedPage}
+    // for EACH partition a row landed in — three times total for a page-typed
+    // match (once here, once for `blocks`, once for `pages`). The raw value
+    // rides along because arm 4's {@link capPaletteContent} needs it too, and
+    // re-reading the property there would be a second read of the same column.
     const matching = structural
-      .map((b) => ({ b, stripped: stripForFts(b['content'] as string | null) }))
+      .map((b) => {
+        const content = (b['content'] as string | null) ?? null
+        return { b, content, stripped: stripForFts(content) }
+      })
       .filter((c) => matchesFtsIndex(c.stripped, query))
     const pagesAll = matching.filter((c) => isPageTyped(c.b))
     const folded = foldForFtsIndex(query)
+    const contentOf = new Map(matching.map((c) => [c.b, c.content]))
 
     // Arm 4 — every toggle off: the straight partitioned FTS scan
     // (`toggle_filter.rs:454-478`). Two INDEPENDENT scans, each capped at its
@@ -2210,18 +2595,27 @@ export const searchHandlers = {
     // its zero-limit answer (`partitioned.rs:237-238`:
     // `page_limit_usize > 0 && …`, which the seam reproduces because a
     // zero-limit page has no boundary row to mint from).
+    //
+    // #4159 item 2 — and it is the ONE arm that ships `content` truncated to
+    // {@link PALETTE_CONTENT_PREVIEW_CAP} (`toggle_filter.rs:466-473`). See
+    // {@link capPaletteContent} for why the cut is per-arm rather than global,
+    // and arm 5 below for the arm that must NOT carry it.
     if (filter['caseSensitive'] !== true && filter['wholeWord'] !== true) {
       const pages = searchFtsRankedPage(pagesAll, folded, null, pageLimit)
       const blocksPartition = searchFtsRankedPage(matching, folded, null, blockLimit)
+      const capped = (r: unknown): Record<string, unknown> => {
+        const row = r as Record<string, unknown>
+        return capPaletteContent(row, contentOf.get(row) ?? null)
+      }
       return {
         pages: {
-          items: pages.items,
+          items: pages.items.map((r) => capped(r)),
           next_cursor: null,
           has_more: pages.has_more,
           total_count: null,
         },
         blocks: {
-          items: blocksPartition.items,
+          items: blocksPartition.items.map((r) => capped(r)),
           next_cursor: null,
           has_more: blocksPartition.has_more,
           total_count: null,
@@ -2239,11 +2633,14 @@ export const searchHandlers = {
     // partition are not surfaced at all, the documented best-effort trade-off
     // (`:490-496`).
     //
-    // One divergence left standing, because it is arm 4's and not this arm's:
-    // arm 4 ships `content` truncated to `PALETTE_CONTENT_PREVIEW_CAP` (512
-    // codepoints, `partitioned.rs:30-53`) while this arm ships it in full so
-    // the post-filter can match past the cut (`:499-511`). The mock models no
-    // `content` truncation anywhere, so both arms ship full content here.
+    // #4159 item 2 — this arm ships `content` in FULL, and deliberately so:
+    // `search_with_toggles_partitioned` passes `snippet_len: None` here
+    // (`toggle_filter.rs:499-521`) because the post-filter runs a literal regex
+    // against `row.content` and a DB-side `substr(content, 1, 512)` would hide
+    // any match first appearing past codepoint 512 — dropping the row outright.
+    // Arm 4 above, which runs no post-filter, is the one that truncates. The
+    // asymmetry is the modelled behaviour; a cap applied to both arms would be
+    // as wrong as a cap applied to neither.
     const re = buildSearchRegex(query, filter, true)
     const survivors = (candidates: Array<{ b: Record<string, unknown>; stripped: string }>) =>
       searchFtsRankedPage(candidates, folded, null, SEARCH_MAX_RESULTS).items.filter((b) =>
