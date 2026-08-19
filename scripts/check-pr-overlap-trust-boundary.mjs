@@ -96,11 +96,28 @@
 //      `compute` at all. A workflow-level `env:` counts too — it is
 //      inherited by every job, so a secret declared once above `jobs:` lands
 //      in the untrusted job just the same.
+//      The `secrets` context counts however it is SPELLED: the accessor
+//      forms (`secrets.A_PAT`, `secrets['A_PAT']`) and the whole-context
+//      forms GitHub documents, `${{ toJSON(secrets) }}` chief among them —
+//      which hands the job EVERY secret in one expression and carries no
+//      accessor for an accessor-shaped regex to find. See
+//      `SECRET_REFERENCE` / `SECRET_IN_EXPRESSION` below.
 //      What this does NOT cover: a secret reaching the untrusted job by a
-//      route with no `secrets.` token in this file — a `with:` input on a
+//      route with no `secrets` token in this file — a `with:` input on a
 //      third-party action that fetches its own credential, an OIDC exchange,
 //      a value carried in from a reusable workflow's `secrets: inherit`.
-//      Those need a different check; this one closes the one-line edit.
+//      Nor does it cover the OTHER direction of the split: a job that holds
+//      a secret and never checks out anything is trusted BY THIS CHECK, but
+//      it may still CONSUME the untrusted job's artifact. That is correct
+//      with respect to fork-code EXECUTION — no fork-authored code runs in
+//      such a job — and wrong with respect to fork-authored DATA: an
+//      artifact is attacker-influenced text, and a job that interpolates it
+//      into a `run:` alongside a token is an injection away from the same
+//      outcome. `pr-overlap.yml`'s `post` job carries the reasoning for why
+//      it does not (the artifact reaches `node` as a `--diverged-from
+//      <path>` filename, never as shell text); enforcing that is a
+//      taint-tracking check this one does not attempt.
+//      Those all need a different check; this one closes the one-line edit.
 //
 // (1 AND 2) is one failure mode; 3 and 4 are two more, independent of it and
 // of each other. Any of them firing is a violation.
@@ -136,11 +153,39 @@ const HEAD_REF_PATTERNS = [
 // write-scoped job.
 const BASE_REF_PATTERNS = [/pull_request\.base\.(?:sha|ref)/]
 
-// Any reference to the `secrets` context: `secrets.GITHUB_TOKEN`,
+// Any reference to the `secrets` context BY ACCESSOR: `secrets.GITHUB_TOKEN`,
 // `secrets.A_PAT`, or the index form `secrets['A_PAT']`. Condition 4 (below)
 // rejects all of them inside a job holding a non-base-pinned checkout — see
 // this file's header for why `GITHUB_TOKEN` is not carved out.
 const SECRET_REFERENCE = /\bsecrets\s*(?:\.\s*[A-Za-z_][A-Za-z0-9_-]*|\[)/
+
+// The `secrets` context named inside a `${{ … }}` expression WITHOUT an
+// accessor. `${{ toJSON(secrets) }}` is a documented GitHub form and it is
+// strictly WORSE than any single accessor — it serialises EVERY secret the
+// workflow can see into one value — yet `SECRET_REFERENCE` above cannot see
+// it, because the character after `secrets` is `)` rather than `.` or `[`.
+// So condition 4, whose whole framing is "closes the one-line edit", had a
+// one-line edit that walked straight past it.
+//
+// Scoped to the inside of an expression rather than matching the bare word
+// anywhere on the line, because "secrets" is an ordinary English word that
+// appears in step names and prose (`- name: Scan for leaked secrets`), and a
+// guard that reds on the word rather than the context is a guard people
+// route around. `(?:(?!\}\})[\s\S])*?` is "any text not yet closing the
+// expression": the match needs an opening `${{` before the mention, not a
+// closing `}}` after it, so an expression broken across lines still fails
+// CLOSED on the line that opens it.
+const SECRET_IN_EXPRESSION = /\$\{\{(?:(?!\}\})[\s\S])*?\bsecrets\b/
+
+/**
+ * Whether one line (already comment-stripped by the caller) references the
+ * `secrets` context in any spelling condition 4 rejects.
+ *
+ * @param {string} line
+ */
+function referencesSecrets(line) {
+  return SECRET_REFERENCE.test(line) || SECRET_IN_EXPRESSION.test(line)
+}
 
 /**
  * Extract the top-level `on:` block's raw text (from the `on:` line up to,
@@ -148,6 +193,15 @@ const SECRET_REFERENCE = /\bsecrets\s*(?:\.\s*[A-Za-z_][A-Za-z0-9_-]*|\[)/
  * inside it are dropped before the caller matches against it, so a
  * DOCUMENTATION mention of the trigger name (this very file's own header,
  * for instance) cannot be mistaken for the trigger actually being declared.
+ *
+ * A COLUMN-0 COMMENT IS NOT THE NEXT TOP-LEVEL KEY. YAML allows a comment at
+ * any indentation, including none, so `# ─── the target trigger ───` written
+ * flush left between two entries of the `on:` mapping is legal and ends
+ * nothing. Treating it as the block boundary truncates the block there, and
+ * a `pull_request_target:` declared BELOW it is never seen —
+ * `declaresDangerousTrigger` returns false and conditions 1+2 stay silent on
+ * a file that really does carry the trigger. `splitJobs` had the identical
+ * break, for the identical reason; both are fixed together.
  *
  * Throws — not a violation, a WIRING failure — if the file carries no `on:`
  * block at all, which means this guard is looking at the wrong shape of
@@ -165,9 +219,9 @@ export function extractOnBlock(src) {
   }
   const block = []
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^\S/.test(lines[i])) break // next top-level key
-    const trimmed = lines[i].trim()
-    if (trimmed.startsWith('#')) continue
+    // Next top-level KEY — a column-0 comment is not one; see the docstring.
+    if (/^\S/.test(lines[i]) && !isCommentLine(lines[i])) break
+    if (isCommentLine(lines[i])) continue
     block.push(lines[i])
   }
   return block.join('\n')
@@ -234,6 +288,25 @@ export function findHeadCheckoutRefs(src) {
  * job they were already in, so every `headerLine + offset` line number
  * stays exact.
  *
+ * THE HEADER REGEX RUNS OVER THE COMMENT-STRIPPED LINE, for the mirror image
+ * of that failure. It requires end-of-line after the colon, so `  post: #
+ * posts the table compute produced` — a job header with an ordinary trailing
+ * comment, more likely to be typed by accident than the banner-ending-in-a-
+ * colon above — matched NOTHING, and `post`'s whole body folded into the
+ * job before it. If that predecessor is the untrusted `contents: read` half
+ * of the split (it is, in this file: `compute` precedes `post`), the merged
+ * job reads as non-write-scoped and conditions 3 and 4 skip the write-scoped
+ * job entirely. Same silent false negative, opposite direction: there a
+ * comment became a job, here a job became a comment. `isCommentLine` still
+ * runs on the RAW line — stripping first would turn every whole-line comment
+ * into `''`, which is not a header either, but says so by accident.
+ *
+ * A COLUMN-0 COMMENT IS NOT THE NEXT TOP-LEVEL KEY, exactly as in
+ * `extractOnBlock` — a flush-left banner between two jobs is legal YAML and
+ * ends nothing, but read as the end of the `jobs:` block it deletes EVERY
+ * job below it from conditions 3 and 4. It is pushed into the current job's
+ * body rather than skipped, so `headerLine + offset` arithmetic stays exact.
+ *
  * Throws — a wiring failure, not a violation — if the file has no top-level
  * `jobs:` block, same discipline as `extractOnBlock`.
  *
@@ -256,8 +329,10 @@ export function splitJobs(src) {
   }
   for (let i = jobsStart + 1; i < lines.length; i++) {
     const line = lines[i]
-    if (/^\S/.test(line)) break // dedented back to a top-level key; jobs: block is over
-    const header = isCommentLine(line) ? null : /^ {2}(\S[^:]*):\s*$/.exec(line)
+    // Dedented back to a top-level KEY; the jobs: block is over. A column-0
+    // COMMENT is not a key — see the docstring.
+    if (/^\S/.test(line) && !isCommentLine(line)) break
+    const header = isCommentLine(line) ? null : /^ {2}(\S[^:]*):\s*$/.exec(stripComment(line))
     if (header) {
       flush()
       name = header[1]
@@ -303,16 +378,55 @@ export function jobDeclaresWriteScope(jobBody) {
 
 /**
  * `line` with any trailing `#` comment removed, and `''` for a whole-line
- * comment. Deliberately naive about a `#` inside a quoted scalar: no
- * `permissions:` or `ref:` value in a workflow carries one, and the failure
- * direction of getting it wrong here is a value that reads as SHORTER, never
- * as a write scope that is not there.
+ * comment, cutting where YAML says the comment starts rather than at the
+ * first `#` character.
+ *
+ * THE NAIVE VERSION FAILED OPEN once this became condition 4's input. It cut
+ * at the first `#` anywhere and justified that with "the failure direction
+ * is a value that reads as SHORTER, never as a write scope that is not
+ * there" — true while the only callers were `jobDeclaresWriteScope` and
+ * `refFromWithMapping`, where a shorter value means a scope or a base-pin
+ * that reads as ABSENT and the check stays red. It is false for
+ * `findSecretReferences`, where shorter means FEWER secrets found, i.e.
+ * fewer violations: `run: echo '#' && curl -H "auth: ${{ secrets.A_PAT }}"`
+ * truncated at the quoted hash hides the PAT from condition 4 entirely. The
+ * fail direction is per-caller, so it cannot be asserted once for the
+ * function; the function is made accurate instead.
+ *
+ * Two YAML rules are enough to close that: a `#` inside a quoted scalar is
+ * content, and a `#` in a plain scalar only opens a comment when it follows
+ * whitespace (or starts the line) — `sha#frag` is one token, not a token and
+ * a comment. Both rules make the retained value LONGER than the naive cut,
+ * which is the fail-closed direction for the secrets caller and, for the
+ * other two, only ever admits a value that YAML itself says is live.
+ *
+ * Residual, stated rather than assumed: a line inside a BLOCK scalar
+ * (`run: |`) is shell text where `#` is a shell comment and quotes are shell
+ * quotes, and this function still reads it as YAML. A block-scalar line
+ * carrying an unbalanced quote (`echo "it's fine" # trailing`) can therefore
+ * still be cut where YAML would not cut. That is a narrower hole than the
+ * one it replaces — the evasion has to survive shell quoting too — and
+ * closing it needs block-scalar tracking this guard does not do.
  *
  * @param {string} line
  */
 function stripComment(line) {
-  const hash = line.indexOf('#')
-  return hash === -1 ? line : line.slice(0, hash)
+  /** @type {string | null} */
+  let quote = null
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (quote === null) {
+      if (ch === '"' || ch === "'") quote = ch
+      else if (ch === '#' && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i)
+    } else if (quote === '"' && ch === '\\') {
+      i++ // an escaped character inside a double-quoted scalar, `\"` included
+    } else if (ch === quote) {
+      // `''` inside a single-quoted scalar is an escaped quote, not the end.
+      if (quote === "'" && line[i + 1] === "'") i++
+      else quote = null
+    }
+  }
+  return line
 }
 
 /**
@@ -456,8 +570,11 @@ function refFromWithMapping(block, stepIndent) {
  * defaults to fork-controlled content.
  *
  * @param {string} src
+ * @param {ReturnType<typeof splitJobs>} [jobs]  the split `checkTrustBoundary`
+ *   already computed; defaults to splitting `src` here, so a caller with only
+ *   a source string (the self-test, an importer) still works.
  */
-export function findWriteScopedUnsafeCheckouts(src) {
+export function findWriteScopedUnsafeCheckouts(src, jobs = splitJobs(src)) {
   const lines = src.split('\n')
   const workflowPermissions = (() => {
     const idx = lines.findIndex((l) => l.startsWith('permissions:'))
@@ -472,7 +589,6 @@ export function findWriteScopedUnsafeCheckouts(src) {
     return false
   })()
 
-  const jobs = splitJobs(src)
   const hits = []
   for (const [jobName, { body, headerLine }] of Object.entries(jobs)) {
     const own = jobDeclaresWriteScope(body)
@@ -509,10 +625,13 @@ function isBasePinned(ref) {
 }
 
 /**
- * Every `secrets.` reference, with its 1-based line number, in `lines`.
- * Comments are stripped first: this file's own prose (and `pr-overlap.yml`'s)
+ * Every `secrets` reference — accessor or whole-context expression, see
+ * `referencesSecrets` — with its 1-based line number, in `lines`. Comments
+ * are stripped first: this file's own prose (and `pr-overlap.yml`'s)
  * discusses tokens at length, and a comment SAYING `secrets.GITHUB_TOKEN` is
- * not a job holding one.
+ * not a job holding one. That strip is the one place in this guard where
+ * cutting too much loses a violation rather than inventing one, which is why
+ * `stripComment` is quote-aware — see its docstring.
  *
  * @param {string[]} lines
  * @returns {{ offset: number, text: string }[]}  offset is 0-based into `lines`
@@ -521,7 +640,7 @@ function findSecretReferences(lines) {
   const hits = []
   lines.forEach((line, i) => {
     const bare = stripComment(line)
-    if (SECRET_REFERENCE.test(bare)) hits.push({ offset: i, text: bare.trim() })
+    if (referencesSecrets(bare)) hits.push({ offset: i, text: bare.trim() })
   })
   return hits
 }
@@ -540,9 +659,11 @@ function findSecretReferences(lines) {
  * preamble line it actually lives on.
  *
  * @param {string} src
+ * @param {ReturnType<typeof splitJobs>} [jobs]  as in
+ *   `findWriteScopedUnsafeCheckouts`; the default throws on a file with no
+ *   `jobs:` block — a wiring failure, not a violation.
  */
-export function findSecretsInUntrustedJobs(src) {
-  const jobs = splitJobs(src) // throws on a file with no `jobs:` — a wiring failure
+export function findSecretsInUntrustedJobs(src, jobs = splitJobs(src)) {
   const lines = src.split('\n')
   const jobsStart = lines.findIndex((l) => /^jobs:\s*$/.test(l))
   const preambleHits = findSecretReferences(lines.slice(0, jobsStart))
@@ -572,8 +693,14 @@ export function checkTrustBoundary(src) {
   const onBlock = extractOnBlock(src)
   const dangerous = declaresDangerousTrigger(onBlock)
   const headRefs = dangerous ? findHeadCheckoutRefs(src) : []
-  const unsafeWriteCheckouts = findWriteScopedUnsafeCheckouts(src)
-  const secretsInUntrustedJobs = findSecretsInUntrustedJobs(src)
+  // Split ONCE and hand the same map to both conditions. Not for speed at
+  // this file size — so that "the untrusted job" and "the write-scoped job"
+  // are provably statements about the identical set of jobs, rather than
+  // about two independent parses that a future edit to `splitJobs` could
+  // silently make disagree.
+  const jobs = splitJobs(src)
+  const unsafeWriteCheckouts = findWriteScopedUnsafeCheckouts(src, jobs)
+  const secretsInUntrustedJobs = findSecretsInUntrustedJobs(src, jobs)
   return {
     dangerous,
     headRefs,
@@ -1106,6 +1233,202 @@ jobs:
           persist-credentials: false
 `
 
+// THE MIRROR IMAGE of `COMMENT_LINE_IS_NOT_A_JOB_HEADER`: there a comment was
+// read as a job, here a job is not read at all. `  post: # posts the table`
+// is an ordinary job header with an ordinary trailing comment — nothing
+// exotic, nothing adversarial, the sort of line anyone might type — and the
+// header regex requires end-of-line after the colon, so it matched nothing
+// and `post`'s entire body folded into `compute` above it. `compute` is the
+// untrusted half and declares `contents: read`, so the merged job reads as
+// non-write-scoped, condition 3 skips it, and the write-scoped `post` with
+// its ref-less (fork-content) checkout vanishes from the guard's view. Like
+// the banner fixture, this file is a REAL violation that the unfixed split
+// reports as clean.
+const JOB_HEADER_WITH_A_TRAILING_COMMENT = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+  post: # posts the table \`compute\` produced
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+`
+
+// A FLUSH-LEFT BANNER BETWEEN TWO JOBS. Legal YAML — a comment has no
+// indentation semantics — but `splitJobs` treated any column-0 line as the
+// next top-level key and stopped there, deleting `post` and everything after
+// it from conditions 3 and 4. This repo's banners happen to be two-space
+// indented today, which is the only reason the phantom-job bug was the one
+// that got hit and this one did not; a single reflow of a comment block
+// swaps which of the two is live.
+const COLUMN_ZERO_COMMENT_BETWEEN_JOBS = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+# ─── the trusted half ────────────────────────────────────────────────────
+#
+# A banner written flush left rather than indented into the block, in the
+# idiom this workflow's own header uses. It ends nothing.
+
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+`
+
+// THE SAME BREAK IN `extractOnBlock`, with the consequence that belongs to
+// conditions 1+2 instead of 3+4: a flush-left banner inside the `on:` mapping
+// truncated the block, so a `pull_request_target:` declared BELOW it was
+// never seen and `dangerous` came back false on a file that declares the
+// trigger. Nothing else in this fixture is a violation — the job holds no
+// write scope and no secret — so conditions 1+2 are the only thing that can
+// catch it, which is exactly the point.
+const COLUMN_ZERO_COMMENT_INSIDE_THE_ON_BLOCK = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# ─── and the dangerous trigger, below a flush-left banner ────────────────
+#
+# Legal YAML: a comment between two entries of the \`on:\` mapping, written at
+# column 0. The mapping continues below it.
+
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+`
+
+// \`toJSON(secrets)\` — condition 4's one-line edit, in the spelling that
+// carries no accessor. It is GitHub's own documented way to reach the whole
+// context, and it hands the untrusted job EVERY secret at once rather than
+// one; an accessor-shaped regex (\`secrets\` followed by \`.\` or \`[\`) sees a
+// \`)\` and matches nothing. Trigger, \`permissions:\` and checkout are the real
+// file's, untouched — conditions 1, 2 and 3 all stay green here, as with
+// \`SECRET_PAT_IN_UNTRUSTED_JOB\`.
+const TOJSON_SECRETS_IN_UNTRUSTED_JOB = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Dump the environment while debugging the diverged step
+        env:
+          EVERYTHING: \${{ toJSON(secrets) }}
+        run: node scripts/pr-overlap-debug.mjs
+`
+
+// A SECRET BEHIND A QUOTED \`#\`. The naive \`stripComment\` cut at the first
+// \`#\` on the line whatever surrounded it, so the hash inside \`'#'\` truncated
+// this \`run:\` before the PAT and condition 4 saw a clean job — the one place
+// in this guard where over-stripping LOSES a violation instead of inventing
+// one. The second step is the acceptance that keeps the fix honest: a
+// genuine trailing comment naming the same secret must still be ignored, so
+// this fixture must produce exactly ONE hit, not two.
+const SECRET_BEHIND_A_QUOTED_HASH = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the table, marking the payload with a literal hash
+        run: |
+          echo '#' && curl -sSf -H "authorization: bearer \${{ secrets.A_PAT_WITH_WRITE }}" https://example.invalid/t
+      - name: The same token, genuinely commented out
+        run: node scripts/pr-file-overlap.mjs # was \${{ secrets.A_PAT_WITH_WRITE }}
+`
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -1452,6 +1775,129 @@ function runSelfTest() {
       "pr-overlap.yml's `(line N)` self-citation points at `compute`'s tolerant `git fetch … || true`",
       citedLine !== null && inCompute && /git fetch .*\|\| true/.test(citedLine),
       `anchor line ${anchor + 1}, citation ${citation?.[1] ?? '(none)'}, cited text: ${JSON.stringify(citedLine)}`,
+    )
+  }
+
+  // 16. A JOB HEADER WITH A TRAILING COMMENT IS STILL A JOB HEADER — the
+  //     mirror of assertion 13. Two assertions again, and for the same
+  //     reason: the second alone would not say why. Read without stripping
+  //     the comment, `  post: # …` is not a header, `post`'s body folds into
+  //     the untrusted `compute` above it, the merged job reads as
+  //     `contents: read`, and the write-scoped job's fork-content checkout is
+  //     never inspected.
+  {
+    const jobs = splitJobs(JOB_HEADER_WITH_A_TRAILING_COMMENT)
+    expect(
+      'a job header carrying a trailing comment is still a job header',
+      JSON.stringify(Object.keys(jobs)) === JSON.stringify(['compute', 'post']),
+      JSON.stringify(Object.keys(jobs)),
+    )
+    const r = checkTrustBoundary(JOB_HEADER_WITH_A_TRAILING_COMMENT)
+    expect(
+      'and the write-scoped job it names keeps its unpinned checkout, and is flagged',
+      r.violation === true &&
+        r.unsafeWriteCheckouts.length === 1 &&
+        r.unsafeWriteCheckouts[0]?.job === 'post' &&
+        r.unsafeWriteCheckouts[0]?.ref === null,
+      JSON.stringify(r),
+    )
+  }
+
+  // 17. A COLUMN-0 COMMENT IS NOT THE END OF THE BLOCK IT SITS IN, asserted
+  //     on both scanners that made that assumption: `splitJobs` (which would
+  //     drop every job below the banner from conditions 3 and 4) and
+  //     `extractOnBlock` (which would drop every trigger below it from
+  //     conditions 1 and 2). The line numbers are checked too, since the fix
+  //     keeps the comment in the job body precisely so the
+  //     `headerLine + offset` arithmetic stays exact across it.
+  {
+    const jobs = splitJobs(COLUMN_ZERO_COMMENT_BETWEEN_JOBS)
+    expect(
+      'a flush-left banner between two jobs does not end the `jobs:` block',
+      JSON.stringify(Object.keys(jobs)) === JSON.stringify(['compute', 'post']),
+      JSON.stringify(Object.keys(jobs)),
+    )
+    const r = checkTrustBoundary(COLUMN_ZERO_COMMENT_BETWEEN_JOBS)
+    const cited = COLUMN_ZERO_COMMENT_BETWEEN_JOBS.split('\n')[r.unsafeWriteCheckouts[0]?.line - 1]
+    expect(
+      'the job below it is still inspected, and the cited line is its checkout step',
+      r.violation === true &&
+        r.unsafeWriteCheckouts.length === 1 &&
+        r.unsafeWriteCheckouts[0]?.job === 'post' &&
+        /uses: actions\/checkout@/.test(cited ?? ''),
+      `${JSON.stringify(r.unsafeWriteCheckouts)} cited: ${JSON.stringify(cited)}`,
+    )
+
+    const on = checkTrustBoundary(COLUMN_ZERO_COMMENT_INSIDE_THE_ON_BLOCK)
+    expect(
+      'a flush-left banner inside `on:` does not hide a `pull_request_target` declared below it',
+      on.dangerous === true && on.violation === true && on.headRefs.length === 1,
+      JSON.stringify(on),
+    )
+    expect(
+      'and conditions 1+2 are what caught it — nothing else in that fixture is a violation',
+      on.unsafeWriteCheckouts.length === 0 && on.secretsInUntrustedJobs.length === 0,
+      JSON.stringify(on),
+    )
+  }
+
+  // 18. `toJSON(secrets)` IS A SECRET REFERENCE. Condition 4 is framed as
+  //     closing the one-line edit; this is the one-line edit in the spelling
+  //     that hands over every secret at once, and an accessor-shaped regex
+  //     cannot see it. Conditions 1-3 stay green on this fixture, as with
+  //     assertion 10's PAT.
+  {
+    const r = checkTrustBoundary(TOJSON_SECRETS_IN_UNTRUSTED_JOB)
+    expect(
+      '`${{ toJSON(secrets) }}` in the untrusted job IS flagged by condition 4',
+      r.violation === true &&
+        r.secretsInUntrustedJobs.length === 1 &&
+        r.secretsInUntrustedJobs[0]?.job === 'compute' &&
+        /toJSON\(secrets\)/.test(r.secretsInUntrustedJobs[0]?.text ?? ''),
+      JSON.stringify(r),
+    )
+    expect(
+      'and by condition 4 alone — trigger, permissions and checkout are untouched',
+      r.dangerous === false && r.headRefs.length === 0 && r.unsafeWriteCheckouts.length === 0,
+      JSON.stringify(r),
+    )
+  }
+
+  // 19. THE COMMENT STRIP DOES NOT SWALLOW A QUOTED `#`. This is the one
+  //     caller where over-stripping loses a violation rather than inventing
+  //     one, so the fixture asserts both directions at once: the secret
+  //     behind `'#'` is found, and the secret in a real trailing comment on
+  //     the next step is still not — exactly one hit, not zero and not two.
+  {
+    const r = checkTrustBoundary(SECRET_BEHIND_A_QUOTED_HASH)
+    expect(
+      'a secret after a quoted `#` on the same line is still found',
+      r.violation === true &&
+        r.secretsInUntrustedJobs.length === 1 &&
+        (r.secretsInUntrustedJobs[0]?.text ?? '').startsWith("echo '#' && curl "),
+      JSON.stringify(r.secretsInUntrustedJobs),
+    )
+    // …and the unit behind it, in both directions, since the fixture above
+    // can only show the composite. Left column is the line, right is what
+    // `stripComment` must keep of it.
+    const stripCases = [
+      // A `#` inside a quoted scalar is content, not a comment opener — the
+      // two the naive version got wrong, in both quote styles.
+      [`run: echo '#' && x \${{ secrets.A }}`, `run: echo '#' && x \${{ secrets.A }}`],
+      ['run: echo "a # b" # gone', 'run: echo "a # b" '],
+      // A `#` not preceded by whitespace is part of the plain scalar.
+      ['ref: abc#not-a-comment', 'ref: abc#not-a-comment'],
+      // …and the two it got right, which must stay right.
+      [`run: x # \${{ secrets.A }}`, 'run: x '],
+      ['  # a whole-line comment', '  '],
+    ]
+    const wrong = stripCases
+      .map(([line, want]) => ({ line, want, got: stripComment(line) }))
+      .filter((c) => c.got !== c.want)
+    expect(
+      '`stripComment` keeps a `#` inside a quoted scalar and cuts a real trailing comment',
+      wrong.length === 0,
+      JSON.stringify(wrong),
     )
   }
 
