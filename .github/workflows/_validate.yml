@@ -1264,6 +1264,10 @@ jobs:
       # instead of the mirror. Keyed on package-lock so a Playwright bump busts
       # it; restore-keys lets a stale set seed a partial hit.
       - name: Cache apt archives (Playwright system deps)
+        # `id` is load-bearing (#4163): the install step below bounds itself
+        # only on an exact-key hit, and `cache-hit` cannot be referenced
+        # without it.
+        id: apt-deb-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /var/cache/apt/archives/*.deb
@@ -1272,7 +1276,7 @@ jobs:
 
       - name: Install Playwright system deps (always)
         # `install-deps` apt-installs ~33 MB of system libs/fonts each run (not
-        # on the base image; the .debs are now cached by the step above, #1464).
+        # on the base image; the .debs are cached by the step above, #1464).
         # The earlier flake source was the
         # runner's `unattended-upgrades`/`apt-daily` holding the dpkg lock at
         # boot: this step queued behind a ~6-min background job and ran out the
@@ -1281,41 +1285,79 @@ jobs:
         # waits for the lock; here we retry once more after re-clearing it, in
         # case a straggler grabbed it.
         #
-        # #4163: each attempt is bounded. `prepare-apt` bounds `apt-get update`
-        # only -- `install-deps` shells out to its own `apt-get install`, which
-        # nothing above covers, so a stalled mirror hung attempt 1 forever and
-        # the retry below was never reached. That burned the full 30-minute job
-        # budget inside SETUP and reported as a Playwright failure with the
-        # suite never started (jobs 95981613754 / 95982226093, 2026-08-19).
-        # 300s is the repo-wide bound for an apt stall and is >4x the slowest
-        # healthy run of this step observed across recent CI (11, 11, 14, 21,
-        # 27, 72 seconds).
+        # #4163: bounded, but ONLY on an exact .deb-cache hit. Two facts have to
+        # hold together:
+        #
+        #   - Unbounded, a stalled mirror hangs attempt 1 forever, so the retry
+        #     below is never reached and the whole 30-min budget burns during
+        #     SETUP -- reported as a Playwright failure with the suite never
+        #     started (jobs 95981613754 / 95982226093, 2026-08-19).
+        #   - But a cap below the real cold-cache runtime is worse than the bug.
+        #     `install-deps` took 760s (12.7 min) on a slow-but-HEALTHY mirror in
+        #     run 27718957382, and the 20 -> 30 minute bump above (line ~1219)
+        #     was paid specifically to absorb that. A 300s cap was tried and
+        #     reverted for exactly this reason; see the sibling note in
+        #     scheduled-deep-checks.yml.
+        #
+        # Gating on the cache hit resolves it without inventing a number. On a
+        # hit apt resolves from /var/cache/apt/archives and does not pull the
+        # ~33 MB, which is the population the 300s was measured against: every
+        # healthy sample available (11, 11, 14, 21, 27, 72 seconds) is a
+        # cache-hit run, so the bound is applied to precisely the runs it was
+        # derived from. On a miss -- or a restore-keys PARTIAL hit, where
+        # `cache-hit` is false -- behaviour is exactly as before this change:
+        # unbounded, and the 760s observation still has its 30-min budget.
+        #
+        # `Acquire::*::Timeout` (set globally by prepare-apt, so it does reach
+        # the `apt-get` that install-deps shells out to) is not a substitute: it
+        # does not bound a connection that establishes and then produces no
+        # bytes, as prepare-apt's own comment records.
+        env:
+          APT_CACHE_HIT: ${{ steps.apt-deb-cache.outputs.cache-hit }}
         run: |
+          # Bound only when the .debs are already local; see the note above.
+          if [ "${APT_CACHE_HIT}" = "true" ]; then
+            bound="300"
+          else
+            bound=""
+            echo "::notice::apt .deb cache miss -- install-deps left unbounded (760s cold-mirror observation, #4163)"
+          fi
+
           for attempt in 1 2; do
             # Capture via `|| status=$?`, not `$?` after an `if`: a false `if`
             # with no `else` exits 0 per POSIX, so reading `$?` there would
             # report success and never take the 124 branch below.
             status=0
-            timeout 300 npx playwright install-deps chromium || status=$?
+            if [ -n "${bound}" ]; then
+              # -k: `timeout` otherwise SIGTERMs and then waits on the child
+              # indefinitely, which is not a bound at all.
+              timeout -k 30 "${bound}" npx playwright install-deps chromium || status=$?
+            else
+              npx playwright install-deps chromium || status=$?
+            fi
             if [ "${status}" -eq 0 ]; then
               exit 0
             fi
             if [ "${status}" -eq 124 ]; then
-              # `timeout` SIGTERMs only its direct child (npx), so the grandchild
-              # `apt-get` survives -- still hung on the mirror AND still holding
-              # the lock. The lock wait below would then spin its full 180s and
-              # attempt 2 would race attempt 1's apt. Terminate the strays first,
-              # or the retry is not an independent attempt. Same reasoning as the
-              # note in .github/actions/prepare-apt/action.yml.
-              echo "::warning::playwright install-deps attempt ${attempt} exceeded 300s (mirror stall); killing strays and retrying"
+              # `timeout` runs as the runner user and SIGTERMs only its direct
+              # child (npx), so the root `apt-get` grandchild survives -- still
+              # hung on the mirror AND still holding the lock. Without clearing
+              # it the wait below spins its full 180s and attempt 2 races
+              # attempt 1. prepare-apt records the same hazard.
+              echo "::warning::playwright install-deps attempt ${attempt} exceeded ${bound}s (mirror stall); clearing strays and retrying"
               sudo pkill -TERM -x apt-get 2>/dev/null || true
               sleep 5
               sudo pkill -KILL -x apt-get 2>/dev/null || true
+              sudo pkill -KILL -x dpkg 2>/dev/null || true
             else
               echo "::warning::playwright install-deps attempt ${attempt} failed (exit ${status}); waiting for apt lock before retry"
             fi
+            # Poll all three locks, as prepare-apt does: killing `apt-get` by
+            # name does not reap a `dpkg` child, which holds /var/lib/dpkg/lock
+            # and is invisible to a lock-frontend-only poll.
             for _ in $(seq 1 60); do
-              sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || break
+              sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock \
+                     /var/lib/apt/lists/lock >/dev/null 2>&1 || break
               sleep 3
             done
             sudo dpkg --configure -a || true
