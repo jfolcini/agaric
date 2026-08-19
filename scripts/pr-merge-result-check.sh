@@ -21,7 +21,9 @@
 # that is the cost side of the issue's own option 1 (branch-protection
 # "require up to date"), paid per-overlap instead of per-merge. This script
 # runs the toolchain-free subset that actually polices whole-tree ratchet
-# files: the Rust guard trio that shares the five-crate-root scan (#3107) —
+# files, PLUS one thing that is not toolchain-free and earns its keep
+# anyway (the typecheck — see the #4078 section below): the Rust guard trio
+# that shares the five-crate-root scan (#3107) —
 # check-raw-tx, check-dynamic-sql, check-table-ownership — all stdlib-only
 # Python, no cargo, no node_modules; plus (#3978) the three OTHER whole-tree
 # ratchets that were previously left out — `unsafe-allowlist` and
@@ -33,6 +35,67 @@
 # each script — see `run_one_guard` below for the per-guard invocation
 # shape, which differs because each guard resolves "which repo am I in"
 # differently.
+#
+# ─── #4078 — the guards were the whole story, and that was the hole ───────
+#
+# Everything above verifies RATCHETS on the merge result. Nothing verified
+# ORDINARY SOURCE, so the identical failure class in ordinary source walked
+# straight through this script with a green "merge result verified".
+#
+# It happened on 2026-08-18. #4074 and #4075 were green on their own
+# branches and merged minutes apart. #4074 consolidated the property seeds
+# in `markdown-roundtrip.property.test.ts` and deleted `hasKnownIssue4049Drift`;
+# #4075 added three properties to the SAME file still referencing both. The
+# hunks were disjoint, so git merged them with no conflict, and the merged
+# tree did not compile:
+#
+#   markdown-roundtrip.property.test.ts(860,42): error TS2304: Cannot find name 'NESTING_SEED'.
+#   markdown-roundtrip.property.test.ts(916,17): error TS2304: Cannot find name 'hasKnownIssue4049Drift'.
+#
+# `main` sat un-compilable until a release build failed on it (#4077). Per-PR
+# CI structurally cannot see this — it tests the branch, not the branch
+# merged into whatever `main` has become. This script CAN see it, and until
+# #4078 it declined to look.
+#
+# So the merged tree is now type-checked too, via `npm run typecheck` — the
+# repo's SINGLE definition of "does this tree typecheck" (`tsc -b --noEmit`;
+# tsconfig.json's own header explains why every gate must go through that
+# one script rather than inventing a sixth spelling). It is deliberately not
+# vitest and not cargo: both are minutes, the typecheck is seconds.
+#
+# ─── What that costs, measured, not guessed ───────────────────────────────
+#
+# On this repo at the time of writing (1757 tracked .ts/.tsx files, ~535k
+# lines; TypeScript 7.0.2, the native compiler):
+#
+#   * `npm ci` on a GitHub ubuntu-24.04 runner, `actions/setup-node` npm
+#     cache warm: 16-21 s (three sampled `_validate.yml` runs: 21 s, 19 s,
+#     16 s). Paid ONCE, in the workflow, in the job checkout.
+#   * `npm run typecheck` cold (no `.tsbuildinfo`) on the same runners:
+#     7-8 s (`vitest-node22` step, two sampled runs: 8 s, 7 s). Locally on
+#     a developer machine: 3.1-3.4 s.
+#   * borrowing that install into the merged worktree (see
+#     `provision_node_modules`): 0.03 s — ONE `ln -s -t` for ~710 top-level
+#     entries, not one `ln` per entry.
+#
+# The `merge-result` job measured 23-25 s before this (two sampled
+# `pr-overlap.yml` runs), so the whole typecheck stage roughly doubles a
+# 25-second job to ~55-65 s, inside a 10-minute ceiling. That is the trade:
+# ~35 s per PR against `main` sitting un-compilable until a release build
+# notices.
+#
+# `node_modules` is BORROWED, not installed here. The workflow runs `npm ci`
+# once in its own checkout — which for a `pull_request` event is
+# `refs/pull/N/merge`, i.e. very nearly the tree this script computes — and
+# `provision_node_modules` symlinks that install's top-level entries into
+# the merged worktree. It is only "very nearly": if the merged tree's
+# `package-lock.json` does NOT match the one the borrowed install came
+# from, the borrowed tree is the wrong dependency set and a typecheck
+# against it proves nothing about the merge. That case re-installs with
+# `npm ci` IN the merged worktree rather than borrowing (rare: it needs
+# `main`'s lockfile to move in the seconds between the job's checkout and
+# this script's fetch), and if that cannot be done, it is exit 3 — verified
+# nothing — never a quiet pass against the wrong deps.
 #
 # `CRATE_ROOTS` (the five-crate-root set the Python trio scans) used to be
 # hand-duplicated here as a bash array, kept in sync by hand with the SAME
@@ -104,7 +167,8 @@
 # a merge-policy decision, not a script. See #3672.
 #
 # ─── Contract ───────────────────────────────────────────────────────────────
-#   exit 0 — computed, and every ratchet guard passed on the merged tree.
+#   exit 0 — computed, and every ratchet guard passed on the merged tree,
+#            AND the merged tree type-checks (#4078).
 #   exit 1 — computed, and at least one guard FAILED on the merged tree
 #            specifically. stdout/stderr names which guard and why.
 #   exit 2 — NOT computed, and not this script's to judge: `git merge`
@@ -128,7 +192,14 @@
 #            result" and tells the author to merge main — wrong advice for
 #            infrastructure breakage), one of the Python guards examined
 #            ZERO files, no `.rs` file exists under any known crate root,
-#            or python3 is unavailable. Split from exit 2 deliberately — 2
+#            or python3 is unavailable. #4078 adds the typecheck stage's own
+#            "could not run" cases to the same code: no `node_modules` to
+#            borrow, the merged tree carries no `package.json` or no
+#            `typecheck` script in it, the merged tree's `package-lock.json`
+#            disagrees with the borrowed install's and cannot be reconciled,
+#            or npm is unavailable. Every one of those is "the typecheck did
+#            not happen", which must never render as "the merge type-checks".
+#            Split from exit 2 deliberately — 2
 #            says "not mine to judge", 3 says "I judged nothing", and CI
 #            must treat 3 as a failure. base/head resolution, mktemp, `git
 #            worktree add`, and (initially) EVERY non-zero `git merge` used
@@ -138,6 +209,22 @@
 #            the lane as passing. All of these cases returned **0** ("guards
 #            pass on the actual merge") before this script's original
 #            review, which is exactly how a guard goes quietly decorative.
+#   exit 4 — computed, every ratchet guard passed, and the merged tree does
+#            NOT TYPECHECK (#4078). Its own code rather than exit 1's on
+#            purpose: pr-overlap.yml renders exit 1 as "a ratchet guard
+#            fails on the merge result" and points the author at
+#            `prek --all-files`, which is the wrong instrument and the
+#            wrong reading for a TS2304 in ordinary source. The remedy is
+#            the same shape (merge `main` in, re-run), but the author has
+#            to be told WHAT broke to act on it, and a guard-shaped message
+#            for a compiler error is how a real finding gets dismissed as
+#            "the ratchet lane being noisy again". Exit 1 keeps precedence
+#            when BOTH are true — a ratchet violation is the more specific
+#            verdict and its guard names the file directly.
+#            NOTE for anyone adding a code: pr-overlap.yml's `else` branch
+#            catches everything it does not name, so an unnamed new code
+#            silently inherits exit 1's guard wording. Add the branch there
+#            in the same commit; the self-test pins that it exists.
 #
 # Usage:
 #   scripts/pr-merge-result-check.sh <base-ref> <head-sha>
@@ -490,6 +577,189 @@ run_one_guard() {
   esac
 }
 
+# ---------------------------------------------------------------------------
+# typecheck (#4078)
+# ---------------------------------------------------------------------------
+
+# Where to borrow an already-installed `node_modules` from.
+#
+# `MR_NODE_MODULES` exists so the self-test can point every fixture repo at
+# THIS repo's install (a scratch fixture in /tmp has none of its own, and
+# `npm ci`-ing one per fixture would put the network in the middle of a prek
+# hook). CI never sets it: the default — the caller repo's own toplevel,
+# which the workflow has just run `npm ci` in — is the path that actually
+# ships, so the fixtures below deliberately leave it unset and seed a
+# `node_modules` symlink in the fixture root instead. An env override that
+# only the test uses is an env override the test cannot prove anything about.
+resolve_node_modules_source() {
+  local src="${MR_NODE_MODULES:-}"
+  if [ -z "$src" ]; then
+    local toplevel
+    toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+    src="$toplevel/node_modules"
+  fi
+  [ -d "$src" ] || return 1
+  ( cd "$src" && pwd -P )
+}
+
+# Give the merged worktree a `node_modules` without paying for an install.
+#
+# Symlinks every TOP-LEVEL entry of the borrowed install (packages, scoped
+# `@scope` directories, and `.bin`) into a REAL directory in the worktree.
+# Real directory, not a symlink to the whole tree, because the tsconfigs put
+# `tsBuildInfoFile` under `./node_modules/.tmp/` — with a whole-tree symlink
+# that write lands in the borrowed install and clobbers the caller's own
+# incremental state. Here `.tmp` is created inside the disposable worktree
+# and dies with it.
+#
+# ONE `ln -s -t` for the whole set, not one `ln` per entry: measured 0.03 s
+# vs 1.28 s for ~710 entries, and this runs inside a prek hook.
+#
+# Node resolves symlinks by default, so each borrowed package finds its own
+# dependencies back in the borrowed install — the same mechanism npm
+# workspaces rely on.
+provision_node_modules() {
+  local workdir="$1" src="$2"
+  # `src/*/` expands to package and @scope directories; `.bin` is named
+  # explicitly because it is a dotfile. The dot-directories deliberately NOT
+  # borrowed are build state, not resolution input: `.tmp` (tsbuildinfo, the
+  # whole point above), `.cache`, `.vite`, `.vite-temp`.
+  #
+  # Each candidate is `[ -e ]`-tested — a shell builtin, so this stays a
+  # single process for the whole set — because `ln -s` creates DANGLING
+  # links without complaint. An unmatched glob would otherwise arrive here
+  # as the literal pattern and become a symlink named `*`, and an empty
+  # borrow source would then look successfully provisioned.
+  local -a entries=()
+  local e
+  for e in "$src"/*/ "$src/.bin"; do
+    [ -e "$e" ] || continue
+    entries+=("${e%/}")
+  done
+  # A borrowed install with nothing in it is not an install. Without this, an
+  # empty `src` would send an un-resolvable tree to tsc and every import in
+  # the repo would come back as a type error — a full-red "this merge does
+  # not compile" that is nothing of the sort.
+  [ "${#entries[@]}" -gt 0 ] || return 1
+  mkdir -p "$workdir/node_modules" || return 1
+  ln -s -t "$workdir/node_modules" -- "${entries[@]}" || return 1
+  return 0
+}
+
+# Do the merged tree's dependencies match the install we are about to
+# borrow? Byte-compare the two lockfiles. Returns 0 when they agree (borrow
+# is sound), 1 when they do not (borrowing would type-check the merge
+# against the wrong dependency set).
+#
+# A lockfile MISSING on either side is "agree", not "disagree". A merged
+# tree with no `package-lock.json` makes no dependency claim for the
+# borrowed install to contradict, and whether a tree ought to have one is
+# some other lane's business, not this stage's — this stage answers "does
+# it compile". Fixtures rely on this: a scratch repo in /tmp has no
+# lockfile of its own and must still be able to borrow.
+lockfiles_agree() {
+  local workdir="$1" src_root="$2"
+  local a="$workdir/package-lock.json" b="$src_root/package-lock.json"
+  [ -f "$a" ] || return 0
+  [ -f "$b" ] || return 0
+  cmp -s "$a" "$b"
+}
+
+# Type-check the merged tree.
+#
+#   0 — the merged tree type-checks
+#   1 — it does not (a real finding: the #4078 shape)
+#   3 — could not be established (never a pass — see the Contract)
+#
+# Invoked as `npm run typecheck`, from the MERGED tree's own package.json,
+# for the same reason every guard above runs the merged tree's own copy of
+# itself: a merge can change what "typecheck" means, and the merged tree's
+# definition is the one that matters.
+run_typecheck() {
+  local workdir="$1"
+
+  if [ ! -f "$workdir/package.json" ]; then
+    echo "pr-merge-result-check: the merged tree has no package.json, so there is no" >&2
+    echo "  typecheck to run. The layout moved, or this is not that repository." >&2
+    echo "  NOTHING was type-checked — reported as 3, not as a pass." >&2
+    return 3
+  fi
+  # `npm run <missing-script>` exits non-zero, which would arrive here
+  # indistinguishable from "the merged tree does not compile". Ask first.
+  if ! node -e '
+const p = JSON.parse(require("fs").readFileSync(process.argv[1] + "/package.json", "utf8"))
+process.exit(p.scripts && p.scripts.typecheck ? 0 : 1)
+' "$workdir" 2>/dev/null; then
+    echo "pr-merge-result-check: the merged tree's package.json defines no \`typecheck\`" >&2
+    echo "  script. That script is the repo's single definition of 'does this tree" >&2
+    echo "  compile' (see tsconfig.json's header); without it this stage has nothing" >&2
+    echo "  to invoke. Either it was renamed — rename it here too — or the merge" >&2
+    echo "  removed it. NOTHING was type-checked." >&2
+    return 3
+  fi
+  if [ ! -f "$workdir/tsconfig.json" ]; then
+    echo "pr-merge-result-check: the merged tree has no tsconfig.json for \`tsc -b\` to" >&2
+    echo "  read. tsc would fail for that reason and this stage would report it as" >&2
+    echo "  'the merge does not typecheck', blaming the PR for a missing config file." >&2
+    echo "  NOTHING was type-checked." >&2
+    return 3
+  fi
+
+  local src_root src
+  if ! src=$(resolve_node_modules_source); then
+    echo "pr-merge-result-check: no installed \`node_modules\` to type-check against." >&2
+    echo "  This script borrows the caller repo's install rather than running its own" >&2
+    echo "  \`npm ci\` (pr-overlap.yml installs once, in the job checkout). If you are" >&2
+    echo "  running this by hand, \`npm ci\` first, or point MR_NODE_MODULES at an" >&2
+    echo "  existing install. NOTHING was type-checked — this is a runner/call-site" >&2
+    echo "  gap, not a verdict on the merge." >&2
+    return 3
+  fi
+  src_root=$(dirname "$src")
+
+  if lockfiles_agree "$workdir" "$src_root"; then
+    if ! provision_node_modules "$workdir" "$src"; then
+      echo "pr-merge-result-check: could not link the borrowed node_modules ($src)" >&2
+      echo "  into the merged worktree, or it is empty. NOTHING was type-checked." >&2
+      return 3
+    fi
+  else
+    # The borrowed install is for a DIFFERENT lockfile. Do not type-check
+    # the merge against dependencies it does not declare — install the ones
+    # it does. Rare by construction (see the #4078 header), and loud when it
+    # cannot be done rather than quietly borrowing anyway.
+    echo "pr-merge-result-check: the merged tree's package-lock.json differs from" >&2
+    echo "  $src_root/package-lock.json, so the install there is the wrong dependency" >&2
+    echo "  set to judge this merge by. Installing the merged tree's own instead." >&2
+    if ! command -v npm >/dev/null 2>&1; then
+      echo "pr-merge-result-check: npm is not on PATH, so that install cannot happen." >&2
+      echo "  NOTHING was type-checked; this is a runner-side gap, not a verdict." >&2
+      return 3
+    fi
+    if ! ( cd "$workdir" && npm ci ) >&2; then
+      echo "pr-merge-result-check: \`npm ci\` FAILED in the merged tree. That is an" >&2
+      echo "  install failure, not a type error — reported as 3, never as 4, because" >&2
+      echo "  exit 4 tells the author their merge does not compile and nothing here" >&2
+      echo "  has established that either way. NOTHING was type-checked." >&2
+      return 3
+    fi
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "pr-merge-result-check: npm is not on PATH — \`npm run typecheck\` cannot run." >&2
+    echo "  NOTHING was type-checked; this is a runner-side gap, not a verdict." >&2
+    return 3
+  fi
+  # stdout AND stderr to stderr: this script's stdout is otherwise silent on
+  # success, and tsc writes its diagnostics to stdout. The workflow tees the
+  # whole job log into the step summary, so the actual TS errors have to
+  # reach the log rather than be swallowed by a `>/dev/null`.
+  if ! ( cd "$workdir" && npm run --silent typecheck ) >&2; then
+    return 1
+  fi
+  return 0
+}
+
 # Build a fresh merge of base-tip + head in a disposable worktree, run the
 # ratchet guards against it, and report. Never touches the caller's own
 # working tree or index.
@@ -723,6 +993,15 @@ run_merge_check() {
     fi
   done
 
+  # #4078 — type-check the merged tree. LAST, and deliberately so: it is the
+  # only stage that writes into the worktree (`node_modules/`), and the
+  # guards above walk that tree. Nothing they scan lives under a root
+  # `node_modules/`, so the order is belt-and-braces rather than load-bearing
+  # — but "the cheap read-only checks all ran before anything mutated the
+  # tree" is a property worth not having to re-derive later.
+  local typecheck_rc=0
+  run_typecheck "$workdir" || typecheck_rc=$?
+
   mr_cleanup "$workdir" "$parent"
 
   # The absence note wins the exit code, NOT the failure count. Originally
@@ -749,6 +1028,31 @@ run_merge_check() {
   fi
   if [ "$failures" -gt 0 ]; then
     return 1
+  fi
+
+  # #4078, and in THIS position on purpose.
+  #
+  # BELOW the guard-failure check: a ratchet violation names a file and a
+  # line and is the more specific verdict, so it keeps precedence when both
+  # are true. ABOVE the examined-count checks, and above the final `return
+  # 0`: a merge that does not compile must never be reported as "the merge
+  # result is verified", which is exactly what it was until #4078.
+  #
+  # Note the asymmetry with `missing` at the top: the typecheck's own
+  # "verified nothing" (3) sits HERE, not up there, because unlike a guard
+  # absence it cannot have CAUSED the guard failures above it. Reporting 3
+  # ahead of a genuine ratchet finding would tell the author "the check is
+  # broken, not your PR" about a violation that is, in fact, their PR.
+  if [ "$typecheck_rc" -eq 3 ]; then
+    echo "pr-merge-result-check: the ratchet guards passed on the merged tree, but the" >&2
+    echo "  TYPECHECK could not run (cause above). Half a verdict is not a pass —" >&2
+    echo "  #4078 exists because a merged tree that did not compile was reported green." >&2
+    return 3
+  fi
+  if [ "$typecheck_rc" -ne 0 ]; then
+    echo "pr-merge-result-check: the MERGED tree does not TYPECHECK (#4078) — each" >&2
+    echo "  branch compiles alone, their merge does not. The tsc diagnostics are above." >&2
+    return 4
   fi
 
   # Only a PASS is gated on the examined counts, and deliberately in this
@@ -843,6 +1147,65 @@ mr_seed_guards() {
   # would then hard-error on every fixture that never adds a real `src/`
   # file of its own (every one of them except the tauri-import fixtures).
   : > "$dir/src/.gitkeep"
+  mr_seed_typecheck "$dir"
+}
+
+# Seed a fixture repo with the smallest thing the #4078 typecheck stage will
+# accept: a `typecheck` script, a solution-style `tsconfig.json` with one
+# referenced project, one trivially-valid source file, and a `node_modules`
+# borrowed from THIS repo.
+#
+# Borrowed, not installed: an `npm ci` per fixture would put the network in
+# the middle of a prek hook, and the tsc binary is the only thing these
+# fixtures need out of it. `.gitignore` keeps the symlink out of every
+# fixture's `git add -A` — including the ones that commit again later.
+#
+# The referenced project sets `types: []` and `lib: ["ES2022"]` so it pulls
+# in no `@types` and no DOM: the fixtures then type-check in ~0.1 s each and
+# cannot go red because this repo's own dependency tree moved. What is under
+# test here is the STAGE, not TypeScript.
+#
+# `tsBuildInfoFile` is deliberately NOT under `node_modules/` (where the
+# real repo puts it) — the fixture's `node_modules` is a symlink to the real
+# install, and a fixture writing tsbuildinfo through it would corrupt the
+# caller's own incremental state. The real merged worktree has no such
+# problem: `provision_node_modules` builds a REAL `node_modules` directory
+# there and only the ENTRIES are symlinks.
+mr_seed_typecheck() {
+  local dir="$1"
+  mkdir -p "$dir/src/typecheck"
+  cat > "$dir/package.json" <<'EOF'
+{
+  "name": "pr-merge-result-check-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "typecheck": "tsc -b --noEmit" }
+}
+EOF
+  cat > "$dir/tsconfig.json" <<'EOF'
+{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }
+EOF
+  cat > "$dir/tsconfig.app.json" <<'EOF'
+{
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "types": [],
+    "lib": ["ES2022"],
+    "skipLibCheck": true,
+    "tsBuildInfoFile": "./.tsbuild/app.tsbuildinfo"
+  },
+  "include": ["src/typecheck"]
+}
+EOF
+  printf 'export const OK = 1\n' > "$dir/src/typecheck/ok.ts"
+  printf 'node_modules\n.tsbuild\n' > "$dir/.gitignore"
+  [ -e "$dir/node_modules" ] || ln -s "$REPO_ROOT/node_modules" "$dir/node_modules"
 }
 
 # The CLEAN case: two branches each add ONE dynamic-SQL site to a
@@ -947,6 +1310,14 @@ mr_make_fresh_base_repo() {
   git -C "$down" fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*'
   git -C "$down" update-ref refs/heads/main "$(git -C "$up" rev-parse 'main^')"
   git -C "$down" update-ref refs/heads/pr "$(git -C "$up" rev-parse pr)"
+  # `down`'s working tree is never checked out, so it never goes through
+  # mr_seed_guards → mr_seed_typecheck. It still has to carry a
+  # `node_modules` of its own: this script is invoked FROM `down`, and
+  # resolve_node_modules_source borrows from the CALLER repo's toplevel.
+  # Without it the typecheck stage reports "verified nothing" (3) and this
+  # fixture's two assertions — which are about base-ref resolution, not
+  # about typechecking — would both read 3 for the wrong reason.
+  ln -s "$REPO_ROOT/node_modules" "$down/node_modules"
 }
 
 # #3989's fix, pinned behaviourally: `targets` is built from CRATE_ROOTS as
@@ -1209,6 +1580,93 @@ mr_make_broken_rawtx_repo() {
   printf '\n\ndef this_will_not_parse(:\n' >> "$dir/scripts/check-raw-tx.py"
   git -C "$dir" add -A
   git -C "$dir" commit --quiet -m 'main: check-raw-tx.py no longer parses'
+}
+
+# #4078 — the SAME near-miss shape as mr_make_near_miss_repo, but in ORDINARY
+# SOURCE instead of a ratchet file, which is precisely the case the six
+# guards above cannot see.
+#
+# Modelled on the real incident (#4074 × #4075, 2026-08-18): `main`
+# consolidates the seeds and deletes a symbol, updating its own uses at the
+# TOP of the file; the PR adds a new use of that symbol at the BOTTOM. The
+# two hunks are far apart, so git merges both with no conflict and no
+# warning; each branch compiles alone; the merge references a name that no
+# longer exists.
+#
+# The falsification the issue asks for is the pair of assertions this
+# fixture supports: each branch type-checks ALONE (so per-PR CI is green on
+# both), and the merge exits 4 while NO ratchet guard reports a failure —
+# i.e. the guards-only script this one replaced would have exited 0 on
+# exactly this input.
+mr_make_typecheck_near_miss_repo() {
+  local dir="$1"
+  git_scratch_init "$dir"
+  mkdir -p "$dir/src-tauri/src"
+  mr_seed_guards "$dir"
+  printf 'pub fn noop() {}\n' > "$dir/src-tauri/src/lib.rs"
+  : > "$dir/src-tauri/dynamic-sql-baseline.txt"
+
+  cat > "$dir/src/typecheck/seeds.ts" <<'EOF'
+export const NESTING_SEED = 1
+export const BASE_SEED = 2
+EOF
+  # The filler is load-bearing: git needs more than its 3 lines of context
+  # between the two branches' hunks or this merges as a CONFLICT (exit 2)
+  # and the fixture proves nothing about the typecheck.
+  cat > "$dir/src/typecheck/props.ts" <<'EOF'
+import { BASE_SEED, NESTING_SEED } from './seeds'
+
+export const first = NESTING_SEED
+
+// filler 1
+// filler 2
+// filler 3
+// filler 4
+// filler 5
+// filler 6
+// filler 7
+// filler 8
+
+export const last = BASE_SEED
+EOF
+  git -C "$dir" add -A
+  git -C "$dir" commit --quiet -m base
+  git -C "$dir" branch pr
+
+  # main: consolidate the seeds — delete NESTING_SEED and re-point its only
+  # use. Self-consistent: `main` alone compiles.
+  cat > "$dir/src/typecheck/seeds.ts" <<'EOF'
+export const BASE_SEED = 2
+EOF
+  cat > "$dir/src/typecheck/props.ts" <<'EOF'
+import { BASE_SEED } from './seeds'
+
+export const first = BASE_SEED
+
+// filler 1
+// filler 2
+// filler 3
+// filler 4
+// filler 5
+// filler 6
+// filler 7
+// filler 8
+
+export const last = BASE_SEED
+EOF
+  git -C "$dir" add -A
+  git -C "$dir" commit --quiet -m 'main: consolidate the seeds, dropping NESTING_SEED'
+
+  # pr: add one more property that uses NESTING_SEED, which still exists on
+  # this branch's base. Self-consistent: `pr` alone compiles.
+  git -C "$dir" checkout --quiet pr
+  cat >> "$dir/src/typecheck/props.ts" <<'EOF'
+
+export const added = NESTING_SEED
+EOF
+  git -C "$dir" add -A
+  git -C "$dir" commit --quiet -m 'pr: one more property, still using NESTING_SEED'
+  git -C "$dir" checkout --quiet main
 }
 
 run_self_test() {
@@ -1518,6 +1976,24 @@ STUB
     "$(grep -c 'pr-merge-result-check\.sh "\$BASE_REF" "\$HEAD_SHA" || rc=\$?' "$wf" || true)"
   st_expect 'and the workflow branches on exit 3 (verified nothing) as a failure' '1' \
     "$(grep -c '"\$rc" -eq 3' "$wf" || true)"
+  # #4078: the workflow's `else` branch catches every code it does not name
+  # and renders it with exit 1's wording — "a ratchet guard fails on the
+  # merge result", plus "re-run `prek --all-files`". A merged tree that does
+  # not COMPILE reported that way is a real finding dressed as a lane the
+  # author has learned to treat as noise, pointing at an instrument that
+  # cannot reproduce it. So the branch has to exist, by code and by name.
+  st_expect 'and it branches on exit 4 (the merge does not typecheck) too' '1' \
+    "$(grep -c '"\$rc" -eq 4' "$wf" || true)"
+  st_expect 'and that branch says TYPECHECK, so the author is not sent to prek for a TS error' \
+    '1' "$(grep -c 'DOES NOT TYPECHECK' "$wf" || true)"
+  # The typecheck cannot run without an install, and the job is the only
+  # place that can provide one — a workflow that dropped `npm ci` would turn
+  # every merge-result run into exit 3, permanently, for a reason its own
+  # log would report correctly and nobody would read.
+  st_expect 'and the merge-result job installs the node_modules the typecheck borrows' \
+    '1' "$(sed -n '/^  merge-result:/,$p' "$wf" | grep -c '^ *run: npm ci$' || true)"
+  st_expect 'and sets up Node to do it with' \
+    '1' "$(sed -n '/^  merge-result:/,$p' "$wf" | grep -c 'actions/setup-node@' || true)"
   # `always()` also fires on a CANCELLED run, and this workflow sets
   # `concurrency.cancel-in-progress: true` — so `always()` was the wrong
   # primitive: it would let a superseded run's merge-result job start
@@ -1785,6 +2261,127 @@ STUB
     '1' "$(grep -c 'SyntaxError' "$tmp/brokenraw.err" || true)"
   st_expect 'and it is NOT reported as "the layout moved", which is a different fault' \
     '0' "$(grep -c 'carries no .rs file under ANY crate' "$tmp/brokenraw.err" || true)"
+
+  # ── 3z. #4078 — the merge result must be TYPE-CHECKED, not just ratcheted ─
+  #
+  # The falsification the issue asked for, built from the incident it was
+  # filed about: two branches that each compile alone and whose merge does
+  # not, with NO textual conflict and NO ratchet file involved.
+  local tsnearmiss="$tmp/typecheck-nearmiss"
+  mkdir -p "$tsnearmiss"
+  mr_make_typecheck_near_miss_repo "$tsnearmiss"
+
+  # Fixture sanity FIRST, and it is the whole point: if either branch failed
+  # to compile alone, the merge failing would prove nothing — per-PR CI
+  # would already have been red and #4078 would not exist.
+  git -C "$tsnearmiss" checkout --quiet main
+  st_expect 'fixture sanity: the #4078 fixture MAIN branch alone type-checks' \
+    '0' "$( ( cd "$tsnearmiss" && npm run --silent typecheck ) >/dev/null 2>&1; echo $? )"
+  git -C "$tsnearmiss" checkout --quiet pr
+  st_expect 'fixture sanity: the #4078 fixture PR branch alone ALSO type-checks' \
+    '0' "$( ( cd "$tsnearmiss" && npm run --silent typecheck ) >/dev/null 2>&1; echo $? )"
+  git -C "$tsnearmiss" checkout --quiet main
+  # `.tsbuild` from the two runs above is gitignored, so it cannot leak into
+  # the merge; remove it anyway so the merged worktree's own run is cold.
+  rm -rf "$tsnearmiss/.tsbuild"
+
+  ( cd "$tsnearmiss" && bash "$SELF" main pr ) \
+    >"$tmp/tsnearmiss.out" 2>"$tmp/tsnearmiss.err"; rc2=$?
+  st_expect 'the #4078 merge is exit 4 — computed, and the MERGED tree does not typecheck' \
+    '4' "$rc2"
+  st_expect 'and it is not exit 2 — the two hunks merged with NO textual conflict' \
+    '0' "$(grep -c 'do NOT merge cleanly' "$tmp/tsnearmiss.err" || true)"
+  # THE RED DEMONSTRATION the issue asked for, expressed as an assertion
+  # rather than a claim: every ratchet guard passes on this merged tree, so
+  # the guards-only script this one replaced exited 0 on exactly this input.
+  st_expect 'and NO ratchet guard failed on it — guards-only would have exited 0 here' \
+    '0' "$(grep -c 'FAILED on the MERGED tree' "$tmp/tsnearmiss.err" || true)"
+  st_expect "and tsc's own diagnostic reaches the log, not just this script's summary" \
+    '1' "$(grep -c 'TS2304' "$tmp/tsnearmiss.err" || true)"
+  st_expect 'and the summary names the TYPECHECK, so the author is not sent to prek' \
+    '1' "$(grep -c 'does not TYPECHECK' "$tmp/tsnearmiss.err" || true)"
+
+  # A ratchet violation and a typecheck failure at once: exit 1 keeps
+  # precedence, because it names a file and a line and exit 4 does not.
+  local tsboth="$tmp/typecheck-and-ratchet"
+  mkdir -p "$tsboth"
+  mr_make_typecheck_near_miss_repo "$tsboth"
+  git -C "$tsboth" checkout --quiet pr
+  printf '#![allow(unsafe_code)]\npub unsafe fn danger() {}\n' > "$tsboth/src-tauri/src/bad.rs"
+  git -C "$tsboth" add -A
+  git -C "$tsboth" commit --quiet -m 'pr: ALSO trips the unsafe allowlist'
+  git -C "$tsboth" checkout --quiet main
+  ( cd "$tsboth" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsboth.err"; rc2=$?
+  st_expect 'a merge that BOTH breaks a ratchet and fails to typecheck is exit 1, not 4' \
+    '1' "$rc2"
+  st_expect 'and the guard failure is still named' \
+    '1' "$(grep -c 'check-unsafe-allowlist.sh FAILED on the MERGED tree' "$tmp/tsboth.err" || true)"
+
+  # The typecheck stage's own fail-open shapes. Each must be exit 3
+  # ("verified nothing"), never exit 0 and never exit 4 — a stage that did
+  # not run has no verdict, and "the ratchet guards passed" is only half of
+  # what a green from this script now claims.
+  local tsnopkg="$tmp/typecheck-no-package-json"
+  mkdir -p "$tsnopkg"
+  mr_make_clean_repo "$tsnopkg"
+  git -C "$tsnopkg" rm -q package.json
+  git -C "$tsnopkg" commit --quiet -m 'main: package.json is gone from the merged tree'
+  ( cd "$tsnopkg" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsnopkg.err"; rc2=$?
+  st_expect 'a merged tree with no package.json is exit 3, not a green "guards pass"' \
+    '3' "$rc2"
+  st_expect 'and it says so, rather than blaming a guard' \
+    '1' "$(grep -c 'no package.json' "$tmp/tsnopkg.err" || true)"
+
+  local tsnoscript="$tmp/typecheck-no-script"
+  mkdir -p "$tsnoscript"
+  mr_make_clean_repo "$tsnoscript"
+  printf '{\n  "name": "x",\n  "version": "0.0.0",\n  "private": true\n}\n' \
+    > "$tsnoscript/package.json"
+  git -C "$tsnoscript" add -A
+  git -C "$tsnoscript" commit --quiet -m 'main: the typecheck script is gone from package.json'
+  ( cd "$tsnoscript" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsnoscript.err"; rc2=$?
+  st_expect 'a merged tree whose package.json defines no `typecheck` script is exit 3' \
+    '3' "$rc2"
+  st_expect 'and it is NOT reported as the merge failing to compile (exit 4)' \
+    '0' "$(grep -c 'does not TYPECHECK' "$tmp/tsnoscript.err" || true)"
+
+  local tsnotsconfig="$tmp/typecheck-no-tsconfig"
+  mkdir -p "$tsnotsconfig"
+  mr_make_clean_repo "$tsnotsconfig"
+  git -C "$tsnotsconfig" rm -q tsconfig.json
+  git -C "$tsnotsconfig" commit --quiet -m 'main: tsconfig.json is gone from the merged tree'
+  ( cd "$tsnotsconfig" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsnotsconfig.err"; rc2=$?
+  st_expect 'a merged tree with no tsconfig.json is exit 3, not exit 4' '3' "$rc2"
+
+  # No install to borrow at all. `resolve_node_modules_source` must say so
+  # rather than let tsc report every import in the tree as a type error —
+  # which would be a full-red "your merge does not compile" produced by a
+  # runner that simply never ran `npm ci`.
+  local tsnonm="$tmp/typecheck-no-node-modules"
+  mkdir -p "$tsnonm"
+  mr_make_clean_repo "$tsnonm"
+  rm -f "$tsnonm/node_modules"
+  ( cd "$tsnonm" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsnonm.err"; rc2=$?
+  st_expect 'no node_modules to borrow is exit 3 (verified nothing), not exit 4' '3' "$rc2"
+  st_expect 'and it names the gap as a call-site one, not a verdict on the merge' \
+    '1' "$(grep -c 'no installed `node_modules` to type-check against' "$tmp/tsnonm.err" || true)"
+
+  # An install that EXISTS but is empty is the same fail-open wearing a
+  # different hat: `-d` succeeds, so `resolve_node_modules_source` is happy,
+  # and in the REAL repo every import would then resolve to nothing. The
+  # fixture's own project imports nothing (`types: []`, `lib: ["ES2022"]`),
+  # so this pins the check in `provision_node_modules` rather than tsc's
+  # reaction to it — which is the right place for it: what must not happen
+  # is this stage claiming to have type-checked against an install that is
+  # not there, whatever tsc would have said.
+  local tsemptynm="$tmp/typecheck-empty-node-modules"
+  mkdir -p "$tsemptynm" "$tmp/empty-install/node_modules"
+  mr_make_clean_repo "$tsemptynm"
+  rm -f "$tsemptynm/node_modules"
+  ln -s "$tmp/empty-install/node_modules" "$tsemptynm/node_modules"
+  ( cd "$tsemptynm" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsemptynm.err"; rc2=$?
+  st_expect 'an EMPTY node_modules is also exit 3, not a tree of phantom type errors' \
+    '3' "$rc2"
 
   # ── 4. THE REAL REPOSITORY is untouched ──────────────────────────────────
   local repo_root

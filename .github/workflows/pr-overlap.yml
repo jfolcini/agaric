@@ -475,8 +475,11 @@ jobs:
     # and the base-divergence half is the only thing that would fire. Excluding
     # `unknown` meant a failure in the divergence script silently switched the
     # merge-result lane off for exactly the case it exists for. Running it
-    # costs a checkout and six guard invocations (three Python, two bash, one
-    # node — see below); not running it costs the incident.
+    # costs a checkout, six guard invocations (three Python, two bash, one
+    # node — see below) and, since #4078, an `npm ci` + `npm run typecheck`;
+    # see `timeout-minutes` below for the measured total. Not running it costs
+    # the incident — twice now, #3724 in a ratchet and #4074×#4075 in ordinary
+    # TypeScript.
     #
     # `!cancelled()` is load-bearing, not decoration: WITHOUT it, `needs:
     # post` alone means any FAILURE in `post` (it is deliberately
@@ -504,9 +507,15 @@ jobs:
         needs.post.outputs.basechanged != '0'
       )
     runs-on: ubuntu-24.04
-    # Real cost is a checkout + one git merge + six short guard invocations
-    # (three Python, two bash, one node) — generous ceiling for the same
-    # reason as `compute`'s.
+    # Measured, not estimated. Before #4078 this job ran 23-25 s (two sampled
+    # runs on this repo): a checkout, one `git merge`, six short guard
+    # invocations (three Python, two bash, one node). #4078 adds Node setup
+    # (5-8 s with the setup-node npm cache warm), `npm ci` (16-21 s across
+    # three sampled `_validate.yml` runs) and a cold `npm run typecheck`
+    # (7-8 s across two sampled runs) — call it ~35 s, for a job around
+    # 55-65 s. The 10-minute ceiling is untouched and still generous, for the
+    # same reason as `compute`'s: a ceiling is for a pathological runner, not
+    # for the measured case.
     timeout-minutes: 10
     permissions:
       contents: read
@@ -539,7 +548,36 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: git fetch --quiet --no-tags origin "$BASE_REF" || true
 
-      - name: Verify the merge result's ratchet guards
+      # #4078 — the typecheck half needs an install. It is done ONCE, here,
+      # in the job checkout, and BORROWED by the merged worktree the script
+      # builds (scripts/pr-merge-result-check.sh's `provision_node_modules`
+      # symlinks this install's top-level entries in, ~0.03 s). Installing
+      # inside the merged worktree instead would pay `npm ci` a second time
+      # for a tree that is, for a `pull_request` event, all but identical to
+      # this checkout: `actions/checkout` with no `ref:` gives us
+      # `refs/pull/N/merge`, and the script's tree is the same head merged
+      # onto a base fetched seconds later. The script compares the two
+      # lockfiles and re-installs itself in the rare case they disagree.
+      - name: Install Node.js
+        # Same pinned action and same Node major as every other lane in
+        # _validate.yml — a merge-result typecheck that ran on a different
+        # Node than the gate would be answering a different question.
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        # `.npmrc` sets `ignore-scripts=true` repo-wide (#816), so this does
+        # NOT execute dependency lifecycle scripts — which matters more here
+        # than in `_validate.yml`, because this job is one of the two in this
+        # workflow that checks out PR-authored code. It holds `contents:
+        # read` and no secrets (see the trust-boundary guard,
+        # scripts/check-pr-overlap-trust-boundary.mjs), and it still should
+        # not be running a fork's postinstall.
+        run: npm ci
+
+      - name: Verify the merge result (ratchet guards + typecheck)
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           # The PR's own head, not the `refs/pull/N/merge` ref this checkout
@@ -558,8 +596,9 @@ jobs:
           rc=0
           bash scripts/pr-merge-result-check.sh "$BASE_REF" "$HEAD_SHA" || rc=$?
           if [ "$rc" -eq 0 ]; then
-            echo "Merge result verified: the ratchet guards pass on the ACTUAL merge of" \
-              "$BASE_REF (fetched fresh) and this PR's head." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "Merge result verified: the ratchet guards pass AND the tree type-checks" \
+              "on the ACTUAL merge of $BASE_REF (fetched fresh) and this PR's head." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
           elif [ "$rc" -eq 2 ]; then
             {
               echo "### Merge-result check: not computed"
@@ -576,7 +615,10 @@ jobs:
             # "I judged nothing": base/head could not be resolved, `mktemp`
             # or `git worktree add` failed on this runner, a guard is
             # missing from the merged tree, no .rs file exists under any
-            # known crate root, or no python3. All of these used to exit 0,
+            # known crate root, no python3 — or (#4078) the typecheck half
+            # could not run: nothing to borrow a `node_modules` from, or a
+            # merged tree carrying no `package.json`, no `typecheck` script
+            # or no `tsconfig.json`. All of these used to exit 0,
             # or shared exit 2 with the genuine conflict case and rendered
             # as a `::warning::` on an otherwise GREEN job — a runner-side
             # failure that verified nothing reporting the lane as passing.
@@ -586,11 +628,36 @@ jobs:
               echo "The check could not run: base/head could not be resolved, \`mktemp\`"
               echo "or \`git worktree add\` failed on this runner, a guard named in"
               echo "\`RATCHET_GUARDS\` is absent from the merged tree, no \`.rs\` file exists"
-              echo "under any crate root the script knows about, or python3 is"
-              echo "unavailable. This is not a pass — see the job log for which, and fix"
-              echo "the script or the runner rather than the PR."
+              echo "under any crate root the script knows about, python3 is unavailable,"
+              echo "or the typecheck half had nothing to run (#4078: no installed"
+              echo "\`node_modules\` to borrow, or a merged tree with no \`package.json\`,"
+              echo "no \`typecheck\` script or no \`tsconfig.json\`). This is not a pass —"
+              echo "see the job log for which, and fix the script or the runner rather"
+              echo "than the PR."
             } | tee -a "$GITHUB_STEP_SUMMARY"
             echo "::error::pr-merge-result-check: verified nothing — the check itself is broken"
+            exit 1
+          elif [ "$rc" -eq 4 ]; then
+            # #4078. Its own branch rather than falling into the `else`
+            # below, which would tell the author a ratchet guard failed and
+            # send them to `prek --all-files` — an instrument that cannot
+            # reproduce a TS2304 and a lane they have learned reports
+            # ratchet noise. The remedy is the same shape, the diagnosis is
+            # not, and a wrong diagnosis on a real finding is how the
+            # finding gets ignored.
+            {
+              echo "### Merge-result check: THE MERGE DOES NOT TYPECHECK"
+              echo
+              echo "Both branches compile alone; their actual merge does not — the"
+              echo "#4078 shape (two PRs edit disjoint hunks of the same file, one"
+              echo "deletes a symbol the other starts using, git merges them with no"
+              echo "conflict). Every ratchet guard passed, so nothing else in the"
+              echo "pipeline would have reported this before it became \`main\`."
+              echo
+              echo "Merge \`$BASE_REF\` into this branch and run \`npm run typecheck\`;"
+              echo "the tsc diagnostics are in the job log above."
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "::error::pr-merge-result-check: the merge result does not typecheck — see #4078"
             exit 1
           else
             {
