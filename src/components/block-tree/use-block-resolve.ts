@@ -85,15 +85,27 @@ function formatNamespacedLabel(title: string): {
 }
 
 /**
- * #4138 — the single render site for the `'Untitled'` placeholder. Cache
- * seeds (`searchPagesViaCache`'s fallback fetch, below) store the RAW title
- * (`''` for NULL content), matching the backend's `COALESCE(b.content, '')`
- * so `comparePageRows` sorts a NULL-content page exactly where a refetch
- * would. Baking `'Untitled'` into the stored title instead (the pre-#4138
- * shape) made it sort under `U` locally and under `''` (first) on the
- * backend — the seed silently drifted from the comparator #4134/#4131 made
- * exact. The placeholder still needs to be SHOWN, so it is applied here,
- * once, at display time, rather than at every seed site.
+ * #4138 — the single render site for the `'Untitled'` placeholder **on the
+ * page-title picker items built from a page row**, i.e. everything produced
+ * by `searchPagesViaCache` and `searchPagesViaFts`. Cache seeds
+ * (`searchPagesViaCache`'s fallback fetch, below) store the RAW title (`''`
+ * for NULL content), matching the backend's `COALESCE(b.content, '')` so
+ * `comparePageRows` sorts a NULL-content page exactly where a refetch would.
+ * Baking `'Untitled'` into the stored title instead (the pre-#4138 shape)
+ * made it sort under `U` locally and under `''` (first) on the backend — the
+ * seed silently drifted from the comparator #4134/#4131 made exact. The
+ * placeholder still needs to be SHOWN, so it is applied here, once, at
+ * display time, rather than at every seed site.
+ *
+ * Two `'Untitled'` literals elsewhere in this file are deliberately NOT
+ * routed through here, because neither receives the `''` cache-seed shape
+ * this helper is written against (#4150 review):
+ *   - `mergeAliasPrefixMatches` builds a COMPOSITE label
+ *     (`'<title> (alias: <alias>)'`) from an alias row whose title is the
+ *     backend's raw nullable `blocks.content` (no `COALESCE`), so it maps
+ *     `null`, not `''`.
+ *   - `searchBlockRefs` renders BLOCK content for the `((` picker, a
+ *     different surface with its own truncation rules — not a page title.
  */
 function makePagePickerItem(id: string, title: string): PickerItem {
   const { label, breadcrumb } = formatNamespacedLabel(title === '' ? 'Untitled' : title)
@@ -177,7 +189,12 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
   )
   const matches = resp.items
     .filter((b) => b.block_type === 'page')
-    .map((b) => makePagePickerItem(b.id, b.content ?? 'Untitled'))
+    // #4150 review — pass the raw `''` rather than the placeholder, same as
+    // the cache seed above. `makePagePickerItem` maps `''` to `'Untitled'`,
+    // so the rendered label is unchanged; this value is only ever a label
+    // input (never a sort or match key), which is what makes the two forms
+    // interchangeable here and the render site the sole owner of the string.
+    .map((b) => makePagePickerItem(b.id, b.content ?? ''))
 
   if (matches.length >= 5 || pagesListRef.current.length === 0) {
     return matches
@@ -290,9 +307,18 @@ function appendCreatePageOptionIfNeeded(
   // `t('properties.createNewPageAction')`) would be appended, even
   // though the page does exist.
   const qFolded = foldForSearch(q)
-  const exactMatch = allSource.some(
-    (p) => foldForSearch('title' in p ? p.title : p.label) === qFolded,
-  )
+  // #4150 review — the `q.length === 0` early return above is a check on the
+  // RAW query, so it does not cover a non-empty query that FOLDS to empty.
+  // `foldForSearch` strips `U+0300..U+036F`, so a combining-mark-only query
+  // (`.trim()` does not remove combining marks) survives the length guard and
+  // folds to `''` — which then compares EQUAL to the `''` title #4138 now
+  // seeds for a NULL-content page, suppressing Create and leaving the picker
+  // with nothing at all (nothing matches such a query either). A query that
+  // folds away entirely carries no name to match on, so it can never be an
+  // "exact match"; offer Create instead.
+  const exactMatch =
+    qFolded !== '' &&
+    allSource.some((p) => foldForSearch('title' in p ? p.title : p.label) === qFolded)
   if (exactMatch) return
   matches.push({
     id: '__create__',

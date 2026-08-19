@@ -1114,6 +1114,10 @@ describe('searchPages — long query (>2 chars)', () => {
     expect(nonCreate[0]).toEqual(expect.objectContaining({ id: 'F20', label: 'Lonely Result' }))
   })
 
+  // #4150 review — also the guard for the FTS path passing the raw `''` to
+  // `makePagePickerItem` instead of pre-substituting `'Untitled'`: the value
+  // is a label input only (never a sort or match key on this path), so the
+  // rendered label must stay identical after that change.
   it('handles null content as "Untitled" in FTS results', async () => {
     mockedSearchBlocks.mockResolvedValueOnce({
       items: [
@@ -1343,6 +1347,52 @@ describe('searchPages — "Create new" option', () => {
     // allSource = matches (PickerItem[]) → 'label' in p → p.label.toLowerCase() === q
     const createOption = items.find((i) => i.isCreate)
     expect(createOption).toBeUndefined()
+  })
+
+  // #4150 review residual — the fold-to-EMPTY gap. #4150 argued the seed
+  // change (`'Untitled'` → `''`) could not spuriously suppress Create
+  // because "the exact-match check returns early on an empty query". That
+  // early return is `if (q.length === 0) return`, which is a check on the
+  // RAW query, not the folded one. `foldForSearch` strips
+  // `U+0300..U+036F` (src/lib/fold-for-search.ts), so a combining-mark-only
+  // query is non-empty (`q.length === 1`, and `.trim()` does not remove a
+  // combining mark) yet folds to `''` — which then compares EQUAL to the
+  // `''`-seeded title of a NULL-content page, sets `exactMatch`, and
+  // suppresses Create. Nothing else matches such a query either, so the
+  // picker renders with zero options. Pre-#4150 the seed was `'Untitled'`,
+  // whose fold is `'untitled' !== ''`, so this could not happen.
+  it('offers "Create new" for a query that folds to empty even when a NULL-content page is cached', async () => {
+    // Combining acute accent (U+0301) — `foldForSearch('́') === ''`.
+    const COMBINING_ACUTE = '́'
+
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      {
+        id: 'P_NULL',
+        content: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages(COMBINING_ACUTE)
+    })
+
+    // The seed really is the raw `''` (the #4150 shape this depends on).
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P_NULL', title: '' }])
+    // Nothing matched, so Create is the ONLY thing standing between the
+    // user and an empty picker.
+    expect(items.filter((i) => !i.isCreate)).toEqual([])
+    expect(items.find((i) => i.isCreate)).toEqual({
+      id: '__create__',
+      label: COMBINING_ACUTE,
+      isCreate: true,
+    })
   })
 })
 
