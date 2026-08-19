@@ -52,8 +52,18 @@ export const MAX_LINK_SCAN = 10_000
  * (`[!note] a\rb` → `a`). The separator is `[ \t]` rather than `\s` for the
  * same reason: `\s` includes CR, so it would swallow a CR sitting directly
  * after `]` instead of leaving it as content.
+ *
+ * The `(?!\()` refuses ONE follower (#4072). A link whose visible text begins
+ * with `!` serializes to `[!a](https://example.com)` — character-for-character
+ * a callout marker with a destination glued to it — so leading a blockquote it
+ * used to be read as a callout named `a`, upper-casing the label and letting
+ * `serializeBlockquote` re-emit it as `[!A] (https://example.com)`: a space
+ * that both drifts the bytes and breaks the link. The two productions differ
+ * exactly here — a callout's `]` is followed by end of line, whitespace, or its
+ * title, never by the `(` that opens a link destination — so declining that one
+ * character separates them without narrowing the callout syntax anywhere else.
  */
-export const CALLOUT_RE = /^\[!(\w+)\][ \t]?([^\n]*)/i
+export const CALLOUT_RE = /^\[!(\w+)\](?!\()[ \t]?([^\n]*)/i
 /**
  * Maximum recursion depth for `parse()` to guard against pathological or
  * adversarial inputs (deeply nested blockquotes, link-display-text with

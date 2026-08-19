@@ -63,26 +63,24 @@ import type {
 /**
  * Runs per property. Lower than the 500 of the string-fuzzing suite: each run
  * here builds and round-trips a full multi-block document.
+ *
+ * `SWEEP_RUNS` overrides this AND `NESTING_NUM_RUNS` below, so the by-hand
+ * sweep the two comments ask for is one env var rather than an edit:
+ * `SWEEP_RUNS=20000 npx vitest run src/editor/__tests__/markdown-roundtrip.property.test.ts`.
+ * CI never sets it; the shipped defaults are what every push pays for.
  */
-const NUM_RUNS = 300
+const NUM_RUNS = Number(process.env['SWEEP_RUNS'] ?? 300)
 
-/**
- * FIXED fast-check seed for every property in this FILE (#4059).
+/*
+ * THIS FILE IS UNSEEDED, AND THAT IS THE END OF A STORY (#4059 → #4072).
  *
- * THIS WIDENS THE PIN — it is not the status quo. Before this change only the
- * three nesting properties (`arbDeepListDoc` & friends, `NESTING_NUM_RUNS`)
- * carried a seed; the two `NUM_RUNS = 300` properties —
- * "serialize→parse→serialize is a strict fixpoint" and "one parse pass reaches
- * the canonical fixed point" — ran UNSEEDED. All of them now run at this single
- * seed, so the file explores strictly LESS random space than it used to, and
- * that reduction is precisely what keeps the pre-existing violations below from
- * reddening CI. The trade is deliberate; the cost is real.
- *
- * Unseeded exploration is only safe while the properties are true of the whole
- * generated space. They are not. A 200 000-run sweep (10 distinct random seeds
- * × 20 000 runs) of this file found three PRE-EXISTING violations, none of them
- * reachable through a change made here and none involving the `_` escape that
- * #4049 was about. #4071 FIXED the first of the three:
+ * There is deliberately no `seed:` in any `fc.assert` below. #4059 had added
+ * one — `PROPERTY_SEED = 4059`, pinning every property in the file — because a
+ * 200 000-run sweep (10 distinct random seeds × 20 000 runs) had found three
+ * PRE-EXISTING violations that unseeded exploration would eventually surface on
+ * an unrelated contributor's PR. The pin was explicitly conditional: "delete it
+ * when violations 2 and 3 are fixed, not before". All three are now fixed, so
+ * it is deleted.
  *
  *  1. FIXED (#4071/#4076). `serialize(parse('   1. item\n    - item\n3. item'))`
  *     did not converge in one pass — two ordered lists separated by a sibling
@@ -90,30 +88,33 @@ const NUM_RUNS = 300
  *     because serializing normalized the list markers to column 0 and thereby
  *     dropped the item's content column below the paragraph's own leading
  *     indent, so the paragraph was swallowed as nested content. 7 of the 10
- *     seeds. The serializer now defuses that indent
- *     (`serializeBlockSequence`), and a re-sweep at 12 seeds × 20 000 runs no
- *     longer generates the shape.
- *  2. a link whose text starts with `!` as the first child of a blockquote
- *     re-reads as a callout label and normalizes its case:
- *     `> [!a](https://example.com)a` → `> [!A] (https://example.com)a`.
- *     Still live: seeds 1, 6 and 9 of the re-sweep.
- *  3. a leading hardBreak in a table cell followed by `>` (or `#`) is not a
- *     fixpoint (the cell degrades the break to a space and then trims it).
- *     Still live: seeds 6, 10 and 12 of the re-sweep.
+ *     seeds. Fixed in `serializeBlockSequence`.
+ *  2. FIXED (#4072). A link whose text starts with `!` as the first child of a
+ *     blockquote re-read as a callout label and normalized its case:
+ *     `> [!a](https://example.com)a` → `> [!A] (https://example.com)a`, which
+ *     also destroyed the link. Seeds 1, 6 and 9. Fixed in `CALLOUT_RE`, which
+ *     now refuses a `(` directly after the `]` — the one follower a callout
+ *     marker never has and a link destination always does.
+ *  3. FIXED (#4072). A leading hardBreak in a table cell followed by `>` (or
+ *     `#`) was not a fixpoint: the cell degraded the break to a space, the
+ *     space talked `serializeParagraph` out of escaping the block marker behind
+ *     it, and only then did the string trim remove the space — so pass one
+ *     emitted `| > |` and pass two `| \> |`. Seeds 6, 10 and 12. Fixed in
+ *     `canonicalCellParagraphs`, which now trims the cell edge at the NODE
+ *     level, before any escape decision looks at it.
  *
- * So route 1 of #4059 (fix the bug, stay unseeded) is unavailable and route 2
- * applies: every `fc.assert` here is a deterministic replay, and new
- * exploration happens deliberately — bump this seed, or raise the run counts by
- * hand — rather than on an unrelated contributor's PR. Delete the pin when
- * violations 2 and 3 are fixed, not before.
+ * Unseeded exploration is only safe while the properties are true of the whole
+ * generated space, so the evidence bar for removing the pin is the same sweep
+ * that justified adding it, and then some: 32 distinct random seeds × 20 000
+ * runs — 640 000 runs, 3.2× the sweep that found the three violations — green
+ * across all 42 tests of this file, with the same sweep reddening at seeds 1,
+ * 6, 9, 10 and 12 on the parent commit. Re-run it before touching the
+ * parse/serialize pair, and if it ever finds a fourth violation, re-pin here
+ * rather than weakening a property.
  *
- * `markdown-serializer.property.test.ts` stays UNSEEDED on purpose: the same
- * sweep (10 seeds × 20 000 runs, 40× its shipped 500) was green for all 58 of
- * its tests, so random exploration there is pure upside.
- *
- * The value is the issue number, so its provenance is obvious.
+ * `markdown-serializer.property.test.ts` was never seeded, for the same reason
+ * this file no longer is.
  */
-const PROPERTY_SEED = 4059
 
 // -- Generators ---------------------------------------------------------------
 
@@ -566,7 +567,6 @@ describe('property: serialize→parse→serialize is a strict fixpoint', () => {
       ),
       {
         numRuns: NUM_RUNS,
-        seed: PROPERTY_SEED,
         examples: FIXPOINT_SEEDS.map((d) => [d] as [DocNode]),
       },
     )
@@ -587,7 +587,6 @@ describe('property: one parse pass reaches the canonical fixed point', () => {
       }),
       {
         numRuns: NUM_RUNS,
-        seed: PROPERTY_SEED,
         examples: [...FIXPOINT_SEEDS, ...CONVERGENCE_SEEDS].map((d) => [d] as [DocNode]),
       },
     )
@@ -689,8 +688,9 @@ describe('#4053 hasGreedyAdjacency excludes nested adjacency, not just top-level
  * verdict now keys on word-ness alone and so survives every dedent, trim and
  * node-coalescing the round trip performs (`underscoreNeedsEscape`) — so the
  * exclusion is GONE: 10 × 20 000 runs across distinct random seeds produced no
- * underscore drift in either property file. The seed pin stays, for the three
- * unrelated pre-existing violations documented at `PROPERTY_SEED`.
+ * underscore drift in either property file. The seed pin that outlived that
+ * exclusion is gone too, now that its three unrelated violations are fixed
+ * (see the unseeded note at the top of the file).
  */
 
 /**
@@ -707,9 +707,10 @@ describe('#4053 hasGreedyAdjacency excludes nested adjacency, not just top-level
  * pay for on every CI run". 5 000 buys a quarter of it for ~1.2s against a
  * 160s full frontend suite (<1%), i.e. it does not dominate; the 20 000 that
  * reproduces the full sweep is a visible tax on every push. Re-run the higher
- * rows by hand when touching the parse/serialize pair.
+ * rows when touching the parse/serialize pair — `SWEEP_RUNS` (see `NUM_RUNS`)
+ * raises this knob and that one together.
  */
-const NESTING_NUM_RUNS = 5000
+const NESTING_NUM_RUNS = Number(process.env['SWEEP_RUNS'] ?? 5000)
 
 // -- P1: deep, heterogeneous list structures ---------------------------------
 
@@ -764,7 +765,7 @@ describe('property (#4019): deep, heterogeneous list nesting is a strict fixpoin
         const md1 = serialize(d)
         expect(serialize(parse(md1))).toBe(md1)
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
+      { numRuns: NESTING_NUM_RUNS },
     )
   })
 })
@@ -814,7 +815,7 @@ describe('property (#4019): a marker-like paragraph never resurrects as a list',
         expect(parse(md)).toEqual(d)
         expect(serialize(parse(md))).toBe(md)
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
+      { numRuns: NESTING_NUM_RUNS },
     )
   })
 })
@@ -872,7 +873,7 @@ describe('property (#4019): foreign markdown import converges in one pass', () =
         const md2 = serialize(parse(md1))
         expect(md2).toBe(md1)
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
+      { numRuns: NESTING_NUM_RUNS },
     )
   })
 })
@@ -898,7 +899,7 @@ describe('property (#4051): a CRLF document parses as its LF twin', () => {
         // a backslash — passing for the wrong reason rather than failing.
         expect(allStoredText(parsed).filter((t) => t.includes('\r'))).toEqual([])
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
+      { numRuns: NESTING_NUM_RUNS },
     )
   })
 
@@ -908,7 +909,7 @@ describe('property (#4051): a CRLF document parses as its LF twin', () => {
         const lf = lines.join('\n')
         expect(parse(`${lf.replaceAll('\n', '\r\n')}\r`)).toEqual(parse(lf))
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
+      { numRuns: NESTING_NUM_RUNS },
     )
   })
 })
@@ -946,7 +947,7 @@ describe('property (#4052): a leading tab parses as the columns it occupies', ()
         fc.pre(!tabbed.includes('```'))
         expect(parse(tabbed)).toEqual(parse(spaced))
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
+      { numRuns: NESTING_NUM_RUNS },
     )
   })
 
@@ -956,7 +957,7 @@ describe('property (#4052): a leading tab parses as the columns it occupies', ()
         const md1 = serialize(parse(tabbed))
         expect(serialize(parse(md1))).toBe(md1)
       }),
-      { numRuns: NESTING_NUM_RUNS, seed: PROPERTY_SEED },
+      { numRuns: NESTING_NUM_RUNS },
     )
   })
 })

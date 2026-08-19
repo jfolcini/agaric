@@ -820,6 +820,63 @@ function degradeCellHardBreaks(p: ParagraphNode): ParagraphNode {
   }
 }
 
+/**
+ * Drop the whitespace at one EDGE of a cell's inline sequence, at the node
+ * level (#4072).
+ *
+ * `parseTable` trims every cell, so that whitespace has no representation to
+ * survive into and the emitted string is trimmed anyway (see serializeTable).
+ * Doing it here instead of only on the string is what keeps the two halves
+ * honest: `serializeParagraph` escapes a leading BLOCK marker only when the
+ * marker is genuinely first, so a degraded hardBreak sitting in front of a `>`
+ * or `#` used to talk it out of the escape — and the string trim then removed
+ * the very space that had justified the decision, emitting a bare marker whose
+ * reparse (plain text now, with no space in front) re-serializes ESCAPED. One
+ * pass wrote `| > |`, the next `| \> |`.
+ *
+ * Only UNMARKED text nodes are trimmed. Whitespace inside a mark's delimiters
+ * (`` `  x  ` ``, `** a**`) is content, not a cell edge: it is not at the edge
+ * of the emitted string at all, and stripping it would silently rewrite the
+ * cell.
+ */
+function trimCellEdge(nodes: readonly InlineNode[], edge: 'start' | 'end'): InlineNode[] {
+  const out = [...nodes]
+  while (out.length > 0) {
+    const index = edge === 'start' ? 0 : out.length - 1
+    const node = out[index]
+    if (node?.type !== 'text' || (node.marks?.length ?? 0) > 0) break
+    const trimmed = edge === 'start' ? node.text.replace(/^\s+/, '') : node.text.replace(/\s+$/, '')
+    if (trimmed === '') {
+      out.splice(index, 1)
+      continue
+    }
+    if (trimmed !== node.text) out[index] = { ...node, text: trimmed }
+    break
+  }
+  return out
+}
+
+/**
+ * A cell's paragraphs in the form the parser will store them back as: hardBreaks
+ * degraded to spaces, and the cell's leading/trailing whitespace already gone.
+ * Whitespace BETWEEN paragraphs is untouched — the `join(' ')` below puts it
+ * back as interior text, where no block-marker escape keys on it.
+ */
+function canonicalCellParagraphs(paragraphs: readonly ParagraphNode[]): ParagraphNode[] {
+  const out = paragraphs.map(degradeCellHardBreaks)
+  for (let i = 0; i < out.length; i++) {
+    const content = trimCellEdge((out[i] as ParagraphNode).content ?? [], 'start')
+    out[i] = { ...(out[i] as ParagraphNode), content }
+    if (content.length > 0) break
+  }
+  for (let i = out.length - 1; i >= 0; i--) {
+    const content = trimCellEdge((out[i] as ParagraphNode).content ?? [], 'end')
+    out[i] = { ...(out[i] as ParagraphNode), content }
+    if (content.length > 0) break
+  }
+  return out
+}
+
 function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void): string {
   if (!node.content || node.content.length === 0) return ''
   const rows = node.content
@@ -843,18 +900,23 @@ function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void)
         // parser-canonical form, so the round-trip is a fixed point. (Interior
         // whitespace is untouched; only the cell boundaries are normalized,
         // matching the parser.)
+        //
+        // A table row must stay a single line, too: a hardBreak inside a cell
+        // paragraph would embed its `\`+newline token in the row, splitting it
+        // and destroying the whole table on reparse. Degrade the break to a
+        // single space — the same policy as the multi-paragraph join below.
+        // Both normalizations happen at the NODE level
+        // (`canonicalCellParagraphs`), not on the emitted string, so the
+        // escape/seam decisions see the content the cell will actually hold
+        // rather than a space that is about to be deleted. The `.trim()` below
+        // stays as the finisher for whitespace produced downstream of those
+        // decisions (an emptied paragraph's `join(' ')` seam), which is why it
+        // can no longer contradict them.
         const text =
           cell.content && cell.content.length > 0
             ? escapeCellPipes(
-                cell.content
-                  // A table row must stay a single line: a hardBreak inside a
-                  // cell paragraph would embed its `\`+newline token in the
-                  // row, splitting it and destroying the whole table on
-                  // reparse. Degrade the break to a single space — the same
-                  // policy as the multi-paragraph join below. Done at the
-                  // NODE level (not on the emitted string) so the escape/seam
-                  // decisions see the space the cell will actually contain.
-                  .map((p) => serializeParagraph(degradeCellHardBreaks(p), onUnknownNode))
+                canonicalCellParagraphs(cell.content)
+                  .map((p) => serializeParagraph(p, onUnknownNode))
                   .join(' ')
                   .trim(),
               )
