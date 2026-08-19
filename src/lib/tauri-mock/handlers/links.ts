@@ -19,7 +19,7 @@ import {
   inSpaceScope,
   scanLinkTargets,
 } from '@/lib/tauri-mock/handlers/shared'
-import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
+import { blockTags, blocks, pageAliases, properties } from '@/lib/tauri-mock/seed'
 
 export const linksHandlers = {
   get_backlinks: (args) => {
@@ -198,12 +198,27 @@ export const linksHandlers = {
         truncated: false,
       }
     const pageTitle = (page['content'] as string) ?? ''
-    // `trim()`, not just a truthiness test: a whitespace-only title sanitizes
-    // to no terms on the backend, so `eval_unlinked_references` early-returns
-    // an empty set (`grouped.rs`, via `sanitize_fts_query`). Without the trim
-    // it would run here as a literal substring needle and match every block
-    // containing a space.
-    if (!pageTitle.trim())
+    // #4036 item 1 — the needle set is the page TITLE **OR** every one of its
+    // `page_aliases` rows, not the title alone. `eval_unlinked_references`
+    // builds `terms` from the sanitized title and then from each sanitized,
+    // trimmed alias, and ORs them into one FTS5 query — `(t1) OR (t2) …`
+    // (`agaric-store/src/backlink/grouped.rs:598-645`). A block reading "see
+    // getting-started for setup" is an unlinked reference to the
+    // `getting-started`-aliased page on the backend; here it was a false
+    // negative, and not hypothetically — `pageAliases` is a seeded store
+    // (`seed.ts:653`).
+    //
+    // The `trim()` on each term is the backend's own (`alias.trim()`,
+    // grouped.rs:614) plus, for the title, the `sanitize_fts_query` empty
+    // check: a whitespace-only title contributes NO term, so it neither
+    // early-returns on its own nor runs as a literal substring needle that
+    // would match every block containing a space. The early return fires only
+    // when the COMBINED term list is empty (grouped.rs:625-635) — a blank
+    // title with a live alias still searches.
+    const terms = [pageTitle, ...(pageAliases.get(pageId) ?? [])]
+      .map((t) => t.trim())
+      .filter((t) => t !== '')
+    if (terms.length === 0)
       return {
         groups: [],
         next_cursor: null,
@@ -236,7 +251,9 @@ export const linksHandlers = {
       if (b['block_type'] === 'page') return false
       if (!inSpaceScope(b, spaceId)) return false
       const content = (b['content'] as string) ?? ''
-      if (!matchesFtsIndex(stripForFts(content), pageTitle)) return false
+      // The FTS5 `OR` over `terms` — ANY term hitting keeps the row.
+      const stripped = stripForFts(content)
+      if (!terms.some((t) => matchesFtsIndex(stripped, t))) return false
       // Exclude if it already has a [[link]] to this page.
       return !contentLinksTo(content, pageId)
     })

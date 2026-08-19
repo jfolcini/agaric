@@ -45,6 +45,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { clearMock, id, setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
   cursorVersionSlotIsU8,
@@ -52,46 +53,13 @@ import {
   matchesFtsIndex,
   stripForFts,
 } from '@/lib/tauri-mock/handlers/search'
-import {
-  blockTags,
-  blocks,
-  makeBlock,
-  opLog,
-  properties,
-  propertyDefs,
-  seedBlocks,
-} from '@/lib/tauri-mock/seed'
+import { blocks, makeBlock } from '@/lib/tauri-mock/seed'
 
 const SPACE = 'SPACE_S'.padStart(26, '0')
 
 /** The `SpaceScope::Active` every step below runs under — not a user filter
  *  (`has_filters` excludes it), so a `filter` carrying only this is "unfiltered". */
 const SCOPE = { kind: 'active', space_id: SPACE }
-
-function id(label: string): string {
-  return label.padStart(26, '0')
-}
-
-function clearMock(): void {
-  seedBlocks()
-  blocks.clear()
-  blockTags.clear()
-  properties.clear()
-  propertyDefs.clear()
-  opLog.length = 0
-}
-
-function setSpace(blockId: string, spaceId: string): void {
-  if (!properties.has(blockId)) properties.set(blockId, new Map())
-  properties.get(blockId)?.set('space', {
-    key: 'space',
-    value_text: null,
-    value_num: null,
-    value_date: null,
-    value_ref: spaceId,
-    value_bool: null,
-  })
-}
 
 interface SearchResponse {
   items: Array<Record<string, unknown>>

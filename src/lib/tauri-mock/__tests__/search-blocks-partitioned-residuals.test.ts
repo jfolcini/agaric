@@ -33,44 +33,12 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { clearMock, id, setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import {
-  blockTags,
-  blocks,
-  makeBlock,
-  opLog,
-  properties,
-  propertyDefs,
-  seedBlocks,
-} from '@/lib/tauri-mock/seed'
-
-function id(label: string): string {
-  return label.padStart(26, '0')
-}
+import { blocks, makeBlock } from '@/lib/tauri-mock/seed'
 
 const SPACE_A = id('SPACEA')
 const SPACE_B = id('SPACEB')
-
-function clearMock(): void {
-  seedBlocks()
-  blocks.clear()
-  blockTags.clear()
-  properties.clear()
-  propertyDefs.clear()
-  opLog.length = 0
-}
-
-function setSpace(blockId: string, spaceId: string): void {
-  if (!properties.has(blockId)) properties.set(blockId, new Map())
-  properties.get(blockId)?.set('space', {
-    key: 'space',
-    value_text: null,
-    value_num: null,
-    value_date: null,
-    value_ref: spaceId,
-    value_bool: null,
-  })
-}
 
 interface SearchResponse {
   items: Array<Record<string, unknown>>

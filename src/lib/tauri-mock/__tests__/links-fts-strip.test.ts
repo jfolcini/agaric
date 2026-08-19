@@ -26,29 +26,9 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { clearMock, id } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import {
-  blockTags,
-  blocks,
-  makeBlock,
-  opLog,
-  properties,
-  propertyDefs,
-  seedBlocks,
-} from '@/lib/tauri-mock/seed'
-
-function id(label: string): string {
-  return label.padStart(26, '0')
-}
-
-function clearMock(): void {
-  seedBlocks()
-  blocks.clear()
-  blockTags.clear()
-  properties.clear()
-  propertyDefs.clear()
-  opLog.length = 0
-}
+import { blocks, makeBlock, pageAliases } from '@/lib/tauri-mock/seed'
 
 /** Insert a block of `type` under `parent`, returning its id. */
 function put(blockId: string, type: string, content: string, parent: string | null): string {
@@ -240,5 +220,68 @@ describe('list_unlinked_references — matches fts_blocks.stripped (#4022)', () 
       put(REALPAGE, 'page', 'a   b', null)
       expect(unlinkedIds(REALPAGE)).toContain(SPACED)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// `list_unlinked_references` — page aliases (#4036 item 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * `eval_unlinked_references` ORs the page title with EVERY `page_aliases` row
+ * (`agaric-store/src/backlink/grouped.rs:598-645`): it sanitizes the title,
+ * then each trimmed alias, and joins the surviving terms as
+ * `(t1) OR (t2) …`. The mock matched on the title alone, so an alias mention
+ * was a false negative — and not hypothetically: `pageAliases` is a modelled,
+ * SEEDED store (`seed.ts:653`).
+ */
+describe('list_unlinked_references — matches page aliases too (#4036)', () => {
+  const HOST = id('AHOST')
+  const APAGE = id('APAGE')
+  const BY_TITLE = id('ATITLE')
+  const BY_ALIAS = id('AALIAS')
+  const BY_OTHER_ALIAS = id('AALIA2')
+  const UNRELATED = id('AUNREL')
+
+  beforeEach(() => {
+    clearMock()
+    put(HOST, 'page', 'Field Notes', null)
+    put(APAGE, 'page', 'Getting Started', null)
+    pageAliases.set(APAGE, ['gs', 'getting-started'])
+    put(BY_TITLE, 'content', 'see Getting Started for setup', HOST)
+    put(BY_ALIAS, 'content', 'see getting-started for setup', HOST)
+    put(BY_OTHER_ALIAS, 'content', 'the gs doc covers it', HOST)
+    put(UNRELATED, 'content', 'nothing relevant here', HOST)
+  })
+
+  // The falsifier the issue names, verbatim.
+  it('surfaces a block that mentions an alias rather than the title', () => {
+    expect(unlinkedIds(APAGE)).toEqual([BY_ALIAS, BY_OTHER_ALIAS, BY_TITLE].toSorted())
+  })
+
+  it('still excludes a block that mentions neither', () => {
+    expect(unlinkedIds(APAGE)).not.toContain(UNRELATED)
+  })
+
+  // The early return is on the COMBINED term list, not on the title alone
+  // (grouped.rs:625-635): a blank title with a live alias still searches.
+  it('searches on the aliases when the title itself contributes no term', () => {
+    const BLANK = id('ABLANK')
+    put(BLANK, 'page', '   ', null)
+    pageAliases.set(BLANK, ['quokka'])
+    const MENTION = id('AMENTN')
+    put(MENTION, 'content', 'the quokka report', HOST)
+    expect(unlinkedIds(BLANK)).toEqual([MENTION])
+  })
+
+  // Each alias is trimmed and dropped when empty (`alias.trim()`,
+  // grouped.rs:614) — a whitespace alias must not become a space needle that
+  // matches every block containing a space.
+  it('drops a whitespace-only alias instead of matching on it', () => {
+    const WS = id('AWSPC')
+    put(WS, 'page', '', null)
+    pageAliases.set(WS, ['   '])
+    put(id('AWSMTC'), 'content', 'a b c d', HOST)
+    expect(unlinkedIds(WS)).toEqual([])
   })
 })
