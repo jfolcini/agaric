@@ -500,8 +500,10 @@ _eq 'merge-result: an inherited GIT_DIR must not make the probe answer about the
 # above is about the ambiguous index, not a guard that has stopped working
 # under a foreign GIT_DIR.
 _eq 'merge-result: …and --worktree is unaffected by the same leaked GIT_DIR' \
-  '1' "$(cd "$other" && GIT_DIR="$other/.git" GIT_INDEX_FILE="$other/.git/index" \
-    python3 "$fx/$GUARD_RAW_TX" --worktree "$fx/$RAW_TX_FILE" >/dev/null 2>&1; echo $?)"
+  '1' "$(cd "$other" || exit 99
+    GIT_DIR="$other/.git" GIT_INDEX_FILE="$other/.git/index" \
+      python3 "$fx/$GUARD_RAW_TX" --worktree "$fx/$RAW_TX_FILE" >/dev/null 2>&1
+    echo $?)"
 
 # ---------------------------------------------------------------------------
 # 6. exists() AND read() ANSWER ABOUT THE SAME SET (#4058)
@@ -908,6 +910,11 @@ _eq 'undecodable file: …and green under --cached too' \
 REAL_GIT="$(command -v git)"
 CAT_SHIM_DIR="$tmp/cat-file-count-shim"
 mkdir -p "$CAT_SHIM_DIR"
+# Sibling of $CAT_SHIM_DIR, NOT inside it: $CAT_SHIM_DIR is prepended to
+# PATH for the run being measured, and scratch data (the per-run count
+# files) has no business living on the PATH of the process under test.
+CAT_COUNT_DIR="$tmp/cat-file-count-data"
+mkdir -p "$CAT_COUNT_DIR"
 cat > "$CAT_SHIM_DIR/git" <<SHIM
 #!/usr/bin/env bash
 if [ "\$1" = "cat-file" ]; then
@@ -922,7 +929,7 @@ chmod +x "$CAT_SHIM_DIR/git"
 _run_dyn_count_cat_file() {
   local dir="$1"
   shift
-  local count_file="$tmp/cat-file-count-shim/count-$RANDOM-$RANDOM"
+  local count_file="$CAT_COUNT_DIR/count-$RANDOM-$RANDOM"
   : > "$count_file"
   local status
   (
@@ -1009,16 +1016,21 @@ _eq 'orphan batch: …and the message names it, rather than the batching swallow
 # 12. read_many SPANS MULTIPLE `cat-file --batch` CALLS, NOT JUST ONE (#4063)
 # ---------------------------------------------------------------------------
 # Every guard-driven assertion above exercises `read_many` with far fewer
-# paths than `_CAT_FILE_CHUNK` (500), so the chunking LOOP in `read_many` —
-# `for i in range(0, len(wanted), _CAT_FILE_CHUNK)` — only ever runs its body
-# once in this suite; the boundary between two `_read_batch` calls is never
-# reached, so an off-by-one there (a dropped path at a chunk edge, or content
-# from one chunk landing under another chunk's path) would pass every
-# assertion above and still be wrong. This section forces the boundary by
-# monkeypatching `_CAT_FILE_CHUNK` down to 2 over 5 distinctly-sized files —
-# three `_read_batch` calls (2, 2, 1) — and checks CONTENT, not just presence:
-# a path caching that is off by one file would still leave every `rel` a key
-# in `_blobs`, so "cached" alone would not catch it.
+# paths than the default chunk size (500), so the chunking LOOP in
+# `read_many` — `for i in range(0, len(wanted), chunk_size)` — only ever
+# runs its body once in this suite; the boundary between two `_read_batch`
+# calls is never reached, so an off-by-one there (a dropped path at a chunk
+# edge, or content from one chunk landing under another chunk's path) would
+# pass every assertion above and still be wrong. This section forces the
+# boundary by passing `read_many`'s explicit `chunk_size=2` over 5
+# distinctly-sized files — three `_read_batch` calls (2, 2, 1) — and checks
+# CONTENT, not just presence: a path caching that is off by one file would
+# still leave every `rel` a key in `_blobs`, so "cached" alone would not
+# catch it. `chunk_size` is an explicit parameter (not a monkeypatched
+# module global) for the same reason the `.mjs` sibling threads `chunkSize`
+# through explicitly: a renamed or inlined private constant would make a
+# monkeypatch silently stop taking effect while this test kept printing
+# `ok`.
 fx="$tmp/read-many-chunk-boundary"
 _new_fixture "$fx"
 mkdir -p "$fx/src-tauri/src"
@@ -1047,10 +1059,9 @@ spec = importlib.util.spec_from_file_location(
 )
 gfs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gfs)
-gfs._CAT_FILE_CHUNK = 2  # force >1 `cat-file --batch` call over the 5 rels below
 rels = sys.argv[1:]
 src = gfs.FileSource(root, gfs.SOURCE_INDEX, "test probe")
-src.read_many(rels)
+src.read_many(rels, chunk_size=2)  # force >1 `cat-file --batch` call over the 5 rels below
 bad = []
 for rel in rels:
     if rel not in src._blobs:

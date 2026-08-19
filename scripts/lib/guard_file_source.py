@@ -599,20 +599,27 @@ class FileSource:
         self._blobs[rel] = text
         return text
 
-    def read_many(self, rels) -> None:
+    def read_many(self, rels, chunk_size: int = _CAT_FILE_CHUNK) -> None:
         """Warm the blob cache for several paths at once (#4063).
 
         A no-op under the working tree: a disk read is already a single
         syscall with no spawn to amortize, so there is nothing here to
         batch. Under the index it is `_blob`'s per-call `git cat-file blob
         <sha>` collapsed into chunked `git cat-file --batch` calls — one
-        spawn per `_CAT_FILE_CHUNK` paths, not one per path — so a caller
+        spawn per `chunk_size` paths, not one per path — so a caller
         that is about to `read()` many paths (`check-dynamic-sql.py`'s
         orphan sweep, global over the baseline: ~70 entries today, one spawn
         each before this existed) can pay for it once up front. `read()`
         afterwards is a cache hit for every path this warmed; it is
         unaffected for any path this did not (already cached, no stage-0
         blob, or not passed here at all).
+
+        `chunk_size` defaults to `_CAT_FILE_CHUNK` and exists as an explicit
+        parameter — rather than a module global a caller reaches into — for
+        the same reason the `.mjs` sibling threads `chunkSize` through
+        `readContents`/`readFromIndex`: "ONLY so a self-test can drive the
+        chunk-boundary path" without depending on a private name that could
+        be renamed or inlined out from under a monkeypatch.
 
         Ports `readFromIndex`/`parseBatchStream` from the `.mjs` sibling
         (`scripts/lib/guard-file-source.mjs`) verbatim in behaviour,
@@ -633,8 +640,8 @@ class FileSource:
             if entry is None or entry[0] == "160000":
                 continue
             wanted.append((rel, entry[1]))
-        for i in range(0, len(wanted), _CAT_FILE_CHUNK):
-            self._read_batch(wanted[i : i + _CAT_FILE_CHUNK])
+        for i in range(0, len(wanted), chunk_size):
+            self._read_batch(wanted[i : i + chunk_size])
 
     def _read_batch(self, chunk: list[tuple[str, str]]) -> None:
         """Run ONE `git cat-file --batch` over `chunk` and cache every body.
