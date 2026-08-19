@@ -75,7 +75,7 @@
 #     7-8 s (`vitest-node22` step, two sampled runs: 8 s, 7 s). Locally on
 #     a developer machine: 3.1-3.4 s.
 #   * borrowing that install into the merged worktree (see
-#     `provision_node_modules`): 0.03 s — ONE `ln -s -t` for ~710 top-level
+#     `provision_node_modules`): 0.03 s — ONE `ln -s` for ~710 top-level
 #     entries, not one `ln` per entry.
 #
 # The `merge-result` job measured 23-25 s before this (two sampled
@@ -612,7 +612,7 @@ resolve_node_modules_source() {
 # incremental state. Here `.tmp` is created inside the disposable worktree
 # and dies with it.
 #
-# ONE `ln -s -t` for the whole set, not one `ln` per entry: measured 0.03 s
+# ONE `ln -s` for the whole set, not one `ln` per entry: measured 0.03 s
 # vs 1.28 s for ~710 entries, and this runs inside a prek hook.
 #
 # Node resolves symlinks by default, so each borrowed package finds its own
@@ -642,7 +642,13 @@ provision_node_modules() {
   # not compile" that is nothing of the sort.
   [ "${#entries[@]}" -gt 0 ] || return 1
   mkdir -p "$workdir/node_modules" || return 1
-  ln -s -t "$workdir/node_modules" -- "${entries[@]}" || return 1
+  # `ln -s -t DIR -- srcs` is a GNU coreutils extension; BSD/macOS `ln` has no
+  # -t and errors "illegal option -- t", which would make provision_node_modules
+  # fail, run_typecheck return 3, and the selftest prek hook block every commit
+  # touching its files on macOS (a supported dev platform, docs/BUILD.md). The
+  # multi-source-into-directory form below is in both GNU and BSD ln, and is
+  # still ONE process.
+  ln -s -- "${entries[@]}" "$workdir/node_modules" || return 1
   return 0
 }
 
@@ -1050,8 +1056,10 @@ run_merge_check() {
     return 3
   fi
   if [ "$typecheck_rc" -ne 0 ]; then
-    echo "pr-merge-result-check: the MERGED tree does not TYPECHECK (#4078) — each" >&2
-    echo "  branch compiles alone, their merge does not. The tsc diagnostics are above." >&2
+    echo "pr-merge-result-check: the MERGED tree does not TYPECHECK (#4078). The tsc" >&2
+    echo "  diagnostics are above. Only the MERGE is type-checked here, so confirm" >&2
+    echo "  \`validate / typecheck\` is green on this PR before concluding the merge is" >&2
+    echo "  at fault — a head that is already broken produces the same message." >&2
     return 4
   fi
 

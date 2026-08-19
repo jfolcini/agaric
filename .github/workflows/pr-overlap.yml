@@ -648,11 +648,14 @@ jobs:
             {
               echo "### Merge-result check: THE MERGE DOES NOT TYPECHECK"
               echo
-              echo "Both branches compile alone; their actual merge does not — the"
-              echo "#4078 shape (two PRs edit disjoint hunks of the same file, one"
+              echo "The #4078 shape (two PRs edit disjoint hunks of the same file, one"
               echo "deletes a symbol the other starts using, git merges them with no"
-              echo "conflict). Every ratchet guard passed, so nothing else in the"
-              echo "pipeline would have reported this before it became \`main\`."
+              echo "conflict). Every ratchet guard passed, so no OTHER guard in this"
+              echo "lane would have reported it before it became \`main\`."
+              echo
+              echo "Only the merge is type-checked here. If \`validate / typecheck\` is"
+              echo "also red on this PR, the head is broken on its own and the merge is"
+              echo "not what to look at first."
               echo
               echo "Merge \`$BASE_REF\` into this branch and run \`npm run typecheck\`;"
               echo "the tsc diagnostics are in the job log above."
