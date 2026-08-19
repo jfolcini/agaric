@@ -1358,10 +1358,11 @@ jobs:
             echo "::notice::apt .deb cache miss -- install-deps left unbounded (760s cold-mirror observation, #4163)"
           fi
 
-          # #4170: sticky across attempts, so the exit code below can tell
-          # "the mirror stalled" apart from "apt said no".
+          # #4170: `timed_out` is the sticky one -- it survives across attempts
+          # so the exit code below can tell "the mirror stalled" apart from
+          # "apt said no". `status` is re-initialised per attempt inside the
+          # loop and is only read after it as the last attempt's code.
           timed_out=0
-          status=0
 
           for attempt in 1 2; do
             # Capture via `|| status=$?`, not `$?` after an `if`: a false `if`
@@ -1385,7 +1386,8 @@ jobs:
               fi
               exit 0
             fi
-            if [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; then
+            if [ -n "${bound}" ] && [ "${attempt}" -eq 1 ] \
+               && { [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; }; then
               # 137, not just 124 (#4163). `timeout -k` exits 124 when the
               # child dies on the SIGTERM, but the SIGKILL path exits 137 --
               # measured on coreutils 9.4 against a TERM-ignoring child:
@@ -1399,7 +1401,7 @@ jobs:
               # it the wait below spins its full 180s and attempt 2 races
               # attempt 1. prepare-apt records the same hazard.
               timed_out=1
-              echo "::warning::playwright install-deps attempt ${attempt} exceeded ${bound}s (mirror stall, likely inside its apt-get update); clearing strays, next attempt is unbounded"
+              echo "::warning::playwright install-deps attempt ${attempt} exceeded ${bound}s (mirror stall, likely inside its apt-get update); clearing strays, the next and final attempt is unbounded"
               sudo pkill -TERM -x apt-get 2>/dev/null || true
               sleep 5
               sudo pkill -KILL -x apt-get 2>/dev/null || true
