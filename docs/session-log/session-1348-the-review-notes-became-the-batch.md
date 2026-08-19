@@ -4,11 +4,12 @@
 |----------|-------|
 | **Date** | 2026-08-18 → 2026-08-19 |
 | **Subagents** | 5 build (2 of them resumed after an interruption) |
-| **Items closed** | `#4071`, `#4133`, `#4141`, `#4126`, `#4129`, `#3967`, `#4138`, `#4065`, `#4072`, `#4036`, `#3939` |
-| **Items shipped, PR open** | PR #4154 (`#4150` residuals), PR #4155 (`#4140` guard hardening), plus `#4072`, `#4078`, `#4036`/`#3939` in flight |
+| **Items closed** | `#4071`, `#4133`, `#4141`, `#4126`, `#4129`, `#3967`, `#4138`, `#4065` |
+| **Items shipped, PR open** | PR #4155 (`#4140` guard hardening), PR #4157 (this log), PR #4158 (`#4036`, `#3939`), PR #4160 (`#4072`), PR #4162 (`#4078`) |
+| **PRs merged** | #4149, #4145, #4136, #4140, #4150, #4151, #4154 |
 | **Items filed** | `#4152`, `#4153`, `#4156`, `#4159`, `#4161` |
 
-**Summary:** Six PRs merged and eight issues closed, but the more useful observation is
+**Summary:** Seven PRs merged and eight issues closed, but the more useful observation is
 where the *next* batch came from. Three of the five builders launched in this session
 are not working backlog issues at all — they are working the non-blocking notes the
 review bot left on PRs that merged an hour earlier. The backlog sweep found candidates;
@@ -31,9 +32,10 @@ But the notes were then read as a work queue rather than as commentary, and two 
 turned out to be the highest-value items available:
 
 - The guard-evasion set (now PR #4155, which closed all four), because a guard that passes
-  while the thing it protects is broken is worse than no guard. This is the fourth time this pattern has been caught in recent
-  sessions (presence-vs-count baselines, short-circuit-on-trigger, `- uses:` same-line
-  assumptions, escaping self-tests that never reach the real call site). The recurrence
+  while the thing it protects is broken is worse than no guard. This is the fourth time
+  this pattern has been caught in recent sessions (presence-vs-count baselines,
+  short-circuit-on-trigger, `- uses:` same-line assumptions, and escaping self-tests that
+  never reach the real call site). The recurrence
   suggests the repo convention should be "every guard ships with a self-test proven to fail
   on the pre-fix code," and that this be checked at review time, not hoped for. #4155 was
   built that way deliberately: each of its four fixes was reverted in isolation, the
@@ -136,17 +138,75 @@ mark whose content cannot survive re-reading.
 tests — with the *same* sweep reddening at seeds 1, 6, 9, 10 and 12 on the parent commit,
 which is what makes the green mean something rather than merely being green.
 
-### Two PRs claimed session 1348
+### #4078 — the merge-result check learns to compile
 
-Both this log and #4160 added a `docs/session-log/session-1348-*.md`. Nothing caught it:
-the numbering guard sees only the tree it runs in, and each branch contained exactly one
-1348 file, so both were locally valid and would have collided on the second merge. This is
-#3933 exactly, observed rather than theorised, and it happened on the *first* batch where
-two agents were told to write logs concurrently.
+`pr-merge-result-check.sh` computed the real merge of a PR and `main`, then ran only the
+six whole-tree ratchet guards against it. The same failure class in ordinary source — each
+branch correct alone, the merge wrong, no textual conflict — walked straight through with a
+green "merge result verified". It did, on 2026-08-18: #4074 consolidated the property seeds
+in `markdown-roundtrip.property.test.ts` and deleted `hasKnownIssue4049Drift`; #4075 added
+three properties to the *same file* still referencing it. Disjoint hunks, so git merged them
+silently; both branches green because each was internally consistent; the merged tree did
+not compile, and `main` sat un-compilable until a release build noticed (#4077).
 
-The resolution was to keep one log — this one — and fold the other's content in, which is
-also the right answer on the merits: one session's work is one narrative, and #4160's half
-is the technical depth this section now carries.
+Per-PR CI structurally cannot see this — it tests the branch, not the branch merged into
+whatever `main` has become. `pr-merge-result-check.sh` *can*: it already builds the actual
+merge in a disposable worktree. It simply declined to look at anything but ratchets.
+
+The merged tree is now type-checked with `npm run typecheck` — the repo's single definition
+of "does this tree compile", deliberately not a sixth spelling that can drift. The new exit
+code is **4, not a reuse of 1**: exit 1 renders in `pr-overlap.yml` as "a ratchet guard
+fails" and points the author at `prek --all-files`, which is the wrong instrument for a
+TS2304 — and a guard-shaped message for a compiler error is how a real finding gets
+dismissed as ratchet noise. Every "the stage could not run" case is exit 3, never a quiet
+pass: no install to borrow, an empty one, no `package.json` / `typecheck` script /
+`tsconfig.json`, or a lockfile the borrowed install does not match. Half a verdict is not a
+pass.
+
+`node_modules` is borrowed rather than installed — the job already runs `npm ci` in its own
+checkout, and the entries are symlinked into a *real* directory rather than the whole tree
+being symlinked, because the tsconfigs write `tsBuildInfoFile` under `node_modules/.tmp/`
+and a whole-tree symlink would write the merged tree's incremental state into the caller's
+install.
+
+The falsification was demonstrated red in the shape the issue asked for, modelled on the
+real incident: `main` deletes a symbol and re-points its own use at the top of the file, the
+PR adds a use at the bottom, and eight filler lines keep the hunks past git's three lines of
+context so it merges cleanly rather than conflicting. Against `origin/main`'s script: exit
+0, empty stderr. Against the new one: exit 4, `TS2304: Cannot find name 'NESTING_SEED'`. The
+self-test pins the red half as an assertion — no guard reports anything on that merged tree
+— so "the guards-only script had nothing to say about it" is recorded as a fact rather than
+a claim.
+
+Cost was measured rather than estimated, on real runs of this repo: `npm ci` 16–21 s,
+`npm run typecheck` 7–8 s cold, the job itself previously 23–25 s — so ~55–65 s inside an
+unchanged 10-minute ceiling. This PR's own `merge-result` run then went green at 56 s,
+inside the predicted band. Affordable at all because TypeScript 7.0.2 is the native
+compiler: 1757 files and ~535k lines check in seconds.
+
+### Three PRs claimed session 1348
+
+This log, #4160 and #4162 each added a `docs/session-log/session-1348-*.md`, independently
+and within the same hour.
+
+It is worth being precise about why the guard did not catch it, because the obvious
+explanation is wrong. `scripts/check-session-log-numbering.sh` does *not* only see its own
+tree — it unions the numbers in `HEAD` with those in the merge target (`origin/main`) and
+tests against that union, added for exactly this failure mode in #3690. The gap is
+narrower: **a sibling branch that has not merged yet is invisible to any tree-based
+check.** Each of the three branches held exactly one 1348 file and none of the others
+existed on `origin/main`, so all three were legitimately green, and the collision would
+have surfaced only on the second merge.
+
+That distinction matters — reported as "the guard only sees its own tree", it invites
+someone to re-fix something #3690 already fixed. This is #3933, observed rather than
+theorised, on the first batch where three agents wrote logs concurrently. The parallelism
+that made the batch fast is precisely what made the number contended, so the trigger is
+not rare-and-getting-rarer; it scales with how many builders run at once.
+
+The resolution was to keep one log — this one — and fold the other two in, which is also
+the right answer on the merits: one session's work is one narrative. #4160's half is the
+markdown-fixpoint section above; #4162's is the one below.
 
 ### Process notes
 
