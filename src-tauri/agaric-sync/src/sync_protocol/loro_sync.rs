@@ -724,11 +724,29 @@ pub async fn resolve_changed_page_ids(
 /// dangling edges.
 ///
 /// Diagnostics only: it never changes the outcome — the caller propagates the
-/// original error either way — and a probe that itself fails is skipped rather
-/// than masking the real failure. An empty `dangling_parent_edges` on a genuine
-/// 787 is itself informative: it means the violation came from something other
-/// than a changed block's parent (a `page_id` edge, or a Pass D purge whose
-/// deleted row was still referenced).
+/// original error either way. An empty `dangling_parent_edges` on a genuine 787
+/// **with no failed probes** is itself informative: it means the violation came
+/// from something other than a changed block's parent (a `page_id` edge, or a
+/// Pass D purge whose deleted row was still referenced).
+///
+/// # Why the probe failures are counted (#4107)
+///
+/// The probes run against `pool` immediately after the failed `tx.commit()`,
+/// while sqlx's drop-queued `ROLLBACK` for that transaction may not have run
+/// yet — and SQLite admits one writer, so a probe taking a different pooled
+/// connection can come back `SQLITE_BUSY`. The first version swallowed each
+/// probe's error with `.ok()`, which made a *failed* probe indistinguishable
+/// from a parent that is present: the list could come back short, or empty, on
+/// a real violation, and "no dangling edges found" would send the reader
+/// looking somewhere else. That is worse than admitting ignorance, because it
+/// invites a wrong conclusion at the moment someone is already confused.
+///
+/// The failures are counted and logged instead of retried. Retrying would mean
+/// blocking the apply path on a rollback that has no deadline, for a line in a
+/// log; "0 dangling edges, 3 probes failed" is enough to tell the reader the
+/// list is not an answer. Ordering the rollback ahead of the probes is likewise
+/// not available from here: `tx` was consumed by the failed `commit`, so its
+/// connection is already on its way back to the pool.
 async fn report_parent_fk_violation(
     pool: &SqlitePool,
     space_id: &SpaceId,
@@ -744,30 +762,77 @@ async fn report_parent_fk_violation(
     if !is_fk_violation {
         return;
     }
-    let mut dangling: Vec<String> = Vec::new();
-    for (block_id, parent_id) in parent_edges {
-        // dynamic-sql: static-string existence probe on the #4083 787 diagnostic
-        // path; runtime form keeps this cold error-only query off the macro cache.
-        let present: Option<i64> = sqlx::query_scalar("SELECT 1 FROM blocks WHERE id = ?")
-            .bind(*parent_id)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten();
-        if present.is_none() {
-            dangling.push(format!("{block_id} -> {parent_id}"));
-        }
-    }
+    let probe = probe_parent_edges(pool, parent_edges).await;
     tracing::error!(
         space_id = space_id.as_str(),
         edges_checked = parent_edges.len(),
-        dangling_parent_edges = ?dangling,
+        dangling_parent_edges = ?probe.dangling,
+        probes_failed = probe.probes_failed,
+        // `first_` in the name, not `probe_error`: when `probes_failed > 1` this is
+        // one sample, not the set, and a bare `probe_error` next to a count of 3
+        // reads as though all three failed that way (#4107 review).
+        first_probe_error = probe.first_error.as_deref().unwrap_or(""),
         error = %err,
         "#4083: the inbound projection rolled back on a foreign-key violation; \
          these `blocks.parent_id` edges point at ids the local `blocks` table \
-         does not hold (an empty list means the violating reference was not a \
-         changed block's parent)"
+         does not hold. An empty list means the violating reference was not a \
+         changed block's parent — but ONLY when `probes_failed` is 0; a non-zero \
+         count means this list is incomplete by that many edges and says nothing \
+         about them either way (#4107)"
     );
+}
+
+/// What [`probe_parent_edges`] could and could not establish.
+///
+/// The two fields are deliberately separate facts: `dangling` is what the probes
+/// *found*, `probes_failed` is how much of the answer is missing. Collapsing
+/// them — the pre-#4107 shape, where a failed probe simply did not append —
+/// makes a short list unreadable.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ParentEdgeProbe {
+    /// `"{block_id} -> {parent_id}"` for every edge whose parent the `blocks`
+    /// table does not hold.
+    dangling: Vec<String>,
+    /// How many probes could not be run to an answer. Every one of these is an
+    /// edge that is absent from `dangling` without being known to be present.
+    probes_failed: usize,
+    /// The first probe error, so the log says *why* rather than only how many.
+    /// Only the first: on a rolled-back write tx every probe tends to fail the
+    /// same way, and N copies of one message is noise, not evidence.
+    first_error: Option<String>,
+}
+
+/// Re-check each `block_id -> parent_id` edge against the (rolled-back,
+/// i.e. pre-transaction) `blocks` table.
+///
+/// Split from [`report_parent_fk_violation`] so the counting is assertable
+/// without a tracing subscriber: the logging half needs a live 787 to reach,
+/// which the caller's whole tx has to produce, while what #4107 is about is
+/// what the probe loop concludes.
+async fn probe_parent_edges(pool: &SqlitePool, parent_edges: &[(&str, &str)]) -> ParentEdgeProbe {
+    let mut probe = ParentEdgeProbe::default();
+    for (block_id, parent_id) in parent_edges {
+        // dynamic-sql: static-string existence probe on the #4083 787 diagnostic
+        // path; runtime form keeps this cold error-only query off the macro cache.
+        let present = sqlx::query_scalar::<_, i64>("SELECT 1 FROM blocks WHERE id = ?")
+            .bind(*parent_id)
+            .fetch_optional(pool)
+            .await;
+        match present {
+            Ok(Some(_)) => {}
+            Ok(None) => probe.dangling.push(format!("{block_id} -> {parent_id}")),
+            // NOT counted as dangling: a probe that could not run has established
+            // nothing about this edge, and guessing either way is what #4107 is
+            // about. It is counted as unknown instead.
+            Err(probe_err) => {
+                probe.probes_failed += 1;
+                probe
+                    .first_error
+                    .get_or_insert_with(|| probe_err.to_string());
+            }
+        }
+    }
+    probe
 }
 
 /// How the payload handed to [`import_and_project`] reached us — decides
@@ -2290,3 +2355,91 @@ pub struct BatchReplayOutcome {
 // #2621 Sync-D: `loro_sync_tests.rs` is hosted app-side by the `sync_protocol`
 // shim (`src/sync_protocol/mod.rs`) — it references app-only `Materializer` /
 // `recovery`, so the declaration lives in the app crate, not here.
+//
+// The module below is the exception, and only for what that arrangement cannot
+// reach: private helpers with no app-side dependency at all. A `pub(crate)` fn
+// is invisible from the app crate's test file, so the alternative would be
+// widening this module's surface for a test — which is the wrong direction.
+
+#[cfg(test)]
+mod tests {
+    use agaric_store::test_support::{insert_block, test_pool};
+
+    use super::*;
+
+    /// The ordinary answer: exactly the edges whose parent is missing, and a
+    /// clean `probes_failed` so the list can be read as complete.
+    #[tokio::test]
+    async fn probe_reports_only_the_edges_whose_parent_the_table_lacks() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "held-parent", "page", "", None, Some(0)).await;
+
+        let probe = probe_parent_edges(
+            &pool,
+            &[
+                ("child-a", "held-parent"),
+                ("child-b", "never-inserted"),
+                ("child-c", "held-parent"),
+            ],
+        )
+        .await;
+
+        assert_eq!(
+            probe.dangling,
+            vec!["child-b -> never-inserted".to_owned()],
+            "only the edge pointing at an id the `blocks` table does not hold is \
+             dangling; the other two name a row that is present"
+        );
+        assert_eq!(
+            probe.probes_failed, 0,
+            "every probe ran to an answer, which is what makes the list above \
+             readable as complete (#4107)"
+        );
+        assert_eq!(
+            probe.first_error, None,
+            "and there is no error to report alongside it"
+        );
+    }
+
+    /// #4107 — a probe that cannot run is counted, not silently read as
+    /// "the parent is present".
+    ///
+    /// The production hazard is a `SQLITE_BUSY` from the rolled-back write tx
+    /// this diagnostic runs immediately after: sqlx's `ROLLBACK` is queued on
+    /// drop and SQLite admits one writer, so a probe on another pooled
+    /// connection can fail. That race is not reproducible on demand, so the
+    /// failure is injected the one way that is deterministic — a closed pool,
+    /// which fails every `acquire` — because what is under test is the *shape*
+    /// of the conclusion: an empty `dangling` list next to a non-zero
+    /// `probes_failed` rather than an empty list that reads as "nothing wrong".
+    ///
+    /// Both parents below are rows the table genuinely lacks, so the pre-#4107
+    /// code and this one disagree on nothing except that: with `.ok()`
+    /// swallowing the error, the loop appended nothing and reported "0 dangling
+    /// edges" for two edges it had established nothing about.
+    #[tokio::test]
+    async fn a_probe_that_cannot_run_is_counted_rather_than_read_as_a_present_parent() {
+        let (pool, _dir) = test_pool().await;
+        pool.close().await;
+
+        let probe =
+            probe_parent_edges(&pool, &[("child-a", "parent-a"), ("child-b", "parent-b")]).await;
+
+        assert_eq!(
+            probe.probes_failed, 2,
+            "both probes failed and both must be counted; a diagnostic that cannot \
+             say how much it does not know invites the wrong conclusion (#4107)"
+        );
+        assert!(
+            probe.dangling.is_empty(),
+            "a failed probe establishes nothing about its edge, so it must not be \
+             reported as dangling either; got {:?}",
+            probe.dangling
+        );
+        assert!(
+            probe.first_error.is_some(),
+            "the first probe error is carried so the log says WHY the count is \
+             non-zero, not only that it is"
+        );
+    }
+}

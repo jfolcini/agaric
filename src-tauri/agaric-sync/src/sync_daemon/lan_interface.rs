@@ -195,7 +195,40 @@ pub(crate) struct LanInterface {
     /// The IPv4 address assigned to it.
     pub ip: Ipv4Addr,
     /// The CIDR prefix that came with the address.
+    ///
+    /// **Only meaningful once [`is_contiguous_netmask`] has passed on [`Self::netmask`]**
+    /// — see that field. [`rejection`] applies that gate before it reads this value, so
+    /// nothing downstream of a [`Verdict`] sees a prefix derived from a mask that does
+    /// not describe a subnet.
     pub prefix_len: u8,
+    /// The netmask that came with the address, carried verbatim (#4105).
+    ///
+    /// Not redundant with [`Self::prefix_len`], because on POSIX the prefix is *derived*
+    /// from this and the derivation cannot fail. `if-addrs` 0.15 computes it as
+    /// `netmask.octets().count_ones()` with **no contiguity check**
+    /// (`if-addrs-0.15.0/src/lib.rs:283`), so a non-contiguous mask yields a
+    /// plausible-looking prefix that describes no subnet at all: `255.0.255.0` arrives
+    /// here as `prefix_len == 16`. That value is not cosmetic — [`BindDecision::prefix_len`]
+    /// becomes `BindOpts::set_prefix_len`, the egress confinement that keeps the endpoint
+    /// LAN-only — so a fictitious prefix is a confinement boundary that is either too
+    /// narrow (real LAN peers unreachable) or too wide. Keeping the mask lets
+    /// [`rejection`] refuse such an interface instead of binding the fiction, and lets
+    /// [`BindDecision::passed_over`] name the mask in the log so the host is diagnosable.
+    ///
+    /// On Windows the direction is reversed and the check is a no-op: `prefixlen` is the
+    /// OS's own `IP_ADAPTER_UNICAST_ADDRESS.OnLinkPrefixLength` and `if-addrs`
+    /// *synthesises* the mask from it bit by bit, so it is contiguous by construction.
+    ///
+    /// **`prefix_len == 0` stays ambiguous, deliberately.** On POSIX `if-addrs`
+    /// substitutes `0.0.0.0` both for a NULL `ifa_netmask` — which `getifaddrs(3)`
+    /// documents as possible — and for a netmask that is not an `AF_INET` sockaddr
+    /// (`lib.rs:272`), so "the kernel said /0" and "there was no readable netmask" are
+    /// the same two values here and no check in this module can separate them. That is
+    /// not a gap this fix can close: the information is gone before the crate returns.
+    /// Both land on [`Verdict::PrefixTooBroad`] (a `/0` cannot confine egress either
+    /// way), which is the outcome either reading wants, and `0.0.0.0` *is* contiguous, so
+    /// the contiguity gate deliberately says nothing about it.
+    pub netmask: Ipv4Addr,
     /// The interface is operationally up — `if_addrs::IfOperStatus::Up`.
     ///
     /// **What that actually means, per platform**, because the RFC 2863 enum name is
@@ -224,16 +257,55 @@ pub(crate) struct LanInterface {
 
 impl LanInterface {
     /// Test/`decide` convenience constructor.
+    ///
+    /// The netmask is derived from `prefix_len`, so every fixture built this way is
+    /// contiguous — which is what the ordinary case is. The non-contiguous fixtures
+    /// #4105 needs are built with `tests::with_netmask`, which sets the two
+    /// independently and is the only way to spell the disagreement.
     #[cfg(test)]
     fn new(name: &str, ip: &str, prefix_len: u8) -> Self {
         Self {
             name: name.to_owned(),
             ip: ip.parse().expect("test literal is a valid IPv4 address"),
             prefix_len,
+            netmask: netmask_for_prefix(prefix_len),
             is_up: true,
             is_p2p: false,
         }
     }
+}
+
+/// The contiguous netmask `prefix_len` names — the inverse of `count_ones` on a
+/// well-formed mask.
+///
+/// Test-only: production reads the mask the OS reported and never reconstructs one, so
+/// that a disagreement between the two is visible rather than papered over.
+/// `pub(crate)` because `session_supervisor`'s tests build candidates too.
+#[cfg(test)]
+pub(crate) fn netmask_for_prefix(prefix_len: u8) -> Ipv4Addr {
+    // `u32::MAX << 32` is a shift overflow, so /0 is spelled out rather than shifted.
+    let bits = if prefix_len == 0 {
+        0
+    } else {
+        u32::MAX << (32 - u32::from(prefix_len.min(32)))
+    };
+    Ipv4Addr::from(bits)
+}
+
+/// Is `netmask` a well-formed netmask — set bits first, clear bits after, no gaps?
+///
+/// A mask is contiguous iff its leading one-bits and trailing zero-bits account for all
+/// 32 of them. `255.255.255.0` gives `24 + 8`; `0.0.0.0` gives `0 + 32`;
+/// `255.255.255.255` gives `32 + 0`. The non-contiguous `255.0.255.0` gives `8 + 8`,
+/// which is the case #4105 is about — `count_ones` calls it a `/16` and nothing
+/// downstream can tell that the `/16` describes no subnet the interface is on.
+///
+/// Stated as leading+trailing rather than the `!m + 1` power-of-two identity because the
+/// latter wraps to zero on `0.0.0.0` and so needs a special case for the one mask most
+/// likely to be a *substituted* value rather than a reported one.
+fn is_contiguous_netmask(netmask: Ipv4Addr) -> bool {
+    let bits = u32::from(netmask);
+    bits.leading_ones() + bits.trailing_zeros() == 32
 }
 
 /// Interface-name prefixes that name a *virtual* interface.
@@ -473,6 +545,19 @@ pub(crate) enum Verdict {
     /// A prefix broader than [`MIN_IPV4_PREFIX_LEN`], which `lan_only` would reject
     /// anyway because it cannot confine egress to a LAN.
     PrefixTooBroad,
+    /// The netmask has a gap in it, so no prefix length describes this interface's
+    /// subnet (#4105).
+    ///
+    /// A rejection, for the same reason [`Self::NotUp`] is one: the alternative is
+    /// binding a prefix that is *known* to be wrong. `if-addrs` derives the prefix by
+    /// counting set bits, so `255.0.255.0` arrives as a confident-looking `/16` and
+    /// becomes the egress-confinement boundary — either too narrow, and peers on the
+    /// real subnet are unreachable, or too wide. Refusing produces the loopback fallback
+    /// (loud, and it says sync is unreachable) or lets a sane interface win instead,
+    /// where binding the fiction is silent and wrong. The mask itself is in
+    /// [`BindDecision::passed_over`], because "not contiguous" without the value is not
+    /// something an operator can act on.
+    NetmaskNotContiguous,
     /// Rankable, but a virtual / point-to-point interface and a better class existed.
     PassedOverVirtual,
     /// Rankable, but a cellular WAN interface and a better class existed (#3869).
@@ -535,6 +620,9 @@ impl Verdict {
             Self::NotUnicast => "not a unicast host address",
             Self::HostRoute => "/32 host route — no on-link peers (VPN / point-to-point)",
             Self::PrefixTooBroad => "prefix too broad to describe a LAN",
+            Self::NetmaskNotContiguous => {
+                "netmask is not contiguous, so no prefix describes this subnet"
+            }
             Self::PassedOverVirtual => "virtual or point-to-point interface",
             Self::PassedOverCellular => "cellular WAN interface — no LAN peer is on it",
             Self::PassedOverCgnat => "CGNAT 100.64/10 — a carrier network, not a LAN",
@@ -568,6 +656,13 @@ fn rejection(candidate: &LanInterface) -> Option<Verdict> {
     }
     if ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast() || ip.is_documentation() {
         return Some(Verdict::NotUnicast);
+    }
+    // Before either prefix gate (#4105): both of those read `prefix_len`, and on a
+    // non-contiguous mask that value is `count_ones` of a mask with a gap in it — a
+    // number that passes or fails those gates for no reason connected to the interface's
+    // actual subnet. `255.0.255.0` sails through both as a `/16`.
+    if !is_contiguous_netmask(candidate.netmask) {
+        return Some(Verdict::NetmaskNotContiguous);
     }
     if candidate.prefix_len >= 32 {
         return Some(Verdict::HostRoute);
@@ -688,6 +783,11 @@ pub(crate) struct BindDecision {
     /// interface does not actually describe. An earlier revision clamped here as well,
     /// which was unreachable code: no value reaching this point can be below the
     /// minimum.
+    ///
+    /// And it is a prefix that genuinely came from a netmask: [`rejection`] refuses a
+    /// non-contiguous mask ([`Verdict::NetmaskNotContiguous`], #4105), so the
+    /// `count_ones` `if-addrs` performs cannot hand this field a number that describes
+    /// no subnet.
     pub prefix_len: u8,
     /// The selected LAN address, or `None` when this is the loopback fallback.
     ///
@@ -757,6 +857,21 @@ impl BindDecision {
             .iter()
             .filter(|(_, verdict)| *verdict != Verdict::Chosen)
             .map(|(candidate, verdict)| {
+                // A rejected-for-contiguity candidate reports the mask instead of the
+                // prefix (#4105). Its `prefix_len` is `count_ones` of a mask with a gap
+                // in it — a number that names no subnet — so printing it would put a
+                // confident `/16` in the audit line for an interface whose whole problem
+                // is that no prefix describes it, and would hide the one value an
+                // operator needs to recognise their own host.
+                if *verdict == Verdict::NetmaskNotContiguous {
+                    return format!(
+                        "{}={} netmask {} ({})",
+                        candidate.name,
+                        candidate.ip,
+                        candidate.netmask,
+                        verdict.reason()
+                    );
+                }
                 format!(
                     "{}={}/{} ({})",
                     candidate.name,
@@ -812,12 +927,25 @@ pub(crate) fn decide(candidates: Vec<LanInterface>, route_hint: Option<Ipv4Addr>
     }
 
     // Best class first; inside a class the default-route holder first; then enumeration
-    // order, which `min_by_key` preserves because the index is the final key.
-    let winner = rankable.iter().copied().min_by_key(|&idx| {
-        let candidate = &verdicts[idx].0;
-        let on_default_route = u8::from(route_hint != Some(candidate.ip));
-        (class(candidate), on_default_route, idx)
-    });
+    // order, which the index as the final key makes deterministic.
+    //
+    // `map(…).min()` rather than `min_by_key(…)` (#4116): `min_by_key` calls its key
+    // function on *each comparison*, so `class(candidate)` — up to 26 `starts_with`
+    // scans across `VIRTUAL_NAME_PREFIXES` + `CELLULAR_NAME_PREFIXES` — ran O(n log n)
+    // times instead of once per candidate. Materialising the key makes it linear and
+    // matches the loop below, which already reuses a materialised `class(candidate)`.
+    // The measured Pixel 8 enumerates 48 links; this still runs once per daemon start,
+    // not per sync, so the change is consistency rather than a measured win.
+    let winner = rankable
+        .iter()
+        .copied()
+        .map(|idx| {
+            let candidate = &verdicts[idx].0;
+            let on_default_route = u8::from(route_hint != Some(candidate.ip));
+            (class(candidate), on_default_route, idx)
+        })
+        .min()
+        .map(|(_, _, idx)| idx);
 
     let Some(winner) = winner else {
         return loopback_fallback(verdicts);
@@ -968,6 +1096,10 @@ fn host_candidates() -> Vec<LanInterface> {
                 name: iface.name.clone(),
                 ip: v4.ip,
                 prefix_len: v4.prefixlen,
+                // Carried, not recomputed: `prefixlen` is `count_ones` of this on POSIX,
+                // and the two disagree exactly when the mask has a gap in it — the case
+                // `rejection` refuses (#4105). See `LanInterface::netmask`.
+                netmask: v4.netmask,
                 is_up: iface.oper_status == if_addrs::IfOperStatus::Up,
                 is_p2p: iface.is_p2p,
             })
@@ -1057,6 +1189,21 @@ mod tests {
 
     fn down(mut iface: LanInterface) -> LanInterface {
         iface.is_up = false;
+        iface
+    }
+
+    /// Give a candidate a netmask that does not have to agree with its `prefix_len`
+    /// (#4105).
+    ///
+    /// `LanInterface::new` derives one from the prefix, which is the ordinary case and
+    /// cannot express the defect: on POSIX the prefix is `count_ones` of whatever mask
+    /// the kernel reported, so the fixture has to be able to say "this mask, that bit
+    /// count" — `255.0.255.0` with `prefix_len == 16`, which is exactly what `if-addrs`
+    /// hands us for that mask.
+    fn with_netmask(mut iface: LanInterface, netmask: &str) -> LanInterface {
+        iface.netmask = netmask
+            .parse()
+            .expect("test literal is a valid IPv4 netmask");
         iface
     }
 
@@ -2085,6 +2232,202 @@ mod tests {
             too_broad.verdicts.first().map(|(_, verdict)| *verdict),
             Some(Verdict::PrefixTooBroad),
             "and it must be attributed to its breadth, not lumped in with the rest"
+        );
+    }
+
+    // -- Non-contiguous netmasks (#4105) --------------------------------------
+
+    /// The predicate itself, over masks whose shape is not in doubt.
+    ///
+    /// The two ends are included deliberately: `0.0.0.0` (the value `if-addrs`
+    /// substitutes for an unreadable netmask) and `255.255.255.255` are both contiguous,
+    /// so the gate says nothing about them and they keep reaching the prefix rules that
+    /// already have an answer for them (`PrefixTooBroad` and `HostRoute`).
+    #[test]
+    fn contiguity_accepts_well_formed_masks_and_refuses_gaps() {
+        for mask in [
+            "0.0.0.0",         // /0 — also the "netmask unreadable" substitute
+            "128.0.0.0",       // /1
+            "254.0.0.0",       // /7 — a mask whose last set bit is mid-octet
+            "255.0.0.0",       // /8
+            "255.255.240.0",   // /20
+            "255.255.255.0",   // /24
+            "255.255.255.255", // /32
+        ] {
+            let mask: Ipv4Addr = mask.parse().expect("test literal parses");
+            assert!(
+                is_contiguous_netmask(mask),
+                "{mask} is a well-formed netmask and must be accepted"
+            );
+        }
+
+        for (mask, count_ones) in [
+            ("255.0.255.0", 16),   // the issue's example: reads as a plausible /16
+            ("255.255.0.255", 24), // and this one as a plausible /24
+            ("0.255.255.255", 24), // set bits at the wrong end entirely
+            ("255.255.255.1", 25), // one stray host bit
+            ("253.0.0.0", 7),      // a gap inside the first octet
+            ("255.255.254.1", 24), // gap plus a stray bit
+        ] {
+            let parsed: Ipv4Addr = mask.parse().expect("test literal parses");
+            assert!(
+                !is_contiguous_netmask(parsed),
+                "{mask} has a gap in it and describes no subnet, yet `if-addrs` would \
+                 report it as a confident /{count_ones}"
+            );
+            assert_eq!(
+                u32::from(parsed).count_ones(),
+                count_ones,
+                "the fixture's own claim about what `if-addrs` derives from {mask} must \
+                 be true, or this test is arguing with itself"
+            );
+        }
+    }
+
+    /// A non-contiguous mask is rejected outright, not bound as its bit count.
+    ///
+    /// `if-addrs` derives the prefix with `count_ones` and no contiguity check
+    /// (`if-addrs-0.15.0/src/lib.rs:283`), so `255.0.255.0` arrives as `prefix_len == 16`
+    /// — a value that passes both prefix gates and would become
+    /// `BindOpts::set_prefix_len(16)`: the egress-confinement boundary, describing a
+    /// block the interface is not on. The whole point of the rejection is that the
+    /// fictitious prefix never reaches the bind.
+    #[test]
+    fn a_non_contiguous_netmask_is_rejected_rather_than_bound_as_its_bit_count() {
+        let decision = decide(
+            vec![with_netmask(
+                LanInterface::new("eth0", "10.1.2.3", 16),
+                "255.0.255.0",
+            )],
+            None,
+        );
+
+        assert_eq!(
+            decision.lan_ip, None,
+            "the only candidate's mask describes no subnet, so there is nothing to bind"
+        );
+        assert_eq!(
+            decision.verdicts.first().map(|(_, verdict)| *verdict),
+            Some(Verdict::NetmaskNotContiguous),
+            "and it must be attributed to the mask, not to breadth or to a host route"
+        );
+        assert_eq!(
+            decision.bind,
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+            "the loopback fallback, which is loud, rather than a /16 the interface never \
+             described"
+        );
+        assert_eq!(decision.level, Level::Warn);
+
+        // The mask, not the fictitious prefix: "not contiguous" with no value is not
+        // something an operator can match against their own `ip -4 addr` output.
+        let passed_over = decision.passed_over();
+        assert!(
+            passed_over.contains("eth0=10.1.2.3 netmask 255.0.255.0"),
+            "the log line must name the mask so the host is diagnosable, got: \
+             {passed_over}"
+        );
+        // And say why. Without this, `Verdict::NetmaskNotContiguous`'s `reason()` arm
+        // is the one string in that match no test reads, so it could be reworded into
+        // any other verdict's reason — or into "chosen" — and stay green.
+        assert!(
+            passed_over.contains("netmask is not contiguous"),
+            "the audit line must give the reason as well as the value, got: \
+             {passed_over}"
+        );
+        assert!(
+            !passed_over.contains("10.1.2.3/16"),
+            "and it must NOT print the `count_ones` prefix, which describes nothing and \
+             would read as a fact about the subnet, got: {passed_over}"
+        );
+    }
+
+    /// The contiguity gate runs *before* the prefix gates, and that ordering is the
+    /// diagnostic (#4105).
+    ///
+    /// Measured gap, not a hypothetical: moving the gate below the two `prefix_len`
+    /// checks leaves the test above green, because `255.0.255.0` counts to 16 and 16
+    /// passes both of them either way. So nothing pinned the position, and the position
+    /// is what decides which reason an operator is handed.
+    ///
+    /// `253.0.0.0` is the case that separates them. It is `11111101 …` — a gap in the
+    /// first octet — and `count_ones` calls it a `/7`, which is *below*
+    /// [`MIN_IPV4_PREFIX_LEN`]. With the gate first the verdict names the mask; with the
+    /// gate last, `PrefixTooBroad` fires first and [`BindDecision::passed_over`] prints
+    /// `eth0=10.1.2.3/7` — a confident prefix for an interface whose whole problem is
+    /// that no prefix describes it, and the exact misleading audit line #4105 exists to
+    /// prevent. The bind outcome is a rejection under both orderings; only the reason
+    /// changes, which is precisely why no other test can catch this.
+    #[test]
+    fn a_mask_whose_bit_count_also_fails_the_prefix_gate_is_still_named_as_the_mask() {
+        // Precondition, asserted rather than assumed: the bit count really does land
+        // under the prefix floor, or the two orderings agree and this pins nothing.
+        let count_ones = u32::from("253.0.0.0".parse::<Ipv4Addr>().expect("literal parses"))
+            .count_ones()
+            .try_into()
+            .expect("a 32-bit popcount fits in u8");
+        assert!(
+            count_ones < MIN_IPV4_PREFIX_LEN,
+            "253.0.0.0 must count to fewer than {MIN_IPV4_PREFIX_LEN} bits for this test \
+             to distinguish the two orderings; got /{count_ones}"
+        );
+
+        let decision = decide(
+            vec![with_netmask(
+                LanInterface::new("eth0", "10.1.2.3", count_ones),
+                "253.0.0.0",
+            )],
+            None,
+        );
+
+        assert_eq!(
+            decision.verdicts.first().map(|(_, verdict)| *verdict),
+            Some(Verdict::NetmaskNotContiguous),
+            "the mask is what is wrong with this interface; `PrefixTooBroad` would be a \
+             true statement about a number that describes nothing"
+        );
+        let passed_over = decision.passed_over();
+        assert!(
+            passed_over.contains("eth0=10.1.2.3 netmask 253.0.0.0"),
+            "and the audit line must carry the mask, got: {passed_over}"
+        );
+        assert!(
+            !passed_over.contains("10.1.2.3/"),
+            "never the derived prefix — that is the line the reordering would produce, \
+             got: {passed_over}"
+        );
+    }
+
+    /// The rejection is a rejection, so a sane NIC alongside it still wins — and the
+    /// bind takes *that* interface's prefix.
+    ///
+    /// A candidate whose mask is malformed must not be able to affect the outcome for
+    /// the ones whose masks are fine, which is the property that makes rejecting it
+    /// safe.
+    #[test]
+    fn a_sane_nic_is_chosen_alongside_an_interface_with_a_broken_netmask() {
+        let decision = decide(
+            vec![
+                with_netmask(LanInterface::new("eth0", "10.1.2.3", 16), "255.0.255.0"),
+                LanInterface::new("wlp2s0", "192.160.160.80", 24),
+            ],
+            None,
+        );
+
+        assert_eq!(
+            decision.lan_ip,
+            Some("192.160.160.80".parse::<Ipv4Addr>().unwrap()),
+            "the interface with a usable netmask must win; passed over: {}",
+            decision.passed_over()
+        );
+        assert_eq!(
+            decision.prefix_len, 24,
+            "and the confinement boundary is the winner's own prefix"
+        );
+        assert_eq!(
+            decision.verdicts.first().map(|(_, verdict)| *verdict),
+            Some(Verdict::NetmaskNotContiguous),
+            "the broken interface is still reported, not silently dropped"
         );
     }
 
