@@ -49,6 +49,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 })
 
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
+import { i18n, t } from '@/lib/i18n'
 import {
   invalidateNameCaches,
   notifyPageRemoved,
@@ -831,6 +832,75 @@ describe('searchPages — short query (<=2 chars)', () => {
     expect(result.current.pagesListRef.current).toEqual([{ id: 'P30', title: '' }])
   })
 
+  // #4153 item 1 — a whitespace-only title (not just NULL/`''`) must also
+  // render the placeholder. The pre-fix test was `title === ''`, which is
+  // exact-empty: a `'   '` title fails that test and used to render as a
+  // blank, unlabelled picker row instead of "Untitled".
+  it('renders the "Untitled" placeholder for a whitespace-only page title, not a blank label (#4153)', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      {
+        id: 'P31',
+        content: '   ',
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    expect(items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'P31', label: t('block.untitled') })]),
+    )
+  })
+
+  // #4153 item 2 — the placeholder must be routed through the LIVE i18n
+  // instance (`translate('block.untitled')`), not a hardcoded English
+  // literal. Asserting against `t('block.untitled')` alone would pass just
+  // as well against a hardcoded `'Untitled'` literal, because this app's
+  // single-locale (`en`) catalog happens to hold that exact string — so
+  // that alone is not proof of routing. Overriding the catalog entry at
+  // runtime and asserting the OVERRIDDEN value shows up is: it can only
+  // pass if the production code actually calls into the i18n instance for
+  // this string, at call time, rather than embedding English text.
+  it('routes the placeholder through the live i18n instance, not a hardcoded literal (#4153)', async () => {
+    const original = i18n.t('block.untitled')
+    i18n.addResource('en', 'translation', 'block.untitled', 'UNTITLED_OVERRIDE_4153')
+    try {
+      mockedListAllPagesInSpace.mockResolvedValueOnce([
+        {
+          id: 'P32',
+          content: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+        },
+      ])
+
+      const { result } = renderHook(() => useBlockResolve())
+
+      let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+      await act(async () => {
+        items = await result.current.searchPages('')
+      })
+
+      expect(items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'P32', label: 'UNTITLED_OVERRIDE_4153' }),
+        ]),
+      )
+    } finally {
+      i18n.addResource('en', 'translation', 'block.untitled', original)
+    }
+  })
+
   // #4138 item 1, continued — a direct consequence of the seed no longer
   // baking "Untitled" text into the title: a short-query substring search
   // for "un" used to match a NULL-content page (because its stored title
@@ -838,6 +908,12 @@ describe('searchPages — short query (<=2 chars)', () => {
   // full-text index has nothing to match ("un" doesn't appear anywhere in a
   // NULL/empty content column). Confirms the placeholder no longer leaks
   // into the searchable text.
+  //
+  // #4152 considered inverting this (matching the DISPLAYED "Untitled"
+  // placeholder), but that is an open product question the issue itself
+  // declines to settle (labelled `idea`, zero comments, #4154 explicitly
+  // filed-not-implemented) — not something this session has standing to
+  // decide by flipping the assertion #4150 deliberately locked in.
   it('does NOT match a NULL-content page by searching its "Untitled" placeholder text', async () => {
     mockedListAllPagesInSpace.mockResolvedValueOnce([
       {
@@ -2343,6 +2419,36 @@ describe('searchPages — alias prefix matching', () => {
     })
   })
 
+  // #4153 item 1 — same "same class of gap" the issue calls out for this
+  // function: it mapped only `null` (`title ?? 'Untitled'`), so a
+  // whitespace-only alias title produced a label starting with
+  // `" (alias: …)"` instead of the placeholder.
+  it('handles a whitespace-only alias title as "Untitled" (#4153)', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    mockedListPageAliasesByPrefix.mockResolvedValueOnce([['ALIAS_PAGE_4', 'blank-page', '   ']])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('blank-page')
+    })
+
+    const nonCreate = items.find((i) => !i.isCreate)
+    expect(nonCreate).toEqual({
+      id: 'ALIAS_PAGE_4',
+      label: `${t('block.untitled')} (alias: blank-page)`,
+      isAlias: true,
+      aliasText: 'blank-page',
+    })
+  })
+
   it('does not call listPageAliasesByPrefix for empty query', async () => {
     const { result } = renderHook(() => useBlockResolve())
 
@@ -2823,6 +2929,51 @@ describe('searchBlockRefs — icons', () => {
     expect(items[0]?.breadcrumb).toBe('Page A')
     expect(items[1]?.breadcrumb).toBe('Page B')
     expect(items[2]?.breadcrumb).toBeUndefined()
+  })
+
+  // #4153 item 2 — the `((` block-ref picker's own null-content fallback
+  // must also route through the live i18n instance, not a hardcoded
+  // English literal. Same runtime-override technique as the page-picker
+  // proof above: only passes if the production code calls into i18n at
+  // call time for this string.
+  it('routes null block content through the live i18n instance, not a hardcoded literal (#4153)', async () => {
+    const original = i18n.t('block.untitled')
+    i18n.addResource('en', 'translation', 'block.untitled', 'UNTITLED_OVERRIDE_4153_BR')
+    try {
+      mockedSearchBlocks.mockResolvedValueOnce({
+        items: [
+          {
+            id: 'BR3',
+            block_type: 'block',
+            content: null,
+            parent_id: null,
+            position: 0,
+            deleted_at: null,
+            todo_state: null,
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+            page_id: null,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      const { result } = renderHook(() => useBlockResolve())
+
+      let items: Awaited<ReturnType<typeof result.current.searchBlockRefs>> = []
+      await act(async () => {
+        items = await result.current.searchBlockRefs('some block')
+      })
+
+      expect(items).toEqual([
+        expect.objectContaining({ id: 'BR3', label: 'UNTITLED_OVERRIDE_4153_BR' }),
+      ])
+    } finally {
+      i18n.addResource('en', 'translation', 'block.untitled', original)
+    }
   })
 })
 
