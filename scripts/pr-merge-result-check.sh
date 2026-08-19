@@ -583,14 +583,17 @@ run_one_guard() {
 
 # Where to borrow an already-installed `node_modules` from.
 #
-# `MR_NODE_MODULES` exists so the self-test can point every fixture repo at
+# `MR_NODE_MODULES` exists so the self-test can point a fixture repo at
 # THIS repo's install (a scratch fixture in /tmp has none of its own, and
 # `npm ci`-ing one per fixture would put the network in the middle of a prek
 # hook). CI never sets it: the default — the caller repo's own toplevel,
 # which the workflow has just run `npm ci` in — is the path that actually
-# ships, so the fixtures below deliberately leave it unset and seed a
-# `node_modules` symlink in the fixture root instead. An env override that
-# only the test uses is an env override the test cannot prove anything about.
+# ships, so most fixtures below leave it unset and seed a `node_modules`
+# symlink in the fixture root instead, which exercises the DEFAULT branch.
+# The override branch itself is exercised too (#4169 follow-up 3, the
+# "typecheck-mr-node-modules-override" fixture below): a fixture with NO
+# symlink of its own, borrowing purely through this env var, proving it is
+# actually honored rather than read-and-ignored.
 resolve_node_modules_source() {
   local src="${MR_NODE_MODULES:-}"
   if [ -z "$src" ]; then
@@ -618,6 +621,14 @@ resolve_node_modules_source() {
 # Node resolves symlinks by default, so each borrowed package finds its own
 # dependencies back in the borrowed install — the same mechanism npm
 # workspaces rely on.
+#
+# #4169 (follow-up 5): this deliberately diverges from scripts/seed-worktree.sh
+# (its node_modules step, ~line 108 on), which gives a worktree a whole-TREE
+# symlink and hard-errors on a REAL node_modules directory (issue #3171 --
+# `ln -s` nesting inside it produces confusing TS2688 vite/client + node
+# failures). That divergence is intentional, for the reason above
+# (tsBuildInfoFile under ./node_modules/.tmp/), not something to reconcile by
+# copying either shape into the other.
 provision_node_modules() {
   local workdir="$1" src="$2"
   # `src/*/` expands to package and @scope directories; `.bin` is named
@@ -657,16 +668,31 @@ provision_node_modules() {
 # is sound), 1 when they do not (borrowing would type-check the merge
 # against the wrong dependency set).
 #
-# A lockfile MISSING on either side is "agree", not "disagree". A merged
-# tree with no `package-lock.json` makes no dependency claim for the
-# borrowed install to contradict, and whether a tree ought to have one is
-# some other lane's business, not this stage's — this stage answers "does
-# it compile". Fixtures rely on this: a scratch repo in /tmp has no
-# lockfile of its own and must still be able to borrow.
+# A lockfile MISSING on either side is "agree", not "disagree" — WITH ONE
+# EXCEPTION (#4169 follow-up 2). A merged tree that never had a
+# `package-lock.json` makes no dependency claim for the borrowed install to
+# contradict, and whether a tree ought to have one is some other lane's
+# business, not this stage's — this stage answers "does it compile".
+# Fixtures rely on this: a scratch repo in /tmp has no lockfile of its own
+# and must still be able to borrow.
+#
+# But a merged tree whose lockfile EXISTED on either parent and is simply
+# GONE from the merge result is a different claim entirely: the merge
+# deleted it. Borrowing there would type-check "the ACTUAL merge" against a
+# dependency set the merge no longer declares — a half verdict rendered as a
+# full one. `base_tip`/`head_sha` distinguish the two: checked against the
+# MERGED workdir's own object store (a shared clone, so both are reachable
+# from it), not against the working tree, so this needs no extra checkout.
 lockfiles_agree() {
-  local workdir="$1" src_root="$2"
+  local workdir="$1" src_root="$2" base_tip="$3" head_sha="$4"
   local a="$workdir/package-lock.json" b="$src_root/package-lock.json"
-  [ -f "$a" ] || return 0
+  if [ ! -f "$a" ]; then
+    if git -C "$workdir" cat-file -e "${base_tip}:package-lock.json" 2>/dev/null ||
+       git -C "$workdir" cat-file -e "${head_sha}:package-lock.json" 2>/dev/null; then
+      return 1
+    fi
+    return 0
+  fi
   [ -f "$b" ] || return 0
   cmp -s "$a" "$b"
 }
@@ -682,7 +708,7 @@ lockfiles_agree() {
 # itself: a merge can change what "typecheck" means, and the merged tree's
 # definition is the one that matters.
 run_typecheck() {
-  local workdir="$1"
+  local workdir="$1" base_tip="$2" head_sha="$3"
 
   if [ ! -f "$workdir/package.json" ]; then
     echo "pr-merge-result-check: the merged tree has no package.json, so there is no" >&2
@@ -723,7 +749,7 @@ process.exit(p.scripts && p.scripts.typecheck ? 0 : 1)
   fi
   src_root=$(dirname "$src")
 
-  if lockfiles_agree "$workdir" "$src_root"; then
+  if lockfiles_agree "$workdir" "$src_root" "$base_tip" "$head_sha"; then
     if ! provision_node_modules "$workdir" "$src"; then
       echo "pr-merge-result-check: could not link the borrowed node_modules ($src)" >&2
       echo "  into the merged worktree, or it is empty. NOTHING was type-checked." >&2
@@ -1005,8 +1031,18 @@ run_merge_check() {
   # `node_modules/`, so the order is belt-and-braces rather than load-bearing
   # — but "the cheap read-only checks all ran before anything mutated the
   # tree" is a property worth not having to re-derive later.
+  #
+  # #4169 follow-up 4: gated on the two verdicts below that ALREADY return
+  # before `typecheck_rc` is ever consulted (`missing` at 3, `failures` at 1,
+  # both further down). Running the tsc invocation (~8 s in CI, plus the
+  # `npm run` startup cost) when its result cannot change the exit code pays
+  # for a verdict without using it. Every current exit code is byte-identical
+  # with this gate in place — `missing`/`failures` still win the same way
+  # below, `typecheck_rc` simply stays 0 (never consulted on those paths).
   local typecheck_rc=0
-  run_typecheck "$workdir" || typecheck_rc=$?
+  if [ -z "$missing" ] && [ "$failures" -eq 0 ]; then
+    run_typecheck "$workdir" "$base_tip" "$head_sha" || typecheck_rc=$?
+  fi
 
   mr_cleanup "$workdir" "$parent"
 
@@ -1677,6 +1713,38 @@ EOF
   git -C "$dir" checkout --quiet main
 }
 
+# #4169 follow-up 2: the shape `lockfiles_agree` used to mishandle. `main`
+# DELETES `package-lock.json`; `pr` branches from the commit BEFORE that
+# deletion and never touches the file, adding an unrelated change instead —
+# so the merge (delete on one side, no change on the other) auto-resolves to
+# DELETED with no textual conflict, exactly like a PR whose merge drops the
+# lockfile. `pr`'s own tip still carries the file, which is what lets the OLD
+# `[ -f "$a" ] || return 0` be fooled: `a` (the merged tree's copy) is gone,
+# so the old code called that "agreement" and borrowed the caller's install
+# anyway — the fix instead has to notice the file existed on EITHER parent.
+mr_make_lockfile_deleted_repo() {
+  local dir="$1"
+  git_scratch_init "$dir"
+  mkdir -p "$dir/src-tauri/src"
+  mr_seed_guards "$dir"
+  printf 'pub fn noop() {}\n' > "$dir/src-tauri/src/lib.rs"
+  : > "$dir/src-tauri/dynamic-sql-baseline.txt"
+  printf '{\n  "name": "x",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {}\n}\n' \
+    > "$dir/package-lock.json"
+  git -C "$dir" add -A
+  git -C "$dir" commit --quiet -m base
+  git -C "$dir" branch pr
+
+  git -C "$dir" rm -q package-lock.json
+  git -C "$dir" commit --quiet -m 'main: drop package-lock.json'
+
+  git -C "$dir" checkout --quiet pr
+  printf 'pub fn extra() {}\n' > "$dir/src-tauri/src/extra.rs"
+  git -C "$dir" add -A
+  git -C "$dir" commit --quiet -m 'pr: unrelated change, lockfile untouched (still present on this tip)'
+  git -C "$dir" checkout --quiet main
+}
+
 run_self_test() {
   local tmp
   tmp=$(mktemp -d -t pr-merge-result-check-selftest.XXXXXX)
@@ -1999,9 +2067,21 @@ STUB
   # every merge-result run into exit 3, permanently, for a reason its own
   # log would report correctly and nobody would read.
   st_expect 'and the merge-result job installs the node_modules the typecheck borrows' \
-    '1' "$(sed -n '/^  merge-result:/,$p' "$wf" | grep -c '^ *run: npm ci$' || true)"
+    '1' "$(sed -n '/^  merge-result:/,$p' "$wf" | grep -c '^ *if ! npm ci; then$' || true)"
   st_expect 'and sets up Node to do it with' \
     '1' "$(sed -n '/^  merge-result:/,$p' "$wf" | grep -c 'actions/setup-node@' || true)"
+  # #4169 follow-up 1: a bare `run: npm ci` bypassed the exit-code contract —
+  # an install failure turned the job red at a step with no summary at all,
+  # one step upstream of the script every OTHER failure mode routes through.
+  # Pinned structurally: the install step no longer reads as a single bare
+  # `run: npm ci` line, and it renders the SAME "VERIFIED NOTHING" heading the
+  # Verify step's own exit-3 branch uses, plus its own `::error::` annotation.
+  st_expect 'the Install step is no longer a bare, un-gated `run: npm ci`' \
+    '0' "$(grep -c '^ *run: npm ci$' "$wf" || true)"
+  st_expect 'and on failure it renders a "VERIFIED NOTHING" summary, same heading as the exit-3 branch below' \
+    '2' "$(grep -c 'Merge-result check: VERIFIED NOTHING' "$wf" || true)"
+  st_expect 'and it fails the step (a runner-side install failure must stay red, not warn-and-pass)' \
+    '1' "$(sed -n '/^      - name: Install npm dependencies$/,/^      - name: Verify the merge result/p' "$wf" | grep -c '::error::pr-merge-result-check: npm ci failed' || true)"
   # `always()` also fires on a CANCELLED run, and this workflow sets
   # `concurrency.cancel-in-progress: true` — so `always()` was the wrong
   # primitive: it would let a superseded run's merge-result job start
@@ -2390,6 +2470,67 @@ STUB
   ( cd "$tsemptynm" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsemptynm.err"; rc2=$?
   st_expect 'an EMPTY node_modules is also exit 3, not a tree of phantom type errors' \
     '3' "$rc2"
+
+  # #4169 follow-up 2: a merge that DELETES package-lock.json must never
+  # silently borrow the caller's install and report a pass — that would
+  # type-check the merge against a dependency set it no longer declares.
+  # `lockfiles_agree` now has to notice the file existed on either parent and
+  # refuse to borrow; the merged tree still has no lockfile of its own for
+  # `npm ci` to install FROM (see the `else` branch of run_typecheck), so the
+  # correct outcome is exit 3 (verified nothing), not exit 0 (a false pass)
+  # and not exit 4 (a false "does not compile" — nothing was type-checked at
+  # all).
+  local lockdel="$tmp/lockfile-deleted-by-merge"
+  mkdir -p "$lockdel"
+  mr_make_lockfile_deleted_repo "$lockdel"
+  ( cd "$lockdel" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/lockdel.err"; rc2=$?
+  st_expect 'a merge that DELETES package-lock.json is never a silent pass — exit 3, not 0' \
+    '3' "$rc2"
+  st_expect 'and the cause is the install, not a phantom type error' \
+    '1' "$(grep -c 'npm ci` FAILED in the merged tree' "$tmp/lockdel.err" || true)"
+
+  # #4169 follow-up 3: MR_NODE_MODULES is read (resolve_node_modules_source)
+  # but nothing had ever SET it — an override only the test uses is one the
+  # test cannot prove anything about. Exercised here: the fixture's OWN
+  # node_modules symlink is removed (same technique as tsnonm above, which
+  # proves the DEFAULT resolution fails without it), and MR_NODE_MODULES is
+  # pointed at this repo's real install instead. If the override were dead —
+  # read but never honored — this would fall back to the same "no installed
+  # node_modules" exit-3 shape as tsnonm; honoring it instead reaches a real
+  # verdict (exit 0: mr_make_clean_repo's own typecheck fixture is trivially
+  # valid).
+  local mrnm="$tmp/typecheck-mr-node-modules-override"
+  mkdir -p "$mrnm"
+  mr_make_clean_repo "$mrnm"
+  rm -f "$mrnm/node_modules"
+  ( cd "$mrnm" && MR_NODE_MODULES="$REPO_ROOT/node_modules" bash "$SELF" main pr ) \
+    >/dev/null 2>"$tmp/mrnm.err"; rc2=$?
+  st_expect 'MR_NODE_MODULES, when set, is actually honored as the borrow source' \
+    '0' "$rc2"
+  st_expect 'and it does NOT fall back to "no node_modules to borrow" (which removing only the fixture symlink produces, per tsnonm above)' \
+    '0' "$(grep -c 'no installed .node_modules. to type-check against' "$tmp/mrnm.err" || true)"
+
+  # #4169 follow-up 4: `run_typecheck` must not be PAID FOR (~8 s of tsc,
+  # plus an `npm run` startup) when its result cannot change the verdict — a
+  # `missing`-guard verdict (exit 3) already wins regardless of
+  # `typecheck_rc`. Reuses the `noguards` shape (RATCHET_GUARDS entries
+  # absent from the merged tree) with node_modules ALSO removed: if
+  # `run_typecheck` were still invoked unconditionally, it would hit
+  # `resolve_node_modules_source` failing and print its own "no installed
+  # node_modules" diagnostic — that string's ABSENCE from stderr is what
+  # proves the call was skipped, not merely that the exit code held steady
+  # (the exit code is unchanged by design, per the issue).
+  local missingskip="$tmp/typecheck-skipped-when-guards-missing"
+  mkdir -p "$missingskip"
+  mr_make_near_miss_repo "$missingskip"
+  git -C "$missingskip" rm -q -r scripts
+  git -C "$missingskip" commit --quiet -m 'the guard scripts are gone too'
+  rm -f "$missingskip/node_modules"
+  ( cd "$missingskip" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/missingskip.err"; rc2=$?
+  st_expect 'missing ratchet guards still exits 3 — the gate must not change this verdict' \
+    '3' "$rc2"
+  st_expect 'and the typecheck stage was SKIPPED, not invoked-and-ignored (no node_modules diagnostic reaches stderr)' \
+    '0' "$(grep -c 'no installed .node_modules. to type-check against' "$tmp/missingskip.err" || true)"
 
   # ── 4. THE REAL REPOSITORY is untouched ──────────────────────────────────
   local repo_root
