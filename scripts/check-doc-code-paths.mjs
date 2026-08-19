@@ -72,6 +72,11 @@
 //     `--update-baseline`, so the baseline can only ever shrink, never
 //     silently keep phantom cover for a citation that already moved on.
 //
+// #4135's bare-filename widening (`BARE_CODE_CITATION_RE`, below) uses the
+// SAME baseline and the same two failure modes; it added 142 pre-existing
+// (file, ref) pairs, carrying their own `reason` string so the two intakes
+// stay distinguishable in the file. #4181 tracks burning those down.
+//
 // ─── The two working-tree reads this guard used to carry (#4017) ─────────
 //
 // It enumerated with `git ls-files` (the index) and then judged with
@@ -325,6 +330,92 @@ function extractCandidates(text) {
   return found
 }
 
+// #4135 — a code citation written as a BARE FILENAME with a line number,
+// e.g. `` `session_supervisor.rs:708-716` ``, carries no repo-rooted prefix
+// at all, so `isLocalPathCandidate`'s `PATH_PREFIX_RE` gate above treats it
+// exactly like `` `Cargo.toml` `` or `` `README.md` `` — an ordinary prose
+// mention — and silently skips it. That is the shape prose most naturally
+// takes once a paragraph has already named the file once (`docs/architecture/`
+// is full of it), and it is also the shape most likely to rot: a bare
+// filename carries no signal about which crate/dir it lives in after a move,
+// and this repo has already done one crate split (#882). `threat-model.md`
+// once cited `session_supervisor.rs:708-716` for behaviour that had moved
+// entirely into `lan_interface.rs` — wrong file, not merely a drifted line
+// number — and no guard could see it; a human reading the source caught it
+// on the third review pass.
+//
+// Resolving the bare name against the tracked tree (rather than flagging the
+// form outright) was considered and rejected: `mod.rs`, `error.rs` and
+// `tests.rs` each exist under several directories in this repo, so a naive
+// resolution is either an arbitrary first match or a false positive whenever
+// more than one candidate exists. So the FORM is the rule instead — a code
+// citation with a line number must be repo-rooted, full stop — which is also
+// what a reader actually wants from the citation.
+//
+// Scoped to citations that carry a LINE NUMBER (`:N` / `:N-M`, the same
+// trailing-suffix grammar `isLocalPathCandidate` strips): a bare mention with
+// no line number (`` `error.rs` ``) is genuinely ambiguous prose ("the file
+// handling errors") in a way `error.rs:42` is not, and flagging every bare
+// filename mention with no signal beyond its name would be far noisier for
+// far less benefit. The extension list matches the languages this repo's own
+// code actually lives in (Rust, TS/TSX, the JS script variants, Python,
+// shell, SQL migrations, TOML config) — narrow on purpose, so an unrelated
+// dotted token that happens to end in a real extension after a `:digit`
+// (unlikely, but see `isLocalPathCandidate`'s own prose-tell list) stays the
+// only false-positive surface.
+//
+// WHAT THIS STILL DOES NOT SEE, stated rather than implied — #4135's framing
+// is "a code citation with a line number must be repo-rooted", and this
+// pattern only enforces the BARE end of that:
+//
+//   - A PARTIALLY-ROOTED citation — `pagination/mod.rs:658-668`,
+//     `agaric-store/src/query/engine.rs:229`, `ui/sidebar.tsx:865` — has a
+//     slash, so `BARE_CODE_CITATION_RE` (which forbids one, by anchoring on
+//     a single filename) skips it; and its first segment is not one of
+//     `PATH_PREFIX_RE`'s roots, so `isLocalPathCandidate` skips it too. It
+//     falls between the two gates and is invisible to exactly the same
+//     drift the bare form is — arguably more so, since a crate-relative
+//     prefix reads as authoritative while naming no crate. 58 (file, ref)
+//     pairs across 17 files carry this shape today; #4184 tracks closing it,
+//     which needs its own baseline and is a strictly larger content sweep
+//     than the one #4135 already defers.
+//   - A citation inside a FENCED CODE BLOCK. Like `extractCandidates` above,
+//     this scans the whole judged text, fences included, so a doc that
+//     DEMONSTRATES a bad citation inside a ``` block would be flagged for
+//     the demonstration. No such case exists in the tree today (checked),
+//     and the behaviour is deliberately identical to the pre-existing
+//     extraction rather than a second, divergent notion of "in scope" — but
+//     it is the shape to reach for a repo-rooted example in, if one is ever
+//     needed. `docs/session-log/` is excluded from the scan entirely, so a
+//     session log quoting a bad citation is already safe.
+const BARE_CODE_CITATION_RE =
+  /^([A-Za-z0-9][A-Za-z0-9_.-]*\.(?:rs|tsx?|mjs|cjs|jsx?|py|sh|sql|toml)):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)$/
+
+/**
+ * Every inline-code-span citation in `text` matching the bare-filename shape
+ * `BARE_CODE_CITATION_RE` describes — a citation this guard's normal
+ * candidate extraction never even sees, since it is gated out before
+ * `isLocalPathCandidate` returns. Returned as the raw citation text itself
+ * (there is nothing to resolve — the form IS the violation), deduplicated the
+ * same way `extractCandidates` dedupes its own candidates.
+ *
+ * Only inline code spans are scanned, not markdown link targets: a bare
+ * filename is not a valid relative link target to begin with (there is
+ * nothing for a browser or GitHub's renderer to resolve it against), so that
+ * shape does not occur in `](…)` targets in practice — see the "how it
+ * surfaced" citations above, all of which are inline code spans.
+ *
+ * @param {string} text
+ */
+function extractBareCitations(text) {
+  const found = new Set()
+  for (const match of text.matchAll(/`([^`\n]{2,200})`/g)) {
+    const raw = (match[1] ?? '').trim()
+    if (BARE_CODE_CITATION_RE.test(raw)) found.add(raw)
+  }
+  return found
+}
+
 function resolveAgainstDoc(_docFile, ref) {
   // Every candidate is already gated through `PATH_PREFIX_RE` so it's
   // repo-rooted by construction. Normalise to strip any redundant `./`
@@ -436,8 +527,24 @@ function computeMisses() {
       // deleted from the working tree without a `git rm` (see the header).
       const onDisk = chosen.source === SOURCE_INDEX ? null : existsSync(join(REPO_ROOT, resolved))
       if (!isTracked || onDisk === false) {
-        misses.push({ doc: citingFile, ref, resolved, onDisk, tracked: isTracked })
+        misses.push({ doc: citingFile, ref, resolved, onDisk, tracked: isTracked, kind: 'missing' })
       }
+    }
+    // #4135 — a citation whose FORM is the violation, independent of whether
+    // anything resolves: see `extractBareCitations`. `resolved`/`onDisk`/
+    // `tracked` carry no meaning for this kind (there is nothing this guard
+    // tried to resolve), so they are left `null`/`false` rather than
+    // fabricating a value, and `check()`'s rendering branches on `kind`
+    // before ever printing them.
+    for (const raw of extractBareCitations(text)) {
+      misses.push({
+        doc: citingFile,
+        ref: raw,
+        resolved: null,
+        onDisk: null,
+        tracked: false,
+        kind: 'bare-form',
+      })
     }
   }
   for (const doc of docs) {
@@ -500,6 +607,17 @@ function check() {
       'ERROR: doc/comment citations reference paths missing from the tracked tree:\n',
     )
     for (const m of shown) {
+      // #4135 — a `bare-form` miss never resolved anything (there was no
+      // repo-rooted path to resolve), so printing its `resolved`/`onDisk`/
+      // `tracked` fields would read as a real resolution attempt that failed
+      // rather than what actually happened: the citation's FORM is the
+      // violation. Give it its own line instead.
+      if (m.kind === 'bare-form') {
+        process.stderr.write(
+          `  - ${m.doc} → \`${m.ref}\`  (bare filename with a line number — cite a repo-rooted path instead, #4135)\n`,
+        )
+        continue
+      }
       const onDisk = m.onDisk === null ? 'n/a' : String(m.onDisk)
       process.stderr.write(
         `  - ${m.doc} → \`${m.ref}\`  (resolved: ${m.resolved}, onDisk=${onDisk}, tracked=${m.tracked})\n`,
@@ -572,7 +690,9 @@ function updateBaseline() {
     ref: m.ref,
     reason:
       reasonByKey.get(baselineKey(m.doc, m.ref)) ??
-      'Pre-existing at the #4126 .ts/.tsx comment-scan widening; not yet fixed.',
+      (m.kind === 'bare-form'
+        ? 'Pre-existing at the #4135 bare-filename-citation widening; not yet fixed.'
+        : 'Pre-existing at the #4126 .ts/.tsx comment-scan widening; not yet fixed.'),
   }))
   writeBaseline(entries)
   console.log(`OK: wrote ${entries.length} baselined citation(s) to ${BASELINE_FILE}`)
@@ -737,6 +857,143 @@ function tsCommentScenarios(root) {
       'a path-shaped STRING LITERAL (not a comment) is not flagged',
       literalOk.status === 0,
       `expected 0, got ${literalOk.status}: ${literalOk.stderr}`,
+    )
+    return results
+  })
+}
+
+/**
+ * #4135 — a code citation written as a BARE FILENAME with a line number is
+ * flagged by FORM, independent of whether anything on disk happens to match
+ * it. The fixture uses the issue's own motivating shape (a `.rs` citation
+ * with a line RANGE) in a doc, plus the acceptance cases that keep the rule
+ * from being noisier than intended: no line number is not flagged, and the
+ * rule is wired through the SAME shrink-only baseline mechanism a `missing`
+ * miss already uses.
+ */
+function bareCitationScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+    const dir = join(root, 'bare-citation')
+    const env = scrubbedGitEnv(root)
+    const git = initScratchRepo(dir, env)
+    const run = (flags) => {
+      const r = spawnSync(process.execPath, [import.meta.filename, ...flags], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      })
+      return { status: r.status, stderr: r.stderr ?? '' }
+    }
+    mkdirSync(join(dir, 'src-tauri', 'src'), { recursive: true })
+    writeFileSync(join(dir, 'src-tauri', 'src', 'session_supervisor.rs'), 'fn f() {}\n')
+
+    // THE ACTUAL #4135 DEFECT SHAPE: a bare filename with a line RANGE, cited
+    // from a doc, naming a file that does not even exist under that bare
+    // name anywhere in the tree — exactly what `threat-model.md:164` did.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The handshake retry lives in `session_supervisor.rs:708-716`.\n',
+    )
+    git('add', '-A')
+    const bareBad = run(['--worktree'])
+    record(
+      'a bare `<file>.rs:<range>` citation is red, even with no on-disk match at all',
+      bareBad.status === 1 &&
+        /session_supervisor\.rs:708-716/.test(bareBad.stderr) &&
+        /bare filename/.test(bareBad.stderr) &&
+        /#4135/.test(bareBad.stderr),
+      `expected 1 naming session_supervisor.rs:708-716 as a bare-form miss, got ${bareBad.status}: ${bareBad.stderr}`,
+    )
+
+    // Retargeting at the real, repo-rooted path clears it — the fix the
+    // error message itself recommends.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The handshake retry lives in `src-tauri/src/session_supervisor.rs:708-716`.\n',
+    )
+    git('add', '-A')
+    const bareFixed = run(['--worktree'])
+    record(
+      'rewriting the SAME citation as a repo-rooted path clears it',
+      bareFixed.status === 0,
+      `expected 0, got ${bareFixed.status}: ${bareFixed.stderr}`,
+    )
+
+    // ACCEPTANCE: the FORM requires a line-number suffix. A bare filename
+    // mention with NO line number is genuinely ambiguous prose ("the file
+    // handling the session"), not a precise citation, and must not be
+    // flagged — this is the deliberate scoping `BARE_CODE_CITATION_RE`'s own
+    // comment argues for, actually exercised.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'See `session_supervisor.rs` for the handshake retry logic.\n',
+    )
+    git('add', '-A')
+    const noLineNumber = run(['--worktree'])
+    record(
+      'a bare filename with NO line number is not flagged — too ambiguous to be a form violation',
+      noLineNumber.status === 0,
+      `expected 0, got ${noLineNumber.status}: ${noLineNumber.stderr}`,
+    )
+
+    // ACCEPTANCE: the rule is the WHOLE code span, anchored at both ends.
+    // Flagging by FORM only works if the form is unambiguous, so the three
+    // shapes that most look like one without being one must stay green: a
+    // quoted log/diagnostic line that HAPPENS to contain a `file.ext:N`, a
+    // URL whose path ends that way, and a `file.ext:LINE:COL` diagnostic
+    // coordinate. Without the `^…$` anchors every one of these reds, and the
+    // guard becomes the noise generator `BARE_CODE_CITATION_RE`'s own
+    // scoping argument is trying to avoid.
+    writeFileSync(
+      join(dir, 'README.md'),
+      [
+        'A log line: `panicked at session_supervisor.rs:708, thread main`.',
+        '',
+        'A URL: `https://github.com/o/r/blob/main/session_supervisor.rs:708`.',
+        '',
+        'A rustc coordinate: `session_supervisor.rs:708:16`.',
+        '',
+      ].join('\n'),
+    )
+    git('add', '-A')
+    const notCitations = run(['--worktree'])
+    record(
+      'a log line, a URL and a `file:LINE:COL` coordinate inside a code span are NOT bare citations',
+      notCitations.status === 0,
+      `expected 0, got ${notCitations.status}: ${notCitations.stderr}`,
+    )
+
+    // THE SAME SHRINK-ONLY BASELINE MECHANISM `missing` misses use also
+    // grandfathers a `bare-form` miss — proved both directions, the same
+    // discipline `baselineScenarios` applies to the `missing` kind.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The handshake retry lives in `session_supervisor.rs:708-716`.\n',
+    )
+    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    const baselinePath = join(dir, 'scripts', 'doc-code-paths-baseline.json')
+    const writeFixtureBaseline = (entries) =>
+      writeFileSync(baselinePath, `${JSON.stringify(entries, null, 2)}\n`)
+    writeFixtureBaseline([
+      { file: 'README.md', ref: 'session_supervisor.rs:708-716', reason: 'self-test fixture' },
+    ])
+    git('add', '-A')
+    const grandfathered = run(['--worktree'])
+    record(
+      'a bare-form miss LISTED in the baseline is grandfathered (green)',
+      grandfathered.status === 0,
+      `expected 0, got ${grandfathered.status}: ${grandfathered.stderr}`,
+    )
+
+    writeFixtureBaseline([])
+    git('add', '-A')
+    const unbaselined = run(['--worktree'])
+    record(
+      'the SAME bare-form miss, once removed from the baseline, is red again',
+      unbaselined.status === 1 && /session_supervisor\.rs:708-716/.test(unbaselined.stderr),
+      `expected 1 naming session_supervisor.rs:708-716, got ${unbaselined.status}: ${unbaselined.stderr}`,
     )
     return results
   })
@@ -919,6 +1176,7 @@ function selfTest() {
     })
     results.push(...linkTargetScenarios(root))
     results.push(...tsCommentScenarios(root))
+    results.push(...bareCitationScenarios(root))
     results.push(...baselineScenarios(root))
     results.push(...corruptBaselineScenarios(root))
     let failures = 0
