@@ -2077,9 +2077,9 @@ STUB
   # `run: npm ci` line, and it renders the SAME "VERIFIED NOTHING" heading the
   # Verify step's own exit-3 branch uses, plus its own `::error::` annotation.
   st_expect 'the Install step is no longer a bare, un-gated `run: npm ci`' \
-    '0' "$(grep -c '^ *run: npm ci$' "$wf" || true)"
+    '0' "$(sed -n '/^  merge-result:/,$p' "$wf" | grep -c '^ *run: npm ci$' || true)"
   st_expect 'and on failure it renders a "VERIFIED NOTHING" summary, same heading as the exit-3 branch below' \
-    '2' "$(grep -c 'Merge-result check: VERIFIED NOTHING' "$wf" || true)"
+    '2' "$(sed -n '/^  merge-result:/,$p' "$wf" | grep -c 'Merge-result check: VERIFIED NOTHING' || true)"
   st_expect 'and it fails the step (a runner-side install failure must stay red, not warn-and-pass)' \
     '1' "$(sed -n '/^      - name: Install npm dependencies$/,/^      - name: Verify the merge result/p' "$wf" | grep -c '::error::pr-merge-result-check: npm ci failed' || true)"
   # `always()` also fires on a CANCELLED run, and this workflow sets

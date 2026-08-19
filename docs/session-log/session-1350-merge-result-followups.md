@@ -3,11 +3,9 @@
 | Metadata | Value |
 |----------|-------|
 | **Date** | 2026-08-19 |
-| **Subagents** | orchestrator-only (adversarial review of a pre-existing diff) |
-| **Items closed** | #4169 |
+| **Subagents** | orchestrator-only (adversarial review of a pre-existing diff, then commit + push) |
+| **Items closed** | #4169 (via PR #4172) |
 | **Items modified** | — |
-| **Tests added** | +6 (self-test assertions, `scripts/pr-merge-result-check.sh`) |
-| **Files touched** | 3 |
 
 **Summary:** Adversarially reviewed an uncommitted diff implementing all six
 follow-ups deferred from PR #4162's review (#4169): a gated `npm ci` wrapper in
@@ -20,12 +18,16 @@ trust-boundary comment in `pr-overlap.yml`). Reviewed each of the six against
 the issue and PR #4162's review comments, then falsified every new fixture by
 hand — reverting each corresponding production change one at a time and
 confirming the exact new assertion(s), and only those, went red. No defects
-found; nothing needed fixing.
+found; the diff was then committed and pushed as PR #4172.
 
-**Files touched (this session):** none — the diff was reviewed as-is, no
-changes made. (For reference, the reviewed diff: `.github/workflows/pr-overlap.yml`
-+35/-8, `scripts/pr-merge-result-check.sh` +157/-16, `scripts/seed-worktree.sh`
-+8/-0.)
+**Files touched (this session):** `.github/workflows/pr-overlap.yml`,
+`scripts/pr-merge-result-check.sh`, `scripts/seed-worktree.sh`, and this log —
+four files, committed and pushed as PR #4172 on branch
+`claude/ci-merge-result-followups`. The self-test in
+`scripts/pr-merge-result-check.sh` gained nine new `st_expect` assertions
+(counted directly against the diff, not estimated) spread across the
+lockfile-deletion case, the `MR_NODE_MODULES` override, the `run_typecheck`
+gate, and the workflow's `npm ci` wrapper.
 
 **Verification:**
 - `bash scripts/pr-merge-result-check.sh --self-test` — all assertions pass
@@ -83,5 +85,5 @@ else, including the "byte-identical exit codes" claim for follow-up 4, which
 is the kind of claim that reads as a plausible rationalization until checked
 by construction.
 
-**Commit plan:** not pushed — review-only session; the diff was left
-uncommitted in the worktree as found, verified sound.
+**Commit plan:** committed and pushed as PR #4172
+(`claude/ci-merge-result-followups`), `Closes #4169`.
