@@ -28,6 +28,7 @@ import { notify } from '@/lib/notify'
 import { getPageDisplayName } from '@/lib/page-display'
 import { searchBlocksLimit } from '@/lib/safe-limit'
 import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
+import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -340,15 +341,6 @@ function appendCreatePageOptionIfNeeded(
 // correct, if slightly eager: the backend has already committed the delete.
 
 /**
- * SQLite's `NOCASE` collation folds ONLY ASCII `A`-`Z`, unlike `String.
- * toLowerCase()` which folds every cased Unicode character. Mirrors that
- * exactly so `comparePageRows` matches `NOCASE` rather than approximating it.
- */
-function foldAsciiUppercase(s: string): string {
-  return s.replace(/[A-Z]/g, (c) => c.toLowerCase())
-}
-
-/**
  * A patched-in-place rename must also re-establish the ORDER the fetch
  * returned, because both caches are served in list order: `searchPages`'s
  * empty/short query slices the FIRST 20 rows off `pagesListRef`, and
@@ -419,29 +411,10 @@ function comparePageRows(
   return compareUtf8Bytes(a.id, b.id)
 }
 
-// #4057 — JS `<` on strings compares UTF-16 CODE UNITS; SQLite's default
-// BINARY collation (what the tags `ORDER BY tc.name` query uses) compares
-// UTF-8 BYTES. The two agree everywhere EXCEPT when a supplementary-plane
-// character (U+10000+, encoded in UTF-16 as a surrogate pair whose leading
-// unit is 0xD800-0xDBFF) is compared against a BMP character whose code
-// point falls in 0xE000-0xFFFF: UTF-16 code-unit order puts the
-// supplementary character first (0xD800-0xDBFF < 0xE000-0xFFFF), while
-// UTF-8 byte order puts it last (its 4-byte encoding starts with
-// 0xF0-0xF4, which is greater than the 3-byte encoding's 0xE0-0xEF lead
-// byte for that BMP range). Comparing raw UTF-8 bytes sidesteps the
-// surrogate-pair encoding entirely and matches BINARY exactly.
-const utf8Encoder = new TextEncoder()
-
-function compareUtf8Bytes(a: string, b: string): number {
-  const aBytes = utf8Encoder.encode(a)
-  const bBytes = utf8Encoder.encode(b)
-  const len = Math.min(aBytes.length, bBytes.length)
-  for (let i = 0; i < len; i++) {
-    const diff = (aBytes[i] as number) - (bBytes[i] as number)
-    if (diff !== 0) return diff < 0 ? -1 : 1
-  }
-  return aBytes.length - bBytes.length
-}
+// #4057's `compareUtf8Bytes` and `NOCASE`'s ASCII-only fold now live in
+// `@/lib/sqlite-collation` — the Tauri mock's `compareMetaRows` models the
+// same two backend clauses and was carrying its own (drifted) spelling of
+// them (#3939 item 1).
 
 function compareTagRows(a: TagCacheRow, b: TagCacheRow): number {
   const nameCmp = compareUtf8Bytes(a.name, b.name)

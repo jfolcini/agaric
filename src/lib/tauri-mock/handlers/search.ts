@@ -1118,9 +1118,23 @@ const SEARCH_STRUCTURAL_FILTER_FIELDS = [
  * `search_with_toggles`'s `has_filters` disjunction, including its treatment
  * of "present": a `Vec` field is absent when EMPTY (`!x.is_empty()`), not when
  * null, so `tagIds: []` is no filter at all.
+ *
+ * `honourBlockType: false` is the PARTITIONED disjunction. The two Rust
+ * functions spell `has_filters` almost identically, and the one difference is
+ * `block_type_filter`: `search_with_toggles` takes it as a parameter and lists
+ * it as a disjunct (`toggle_filter.rs:154-161`), while
+ * `search_with_toggles_partitioned` has NO such parameter — the partitioning
+ * IS the block-type split — so its disjunction omits it
+ * (`toggle_filter.rs:330-336`). A blank query whose only "filter" is
+ * `blockTypeFilter` is therefore the FILTERED page on `search_blocks` and the
+ * EMPTY page on `search_blocks_partitioned`.
  */
-function searchHasStructuralFilter(filter: Record<string, unknown>): boolean {
+function searchHasStructuralFilter(
+  filter: Record<string, unknown>,
+  honourBlockType = true,
+): boolean {
   return SEARCH_STRUCTURAL_FILTER_FIELDS.some((field) => {
+    if (field === 'blockTypeFilter' && !honourBlockType) return false
     const v = filter[field]
     if (v === undefined || v === null) return false
     if (Array.isArray(v)) return v.length > 0
@@ -1577,13 +1591,99 @@ function buildSearchRegex(
   }
 }
 
+/** The `block_type = 'page'` predicate the partitioned command's PAGES scan
+ *  adds to its SQL on every arm (`partitioned.rs:165-212`,
+ *  `toggle_filter.rs:377-397`, `:1246-1258`) — the partition split itself. */
+function isPageTyped(b: Record<string, unknown>): boolean {
+  return b['block_type'] === 'page'
+}
+
+/**
+ * Package one partition of `search_blocks_partitioned` from its scan's rows.
+ *
+ * Every non-FTS arm of `search_with_toggles_partitioned` ends in the same
+ * three lines, and they are identical across the arms:
+ * `has_more = limit_usize > 0 && rows.len() > limit_usize`, then
+ * `rows.truncate(limit_usize)` (`toggle_filter.rs:437-443` regex,
+ * `:530-539` post-filter, `:1273-1281` filter-only). The `limit > 0` half is
+ * the degenerate-ask guard — the caller asked this partition for nothing, so
+ * there is nothing to "have more" of — and it is what makes a zero limit LEGAL
+ * here where `search_blocks`'s `PageRequest::new` range refuses it.
+ *
+ * Pass the FULL scan result: the backend fetches `limit + 1` and compares
+ * `len() > limit`, which is the same boolean as comparing an untruncated
+ * length. `next_cursor` is always `null` — the palette does not paginate
+ * (`queries.rs:783-796`).
+ */
+function searchPartitionOf(rows: Record<string, unknown>[], limit: number): SearchPageResponse {
+  return {
+    items: rows.slice(0, limit),
+    next_cursor: null,
+    has_more: limit > 0 && rows.length > limit,
+    total_count: null,
+  }
+}
+
+/**
+ * The regex arm's pre-filter window: the newest {@link SEARCH_REGEX_PRE_FILTER_CAP}
+ * structurally-filtered rows THAT HAVE CONTENT.
+ *
+ * #3939 item 2 — the order of those two steps is observable and the mock had
+ * it backwards. `regex_mode_query`'s SQL carries `AND b.content IS NOT NULL`
+ * in its `WHERE` (`toggle_filter.rs:810-816`) and applies `ORDER BY b.id DESC
+ * LIMIT ?cap` (`:866-869`, bound to `REGEX_PRE_FILTER_CAP`, `:119`) AFTER it,
+ * so the 1000-row window is 1000 rows WITH content. Capping first and dropping
+ * null-content rows afterwards — which is what a `searchRegexMatches` that
+ * answers `false` for null content does — selects a SHORTER window whenever
+ * null-content rows sit inside it, hiding matches the backend reaches.
+ *
+ * Shared by both regex callers so the two windows cannot disagree: the
+ * `search_blocks` regex arm and each partition of the
+ * `search_blocks_partitioned` regex arm (whose pages partition pushes
+ * `block_type = 'page'` into the same SQL, hence a window narrowed BEFORE the
+ * cap there too — `toggle_filter.rs:377-397`).
+ */
+function searchRegexPrefilterWindow(
+  candidates: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  return candidates
+    .filter((b) => b['content'] != null)
+    .toSorted(byIdDesc)
+    .slice(0, SEARCH_REGEX_PRE_FILTER_CAP)
+}
+
 /** Run a composed pattern against RAW `blocks.content` — the column both the
- *  regex arm and `post_filter_row` match on (NOT `fts_blocks.stripped`). */
+ *  regex arm and `post_filter_row` match on (NOT `fts_blocks.stripped`).
+ *
+ *  #3939 item 3 — a NON-ZERO-WIDTH match is required. Both backend sites
+ *  collect `re.find_iter(content).filter(|m| m.end() > m.start())` and drop the
+ *  row when nothing survives: `post_filter_row` (`toggle_filter.rs:618-641`,
+ *  "no non-zero-width match") and `regex_mode_query`'s inline loop
+ *  (`toggle_filter.rs:905-919`). `RegExp.prototype.test` has no such filter, so
+ *  a nullable pattern (`a*`, `(?:)`, an all-optional group) matched EVERY row
+ *  here and NO row there — the mock's most inverted regex answer. Spelled with
+ *  `exec` + an explicit width test rather than by rejecting nullable patterns
+ *  up front, because the backend's filter is per-MATCH: `x*` still keeps a row
+ *  containing `xx` (that match is two wide) while dropping one that has only
+ *  the zero-width match at position 0.
+ *
+ *  The scan is a manual `lastIndex` walk because a zero-width match does not
+ *  advance a `g`-flagged regex on its own; the composed patterns are built
+ *  without `g` (see {@link buildSearchRegex}), so a fresh sticky copy is made
+ *  here instead of mutating the caller's.
+ */
 function searchRegexMatches(re: RegExp | null, b: Record<string, unknown>): boolean {
   if (re === null) return false
   const content = b['content'] as string | null
   if (content == null) return false
-  return re.test(content)
+  const scan = new RegExp(re.source, `${re.flags.replace(/[gy]/g, '')}g`)
+  for (let m = scan.exec(content); m !== null; m = scan.exec(content)) {
+    if (m[0].length > 0) return true
+    // Zero-width match: `g` alone would spin forever here, so step past it.
+    scan.lastIndex += 1
+    if (scan.lastIndex > content.length) break
+  }
+  return false
 }
 
 export const searchHandlers = {
@@ -1895,9 +1995,7 @@ export const searchHandlers = {
     // against RAW `blocks.content`, and the path never emits a cursor.
     if (filter['isRegex'] === true) {
       const re = buildSearchRegex(query, filter, false)
-      const items = candidates
-        .toSorted(byIdDesc)
-        .slice(0, SEARCH_REGEX_PRE_FILTER_CAP)
+      const items = searchRegexPrefilterWindow(candidates)
         .filter((b) => searchRegexMatches(re, b))
         .slice(0, limit)
       return { items, next_cursor: null, has_more: false, total_count: null }
@@ -1993,6 +2091,24 @@ export const searchHandlers = {
     // `partitioned.rs:237-238`'s explicit `page_limit_usize > 0 && …` clause,
     // which is what makes this a DIFFERENT guard from the one #4030 item 4
     // added to `search_blocks`, not the same one reused.
+    //
+    // Where the two stacks part, in KIND as well as text — the same exception
+    // {@link searchHandlers.search_blocks} documents for its own guard, which
+    // this one inherited without inheriting the note. `page_limit` /
+    // `block_limit` are `u32` in Rust (`queries.rs:713-720`), so a NEGATIVE or
+    // FRACTIONAL value never reaches `search_blocks_partitioned_inner` at all:
+    // Tauri's serde deserialisation refuses it at the IPC boundary, and a
+    // deserialisation failure is not an `AppError`, so there is no backend kind
+    // for this mock to be in parity WITH. Only an INTEGER above the cap is
+    // `AppError::Validation` on both sides with the same text — that is the
+    // parity this guard exists for. The `Number.isInteger` / `>= 0` half is the
+    // mock's own choice (the cheapest way to keep a fractional bound out of
+    // `slice`), and #2463's kind-parity rule is about refusals the backend
+    // expresses as an `AppError`. Reachable, though: `pageLimit` is typed
+    // `number`, so a typed caller CAN send `-1` or `50.5`; both stacks refuse
+    // it, and they disagree about how — which is why the tests below assert
+    // only THAT those two refuse, and pin kind + message for the over-cap case
+    // alone.
     if (
       !(Number.isInteger(pageLimit) && pageLimit >= 0 && pageLimit <= SEARCH_MAX_RESULTS) ||
       !(Number.isInteger(blockLimit) && blockLimit >= 0 && blockLimit <= SEARCH_MAX_RESULTS)
@@ -2003,14 +2119,72 @@ export const searchHandlers = {
       )
     }
 
-    // #4065 item 3 — every OTHER path on this command sets `total_count: null`
+    const structural = searchStructuralCandidates(filter, false)
+
+    // Arm 1 + 2 — the blank-query dispatch, MODE-INDEPENDENT and therefore
+    // ahead of the mode branch, exactly as `search_with_toggles_partitioned`
+    // puts it ahead of its own (`toggle_filter.rs:330-360`).
+    //
+    // #4065 item 3 — every path on this command sets `total_count: null`
     // (`queries.rs:783-796`'s `PageResponse`s do); this short circuit used to
     // leave the key off entirely, so a consumer reading it got `undefined`
-    // here and `null` everywhere else.
-    const empty = { items: [], next_cursor: null, has_more: false, total_count: null }
-    if (!query) return { pages: empty, blocks: empty }
+    // here and `null` everywhere else. Two SEPARATE literals, not one `empty`
+    // shared by both partitions: a single object handed to both handed them
+    // one `items` array as well, so a caller that mutated one partition's
+    // items mutated the other's. Harmless while every caller treats the
+    // response as read-only, but nothing here enforced that.
+    //
+    // #4151 review item 2 — `query.trim() === ''`, not `!query`. The backend
+    // short-circuits on `query.trim().is_empty()` (`toggle_filter.rs:330`, and
+    // `partitioned.rs:127` behind it), and this mock's own `search_blocks`
+    // already trims. A query of `'   '` used to fall through to the FTS path
+    // and match on a space substring where both backend sites answer the
+    // blank-query dispatch.
+    //
+    // #4151 review item 1 — the other half of #4065 item 1. With NO user
+    // filter the answer is two empty partitions; with at least one it is
+    // `fts_fetch_filter_only_partitioned` (`toggle_filter.rs:1233-1288`) — the
+    // same two partitions, FTS-free, each an `ORDER BY b.id DESC` scan
+    // (`filter_only_scan`, `:1141-1145`) with its own `limit + 1` probe. Until
+    // #4151 threaded `filter` through, this branch could not be told apart
+    // from the unfiltered one, which is why the mock returned empty
+    // unconditionally. `honourBlockType: false` on the `has_filters` test as
+    // well as on the candidate scan: the partitioned Rust has no
+    // `block_type_filter` parameter, so unlike `search_blocks` it does not
+    // list one as a disjunct (see {@link searchHasStructuralFilter}).
+    if (query.trim() === '') {
+      if (!searchHasStructuralFilter(filter, false)) {
+        return {
+          pages: { items: [], next_cursor: null, has_more: false, total_count: null },
+          blocks: { items: [], next_cursor: null, has_more: false, total_count: null },
+        }
+      }
+      return {
+        pages: searchPartitionOf(structural.filter(isPageTyped).toSorted(byIdDesc), pageLimit),
+        blocks: searchPartitionOf(structural.toSorted(byIdDesc), blockLimit),
+      }
+    }
 
-    const structural = searchStructuralCandidates(filter, false)
+    // Arm 3 — `isRegex`: two parallel `regex_mode_query` scans, FTS bypassed
+    // (`toggle_filter.rs:363-453`). The pages scan pushes `block_type = 'page'`
+    // into the SAME SQL rather than filtering the shared window afterwards
+    // (`:377-397`), so each partition gets its own
+    // {@link searchRegexPrefilterWindow} — a pages partition can reach page
+    // rows older than the newest 1000 blocks, which one shared window would
+    // hide. Each scan asks for `limit + 1` (`probe_limit_i64`, `:551-555`),
+    // which is what {@link searchPartitionOf} derives `has_more` from; the
+    // scan itself answers `has_more: false` (`:952-957`) and the partitioned
+    // caller overrides it (`:440-443`).
+    if (filter['isRegex'] === true) {
+      const re = buildSearchRegex(query, filter, false)
+      const matches = (rows: Record<string, unknown>[]) =>
+        searchRegexPrefilterWindow(rows).filter((b) => searchRegexMatches(re, b))
+      return {
+        pages: searchPartitionOf(matches(structural.filter(isPageTyped)), pageLimit),
+        blocks: searchPartitionOf(matches(structural), blockLimit),
+      }
+    }
+
     // #4065 item 4 — stripped ONCE per structural candidate and carried
     // alongside `b`, not recomputed per partition. This used to run
     // `stripForFts` again inside {@link searchFtsRankedPage} for EACH
@@ -2019,36 +2193,65 @@ export const searchHandlers = {
     const matching = structural
       .map((b) => ({ b, stripped: stripForFts(b['content'] as string | null) }))
       .filter((c) => matchesFtsIndex(c.stripped, query))
-    const pagesAll = matching.filter((c) => (c.b['block_type'] as string) === 'page')
-
-    // Two INDEPENDENT scans, each capped at its own limit — not one scan
-    // partitioned afterwards (`partitioned.rs:17-27`: the one-scan shape could
-    // drop the pages partition entirely). `null` for the cursor because the
-    // palette does not paginate: `search_fts_partitioned` passes `None` through
-    // to both `fts_fetch_rows` calls and the command answers `next_cursor: None`
-    // (`queries.rs:783-796`), so the cursor the seam mints from the boundary row
-    // is DISCARDED here rather than put on the wire. What is kept is the rest of
-    // `search_fts`'s window: the `(rank, id)` order, the `take(limit)`, and the
-    // `limit + 1` probe behind `has_more` — including its zero-limit answer
-    // (`partitioned.rs:237-238`: `page_limit_usize > 0 && …`, which the seam
-    // reproduces because a zero-limit page has no boundary row to mint from).
+    const pagesAll = matching.filter((c) => isPageTyped(c.b))
     const folded = foldForFtsIndex(query)
-    const pages = searchFtsRankedPage(pagesAll, folded, null, pageLimit)
-    const blocksPartition = searchFtsRankedPage(matching, folded, null, blockLimit)
 
+    // Arm 4 — every toggle off: the straight partitioned FTS scan
+    // (`toggle_filter.rs:454-478`). Two INDEPENDENT scans, each capped at its
+    // own limit — not one scan partitioned afterwards (`partitioned.rs:17-27`:
+    // the one-scan shape could drop the pages partition entirely). `null` for
+    // the cursor because the palette does not paginate:
+    // `search_fts_partitioned` passes `None` through to both `fts_fetch_rows`
+    // calls and the command answers `next_cursor: None`
+    // (`queries.rs:783-796`), so the cursor the seam mints from the boundary
+    // row is DISCARDED here rather than put on the wire. What is kept is the
+    // rest of `search_fts`'s window: the `(rank, id)` order, the
+    // `take(limit)`, and the `limit + 1` probe behind `has_more` — including
+    // its zero-limit answer (`partitioned.rs:237-238`:
+    // `page_limit_usize > 0 && …`, which the seam reproduces because a
+    // zero-limit page has no boundary row to mint from).
+    if (filter['caseSensitive'] !== true && filter['wholeWord'] !== true) {
+      const pages = searchFtsRankedPage(pagesAll, folded, null, pageLimit)
+      const blocksPartition = searchFtsRankedPage(matching, folded, null, blockLimit)
+      return {
+        pages: {
+          items: pages.items,
+          next_cursor: null,
+          has_more: pages.has_more,
+          total_count: null,
+        },
+        blocks: {
+          items: blocksPartition.items,
+          next_cursor: null,
+          has_more: blocksPartition.has_more,
+          total_count: null,
+        },
+      }
+    }
+
+    // Arm 5 — `caseSensitive` and/or `wholeWord` (and NOT `isRegex`)
+    // (`toggle_filter.rs:479-543`). This path has no cursor, so it cannot page
+    // for more survivors the way `search_blocks`'s arm 5 can: it OVER-FETCHES
+    // each partition to `MAX_SEARCH_RESULTS` BEFORE the post-filter, then
+    // derives `has_more` from the SURVIVOR count against the caller's real
+    // limit (`:530-539`). That ceiling is observable and is modelled rather
+    // than smoothed over: survivors ranked below the 100th candidate of a
+    // partition are not surfaced at all, the documented best-effort trade-off
+    // (`:490-496`).
+    //
+    // One divergence left standing, because it is arm 4's and not this arm's:
+    // arm 4 ships `content` truncated to `PALETTE_CONTENT_PREVIEW_CAP` (512
+    // codepoints, `partitioned.rs:30-53`) while this arm ships it in full so
+    // the post-filter can match past the cut (`:499-511`). The mock models no
+    // `content` truncation anywhere, so both arms ship full content here.
+    const re = buildSearchRegex(query, filter, true)
+    const survivors = (candidates: Array<{ b: Record<string, unknown>; stripped: string }>) =>
+      searchFtsRankedPage(candidates, folded, null, SEARCH_MAX_RESULTS).items.filter((b) =>
+        searchRegexMatches(re, b as Record<string, unknown>),
+      ) as Record<string, unknown>[]
     return {
-      pages: {
-        items: pages.items,
-        next_cursor: null,
-        has_more: pages.has_more,
-        total_count: null,
-      },
-      blocks: {
-        items: blocksPartition.items,
-        next_cursor: null,
-        has_more: blocksPartition.has_more,
-        total_count: null,
-      },
+      pages: searchPartitionOf(survivors(pagesAll), pageLimit),
+      blocks: searchPartitionOf(survivors(matching), blockLimit),
     }
   },
 

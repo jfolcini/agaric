@@ -19,6 +19,7 @@
 import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, commands } from '@/lib/bindings'
 import { asciiLowercase, pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
+import { compareNocase, compareUtf8Bytes } from '@/lib/sqlite-collation'
 import { TASK_STATES } from '@/lib/task-states'
 import {
   type MockLinkEdge,
@@ -815,12 +816,26 @@ export function lastEditedMatches(
  * `0` sorts below every epoch-ms value, so op-log-free rows tie at the
  * sentinel and fall to the id tiebreaker — the engine's behaviour, not a
  * seeded ordering.
+ *
+ * #3939 item 1 — the `'alphabetical'` arm ran `toLowerCase().localeCompare()`
+ * where the backend orders `COALESCE(b.content,'') COLLATE NOCASE`. Both
+ * halves were wrong, and for the two reasons #4131 already fixed in the
+ * picker's `comparePageRows`: `NOCASE` folds ASCII `A`-`Z` ONLY (so a Turkish
+ * `İ` or a Greek `Σ` folded here and not there), and it then memcmps UTF-8
+ * BYTES, where `localeCompare` applies an ICU collation that reorders
+ * accented and non-Latin titles wholesale (`Ápple` sorts before `Zebra` under
+ * ICU and after it under `NOCASE`). {@link compareNocase} is the same code
+ * that comparator uses, so the two cannot drift apart again.
+ *
+ * The id tiebreaker moves with it: the backend's is `b.id ASC`, SQLite's
+ * default `BINARY` collation — #4138 item 2's finding, inert while ids are
+ * Crockford-base32 ULIDs but not enforced to be.
  */
 export function compareMetaRows(x: PageMetaRow, y: PageMetaRow, sort: string): number {
   let primary = 0
   switch (sort) {
     case 'alphabetical': {
-      primary = (x.content ?? '').toLowerCase().localeCompare((y.content ?? '').toLowerCase())
+      primary = compareNocase(x.content ?? '', y.content ?? '')
       break
     }
     case 'recently-modified': {
@@ -836,11 +851,11 @@ export function compareMetaRows(x: PageMetaRow, y: PageMetaRow, sort: string): n
       break
     }
     default: {
-      primary = x.id.localeCompare(y.id)
+      primary = compareUtf8Bytes(x.id, y.id)
       break
     }
   }
-  return primary !== 0 ? primary : x.id.localeCompare(y.id)
+  return primary !== 0 ? primary : compareUtf8Bytes(x.id, y.id)
 }
 
 /**
