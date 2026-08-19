@@ -134,9 +134,15 @@ reviewable diff. There is no CLI opt-out flag.
 the hook does not scan as live markers (#4146) — see
 `scripts/check-remove-after-markers.mjs` for why documenting the convention
 doesn't trip it. Outside a fence, even naming the bare phrase in prose — the
-two capitalized words in the paragraph above this one, spelled out — would
-trip the same malformed check this section is explaining, which is exactly
-why it isn't spelled out there.)
+two-word phrase in capitals from the canonical-spelling paragraph above,
+spelled out — would trip the same malformed check this section is
+explaining, which is exactly why it isn't spelled out there.)
+
+This exemption is a trade-off, not a free lunch: a fence hides its contents
+from the guard just as thoroughly whether the marker inside is a
+documentation example or a real, live deadline that someone pasted into a
+fenced block by mistake. Keep real markers unfenced — this section is the
+one deliberate exception, not a template for hiding one from the check.
 
 Every change must:
 

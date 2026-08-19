@@ -7,7 +7,6 @@
 | **Items closed** | #4147, #4146 |
 | **Items modified** | — |
 | **Tests added** | +8 (self-test scenarios, backend/Node) |
-| **Files touched** | 3 |
 
 **Summary:** Adversarially reviewed an uncommitted diff claiming to fix #4147 (a
 docs-only PR skipped the `remove-after-markers` guard entirely) and #4146 (the guard
@@ -24,16 +23,22 @@ fail against the pre-fix logic and pass against the fix, and added a #4147 wirin
 self-test scenario that reads the real `_validate.yml` and asserts `remove-after-markers`
 stays in `docs-lint`'s hook list.
 
-**Files touched (this session):**
-- `scripts/check-remove-after-markers.mjs` (fence state machine fix: `MD_FENCE_RE` +
-  new `MD_FENCE_BARE_RE`, `findMarkers`'s per-file `fence` tracking now records
-  delimiter char/length instead of an unconditional toggle; +4 adversarial fence
-  scenarios in `fenceStateMachineScenarios`; +1 `docsLintWiringScenario` reading the
-  real `_validate.yml`; header comments updated to describe the corrected semantics)
-- `.github/workflows/_validate.yml` — reviewed only, no changes needed (the `docs-lint`
-  job's hook list and comments were already correct)
-- `CONTRIBUTING.md` — reviewed only, no changes needed (the new "Marking code with a
-  removal deadline" section's fenced examples pass the guard as documented)
+**Files touched:** the PR ships four changed files, all in one commit on
+`claude/ci-remove-after-guard` (PR #4171).
+
+- `scripts/check-remove-after-markers.mjs` — this session's own edit (fence state
+  machine fix: `MD_FENCE_RE` + new `MD_FENCE_BARE_RE`, `findMarkers`'s per-file `fence`
+  tracking now records delimiter char/length instead of an unconditional toggle; +4
+  adversarial fence scenarios in `fenceStateMachineScenarios`; +1
+  `docsLintWiringScenario` reading the real `_validate.yml`; header comments updated to
+  describe the corrected semantics).
+- `.github/workflows/_validate.yml` — carried in from the diff this session reviewed
+  (the `docs-lint` job's hook list now names `remove-after-markers`); this session
+  verified it was correct rather than re-editing it.
+- `CONTRIBUTING.md` — carried in from the same diff (the new "Marking code with a
+  removal deadline" section, whose fenced examples pass the guard as documented); this
+  session verified it rather than re-editing it.
+- `docs/session-log/session-1349-ci-remove-after-guard.md` — this file.
 
 **What was already correct in the diff (verified, not just trusted):**
 - #4147: `docs-lint`'s `prek run --all-files …` line now names `remove-after-markers`,
@@ -100,4 +105,5 @@ convention) the exemption itself was added to support. Always falsify a state-ma
 exemption against the fixture pattern its own feature encourages people to write, not
 just the pattern its acceptance criteria named.
 
-**Commit plan:** not committed — review-and-fix only, left staged for the branch owner.
+**Commit plan:** committed and pushed as `ci(remove-after): run the guard on docs-only
+PRs, and let it document itself`, open as PR #4171.

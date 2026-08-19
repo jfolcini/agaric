@@ -118,9 +118,13 @@
 // fenced at all. (This was live and demonstrable before length/character
 // matching was added — see `fenceStateMachineScenarios` in the self-test
 // below.) An odd number of correctly-matched fence delimiters (an
-// unterminated fence) leaves it open through end of file — the same "rest
-// of the document is code" reading CommonMark itself gives an unclosed
-// fence, not a special case here.
+// unterminated fence) leaves it open through end of file. At the document
+// level that is the same "rest of the document is code" reading CommonMark
+// itself gives an unclosed fence; CommonMark actually closes an unclosed
+// fence at the end of its *containing block* (e.g. a list item), so a fence
+// opened inside a list item and never closed diverges from CommonMark
+// there — this scanner has no notion of block containers, so it keeps the
+// fence open through EOF regardless. Deliberate, not a special case here.
 //
 // ─── The escape hatch ────────────────────────────────────────────────────
 //
