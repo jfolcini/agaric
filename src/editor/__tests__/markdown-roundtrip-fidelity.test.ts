@@ -21,6 +21,7 @@ import {
   bulletList,
   callout,
   blockquote,
+  code,
   doc,
   hardBreak,
   heading,
@@ -518,5 +519,132 @@ describe('#4071/#4076: markdown-string convergence on the SECOND pass', () => {
     // leading whitespace at all and needs no escape.
     expect(serialize(doc(bulletList(listItem(tabbed))))).toBe('- \tx')
     expect(parse('- \tx')).toEqual(doc(bulletList(listItem(tabbed))))
+  })
+})
+
+describe('#4072: a callout-shaped link at a blockquote head', () => {
+  const LINK = 'https://example.com'
+  const link = (t: string) => text(t, [{ type: 'link', attrs: { href: LINK } }])
+
+  /**
+   * #4072.1. A link whose visible text starts with `!` serializes to
+   * `[!a](https://example.com)` — the exact shape of the `[!TYPE]` callout
+   * marker with a destination glued to it. As the FIRST thing in a blockquote
+   * that string was read back as a callout named `a`, so the label came out
+   * upper-cased and `serializeBlockquote`'s `[!A] ` prefix put a SPACE between
+   * the label and the destination, which also destroys the link
+   * (`> [!a](url)a` → `> [!A] (url)a`).
+   *
+   * The marker and the link differ at exactly one character: a callout's `]` is
+   * followed by nothing, whitespace, or its title, never by the `(` that opens
+   * a link destination. `CALLOUT_RE` now refuses that one follower, so the two
+   * productions no longer overlap and the link survives.
+   */
+  it('#4072.1: `[!a](url)` leading a blockquote stays a link, not a callout', () => {
+    const d = doc(blockquote(paragraph(link('!a'), text('a'))))
+    const md = serialize(d)
+    expect(md).toBe('> [!a](https://example.com)a')
+    expect(parse(md)).toEqual(d)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('#4072.1: …with the link as the whole paragraph', () => {
+    const d = doc(blockquote(paragraph(link('!a'))))
+    const md = serialize(d)
+    expect(md).toBe('> [!a](https://example.com)')
+    expect(parse(md)).toEqual(d)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('#4072.1: the same, reached from a string rather than a document', () => {
+    // `> [](!a)` — an empty-text link whose DESTINATION is `!a` — serializes to
+    // the callout-shaped `> [!a](!a)`, so it hit the same trap from the other
+    // side. This is the shape the exhaustive sweep found.
+    const once = serialize(parse('> [](!a)'))
+    expect(once).toBe('> [!a](!a)')
+    expect(serialize(parse(once))).toBe(once)
+  })
+
+  it('#4072.1: a real callout marker is untouched (only a `(` follower is refused)', () => {
+    expect(parse('> [!note] title')).toEqual(doc(callout('note', paragraph(text('title')))))
+    expect(parse('> [!NOTE]')).toEqual(doc(callout('note', paragraph())))
+    // …and a callout whose BODY starts with such a link keeps both readings
+    const d = doc(callout('info', paragraph(link('!a'), text('a'))))
+    const md = serialize(d)
+    expect(md).toBe('> [!INFO] [!a](https://example.com)a')
+    expect(parse(md)).toEqual(d)
+    expect(serialize(parse(md))).toBe(md)
+  })
+})
+
+describe('#4072: whitespace at a table cell edge and the block-marker escape', () => {
+  /**
+   * #4072.2. A markdown cell is single-line, so a hardBreak inside one degrades
+   * to a space, and the cell's own text is TRIMMED on both edges because
+   * `parseTable` trims it. Those two rules used to run in the wrong order: the
+   * break became a space at the NODE level, `serializeParagraph` then saw a
+   * paragraph whose text began with a SPACE and so declined to escape the
+   * leading block marker behind it, and only afterwards did the string `.trim()`
+   * pull that space off — emitting a bare `>` (or `#`) at the cell edge. The
+   * reparse stores the marker as plain text, whose own serialization DOES
+   * escape it, so the second pass wrote `\>` where the first wrote `>`.
+   *
+   * The trim now happens at the node level, before any escaping decision, so
+   * the paragraph the escape logic inspects is the one the parser will actually
+   * store back. Any leading/trailing whitespace of an UNMARKED text node is in
+   * scope; whitespace inside a mark's delimiters (`` `  x` ``) is content, not a
+   * cell edge, and is left alone.
+   */
+  it.each([
+    ['>', '| \\> |\n| --- |'],
+    ['# x', '| \\# x |\n| --- |'],
+    ['- x', '| \\- x |\n| --- |'],
+    ['1. x', '| 1\\. x |\n| --- |'],
+  ])('a leading hardBreak before %j is a fixpoint', (lead, expected) => {
+    const d = doc(table(tableRow(tableHeader(paragraph(hardBreak(), text(lead))))))
+    const md = serialize(d)
+    expect(md).toBe(expected)
+    expect(serialize(parse(md))).toBe(md)
+    // the break is gone by policy, but nothing else is
+    expect(parse(md)).toEqual(doc(table(tableRow(tableHeader(paragraph(text(lead)))))))
+  })
+
+  it('the same holds for a plain leading space, which the cell also trims', () => {
+    const d = doc(table(tableRow(tableHeader(paragraph(text(' >'))))))
+    const md = serialize(d)
+    expect(md).toBe('| \\> |\n| --- |')
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('whitespace inside a mark is content, not a cell edge', () => {
+    const d = doc(table(tableRow(tableHeader(paragraph(code(' x '))))))
+    const md = serialize(d)
+    // (the extra pad is CommonMark's code-span stripping rule, not a cell edge)
+    expect(md).toBe('| `  x  ` |\n| --- |')
+    expect(parse(md)).toEqual(d)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('a trailing hardBreak still keeps its neighbour unescaped', () => {
+    const d = doc(table(tableRow(tableHeader(paragraph(text('$'), hardBreak())))))
+    const md = serialize(d)
+    expect(md).toBe('| $ |\n| --- |')
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  /**
+   * The same violation reached from a STRING rather than from a document — the
+   * form the exhaustive sweep on this fix actually generated, and the form a
+   * paste or an import arrives in. Every one of these used to alternate
+   * `| > |` / `| \\> |` forever.
+   */
+  it.each([
+    ['|\\ >', '| \\> |\n| --- |'],
+    ['| \\ \\ >', '| \\> |\n| --- |'],
+    ['| \\ # x |\n| --- |', '| \\# x |\n| --- |'],
+  ])('the string %j converges in one pass', (input, expected) => {
+    const once = serialize(parse(input))
+    expect(once).toBe(expected)
+    expect(serialize(parse(once))).toBe(once)
   })
 })

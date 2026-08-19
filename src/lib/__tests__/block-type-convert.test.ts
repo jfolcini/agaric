@@ -248,3 +248,45 @@ describe('list button — marker and content land on the SAME line (#2999)', () 
     expect(stripBlockMarker('   - x')).toBe('x')
   })
 })
+
+// -- #4072: a callout-shaped link is a QUOTE, on both sides ------------------
+// A link whose visible text begins with `!` serializes to `[!a](url)` — the
+// exact bytes of a `[!TYPE]` marker with a destination glued on. The parser was
+// taught to refuse that one follower (`CALLOUT_RE` in `markdown-parse/vocab.ts`
+// grew a `(?!\()`), so this module has to refuse it too: otherwise the
+// Turn-into menu highlights "Callout" for a block the editor renders as a plain
+// quote, and `stripBlockMarker` eats the `[!a]` that IS the link's text.
+describe('#4072: `[!x](…)` is a link, not a callout marker', () => {
+  const LINK = '> [!a](https://example.com)a'
+
+  it('detects it as a quote, not a callout', () => {
+    expect(detectBlockType(LINK)).toBe('quote')
+    expect(detectBlockType('> [!a](https://example.com)')).toBe('quote')
+  })
+
+  it('strips only the `> `, leaving the link intact', () => {
+    expect(stripBlockMarker(LINK)).toBe('[!a](https://example.com)a')
+    expect(convertBlockContent(LINK, 'paragraph')).toBe('[!a](https://example.com)a')
+  })
+
+  it('agrees with the parser about which one it is', () => {
+    // The cross-check, not a restatement of the regex: same string, same
+    // verdict here and in the markdown parser.
+    const calloutTypeOf = (md: string) =>
+      (parse(md).content?.[0] as { attrs?: { calloutType?: string } } | undefined)?.attrs
+        ?.calloutType ?? null
+    expect(calloutTypeOf(LINK)).toBeNull()
+    expect(detectBlockType(LINK)).toBe('quote')
+    expect(calloutTypeOf('> [!INFO] hi')).toBe('info')
+    expect(detectBlockType('> [!INFO] hi')).toBe('callout')
+  })
+
+  it('a real marker keeps working — only a `(` follower is refused', () => {
+    expect(detectBlockType('> [!NOTE] t')).toBe('callout')
+    expect(detectBlockType('> [!NOTE]')).toBe('callout')
+    // …including a real callout whose BODY starts with such a link
+    expect(stripBlockMarker('> [!INFO] [!a](https://example.com)a')).toBe(
+      '[!a](https://example.com)a',
+    )
+  })
+})
