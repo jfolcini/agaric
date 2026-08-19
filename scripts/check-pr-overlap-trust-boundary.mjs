@@ -119,8 +119,39 @@
 //      taint-tracking check this one does not attempt.
 //      Those all need a different check; this one closes the one-line edit.
 //
-// (1 AND 2) is one failure mode; 3 and 4 are two more, independent of it and
-// of each other. Any of them firing is a violation.
+//   5. (#4148) A `run:` step reaching PR content directly — `gh pr checkout`,
+//      `gh pr diff`, a git command consuming a fetched `FETCH_HEAD`, or a
+//      `git fetch … refs/pull/…` (see `RUN_STEP_CHECKOUT_PATTERNS`) — is NOT
+//      an `actions/checkout` step and writes no `ref:` line, so it evaded
+//      every condition above: condition 2 only reads `ref:` values, and
+//      condition 3 only recognised a step as a checkout if it `uses:
+//      actions/checkout@`. `findCheckoutSteps` now also recognises this
+//      shape (with `ref: null`, the same "not base-pinned" reading a
+//      ref-less `actions/checkout` step already gets), so it feeds BOTH
+//      condition 2 (via `findRunStepCheckouts`, gated on the same `dangerous`
+//      trigger check) and condition 3 (automatically, since condition 3
+//      already iterates every step `findCheckoutSteps` returns).
+//      The patterns are matched per SOURCE LINE and, separately, against the
+//      step's non-comment lines JOINED, so a command YAML itself splits
+//      across lines (a folded `run: >` scalar, a `\`/`&&`/`|` continuation)
+//      is not invisible to a line-oriented scan — see `findCheckoutSteps`.
+//      Textual and narrow, like the rest of this guard, and the classes it
+//      still cannot see are enumerated at `RUN_STEP_CHECKOUT_PATTERNS`
+//      rather than left implied: a checkout behind a composite or
+//      third-party ACTION (it lives in another file), PR content pulled over
+//      the network (`curl … .patch | git am`, a tarball, an artifact), and
+//      shell-level indirection. #4183 tracks them.
+//
+//      Two `actions/checkout` spellings of the same reach were found in the
+//      same adversarial pass and closed with it, because they are the same
+//      failure — a head-content checkout conditions 1+2 could not name:
+//      `ref: ${{ github.event.pull_request.merge_commit_sha }}` (see
+//      `HEAD_REF_PATTERNS`), and `repository:` redirected at the PR's head
+//      repo, which launders even a BASE-pinned `ref:` past condition 3 (see
+//      `FORK_REPOSITORY_PATTERNS`).
+//
+// (1 AND (2 OR 5)) is one failure mode; 3 and 4 are two more, independent of
+// it and of each other. Any of them firing is a violation.
 //
 // Usage:
 //   node scripts/check-pr-overlap-trust-boundary.mjs
@@ -145,13 +176,104 @@ const HEAD_REF_PATTERNS = [
   /pull_request\.head\.(?:sha|ref)/,
   /\bhead_ref\b/, // github.head_ref
   /refs\/pull\/[^/]+\/(?:merge|head)/,
+  // `github.event.pull_request.merge_commit_sha` — GitHub's own precomputed
+  // merge of head into base. It is the SAME content `refs/pull/<n>/merge`
+  // resolves to (already listed above), spelled as an event field instead of
+  // a ref, and it was the one head-content spelling an adversarial pass
+  // found that condition 2 did not recognise: a `pull_request_target` job
+  // with NO write scope checking out `merge_commit_sha` was green on every
+  // condition. Condition 3 already caught it in a WRITE-scoped job (the
+  // value is not `pull_request.base.*`, so `isBasePinned` is false), which
+  // is exactly why the gap was invisible — the half that fires without a
+  // write scope is conditions 1+2, and only they were blind to it.
+  /pull_request\.merge_commit_sha/,
 ]
+
+// A `repository:` value under an `actions/checkout` step's `with:` mapping
+// naming the PR's HEAD repository — i.e. the fork. This is the one shape
+// that turns condition 3's ACCEPTANCE path into a laundering route: a step
+// spelling `ref: ${{ github.event.pull_request.base.sha }}` reads as
+// base-pinned to `isBasePinned` and is waved through, while
+// `repository: ${{ github.event.pull_request.head.repo.full_name }}`
+// silently redirects the whole clone at the fork — the base ref's NAME
+// resolved against the fork's object graph, which is content the fork author
+// controls. `refFromWithMapping`'s own docstring already worries about a
+// nested value laundering a ref-less checkout past condition 3; this is the
+// same laundering by the sibling key, and it was open.
+const FORK_REPOSITORY_PATTERNS = [/pull_request\.head\.repo/, /\bhead_repo\b/]
 
 // A `ref:` value resolving to one of these is pinned to the PR's BASE
 // branch — a commit in this repo's own history, never a fork's — which is
 // the one shape of checkout condition 3 (below) accepts inside a
 // write-scoped job.
 const BASE_REF_PATTERNS = [/pull_request\.base\.(?:sha|ref)/]
+
+// #4148 — a `run:` step reaching the SAME fork-authored content as a
+// `ref:`-pinned `actions/checkout`, without ever writing a `ref:` line. Every
+// condition above and below this one only inspects `ref:` values or
+// `uses: actions/checkout@` steps, so a job whose ONLY checkout is one of
+// these `run:` invocations satisfied every condition this guard checked while
+// doing precisely the thing it exists to prevent — see the issue's own
+// falsification: `gh pr checkout` in a `run:` step, inside a write-scoped
+// job, went unnoticed by every condition 1-4 above.
+//
+//   - `gh … pr checkout <n>` — the GitHub CLI's own PR-checkout command;
+//     reaches the PR's head content exactly like `ref: refs/pull/<n>/head`.
+//     `[^\n]*` between `gh` and `pr` so the GLOBAL flags the CLI accepts
+//     before a subcommand (`gh -R owner/repo pr checkout 1`, `gh --repo …`)
+//     do not walk past an anchored `gh\s+pr` — the first evasion an
+//     adversarial pass found against the anchored form.
+//   - `gh … pr diff` — the sibling shape: the PR's own patch, obtained by
+//     the same CLI. `gh pr diff N | git apply -` puts fork-authored code in
+//     the workspace with no `checkout` verb anywhere in the line.
+//   - a git command CONSUMING `FETCH_HEAD` — not only `git checkout
+//     FETCH_HEAD`. Once a `git fetch` has landed PR content in `FETCH_HEAD`,
+//     `switch --detach`, `worktree add`, `reset --hard`, `merge`,
+//     `cherry-pick`, `rebase`, `restore`, `am`, `apply` and `pull` all
+//     materialise it in a tree just as effectively; an anchored `checkout`
+//     matched exactly one of ten. The verb alternation is deliberate rather
+//     than a bare `git … FETCH_HEAD`: a READ-ONLY inspection (`git rev-parse
+//     FETCH_HEAD`, `git log FETCH_HEAD`) puts no fork content in the tree
+//     and must not be flagged, or the guard reds on a diagnostic.
+//   - `git fetch … refs/pull/…` — fetching a PR ref into the workspace is
+//     already reaching fork-authored content, whether or not a later step
+//     checks it out (the fetched objects are on disk and buildable either
+//     way). Remote name and refspec shape are unconstrained on purpose:
+//     `git fetch fork '+refs/pull/*/head:refs/remotes/pr/*'` is the same
+//     reach as `git fetch origin refs/pull/1/head`.
+//
+// Textual and narrow, matching how the rest of this guard is built (see the
+// header's "not a general-purpose pull_request_target linter" scoping). What
+// it does NOT catch, stated rather than assumed — an adversarial pass
+// enumerated each of these and confirmed the guard stays green on it, so
+// none of them should be read as covered:
+//
+//   - A checkout behind an ACTION rather than a `run:` step: `uses:
+//     ./.github/actions/<x>` (a composite action whose own steps do the
+//     checkout) or a third-party `uses: some/checkout-ish@v1`. The checkout
+//     lives in a DIFFERENT FILE, and this guard reads exactly one file by
+//     construction (`WORKFLOW_PATH`) — no single-file textual check can see
+//     it.
+//   - PR content fetched over the NETWORK rather than over git: `curl …
+//     /pull/N.patch | git am`, `curl … /archive/$HEAD_SHA.tar.gz | tar xz`,
+//     or `actions/download-artifact` pulling an artifact an untrusted job
+//     produced. Deciding whether an arbitrary URL or artifact name resolves
+//     to fork-authored content is not a textual question. (The artifact case
+//     is the same residual condition 4's own docstring names for its DATA
+//     half, and is not closed here either.)
+//   - Shell-level indirection: a command assembled from string
+//     concatenation, dispatched through a `$VAR`, or base64-decoded, and a
+//     wrapper script that shells out to `git` under a different name.
+//     Closing these needs shell-semantics tracking this guard does not
+//     attempt.
+//
+// zizmor's `pull_request_target` linter is the broader net for the shapes
+// this narrow guard cannot see; #4183 tracks the classes above.
+const RUN_STEP_CHECKOUT_PATTERNS = [
+  /\bgh\b[^\n]*\bpr\s+(?:checkout|diff)\b/,
+  /\bgit\b[^\n]*\b(?:checkout|switch|restore|reset|merge|rebase|cherry-pick|worktree|pull|am|apply)\b[^\n]*\bFETCH_HEAD\b/,
+  /\bgit\s+fetch\b[^\n]*refs\/pull\//,
+]
 
 // Any reference to the `secrets` context BY ACCESSOR: `secrets.GITHUB_TOKEN`,
 // `secrets.A_PAT`, or the index form `secrets['A_PAT']`. Condition 4 (below)
@@ -260,6 +382,17 @@ export function findHeadCheckoutRefs(src) {
   lines.forEach((line, i) => {
     const trimmed = line.trim()
     if (trimmed.startsWith('#')) return
+    // `repository:` alongside `ref:`: a checkout redirected at the PR's HEAD
+    // REPOSITORY is reaching fork-authored content no matter what its `ref:`
+    // says — see `FORK_REPOSITORY_PATTERNS`. Conditions 1+2 fire on ANY step
+    // reaching PR head content, so the sibling key belongs in the same scan;
+    // condition 3 reads the same fact per-step via `findCheckoutSteps`.
+    if (trimmed.startsWith('repository:')) {
+      if (FORK_REPOSITORY_PATTERNS.some((re) => re.test(trimmed))) {
+        hits.push({ line: i + 1, text: trimmed })
+      }
+      return
+    }
     if (!trimmed.startsWith('ref:')) return
     if (HEAD_REF_PATTERNS.some((re) => re.test(trimmed))) {
       hits.push({ line: i + 1, text: trimmed })
@@ -466,6 +599,15 @@ function declaresWrite(line) {
  * checkout's ref would let a base-pinned nested value launder a ref-less —
  * i.e. fork-content — checkout past condition 3.
  *
+ * A step whose `uses:` is NOT `actions/checkout` but whose body matches
+ * `RUN_STEP_CHECKOUT_PATTERNS` (see #4148 at that constant's definition) is
+ * ALSO included, with `ref: null` — a `run:`-step checkout carries no `ref:`
+ * to read, and `ref: null` is already how this file's callers (`isBasePinned`)
+ * read "not pinned to the PR base", which is the correct, fail-closed
+ * classification for content a `run:` step fetched directly. `runCheckoutLine`
+ * (like `refLine`) is the offset of the matched line, so a failure message can
+ * quote the actual `run:` text rather than only the step's introducing line.
+ *
  * @param {string[]} jobBody
  */
 export function findCheckoutSteps(jobBody) {
@@ -488,18 +630,77 @@ export function findCheckoutSteps(jobBody) {
     }
     const block = jobBody.slice(i, end)
 
-    const isCheckout = block.some(
+    const usesCheckout = block.some(
       (line) => !isCommentLine(line) && /(?:^|\s)uses:\s*actions\/checkout@/.test(line),
     )
+    // #4148 — a `run:` step reaching PR content directly, evading both the
+    // `uses: actions/checkout@` test above and every `ref:`-based check in
+    // this file. Scanned over the whole step block, not only a line under a
+    // `run:` key, for the same reason `usesCheckout` above scans the whole
+    // block rather than only the introducing line: a `run: |` block scalar's
+    // payload is indented UNDER the `run:` line, not on it.
+    const runCheckoutOffset = block.findIndex(
+      (line) => !isCommentLine(line) && RUN_STEP_CHECKOUT_PATTERNS.some((re) => re.test(line)),
+    )
+    // …AND against the step's non-comment lines JOINED into one string. A
+    // per-line scan is blind to a command YAML itself splits across source
+    // lines: a FOLDED block scalar (`run: >`) rejoins its lines with spaces
+    // before the shell ever sees them, so
+    //
+    //     run: >
+    //       git fetch origin
+    //       refs/pull/1/head
+    //
+    // runs `git fetch origin refs/pull/1/head` while no single SOURCE line
+    // carries both halves. The same is true of a command continued with a
+    // trailing `\`, `&&` or `|` inside a literal `run: |` block. That is a
+    // YAML-level blindness, not the shell-level obfuscation this guard
+    // disclaims above, so it is closed rather than documented away.
+    //
+    // The failure direction of joining is toward FALSE POSITIVES (two
+    // unrelated lines of one step reading as one command), never toward a
+    // missed violation, which is the correct direction for a security guard
+    // — and the joined text is still only ever ONE step's lines, so the
+    // widest a spurious match can reach is a single step. Comment lines are
+    // dropped before joining for the same reason the per-line scan skips
+    // them: a step whose prose merely NAMES `gh pr checkout` is not a step
+    // running it.
+    const flattened = block.filter((line) => !isCommentLine(line)).join(' ')
+    const flatCheckout =
+      runCheckoutOffset === -1 && RUN_STEP_CHECKOUT_PATTERNS.some((re) => re.test(flattened))
+    const isCheckout = usesCheckout || runCheckoutOffset !== -1 || flatCheckout
     if (!isCheckout) continue
 
     // `refLine` is relative to the job body, like `stepLine`, and is `null`
     // when the step declares no `ref:` — it exists because a `- name:`-first
     // step's `ref:` can sit many lines below the line that introduces it, and
     // a failure message naming only the step line points at a line that does
-    // not contain the value it quotes.
-    const { ref, refLine } = refFromWithMapping(block, indent)
-    steps.push({ stepLine: i, ref, refLine: refLine === null ? null : i + refLine })
+    // not contain the value it quotes. A `run:`-step checkout has no `with:`
+    // mapping to read at all, so `refFromWithMapping` is only consulted when
+    // the step is ALSO an `actions/checkout` step — reading it unconditionally
+    // would return `{ ref: null, refLine: null }` for a run-step checkout
+    // anyway (no `with:` block to find), but skipping the call says so.
+    const { ref, refLine } = usesCheckout
+      ? valueFromWithMapping(block, indent, 'ref')
+      : { ref: null, refLine: null }
+    // The `repository:` sibling key — see `FORK_REPOSITORY_PATTERNS`. Read
+    // from the SAME direct-child-of-`with:` scan as `ref:`, so a nested
+    // `repository:` under some other key cannot stand in for the checkout's
+    // own, exactly as for `ref:`.
+    const repository = usesCheckout ? valueFromWithMapping(block, indent, 'repository').ref : null
+    steps.push({
+      stepLine: i,
+      ref,
+      refLine: refLine === null ? null : i + refLine,
+      forkRepository:
+        repository !== null && FORK_REPOSITORY_PATTERNS.some((re) => re.test(repository)),
+      // A flattened-only match (see `flatCheckout`) has no single source
+      // line to cite, so it cites the step's own introducing line rather
+      // than inventing one — but it MUST still be non-null, or
+      // `findRunStepCheckouts` skips it and condition 3's message prints a
+      // misleading `ref: (none)` for a step that has no `ref:` by design.
+      runCheckoutLine: runCheckoutOffset !== -1 ? i + runCheckoutOffset : flatCheckout ? i : null,
+    })
   }
   return steps
 }
@@ -515,11 +716,19 @@ function isCommentLine(line) {
 }
 
 /**
- * The `ref:` value declared as a DIRECT child of a step's `with:` mapping,
+ * The value of `key` declared as a DIRECT child of a step's `with:` mapping,
  * with its offset from the step's introducing line. Both are `null` if the
- * step has no `with:` block or no `ref:` directly under it. See
+ * step has no `with:` block or no `<key>:` directly under it. See
  * `findCheckoutSteps`' docstring for why "direct child" rather than "anywhere
  * in the step".
+ *
+ * Parameterised on the key (rather than hard-coded to `ref:`) so the
+ * `repository:` sibling — the laundering route `FORK_REPOSITORY_PATTERNS`
+ * describes — is read by the SAME direct-child scan, with the same
+ * comment-stripping and the same nesting rule, rather than by a second
+ * hand-rolled walk that could disagree with this one. The returned field is
+ * still named `ref` for both callers: it is "the value this scan found",
+ * and renaming it would churn every existing caller for nothing.
  *
  * THE VALUE IS COMMENT-STRIPPED, like every other value this guard reads
  * (`jobDeclaresWriteScope`, `declaresWrite`). Condition 3 accepts a checkout
@@ -534,9 +743,10 @@ function isCommentLine(line) {
  *
  * @param {string[]} block  the step's lines, starting at its `- …` line
  * @param {number} stepIndent  indentation of that leading `-`
+ * @param {string} key  the `with:` key to read (`ref`, `repository`)
  * @returns {{ ref: string | null, refLine: number | null }}
  */
-function refFromWithMapping(block, stepIndent) {
+function valueFromWithMapping(block, stepIndent, key) {
   const withIdx = block.findIndex(
     (line) => !isCommentLine(line) && indentOf(line) > stepIndent && /^\s*with:\s*$/.test(line),
   )
@@ -550,7 +760,7 @@ function refFromWithMapping(block, stepIndent) {
     if (lineIndent <= withIndent) break // dedented back out of the with: mapping
     if (childIndent === null) childIndent = lineIndent
     if (lineIndent !== childIndent) continue // nested under some other with: key
-    const refMatch = /^\s*ref:\s*(.*)$/.exec(stripComment(line))
+    const refMatch = new RegExp(`^\\s*${key}:\\s*(.*)$`).exec(stripComment(line))
     if (refMatch) {
       const value = refMatch[1].trim()
       return value === '' ? { ref: null, refLine: null } : { ref: value, refLine: j }
@@ -595,12 +805,22 @@ export function findWriteScopedUnsafeCheckouts(src, jobs = splitJobs(src)) {
     const writeScoped = own === null ? workflowPermissions : own
     if (!writeScoped) continue
     for (const step of findCheckoutSteps(body)) {
-      if (isBasePinned(step.ref)) continue
+      // A base-pinned `ref:` is the ONE accepted shape — unless the step also
+      // redirects the clone at the fork with `repository:`, in which case the
+      // base ref's NAME is resolved against the fork's object graph and the
+      // pin buys nothing. See `FORK_REPOSITORY_PATTERNS`.
+      if (isBasePinned(step.ref) && !step.forkRepository) continue
       hits.push({
         job: jobName,
         line: headerLine + step.stepLine + 1,
         refLine: step.refLine === null ? null : headerLine + step.refLine + 1,
         ref: step.ref,
+        // #4148 — set only for a `run:`-step checkout (see `findCheckoutSteps`).
+        runCheckoutLine:
+          step.runCheckoutLine === null ? null : headerLine + step.runCheckoutLine + 1,
+        // See `FORK_REPOSITORY_PATTERNS`: the reason this hit is here at all
+        // when its `ref:` IS base-pinned.
+        forkRepository: step.forkRepository === true,
       })
     }
   }
@@ -683,6 +903,30 @@ export function findSecretsInUntrustedJobs(src, jobs = splitJobs(src)) {
 }
 
 /**
+ * #4148 — every `run:`-step checkout (see `RUN_STEP_CHECKOUT_PATTERNS`), in
+ * EVERY job regardless of write scope, across the whole file. Feeds
+ * conditions 1+2 the same way `findHeadCheckoutRefs` does: those conditions
+ * fire on ANY step reaching PR head content once `pull_request_target` is
+ * declared, independent of which job holds a write scope, because
+ * `pull_request_target` hands every job in the file access to secrets
+ * regardless of its `permissions:` block — see this file's header. Condition
+ * 3 (write-scope-gated) reuses `findCheckoutSteps` directly instead, since it
+ * already needs the per-job write-scope filter this function does not apply.
+ *
+ * @param {ReturnType<typeof splitJobs>} jobs
+ */
+export function findRunStepCheckouts(jobs) {
+  const hits = []
+  for (const [jobName, { body, headerLine }] of Object.entries(jobs)) {
+    for (const step of findCheckoutSteps(body)) {
+      if (step.runCheckoutLine === null) continue
+      hits.push({ job: jobName, line: headerLine + step.runCheckoutLine + 1 })
+    }
+  }
+  return hits
+}
+
+/**
  * The full verdict for one workflow source string. Pulled out of `main` so
  * the self-test can exercise it against synthetic fixtures without touching
  * the real file.
@@ -692,22 +936,26 @@ export function findSecretsInUntrustedJobs(src, jobs = splitJobs(src)) {
 export function checkTrustBoundary(src) {
   const onBlock = extractOnBlock(src)
   const dangerous = declaresDangerousTrigger(onBlock)
-  const headRefs = dangerous ? findHeadCheckoutRefs(src) : []
-  // Split ONCE and hand the same map to both conditions. Not for speed at
+  // Split ONCE and hand the same map to every condition. Not for speed at
   // this file size — so that "the untrusted job" and "the write-scoped job"
   // are provably statements about the identical set of jobs, rather than
   // about two independent parses that a future edit to `splitJobs` could
   // silently make disagree.
   const jobs = splitJobs(src)
+  const headRefs = dangerous ? findHeadCheckoutRefs(src) : []
+  // #4148 — the `run:`-step half of conditions 1+2's "ANY step checks out PR
+  // head content" test; see `findRunStepCheckouts`.
+  const runStepCheckouts = dangerous ? findRunStepCheckouts(jobs) : []
   const unsafeWriteCheckouts = findWriteScopedUnsafeCheckouts(src, jobs)
   const secretsInUntrustedJobs = findSecretsInUntrustedJobs(src, jobs)
   return {
     dangerous,
     headRefs,
+    runStepCheckouts,
     unsafeWriteCheckouts,
     secretsInUntrustedJobs,
     violation:
-      (dangerous && headRefs.length > 0) ||
+      (dangerous && (headRefs.length > 0 || runStepCheckouts.length > 0)) ||
       unsafeWriteCheckouts.length > 0 ||
       secretsInUntrustedJobs.length > 0,
   }
@@ -731,15 +979,25 @@ export function renderVerdict(result) {
     )
     return { lines, exitCode: 0 }
   }
-  if (result.dangerous && result.headRefs.length > 0) {
+  if (result.dangerous && (result.headRefs.length > 0 || result.runStepCheckouts.length > 0)) {
     lines.push(
       'ERROR: pr-overlap.yml triggers on `pull_request_target` AND checks out PR head content —',
       'that is the exact combination #3967 removed: a `pull_request_target` run gets a token',
       'scoped by the `permissions:` block AS WRITTEN, with none of the fork read-only downgrade',
       '`pull_request` gets, so a job holding write and checking out PR-authored code can leak it.',
-      'Offending `ref:` line(s):',
+      'Offending checkout(s):',
     )
+    // `hit.text` is the whole trimmed source line, `ref: …` / `repository: …`
+    // key included, so it is printed AS IS — prefixing it with a literal
+    // `ref: ` produced `line N: ref: ref: ${{ … }}`, and would be wrong
+    // outright for the `repository:` hits.
     for (const hit of result.headRefs) lines.push(`  line ${hit.line}: ${hit.text}`)
+    for (const hit of result.runStepCheckouts) {
+      lines.push(
+        `  line ${hit.line}, job \`${hit.job}\`: a \`run:\` step checks out PR content directly ` +
+          '(not an actions/checkout `ref:`) — #4148',
+      )
+    }
     lines.push(
       '\nEither drop `pull_request_target`, or make the checkout use the default (base-branch) ref',
       'and get any PR-specific data from the job that already runs the untrusted checkout, via an',
@@ -759,7 +1017,20 @@ export function renderVerdict(result) {
       // The step's own line and the `ref:`'s line are quoted separately: a
       // `- name:`-first checkout step declares its `ref:` well below the line
       // that introduces the step, so one number cannot honestly stand for both.
-      const where = hit.refLine === null ? '(none)' : `${hit.ref} (line ${hit.refLine})`
+      // A `run:`-step checkout (#4148) has neither a `ref:` nor a `with:`
+      // block, so it gets its own message naming the matched `run:` line
+      // instead of printing a misleading `ref: (none)`.
+      const where =
+        hit.runCheckoutLine !== null
+          ? `no \`ref:\` at all — a \`run:\` step checks out PR content directly (line ${hit.runCheckoutLine})`
+          : hit.forkRepository
+            ? // A base-pinned `ref:` here is not a pass: `repository:` points
+              // the clone at the FORK, so the base ref name resolves against
+              // the fork's objects. Say which of the two facts is the problem.
+              `${hit.ref ?? '(none)'} — but \`repository:\` points at the PR's HEAD repo (the fork), so the pin resolves against fork objects`
+            : hit.refLine === null
+              ? '(none)'
+              : `${hit.ref} (line ${hit.refLine})`
       lines.push(`  job \`${hit.job}\`, checkout step at line ${hit.line}: ref: ${where}`)
     }
     lines.push(
@@ -1429,6 +1700,345 @@ jobs:
         run: node scripts/pr-file-overlap.mjs # was \${{ secrets.A_PAT_WITH_WRITE }}
 `
 
+// #4148's OWN FALSIFICATION, verbatim from the issue: a write-scoped job
+// whose ONLY checkout is \`gh pr checkout\` inside a \`run:\` step — no
+// \`actions/checkout\` anywhere, no \`ref:\` line anywhere. Before this fix,
+// EVERY condition in this file stayed green on it: condition 3 only
+// recognised a step as a checkout when it \`uses: actions/checkout@\`, so this
+// step was invisible to it entirely, while doing precisely the thing the
+// guard exists to prevent — a write-scoped job running fork-authored content.
+const WRITE_SCOPED_JOB_GH_PR_CHECKOUT_IN_RUN_STEP = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check out the PR's own content, the idiomatic CLI way
+        run: gh pr checkout \${{ github.event.number }}
+
+      - name: Post the table
+        run: gh pr comment "\${{ github.event.number }}" --body-file table.md
+`
+
+// The SECOND evasion the issue names: fetching the PR's head ref and checking
+// it out with plain git, split across two \`run:\` lines inside one step's
+// block scalar — the shape the issue's own example uses. Every condition
+// stays green up to and including condition 3's OLD \`uses: actions/checkout@\`
+// test, for the same reason as the fixture above.
+const WRITE_SCOPED_JOB_GIT_FETCH_CHECKOUT_IN_RUN_STEP = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check out the PR's own content, the plain-git way
+        run: |
+          git fetch origin refs/pull/\${{ github.event.number }}/head
+          git checkout FETCH_HEAD
+
+      - name: Post the table
+        run: gh pr comment "\${{ github.event.number }}" --body-file table.md
+`
+
+// Conditions 1+2's half of #4148: \`pull_request_target\` declared, no
+// write-scoped job at all (so condition 3 has nothing to say), and the ONLY
+// checkout of PR content is a \`run:\`-step \`gh pr checkout\` — no \`ref:\` line
+// anywhere for condition 2's OLD \`findHeadCheckoutRefs\` scan to find. Under
+// \`pull_request_target\` every job gets secret access regardless of its
+// \`permissions:\` block (see this file's header), so this is dangerous even
+// though the job itself asks for no write scope.
+const DANGEROUS_TARGET_WITH_RUN_STEP_CHECKOUT = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the PR's own content, the idiomatic CLI way
+        run: gh pr checkout \${{ github.event.number }}
+`
+
+// THE NEGATIVE CONTROL for #4148: an ORDINARY \`git fetch\` of the BASE branch
+// — exactly the shape \`pr-overlap.yml\`'s real \`post\` job already uses
+// (\`git fetch --quiet --no-tags origin "$BASE_REF"\`) — must NOT be flagged.
+// \`RUN_STEP_CHECKOUT_PATTERNS\`' fetch pattern requires \`refs/pull/\` in the
+// same line; a fetch of a named branch never matches it. Without this fixture
+// a version of the pattern that matched ANY \`git fetch\` would pass every
+// other assertion in this file (none of them fetch a non-\`refs/pull\` ref)
+// while making the real \`post\` job's own ordinary fetch a false positive.
+const WRITE_SCOPED_JOB_ORDINARY_BASE_FETCH_IS_FINE = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout the TRUSTED script source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Fetch the base branch to diff against, same idiom as the real file
+        run: git fetch --quiet --no-tags origin "$BASE_REF" || true
+`
+
+// A \`run:\` step whose TEXT merely mentions \`gh pr checkout\` inside a
+// comment, never actually running it — the same discipline as
+// \`SECRET_NAMED_ONLY_IN_A_COMMENT\` and \`COMMENT_IN_PERMISSIONS_IS_NOT_A_WRITE_SCOPE\`
+// above: a whole-line YAML comment naming the shape is not the shape being
+// used, and \`isCommentLine\` must still filter it out inside a step block.
+const RUN_STEP_CHECKOUT_MENTIONED_ONLY_IN_A_COMMENT = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout the TRUSTED script source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Post the table
+        # Deliberately NOT using \`gh pr checkout\` here — see #4148 for why.
+        run: gh pr comment "\${{ github.event.number }}" --body-file table.md
+`
+
+// ─── the evasions an adversarial pass found against the FIRST cut of
+// `RUN_STEP_CHECKOUT_PATTERNS` (#4148 review) ──────────────────────────────
+//
+// Each of these was GREEN against the anchored patterns that shipped in the
+// first draft (`gh\s+pr\s+checkout`, `git\s+checkout\s+FETCH_HEAD`), and each
+// reaches exactly the same fork-authored content as the two fixtures above.
+// They are written as ONE fixture per evasion CLASS, not one per verb, with
+// the verb sweep done in the assertion block below — a fixture per verb would
+// be ten near-identical strings pinning one alternation.
+//
+// 1. `gh` with a GLOBAL FLAG before the subcommand. `gh -R owner/repo pr
+//    checkout 1` is the documented spelling for a checkout against an
+//    explicitly named repo, and `gh\s+pr` cannot match it.
+const WRITE_SCOPED_JOB_GH_GLOBAL_FLAG_BEFORE_PR_CHECKOUT = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check out the PR, naming the repo explicitly
+        run: gh -R "\${{ github.repository }}" pr checkout \${{ github.event.number }}
+`
+
+// 2. A FOLDED block scalar (`run: >`) splitting one command across source
+//    lines. YAML rejoins them with spaces before the shell sees them, so the
+//    step runs `git fetch origin refs/pull/1/head && git checkout FETCH_HEAD`
+//    while NO single source line carries both `git fetch` and `refs/pull/`.
+//    This is the shape the per-line scan is structurally blind to, and the
+//    reason `findCheckoutSteps` also matches against the flattened block.
+const WRITE_SCOPED_JOB_FOLDED_SCALAR_FETCH = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check out the PR, folded across lines
+        run: >
+          git fetch origin
+          refs/pull/\${{ github.event.number }}/head
+`
+
+// 3. A git verb OTHER than \`checkout\` consuming a fetched \`FETCH_HEAD\`.
+//    \`git worktree add\` materialises the fork's tree just as completely as
+//    \`git checkout\` does, and the fetch here names a SHA rather than a
+//    \`refs/pull/\` ref, so the fetch pattern has nothing to match either —
+//    the whole step hung on the one anchored verb.
+const WRITE_SCOPED_JOB_WORKTREE_FROM_FETCH_HEAD = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Materialise the PR head without the word "checkout"
+        env:
+          HEAD_SHA: \${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch origin "$HEAD_SHA"
+          git worktree add /tmp/pr FETCH_HEAD
+`
+
+// 4. \`merge_commit_sha\` — GitHub's precomputed merge of head into base, the
+//    same content \`refs/pull/<n>/merge\` names, spelled as an event field.
+//    Under \`pull_request_target\` in a job with NO write scope, conditions
+//    1+2 are the only ones that can fire, and \`HEAD_REF_PATTERNS\` did not
+//    name it.
+const DANGEROUS_TARGET_WITH_MERGE_COMMIT_SHA = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request_target:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+`
+
+// 5. THE LAUNDERING CASE: a \`ref:\` pinned to the PR BASE — the one shape
+//    condition 3 ACCEPTS — while \`repository:\` redirects the whole clone at
+//    the fork. The base ref's NAME then resolves against the fork's object
+//    graph, i.e. content the fork author controls, and the pin buys nothing.
+//    Without \`FORK_REPOSITORY_PATTERNS\` this fixture is green on every
+//    condition: \`isBasePinned\` says yes and condition 3 skips the step.
+const WRITE_SCOPED_JOB_BASE_PINNED_BUT_FORK_REPOSITORY = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Base-pinned ref, fork repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: \${{ github.event.pull_request.head.repo.full_name }}
+          ref: \${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+`
+
+// NEGATIVE CONTROL for the widened FETCH_HEAD alternation: a READ-ONLY
+// inspection of \`FETCH_HEAD\` puts no fork content in the tree. \`git
+// rev-parse FETCH_HEAD\` after an ordinary base-branch fetch is a diagnostic,
+// and a pattern matching a bare \`git … FETCH_HEAD\` would red on it. Without
+// this fixture the obvious over-broad simplification passes every other
+// assertion in this file.
+const WRITE_SCOPED_JOB_READ_ONLY_FETCH_HEAD_INSPECTION_IS_FINE = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout the TRUSTED script source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Report which base commit we fetched
+        env:
+          BASE_REF: \${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --quiet --no-tags origin "$BASE_REF" || true
+          echo "base tip: $(git rev-parse FETCH_HEAD)"
+`
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -1898,6 +2508,194 @@ function runSelfTest() {
       '`stripComment` keeps a `#` inside a quoted scalar and cuts a real trailing comment',
       wrong.length === 0,
       JSON.stringify(wrong),
+    )
+  }
+
+  // 20. #4148's OWN FALSIFICATION: a `run:`-step `gh pr checkout` in a
+  //     write-scoped job, with NO `actions/checkout` anywhere and NO `ref:`
+  //     line anywhere — every condition prior to this fix stayed green on it.
+  {
+    const r = checkTrustBoundary(WRITE_SCOPED_JOB_GH_PR_CHECKOUT_IN_RUN_STEP)
+    expect(
+      '`gh pr checkout` in a `run:` step, in a write-scoped job, IS flagged (condition 3)',
+      r.violation === true &&
+        r.unsafeWriteCheckouts.length === 1 &&
+        r.unsafeWriteCheckouts[0]?.job === 'post' &&
+        r.unsafeWriteCheckouts[0]?.ref === null &&
+        r.unsafeWriteCheckouts[0]?.runCheckoutLine !== null,
+      JSON.stringify(r),
+    )
+    const rendered = renderVerdict(r)
+    expect(
+      'the rendered message points at the `run:` step, not a nonexistent `ref:`',
+      rendered.exitCode === 1 &&
+        rendered.lines.some((l) => l.includes('`post`') && /run:.*checks out PR content/.test(l)),
+      JSON.stringify(rendered),
+    )
+
+    // The sibling shape: `git fetch … refs/pull/… ` + `git checkout
+    // FETCH_HEAD` split across two lines of one `run: |` block scalar.
+    const gitFetch = checkTrustBoundary(WRITE_SCOPED_JOB_GIT_FETCH_CHECKOUT_IN_RUN_STEP)
+    expect(
+      '`git fetch … refs/pull/… ` + `git checkout FETCH_HEAD` in a `run:` step is ALSO flagged',
+      gitFetch.violation === true &&
+        gitFetch.unsafeWriteCheckouts.length === 1 &&
+        gitFetch.unsafeWriteCheckouts[0]?.job === 'post',
+      JSON.stringify(gitFetch),
+    )
+
+    // Condition 1+2's half: `pull_request_target`, no write-scoped job at
+    // all, and the only checkout is a `run:`-step `gh pr checkout` — old
+    // `findHeadCheckoutRefs` had no `ref:` line to find.
+    const dangerous = checkTrustBoundary(DANGEROUS_TARGET_WITH_RUN_STEP_CHECKOUT)
+    expect(
+      'a `run:`-step `gh pr checkout` under `pull_request_target`, in a job with NO write scope, is flagged',
+      dangerous.violation === true &&
+        dangerous.dangerous === true &&
+        dangerous.runStepCheckouts.length === 1 &&
+        dangerous.runStepCheckouts[0]?.job === 'compute' &&
+        dangerous.unsafeWriteCheckouts.length === 0,
+      JSON.stringify(dangerous),
+    )
+    const dangerousRendered = renderVerdict(dangerous)
+    expect(
+      'the rendered message for the dangerous-trigger fixture names the job and cites #4148',
+      dangerousRendered.exitCode === 1 &&
+        dangerousRendered.lines.some((l) => l.includes('`compute`') && l.includes('#4148')),
+      JSON.stringify(dangerousRendered),
+    )
+
+    // Negative control: an ORDINARY base-branch `git fetch`, the exact idiom
+    // the real `post` job already uses, must NOT be flagged — proves the
+    // fetch pattern is anchored on `refs/pull/`, not on the bare word `fetch`.
+    const ordinary = checkTrustBoundary(WRITE_SCOPED_JOB_ORDINARY_BASE_FETCH_IS_FINE)
+    expect(
+      'an ordinary `git fetch` of the base branch (no refs/pull/) is NOT flagged',
+      ordinary.violation === false,
+      JSON.stringify(ordinary),
+    )
+
+    // A comment merely NAMING `gh pr checkout` is not the shape being used.
+    const commented = checkTrustBoundary(RUN_STEP_CHECKOUT_MENTIONED_ONLY_IN_A_COMMENT)
+    expect(
+      'a comment mentioning `gh pr checkout` (never run) is NOT flagged',
+      commented.violation === false,
+      JSON.stringify(commented),
+    )
+  }
+
+  // 21. THE EVASIONS THE #4148 REVIEW FOUND against the first cut of
+  //     `RUN_STEP_CHECKOUT_PATTERNS`. Every fixture in this block was GREEN
+  //     against the anchored patterns that shipped in the draft, and each
+  //     reaches exactly the fork-authored content the guard exists to keep
+  //     out of a privileged job — so each is pinned here, with the
+  //     over-broadening each fix invites pinned alongside it.
+  {
+    const globalFlag = checkTrustBoundary(WRITE_SCOPED_JOB_GH_GLOBAL_FLAG_BEFORE_PR_CHECKOUT)
+    expect(
+      '`gh -R <repo> pr checkout` — a GLOBAL FLAG before the subcommand — is flagged',
+      globalFlag.violation === true && globalFlag.unsafeWriteCheckouts.length === 1,
+      JSON.stringify(globalFlag),
+    )
+
+    const folded = checkTrustBoundary(WRITE_SCOPED_JOB_FOLDED_SCALAR_FETCH)
+    expect(
+      'a FOLDED `run: >` scalar splitting `git fetch … refs/pull/…` across source lines is flagged',
+      folded.violation === true &&
+        folded.unsafeWriteCheckouts.length === 1 &&
+        folded.unsafeWriteCheckouts[0]?.runCheckoutLine !== null,
+      JSON.stringify(folded),
+    )
+
+    const worktree = checkTrustBoundary(WRITE_SCOPED_JOB_WORKTREE_FROM_FETCH_HEAD)
+    expect(
+      '`git worktree add … FETCH_HEAD` (no `checkout` verb, no `refs/pull/` ref) is flagged',
+      worktree.violation === true && worktree.unsafeWriteCheckouts.length === 1,
+      JSON.stringify(worktree),
+    )
+
+    // The verb sweep. One fixture above pins the mechanism; this pins the
+    // ALTERNATION — every verb that materialises `FETCH_HEAD` in a tree is
+    // in it, and the read-only inspections are NOT. Asserted through
+    // `checkTrustBoundary` on a real fixture rather than against the regex
+    // directly, so it cannot pass while the wiring is broken.
+    const inWorktreeFixture = (cmd) =>
+      checkTrustBoundary(
+        WRITE_SCOPED_JOB_WORKTREE_FROM_FETCH_HEAD.replace(
+          'git worktree add /tmp/pr FETCH_HEAD',
+          cmd,
+        ),
+      ).violation
+    const materialising = [
+      'git checkout FETCH_HEAD',
+      'git switch --detach FETCH_HEAD',
+      'git restore --source FETCH_HEAD .',
+      'git reset --hard FETCH_HEAD',
+      'git merge --no-edit FETCH_HEAD',
+      'git rebase FETCH_HEAD',
+      'git cherry-pick FETCH_HEAD',
+      'git worktree add /tmp/pr FETCH_HEAD',
+      'git pull origin FETCH_HEAD',
+    ]
+    const missed = materialising.filter((cmd) => inWorktreeFixture(cmd) !== true)
+    expect(
+      'every git verb that MATERIALISES a fetched FETCH_HEAD is flagged, not only `checkout`',
+      missed.length === 0,
+      `missed: ${JSON.stringify(missed)}`,
+    )
+
+    const readOnly = checkTrustBoundary(WRITE_SCOPED_JOB_READ_ONLY_FETCH_HEAD_INSPECTION_IS_FINE)
+    expect(
+      'a READ-ONLY `git rev-parse FETCH_HEAD` after an ordinary base fetch is NOT flagged',
+      readOnly.violation === false,
+      JSON.stringify(readOnly),
+    )
+
+    // `merge_commit_sha` — conditions 1+2's blind spot, in a job with no
+    // write scope so ONLY conditions 1+2 can answer.
+    const mergeSha = checkTrustBoundary(DANGEROUS_TARGET_WITH_MERGE_COMMIT_SHA)
+    expect(
+      '`ref: …merge_commit_sha` under `pull_request_target` is flagged by conditions 1+2',
+      mergeSha.violation === true &&
+        mergeSha.headRefs.length === 1 &&
+        mergeSha.unsafeWriteCheckouts.length === 0,
+      JSON.stringify(mergeSha),
+    )
+    expect(
+      'and the rendered `ref:` line is printed once, not doubled',
+      renderVerdict(mergeSha).lines.some((l) => /ref: \$\{\{/.test(l) && !/ref: ref:/.test(l)),
+      JSON.stringify(renderVerdict(mergeSha)),
+    )
+
+    // The laundering case: a BASE-pinned `ref:` — condition 3's one accepted
+    // shape — with `repository:` pointing at the fork.
+    const laundered = checkTrustBoundary(WRITE_SCOPED_JOB_BASE_PINNED_BUT_FORK_REPOSITORY)
+    expect(
+      'a base-pinned `ref:` does NOT launder a checkout whose `repository:` is the fork',
+      laundered.violation === true &&
+        laundered.unsafeWriteCheckouts.length === 1 &&
+        laundered.unsafeWriteCheckouts[0]?.forkRepository === true,
+      JSON.stringify(laundered),
+    )
+    expect(
+      'and the message says WHY a base-pinned ref did not save it',
+      renderVerdict(laundered).lines.some((l) => /repository:.*fork/.test(l)),
+      JSON.stringify(renderVerdict(laundered)),
+    )
+
+    // NEGATIVE CONTROL for `FORK_REPOSITORY_PATTERNS`: the SAME fixture with
+    // `repository:` naming THIS repo is base-pinned and safe, so the new
+    // condition must not simply red on the presence of a `repository:` key.
+    const ownRepository = checkTrustBoundary(
+      WRITE_SCOPED_JOB_BASE_PINNED_BUT_FORK_REPOSITORY.replace(
+        'repository: ${{ github.event.pull_request.head.repo.full_name }}',
+        'repository: ${{ github.repository }}',
+      ),
+    )
+    expect(
+      '`repository: ${{ github.repository }}` (this repo) with a base-pinned ref is NOT flagged',
+      ownRepository.violation === false,
+      JSON.stringify(ownRepository),
     )
   }
 
