@@ -4,9 +4,9 @@
 |----------|-------|
 | **Date** | 2026-08-18 → 2026-08-19 |
 | **Subagents** | 5 build (2 of them resumed after an interruption) |
-| **Items closed** | `#4071`, `#4133`, `#4141`, `#4126`, `#4129`, `#3967`, `#4138`, `#4065` |
+| **Items closed** | `#4071`, `#4133`, `#4141`, `#4126`, `#4129`, `#3967`, `#4138`, `#4065`, `#4072`, `#4036`, `#3939` |
 | **Items shipped, PR open** | PR #4154 (`#4150` residuals), PR #4155 (`#4140` guard hardening), plus `#4072`, `#4078`, `#4036`/`#3939` in flight |
-| **Items filed** | `#4152`, `#4153` |
+| **Items filed** | `#4152`, `#4153`, `#4156`, `#4159`, `#4161` |
 
 **Summary:** Six PRs merged and eight issues closed, but the more useful observation is
 where the *next* batch came from. Three of the five builders launched in this session
@@ -87,6 +87,66 @@ The dead builders also left `in-progress` labels on their issues. Session 1347 s
 section on exactly this — seven stale claims blocking a backlog sweep — which is evidence
 that "remember to clear the label" is not a working mitigation. The label needs to expire
 on its own or be derived from branch/PR state.
+
+### #4072 — two fixpoints, and the seed pin they were holding open
+
+#4072 bundled two rare round-trip violations that the #4059 sweep had found and left
+live. Fixing them turned out to be the precondition on a comment already in the tree:
+`markdown-roundtrip.property.test.ts` carried a fast-check seed pin whose docstring said,
+in as many words, "delete the pin when violations 2 and 3 are fixed, not before". So the
+real deliverable is not two one-line matchers — it is that the file explores randomly
+again.
+
+**A callout-shaped link.** A link whose visible text begins with `!` serializes to
+`[!a](https://example.com)` — character-for-character a `[!TYPE]` callout marker with a
+destination glued on. Leading a blockquote it re-parsed as a callout named `a`, so the
+label was upper-cased and re-emitted as `[!A] (…)`. The inserted space is what makes this
+more than cosmetic drift: it breaks the link. The two productions differ at exactly one
+character — a callout's `]` is followed by end of line, whitespace, or its title, never by
+the `(` that opens a link destination — so `CALLOUT_RE` refuses that one follower and
+nothing else about callout syntax narrows.
+
+**A cell edge that two frames disagreed about.** A markdown table cell is single-line, so
+a hardBreak inside one degrades to a space, and `parseTable` trims the cell on both edges.
+Those two rules ran in the wrong order: the break became a space at the node level;
+`serializeParagraph` then saw a paragraph beginning with a space and declined to escape the
+block marker behind it; and only afterwards did the string `.trim()` pull that space off,
+emitting a bare `>` at the cell edge. The reparse stores the marker as plain text, whose
+own serialization *does* escape it — so pass one wrote `| > |` and pass two `| \> |`,
+forever. The trim now happens at the node level, before any escaping decision.
+
+**The third file nobody had cited.** `src/lib/block-type-convert.ts` keeps its own callout
+matcher for the Turn-into menu. Fixing the parser without it would have *created* a
+divergence: the editor renders a plain quote holding a link while the menu still highlights
+"Callout" and `stripBlockMarker` eats the `[!a]` that *is* the link's text. Both patterns
+now derive from one shared fragment, and the test that matters is the cross-check — same
+string, same verdict on both sides — not a restatement of the regex.
+
+**What the sweep measured.** Before and after over the same corpus — six alphabets, free
+and prefix-anchored, plus a seeded random corpus, 1,607,480 inputs. 616 non-convergent
+before, 21 after, and **zero inputs that converged before and stopped converging after**.
+That last number is the one the fix had to earn; the other two only say how much ground it
+covered. The 21 survivors are one unrelated family present identically on both sides — an
+emphasis span wrapping only whitespace, where `* *` re-reads as a bullet list — filed as
+#4156 rather than folded in, because a fix there is about the serializer refusing to emit a
+mark whose content cannot survive re-reading.
+
+**Retiring the pin.** The evidence bar was set by the sweep that justified adding it
+(10 seeds × 20,000 runs) and cleared with room: 32 seeds × 20,000 runs green across all 42
+tests — with the *same* sweep reddening at seeds 1, 6, 9, 10 and 12 on the parent commit,
+which is what makes the green mean something rather than merely being green.
+
+### Two PRs claimed session 1348
+
+Both this log and #4160 added a `docs/session-log/session-1348-*.md`. Nothing caught it:
+the numbering guard sees only the tree it runs in, and each branch contained exactly one
+1348 file, so both were locally valid and would have collided on the second merge. This is
+#3933 exactly, observed rather than theorised, and it happened on the *first* batch where
+two agents were told to write logs concurrently.
+
+The resolution was to keep one log — this one — and fold the other's content in, which is
+also the right answer on the merits: one session's work is one narrative, and #4160's half
+is the technical depth this section now carries.
 
 ### Process notes
 
