@@ -1671,6 +1671,105 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
     materializer.shutdown();
 }
 
+/// #4096 companion to the test above: the empty-stream short-circuit now
+/// writes `peer_refs` **unconditionally** (it is not gated on
+/// `streamed_to_peer`, which that path never sets), so it inherits the exact
+/// hazard `orchestrator_rejects_sync_complete_with_empty_peer_id` exists to
+/// pin — with none of that test's coverage, because the short-circuit returns
+/// before the `SyncComplete` arm it guards.
+///
+/// Same setup, one difference: **no space is registered**, so
+/// `head_exchange_outgoing_loro` takes `messages.is_empty() &&
+/// op_batches.is_empty()` and replies `SyncComplete` directly instead of
+/// entering `StreamingOps`.
+///
+/// The two paths answer the unidentified peer differently on purpose, and both
+/// halves are asserted here:
+///
+///   * **It does not fail.** The `SyncComplete` arm turns "no identity" into
+///     `Failed`, because a session that pulled state and cannot attribute it
+///     has lost something. This one shipped nothing and applied nothing, so
+///     there is nothing to lose — it completes, matching
+///     `complete_pull_session`'s skip-and-warn rather than the receive arm's
+///     hard error.
+///   * **It writes nothing.** `resolve_remote_peer_id()` returns `None` and the
+///     whole bookkeeping block is skipped. A `peer_id = ""` row here would be
+///     the same permanent corruption of the per-peer bookkeeping, arrived at
+///     through a branch that previously could not reach `peer_refs` at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue4096_short_circuit_writes_no_row_when_peer_is_unidentified() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // Seed one local op so the remote's claim `(local-dev, seq=1)` passes
+    // `check_reset_required` (same reason as the test above).
+    append_local_op_at(
+        &pool,
+        "local-dev",
+        test_create_payload("SEED4096"),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    // Cert-less: no `with_expected_remote_id`, so the ONLY identity source is
+    // the advertised heads — and they carry only our own device id below.
+    let mut orch = SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+
+    let reply = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "local-dev".into(),
+                seq: 1,
+                hash: "abc".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+        })
+        .await
+        .expect(
+            "#4096: the short-circuit must still complete an unattributable session — it \
+             shipped nothing and applied nothing, so unlike the SyncComplete arm there is \
+             no pulled state left dangling",
+        );
+
+    assert!(
+        matches!(reply, Some(SyncMessage::SyncComplete { .. })),
+        "precondition: an empty registry must take the empty-stream short-circuit, \
+         not the per-space LoroSync path — got {reply:?}"
+    );
+    assert_eq!(
+        orch.session().state,
+        SyncState::Complete,
+        "the short-circuit completes the session"
+    );
+    assert_eq!(
+        orch.session().remote_device_id,
+        "",
+        "precondition: no non-local head and no expected_remote_id, so the peer \
+         is genuinely unidentified"
+    );
+
+    let rows: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM peer_refs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows, 0,
+        "#4096: the new unconditional bookkeeping must skip entirely when the peer \
+         was never identified. `record_stream_in_tx` upserts by `peer_id`, so an \
+         unguarded write here creates a row keyed by the empty string and corrupts \
+         the per-peer bookkeeping permanently — exactly what \
+         `orchestrator_rejects_sync_complete_with_empty_peer_id` pins for the arm \
+         this branch returns before reaching"
+    );
+
+    materializer.shutdown();
+}
+
 // ======================================================================
 // Message serialization round-trip tests
 // ======================================================================
