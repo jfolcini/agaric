@@ -4983,3 +4983,224 @@ async fn reindex_page_link_cache_for_block_skips_an_unstranded_stale_key_3891() 
          drop a repair the reindexed block itself owes (#3891)"
     );
 }
+
+// ====================================================================
+// block_links_unresolved (#4118)
+// ====================================================================
+
+/// Read the unresolved link tokens recorded for `source_id`.
+async fn unresolved_targets(pool: &SqlitePool, source_id: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT target_id FROM block_links_unresolved WHERE source_id = ? ORDER BY target_id",
+    )
+    .bind(source_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// #4118 — a token whose target does not exist yet is DROPPED from
+/// `block_links` (the INSERT's `WHERE EXISTS` guard) and, before this issue,
+/// was forgotten with it. The reindexer's only trigger is a change to the
+/// SOURCE's content, so once the target arrived nothing re-ran it and the edge
+/// was gone permanently.
+///
+/// The drop itself is correct — `block_links.target_id REFERENCES blocks(id)`,
+/// so a dangling edge is not storable. What must not happen is losing the
+/// *knowledge* that the edge is owed. This pins the whole life-cycle of that
+/// knowledge on the store side: recorded on the drop, and gone the moment the
+/// edge exists.
+#[tokio::test]
+async fn block_links_records_a_token_whose_target_does_not_exist_yet_4118() {
+    let (pool, _dir) = test_pool().await;
+
+    let src = "01HZ0000000000000000000SRC";
+    let tgt = "01HZ00000000000000000000AB";
+    insert_block(&pool, src, "content", &format!("see [[{tgt}]]")).await;
+
+    reindex_block_links(&pool, src).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_links").await,
+        0,
+        "a token whose target is not in `blocks` cannot become an edge — the FK on \
+         target_id makes it unstorable"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, src).await,
+        vec![tgt.to_owned()],
+        "#4118: the dropped token must be RECORDED, keyed for lookup by target — that \
+         record is the only thing that can re-link the edge later, because the \
+         reindexer is triggered by the SOURCE's content and the source never changes"
+    );
+
+    // The target arrives. A reindex of the source now admits the edge, and the
+    // record of the debt goes with it.
+    insert_block(&pool, tgt, "content", "target").await;
+    reindex_block_links(&pool, src).await.unwrap();
+
+    let edges: Vec<String> =
+        sqlx::query_scalar("SELECT target_id FROM block_links WHERE source_id = ?")
+            .bind(src)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        edges,
+        vec![tgt.to_owned()],
+        "once the target exists the same content must produce the edge"
+    );
+    assert!(
+        unresolved_targets(&pool, src).await.is_empty(),
+        "a resolved token must stop being recorded as unresolved — otherwise every \
+         future arrival of any block would re-drive a repair that is already done"
+    );
+}
+
+/// #4118 — a token that leaves the content while it is STILL unresolved must
+/// drop its record.
+///
+/// This is the case the pre-#4118 `to_delete.is_empty() && to_insert.is_empty()`
+/// early return would have skipped, and it is not reachable by either arm of
+/// the diff: such a token never had a `block_links` row (so it is not in
+/// `to_delete`) and is no longer in the content (so it is not in `to_insert`).
+/// Its record would have survived every subsequent reindex of the source and
+/// kept re-driving a repair for a reference that no longer exists — a slow
+/// leak of permanent work.
+#[tokio::test]
+async fn block_links_forgets_an_unresolved_token_removed_from_content_4118() {
+    let (pool, _dir) = test_pool().await;
+
+    let src = "01HZ0000000000000000000SRC";
+    let ghost = "01HZ00000000000000000000AB";
+    insert_block(&pool, src, "content", &format!("see [[{ghost}]]")).await;
+    reindex_block_links(&pool, src).await.unwrap();
+    assert_eq!(
+        unresolved_targets(&pool, src).await,
+        vec![ghost.to_owned()],
+        "seed: the token to the absent target is recorded"
+    );
+
+    sqlx::query("UPDATE blocks SET content = 'no links here' WHERE id = ?")
+        .bind(src)
+        .execute(&pool)
+        .await
+        .unwrap();
+    reindex_block_links(&pool, src).await.unwrap();
+
+    assert!(
+        unresolved_targets(&pool, src).await.is_empty(),
+        "#4118: an unresolved token the content no longer names is owed by nobody; \
+         leaving the row behind would make the target's eventual arrival re-link an \
+         edge the source has since deleted"
+    );
+}
+
+/// #4118 — the same recording on the READ/WRITE-SPLIT writer.
+///
+/// The split variant is a second, hand-maintained copy of the same diff (that
+/// duplication is what #375 and #3903 were both about), so it gets its own
+/// pin: the production materializer picks it whenever a read pool is
+/// configured, and a fix that landed only in the single-pool copy would leave
+/// exactly the deployments that carry the most sync traffic still losing edges.
+#[tokio::test]
+async fn block_links_split_records_and_clears_unresolved_tokens_4118() {
+    let (pool, _dir) = test_pool().await;
+
+    let src = "01HZ0000000000000000000SRC";
+    let tgt = "01HZ00000000000000000000AB";
+    insert_block(&pool, src, "content", &format!("see [[{tgt}]]")).await;
+
+    reindex_block_links_split(&pool, &pool, src).await.unwrap();
+    assert_eq!(
+        unresolved_targets(&pool, src).await,
+        vec![tgt.to_owned()],
+        "#4118: the split writer must record the dropped token too"
+    );
+
+    insert_block(&pool, tgt, "content", "target").await;
+    reindex_block_links_split(&pool, &pool, src).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_links").await,
+        1,
+        "the split writer must admit the edge once the target exists"
+    );
+    assert!(
+        unresolved_targets(&pool, src).await.is_empty(),
+        "and clear the record it wrote"
+    );
+}
+
+/// #4118 case 2 — the cross-space filter's drop is recorded too.
+///
+/// This is the residual window #3903/#3894 left behind: the filter itself is
+/// now correct, but a target whose `space_id` has not been stamped yet still
+/// resolves to NULL, `NULL = ?3` is still falsy, and the edge is still
+/// dropped. `space_id` is stamped POST-COMMIT by `SetBlockPageId`, so this is
+/// not an exotic race — it is the ordinary shape of a create.
+#[tokio::test]
+async fn block_links_records_a_target_whose_space_is_not_stamped_yet_4118() {
+    let (pool, _dir) = test_pool().await;
+
+    let space = "01HZ0000000000000000000SPC";
+    let src = "01HZ0000000000000000000SRC";
+    let tgt = "01HZ00000000000000000000AB";
+
+    insert_block(&pool, space, "page", "space root").await;
+    sqlx::query("UPDATE blocks SET page_id = id WHERE id = ?")
+        .bind(space)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+        .bind(space)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    insert_block(&pool, src, "content", &format!("see [[{tgt}]]")).await;
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+        .bind(space)
+        .bind(src)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // The target exists and is live, but carries neither its own `space_id`
+    // nor a `page_id` to inherit one through — the state a block is in between
+    // its create commit and the deferred `SetBlockPageId`.
+    insert_block(&pool, tgt, "content", "target").await;
+
+    reindex_block_links(&pool, src).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_links").await,
+        0,
+        "seed: an unresolvable target space is falsy against the source's, so the \
+         cross-space filter drops the edge"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, src).await,
+        vec![tgt.to_owned()],
+        "#4118: a drop by the SPACE filter is owed exactly as much as a drop by the \
+         existence guard — the target becomes linkable when its space is stamped"
+    );
+
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+        .bind(space)
+        .bind(tgt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    reindex_block_links(&pool, src).await.unwrap();
+
+    assert_eq!(
+        count_rows(&pool, "block_links").await,
+        1,
+        "once the space is stamped the same content must produce the edge"
+    );
+    assert!(
+        unresolved_targets(&pool, src).await.is_empty(),
+        "and the record must clear"
+    );
+}

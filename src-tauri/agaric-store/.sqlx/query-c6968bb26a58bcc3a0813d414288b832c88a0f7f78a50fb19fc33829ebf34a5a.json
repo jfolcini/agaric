@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM block_links_unresolved WHERE source_id = ?1 AND (target_id NOT IN (SELECT value FROM json_each(?2)) OR target_id IN (SELECT target_id FROM block_links WHERE source_id = ?1))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "c6968bb26a58bcc3a0813d414288b832c88a0f7f78a50fb19fc33829ebf34a5a"
+}

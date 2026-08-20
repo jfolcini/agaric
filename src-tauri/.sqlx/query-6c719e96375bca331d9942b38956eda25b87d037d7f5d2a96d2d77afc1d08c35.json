@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT target_id, CAST(0 AS INTEGER) AS unresolved FROM block_links WHERE source_id = ?1 UNION ALL SELECT target_id, CAST(1 AS INTEGER) AS unresolved FROM block_links_unresolved WHERE source_id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "target_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_links",
+            "name": "target_id"
+          }
+        }
+      },
+      {
+        "name": "unresolved",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "6c719e96375bca331d9942b38956eda25b87d037d7f5d2a96d2d77afc1d08c35"
+}

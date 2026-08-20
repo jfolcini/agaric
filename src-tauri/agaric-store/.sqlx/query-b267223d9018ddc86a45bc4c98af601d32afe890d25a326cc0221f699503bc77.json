@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM block_links_unresolved",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "b267223d9018ddc86a45bc4c98af601d32afe890d25a326cc0221f699503bc77"
+}

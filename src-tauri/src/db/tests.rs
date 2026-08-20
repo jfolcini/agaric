@@ -5715,3 +5715,78 @@ async fn peer_refs_0111_streamed_at_add_preserves_existing_rows_4084() {
          the puller and the scheduler measures staleness from it"
     );
 }
+
+/// #4118 / migration 0112 — the two schema decisions `block_links_unresolved`
+/// rests on, pinned so a future rebuild of the table cannot quietly reverse
+/// either.
+///
+/// The table records link tokens a reindex parsed out of `blocks.content` but
+/// could not turn into a `block_links` edge, keyed for lookup BY TARGET so the
+/// referrers can be re-linked when the target becomes linkable.
+///
+/// 1. **`target_id` carries NO foreign key.** This is the whole point: a row
+///    exists precisely because the target may not be in `blocks` yet (created
+///    after the referrer, routinely so on an out-of-order remote replay). An
+///    FK here — the obvious thing to copy from `block_links`, whose
+///    `target_id` DOES reference `blocks(id)` — would make the table unable to
+///    hold the only rows it is for, and #4118 would silently regress to
+///    "nothing is ever recorded".
+/// 2. **`source_id` DOES cascade.** A purged source owes nothing, and leaving
+///    its rows behind would keep re-driving a repair for a block that no
+///    longer exists. The RESET path additionally depends on this table being
+///    empt-able (`truncate_block_links` wipes it in the same
+///    `defer_foreign_keys = ON` transaction that swaps `blocks`).
+#[tokio::test]
+async fn block_links_unresolved_0112_target_has_no_fk_and_source_cascades_4118() {
+    let (pool, _dir) = test_pool().await;
+
+    let source = "01HZ0000000000000000000SRC";
+    let absent_target = "01HZ0000000000000000000GHO";
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'src')")
+        .bind(source)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // (1) A row whose target is not in `blocks` must be storable.
+    sqlx::query("INSERT INTO block_links_unresolved (source_id, target_id) VALUES (?, ?)")
+        .bind(source)
+        .bind(absent_target)
+        .execute(&pool)
+        .await
+        .expect(
+            "0112's target_id must carry NO foreign key — a row exists exactly because \
+             the target is not in `blocks` yet, so an FK would reject every row the \
+             table is for and #4118's repair would have nothing to drive it",
+        );
+
+    // The same pair through `block_links` must be REJECTED, which is what makes
+    // the missing FK a deliberate asymmetry rather than an oversight.
+    let via_block_links =
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(source)
+            .bind(absent_target)
+            .execute(&pool)
+            .await;
+    assert!(
+        via_block_links.is_err(),
+        "`block_links.target_id` must still reference `blocks(id)` — that FK is why the \
+         dropped edge needs a separate home in the first place"
+    );
+
+    // (2) Purging the source cascades its unresolved rows away.
+    sqlx::query("DELETE FROM blocks WHERE id = ?")
+        .bind(source)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_links_unresolved")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        left, 0,
+        "0112's source_id must cascade on hard delete — a purged source owes no link \
+         repair, and a surviving row would keep re-driving one for a block that is gone"
+    );
+}

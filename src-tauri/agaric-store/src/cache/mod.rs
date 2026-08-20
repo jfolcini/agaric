@@ -149,6 +149,7 @@ where
 pub use agenda::{rebuild_agenda_cache, rebuild_agenda_cache_split};
 pub use block_links::{
     reindex_block_links, reindex_block_links_conn, reindex_block_links_split, truncate_block_links,
+    unresolved_link_sources,
 };
 pub use block_tag_refs::{
     rebuild_block_tag_refs_cache, rebuild_block_tag_refs_cache_split, reindex_block_tag_refs,

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO block_links_unresolved (source_id, target_id) SELECT ?1, je.value FROM json_each(?2) je WHERE NOT EXISTS ( SELECT 1 FROM block_links WHERE source_id = ?1 AND target_id = je.value)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "7fd71109f12ea06931054eb5f0458a0274108873c0f1c779e484abfb1a9b4728"
+}

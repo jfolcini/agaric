@@ -284,6 +284,27 @@ async fn run_reindex_block_links(
     pool: &SqlitePool,
     read_pool: Option<&SqlitePool>,
     block_id: &str,
+    metrics: Option<&crate::materializer::metrics::QueueMetrics>,
+) -> Result<(), AppError> {
+    reindex_one_block_links(pool, read_pool, block_id).await?;
+    resolve_referrers_of(pool, read_pool, block_id, metrics).await
+}
+
+/// One block's own outbound-link maintenance: the `block_links` diff, the
+/// `page_link_cache` roll-up, and the `pages_cache.inbound_link_count`
+/// refresh. Reads NOTHING about who references this block.
+///
+/// Split out of [`run_reindex_block_links`] by #4118 so the referrer repair
+/// that function performs can re-run this for each referrer WITHOUT recursing:
+/// a reindex cannot change whether its own block is linkable (that is a
+/// function of the block's existence, liveness and space, none of which a
+/// reindex writes), so one level is not an arbitrary depth cap — it is the
+/// fixed point. Recursing would additionally loop forever on a pair of blocks
+/// that reference each other and are both unresolved.
+async fn reindex_one_block_links(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    block_id: &str,
 ) -> Result<(), AppError> {
     dispatch_split_or_single(
         pool,
@@ -302,6 +323,181 @@ async fn run_reindex_block_links(
         },
     )
     .await
+}
+
+/// #4118 — the PUSH half: re-link the referrers that were waiting for
+/// `target_id` to become linkable.
+///
+/// # The defect
+///
+/// `reindex_block_links_conn` drops a parsed link token whose target does not
+/// yet exist / is not yet live / has no `space_id` stamped. All three are
+/// properties of the TARGET, all three can become true later — a peer can
+/// deliver the referrer before the referent, and `space_id` is stamped
+/// post-commit by `SetBlockPageId` — and the reindexer's only trigger is a
+/// change to the SOURCE's content. With no vault-wide `rebuild_block_links`
+/// behind it, the edge was lost permanently.
+///
+/// # Why push and not pull
+///
+/// The alternative shape is to stop maintaining the edge set and resolve
+/// tokens at read time. This codebase has already committed to the opposite:
+/// `block_links` is a maintained table with a `REFERENCES blocks(id)` foreign
+/// key on `target_id` (so it *cannot* hold a dangling token), and two further
+/// artefacts — `page_link_cache` and `pages_cache.inbound_link_count` — fold
+/// it as ground truth rather than re-deriving from content. Moving resolution
+/// to read time means dropping that FK, re-filtering in every consumer, and
+/// giving up the precomputed roll-up the graph view reads
+/// (`list_page_links_inner`) — a rewrite of the whole link stack to fix a
+/// missing row. Push keeps every existing consumer and every existing
+/// invariant, and its per-event cost is one indexed seek that almost always
+/// returns nothing.
+///
+/// # The trade-off actually accepted
+///
+/// Push needs a reverse index, and the only honest place to get one was a new
+/// table (`block_links_unresolved`, migration 0112): `block_links` is itself
+/// the reverse index and the row being looked up is the one that is missing,
+/// a `content LIKE` scan is O(vault) per created block, and `fts_blocks`
+/// erases the ULID it would be probed by. So the cost of this fix is one extra
+/// table, kept honest by being recomputed from scratch for a source on every
+/// reindex of that source rather than accumulated. What it buys is that the
+/// repair is proportional to the blocks that actually named this target —
+/// unlike the vault-wide `rebuild_block_links` alternative, which is O(vault)
+/// per trigger and, more importantly, would still only be a *narrowing*: it
+/// fires on restore/purge-shaped events, not on "a target became linkable", so
+/// the reported scenario (write a reference, create its target, never touch
+/// either again) would remain permanently broken.
+///
+/// # Durability
+///
+/// The `block_links_unresolved` rows are durable, but the *trigger* is not:
+/// nothing would re-run this pass if the process died between the target
+/// becoming linkable and the referrers being reindexed. So each referrer gets
+/// a durable `RetryKind::ReindexBlockLinks` obligation seeded BEFORE the
+/// inline repair and cleared after it succeeds — the #2831 / #3842 shape,
+/// verbatim. A referrer whose repair fails keeps its obligation and its
+/// unresolved row, so the sweeper retries it and the next touch of the target
+/// finds it again.
+///
+/// It departs from #3842 in ONE respect, and deliberately: the clear is
+/// conditional on this pass having actually inserted the row. #3842's inline
+/// attempt is the whole `ReindexBlockLinks` task, so discharging a
+/// pre-existing row of the same key is honest there. Here the inline attempt
+/// is only [`reindex_one_block_links`] — half the task — so a pre-existing row
+/// (a real failure, or an import-time SHED row for a task that never ran)
+/// must survive. See the loop body.
+///
+/// Errors from an individual referrer are logged and swallowed for #3842's
+/// reason: returning `Err` would fail the TARGET's task and seed a retry for
+/// a block whose own reindex succeeded, which is churn. The referrer's own
+/// obligation is the recovery path.
+async fn resolve_referrers_of(
+    pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
+    target_id: &str,
+    metrics: Option<&crate::materializer::metrics::QueueMetrics>,
+) -> Result<(), AppError> {
+    let referrers = cache::unresolved_link_sources(pool, target_id).await?;
+    if referrers.is_empty() {
+        return Ok(());
+    }
+
+    let mut tx =
+        crate::db::begin_immediate_logged(pool, "resolve_unresolved_block_links_4118").await?;
+    // Per referrer, whether THIS pass is the row's author. See the loop below
+    // for why that has to be tracked rather than counted.
+    let mut is_ours: Vec<bool> = Vec::with_capacity(referrers.len());
+    for source_id in &referrers {
+        is_ours.push(
+            crate::materializer::retry_queue::seed_obligation_tx(
+                &mut tx,
+                &crate::materializer::retry_queue::RetryKind::ReindexBlockLinks,
+                source_id,
+                crate::materializer::retry_queue::SEED_UNRESOLVED_LINK_LAST_ERROR,
+            )
+            .await?,
+        );
+    }
+    tx.commit().await?;
+
+    // Gauge accounting only AFTER a successful commit — mirrors #2831/#3842.
+    if let Some(m) = metrics {
+        for _ in 0..is_ours.iter().filter(|seeded| **seeded).count() {
+            m.note_retry_row_inserted();
+        }
+    }
+
+    tracing::debug!(
+        target_id = %target_id,
+        referrers = referrers.len(),
+        "#4118: target became linkable; re-linking the referrers that named it"
+    );
+
+    for (source_id, seeded_here) in referrers.iter().zip(is_ours) {
+        match reindex_one_block_links(pool, read_pool, source_id).await {
+            Ok(()) => {
+                // Clear ONLY the obligation this pass authored.
+                //
+                // `clear_obligation`'s DELETE is unconditional, and
+                // `seed_obligation_tx` is `ON CONFLICT DO NOTHING`, so a
+                // referrer that ALREADY owed a `ReindexBlockLinks` — a real
+                // earlier failure, or (overwhelmingly the common case during
+                // an import, per #3843's 74–90% shed measurement) a row
+                // recorded when its own create-time task was SHED at enqueue
+                // and never executed — would have that pre-existing row
+                // deleted here too.
+                //
+                // That would be a silent downgrade, because the two
+                // obligations are not the same work. The pre-existing row owes
+                // the WHOLE `ReindexBlockLinks` task, which is
+                // `reindex_one_block_links` PLUS this very
+                // `resolve_referrers_of` pass for the referrer's own id — the
+                // half that re-links whoever is waiting on the REFERRER as a
+                // target. The inline repair below runs only the first half (it
+                // must: running the second would recurse). Discharging the
+                // row on the strength of half the work reintroduces exactly
+                // #4118's permanent loss one hop away.
+                //
+                // So a row we did not author is LEFT for the sweeper, which
+                // re-enqueues the full task and lets `clear_on_success` retire
+                // it. The cost of being wrong in this direction is one
+                // redundant idempotent reindex; the cost of the other
+                // direction is a lost edge nothing will ever re-derive.
+                if !seeded_here {
+                    continue;
+                }
+                if let Err(e) = crate::materializer::retry_queue::clear_obligation(
+                    pool,
+                    &crate::materializer::retry_queue::RetryKind::ReindexBlockLinks,
+                    source_id,
+                    metrics,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        source_id = %source_id,
+                        target_id = %target_id,
+                        error = %e,
+                        "#4118: failed to clear the referrer re-link obligation after an \
+                         inline success; the sweeper will re-run the reindex (idempotent) \
+                         and re-clear"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    source_id = %source_id,
+                    target_id = %target_id,
+                    error = %e,
+                    "#4118: inline referrer re-link failed; the durable ReindexBlockLinks \
+                     obligation is left for the retry sweeper"
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Metrics-unaware entry point (unit tests, and any caller without a live
@@ -418,7 +614,7 @@ async fn handle_background_task_inner(
             // references them and the refresh would miss the decrement).
             // Then refresh the union of pre- and post-diff target
             // pages after the diff + rollup commit.
-            run_reindex_block_links(pool, read_pool, block_id).await
+            run_reindex_block_links(pool, read_pool, block_id, metrics).await
         }
         MaterializeTask::ReindexBlockTagRefs { block_id } => {
             // #2659 + #2831: reindex this block's inline `#[ULID]` tag-refs AND
@@ -769,7 +965,7 @@ async fn handle_background_task_inner(
                 // pure churn. The durable `ReindexBlockLinks` obligation is
                 // the recovery path, and swallowing keeps `SetBlockPageId`
                 // idempotent, which is what `metrics.rs` classifies it as.
-                match run_reindex_block_links(pool, read_pool, block_id).await {
+                match run_reindex_block_links(pool, read_pool, block_id, metrics).await {
                     Ok(()) => {
                         if let Err(e) = crate::materializer::retry_queue::clear_obligation(
                             pool,
@@ -798,6 +994,52 @@ async fn handle_background_task_inner(
                         );
                     }
                 }
+            } else if let Err(e) = resolve_referrers_of(pool, read_pool, block_id, metrics).await {
+                // #4118 — the `changed: false` arm, and why it is defence in
+                // depth rather than a demonstrated hole.
+                //
+                // `write.changed` gates the block's OWN reindex, but the
+                // linkability transition #4118 is about on this task is the
+                // SPACE stamp, and `set_block_space_id_from_parent` above runs
+                // UNCONDITIONALLY. So the arm's guard and the arm's linkability
+                // effect are not the same condition, and the referrer repair
+                // was attached to the guard.
+                //
+                // No production trace is claimed for the gap, and the honest
+                // reason is that the cross-space filter's owning-page fallback
+                // (`COALESCE(tgt.space_id, tp.space_id)`, #3894) keeps closing
+                // it: a target that already carries the `page_id` this arm
+                // would have written resolves its space THROUGH that page, so
+                // it was never dropped and there is no unresolved row to
+                // repair. Reaching this branch with a real NULL → stamped
+                // transition needs a block whose `page_id` is unchanged AND
+                // NULL-or-space-less while its PARENT already carries a space —
+                // constructible (`space_id` is inherited from `parent_id`,
+                // `page_id` from the parent's `page_id`, and those are two
+                // different edges), but not observed.
+                //
+                // It is wired anyway, on the same standing as the
+                // `seeded_full_rebuild` fallback above: the cost is one indexed
+                // seek on an arm that is already the rare one, and the failure
+                // mode it covers is the exact permanent loss this issue exists
+                // to end. `set_block_page_id_and_space_stamp_relinks_referrers_
+                // without_a_page_id_change_4118` pins it executably so it
+                // cannot rot into dead code unnoticed.
+                //
+                // Only the REFERRER half is owed here: a source whose own space
+                // is unstamped resolves `?3 IS NULL`, which passes every
+                // target, so the source side records nothing to repair.
+                //
+                // Swallowed for the same reason the `changed` arm swallows:
+                // failing `SetBlockPageId` would seed a retry whose re-run is a
+                // no-op. Each referrer carries its own durable obligation.
+                tracing::warn!(
+                    block_id = %block_id,
+                    error = %e,
+                    "#4118: referrer re-link pass failed after an unchanged-page_id space \
+                     stamp; each referrer's durable ReindexBlockLinks obligation is the \
+                     recovery path"
+                );
             }
             Ok(())
         }

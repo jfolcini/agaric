@@ -19,12 +19,140 @@ use agaric_core::error::AppError;
 /// transaction boundary (the RESET wipes `block_links` inside the same
 /// `defer_foreign_keys = ON` tx that swaps the core tables).
 ///
+/// # `block_links_unresolved` goes with it (#4118)
+///
+/// The unresolved-token index (migration 0112) is a satellite of `block_links`
+/// written by the same diff, so a RESET that wiped one and not the other would
+/// leave the restored vault claiming a set of pending link repairs derived from
+/// the PREVIOUS vault's content. It is wiped here rather than added to
+/// `agaric-sync`'s `CACHE_TABLES` inventory for the reason that inventory's own
+/// doc gives for `block_links`: this crate owns the table, and the wipe belongs
+/// beside the maintenance.
+///
+/// The wipe is IDEMPOTENT WITH A CASCADE, not load-bearing against an FK
+/// check — the same standing `CACHE_TABLES` gives for listing `page_link_cache`
+/// explicitly. `source_id REFERENCES blocks(id) ON DELETE CASCADE`, and the
+/// RESET's later `DELETE FROM blocks` fires that cascade immediately (cascade
+/// ACTIONS are not deferred by `PRAGMA defer_foreign_keys = ON`; only violation
+/// CHECKS are), so the rows could not have survived to COMMIT and could not
+/// have failed one. What the explicit DELETE buys is that the table is empty at
+/// the point the restore starts inserting, rather than depending on a cascade
+/// several statements away staying where it is.
+///
 /// # Errors
-/// Returns [`AppError`] if the DELETE fails.
+/// Returns [`AppError`] if either DELETE fails.
 pub async fn truncate_block_links(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
     sqlx::query!("DELETE FROM block_links")
         .execute(&mut *conn)
         .await?;
+    sqlx::query!("DELETE FROM block_links_unresolved")
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// block_links_unresolved (#4118)
+// ---------------------------------------------------------------------------
+
+/// The sources that name `target_id` in their content but have NO
+/// `block_links` edge to it — the reverse lookup #4118 exists to provide.
+///
+/// Answered by an index seek on `idx_block_links_unresolved_target`, so it is
+/// affordable on the per-block reindex path where every created / edited /
+/// page-stamped block asks it once. The overwhelmingly common answer is the
+/// empty vec.
+///
+/// Ordered by `source_id` purely so the repair fan-out is deterministic
+/// (test-diffable, and log lines from two runs of the same repair line up).
+///
+/// # Errors
+/// Returns [`AppError`] if the query fails.
+pub async fn unresolved_link_sources(
+    pool: &SqlitePool,
+    target_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let rows = sqlx::query!(
+        "SELECT source_id FROM block_links_unresolved \
+         WHERE target_id = ? ORDER BY source_id",
+        target_id,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.source_id).collect())
+}
+
+/// Bring `source_id`'s rows in `block_links_unresolved` in line with the state
+/// the surrounding reindex just committed to `block_links`.
+///
+/// `new_targets` is every token the source's CURRENT content names;
+/// `had_unresolved_rows` is whether the pre-diff read found any row for this
+/// source; `all_tokens_already_linked` is `to_insert.is_empty()`.
+///
+/// # Why `to_insert.is_empty()` is a complete short-circuit
+///
+/// `to_insert = new_targets − old_targets`, and `old_targets` is exactly the
+/// set of targets that already have a `block_links` row. Empty `to_insert`
+/// therefore means every token in the current content is ALREADY linked, so
+/// the desired unresolved set is empty and the only work left is dropping
+/// stale rows — which is a single source-keyed DELETE, and only when there
+/// were rows to drop. That is the path a no-link block create takes, and it
+/// costs zero statements.
+///
+/// Otherwise the recompute is pushed into SQL and reads `block_links` back,
+/// rather than being predicted in Rust from `to_insert`: the INSERT is
+/// `OR IGNORE` with an EXISTS guard and a cross-space subquery, so which of
+/// the offered targets actually landed is a fact about the database, not
+/// something the caller knows. Reading it back is one statement and cannot
+/// drift from the filter the way a transcribed prediction would (that drift is
+/// what #3903 was).
+async fn sync_unresolved_links(
+    conn: &mut sqlx::SqliteConnection,
+    source_id: &str,
+    new_targets: &HashSet<String>,
+    had_unresolved_rows: bool,
+    all_tokens_already_linked: bool,
+) -> Result<(), AppError> {
+    if all_tokens_already_linked {
+        if had_unresolved_rows {
+            sqlx::query!(
+                "DELETE FROM block_links_unresolved WHERE source_id = ?",
+                source_id,
+            )
+            .execute(&mut *conn)
+            .await?;
+        }
+        return Ok(());
+    }
+
+    let targets: Vec<&String> = new_targets.iter().collect();
+    let targets_json = serde_json::to_string(&targets)?;
+
+    // Drop rows the current content no longer names, plus rows whose target
+    // the INSERT just linked.
+    sqlx::query!(
+        "DELETE FROM block_links_unresolved \
+         WHERE source_id = ?1 \
+           AND (target_id NOT IN (SELECT value FROM json_each(?2)) \
+                OR target_id IN (SELECT target_id FROM block_links WHERE source_id = ?1))",
+        source_id,
+        targets_json,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    // Record every token the content names that did NOT end up as an edge.
+    sqlx::query!(
+        "INSERT OR IGNORE INTO block_links_unresolved (source_id, target_id) \
+         SELECT ?1, je.value FROM json_each(?2) je \
+         WHERE NOT EXISTS ( \
+             SELECT 1 FROM block_links WHERE source_id = ?1 AND target_id = je.value)",
+        source_id,
+        targets_json,
+    )
+    .execute(&mut *conn)
+    .await?;
+
     Ok(())
 }
 
@@ -64,6 +192,24 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
 /// `ReindexBlockLinks` after the foreground hook already applied the edges)
 /// finds an empty diff and is a no-op — the synchronous update and the
 /// backstop rebuild converge on the same edge set with no double-count.
+///
+/// # #4118 — what it does with the tokens it declines to link
+///
+/// The INSERT below drops a parsed token whose target is not yet LINKABLE: the
+/// target row must exist and be live, and (when the source has a resolved
+/// space) the target's resolved space must match. Both conditions are about
+/// the TARGET and both can become true LATER — the target can be created after
+/// the referrer (routine on an out-of-order remote replay), and its `space_id`
+/// is stamped post-commit by `SetBlockPageId`. This function is driven by ONE
+/// trigger, a change to the SOURCE's content, so nothing re-ran it when that
+/// happened and the edge was lost permanently.
+///
+/// It therefore no longer discards what it dropped: every declined token is
+/// recorded in `block_links_unresolved` (migration 0112) keyed for lookup BY
+/// TARGET, which is the reverse index the repair needs and the one
+/// `block_links` cannot be (the missing row is the thing being looked up). The
+/// push side lives in the materializer's `ReindexBlockLinks` handler, which
+/// asks that index "who was waiting for this block?" after reindexing it.
 pub async fn reindex_block_links_conn(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
@@ -90,15 +236,36 @@ pub async fn reindex_block_links_conn(
         .map(|cap| cap[1].to_string())
         .collect();
 
-    // 3. Get existing outbound links (same tx — consistent snapshot)
+    // 3. Get existing outbound links (same tx — consistent snapshot), AND
+    //    (#4118) the source's currently-recorded unresolved tokens.
+    //
+    //    One `UNION ALL` rather than two statements: the unresolved read is
+    //    needed on EVERY reindex (that is how a stale row gets dropped), and
+    //    the create path this rides on is the one #3843 is measuring. Both
+    //    sides are source-keyed index seeks and the second is almost always
+    //    empty, so folding them into the existing round-trip keeps the added
+    //    cost of the whole #4118 mechanism at zero statements for a block with
+    //    no link tokens.
     let existing_rows = sqlx::query!(
-        "SELECT target_id FROM block_links WHERE source_id = ?",
+        "SELECT target_id, CAST(0 AS INTEGER) AS unresolved \
+           FROM block_links WHERE source_id = ?1 \
+         UNION ALL \
+         SELECT target_id, CAST(1 AS INTEGER) AS unresolved \
+           FROM block_links_unresolved WHERE source_id = ?1",
         block_id,
     )
     .fetch_all(&mut *conn)
     .await?;
 
-    let old_targets: HashSet<String> = existing_rows.into_iter().map(|r| r.target_id).collect();
+    let mut old_targets: HashSet<String> = HashSet::new();
+    let mut had_unresolved_rows = false;
+    for row in existing_rows {
+        if row.unresolved == 0 {
+            old_targets.insert(row.target_id);
+        } else {
+            had_unresolved_rows = true;
+        }
+    }
 
     // 4. Diff
     let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
@@ -147,11 +314,15 @@ pub async fn reindex_block_links_conn(
             .map(|s| s.as_str().to_owned())
     };
 
-    if to_delete.is_empty() && to_insert.is_empty() {
-        // No changes — leave the caller's transaction untouched.
-        return Ok(());
-    }
-
+    // #4118: the former `to_delete.is_empty() && to_insert.is_empty()` early
+    // return is gone. Both write blocks below are already self-guarding, so it
+    // saved nothing — and it skipped the unresolved-index maintenance for the
+    // one case that still owes work: a token that LEFT the content while it
+    // was still unresolved contributes to neither `to_delete` (it never had a
+    // `block_links` row) nor `to_insert` (it is no longer in the content), so
+    // its stale row would have survived every subsequent reindex and kept
+    // re-triggering a repair for a reference that no longer exists.
+    //
     // Batch DELETE/INSERT via `json_each` — one round-trip per side
     // regardless of the number of changed targets, replacing the previous
     // 2N round-trip per-target loops.
@@ -203,6 +374,20 @@ pub async fn reindex_block_links_conn(
         .await?;
     }
 
+    // #4118: record whatever the INSERT above declined to link, so the edge is
+    // recoverable when the target becomes linkable. Same connection, so the
+    // unresolved index commits or rolls back atomically with the edges it
+    // describes — including on the in-tx create/edit hook, where "the edge and
+    // the note that it is owed" must not be able to disagree.
+    sync_unresolved_links(
+        &mut *conn,
+        block_id,
+        &new_targets,
+        had_unresolved_rows,
+        to_insert.is_empty(),
+    )
+    .await?;
+
     Ok(())
 }
 
@@ -243,15 +428,29 @@ pub async fn reindex_block_links_split(
         .map(|cap| cap[1].to_string())
         .collect();
 
-    // 3. Get existing outbound links from read pool
+    // 3. Get existing outbound links from read pool, and (#4118) the source's
+    //    currently-recorded unresolved tokens — one round-trip, exactly as in
+    //    the single-pool variant.
     let existing_rows = sqlx::query!(
-        "SELECT target_id FROM block_links WHERE source_id = ?",
+        "SELECT target_id, CAST(0 AS INTEGER) AS unresolved \
+           FROM block_links WHERE source_id = ?1 \
+         UNION ALL \
+         SELECT target_id, CAST(1 AS INTEGER) AS unresolved \
+           FROM block_links_unresolved WHERE source_id = ?1",
         block_id,
     )
     .fetch_all(read_pool)
     .await?;
 
-    let old_targets: HashSet<String> = existing_rows.into_iter().map(|r| r.target_id).collect();
+    let mut old_targets: HashSet<String> = HashSet::new();
+    let mut had_unresolved_rows = false;
+    for row in existing_rows {
+        if row.unresolved == 0 {
+            old_targets.insert(row.target_id);
+        } else {
+            had_unresolved_rows = true;
+        }
+    }
 
     // 4. Diff
     let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
@@ -272,7 +471,13 @@ pub async fn reindex_block_links_split(
             .map(|s| s.as_str().to_owned())
     };
 
-    if to_delete.is_empty() && to_insert.is_empty() {
+    // #4118: `had_unresolved_rows` joins the "nothing to write" test rather
+    // than the early return being dropped outright as in the single-pool
+    // variant — this one opens a WRITE transaction on the far side of it, so
+    // an unconditional fall-through would put a write tx on the split path's
+    // every no-op reindex. A source with no recorded unresolved tokens and an
+    // empty diff still writes nothing.
+    if to_delete.is_empty() && to_insert.is_empty() && !had_unresolved_rows {
         // No changes — nothing to write.
         return Ok(());
     }
@@ -331,6 +536,18 @@ pub async fn reindex_block_links_split(
         .execute(&mut *tx)
         .await?;
     }
+
+    // #4118: same unresolved-index maintenance as the single-pool variant, on
+    // the WRITE transaction — its read-back of `block_links` must observe the
+    // INSERT above, which the read pool cannot yet see.
+    sync_unresolved_links(
+        &mut tx,
+        block_id,
+        &new_targets,
+        had_unresolved_rows,
+        to_insert.is_empty(),
+    )
+    .await?;
 
     tx.commit().await?;
     Ok(())
