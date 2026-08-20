@@ -220,13 +220,17 @@ describe('finding 11: literal ((ULID)) text vs live block_ref', () => {
   })
 })
 
-describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonical policy)', () => {
+describe('finding 12: adjacent sibling blockquotes merge (pinned canonical policy)', () => {
   // The block grammar has no boundary the serializer could emit between two
-  // sibling blockquotes (or tables) that would not itself become a block on
-  // reparse — the merge is therefore the CANONICAL normalization: it happens in
-  // one pass, and serialize∘parse is a byte-for-byte fixed point from there.
-  // (Doc-side sibling merging at editor mount is tracked separately — it lives
-  // outside the serializer.)
+  // sibling blockquotes that would not itself become a block on reparse — the
+  // merge is therefore the CANONICAL normalization: it happens in one pass,
+  // and serialize∘parse is a byte-for-byte fixed point from there. (Doc-side
+  // sibling merging at editor mount is tracked separately — it lives outside
+  // the serializer.)
+  //
+  // Tables used to merge the same way (a visible `\---` junk data row
+  // absorbing the second table's delimiter) — see #4012 item 1, resolved
+  // below: adjacent tables now SPLIT back apart on reparse instead.
   it('two sibling blockquotes normalize to ONE blockquote with both paragraphs, stably', () => {
     const d = doc(
       blockquote(paragraph(text('first quote'))),
@@ -251,33 +255,63 @@ describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonica
     expect(serialize(reparsed)).toBe(md)
   })
 
-  it('two sibling tables normalize to ONE table, stably from the canonical form', () => {
+  // #4012 item 1 — RESOLVED as split, not merge. `parseTable` collects the
+  // whole run of consecutive `|` lines with no lookahead, so two sibling
+  // tables typed (or pasted) with no blank line between them used to land in
+  // that ONE run: the second table's delimiter, no longer at the run's own
+  // index 1, was read as data and escaped to a literal `\---` junk row on
+  // serialize. `splitTableRuns` now detects the absorbed delimiter (a bare
+  // `-{3,}`-only row past the run's own header pair — a shape our own
+  // serializer always escapes when it is genuine data, so an unescaped one can
+  // only be an absorbed second table) and partitions the run there instead.
+  //
+  // This is jfolcini's chosen resolution (issue comment): split loses nothing
+  // — the user pasted two tables and gets two tables back — where "merge
+  // without the junk row" would silently drop the absorbed row, the exact
+  // data loss #3274 exists to prevent.
+  it('two sibling tables reparse back into TWO tables — a strict fixpoint, not a merge', () => {
     const d = doc(
       table(tableRow(tableHeader(paragraph(text('a'))))),
       table(tableRow(tableHeader(paragraph(text('b'))))),
     )
-    // The second table's header becomes an ordinary DATA row of the merged
-    // table (unchanged). Its separator, however, is no longer swallowed
-    // (#3274 — the separator heuristic is positional, only row 1 of the run
-    // qualifies): it survives as a THIRD row whose cell is the literal text
-    // `---`. The pre-existing horizontal-rule guard in serializeParagraph
-    // (`^-{3,}$`) already escapes that cell on the way back out, so it can
-    // never be mistaken for a separator again.
-    const merged = doc(
+    const md = serialize(d)
+    expect(md).toBe('| a |\n| --- |\n| b |\n| --- |')
+    // The split reconstructs the ORIGINAL two-table doc exactly — no junk row,
+    // no escaping needed, and (unlike the old merge) already a fixpoint on the
+    // very first pass.
+    const reparsed = parse(md)
+    expect(reparsed).toEqual(d)
+    expect(serialize(reparsed)).toBe(md)
+  })
+
+  it('three adjacent tables with no blank line between them split into three', () => {
+    const d = doc(
+      table(tableRow(tableHeader(paragraph(text('a'))))),
+      table(tableRow(tableHeader(paragraph(text('b'))))),
+      table(tableRow(tableHeader(paragraph(text('c'))))),
+    )
+    const md = serialize(d)
+    expect(md).toBe('| a |\n| --- |\n| b |\n| --- |\n| c |\n| --- |')
+    expect(parse(md)).toEqual(d)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('a merge is not falsely triggered by a genuine `--` data row (not 3+ dashes)', () => {
+    // `--` is a legal GFM delimiter cell shape but NOT the canonical `---`
+    // `serializeTable` emits and `serializeParagraph`'s horizontal-rule guard
+    // (`^-{3,}$`) does not escape it — so it is reachable as genuine,
+    // unescaped data mid-table, and must not be misread as an absorbed
+    // second table's separator.
+    const d = doc(
       table(
-        tableRow(tableHeader(paragraph(text('a')))),
-        tableRow(tableCell(paragraph(text('b')))),
-        tableRow(tableCell(paragraph(text('---')))),
+        tableRow(tableHeader(paragraph(text('a'))), tableHeader(paragraph(text('b')))),
+        tableRow(tableCell(paragraph(text('x'))), tableCell(paragraph(text('--')))),
       ),
     )
-    const reparsed = parse(serialize(d))
-    expect(reparsed).toEqual(merged)
-    // The doc shape is already the fixed point after one pass; the STRING
-    // gains the `---` cell's escape on this second serialize, then is stable.
-    const md2 = serialize(reparsed)
-    expect(md2).toBe('| a |\n| --- |\n| b |\n| \\--- |')
-    expect(parse(md2)).toEqual(merged)
-    expect(serialize(parse(md2))).toBe(md2)
+    const md = serialize(d)
+    expect(md).toBe('| a | b |\n| --- | --- |\n| x | -- |')
+    expect(parse(md)).toEqual(d)
+    expect(serialize(parse(md))).toBe(md)
   })
 })
 

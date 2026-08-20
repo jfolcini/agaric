@@ -328,6 +328,14 @@ export function parseHeading(
  * the only position GFM allows a delimiter row in. Whether the row AT index 1
  * is really a delimiter (rather than a dash-only first data row of foreign
  * markdown that never had one) is decided by `isSeparatorRow` (#4003).
+ *
+ * A run collected this way may span TWO OR MORE sibling tables typed (or
+ * pasted) with no blank line between them — nothing here looks ahead for a
+ * second header/delimiter pair, so the whole run would otherwise be built as
+ * ONE table with the second table's header read as data and its delimiter
+ * read as a literal `---` data row. `splitTableRuns` (#4012 item 1)
+ * partitions the run at any such absorbed delimiter before `buildTableRows`
+ * ever sees it, so each table in the run comes back as its own `TableNode`.
  */
 export function parseTable(
   lines: readonly string[],
@@ -342,11 +350,62 @@ export function parseTable(
     tableLines.push(lines[j] as string)
     j++
   }
-  const rows = buildTableRows(tableLines, depth)
   const consumed = j - i
-  if (rows.length === 0) return { blocks: [], consumed }
-  const block: TableNode = { type: 'table', content: rows }
-  return { blocks: [block], consumed }
+  const blocks: TableNode[] = []
+  for (const group of splitTableRuns(tableLines)) {
+    const rows = buildTableRows(group, depth)
+    if (rows.length > 0) blocks.push({ type: 'table', content: rows })
+  }
+  return { blocks, consumed }
+}
+
+/**
+ * A row shape ONLY `serializeTable`'s own separator ever takes: `---` in
+ * every populated cell — 3 OR MORE bare dashes, no colons, no shorter form.
+ * Deliberately narrower than `DELIMITER_CELL` / `isSeparatorRow`'s full GFM
+ * delimiter grammar (colons, `-`, `--` all qualify there): a genuine data
+ * cell can legally hold `--` or `:-` and nothing escapes it on serialize, so
+ * treating those shapes as a split signal here — with no header context to
+ * disambiguate, unlike row 1 — would misfire on real content. A bare 3+-dash
+ * cell has no such escape hatch: `serializeParagraph`'s horizontal-rule guard
+ * (`^-{3,}$`, table cells go through it too) ALWAYS escapes a genuine one to
+ * `\---`, so an UNESCAPED row of only this shape, found past the run's own
+ * header pair, can only be an absorbed second table's delimiter — from our
+ * own re-serialized output, or from foreign markdown whose author wrote the
+ * canonical GFM form.
+ */
+const ABSORBED_TABLE_SEPARATOR_CELL = /^-{3,}$/
+
+function looksLikeAbsorbedTableSeparator(cells: readonly string[]): boolean {
+  const written = cells.filter((cell) => cell !== '')
+  return written.length > 0 && written.every((cell) => ABSORBED_TABLE_SEPARATOR_CELL.test(cell))
+}
+
+/**
+ * Partition one run of consecutive `|`-lines (as collected by `parseTable`)
+ * into the table(s) it actually represents (#4012 item 1). A run with no
+ * embedded absorbed-separator row is returned whole, as a single group —
+ * the common case, and the only one `buildTableRows` ever saw before this
+ * split existed.
+ *
+ * Every index `k` from 2 onward (never 0, the run's own header; never 1, its
+ * own delimiter, disambiguated separately by `isSeparatorRow`) is checked for
+ * `looksLikeAbsorbedTableSeparator`. Each match starts a new group at `k - 1`
+ * (the absorbed table's header), so the run splits into as many tables as it
+ * actually contains — including three or more concatenated with no blank
+ * line, which splits at every boundary found, not just the first.
+ */
+function splitTableRuns(tableLines: readonly string[]): string[][] {
+  const starts: number[] = [0]
+  for (let k = 2; k < tableLines.length; k++) {
+    if (looksLikeAbsorbedTableSeparator(rowCells(tableLines[k] as string))) {
+      starts.push(k - 1)
+    }
+  }
+  return starts.map((start, idx) => {
+    const end = idx + 1 < starts.length ? (starts[idx + 1] as number) : tableLines.length
+    return tableLines.slice(start, end)
+  })
 }
 
 /**

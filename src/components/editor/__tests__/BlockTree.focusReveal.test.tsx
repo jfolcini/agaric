@@ -128,10 +128,12 @@ const mockedInvoke = vi.mocked(invoke)
 
 let pageStore: StoreApi<PageBlockState>
 
-function renderBlockTree() {
+function renderBlockTree(
+  props: { onRevealSettled?: (blockId: string, found: boolean) => void } = {},
+) {
   return render(
     <PageBlockContext.Provider value={pageStore}>
-      <BlockTree autoCreateFirstBlock={false} />
+      <BlockTree autoCreateFirstBlock={false} onRevealSettled={props.onRevealSettled} />
     </PageBlockContext.Provider>,
   )
 }
@@ -242,6 +244,75 @@ async function settle(): Promise<void> {
     await Promise.resolve()
   })
 }
+
+// #4011 — `onRevealSettled` reports the two DECIDABLE end states of the
+// reveal effect above directly, instead of leaving a caller (`PageEditor`) to
+// infer them from elapsed frames. Both arms are proven here against the REAL
+// effect, not a stub of it.
+describe('BlockTree reports reveal completion via onRevealSettled (#4011)', () => {
+  it('reports found: true once — and only once the row is actually mounted', async () => {
+    const filler = makeFlatBlocks(INITIAL_MOUNT_LIMIT)
+    const root = makeBlock({ id: 'ROOT', content: 'root', depth: 0 })
+    const target = makeBlock({ id: 'TARGET', content: 'target', parent_id: 'ROOT', depth: 1 })
+    writePreference(PREFERENCES.blockCollapse, ['ROOT'], 'PAGE_1')
+    pageStore.setState({ blocks: [...filler, root, target], loading: false })
+
+    const onRevealSettled = vi.fn()
+    renderBlockTree({ onRevealSettled })
+    await screen.findByTestId('block-tree-mount-boundary')
+    expect(onRevealSettled).not.toHaveBeenCalled()
+
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'TARGET' })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-TARGET')).toBeInTheDocument()
+    })
+
+    // The row is doubly hidden (collapsed ancestor PAST the mount cap), so
+    // this genuinely takes more than one commit to converge — proving the
+    // callback fires from the SETTLED state, not merely once, on the first
+    // render.
+    expect(onRevealSettled).toHaveBeenLastCalledWith('TARGET', true)
+    // Never told the caller the target was unreachable along the way.
+    expect(onRevealSettled).not.toHaveBeenCalledWith('TARGET', false)
+  })
+
+  it('reports found: false once the target turns out to be outside the active zoom pane', async () => {
+    // ZOOM is a normal, uncollapsed child of ANC — nothing here is hidden by
+    // collapse or the mount cap. OUT sits at the page root, outside the pane
+    // zooming into ZOOM opens, which is the one case the reveal effect's own
+    // comment documents it cannot address (BlockTree.tsx, "#3276").
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'ANC', content: 'ancestor', depth: 0 }),
+        makeBlock({ id: 'ZOOM', content: 'zoom root', parent_id: 'ANC', depth: 1 }),
+        makeBlock({ id: 'KID', content: 'kid', parent_id: 'ZOOM', depth: 2 }),
+        makeBlock({ id: 'OUT', content: 'outside', depth: 0 }),
+      ],
+      loading: false,
+    })
+
+    const onRevealSettled = vi.fn()
+    renderBlockTree({ onRevealSettled })
+    await screen.findByTestId('sortable-block-ZOOM')
+
+    fireEvent.click(screen.getByTestId('zoom-in-ZOOM'))
+    await settle()
+    expect(screen.getByTestId('sortable-block-KID')).toBeInTheDocument()
+    // Confirms the premise: OUT really is excluded from the active pane.
+    expect(screen.queryByTestId('sortable-block-OUT')).not.toBeInTheDocument()
+
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'OUT' })
+    })
+    await settle()
+
+    expect(onRevealSettled).toHaveBeenCalledWith('OUT', false)
+    expect(onRevealSettled).not.toHaveBeenCalledWith('OUT', true)
+  })
+})
 
 // #4038 note 1 — the release of a transient reveal used to empty an OPEN zoom
 // pane. Reproducing it requires the real ordering (reveal → zoom → focus

@@ -81,6 +81,7 @@ import { convertBlockContent } from '@/lib/block-type-convert'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { searchPropertyKeys, searchSlashCommands } from '@/lib/slash-commands'
+import type { FlatBlock } from '@/lib/tree-utils'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { mountedScopedIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
@@ -104,6 +105,35 @@ const DND_MEASURING = {
   droppable: { strategy: MeasuringStrategy.WhileDragging },
 } as const
 
+/**
+ * Whether `blockId` is structurally inside the active zoom pane — a
+ * `parent_id` ancestry walk, deliberately independent of collapse state.
+ *
+ * #4011: the `focusedBlockId` reveal effect below needs to tell "this target
+ * can never be reached in the current pane" from "reachable, but the
+ * ancestor-expansion this same effect just triggered hasn't landed yet" —
+ * and the pane's own rendered list (`uncappedZoomedVisible`) cannot make that
+ * distinction, because it is ALSO filtered by collapse state, which lags the
+ * `expandAncestors` call by one render (the state update it schedules is not
+ * applied yet). Walking the raw parent chain reads nothing collapse-
+ * dependent, so it gives the same answer on the very render the target
+ * enters focus as it would after every collapsed ancestor between it and the
+ * zoom root has finished expanding.
+ */
+function isInZoomPane(
+  blockId: string,
+  zoomedBlockId: string | null,
+  blocksById: ReadonlyMap<string, FlatBlock>,
+): boolean {
+  if (zoomedBlockId === null) return true
+  let current = blocksById.get(blockId)
+  while (current) {
+    if (current.id === zoomedBlockId) return true
+    current = current.parent_id ? blocksById.get(current.parent_id) : undefined
+  }
+  return false
+}
+
 interface BlockTreeProps {
   /** Optional parent block ID -- when set, loads children of this block. */
   parentId?: string | undefined
@@ -113,12 +143,23 @@ interface BlockTreeProps {
   /** When true (default), auto-creates an empty first block on empty pages.
    *  Set to false to suppress auto-creation (e.g. weekly/monthly journal views). */
   autoCreateFirstBlock?: boolean | undefined
+  /**
+   * #4011 — reports the outcome of the `focusedBlockId` reveal effect below,
+   * once BlockTree has done everything IT can for that id: `found: true` once
+   * the row is actually in `mountedVisible`, `found: false` once the target
+   * turns out not to be reachable in the active zoom pane at all (so no
+   * further `expandAncestors`/`revealIndex` call would help). Lets a caller
+   * (`PageEditor`'s navigation-intent effect) react to the REAL end state of
+   * the reveal instead of inferring one from elapsed frames.
+   */
+  onRevealSettled?: ((blockId: string, found: boolean) => void) | undefined
 }
 
 export function BlockTree({
   parentId,
   onNavigateToPage,
   autoCreateFirstBlock = true,
+  onRevealSettled,
 }: BlockTreeProps = {}): React.ReactElement {
   const { t } = useTranslation()
   // Per-page data from context
@@ -272,11 +313,37 @@ export function BlockTree({
   // recomputing the overlay from the persisted set and re-revealing what they
   // just closed. If that focus rescue ever stops clearing focus, re-check
   // this call — an ancestor of the focused block would become uncollapsable.
+  //
+  // #4011 — `onRevealSettled` reports the two DECIDABLE end states of this
+  // reveal, computed from the same state this effect already reads rather
+  // than guessed from elapsed time: `found: true` once `focusedBlockId` is
+  // actually in `mountedVisible` (the row exists, nothing left to do), and
+  // `found: false` once `isInZoomPane` says it structurally cannot be —
+  // outside the active zoom pane, the one case this effect cannot reveal (see
+  // the "not-yet-addressed" note above) and never will on its own, so there
+  // is no more waiting to do. `isInZoomPane` (not `uncappedZoomedVisible`
+  // membership) is what decides "false": the rendered pane list is ALSO
+  // collapse-filtered, and collapse state lags the `expandAncestors` call
+  // above by one render, so a target that is genuinely reachable but merely
+  // not-yet-expanded would otherwise read as unreachable on this very render.
+  // The one remaining branch — in the pane, not yet mounted — calls
+  // `revealIndex` and reports NOTHING: it is still in progress, and this same
+  // effect re-runs (via the `mountedVisible` dep) once that state update
+  // lands, at which point one of the two decidable branches above fires. A
+  // caller (`PageEditor`) no longer has to infer "stalled" from a frame count
+  // that was always a proxy for this same information.
   useEffect(() => {
     if (!focusedBlockId) return
     if (!blocksById.has(focusedBlockId)) return
     expandAncestors(focusedBlockId)
-    if (mountedVisible.some((b) => b.id === focusedBlockId)) return
+    if (mountedVisible.some((b) => b.id === focusedBlockId)) {
+      onRevealSettled?.(focusedBlockId, true)
+      return
+    }
+    if (!isInZoomPane(focusedBlockId, zoomedBlockId, blocksById)) {
+      onRevealSettled?.(focusedBlockId, false)
+      return
+    }
     const idx = uncappedZoomedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx >= 0) revealIndex(idx)
   }, [
@@ -284,8 +351,10 @@ export function BlockTree({
     blocksById,
     mountedVisible,
     uncappedZoomedVisible,
+    zoomedBlockId,
     expandAncestors,
     revealIndex,
+    onRevealSettled,
   ])
 
   // ── Mount-cap exclusion set for the metadata window (#2580) ─────────────
