@@ -83,11 +83,24 @@
 # as one list so the scrub and the verification cannot drift apart. That
 # drift is its own hazard: a scrubber checking a shorter list than it unsets
 # reports clean while a variable it forgot is still doing the damage.
+#
+# The identity half of that surface belongs here for the same reason the DATE
+# half already did. `GIT_COMMITTER_EMAIL` OUTRANKS the fixture's own
+# `user.email` (measured: with `user.email = fixture@example.invalid` in the
+# fixture's config, `git var GIT_COMMITTER_IDENT` answers the environment's
+# address), so a fixture that configures an identity and then asserts on it is
+# asserting on the caller's shell instead. A self-test that compares the
+# committer address against something is then green or red for a reason it
+# never set up — the #3722 shape exactly, one variable to the left. Scrubbing
+# GIT_AUTHOR_DATE while leaving GIT_AUTHOR_EMAIL was an asymmetry, not a
+# decision. `EMAIL` is git's documented fallback when no `user.email` is
+# configured, and reaches a fixture by the same route.
 GIT_SCRATCH_LEAK_VARS='GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY
 GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE GIT_PREFIX
 GIT_CONFIG GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_PARAMETERS
 GIT_CONFIG_COUNT GIT_AUTHOR_DATE GIT_COMMITTER_DATE GIT_INDEX_VERSION
-GIT_INTERNAL_GETTEXT_SH_SCHEME'
+GIT_INTERNAL_GETTEXT_SH_SCHEME GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
+GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL EMAIL'
 
 git_scratch_guard() {
   local scratch_root="${1:-}" v survivors=''
@@ -390,6 +403,40 @@ _gsg_self_test() {
   # probe exists to prevent, asserted rather than assumed.
   _eq 'the victim index is unchanged after every leaked-index attempt' \
     "$victim_status_before" "$(git -C "$victim" status --porcelain)"
+
+  # ── 6. THE IDENTITY VARIABLES ───────────────────────────────────────────
+  # `GIT_COMMITTER_EMAIL` outranks the fixture's own `user.email`, so a
+  # fixture that configures an identity and then asserts on it is really
+  # asserting on the caller's shell. Behavioural, not a list check: a list
+  # check passes the moment the name is present, whether or not the scrub
+  # reaches it.
+  local ident_committer ident_var
+  ident_committer=$(
+    export GIT_COMMITTER_EMAIL='ambient@example.invalid'
+    export GIT_COMMITTER_NAME='Ambient'
+    export GIT_AUTHOR_EMAIL='ambient@example.invalid'
+    git_scratch_guard "$tmp"
+    git_scratch_init "$tmp/ident"
+    echo x > "$tmp/ident/f.txt"
+    git -C "$tmp/ident" add -A
+    git -C "$tmp/ident" commit -qm ident
+    git -C "$tmp/ident" log -1 --format='%ce'
+  ) 2>/dev/null
+  _eq 'a fixture commit carries the FIXTURE identity, not an ambient GIT_COMMITTER_EMAIL' \
+    'selftest@example.invalid' "$ident_committer"
+  # …and the same shape WITHOUT the guard really does take the ambient
+  # address, so the assertion above is not vacuous.
+  ident_var=$(
+    export GIT_COMMITTER_EMAIL='ambient@example.invalid'
+    git -C "$tmp/ident" var GIT_COMMITTER_IDENT
+  ) 2>/dev/null
+  case "$ident_var" in
+    *'<ambient@example.invalid>'*)
+      _ok 'WITHOUT the scrub, an ambient GIT_COMMITTER_EMAIL does outrank the fixture config' ;;
+    *)
+      _bad 'WITHOUT the scrub, an ambient GIT_COMMITTER_EMAIL outranks the fixture config' \
+        "git var answered [$ident_var] — the assertion above may be vacuous" ;;
+  esac
 
   if [ "$failures" -gt 0 ]; then
     printf '\nself-test: %s assertion(s) failed\n' "$failures" >&2

@@ -128,6 +128,18 @@ struct BackoffState {
     backoff: Duration,
     /// Number of consecutive failures.
     consecutive_failures: u32,
+    /// The user-facing failure text most recently *reported* for this peer
+    /// during the current streak, or `None` if nothing has been reported yet.
+    ///
+    /// #4120: lives here, next to the streak it belongs to, because the two
+    /// places the streak resets — [`SyncScheduler::record_success`] (which
+    /// removes the entry) and [`SyncScheduler::clear_backoff`] (which clears
+    /// the map) — are exactly the two places "the user has already been told
+    /// this" stops being true. Read and written by
+    /// `session_supervisor::record_pull_failure` via
+    /// [`SyncScheduler::last_reported_failure`] /
+    /// [`SyncScheduler::set_last_reported_failure`].
+    last_reported_error: Option<String>,
 }
 
 /// Initial seed for the per-peer backoff state.
@@ -370,6 +382,7 @@ impl SyncScheduler {
             next_retry_at: Instant::now(),
             backoff: MIN_BACKOFF,
             consecutive_failures: 0,
+            last_reported_error: None,
         });
         state.consecutive_failures += 1;
         // Doubling happens *before* we write `next_retry_at`, so the
@@ -429,6 +442,44 @@ impl SyncScheduler {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         backoff.get(peer_id).map_or(0, |s| s.consecutive_failures)
+    }
+
+    /// The user-facing failure text most recently reported for `peer_id` in
+    /// the current failure streak, or `None` if none has been.
+    ///
+    /// #4120: the caller suppresses a *repeat* report, and "repeat" has to be
+    /// per `(peer, message)` rather than per peer. The streak count alone
+    /// cannot express it — it is incremented by every failure route, including
+    /// ones that report through a different channel entirely (the pinned
+    /// identity refusal), and it says nothing about whether the failure the
+    /// user was told about is the failure happening now.
+    ///
+    /// Returning `None` for an unknown peer is the reporting direction: a peer
+    /// the scheduler has never seen fail has certainly not had this failure
+    /// reported.
+    pub fn last_reported_failure(&self, peer_id: &str) -> Option<String> {
+        let backoff = self
+            .backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        backoff
+            .get(peer_id)
+            .and_then(|s| s.last_reported_error.clone())
+    }
+
+    /// Remember `message` as the failure text reported for `peer_id`.
+    ///
+    /// A no-op for a peer with no backoff entry, which cannot happen on the
+    /// intended path: callers record the failure first, and
+    /// [`record_failure`](Self::record_failure) creates the entry.
+    pub fn set_last_reported_failure(&self, peer_id: &str, message: &str) {
+        let mut backoff = self
+            .backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(state) = backoff.get_mut(peer_id) {
+            state.last_reported_error = Some(message.to_string());
+        }
     }
 
     /// Return `(peer_id, consecutive_failures)` pairs for every peer the

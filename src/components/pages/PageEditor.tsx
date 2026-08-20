@@ -6,7 +6,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DonePanel } from '@/components/agenda/DonePanel'
@@ -76,6 +76,65 @@ function PageEditorInner({
   const selectedBlockId = useNavigationStore((s) => s.selectedBlockId)
   const clearSelection = useNavigationStore((s) => s.clearSelection)
 
+  // #4011 — the block currently being revealed by BlockTree's async reveal
+  // effect (expand collapsed ancestors / raise the mount cap), so the
+  // `onRevealSettled` callback below can tell a SETTLED report for the
+  // CURRENT navigation from a stale one for a target `selectedBlockId` has
+  // already moved past. `null` means no reveal is in flight.
+  const pendingRevealBlockIdRef = useRef<string | null>(null)
+
+  // #4012 review note 2 — the re-arm token handed to BlockTree. Bumped every
+  // time the slow path below registers a pending reveal, because BlockTree's
+  // reveal effect keys on `focusedBlockId` and `setFocused(selectedBlockId)`
+  // is a NO-OP when that block is already focused (navigating back to the
+  // block you just came from, a second click on the same backlink, a reveal
+  // re-registered after an unrelated re-render). Nothing in that effect's
+  // deps would change, so it would never re-run, never report, and the
+  // navigation would hang forever: no scroll, no notice, selection never
+  // cleared. The old bounded poll at least always terminated; replacing a
+  // wrong bound with an unbounded wait would have been a worse trade.
+  const [revealNonce, setRevealNonce] = useState(0)
+
+  // BlockTree reports the two DECIDABLE end states of a reveal it just ran
+  // for `blockId`: `found: true` once the row is actually mounted, `found:
+  // false` once BlockTree has determined it cannot reveal the target at all
+  // (outside the active zoom pane — see BlockTree.tsx's "#3276" reveal
+  // effect). Ignores a callback for any id other than the one currently
+  // pending — a stale report for a target `selectedBlockId` has since moved
+  // past (or that already resolved) must not scroll to, or error about, the
+  // wrong block.
+  const handleRevealSettled = useCallback(
+    (blockId: string, found: boolean): void => {
+      if (pendingRevealBlockIdRef.current !== blockId) return
+      if (found) {
+        const el = document.querySelector(`[data-block-id="${blockId}"]`)
+        // #4012 review note 1 — BlockTree reports on its own state (the row
+        // is in `mountedVisible`), which is one step ahead of the DOM in the
+        // cases where they can disagree at all. A missing element here is
+        // therefore NOT-YET-SETTLED, not "not found": consuming the pending
+        // reveal would clear the one-shot navigation intent with no scroll
+        // and no notice — the exact silent no-op #3276 exists to prevent, and
+        // the one thing the old poll never did (it kept going until the
+        // element existed). Leave the reveal pending instead: the layout
+        // effect below re-runs on the next commit and takes its fast path the
+        // moment the row appears, and BlockTree re-reports on every further
+        // change of its own reveal state.
+        if (!el) return
+        pendingRevealBlockIdRef.current = null
+        scrollElementIntoView(el, { behavior: 'smooth', block: 'center' })
+        clearSelection()
+        return
+      }
+      // The reveal is not merely slow — BlockTree has confirmed it cannot
+      // show this block at all — so tell the user instead of silently
+      // dropping the navigation intent.
+      pendingRevealBlockIdRef.current = null
+      notify.error(t('error.blockNotFound'))
+      clearSelection()
+    },
+    [clearSelection, t],
+  )
+
   // useLayoutEffect fires synchronously after DOM commit but before paint,
   // eliminating the visible scroll jump that occurred with useEffect + rAF (B-76).
   //
@@ -86,10 +145,18 @@ function PageEditorInner({
   // mount cap), so `clearSelection()` used to fire unconditionally here and
   // burn the one-shot navigation intent before the reveal could land — no
   // scroll, no highlight, no message, indistinguishable from a broken link.
-  // Poll across a bounded number of animation frames for the reveal to
-  // commit; only clear the intent once the element is actually found, and
-  // surface a visible notice (rather than silently giving up) if it never
-  // does.
+  //
+  // #4011 — the slow path used to poll `requestAnimationFrame` and give up
+  // after a bounded, invented FRAME COUNT (`STALL_LIMIT`, before that
+  // `MAX_REVEAL_ATTEMPTS = 40`) once the mounted rows stopped visibly
+  // changing — an assumption about how many frames a reveal SHOULD take,
+  // dressed up as a stall detector, still capable of false-negative
+  // `error.blockNotFound` for a target that would have mounted given one
+  // more frame than the bound allowed. There is no such bound anymore: the
+  // slow path only registers `selectedBlockId` as the pending reveal and
+  // waits for BlockTree's `onRevealSettled` callback above, which reports
+  // the real end state — found or not — the moment BlockTree itself
+  // determines it, however many renders that takes.
   useLayoutEffect(() => {
     if (!selectedBlockId || blocks.length === 0) return
     const target = blocksById.get(selectedBlockId)
@@ -97,8 +164,8 @@ function PageEditorInner({
     setFocused(selectedBlockId)
 
     // Fast path (unchanged from before #3276): the row is already mounted,
-    // so scroll/clear synchronously before paint — no rAF round-trip, no
-    // B-76 flash.
+    // so scroll/clear synchronously before paint — no round-trip, no B-76
+    // flash, and nothing for `onRevealSettled` to do.
     const immediateEl = document.querySelector(`[data-block-id="${selectedBlockId}"]`)
     if (immediateEl) {
       scrollElementIntoView(immediateEl, { behavior: 'smooth', block: 'center' })
@@ -107,116 +174,22 @@ function PageEditorInner({
     }
 
     // Slow path — the row isn't mounted yet (collapsed ancestor / past the
-    // mount cap). BlockTree reveals it asynchronously; poll across animation
-    // frames instead of giving up on this one commit.
-    let cancelled = false
-
-    // #3881 — bounding this poll by a fixed FRAME COUNT (the previous
-    // `MAX_REVEAL_ATTEMPTS = 40`, an invented number with no derivation, no
-    // comment, and no link to a measured or existing budget) false-negatives
-    // on a slow machine or a large page: BlockTree's reveal effect
-    // (BlockTree.tsx, "#3276: reveal a navigation target…") jumps the mount
-    // cap straight to the target's index via `revealIndex`, which can mean
-    // mounting hundreds of rows in one commit — legitimately slower than 40
-    // frames (~667ms @ 60fps) on a loaded machine or a page near
-    // PAGE_SUBTREE_MAX_BLOCKS. A block that exists and WOULD have mounted
-    // then gets `error.blockNotFound` instead — a false negative shown as
-    // user-facing error text, which is worse than the silent no-op #3276
-    // fixed.
-    //
-    // Bound STALL instead of TIME. BlockTree's own comment documents that
-    // its reveal effect "converges over a couple of renders". So keep
-    // polling as long as the mounted block rows keep CHANGING (real work is
-    // happening); only give up once they stop changing for STALL_LIMIT
-    // consecutive frames — i.e. the mechanism has genuinely stalled (e.g.
-    // the target sits outside the active zoom pane, a known
-    // not-yet-addressed case per BlockTree.tsx), not merely running slow.
-    //
-    // #4008 note 1 — "changing", NOT "growing". Row-count growth is the
-    // wrong progress proxy on a page sitting AT the mount cap:
-    // `useBlockMountLimit` returns `visibleBlocks.slice(0, mountLimit)`, so
-    // the `expandAncestors` half of BlockTree's reveal effect — a real
-    // convergence step, the one that puts the target into the visible list
-    // at all — changes WHICH rows are mounted while the count stays pinned
-    // at exactly `mountLimit`. Counting only growth booked that as a stall.
-    // The fingerprint below is order-sensitive over the mounted ids, so a
-    // reshuffle at a fixed row count reads as the progress it is.
-    //
-    // Reads `[data-block-id]` rows document-wide (the same scope as the
-    // lookup below) rather than scoping to this page's own container, so
-    // unrelated DOM churn elsewhere can in principle also reset the stall
-    // counter — that only delays giving up, it can never cause a false
-    // `notify.error()`, so it's an acceptable tradeoff for not depending on
-    // BlockTree's internals from here.
-    const mountedSignature = (): string => {
-      const rows = document.querySelectorAll('[data-block-id]')
-      let hash = 0
-      for (const row of rows) {
-        const id = row.getAttribute('data-block-id') ?? ''
-        for (let i = 0; i < id.length; i++) {
-          hash = (Math.imul(hash, 31) + id.charCodeAt(i)) | 0
-        }
-      }
-      return `${rows.length}:${hash}`
-    }
-
-    // The bound is derived from BlockTree's pipeline, not picked:
-    //
-    //  * The reveal is three steps — (1) `expandAncestors(target)`,
-    //    (2) `revealIndex(idx)`, (3) the commit that mounts the target row.
-    //  * Exactly ONE of them can be invisible to this observer: step (1),
-    //    when the collapsed ancestor chain lies entirely PAST the mount cap.
-    //    The rows it un-hides are then inserted after the cap boundary, so
-    //    the mounted prefix — and hence the signature — is unchanged. Step
-    //    (2) always changes the signature (`revealIndex` is a no-op unless
-    //    `idx + 1 > mountLimit`, so when it fires the prefix strictly grows),
-    //    and step (3) ends the poll instead of being observed.
-    //  * A step is one React commit, whose passive effect flushes in a task
-    //    after paint — so it can be observed one frame late.
-    //
-    // => (one unobservable step + one frame in which demonstrably nothing
-    //    happened) x two frames per commit. This is a smaller number than the
-    //    growth-only version it replaces and still strictly safer: a
-    //    signature-stable frame is much stronger evidence of a stall than a
-    //    growth-free one, because every observable form of progress now
-    //    resets the counter.
-    const UNOBSERVABLE_REVEAL_STEPS = 1
-    const FRAMES_PER_COMMIT = 2
-    const STALL_LIMIT = (UNOBSERVABLE_REVEAL_STEPS + 1) * FRAMES_PER_COMMIT
-    let lastSignature = mountedSignature()
-    let stallFrames = 0
-
-    const tryReveal = (): void => {
-      if (cancelled) return
-      const el = document.querySelector(`[data-block-id="${selectedBlockId}"]`)
-      if (el) {
-        scrollElementIntoView(el, { behavior: 'smooth', block: 'center' })
-        clearSelection()
-        return
-      }
-      const signature = mountedSignature()
-      if (signature !== lastSignature) {
-        lastSignature = signature
-        stallFrames = 0
-      } else {
-        stallFrames += 1
-      }
-      if (stallFrames >= STALL_LIMIT) {
-        // The reveal has genuinely stalled (or the block can't be shown,
-        // e.g. it's outside the active zoom pane) — tell the user instead of
-        // silently dropping the navigation intent.
-        notify.error(t('error.blockNotFound'))
-        clearSelection()
-        return
-      }
-      requestAnimationFrame(tryReveal)
-    }
-    requestAnimationFrame(tryReveal)
+    // mount cap). Hand off to BlockTree's reveal effect; `handleRevealSettled`
+    // finishes the job once it reports back. The nonce bump is what
+    // GUARANTEES a report: `setFocused` above may have changed nothing (the
+    // target is already the focused block), and BlockTree's reveal effect
+    // only re-runs — and only then reports — when one of its deps changes.
+    pendingRevealBlockIdRef.current = selectedBlockId
+    setRevealNonce((n) => n + 1)
 
     return () => {
-      cancelled = true
+      // `selectedBlockId` changed (or the component unmounted) before the
+      // reveal settled — a report for the OLD id must no longer act.
+      if (pendingRevealBlockIdRef.current === selectedBlockId) {
+        pendingRevealBlockIdRef.current = null
+      }
     }
-  }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection, t])
+  }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection])
 
   // Clear undo state for the previous page when navigating away or unmounting
   useEffect(
@@ -309,7 +282,12 @@ function PageEditorInner({
       <PageHeader pageId={pageId} title={title} onBack={onBack} />
 
       {/* Block tree — loads children of pageId */}
-      <BlockTree parentId={pageId} onNavigateToPage={onNavigateToPage} />
+      <BlockTree
+        parentId={pageId}
+        onNavigateToPage={onNavigateToPage}
+        onRevealSettled={handleRevealSettled}
+        revealNonce={revealNonce}
+      />
 
       {/* Add block button — always directly beneath the last block */}
       <div>

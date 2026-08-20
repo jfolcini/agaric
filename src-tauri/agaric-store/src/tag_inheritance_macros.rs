@@ -55,15 +55,17 @@
 //!   filters `b.deleted_at IS NULL` in the recursive member, so a walk
 //!   never passes THROUGH a soft-deleted block. The unfiltered subtree
 //!   variant is the documented purge-style exception.
-//! * Since #3944 `ancestors_walk` also constrains `?1` itself, so that
-//!   walk never STARTS at a soft-deleted block. It still emits its seed's
-//!   `parent_id` unfiltered — the #3944 filter is on the SUBJECT, not on
-//!   the ancestor emitted (#3926's property is unchanged). The rule does
-//!   NOT extend to `subtree_active`, whose seed must keep admitting a
+//! * Since #3944 `ancestors_walk` also constrains `?1` itself, and since
+//!   #4121 so does `descendants_active` — neither walk may START at a
+//!   soft-deleted block. `ancestors_walk` still emits its seed's
+//!   `parent_id` unfiltered — the filter is on the SUBJECT, not on
+//!   the ancestor emitted (#3926's property is unchanged). The rule holds
+//!   for exactly the walks that feed INSERTs ONLY. It does NOT extend to
+//!   `subtree_active`, whose seed must keep admitting a
 //!   tombstoned `?1`: that CTE also scopes `recompute_subtree_inheritance`'s
 //!   step-1 DELETEs, so emptying it would turn a repair pass over a
 //!   tombstone's LIVE subtree into a no-op. See the macro's own docs.
-//!   `subtree_unfiltered` is the third exception, for its own reason.
+//!   `subtree_unfiltered` is the second exception, for its own reason.
 //! * Every walk bounds depth at `MAX_TAG_INHERITANCE_DEPTH` (= 100). The
 //!   bound is inlined into the SQL string at macro expansion; see
 //!   `MAX_TAG_INHERITANCE_DEPTH` for the canonical Rust value. The
@@ -94,6 +96,41 @@ pub(crate) const MAX_TAG_INHERITANCE_DEPTH: i32 = 100;
 /// Filters `deleted_at IS NULL` in both the seed and the recursive
 /// member, and bounds recursion at [`MAX_TAG_INHERITANCE_DEPTH`].
 ///
+/// # #4121 — the seed also refuses to START at a soft-deleted `?1`
+///
+/// This is the [`tag_inh_ancestors_walk`] #3944 filter on the AddTag side,
+/// and the same soundness argument applies verbatim: this CTE feeds
+/// **INSERTs only** at both of its call-sites
+/// (`propagate_tag_to_descendants`'s single insert, and
+/// `remove_inherited_tag` step 3's), so an empty walk is exactly the
+/// arbiter's answer for a tombstoned subject rather than a suppressed
+/// repair pass. Contrast [`tag_inh_subtree_active`], whose seed must keep
+/// admitting a tombstoned `?1` because it ALSO scopes two `DELETE`s.
+///
+/// Without it, `propagate_tag_to_descendants(R, T)` on a soft-deleted `R`
+/// with a live child `D` wrote `(D, T, R)` — an inherited row attributing
+/// the tag to a tombstoned tagger — while
+/// [`crate::tag_inheritance::rebuild_all`]'s `tag_inh_descendant_tags_full!`
+/// seed carries `tagged.deleted_at IS NULL` and emits nothing. Reached from
+/// `apply_add_tag_via_loro` / `apply_add_tag_sql_only`, the remote/replay
+/// shape where the local command path's own liveness guard does not apply.
+///
+/// The filter is on the SUBJECT `?1`; the per-row `b.deleted_at IS NULL`
+/// predicates (seed and recursive member) are unchanged, and this CTE never
+/// emitted `?1` itself, so nothing else about the walk moves.
+///
+/// **Non-change, deliberately:** `remove_inherited_tag` step 3 is unaffected
+/// in behaviour. Its insert CROSS JOINs `descendants` with
+/// `nearest_ancestor`, which is derived from [`tag_inh_ancestors_walk`] —
+/// already empty for a soft-deleted `?1` since #3944 — so the step-3 result
+/// for a tombstoned subject was already "insert nothing". Making the two
+/// root-seeded INSERT walks agree removes the second, redundant reason
+/// rather than changing an outcome. Pinned by
+/// `propagate_tag_rooted_at_soft_deleted_block_matches_rebuild_4121` and, for
+/// the live-root non-regression, by the whole existing remove/propagate
+/// convergence suite (`remove_tag_incremental_matches_full_rebuild_2669`,
+/// `propagate_tag_to_descendants_*`).
+///
 /// CTE name `descendants(id, depth)`, recursive alias `d`. Caller must bind
 /// the seed block-id to position `?1`.
 #[macro_export]
@@ -101,6 +138,7 @@ macro_rules! tag_inh_descendants_active {
     () => {
         "descendants(id, depth) AS ( \
              SELECT b.id, 0 FROM blocks b \
+             JOIN blocks r ON r.id = ?1 AND r.deleted_at IS NULL \
              WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
              UNION ALL \
              SELECT b.id, d.depth + 1 FROM blocks b \
@@ -489,19 +527,23 @@ mod tests {
         );
     }
 
-    /// #3944 — `ancestors_walk`'s seed must refuse to START at a soft-deleted
-    /// `?1`, and the two SUBTREE walks' seeds must NOT.
+    /// #3944 / #4121 — the two INSERT-only root-seeded walks
+    /// (`ancestors_walk`, `descendants_active`) must refuse to START at a
+    /// soft-deleted `?1`, and the two SUBTREE walks' seeds must NOT.
     ///
     /// `active_walks_filter_deleted_at` above deliberately inspects only the
     /// RECURSIVE member, because for `ancestors_walk` the seed's emitted
     /// ancestor must stay unfiltered (#3926). That check therefore cannot see
     /// the #3944 gap: a seed that admits the subject `?1` unconditionally, so
     /// a remove rooted at a tombstone climbs to ancestors `rebuild_all` says
-    /// it cannot reach.
+    /// it cannot reach. It is equally blind to the #4121 gap on
+    /// `descendants_active`, whose recursive member has always filtered
+    /// `b.deleted_at IS NULL` while its seed admitted a tombstoned tagger.
     ///
     /// The negative half is the load-bearing one, and it is asserted here
-    /// rather than left implicit because "make both root-seeded walks match"
-    /// is the natural-looking follow-up that this test exists to stop.
+    /// rather than left implicit because "make ALL the root-seeded walks
+    /// match" is the natural-looking follow-up that this test exists to stop.
+    /// The dividing line is not "root-seeded" but "feeds INSERTs only":
     /// `subtree_active` scopes `recompute_subtree_inheritance`'s step-1
     /// DELETEs as well as its INSERTs, so filtering its seed turns a recompute
     /// rooted at a tombstone into a no-op and strands rows a structural change
@@ -511,9 +553,29 @@ mod tests {
     /// soft-delete.
     #[test]
     fn root_seeded_walks_filter_the_subject() {
-        for (name, body) in [
-            ("ancestors_walk(0)", tag_inh_ancestors_walk!(0)),
-            ("ancestors_walk(1)", tag_inh_ancestors_walk!(1)),
+        // The expected conjunction is spelled per macro rather than shared,
+        // because `descendants_active`'s seed ALSO carries a `?1` predicate
+        // that is NOT the subject check (`b.parent_id = ?1 AND
+        // b.deleted_at IS NULL` constrains the emitted CHILD). A single
+        // alias-blind needle would be satisfied by that predicate and the
+        // guard would pass with #4121 fully reopened, so each entry names the
+        // aliased column the subject filter must actually be written on.
+        for (name, body, subject_conjunction) in [
+            (
+                "ancestors_walk(0)",
+                tag_inh_ancestors_walk!(0),
+                "id = ?1 AND deleted_at IS NULL",
+            ),
+            (
+                "ancestors_walk(1)",
+                tag_inh_ancestors_walk!(1),
+                "id = ?1 AND deleted_at IS NULL",
+            ),
+            (
+                "descendants_active",
+                tag_inh_descendants_active!(),
+                "r.id = ?1 AND r.deleted_at IS NULL",
+            ),
         ] {
             let seed = body.split("UNION ALL").next().unwrap_or_default();
             // Normalise whitespace and require the CONJUNCTION, not merely the
@@ -522,8 +584,8 @@ mod tests {
             // would stay green on the exact rewrite this guard exists to stop.
             let flat = seed.split_whitespace().collect::<Vec<_>>().join(" ");
             assert!(
-                flat.contains("?1 AND deleted_at IS NULL") && !flat.contains(" OR "),
-                "#3944: {name}'s SEED must reject a soft-deleted `?1` — that \
+                flat.contains(subject_conjunction) && !flat.contains(" OR "),
+                "#3944/#4121: {name}'s SEED must reject a soft-deleted `?1` — that \
                  CTE feeds INSERTs only, so an empty walk is exactly \
                  `rebuild_all`'s answer for a tombstoned subject; \
                  seed was: {seed}",

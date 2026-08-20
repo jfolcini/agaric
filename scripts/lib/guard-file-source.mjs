@@ -80,7 +80,7 @@
 // all spelled this way.
 //
 // THE EXCEPTION, also stated once, here rather than a paragraph apiece in the
-// files that take it. FOUR guards root themselves at `git rev-parse
+// files that take it. FIVE guards root themselves at `git rev-parse
 // --show-toplevel` from the process cwd instead — every consumer of this
 // helper, and no others:
 //
@@ -88,24 +88,37 @@
 //   scripts/check-doc-code-paths.mjs
 //   scripts/check-architecture-citations.mjs
 //   scripts/check-dead-symbol-citations.mjs
+//   scripts/check-remove-after-markers.mjs
 //
-// All four drive themselves through `runSourceScenarios`, which spawns the
-// guard INSIDE a throwaway fixture with `cwd` set to it; a script-anchored
-// root would send them scanning the real repository from there and passing
-// for entirely the wrong reason. The Python guards solved the same problem by
-// copying the guard into the fixture (`scripts/test-py-guard-file-source.sh`,
+// All five drive themselves through `runSourceScenarios` (or, for the last,
+// its own fixtures built on the same helper), which spawns the guard INSIDE
+// a throwaway fixture with `cwd` set to it; a script-anchored root would send
+// them scanning the real repository from there and passing for entirely the
+// wrong reason. The Python guards solved the same problem by copying the
+// guard into the fixture (`scripts/test-py-guard-file-source.sh`,
 // `pr-merge-result-check.sh`), which is the better answer and the one to
-// adopt if these four ever need it.
+// adopt if these five ever need it.
+//
+// They take the exception through ONE function — `repoRootFromCwd` below —
+// rather than five private copies of `execSync('git rev-parse
+// --show-toplevel')`. That mattered (#4192): every copy asked the question
+// under the AMBIENT environment, so a leaked git context could redirect the
+// root itself, BEFORE the ownership probe #4061 added was ever consulted.
+// The Python guards are immune to that vector for free, being anchored at
+// `SCRIPT_DIR.parent` rather than at anything git answers; the Node side
+// buys the same immunity by scrubbing the redirect variables for that one
+// call. Which is why the exception is now a shared function: a rule with
+// five implementations is five rules.
 //
 // None is in `RATCHET_GUARDS`, so none is ever run against a tree other than
-// the caller's, and the divergence is inert today. A NEW guard copies the
-// rule, not the exception — and if it must take the exception, it says so by
-// adding itself to the list above rather than by growing another private
-// explanation.
+// the caller's. A NEW guard copies the rule, not the exception — and if it
+// must take the exception, it says so by adding itself to the list above and
+// calling `repoRootFromCwd`, rather than by growing another private
+// explanation and another private `show-toplevel`.
 //
 // THE LIST IS LOAD-BEARING, not decorative: `repoRoot` below is a required
 // option precisely so that a consumer which forgets to say which tree it
-// judges fails loudly instead of silently resolving AUTO. Two of the four
+// judges fails loudly instead of silently resolving AUTO. Two of the guards
 // above were missed on the first pass of exactly that change, and their own
 // self-tests — not review — are what caught it.
 //
@@ -251,16 +264,245 @@ const CAT_FILE_MAX_BUFFER = 64 * 1024 * 1024
  * the same one rule reads correctly from both sides. The worktree arm is
  * pinned by scenario 10; the submodule arm is the identical layout rule, not
  * a second mechanism.)
+ *
+ * ─── An inherited GIT_DIR outranks -C too (#4061) ──────────────────────────
+ *
+ * `-C repoRoot` tells THIS `git` command where to look — but an ambient
+ * `GIT_DIR` outranks it (measured on git 2.43: `GIT_DIR=<other>/.git git -C
+ * <root> rev-parse --absolute-git-dir` answers about `<other>`, not `root`).
+ * So with both `GIT_DIR` and `GIT_INDEX_FILE` exported from ANOTHER
+ * repository — exactly what a real commit hook leaves in the environment of
+ * that repository — the leaked `GIT_DIR` made this probe answer about that
+ * other repository, and `indexFile` (also naming a path under that same
+ * leaked git dir) then compared EQUAL to it: a false ACCEPT of a foreign
+ * index as belonging to `repoRoot`, silently defeating the exit-2 refusal
+ * `isAmbiguousSource` exists to raise.
+ *
+ * The probe below therefore runs under its OWN scrubbed copy of the
+ * environment, not the ambient one `execFileSync` would otherwise inherit —
+ * asking "what repository is at this path" is a question no ambient git
+ * context should get to answer on `repoRoot`'s behalf. `gitEnv` still binds
+ * the rest of the environment its OWN `git` calls run under, and
+ * `GIT_INDEX_FILE` is still the one variable it decides by BELONGING — kept
+ * when this probe (now honest about `repoRoot`) says it is this tree's,
+ * dropped when it says otherwise. What is no longer true of that function is
+ * "and strips nothing else": since #4191 it removes the whole of
+ * `GIT_REDIRECT_VARS` unconditionally, because those re-aim its
+ * `ls-files`/`cat-file` exactly as they re-aimed this probe. Measured before
+ * this fix, in a two-repository scratch fixture with `GIT_DIR` and
+ * `GIT_INDEX_FILE` both exported from the second: AUTO accepted the foreign
+ * index as belonging to the first, and the guard exited 0 over a staged
+ * violation it never read. Pinned in scenario 9 of `runSourceScenarios` and
+ * section 5 of `scripts/test-py-guard-file-source.sh`.
  */
 const NESTED_GIT_DIRS = new Set(['worktrees', 'modules'])
 
-export function indexBelongsTo(indexFile, repoRoot) {
+// ─── The variables that RE-AIM git, and the one that INFORMS it (#4191) ────
+//
+// Every name below merely points git at a directory it would otherwise
+// DISCOVER for itself. That is what makes removing them safe, and it is the
+// whole distinction this module draws between a leaked git context and a
+// legitimate one: with `cwd` at the tree being judged, ordinary discovery
+// finds that tree's own git dir and answers identically, so scrubbing is a
+// no-op when the ambient context is honest and corrective when it is not.
+// There is no need to sniff which case we are in — measured on git 2.43:
+//
+//   * an ordinary `git commit` in a main checkout exports NO `GIT_DIR` at
+//     all (only `GIT_INDEX_FILE=.git/index`, relative, with the hook's cwd
+//     fixed at the work-tree toplevel — git chdirs the hook to the toplevel
+//     even for a commit issued from a SUBDIRECTORY, so the relative form
+//     always resolves against the tree being committed);
+//   * a `git commit` in a LINKED WORKTREE exports an absolute
+//     `GIT_DIR=<main>/.git/worktrees/<name>` — which is exactly what
+//     `git -C <that worktree> rev-parse --absolute-git-dir` answers with
+//     the variable removed;
+//   * so does a checkout whose `.git` is a GITFILE rather than a directory
+//     (`git init --separate-git-dir`, and every submodule): an absolute
+//     `GIT_DIR` in a MAIN checkout, and equally redundant, because
+//     discovery reads the same target out of the gitfile. "A main checkout
+//     exports none" is true of the ordinary shape and not of every one, so
+//     the argument rests on redundancy rather than on absence;
+//   * a relative `GIT_DIR=.git` (the shape older git and some hook runners
+//     export) resolves against the git process's cwd, and this module's own
+//     `git` calls all run with `cwd` at `repoRoot`, so it resolves to the
+//     same directory discovery finds.
+//
+// The invariant has one honest counterexample, not a shape any of the four
+// above, and not one this repo uses: a DETACHED WORK TREE (`git
+// --git-dir=X --work-tree=Y <command>`, the bare-dotfiles-repo shape), where
+// `Y` carries no `.git` of its own. There `GIT_WORK_TREE` is not redundant
+// with discovery — discovery has nothing under `Y` to find. Verified (git
+// 2.43): with `GIT_DIR`/`GIT_WORK_TREE` scrubbed and `cwd` at such a `Y`,
+// `git rev-parse --show-toplevel` answers "not a git repository" when `Y`
+// sits nowhere near another repo — `repoRootFromCwd` swallows that into
+// `cwd` itself (its documented fail-open) and `listTrackedEntries` returns
+// `null`, the same silent "nothing to report" this module gives an
+// extracted tarball. Worse when `Y` is nested inside an unrelated repo:
+// discovery does not fail, it finds the ANCESTOR — `--show-toplevel`
+// answers with the wrong repository's root, and a guard judges that tree
+// instead, quietly, with no error to notice. Not a shape this repo's guards
+// ever run in, and the four measured shapes above really are redundant, so
+// this does not change what the scrub list removes — but the invariant
+// above is stated unconditionally, and this is the case where it is false.
+//
+// `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are ONE
+// mechanism in two variables — git's `receive-pack` quarantine exports the
+// pair together — and re-aim the OBJECT STORE the same way the others re-aim
+// the git dir: the alternates git would otherwise use are discovered from
+// `<gitdir>/objects/info/alternates`. Scrubbing one and keeping the other
+// would leave a half-configured store, and the half left behind is not
+// harmless. Measured on git 2.43: `git cat-file` does NOT verify that an
+// object's body hashes to the name it was asked for, and an alternate is
+// consulted for any oid the primary store lacks — so a leaked
+// `GIT_ALTERNATE_OBJECT_DIRECTORIES` can serve an ATTACKER-CHOSEN body for
+// an oid `git ls-files -s` names, through `cat-file blob` and `cat-file
+// --batch` alike. Reproduced against `check-raw-tx.py --cached` over a
+// staged violation whose loose object had been removed: exit 2 (the
+// fail-closed "damaged object store" refusal) became exit 0, over a forged
+// clean body. Pinned in section 5c of `scripts/test-py-guard-file-source.sh`
+// and in `verifyLeakedGitContext` (./git-scratch-guard.mjs).
+//
+// Scrubbing the pair is not costless in every direction, only every
+// direction that matters HERE: a guard run as a server-side `pre-receive` /
+// `update` hook has its incoming objects held in exactly this quarantine, so
+// scrubbing it there makes those objects invisible too. That failure is
+// FAIL-CLOSED (`cat-file` misses, this module's own `GitError`, exit 2 with
+// the cause named) rather than the fail-open a leaked alternate risks in a
+// pre-commit guard, so it is safe — this module has no server-side hook
+// consumer today, but the asymmetry is worth being honest about: the pair is
+// not only ever a hostile leak, just one whose one legitimate use this list
+// does not attempt to accommodate.
+//
+// ─── …and what is deliberately NOT here, each measured rather than argued
+//
+// The test for membership is "can it change what a guard READS about the
+// tree in front of it", not "is it a `GIT_` variable", so the near misses
+// are recorded rather than swept in:
+//
+//   * `GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM` / `GIT_CONFIG_COUNT` /
+//     `GIT_CONFIG_PARAMETERS` — config injection cannot re-aim these calls:
+//     git IGNORES `core.worktree` and `core.bare` from anywhere other than
+//     the repository's own config, and all three spellings were measured to
+//     leave `rev-parse --show-toplevel` and `ls-files` answering about the
+//     tree at `cwd`. `cat-file blob` applies no filters, and `ls-files -z`
+//     is not affected by `core.quotePath`. Scrubbing them would also be a
+//     REGRESSION, not a no-op: a fixture that deliberately isolates itself
+//     with `GIT_CONFIG_GLOBAL` would find the guard reading the developer's
+//     real `~/.gitconfig` instead.
+//   * `GIT_PREFIX` — exported to every hook (measured, `sub/` for a commit
+//     issued from `sub/`), and consumed by nothing here: `ls-files`,
+//     `cat-file` and `rev-parse --show-toplevel` all answered identically
+//     with it set to a bogus value.
+//   * `GIT_CEILING_DIRECTORIES` / `GIT_DISCOVERY_ACROSS_FILESYSTEM` — these
+//     bound the UPWARD walk rather than aiming it, so the worst either can
+//     do is truncate or extend the ANCESTRY of `cwd`; neither can name an
+//     unrelated repository. Measured: a ceiling covering the parent (or the
+//     root itself) leaves `--show-toplevel` and `ls-files` unchanged when
+//     `cwd` IS the toplevel, which is the only shape a guard runs in. They
+//     are also the one class where removal is NOT provably a no-op —
+//     `git_scratch_guard` (./git-scratch-guard.sh) SETS a ceiling on
+//     purpose — so they stay, and the invariant above stays true of every
+//     name that is here.
+//
+// `GIT_INDEX_FILE` is deliberately ABSENT from the list, in both of its
+// roles. For `indexBelongsTo` it is the value under TEST rather than ambient
+// context to strip (and `rev-parse --absolute-git-dir` never consults it).
+// For `gitEnv` it is the one variable here that is NOT redundant with
+// discovery: a commit in flight names a temp index — `.git/index.lock` for
+// `git commit -a`, `.git/next-index-<pid>.lock` for `git commit -- <path>`
+// (both measured) — that appears nowhere in git's layout and cannot be
+// re-derived. It is therefore KEPT when it belongs to the tree being judged
+// and dropped when it does not, which is `gitEnv`'s ownership rule below.
+//
+// The Node twin of `_GIT_REDIRECT_VARS` in `guard_file_source.py`; the two
+// lists are identical, which is the point — a divergence between them is the
+// same class of bug as #4062. Exported (unlike the Python name's leading
+// underscore) so `scripts/test-py-guard-file-source.sh` can import this
+// exact list and diff it against the Python one at test time, rather than
+// trusting the "identical" claim in these two comments to stay true.
+export const GIT_REDIRECT_VARS = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_COMMON_DIR',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_NAMESPACE',
+]
+
+/**
+ * A copy of `env` with the path-redirect variables above removed.
+ *
+ * The one spelling of "ask git about the directory in front of you, not
+ * about wherever an inherited environment points" — used by the ownership
+ * probe (#4061), by `gitEnv` for the guard's own enumeration and blob reads
+ * (#4191), and by `repoRootFromCwd` for the `--show-toplevel` call the five
+ * cwd-anchored guards root themselves on (#4192). Those were three separate
+ * exposures of one question, and they had three different answers before
+ * this existed.
+ *
+ * `GIT_INDEX_FILE` survives this call untouched — see the list's own note.
+ */
+export function scrubGitRedirects(env = process.env) {
+  const out = { ...env }
+  for (const name of GIT_REDIRECT_VARS) delete out[name]
+  return out
+}
+
+/**
+ * The repository root containing `cwd`, for a guard that takes the
+ * documented cwd-anchored EXCEPTION to "a guard judges the tree that
+ * contains it" (see the header).
+ *
+ * `git rev-parse --show-toplevel` is asked under a SCRUBBED environment
+ * (#4192). Unscrubbed, a leaked git context redirects the answer before any
+ * later ownership check can be consulted, so the guard roots itself in
+ * another repository and every subsequent decision — which files to
+ * enumerate, which copies to read, which verdict to print — is about that
+ * repository. Measured on git 2.43, from a cwd inside repo A:
+ *
+ *   GIT_DIR=<B>/.git GIT_WORK_TREE=<B> git rev-parse --show-toplevel  -> B
+ *   GIT_DIR=<B>/.git git rev-parse --show-toplevel, B having
+ *     core.worktree set                                               -> B
+ *
+ * (A bare `GIT_DIR=<B>/.git` alone answers A — the work tree defaults to
+ * cwd — which is why this was invisible until someone looked for it, and
+ * why "it resolved correctly the one time I tried" is not evidence.)
+ *
+ * Falls back to `cwd` when git cannot answer at all — an extracted tarball,
+ * git missing from PATH — which is the fail-open every one of these guards
+ * has always had for "not a git repository".
+ */
+export function repoRootFromCwd(cwd = process.cwd(), env = process.env) {
+  try {
+    const out = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd,
+      env: scrubGitRedirects(env),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    return out || cwd
+  } catch {
+    return cwd
+  }
+}
+
+export function indexBelongsTo(indexFile, repoRoot, env = process.env) {
   const indexPath = normalize(resolvePath(indexFile))
+  // `env`, not the module reaching for `process.env` on its own: `gitEnv`
+  // scrubs the `env` object it was PASSED, and this probe is the other half
+  // of the same belonging rule (#4061) — the module should not disagree with
+  // itself about which environment is authoritative. Both call sites below
+  // already receive `process.env` in production, so this changes nothing
+  // observable there; it only stops a future caller that passes a
+  // DIFFERENT `env` (a self-test driving a fixture, say) from having this
+  // probe silently answer about the ambient one instead.
+  const probeEnv = scrubGitRedirects(env)
   let out
   try {
     out = execFileSync('git', ['-C', repoRoot, 'rev-parse', '--absolute-git-dir'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      env: probeEnv,
     }).trim()
   } catch {
     return false
@@ -293,13 +535,42 @@ export function indexBelongsTo(indexFile, repoRoot) {
  * AUTO rule alone would only move the divergence — AUTO would refuse a
  * foreign index while an EXPLICIT `--cached` still read it.
  *
- * Belonging decides, and nothing else is stripped: a foreign
- * `GIT_DIR`/`GIT_WORK_TREE` is out of scope here and would already have made
- * `repoRoot` itself wrong.
+ * ─── …and an ambient GIT_DIR outranks `cwd` in exactly the same way (#4191)
+ *
+ * This function used to leave the rest of the environment exactly as given,
+ * on the stated grounds that "a foreign `GIT_DIR`/`GIT_WORK_TREE` in `env`
+ * is out of scope for this function". It was not: `GIT_DIR` re-aims the very
+ * `git ls-files` this env is built for. Measured on git 2.43, from a cwd
+ * inside repo A: `GIT_DIR=<B>/.git git -C <A> ls-files` lists B's tracked
+ * paths, not A's — `-C` and `cwd` both lose to it. So a leaked `GIT_DIR`
+ * made `listTrackedEntries` enumerate the OTHER repository's index while
+ * `cwd=repoRoot` made it look otherwise, and the guard reported a verdict
+ * about a tree it never opened. Worse than the `GIT_INDEX_FILE` half it sat
+ * next to: `GIT_DIR` alone was enough (`ls-files` falls back to that git
+ * dir's own default index once a foreign `GIT_INDEX_FILE` is stripped), so
+ * it corrupted `--worktree` and `--cached` alike, for every source mode
+ * rather than only under AUTO. Reproduced against
+ * `check-dead-symbol-citations.mjs` in a two-repository fixture: exit 0,
+ * empty stderr, over a violation sitting in both the index and the working
+ * tree of the tree under judgement.
+ *
+ * The redirect variables are therefore scrubbed here too, unconditionally —
+ * see `GIT_REDIRECT_VARS` for why that does not need to distinguish a
+ * hostile leak from an honest one, and why `GIT_INDEX_FILE` is the one
+ * variable that DOES get a belonging test rather than a blanket removal.
+ * Belonging still decides which index is read; nothing about a real commit
+ * hook's environment changes, because the hook's `GIT_DIR` — when it exports
+ * one at all — names the same directory `cwd=repoRoot` already discovers.
+ *
+ * That leaves `indexBelongsTo`'s OWN probe (#4061) as the second half of the
+ * same rule rather than the whole of it: before that fix, "belonging
+ * decides" was true in name only — a `GIT_DIR` exported alongside a foreign
+ * `GIT_INDEX_FILE` could make the probe answer about that foreign repository
+ * and accept its index as `repoRoot`'s.
  */
 export function gitEnv(repoRoot, env = process.env) {
-  const out = { ...env }
-  if (out.GIT_INDEX_FILE && !indexBelongsTo(out.GIT_INDEX_FILE, repoRoot)) {
+  const out = scrubGitRedirects(env)
+  if (out.GIT_INDEX_FILE && !indexBelongsTo(out.GIT_INDEX_FILE, repoRoot, env)) {
     // The pragma below is check-git-fixture-isolation.mjs's per-statement
     // waiver (#4064), replacing the basename exemption this file used to
     // need. It waives rule 1 for THIS LINE only; rule 2 still judges the
@@ -389,7 +660,7 @@ export function resolveSource(
     throw err
   }
   // SET is not enough — it has to be OUR index. See the header.
-  if (indexBelongsTo(indexFile, repoRoot)) {
+  if (indexBelongsTo(indexFile, repoRoot, env)) {
     return {
       source: SOURCE_INDEX,
       why: `auto: git is running a commit hook, GIT_INDEX_FILE=${indexFile}`,
@@ -418,15 +689,18 @@ export function resolveSource(
  * re-thrown, so a caller can exit 2 with the cause named rather than
  * swallowing it into a silent "clean".
  *
- * `env` exists for ONE caller: a self-test enumerating a throwaway fixture.
- * `cwd` does NOT determine which index git reads — an ambient
- * `GIT_INDEX_FILE` (which is exactly what git exports to a pre-commit hook)
- * outranks it, so `listTrackedEntries(fixtureDir)` under a real commit
- * enumerates the REAL repository while looking like it enumerates the
- * fixture. That is the #3722 hazard, and it is invisible to
- * `git rev-parse --show-toplevel`, which stays pinned to the fixture. Pass a
- * scrubbed env (`scrubbedGitEnv` in ./git-scratch-guard.mjs) to close it.
- * Omitted, git's ambient context applies — which is what the guards want.
+ * `env` IS NOT OPTIONAL IN PRACTICE, and every guard passes `gitEnv(...)`.
+ * `cwd` does NOT determine which repository git reads: an ambient
+ * `GIT_INDEX_FILE` (what git exports to a pre-commit hook) outranks it for
+ * the index, and an ambient `GIT_DIR` outranks it for the repository
+ * ITSELF — measured, `GIT_DIR=<B>/.git git -C <A> ls-files` lists B. So
+ * `listTrackedEntries(dir)` with no `env` enumerates whatever the ambient
+ * context points at while looking like it enumerates `dir`, and it is
+ * invisible to `git rev-parse --show-toplevel`, which stays pinned to `dir`.
+ * That is the #3722 hazard for a self-test and the #4191 one for a guard;
+ * `gitEnv` (here) and `scrubbedGitEnv` (./git-scratch-guard.mjs) are the two
+ * envs that close it. Omitted, git's ambient context applies — which no
+ * caller should want.
  */
 export function listTrackedEntries(repoRoot, { env } = {}) {
   let raw
@@ -523,7 +797,7 @@ function readFromIndex(paths, repoRoot, entries, chunkSize = CAT_FILE_CHUNK, env
       // (`git rm --cached`, which leaves the file on disk). It is not being
       // committed, so under `--cached` it is not read: reading the disk copy
       // would be this source answering about a path it has just been told is
-      // absent. Unreachable from the four guards, which enumerate FROM
+      // absent. Unreachable from the five guards, which enumerate FROM
       // `listTrackedEntries`; stated so the rule is one rule. The Python
       // sibling reaches it (its callers pass prek's path arguments) and
       // answers the same way — `read` in scripts/lib/guard_file_source.py,

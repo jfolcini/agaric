@@ -1217,6 +1217,136 @@ async fn same_page_indent_skips_three_rebuilds_without_stale_state_2700() {
     assert_no_stale_page_caches(&s.pool, "a same-page indent").await;
 }
 
+/// #4200 — a LOCAL same-page indent that trips #4112's
+/// `sweep_move_under_tombstoned_ancestor` must NOT claim the #2700 narrowing,
+/// and must leave `tags_cache.usage_count` correct.
+///
+/// This is the one shape where the local command can sweep: the target parent
+/// is LIVE (so `validate_move_in_tx` lets the move through) but an ancestor
+/// ABOVE it is tombstoned — a pre-#4112 vault, or a subtree stranded by a
+/// `sql_only`-fallback move. The sweep then stamps the moved subtree with that
+/// ancestor's cohort, i.e. the move performs a DELETE.
+///
+/// Every page-derived comparison still says "unchanged": `page_id` is derived
+/// from the parent's `page_id` (`rederive_page_and_space_ids`), which a
+/// `deleted_at` stamp does not touch, so the moved block stays on page A at
+/// both ends. Before #4200 that made `move_same_page_hint` return `Some(true)`
+/// and the fan-out dropped `RebuildTagsCache` (and `RebuildPageLinkCache`) on a
+/// move that had just removed live tag holders — `usage_count` stayed at its
+/// pre-move value.
+///
+/// Reddens if `move_block_inner` stops reading `deleted_at` back after the
+/// apply, if `move_same_page_hint` drops its `swept_into_tombstone` term, or if
+/// the `MoveBlock` arm drops its `RebuildTagsCache` push.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_move_that_sweeps_a_subtree_rebuilds_the_tags_cache_4200() {
+    const TAG_ID: &str = "01HZ00000000000000004200TG";
+    const TOMBSTONE_TS: i64 = 1_700_000_000_000;
+
+    let s = build_same_page_scene().await;
+
+    // A live intermediate chain on page A: outer > inner. `outer` is then
+    // tombstoned directly (the invisible-orphan state the sweep exists to
+    // repair) while `inner` stays live, so `inner` is a legal move target.
+    let outer = create_block_inner(
+        &s.pool,
+        DEV,
+        &s.mat,
+        "content".into(),
+        "outer".into(),
+        Some(s.page_a.clone().into()),
+        Some(4),
+    )
+    .await
+    .unwrap();
+    settle(&s.mat).await;
+    let inner = create_block_inner(
+        &s.pool,
+        DEV,
+        &s.mat,
+        "content".into(),
+        "inner".into(),
+        Some(outer.id.clone()),
+        Some(0),
+    )
+    .await
+    .unwrap();
+    settle(&s.mat).await;
+
+    // `sib` holds a tag, and the cache is seeded from the arbiter.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'tag', 'sweep-local-tag', NULL, 0)",
+    )
+    .bind(TAG_ID)
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(&s.sib)
+        .bind(TAG_ID)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    agaric_store::cache::rebuild_tags_cache(&s.pool)
+        .await
+        .unwrap();
+    let usage = |pool: sqlx::SqlitePool| async move {
+        sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+            .bind(TAG_ID)
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+    };
+    assert_eq!(
+        usage(s.pool.clone()).await,
+        Some(1),
+        "precondition: the live holder must be counted before the move"
+    );
+
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+        .bind(TOMBSTONE_TS)
+        .bind(outer.id.as_str())
+        .execute(&s.pool)
+        .await
+        .unwrap();
+
+    // Same-page indent under `inner` — page_id A → A, so #2700's raw page
+    // comparison would claim the fast path; the sweep fires anyway.
+    move_block_inner(
+        &s.pool,
+        DEV,
+        &s.mat,
+        s.sib.clone().into(),
+        Some(inner.id.as_str().into()),
+        0,
+    )
+    .await
+    .unwrap();
+    settle(&s.mat).await;
+
+    let swept: Option<i64> =
+        sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(&s.sib)
+            .fetch_one(&s.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        swept,
+        Some(TOMBSTONE_TS),
+        "precondition: the local move must actually have been swept into the \
+         tombstoned ancestor's cohort (#4112)"
+    );
+
+    assert_eq!(
+        usage(s.pool.clone()).await,
+        Some(0),
+        "#4200: the sweep tombstoned the tag's only holder, so the move's own \
+         fan-out must rebuild tags_cache; a stale 1 means the local move \
+         claimed the #2700 narrowing after performing a delete"
+    );
+}
+
 /// #2906 (nested-page boundary regression) — a same-page INDENT whose moved
 /// subtree CONTAINS a nested page must leave every page-derived cache
 /// consistent. `rederive_page_and_space_ids` now STOPS its `page_id` cascade at

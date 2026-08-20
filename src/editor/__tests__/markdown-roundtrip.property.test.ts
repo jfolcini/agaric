@@ -232,19 +232,30 @@ const arbInlineContent: fc.Arbitrary<InlineNode[]> = fc
 const TODO_STATES: readonly TodoState[] = ['TODO', 'DOING', 'DONE', 'CANCELLED']
 
 /**
- * KNOWN pre-existing exclusion (#1436, mirrored from the existing suite's
- * `paragraphStartsWithAmbiguousSyntax`): an italic whose text begins with a
- * space lands a bare `* ` at column 0 (`italic(' a')` → `* a*`). Emphasis
- * opening onto whitespace has no representation in this grammar, so such a
- * paragraph reparses as a bulletList wherever block dispatch runs (top level,
- * blockquote children). Probed via the production serializer so the check
- * cannot drift from the emission logic.
+ * A paragraph, occasionally carrying a todoState (a task block, #1435).
+ *
+ * FIXED (#1436/#4156): this generator used to filter out any paragraph whose
+ * serialized form began with a bare `* ` — an italic whose text begins with a
+ * space used to land exactly that at column 0 (`italic(' a')` → `* a*`),
+ * which reparsed as a bulletList wherever block dispatch runs (top level,
+ * blockquote children); emphasis opening onto whitespace has no
+ * representation in this grammar. `defuseLeadingItalicMarker` now moves the
+ * mark's open boundary past the leading whitespace (or drops it, if the run is
+ * whitespace all the way through) wherever the paragraph's own text starts the
+ * dispatched line, so the serializer never emits a bare `* ` there again — the
+ * filter is gone.
+ *
+ * This is a coverage GAIN, not a reduction: these properties assert the STRING
+ * invariants (byte-identical re-serialization, one-pass convergence), never doc
+ * identity, so the shapes the filter used to hide are now CHECKED rather than
+ * merely unchecked — which is only true if they are also reachable. Measured
+ * with the sweep the file's seed comment asks for: at `SWEEP_RUNS=20000`, with
+ * the filter gone and the defuse disabled, `the first serialize …` and `a
+ * depth-4 list …` both redden (3 of 3 random seeds); with the defuse in place
+ * the whole file is green across 6 sweeps at that count. At the shipped 300 —
+ * and even at 2 000 — the shape is too rare to reach, so the run count is the
+ * evidence, not the default.
  */
-function startsWithDelimiterBulletMarker(p: ParagraphNode): boolean {
-  return serialize({ type: 'doc', content: [p] }).startsWith('* ')
-}
-
-/** A paragraph, occasionally carrying a todoState (a task block, #1435). */
 const arbParagraph: fc.Arbitrary<ParagraphNode> = fc
   .tuple(arbInlineContent, fc.option(fc.constantFrom(...TODO_STATES), { nil: undefined }))
   .map(([content, todoState]): ParagraphNode =>
@@ -252,11 +263,10 @@ const arbParagraph: fc.Arbitrary<ParagraphNode> = fc
       ? { type: 'paragraph' as const, content }
       : { type: 'paragraph' as const, attrs: { todoState }, content },
   )
-  .filter((p) => !startsWithDelimiterBulletMarker(p))
 
-const arbPlainParagraph: fc.Arbitrary<ParagraphNode> = arbInlineContent
-  .map((content): ParagraphNode => ({ type: 'paragraph' as const, content }))
-  .filter((p) => !startsWithDelimiterBulletMarker(p))
+const arbPlainParagraph: fc.Arbitrary<ParagraphNode> = arbInlineContent.map(
+  (content): ParagraphNode => ({ type: 'paragraph' as const, content }),
+)
 
 const arbHeading: fc.Arbitrary<HeadingNode> = fc
   .tuple(fc.integer({ min: 1, max: 3 }), arbInlineContent)
@@ -387,6 +397,14 @@ const arbDoc: fc.Arbitrary<DocNode> = fc
  * `bulletList` is deliberately NOT in the set: adjacent bullet lists merge too,
  * but nothing renumbers, so the STRING is a fixpoint and excluding them would
  * only cost coverage. Pinned by the bullet-list seeds in `FIXPOINT_SEEDS`.
+ *
+ * `table` stays in the set even though `splitTableRuns` (#4012 item 1) does
+ * split SOME adjacent-table runs back apart — only those whose width changes
+ * at the boundary, where the merged reading would be malformed GFM. Such a
+ * pair is already a strict fixpoint, so keeping `table` here is merely
+ * conservative (it costs a little coverage, exactly as excluding `bulletList`
+ * would); a same-width pair genuinely merges and must stay excluded. The
+ * split half is pinned by name in `markdown-roundtrip-fidelity.test.ts`.
  */
 function hasGreedyAdjacency(node: DocNode | BlockLevelNode | ListItemNode): boolean {
   const greedy = new Set<string>(['blockquote', 'table', 'orderedList'])

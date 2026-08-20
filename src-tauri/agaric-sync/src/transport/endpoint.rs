@@ -448,8 +448,49 @@ fn permissive(resolver: DnsResolver) -> Builder {
 /// Is this address reachable from the public internet?
 ///
 /// Used to classify what an endpoint publishes. Deliberately conservative: anything
-/// not recognised as private, loopback, link-local, unique-local or CGNAT is treated
-/// as public, so an unfamiliar range fails toward "flag it" rather than "allow it".
+/// not recognised as private, loopback, link-local, unique-local, CGNAT or reserved is
+/// treated as public, so an unfamiliar range fails toward "flag it" rather than "allow
+/// it".
+///
+/// # Reserved ranges that are not reachable from anywhere (#4106)
+///
+/// `240.0.0.0/4` (class E, RFC 1112 § 4) and `0.0.0.0/8` ("this network", RFC 1122
+/// § 3.2.1.3) are not routed on the internet and cannot be, so a host holding one is
+/// not internet-facing. They used to answer `true` here, which put the SECURITY.md
+/// "globally-routable listener" WARN and the `InternetFacingBind` user event behind an
+/// address no packet can reach — a false alarm on the one warning in this module whose
+/// only value is being believed. `is_broadcast()` covers `255.255.255.255` alone, so it
+/// was not already catching the rest of class E; `is_unspecified()` likewise covers only
+/// `0.0.0.0` and not the remainder of `0.0.0.0/8`.
+///
+/// Deliberately *not* extended past those two. The rarer reserved blocks
+/// (`192.0.0.0/24`, `192.88.99.0/24`, `198.18.0.0/15`, multicast) are either
+/// unassignable to an interface in practice or would each need their own argument, and
+/// this predicate's failure direction — a spurious warning, never a missed one — makes
+/// leaving them cheap. `link_metadata::is_blocked_ip` enumerates the full table for the
+/// *outbound* case, which is a different question: it decides what may be connected to,
+/// where falling open is a vulnerability rather than a noisy log line. (It already
+/// blocks both of the ranges added here, so this change moves the two predicates
+/// *towards* agreement rather than apart.)
+///
+/// # The second consumer, and which way it moves
+///
+/// This predicate is not only a log-line classifier: [`bind_locality_ok`] triggers on
+/// it too, and there the polarity is inverted — a `false` short-circuits the
+/// "is this one of *our* addresses" proof away entirely. So excluding a range here does
+/// not merely quieten a warning, it also stops requiring that a bind in that range be
+/// vouched for by [`host_ip_addrs`]. That is deliberate and is the same bargain every
+/// range already on this list takes (RFC 1918, loopback, CGNAT — none of them are
+/// checked against the host list either), and it is safe for exactly these two blocks
+/// because neither is routable: an address in `0.0.0.0/8` or `240.0.0.0/4` that the
+/// host does not actually hold still fails at the socket with `EADDRNOTAVAIL`, so the
+/// removed check was never the thing standing in the way. `transport::service`'s
+/// `the_locality_gate_reads_the_host_addresses_the_caller_passed` records the same
+/// consequence from the test side, which is why its unheld address is `8.8.8.8` and not
+/// the `240.0.0.1` it started as.
+///
+/// The corollary is that *adding* a range to this list is a security-relevant edit and
+/// the rarer reserved blocks above are not to be waved in as "just a warning".
 ///
 /// # IPv4-mapped IPv6
 ///
@@ -477,7 +518,13 @@ pub fn is_publicly_routable(addr: &SocketAddr) -> bool {
                 || v4.is_documentation()
                 // 100.64.0.0/10 CGNAT — not `is_private()`, but not internet-routable
                 // either, and it is what CGNAT'd mobile networks hand out.
-                || (o[0] == 100 && (64..128).contains(&o[1])))
+                || (o[0] == 100 && (64..128).contains(&o[1]))
+                // 0.0.0.0/8 "this network" (RFC 1122 § 3.2.1.3) — a source-only range;
+                // `is_unspecified()` above is only the single address 0.0.0.0 (#4106).
+                || o[0] == 0
+                // 240.0.0.0/4 class E, reserved (RFC 1112 § 4) — never routed, and
+                // `is_broadcast()` above is only 255.255.255.255 (#4106).
+                || o[0] >= 240)
         }
         IpAddr::V6(v6) => {
             !(v6.is_loopback()
@@ -702,6 +749,21 @@ mod tests {
             "1.1.1.1:443",
             "93.184.216.34:80",
             "[2606:4700:4700::1111]:443",
+            // Bounds on #4106's new exclusions, so a clause that reaches too far
+            // fails here rather than silently suppressing the warning for real
+            // public space. `1.0.0.1` sits in `1.0.0.0/8`, the block immediately
+            // above `0.0.0.0/8`, so any `o[0] <= 1` reddens it. `223.255.255.255`
+            // is the last address below `224.0.0.0/4`, so it reddens any class-E
+            // clause whose bound slipped to 223 or lower. Measured, not assumed:
+            // rewriting the clause as `o[0] >= 224` leaves this test GREEN. That
+            // gap is deliberate — 224..=239 is multicast, which this predicate
+            // leaves classified public (see the rustdoc) and which a later fix may
+            // legitimately move, so pinning the exact `>= 240` boundary from the
+            // public side would mean asserting that multicast is internet-facing.
+            // Sweeping multicast in is not the regression this guard is for;
+            // sweeping in real unicast space is, and that it catches.
+            "1.0.0.1:443",
+            "223.255.255.255:443",
         ] {
             let sa: SocketAddr = addr.parse().expect("test address parses");
             assert!(
@@ -736,6 +798,40 @@ mod tests {
             assert!(
                 !is_publicly_routable(&sa),
                 "{addr} must NOT be classified publicly routable"
+            );
+        }
+    }
+
+    /// #4106: class E and `0.0.0.0/8` are reserved, not internet-facing.
+    ///
+    /// A host holding one of these used to get the SECURITY.md "globally-routable
+    /// listener" WARN and the `InternetFacingBind` event for an address that is not
+    /// routable anywhere. The addresses are chosen to be unsatisfiable by the two
+    /// predicates that were already there: `255.255.255.254` is class E but not
+    /// `is_broadcast()` (which is only `255.255.255.255`), and `0.1.2.3` is in
+    /// `0.0.0.0/8` but not `is_unspecified()` (which is only `0.0.0.0`). So this cannot
+    /// pass on the pre-#4106 predicate.
+    #[test]
+    fn classifier_recognises_reserved_ranges_as_non_public() {
+        for addr in [
+            // 240.0.0.0/4 — class E, RFC 1112 § 4.
+            "240.0.0.1:1",
+            "250.11.12.13:1",
+            "255.255.255.254:1",
+            // 0.0.0.0/8 — "this network", RFC 1122 § 3.2.1.3.
+            "0.1.2.3:1",
+            "0.0.0.1:1",
+            // The same two ranges in IPv4-mapped clothing, which the unmapping above
+            // must route through the identical v4 rules.
+            "[::ffff:240.0.0.1]:1",
+            "[::ffff:0.1.2.3]:1",
+        ] {
+            let sa: SocketAddr = addr.parse().expect("test address parses");
+            assert!(
+                !is_publicly_routable(&sa),
+                "{addr} is reserved and reachable from nowhere; classifying it as \
+                 internet-facing fires the globally-routable-listener warning on an \
+                 address no packet can reach (#4106)"
             );
         }
     }

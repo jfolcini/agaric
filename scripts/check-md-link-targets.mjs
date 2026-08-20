@@ -60,7 +60,6 @@
 // Exit: 0 = clean, 1 = at least one untracked target, 2 = invocation error.
 // ─────────────────────────────────────────────────────────────────────
 
-import { execSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path, { join } from 'node:path'
@@ -71,27 +70,27 @@ import {
   gitEnv,
   listTrackedEntries,
   readContents,
+  repoRootFromCwd,
   resolveSource,
 } from './lib/guard-file-source.mjs'
 
 // The repository the CALLER is standing in, not the one this script was
 // checked out into — the documented EXCEPTION to "a guard judges the tree
-// that contains it". The rule, the exception, the four guards that take it and
-// what to do instead are stated once, in `scripts/lib/guard-file-source.mjs`
-// ("Which TREE is judged, and the one documented exception"). Not restated
-// here: a rule written down twice is a rule that will be true in one place.
-const ROOT = (() => {
-  try {
-    return execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim()
-  } catch {
-    return process.cwd()
-  }
-})()
+// that contains it", taken through the SHARED `repoRootFromCwd` rather than a
+// private `show-toplevel` (#4192: a private copy asked git under the ambient
+// environment, where a leaked git context redirects the root itself). The
+// rule, the exception, the five guards that take it and what to do instead are
+// stated once, in `scripts/lib/guard-file-source.mjs` ("Which TREE is judged,
+// and the one documented exception"). Not restated here: a rule written down
+// twice is a rule that will be true in one place.
+const ROOT = repoRootFromCwd()
 
 // The environment this guard's OWN `git` calls run under. An ambient
-// `GIT_INDEX_FILE` outranks `cwd`, so without this an explicit `--cached`
-// under somebody else's commit would enumerate that repository while
-// `cwd=ROOT` made it look otherwise — see `gitEnv`.
+// `GIT_INDEX_FILE` outranks `cwd` for the INDEX and an ambient `GIT_DIR`
+// outranks it for the REPOSITORY (#4191), so without this a leaked git
+// context would enumerate somebody else's tree — under `--worktree` as
+// readily as `--cached` — while `cwd=ROOT` made it look otherwise. See
+// `gitEnv`.
 const GIT_ENV = gitEnv(ROOT, process.env)
 
 // Match `](href)` where href is non-empty and contains no whitespace
