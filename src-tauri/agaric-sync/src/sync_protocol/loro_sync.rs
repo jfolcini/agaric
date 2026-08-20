@@ -1508,7 +1508,10 @@ pub(crate) async fn import_and_project(
         // already have a `blocks` row, and `blocks.parent_id` is a self-FK.
         // Named here (one cheap parent-hop walk) so the SQL probe inside the
         // projection tx can tell which of them are missing.
-        let ancestor_candidates = engine.ancestors_outside(&all_refs[..changed_len]);
+        // `all_refs` is still exactly the changed set at this point — the
+        // candidates are appended below — so this is the whole slice, not a
+        // guard against anything.
+        let ancestor_candidates = engine.ancestors_outside(&all_refs);
         // #4100: the candidates' state is read HERE, under the guard that is
         // already held, not under a second acquisition gated on the probe
         // result. #540's property is not merely "acquire once on the healthy

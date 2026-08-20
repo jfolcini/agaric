@@ -669,7 +669,7 @@ impl LoroEngine {
             // #4111: `hops` is a belt-and-braces DEPTH cap, not the cycle guard.
             // Termination is guaranteed by `visited` below — a repeated node
             // breaks the loop on its second insert, so even a cyclic
-            // `A→B→A` stops after three hops. This counter would need a
+            // `A→B→A` stops after two hops. This counter would need a
             // million-deep ancestor chain (a million DISTINCT blocks) to fire,
             // and it is kept only to match `tree_depth_of` / `has_ancestor_in`.
             // Do not read it as making the `visited` break redundant: deleting
