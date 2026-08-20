@@ -415,8 +415,123 @@ function serializeInlineText(child: TextNode, activeMarks: Set<string>): string 
   return transition + escapeText(child.text)
 }
 
+/**
+ * #4156: an italic span that leads a paragraph's content (possibly after
+ * plain, all-space text — the marker-indent tolerance below), and whose text
+ * starts with a space, has no markdown spelling. `emitMarkTransition` would
+ * open it with a bare `*` immediately followed by that space — exactly
+ * `BULLET_ITEM_RE`'s bullet-list marker (`[-*] `) — so the reparse reads the
+ * paragraph as a bullet list instead of reopening emphasis (#711's collision,
+ * but from a MARK delimiter rather than literal text, so `escapeText` never
+ * sees it). Escaping only the opening delimiter after the fact leaves its
+ * matching close dangling — a plain `*` with nothing to pair it with — which
+ * reparses as literal text one way on the first pass and another way (via
+ * `escapeText`'s unconditional `*` escape) on the second, converging only on
+ * pass two (#4076's failure mode, moved rather than removed).
+ *
+ * Any OTHER co-active mark defuses this on its own, because it puts something
+ * that is not a space between the italic star and the text:
+ *
+ *  - bold/strike/highlight/underline insert their own delimiter (`**` `*`, or
+ *    `*` `~~`, …), so the line starts `**`/`<u>`, not `[-*] `;
+ *  - a `code` mark is EXCLUSIVE — `serializeInlineText` emits a backtick run
+ *    and no emphasis star at all;
+ *  - a `link` mark wraps the span in `[`…`](url)`, so the line starts `[`.
+ *
+ * Italic alone (mod all-space plain text before it — the same widened
+ * tolerance `serializeParagraph`'s dash/digit escapes use, since a nested
+ * paragraph's indent can dedent BACK into the marker's 0-3-space tolerance),
+ * opening onto a space, is the only vulnerable shape. {@link isVulnerableItalicOpen}
+ * below therefore has to look past `markSetFromMarks` (which reports only the
+ * five emphasis marks) and reject `code`/`link` explicitly.
+ *
+ * The transform moves the mark's OPENING boundary past the leading whitespace
+ * instead of dropping it outright — `italic(' y')` becomes plain(' ') +
+ * `italic('y')`, so the delimiter now opens on `y`, not on a space, and the
+ * mark survives on everything it can still legally wrap. Only when the run is
+ * whitespace all the way through (no character to move the boundary to, the
+ * issue's literal repro `italic(' ')`) does the mark drop entirely — which
+ * costs nothing visible, since italic on whitespace renders no differently
+ * than plain whitespace.
+ *
+ * It is still LOSSY — a mark boundary moves, and `parse(serialize(doc))` stops
+ * being the identity for these shapes — which is why it is applied only where
+ * the collision can actually happen: `serializeParagraph`'s `atLineStart`,
+ * false for a heading's inline content, a table cell, a task paragraph and a
+ * list item's own leading paragraph, all of which emit a prefix that consumes
+ * the line start before this text reaches it. Every other defense in
+ * `serializeParagraph` is an escape the parser reverses, so applying one
+ * needlessly costs nothing; this one costs a mark, so it is gated instead.
+ */
+function defuseLeadingItalicMarker(content: readonly InlineNode[]): InlineNode[] {
+  const isPlainSpaces = (n: InlineNode | undefined): n is TextNode =>
+    n?.type === 'text' && (n.marks ?? []).length === 0 && /^ *$/.test(n.text)
+
+  let i = 0
+  while (i < content.length && isPlainSpaces(content[i])) i++
+  if (!isVulnerableItalicOpen(content[i])) return content as InlineNode[]
+
+  // The maximal contiguous run that keeps italic continuously active from `i`
+  // (an atom or a mark change ends it — same boundary `emitMarkTransition`
+  // would close the delimiter at). A `code` or `link` mark ends it too, even
+  // though the node still carries `italic`: `isVulnerableItalicOpen` rejects
+  // both (code is exclusive, link wraps the whole span), so a node bearing
+  // either is never part of the vulnerable span and must not be pulled into
+  // this walk — otherwise `consumingLeadingSpace` stays true into a `code`
+  // node's own text and the leading-space split below cuts it into two spans.
+  let runEnd = i
+  while (
+    runEnd < content.length &&
+    content[runEnd]?.type === 'text' &&
+    ((content[runEnd] as TextNode).marks ?? []).some((m) => m.type === 'italic') &&
+    !((content[runEnd] as TextNode).marks ?? []).some((m) => m.type === 'code' || m.type === 'link')
+  ) {
+    runEnd++
+  }
+
+  const out: InlineNode[] = content.slice(0, i) as InlineNode[]
+  let consumingLeadingSpace = true
+  for (const child of content.slice(i, runEnd) as TextNode[]) {
+    if (!consumingLeadingSpace) {
+      out.push(child)
+      continue
+    }
+    const spaceLen = (child.text.match(/^ */) as RegExpMatchArray)[0].length
+    if (spaceLen === child.text.length) {
+      // Entirely spaces: drop italic (nothing to move the boundary onto yet;
+      // the next run node, if any, gets its own chance to hold the boundary).
+      const marks = (child.marks ?? []).filter((m) => m.type !== 'italic')
+      out.push(marks.length > 0 ? { ...child, marks } : { type: 'text', text: child.text })
+      continue
+    }
+    consumingLeadingSpace = false
+    if (spaceLen > 0) {
+      const marks = (child.marks ?? []).filter((m) => m.type !== 'italic')
+      const lead = { ...child, text: child.text.slice(0, spaceLen) }
+      out.push(marks.length > 0 ? { ...lead, marks } : { type: 'text', text: lead.text })
+    }
+    out.push({ ...child, text: child.text.slice(spaceLen) })
+  }
+  out.push(...content.slice(runEnd))
+  return out
+}
+
+/**
+ * Whether `node` is an inline node that would make `emitMarkTransition` open a
+ * bare `*` immediately followed by a space — the exact `[-*] ` bullet marker.
+ * See {@link defuseLeadingItalicMarker} for why `code` and `link` are rejected
+ * even though `markSetFromMarks` cannot see them.
+ */
+function isVulnerableItalicOpen(node: InlineNode | undefined): node is TextNode {
+  if (!node || node.type !== 'text' || !node.text.startsWith(' ')) return false
+  const marks = node.marks ?? []
+  if (marks.some((m) => m.type === 'code' || m.type === 'link')) return false
+  const emphasis = markSetFromMarks(marks)
+  return emphasis.size === 1 && emphasis.has('italic')
+}
+
 /** Pull the bold/italic/strike/highlight/underline subset out of a mark list. */
-function markSetFromMarks(marks: readonly PMMark[]): Set<string> {
+export function markSetFromMarks(marks: readonly PMMark[]): Set<string> {
   const desired = new Set<string>()
   for (const m of marks) {
     if (
@@ -617,7 +732,11 @@ function endsWithEscapedBang(result: string): boolean {
  * markers (`[/]`/`[-]`) so the full TODO→DOING→DONE→CANCELLED cycle survives
  * a markdown round-trip without polluting the task text with keywords.
  */
-function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) => void): string {
+function serializeParagraph(
+  node: ParagraphNode,
+  onUnknownNode?: (type: string) => void,
+  atLineStart = true,
+): string {
   const taskPrefix = node.attrs?.todoState
     ? `- [${TASK_STATE_TO_MARKER[node.attrs.todoState]}] `
     : ''
@@ -628,7 +747,11 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
     return taskPrefix ? taskPrefix.trimEnd() : ''
   }
 
-  const groups = groupByLink(node.content)
+  // A task's own `- [ ] ` marker consumes the line start, so its text is never
+  // dispatched as a block either — same exemption as the callers that pass
+  // `atLineStart: false` (see `defuseLeadingItalicMarker`).
+  const dispatched = atLineStart && taskPrefix === ''
+  const groups = groupByLink(dispatched ? defuseLeadingItalicMarker(node.content) : node.content)
 
   // #2385: a bare-URL autolink emission is only unambiguous when re-scanning
   // it in its final surroundings consumes exactly the href again. When the
@@ -718,6 +841,11 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
   // makes it so. Heading / blockquote / horizontal rule need no such widening:
   // their productions are anchored at column 0, so an indented one is never a
   // marker at any depth.
+  //
+  // A leading `*` from an OPENED italic mark (rather than literal text) is
+  // handled separately, before this string even exists — see
+  // `defuseLeadingItalicMarker` — because escaping only the opening
+  // delimiter here would leave its matching close dangling (#4156).
   const escaped = result
     .replace(/^( *)(\d+)\. /, '$1$2\\. ')
     .replace(/^(#{1,6}) /, '\\$1 ')
@@ -740,8 +868,11 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
 function serializeHeading(node: HeadingNode, onUnknownNode?: (type: string) => void): string {
   const prefix = `${'#'.repeat(node.attrs.level)} `
   if (!node.content || node.content.length === 0) return prefix
+  // `atLineStart: false` — the `#{1,6} ` prefix consumes the line start, so the
+  // heading's text is never re-dispatched as a block (#4156).
   return (
-    prefix + serializeParagraph({ type: 'paragraph', content: [...node.content] }, onUnknownNode)
+    prefix +
+    serializeParagraph({ type: 'paragraph', content: [...node.content] }, onUnknownNode, false)
   )
 }
 
@@ -916,7 +1047,9 @@ function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void)
           cell.content && cell.content.length > 0
             ? escapeCellPipes(
                 canonicalCellParagraphs(cell.content)
-                  .map((p) => serializeParagraph(p, onUnknownNode))
+                  // `atLineStart: false` — a cell sits behind `| `, so its text
+                  // is inline content the row production owns (#4156).
+                  .map((p) => serializeParagraph(p, onUnknownNode, false))
                   .join(' ')
                   .trim(),
               )
@@ -1121,7 +1254,9 @@ function serializeBlockNode(node: BlockLevelNode, onUnknownNode?: (type: string)
  * emitted on the MARKER line, where neither hazard exists — the marker consumes
  * the line start, so that text's own leading whitespace is not a line's leading
  * whitespace at all (`- <tab>x` round-trips as-is) and there is no preceding
- * sibling to absorb it. Its later lines are ordinary lines again.
+ * sibling to absorb it. Its later lines are ordinary lines again. The same
+ * "the marker owns this line start" fact is what exempts that paragraph from
+ * the #4156 italic-delimiter defuse (`serializeParagraph`'s `atLineStart`).
  */
 function serializeBlockSequence(
   nodes: readonly BlockLevelNode[],
@@ -1129,9 +1264,15 @@ function serializeBlockSequence(
   skipFirst = false,
 ): string[] {
   return nodes.map((node, idx) => {
-    const serialized = serializeBlockNode(node, onUnknownNode)
-    if (node.type !== 'paragraph') return serialized
     const onMarkerLine = idx === 0 && skipFirst
+    // A paragraph on the marker line is not at a line start the parser
+    // dispatches, so it also skips the #4156 italic defuse — one notion of
+    // "this text owns the start of its line", used by both.
+    const serialized =
+      onMarkerLine && node.type === 'paragraph'
+        ? serializeParagraph(node, onUnknownNode, false)
+        : serializeBlockNode(node, onUnknownNode)
+    if (node.type !== 'paragraph') return serialized
     const prev = nodes[idx - 1]
     return serialized
       .split('\n')

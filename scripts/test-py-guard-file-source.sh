@@ -472,6 +472,39 @@ _eq 'merge-result: the tree OWN index (absolute) still auto-selects the index' \
 _eq 'merge-result: …and the RELATIVE .git/index a real commit exports does too' \
   '1' "$(_run_auto_commit "$fx" "$GUARD_RAW_TX" "$RAW_TX_FILE")"
 
+# An INHERITED GIT_DIR must not let the ownership probe answer about the
+# OTHER repository (#4061). `_index_belongs_to` asks `git -C <root>
+# rev-parse --absolute-git-dir`, and an ambient GIT_DIR outranks `-C`
+# (measured: `GIT_DIR=<other>/.git git -C <root> rev-parse
+# --absolute-git-dir` answers about <other>, not <root>). A real commit hook
+# running INSIDE `other` would leave BOTH GIT_DIR and GIT_INDEX_FILE
+# exported from it — the shape below — and before the fix the leaked
+# GIT_DIR made the probe answer about `other`, so `GIT_INDEX_FILE` (also
+# naming a path under that same leaked git dir) compared EQUAL to it: a
+# false ACCEPT of the foreign index as belonging to `fx`, silently defeating
+# the exit-2 refusal this whole section is about.
+_run_foreign_commit_and_git_dir() {
+  local cwd="$1" dir="$2"
+  shift 2
+  (
+    cd "$cwd" || exit 99
+    GIT_DIR="$other/.git" GIT_INDEX_FILE="$other/.git/index" \
+      python3 "$dir/$GUARD_RAW_TX" "$@" >/dev/null 2>&1
+  )
+  printf '%s\n' "$?"
+}
+_eq 'merge-result: an inherited GIT_DIR must not make the probe answer about the OTHER repo (#4061)' \
+  '2' "$(_run_foreign_commit_and_git_dir "$other" "$fx" "$fx/$RAW_TX_FILE")"
+# THE CONTROL: --worktree sidesteps AUTO (and therefore the probe) entirely,
+# so it must stay green under the very same leaked GIT_DIR — the refusal
+# above is about the ambiguous index, not a guard that has stopped working
+# under a foreign GIT_DIR.
+_eq 'merge-result: …and --worktree is unaffected by the same leaked GIT_DIR' \
+  '1' "$(cd "$other" || exit 99
+    GIT_DIR="$other/.git" GIT_INDEX_FILE="$other/.git/index" \
+      python3 "$fx/$GUARD_RAW_TX" --worktree "$fx/$RAW_TX_FILE" >/dev/null 2>&1
+    echo $?)"
+
 # ---------------------------------------------------------------------------
 # 6. exists() AND read() ANSWER ABOUT THE SAME SET (#4058)
 # ---------------------------------------------------------------------------
@@ -809,6 +842,241 @@ _eq 'linked worktree: the MAIN checkout of a repo that HAS worktrees still reads
   '1' "$(_run_with_index "$wt_main" "$idx_main" "$GUARD_RAW_TX" "$WT_MAIN_FILE")"
 _eq "linked worktree: …and refuses a WORKTREE's index nested inside its own .git" \
   '2' "$(_run_with_index "$wt_main" "$idx_a" "$GUARD_RAW_TX" "$WT_MAIN_FILE")"
+
+# ---------------------------------------------------------------------------
+# 10. AN UNDECODABLE FILE READS IDENTICALLY UNDER BOTH SOURCES (#4062)
+# ---------------------------------------------------------------------------
+# `_blob` (the index) has always decoded lossily (`errors="replace"`), while
+# `read`'s working-tree branch used to decode strictly and turn a
+# `UnicodeDecodeError` into `None` — silently DROPPING the file from the
+# scan. So a tracked file holding invalid UTF-8 was scanned as mojibake
+# under --cached and skipped entirely under --worktree: the same
+# copy-disagreement #4048 exists to close, arriving through the decoder
+# instead of the source choice.
+#
+# The decoy bytes are the same ones `runSourceScenarios` scenario 7 builds
+# on the Node side (`Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x20, 0xff, 0xfe,
+# 0x00, 0x0a])`) — 0xe9 has no valid continuation and 0xff/0xfe are never
+# valid UTF-8 lead bytes, so decoding strictly must fail.
+UNDECODABLE_PREFIX='\x63\x61\x66\xe9\x20\xff\xfe\x00\n'
+
+fx="$tmp/undecodable-violation"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src"
+printf "$UNDECODABLE_PREFIX" > "$fx/$RAW_TX_FILE"
+printf '%s\n' "$RAW_TX_BAD" >> "$fx/$RAW_TX_FILE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+_eq 'undecodable file: the fixture really is invalid UTF-8 (else this case is vacuous)' \
+  'invalid' "$(python3 -c "
+try:
+    open('$fx/$RAW_TX_FILE', 'rb').read().decode('utf-8')
+    print('valid')
+except UnicodeDecodeError:
+    print('invalid')
+")"
+_eq 'undecodable file: the WORKING TREE scans behind the bad bytes and finds the violation (#4062)' \
+  '1' "$(_run "$fx" "$GUARD_RAW_TX" --worktree "$RAW_TX_FILE")"
+_eq 'undecodable file: the INDEX finds the SAME violation — the two sources now agree' \
+  '1' "$(_run "$fx" "$GUARD_RAW_TX" --cached "$RAW_TX_FILE")"
+
+# THE CONTROL: no violation behind the bad bytes. Without this, "both red"
+# above would be satisfied just as well by a guard that flags every
+# undecodable file outright, rather than one that scans it and finds
+# nothing wrong.
+fx="$tmp/undecodable-clean"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src"
+printf "$UNDECODABLE_PREFIX" > "$fx/$RAW_TX_FILE"
+printf '%s\n' "$RAW_TX_GOOD" >> "$fx/$RAW_TX_FILE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+_eq 'undecodable file: …and the CONTROL — no violation behind the bad bytes stays green under --worktree' \
+  '0' "$(_run "$fx" "$GUARD_RAW_TX" --worktree "$RAW_TX_FILE")"
+_eq 'undecodable file: …and green under --cached too' \
+  '0' "$(_run "$fx" "$GUARD_RAW_TX" --cached "$RAW_TX_FILE")"
+
+# ---------------------------------------------------------------------------
+# 11. check-dynamic-sql.py: THE ORPHAN SWEEP BATCHES cat-file SPAWNS (#4063)
+# ---------------------------------------------------------------------------
+# `orphan_entries` is GLOBAL over the baseline (an entry naming a file going
+# away must be reclaimed, and prek's changed-file list omits deletions), so
+# under --cached every surviving entry used to cost its own `git cat-file
+# blob <sha>` spawn (`_blob`, one per path). `read_many` warms the cache
+# through chunked `git cat-file --batch` calls instead — one spawn per
+# chunk, not one per path. A `git` SHIM on PATH counts `cat-file`
+# invocations, so the reduction is MEASURED rather than asserted from the
+# diff.
+REAL_GIT="$(command -v git)"
+CAT_SHIM_DIR="$tmp/cat-file-count-shim"
+mkdir -p "$CAT_SHIM_DIR"
+# Sibling of $CAT_SHIM_DIR, NOT inside it: $CAT_SHIM_DIR is prepended to
+# PATH for the run being measured, and scratch data (the per-run count
+# files) has no business living on the PATH of the process under test.
+CAT_COUNT_DIR="$tmp/cat-file-count-data"
+mkdir -p "$CAT_COUNT_DIR"
+cat > "$CAT_SHIM_DIR/git" <<SHIM
+#!/usr/bin/env bash
+if [ "\$1" = "cat-file" ]; then
+  printf 'x\n' >> "\$CAT_FILE_COUNT_FILE"
+fi
+exec "$REAL_GIT" "\$@"
+SHIM
+chmod +x "$CAT_SHIM_DIR/git"
+
+# Run a guard with the shim in front of PATH; prints "<exit-code>
+# <cat-file-spawn-count>".
+_run_dyn_count_cat_file() {
+  local dir="$1"
+  shift
+  local count_file="$CAT_COUNT_DIR/count-$RANDOM-$RANDOM"
+  : > "$count_file"
+  local status
+  (
+    cd "$dir" || exit 99
+    env -u GIT_INDEX_FILE \
+      PATH="$CAT_SHIM_DIR:$PATH" \
+      CAT_FILE_COUNT_FILE="$count_file" \
+      python3 "$@" >/dev/null 2>&1
+  )
+  status=$?
+  printf '%s %s\n' "$status" "$(wc -l < "$count_file" | tr -d ' ')"
+}
+
+# 6 present, clean, in-scope baseline entries — none excluded, none
+# test-only, no drift (the target below is a DIFFERENT file, so these 6
+# never enter `actual_counts` and `drifted_entries` never examines them —
+# only `orphan_entries`'s global sweep reads their content, which is the
+# surface #4063 is about).
+DYN_ORPHAN_N=6
+fx="$tmp/dyn-orphan-batch-clean"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src"
+printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
+{
+  printf '# Format: <count> <path-relative-to-repo-root>\n'
+  for i in $(seq 1 "$DYN_ORPHAN_N"); do
+    orphan_rel="src-tauri/src/orphan_4063_$i.rs"
+    printf 'fn f_%s() {}\n' "$i" > "$fx/$orphan_rel"
+    printf '1 %s\n' "$orphan_rel"
+  done
+} > "$fx/$DYN_BASELINE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+
+_eq 'orphan batch: the clean fixture is green under --cached (the control)' \
+  '0' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
+
+read -r batch_status batch_count <<<"$(_run_dyn_count_cat_file "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
+_eq 'orphan batch: still exits 0 while counting spawns (the run under test is the same one)' \
+  '0' "$batch_status"
+# 1 spawn for the target file's own content, 1 for the baseline file's own
+# content (`read_baseline`, unrelated to this fix — both already O(1)), and 1
+# chunked `cat-file --batch` for the WHOLE orphan sweep. Measured before this
+# fix, on this exact fixture: 8 (target + baseline + one `_blob` spawn PER
+# baseline entry — 6). `-le 3` rather than `-eq 3` so a future unrelated read
+# added to the target's or baseline's own processing does not make this
+# assertion brittle; the point under test is that it does NOT scale with
+# $DYN_ORPHAN_N — a 7th orphan candidate would still be 3, not 4.
+if [ "$batch_count" -ge 1 ] && [ "$batch_count" -le 3 ]; then
+  _ok "orphan batch: cat-file spawn count is O(1) in the baseline size, not O($DYN_ORPHAN_N) (got $batch_count, was 8 before #4063)"
+else
+  _bad 'orphan batch: cat-file spawn count is O(1) in the baseline size' \
+    "expected 1..3, got $batch_count"
+fi
+
+# …and the SAME fixture with one baseline entry naming a file that was never
+# created — an entry `read_many` must skip (no stage-0 blob to batch) while
+# `orphan_entries` still flags it, exactly as it did one spawn at a time.
+# Pins that batching did not change WHICH baseline entries the sweep flags,
+# only how many spawns flagging them costs.
+fx="$tmp/dyn-orphan-batch-with-gone"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src"
+printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
+{
+  printf '# Format: <count> <path-relative-to-repo-root>\n'
+  for i in $(seq 1 "$DYN_ORPHAN_N"); do
+    orphan_rel="src-tauri/src/orphan_4063_$i.rs"
+    printf 'fn f_%s() {}\n' "$i" > "$fx/$orphan_rel"
+    printf '1 %s\n' "$orphan_rel"
+  done
+  printf '1 src-tauri/src/orphan_4063_gone.rs\n'
+} > "$fx/$DYN_BASELINE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+
+_eq 'orphan batch: a baseline entry naming a file that never existed is still reclaimed as an orphan' \
+  '1' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
+_eq 'orphan batch: …and the message names it, rather than the batching swallowing it silently' \
+  '1' "$(cd "$fx" && env -u GIT_INDEX_FILE python3 "$GUARD_DYN" --cached "$DYN_FILE" 2>&1 >/dev/null \
+    | grep -c 'orphan_4063_gone.rs: no such file')"
+
+# ---------------------------------------------------------------------------
+# 12. read_many SPANS MULTIPLE `cat-file --batch` CALLS, NOT JUST ONE (#4063)
+# ---------------------------------------------------------------------------
+# Every guard-driven assertion above exercises `read_many` with far fewer
+# paths than the default chunk size (500), so the chunking LOOP in
+# `read_many` — `for i in range(0, len(wanted), chunk_size)` — only ever
+# runs its body once in this suite; the boundary between two `_read_batch`
+# calls is never reached, so an off-by-one there (a dropped path at a chunk
+# edge, or content from one chunk landing under another chunk's path) would
+# pass every assertion above and still be wrong. This section forces the
+# boundary by passing `read_many`'s explicit `chunk_size=2` over 5
+# distinctly-sized files — three `_read_batch` calls (2, 2, 1) — and checks
+# CONTENT, not just presence: a path caching that is off by one file would
+# still leave every `rel` a key in `_blobs`, so "cached" alone would not
+# catch it. `chunk_size` is an explicit parameter (not a monkeypatched
+# module global) for the same reason the `.mjs` sibling threads `chunkSize`
+# through explicitly: a renamed or inlined private constant would make a
+# monkeypatch silently stop taking effect while this test kept printing
+# `ok`.
+fx="$tmp/read-many-chunk-boundary"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src"
+CHUNK_RELS=()
+for i in 1 2 3 4 5; do
+  rel="src-tauri/src/chunk_$i.rs"
+  CHUNK_RELS+=("$rel")
+  python3 -c "print('CHUNK_${i}_MARKER_' + 'x' * ($i * 7))" > "$fx/$rel"
+done
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+
+_probe_read_many_chunks() {
+  local dir="$1"
+  shift
+  (
+    cd "$dir" || exit 99
+    env -u GIT_INDEX_FILE python3 - "$@" <<'PY'
+import importlib.util
+import pathlib
+import sys
+
+root = pathlib.Path.cwd()
+spec = importlib.util.spec_from_file_location(
+    "_gfs", root / "scripts" / "lib" / "guard_file_source.py"
+)
+gfs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gfs)
+rels = sys.argv[1:]
+src = gfs.FileSource(root, gfs.SOURCE_INDEX, "test probe")
+src.read_many(rels, chunk_size=2)  # force >1 `cat-file --batch` call over the 5 rels below
+bad = []
+for rel in rels:
+    if rel not in src._blobs:
+        bad.append(f"{rel}: not cached")
+        continue
+    got = src.read(rel)
+    want = (root / rel).read_text()
+    if got != want:
+        bad.append(f"{rel}: content mismatch")
+print("ok" if not bad else "; ".join(bad))
+PY
+  ) 2>/dev/null
+}
+_eq 'read_many: every path across a chunk boundary is cached with ITS OWN content, not a neighbours' \
+  'ok' "$(_probe_read_many_chunks "$fx" "${CHUNK_RELS[@]}")"
 
 # ---------------------------------------------------------------------------
 if [ "$failures" -gt 0 ]; then

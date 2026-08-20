@@ -251,16 +251,59 @@ const CAT_FILE_MAX_BUFFER = 64 * 1024 * 1024
  * the same one rule reads correctly from both sides. The worktree arm is
  * pinned by scenario 10; the submodule arm is the identical layout rule, not
  * a second mechanism.)
+ *
+ * ─── An inherited GIT_DIR outranks -C too (#4061) ──────────────────────────
+ *
+ * `-C repoRoot` tells THIS `git` command where to look — but an ambient
+ * `GIT_DIR` outranks it (measured on git 2.43: `GIT_DIR=<other>/.git git -C
+ * <root> rev-parse --absolute-git-dir` answers about `<other>`, not `root`).
+ * So with both `GIT_DIR` and `GIT_INDEX_FILE` exported from ANOTHER
+ * repository — exactly what a real commit hook leaves in the environment of
+ * that repository — the leaked `GIT_DIR` made this probe answer about that
+ * other repository, and `indexFile` (also naming a path under that same
+ * leaked git dir) then compared EQUAL to it: a false ACCEPT of a foreign
+ * index as belonging to `repoRoot`, silently defeating the exit-2 refusal
+ * `isAmbiguousSource` exists to raise.
+ *
+ * The probe below therefore runs under its OWN scrubbed copy of the
+ * environment, not the ambient one `execFileSync` would otherwise inherit —
+ * asking "what repository is at this path" is a question no ambient git
+ * context should get to answer on `repoRoot`'s behalf. Nothing else changes:
+ * `gitEnv` still binds the rest of the environment its OWN `git` calls run
+ * under, and still strips only `GIT_INDEX_FILE`, and only when this probe
+ * (now honest about `repoRoot`) says it does not belong. Measured before
+ * this fix, in a two-repository scratch fixture with `GIT_DIR` and
+ * `GIT_INDEX_FILE` both exported from the second: AUTO accepted the foreign
+ * index as belonging to the first, and the guard exited 0 over a staged
+ * violation it never read. Pinned in scenario 9 of `runSourceScenarios` and
+ * section 5 of `scripts/test-py-guard-file-source.sh`.
  */
 const NESTED_GIT_DIRS = new Set(['worktrees', 'modules'])
 
+// The variables through which an inherited git context can redirect the
+// ownership probe in `indexBelongsTo` away from `repoRoot`, despite `-C
+// repoRoot`. `GIT_INDEX_FILE` is deliberately absent: it is the value under
+// test, not ambient context to strip, and `rev-parse --absolute-git-dir`
+// never consults it. The Node twin of `_PROBE_SCRUB_VARS` in
+// `guard_file_source.py`.
+const PROBE_SCRUB_VARS = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_COMMON_DIR',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_NAMESPACE',
+]
+
 export function indexBelongsTo(indexFile, repoRoot) {
   const indexPath = normalize(resolvePath(indexFile))
+  const probeEnv = { ...process.env }
+  for (const name of PROBE_SCRUB_VARS) delete probeEnv[name]
   let out
   try {
     out = execFileSync('git', ['-C', repoRoot, 'rev-parse', '--absolute-git-dir'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      env: probeEnv,
     }).trim()
   } catch {
     return false
@@ -293,9 +336,17 @@ export function indexBelongsTo(indexFile, repoRoot) {
  * AUTO rule alone would only move the divergence — AUTO would refuse a
  * foreign index while an EXPLICIT `--cached` still read it.
  *
- * Belonging decides, and nothing else is stripped: a foreign
- * `GIT_DIR`/`GIT_WORK_TREE` is out of scope here and would already have made
- * `repoRoot` itself wrong.
+ * Belonging decides, and nothing else is stripped from the environment
+ * returned HERE — a foreign `GIT_DIR`/`GIT_WORK_TREE` in `env` is out of
+ * scope for this function and left exactly as given.
+ *
+ * That is safe only because `indexBelongsTo`'s OWN probe no longer trusts a
+ * leaked `GIT_DIR` either (#4061): before that fix, "belonging decides" was
+ * true in name only — a `GIT_DIR` exported alongside a foreign
+ * `GIT_INDEX_FILE` could make the probe answer about that foreign repository
+ * and accept its index as `repoRoot`'s. The probe scrubs its own environment
+ * for that one call; this function's own contract (leave `env` otherwise
+ * untouched) is unaffected.
  */
 export function gitEnv(repoRoot, env = process.env) {
   const out = { ...env }

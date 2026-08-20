@@ -2275,6 +2275,62 @@ pass_filenames = false
 files = "^(scripts/check-migrations-rebuild-cascade\\.mjs|src-tauri/migrations/AGENTS\\.md|src-tauri/src/db/tests\\.rs)$"
 stages = ["pre-commit"]
 
+# Migration-test coverage guard (#4144). `migrations/AGENTS.md` documents a
+# nextest filter (`test(/_(376|606|708)$|_0[0-9]{3}_/)`) that selects "the
+# migration tests" by NAME, but nothing in this repo actually invokes that
+# filter — grepping the tree for it turns up zero references in any CI
+# workflow, justfile recipe, or prek hook. A migration test named outside the
+# documented `<table>_<NNNN>_<what>_<issue>` convention is therefore invisible
+# to the filter and nothing signals that the convention broke (#4137 found
+# twelve such tests unnoticed). This hook makes the convention STRUCTURAL: for
+# every migration under src-tauri/migrations/, it requires at least one test
+# in db/tests.rs (or its snapshot/spaces siblings) whose name embeds that
+# migration's zero-padded number, exactly the way the documented filter's
+# `_0[0-9]{3}_` half would select it. Historical migrations that predate the
+# convention are grandfathered in src-tauri/migrations-test-coverage-baseline.txt
+# (shrink-only, same convention as table-ownership-baseline.txt); a migration
+# NOT listed there must have a matching test. Aggregate invariant like
+# check-table-ownership above, so it rescans the whole tree regardless of
+# which files changed. Regenerate the baseline (only to intentionally
+# grandfather a migration that genuinely predates the convention) with
+# `node scripts/check-migration-test-coverage.mjs --update-baseline`.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "migration-test-coverage"
+name = "migration-test coverage guard (#4144)"
+entry = "node scripts/check-migration-test-coverage.mjs"
+language = "system"
+# `pass_filenames = false` because the guard takes NO file arguments: it
+# resolves the migrations directory, the three scanned test files and the
+# baseline from the repo root itself. Appending changed filenames would rely
+# on the script silently ignoring argv it does not recognise, which is the
+# opposite of the fail-closed argument handling its siblings use — the same
+# reason `doc-vs-code-paths` and `pr-overlap-trust-boundary` set it.
+pass_filenames = false
+# The guard's OWN source is in the trigger set, like `pr-overlap-trust-boundary`:
+# editing the scanner without touching a migration must still re-run it
+# against the real tree, or a widening that reddens the repo lands green.
+files = "^(src-tauri/migrations/.*\\.sql|src-tauri/src/(db|snapshot|spaces)/tests\\.rs|src-tauri/migrations-test-coverage-baseline\\.txt|scripts/check-migration-test-coverage\\.mjs)$"
+stages = ["pre-commit", "pre-push"]
+
+# #4144: the guard's Rust test-attribute parsing (`#[test]` / `#[tokio::test]`,
+# with or without runtime args), its `_<NNNN>_` substring match, and the
+# shrink-only baseline mechanism must not silently regress. This companion
+# hook runs the guard's own fixture suite (`--self-test`), which also pins
+# the issue's own falsification: renaming an existing migration test to drop
+# its `_<NNNN>_` tag must turn the guard red. No file args.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "migration-test-coverage-self-test"
+name = "migration-test coverage guard self-test (#4144 falsification fixtures)"
+entry = "node scripts/check-migration-test-coverage.mjs --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
 # zizmor-version-pin: the zizmor version zizmor-hook.sh's
 # ZIZMOR_PINNED_VERSION asserts against, and the `zizmor@X` entries in every
 # `taiki-e/install-action` `tool:` list under .github/workflows/, are
