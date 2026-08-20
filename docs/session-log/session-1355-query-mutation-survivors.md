@@ -65,7 +65,9 @@ classify([{quoted [0,5]}, {quoted [1,4]}, {word 'tag:z' [5,10]}], '"a b"tag:z')
   mutant   → freeText: '"a b"'
 ```
 
-A test pinning the original here asserts that the **duplicated-tail** output is correct — flatly contradicting the contract in `classify`'s own doc-comment ("does not duplicate the tail when a consumed span runs past the end of the input"), which exists to prevent exactly that. It would lock in the worse of the two behaviours, on an input the tokeniser cannot produce, to satisfy a coverage tool. Rejected.
+A test pinning the original here asserts that the **duplicated-tail** output is correct. That is the worse of the two behaviours, locked in on an input the tokeniser cannot produce, to satisfy a coverage tool. Rejected.
+
+An earlier draft of this argument appealed to `classify`'s own doc-comment ("does not duplicate the tail when a consumed span runs past the end of the input") as being contradicted. That appeal does not hold and has been withdrawn: the doc-comment is scoped to a **consumed** span exceeding `input.length`, guarded by `if (cursor < input.length)`, whereas this divergence is overlapping spans that are all in range — in the fixture above, length 10 with every span inside it, so that guard never fires. The rejection stands on the reasoning above it, which needs no such appeal.
 
 ## Where the original evidence was wrong (without the verdict being wrong)
 
@@ -93,4 +95,4 @@ This is #3142's documented behaviour ("once a line is gone, the next run that se
 - A mutant being killable is not sufficient reason to kill it. If the only distinguishing input is one the module's own producers cannot generate, and the unmutated code behaves *worse* on it, the killing test pins a bug as a contract. Check what the original actually outputs on the distinguishing input before writing the assertion.
 - Check whether a proposed remedy has already been litigated. `// Stryker disable` looked like the obvious durable fix here until #3248 → #3593 turned up an explicit prior rejection with a reason that still applies.
 
-**Commit plan:** not pushed — audit deliberately left as a working-tree diff (`src/lib/__tests__/tagExpr.test.ts` +11) plus this log, for the caller to stage.
+**Commit plan:** shipped as a single commit — the one new `tagExpr` test plus this log — in the PR that closes out the five survivor issues.
