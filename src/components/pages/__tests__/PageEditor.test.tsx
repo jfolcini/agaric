@@ -25,15 +25,21 @@ import { axe } from 'vitest-axe'
 let capturedParentId: string | undefined
 let capturedAutoCreateFirstBlock: boolean | undefined
 let capturedOnRevealSettled: ((blockId: string, found: boolean) => void) | undefined
+// #4012 review note 2 — also captures the re-arm token, so a test can prove
+// PageEditor asks BlockTree for a fresh report rather than depending on
+// `setFocused` having changed something.
+let capturedRevealNonce: number | undefined
 vi.mock('@/components/editor/BlockTree', () => ({
   BlockTree: (props: {
     parentId?: string
     autoCreateFirstBlock?: boolean
     onRevealSettled?: (blockId: string, found: boolean) => void
+    revealNonce?: number
   }) => {
     capturedParentId = props.parentId
     capturedAutoCreateFirstBlock = props.autoCreateFirstBlock
     capturedOnRevealSettled = props.onRevealSettled
+    capturedRevealNonce = props.revealNonce
     return (
       <div
         data-testid="block-tree"
@@ -152,6 +158,7 @@ beforeEach(() => {
   capturedParentId = undefined
   capturedAutoCreateFirstBlock = undefined
   capturedOnRevealSettled = undefined
+  capturedRevealNonce = undefined
   capturedLinkedRefsPageId = undefined
   capturedPagesTreeSectionProps = undefined
   capturedUnlinkedRefsProps = undefined
@@ -734,6 +741,95 @@ describe('PageEditor navigation to a block that never mounts (#3276/#4011)', () 
     // B1's reveal is still pending — untouched by the unrelated report.
     expect(useNavigationStore.getState().selectedBlockId).toBe('B1')
   })
+
+  // #4012 review note 1 — `found: true` is BlockTree's statement about its
+  // OWN state (the row is in `mountedVisible`). If the DOM row still is not
+  // there, the reveal is not finished; consuming the one-shot intent then
+  // would clear the selection with no scroll and no notice — the silent
+  // no-op #3276 exists to prevent, and the one thing the old poll never did.
+  it('treats a found report with no DOM row yet as not-settled, and finishes when it appears', async () => {
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    act(() => {
+      getPageStore('PAGE_1')?.setState({
+        blocks: [
+          makeBlock({ id: 'B1', content: 'Target block', parent_id: 'PAGE_1', position: 0 }),
+        ],
+      })
+    })
+    act(() => {
+      useNavigationStore.setState({ selectedBlockId: 'B1' })
+    })
+
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView')
+    // Reported found, but the row is not in the document.
+    expect(document.querySelector('[data-block-id="B1"]')).toBeNull()
+    act(() => {
+      capturedOnRevealSettled?.('B1', true)
+    })
+
+    // Nothing was done, and nothing was thrown away: no scroll, no error, and
+    // the navigation intent is still live.
+    expect(scrollSpy).not.toHaveBeenCalled()
+    expect(mockedToastError).not.toHaveBeenCalled()
+    expect(useNavigationStore.getState().selectedBlockId).toBe('B1')
+
+    // The row lands; the next report finishes the navigation properly.
+    const target = document.createElement('div')
+    target.setAttribute('data-block-id', 'B1')
+    document.body.append(target)
+    act(() => {
+      capturedOnRevealSettled?.('B1', true)
+    })
+
+    expect(scrollSpy).toHaveBeenCalled()
+    expect(mockedToastError).not.toHaveBeenCalled()
+    expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+
+    scrollSpy.mockRestore()
+    target.remove()
+  })
+
+  // #4012 review note 2 — the hang the frame-count removal introduced. When
+  // the navigation target is ALREADY the focused block, `setFocused` changes
+  // nothing, so BlockTree's reveal effect never re-runs and never reports:
+  // with no bound left, the navigation would wait forever — no scroll, no
+  // error, selection never cleared. PageEditor therefore re-arms explicitly.
+  it('re-arms BlockTree when entering the slow path for an already-focused block', async () => {
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    act(() => {
+      getPageStore('PAGE_1')?.setState({
+        blocks: [
+          makeBlock({ id: 'B1', content: 'Target block', parent_id: 'PAGE_1', position: 0 }),
+        ],
+      })
+    })
+    // The premise: B1 is already focused before the navigation starts, so
+    // `setFocused('B1')` in the slow path is a no-op.
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'B1' })
+    })
+    const nonceBefore = capturedRevealNonce
+    act(() => {
+      useNavigationStore.setState({ selectedBlockId: 'B1' })
+    })
+
+    await waitFor(() => {
+      expect(capturedRevealNonce).not.toBe(nonceBefore)
+    })
+    // Still pending, as it must be — the point is that a report is now
+    // guaranteed to come, not that one already has.
+    expect(mockedToastError).not.toHaveBeenCalled()
+    expect(useNavigationStore.getState().selectedBlockId).toBe('B1')
+
+    // And the report that the re-arm produces settles it normally.
+    act(() => {
+      capturedOnRevealSettled?.('B1', false)
+    })
+    expect(mockedToastError).toHaveBeenCalledWith(t('error.blockNotFound'))
+    expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+  })
 })
 
 // #3881/#4011 — the old fixed `MAX_REVEAL_ATTEMPTS = 40` frame cap (and the
@@ -757,12 +853,18 @@ describe('PageEditor navigation to a block that mounts late, but legitimately (#
       useNavigationStore.setState({ selectedBlockId: 'B1' })
     })
 
-    // Simulate BlockTree taking many renders/commits to converge — far more
-    // than the old 40-frame (or STALL_LIMIT-frame) bound ever allowed —
-    // by letting unrelated page state churn a while before the target
-    // settles. There is no bound here to exceed anymore, so no notice fires
-    // no matter how long this runs.
-    for (let i = 0; i < 200; i++) {
+    // Simulate BlockTree taking several renders/commits to converge before
+    // the target settles.
+    //
+    // #4012 review note 6 — two iterations, not the 200 this started as.
+    // While PageEditor still counted frames, a large N was the assertion:
+    // it had to exceed the bound to prove the bound was wrong. There is no
+    // bound left to exceed, so what is under test now is "a commit that is
+    // not a report changes nothing" — a property the second iteration
+    // already demonstrates and the two-hundredth restates at 100x the render
+    // cost. The unbounded half of the contract is carried by the absence of
+    // any timer in the production code, not by counting to 200 here.
+    for (let i = 0; i < 2; i++) {
       act(() => {
         getPageStore('PAGE_1')?.setState({
           blocks: [

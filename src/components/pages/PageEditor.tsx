@@ -83,6 +83,18 @@ function PageEditorInner({
   // already moved past. `null` means no reveal is in flight.
   const pendingRevealBlockIdRef = useRef<string | null>(null)
 
+  // #4012 review note 2 — the re-arm token handed to BlockTree. Bumped every
+  // time the slow path below registers a pending reveal, because BlockTree's
+  // reveal effect keys on `focusedBlockId` and `setFocused(selectedBlockId)`
+  // is a NO-OP when that block is already focused (navigating back to the
+  // block you just came from, a second click on the same backlink, a reveal
+  // re-registered after an unrelated re-render). Nothing in that effect's
+  // deps would change, so it would never re-run, never report, and the
+  // navigation would hang forever: no scroll, no notice, selection never
+  // cleared. The old bounded poll at least always terminated; replacing a
+  // wrong bound with an unbounded wait would have been a worse trade.
+  const [revealNonce, setRevealNonce] = useState(0)
+
   // BlockTree reports the two DECIDABLE end states of a reveal it just ran
   // for `blockId`: `found: true` once the row is actually mounted, `found:
   // false` once BlockTree has determined it cannot reveal the target at all
@@ -94,16 +106,29 @@ function PageEditorInner({
   const handleRevealSettled = useCallback(
     (blockId: string, found: boolean): void => {
       if (pendingRevealBlockIdRef.current !== blockId) return
-      pendingRevealBlockIdRef.current = null
       if (found) {
         const el = document.querySelector(`[data-block-id="${blockId}"]`)
-        if (el) scrollElementIntoView(el, { behavior: 'smooth', block: 'center' })
+        // #4012 review note 1 — BlockTree reports on its own state (the row
+        // is in `mountedVisible`), which is one step ahead of the DOM in the
+        // cases where they can disagree at all. A missing element here is
+        // therefore NOT-YET-SETTLED, not "not found": consuming the pending
+        // reveal would clear the one-shot navigation intent with no scroll
+        // and no notice — the exact silent no-op #3276 exists to prevent, and
+        // the one thing the old poll never did (it kept going until the
+        // element existed). Leave the reveal pending instead: the layout
+        // effect below re-runs on the next commit and takes its fast path the
+        // moment the row appears, and BlockTree re-reports on every further
+        // change of its own reveal state.
+        if (!el) return
+        pendingRevealBlockIdRef.current = null
+        scrollElementIntoView(el, { behavior: 'smooth', block: 'center' })
         clearSelection()
         return
       }
       // The reveal is not merely slow — BlockTree has confirmed it cannot
       // show this block at all — so tell the user instead of silently
       // dropping the navigation intent.
+      pendingRevealBlockIdRef.current = null
       notify.error(t('error.blockNotFound'))
       clearSelection()
     },
@@ -150,8 +175,12 @@ function PageEditorInner({
 
     // Slow path — the row isn't mounted yet (collapsed ancestor / past the
     // mount cap). Hand off to BlockTree's reveal effect; `handleRevealSettled`
-    // finishes the job once it reports back.
+    // finishes the job once it reports back. The nonce bump is what
+    // GUARANTEES a report: `setFocused` above may have changed nothing (the
+    // target is already the focused block), and BlockTree's reveal effect
+    // only re-runs — and only then reports — when one of its deps changes.
     pendingRevealBlockIdRef.current = selectedBlockId
+    setRevealNonce((n) => n + 1)
 
     return () => {
       // `selectedBlockId` changed (or the component unmounted) before the
@@ -257,6 +286,7 @@ function PageEditorInner({
         parentId={pageId}
         onNavigateToPage={onNavigateToPage}
         onRevealSettled={handleRevealSettled}
+        revealNonce={revealNonce}
       />
 
       {/* Add block button — always directly beneath the last block */}

@@ -128,14 +128,25 @@ const mockedInvoke = vi.mocked(invoke)
 
 let pageStore: StoreApi<PageBlockState>
 
-function renderBlockTree(
-  props: { onRevealSettled?: (blockId: string, found: boolean) => void } = {},
-) {
-  return render(
+interface RevealProps {
+  onRevealSettled?: (blockId: string, found: boolean) => void
+  revealNonce?: number
+}
+
+function blockTreeElement(props: RevealProps = {}) {
+  return (
     <PageBlockContext.Provider value={pageStore}>
-      <BlockTree autoCreateFirstBlock={false} onRevealSettled={props.onRevealSettled} />
-    </PageBlockContext.Provider>,
+      <BlockTree
+        autoCreateFirstBlock={false}
+        onRevealSettled={props.onRevealSettled}
+        revealNonce={props.revealNonce}
+      />
+    </PageBlockContext.Provider>
   )
+}
+
+function renderBlockTree(props: RevealProps = {}) {
+  return render(blockTreeElement(props))
 }
 
 function makeFlatBlocks(count: number): FlatBlock[] {
@@ -311,6 +322,125 @@ describe('BlockTree reports reveal completion via onRevealSettled (#4011)', () =
 
     expect(onRevealSettled).toHaveBeenCalledWith('OUT', false)
     expect(onRevealSettled).not.toHaveBeenCalledWith('OUT', true)
+  })
+
+  // #4012 review note 2 — the reveal effect only reports when it RUNS, and it
+  // runs when its deps change. `PageEditor` starts a navigation by calling
+  // `setFocused(selectedBlockId)`, which changes nothing when that block is
+  // already the focused one (navigating back to the block you came from, a
+  // second click on the same backlink): no dep changes, the effect never
+  // re-runs, no report ever arrives, and — with the frame-count bound gone —
+  // the navigation hangs forever instead of giving up. `revealNonce` is the
+  // explicit re-arm that makes a report unconditional.
+  it('re-reports on a revealNonce bump, with focusedBlockId unchanged', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'ANC', content: 'ancestor', depth: 0 }),
+        makeBlock({ id: 'ZOOM', content: 'zoom root', parent_id: 'ANC', depth: 1 }),
+        makeBlock({ id: 'KID', content: 'kid', parent_id: 'ZOOM', depth: 2 }),
+        makeBlock({ id: 'OUT', content: 'outside', depth: 0 }),
+      ],
+      loading: false,
+    })
+
+    const onRevealSettled = vi.fn()
+    const view = renderBlockTree({ onRevealSettled, revealNonce: 1 })
+    await screen.findByTestId('sortable-block-ZOOM')
+    fireEvent.click(screen.getByTestId('zoom-in-ZOOM'))
+    await settle()
+
+    // The reveal for OUT runs and reports BEFORE anyone is listening for it —
+    // this is the state PageEditor finds itself in when it enters its slow
+    // path for a block that is already focused.
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'OUT' })
+    })
+    await settle()
+    expect(onRevealSettled).toHaveBeenCalledWith('OUT', false)
+    onRevealSettled.mockClear()
+
+    // Nothing else changes — same focus, same blocks, same pane. Only the
+    // nonce moves, and that alone must produce a fresh report.
+    view.rerender(blockTreeElement({ onRevealSettled, revealNonce: 2 }))
+    await settle()
+    expect(onRevealSettled).toHaveBeenCalledWith('OUT', false)
+  })
+
+  // #4012 review note 4 — the callback is read through a ref, NOT a dep. The
+  // effect's first statement is `expandAncestors` (#4002, deliberately before
+  // the bail), a transient-reveal write: with the callback in the deps, a
+  // caller passing an inline closure would re-run that write on every render
+  // of its parent. A fresh callback identity must therefore change nothing.
+  it('does not re-run the reveal when only the onRevealSettled identity changes', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'ANC', content: 'ancestor', depth: 0 }),
+        makeBlock({ id: 'ZOOM', content: 'zoom root', parent_id: 'ANC', depth: 1 }),
+        makeBlock({ id: 'KID', content: 'kid', parent_id: 'ZOOM', depth: 2 }),
+        makeBlock({ id: 'OUT', content: 'outside', depth: 0 }),
+      ],
+      loading: false,
+    })
+
+    const first = vi.fn()
+    const view = renderBlockTree({ onRevealSettled: first, revealNonce: 1 })
+    await screen.findByTestId('sortable-block-ZOOM')
+    fireEvent.click(screen.getByTestId('zoom-in-ZOOM'))
+    await settle()
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'OUT' })
+    })
+    await settle()
+    expect(first).toHaveBeenCalledWith('OUT', false)
+
+    // A brand-new function, exactly as an un-memoized caller would pass on
+    // every render. The effect must NOT re-run for it.
+    const second = vi.fn()
+    view.rerender(blockTreeElement({ onRevealSettled: second, revealNonce: 1 }))
+    await settle()
+    expect(second).not.toHaveBeenCalled()
+
+    // …and the ref really did pick the new callback up, so the next genuine
+    // re-run reports to it rather than to the stale closure.
+    view.rerender(blockTreeElement({ onRevealSettled: second, revealNonce: 2 }))
+    await settle()
+    expect(second).toHaveBeenCalledWith('OUT', false)
+  })
+
+  // #4012 review note 3 — `isInZoomPane` walks `parent_id` on the RENDER
+  // path. A cycle in that chain (a replayed move landing a block under its
+  // own descendant) would spin the main thread forever with no error and no
+  // frame; the walk is bounded by a visited set, exactly like
+  // `expandAncestors` and `getDragDescendants`. Without the guard this test
+  // does not fail — it HANGS the whole file, which is the point.
+  it('terminates on a parent_id cycle instead of spinning the render path', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'ANC', content: 'ancestor', depth: 0 }),
+        makeBlock({ id: 'ZOOM', content: 'zoom root', parent_id: 'ANC', depth: 1 }),
+        makeBlock({ id: 'KID', content: 'kid', parent_id: 'ZOOM', depth: 2 }),
+        // CYC_A ⇄ CYC_B: neither reaches the page root, and neither reaches
+        // the zoom root either — the walk has no terminating parent to find.
+        makeBlock({ id: 'CYC_A', content: 'cycle a', parent_id: 'CYC_B', depth: 0 }),
+        makeBlock({ id: 'CYC_B', content: 'cycle b', parent_id: 'CYC_A', depth: 0 }),
+      ],
+      loading: false,
+    })
+
+    const onRevealSettled = vi.fn()
+    renderBlockTree({ onRevealSettled, revealNonce: 1 })
+    await screen.findByTestId('sortable-block-ZOOM')
+    fireEvent.click(screen.getByTestId('zoom-in-ZOOM'))
+    await settle()
+
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'CYC_A' })
+    })
+    await settle()
+
+    // Reached at all == did not hang; and the cycle reads as "not in the
+    // pane", the answer the caller already knows how to handle.
+    expect(onRevealSettled).toHaveBeenCalledWith('CYC_A', false)
   })
 })
 

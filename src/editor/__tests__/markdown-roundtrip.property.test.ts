@@ -381,12 +381,12 @@ const arbDoc: fc.Arbitrary<DocNode> = fc
 
 /**
  * Adjacent same-type siblings of the GREEDY block productions (blockquote,
- * orderedList) merge on reparse by canonical policy — for ordered lists the
- * merge also normalizes the string (items renumbered), and for blockquotes a
- * callout absorbed into a plain quote has its `[!INFO]` re-emitted as escaped
- * literal text — so those docs converge in one pass instead of already being
- * a fixpoint. They are exercised by the convergence property below and
- * excluded from the strict-fixpoint property.
+ * table, orderedList) merge on reparse by canonical policy — for tables and
+ * ordered lists the merge also normalizes the string (separator row dropped /
+ * items renumbered), and for blockquotes a callout absorbed into a plain quote
+ * has its `[!INFO]` re-emitted as escaped literal text — so those docs converge
+ * in one pass instead of already being a fixpoint. They are exercised by the
+ * convergence property below and excluded from the strict-fixpoint property.
  *
  * RECURSIVE (#4053): the merge rule is a property of a node's CHILD list, not
  * of the document's top level. Two ordered lists nested inside a blockquote or
@@ -398,14 +398,16 @@ const arbDoc: fc.Arbitrary<DocNode> = fc
  * but nothing renumbers, so the STRING is a fixpoint and excluding them would
  * only cost coverage. Pinned by the bullet-list seeds in `FIXPOINT_SEEDS`.
  *
- * `table` is ALSO deliberately not in the set (#4012 item 1): adjacent tables
- * used to merge with an absorbed `\---` junk data row, but `parseTable` now
- * SPLITS a run at any absorbed separator instead, so two adjacent tables
- * reparse back into the same two tables — already a strict fixpoint, exactly
- * like `bulletList`. Pinned by the table seeds in `FIXPOINT_SEEDS`.
+ * `table` stays in the set even though `splitTableRuns` (#4012 item 1) does
+ * split SOME adjacent-table runs back apart — only those whose width changes
+ * at the boundary, where the merged reading would be malformed GFM. Such a
+ * pair is already a strict fixpoint, so keeping `table` here is merely
+ * conservative (it costs a little coverage, exactly as excluding `bulletList`
+ * would); a same-width pair genuinely merges and must stay excluded. The
+ * split half is pinned by name in `markdown-roundtrip-fidelity.test.ts`.
  */
 function hasGreedyAdjacency(node: DocNode | BlockLevelNode | ListItemNode): boolean {
-  const greedy = new Set<string>(['blockquote', 'orderedList'])
+  const greedy = new Set<string>(['blockquote', 'table', 'orderedList'])
   const children = (node.content ?? []) as readonly BlockLevelNode[]
   for (let i = 1; i < children.length; i++) {
     const prev = children[i - 1] as BlockLevelNode
@@ -532,28 +534,16 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
       ),
     ),
   ),
-  // #4012 item 1: adjacent sibling tables now SPLIT back apart on reparse
-  // (no absorbed junk row) — like `bulletList`, nothing renumbers or merges,
-  // so the string is already a fixpoint. Pinned at both levels for the same
-  // reason as the bullet-list pair above, and this is what justifies
-  // `hasGreedyAdjacency` leaving `table` out of the exclusion set too.
-  doc(
-    table(tableRow(tableHeader(paragraph(text('a'))))),
-    table(tableRow(tableHeader(paragraph(text('b'))))),
-  ),
-  doc(
-    bulletList(
-      listItem(
-        paragraph(text('p')),
-        table(tableRow(tableHeader(paragraph(text('a'))))),
-        table(tableRow(tableHeader(paragraph(text('b'))))),
-      ),
-    ),
-  ),
 ]
 
 /** Shapes that normalize (string changes once) before becoming stable. */
 const CONVERGENCE_SEEDS: readonly DocNode[] = [
+  // adjacent sibling tables: the absorbed table's header becomes a data row
+  // and its separator becomes a literal (escaped) `---` data row (#3274)
+  doc(
+    table(tableRow(tableHeader(paragraph(text('a'))))),
+    table(tableRow(tableHeader(paragraph(text('b'))))),
+  ),
   // adjacent ordered lists: items renumber into one list
   doc(
     { type: 'orderedList', content: [listItem(paragraph(text('a')))] },
@@ -663,10 +653,9 @@ describe('#4053 hasGreedyAdjacency excludes nested adjacency, not just top-level
     ).toBe(true)
   })
 
-  it('does NOT exclude adjacent tables (#4012 item 1 — they split, not merge)', () => {
+  it('excludes adjacent tables inside a list item', () => {
     const t = table(tableRow(tableHeader(paragraph(text('a')))))
-    expect(hasGreedyAdjacency(doc(t, t))).toBe(false)
-    expect(hasGreedyAdjacency(doc(bulletList(listItem(paragraph(text('p')), t, t))))).toBe(false)
+    expect(hasGreedyAdjacency(doc(bulletList(listItem(paragraph(text('p')), t, t))))).toBe(true)
   })
 
   it('does NOT exclude adjacent bullet lists (they merge without renumbering)', () => {
