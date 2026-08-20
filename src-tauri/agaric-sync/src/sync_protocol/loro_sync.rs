@@ -772,9 +772,9 @@ async fn report_parent_fk_violation(
         edges_checked = parent_edges.len(),
         dangling_parent_edges = ?probe.dangling,
         probes_failed = probe.probes_failed,
-        // `first_` in the name, not `probe_error`: when `probes_failed > 1` this is
-        // one sample, not the set, and a bare `probe_error` next to a count of 3
-        // reads as though all three failed that way (#4107 review).
+        // Field name kept from #4107 so the log schema is stable. Since #4111
+        // the probe is one batched statement, so this is THE error behind
+        // `probes_failed`, not a sample of several.
         first_probe_error = probe.first_error.as_deref().unwrap_or(""),
         error = %err,
         "#4083: the inbound projection rolled back on a foreign-key violation; \
@@ -798,13 +798,118 @@ struct ParentEdgeProbe {
     /// `"{block_id} -> {parent_id}"` for every edge whose parent the `blocks`
     /// table does not hold.
     dangling: Vec<String>,
-    /// How many probes could not be run to an answer. Every one of these is an
-    /// edge that is absent from `dangling` without being known to be present.
+    /// How many EDGES could not be probed to an answer. Every one of these is
+    /// an edge that is absent from `dangling` without being known to be
+    /// present. Since #4111 the probe is a single batched statement, so this is
+    /// all-or-nothing: 0, or every edge.
     probes_failed: usize,
-    /// The first probe error, so the log says *why* rather than only how many.
-    /// Only the first: on a rolled-back write tx every probe tends to fail the
-    /// same way, and N copies of one message is noise, not evidence.
+    /// The probe error, so the log says *why* rather than only how many. Named
+    /// `first_` from when the probe was a loop (#4107); with one batched
+    /// statement (#4111) there is only ever one error, and it explains all
+    /// `probes_failed` edges rather than sampling them.
     first_error: Option<String>,
+}
+
+/// #4099 — how many probe STATEMENTS [`absent_block_ids`] has executed.
+///
+/// Mirrors `agaric_engine::loro::projection::reproject_call_spy`: the property
+/// under test is a round-trip COUNT, which nothing else in the process can
+/// observe. Read as a before/after delta by the tests, and `#[cfg(test)]` so it
+/// does not exist in a release build. (nextest runs each test in its own
+/// process, so the counter is not shared across concurrent tests.)
+///
+/// The bump lives in [`execute_absent_probe`] — the single place the probe
+/// statement is executed — and NOT at the top of [`absent_block_ids`]. A
+/// counter incremented once per *call* would read `1` however many round-trips
+/// that call made (a chunking loop, say), so it would pass on exactly the N+1
+/// shape #4099 removed; bound to the execution it cannot.
+#[cfg(test)]
+mod probe_statement_spy {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static STATEMENTS: AtomicUsize = AtomicUsize::new(0);
+    pub(super) fn bump() {
+        STATEMENTS.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(super) fn count() -> usize {
+        STATEMENTS.load(Ordering::Relaxed)
+    }
+}
+
+/// Which of `ids` the `blocks` table does **not** hold — in ONE statement
+/// (#4099 / #4111).
+///
+/// Both callers used to ask this question with a `SELECT 1 FROM blocks WHERE
+/// id = ?` per id: the #4083 ancestor backfill (once per untouched ancestor
+/// candidate) and the 787 diagnostic (once per `parent_id` edge, where the
+/// untrusted no-op fallback makes that set the WHOLE vault). Neither round-trip
+/// count is bounded by anything the caller controls, and both sit on paths that
+/// are already the slow one — a long offline catch-up for the first, an
+/// already-failing apply for the second.
+///
+/// The `json_each` value-list idiom is the one this codebase already uses for
+/// exactly this shape (`reproject_dense_positions`, the #2266 tag re-insert):
+/// the id list binds as a single JSON-array parameter, so there is no
+/// `MAX_SQL_PARAMS` chunking to do and no statement built by concatenation.
+/// `NOT EXISTS` rather than `NOT IN` — same correlated-subquery shape as the
+/// #2266 guard, and immune to the `NOT IN` NULL semantics if `blocks.id` ever
+/// stopped being a NOT NULL primary key.
+///
+/// Generic over the executor because one caller runs it on `pool` (the
+/// diagnostic, after its tx is already gone) and the other inside the
+/// projection tx (#4099: probing on the same connection that holds the write
+/// lock is what closes the TOCTOU window a pre-tx autocommit probe leaves).
+///
+/// Returns a set, not a list: both callers ask membership questions, and the
+/// answer's ORDER must come from the caller's own id list — the backfill needs
+/// its ancestors root-first, and the diagnostic needs its edges in the order
+/// the projection would have written them.
+async fn absent_block_ids<'e, E>(
+    executor: E,
+    ids: &[&str],
+) -> Result<std::collections::HashSet<String>, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    // The empty short-circuit precedes the execution, like
+    // `projection::reproject_call_spy`, so a no-op call costs no round-trip
+    // and is not counted.
+    if ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let payload = serde_json::Value::from(ids.to_vec()).to_string();
+    Ok(execute_absent_probe(executor, payload)
+        .await?
+        .into_iter()
+        .collect())
+}
+
+/// Execute the batched existence probe exactly once.
+///
+/// Split out from [`absent_block_ids`] for one reason: it is the sole place a
+/// probe statement is executed, so the `#[cfg(test)]` bump below counts
+/// STATEMENTS rather than calls (see [`probe_statement_spy`]). Any future
+/// chunking of `payload` must loop over THIS function, which keeps the count
+/// honest by construction.
+async fn execute_absent_probe<'e, E>(
+    executor: E,
+    payload: String,
+) -> Result<Vec<String>, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    #[cfg(test)]
+    probe_statement_spy::bump();
+    // dynamic-sql: batched json_each existence probe (#4099), mirroring the
+    // #2266 `EXISTS (SELECT 1 FROM blocks …)` tag guard; runtime form because
+    // the id list arrives as a JSON payload parameter, which the compile-checked
+    // macro forms cannot express.
+    sqlx::query_scalar(
+        "SELECT je.value FROM json_each(?1) AS je \
+         WHERE NOT EXISTS (SELECT 1 FROM blocks WHERE id = je.value)",
+    )
+    .bind(payload)
+    .fetch_all(executor)
+    .await
 }
 
 /// Re-check each `block_id -> parent_id` edge against the (rolled-back,
@@ -814,27 +919,44 @@ struct ParentEdgeProbe {
 /// without a tracing subscriber: the logging half needs a live 787 to reach,
 /// which the caller's whole tx has to produce, while what #4107 is about is
 /// what the probe loop concludes.
+///
+/// #4111: one batched [`absent_block_ids`] statement, not one `SELECT` per
+/// edge. The set this runs over is `block_states`, which on the untrusted
+/// no-op fallback is `live_blocks_preorder()` — the entire vault. A 787 on that
+/// path used to emit one round-trip per block in the vault before the operator
+/// saw a single line. Duplicate parents across edges collapse into one probed
+/// id, and the per-edge answer is then a set lookup.
+///
+/// The `probes_failed` accounting survives the batching unchanged in MEANING
+/// (#4107): it counts EDGES that are absent from `dangling` without being known
+/// present. With one statement there is one way to fail, and it fails for every
+/// edge at once — so a failure counts all of them, which is exactly what the
+/// log line's "this list is incomplete by that many edges" says.
 async fn probe_parent_edges(pool: &SqlitePool, parent_edges: &[(&str, &str)]) -> ParentEdgeProbe {
     let mut probe = ParentEdgeProbe::default();
-    for (block_id, parent_id) in parent_edges {
-        // dynamic-sql: static-string existence probe on the #4083 787 diagnostic
-        // path; runtime form keeps this cold error-only query off the macro cache.
-        let present = sqlx::query_scalar::<_, i64>("SELECT 1 FROM blocks WHERE id = ?")
-            .bind(*parent_id)
-            .fetch_optional(pool)
-            .await;
-        match present {
-            Ok(Some(_)) => {}
-            Ok(None) => probe.dangling.push(format!("{block_id} -> {parent_id}")),
-            // NOT counted as dangling: a probe that could not run has established
-            // nothing about this edge, and guessing either way is what #4107 is
-            // about. It is counted as unknown instead.
-            Err(probe_err) => {
-                probe.probes_failed += 1;
-                probe
-                    .first_error
-                    .get_or_insert_with(|| probe_err.to_string());
+    if parent_edges.is_empty() {
+        return probe;
+    }
+    // Probe each distinct parent once; the per-edge answer below is a lookup.
+    let mut parents: Vec<&str> = parent_edges.iter().map(|(_, parent)| *parent).collect();
+    parents.sort_unstable();
+    parents.dedup();
+    match absent_block_ids(pool, &parents).await {
+        Ok(absent) => {
+            // Edge order, not probe order: the caller reads this list against
+            // the projection it just tried to write.
+            for (block_id, parent_id) in parent_edges {
+                if absent.contains(*parent_id) {
+                    probe.dangling.push(format!("{block_id} -> {parent_id}"));
+                }
             }
+        }
+        // NOT counted as dangling: a probe that could not run has established
+        // nothing about these edges, and guessing either way is what #4107 is
+        // about. They are counted as unknown instead.
+        Err(probe_err) => {
+            probe.probes_failed = parent_edges.len();
+            probe.first_error = Some(probe_err.to_string());
         }
     }
     probe
@@ -1351,6 +1473,15 @@ pub(crate) async fn import_and_project(
     // so the SQL writes never contend with — or hold — the engine mutex.
     // Reads stay consistent (one atomic view of the engine); the three SQL
     // passes below still run A→B→C for the FK ordering documented on each.
+    //
+    // #4100: "one atomic view" is the property, not merely "one acquisition on
+    // the healthy path". The #4083 ancestor backfill briefly took a SECOND
+    // acquisition, gated on the probe finding a missing row — so on the healing
+    // path the backfilled ancestors' snapshots could come from a later engine
+    // state than the changed blocks they were merged with. Both the candidate
+    // walk AND the candidates' state are read under the single acquisition
+    // below; the probe that decides which of them to project is pure SQL and
+    // needs no engine access at all.
 
     // #3162 lookup set for the per-block skip decisions below. A strict subset
     // of `changed_blocks`, so every block is still visited by Pass A.
@@ -1358,7 +1489,7 @@ pub(crate) async fn import_and_project(
         .iter()
         .map(agaric_core::ulid::BlockId::as_str)
         .collect();
-    let (mut block_states, ancestor_candidates) = {
+    let (mut block_states, ancestor_candidates, ancestor_states) = {
         let mut guard = registry.for_space(space_id, device_id)?;
         let engine = guard.engine_mut();
         // #1621: derive every block's `position` from a per-parent ordered-
@@ -1366,13 +1497,70 @@ pub(crate) async fn import_and_project(
         // `child_rank_position` sibling scan. For N changed blocks in a flat
         // space (K≈N) the old loop was O(N²); this is ~O(N). The projected
         // snapshot (incl. `position`) is byte-identical to `read_block`'s.
-        let block_id_refs: Vec<&str> = changed_blocks
+        let mut all_refs: Vec<&str> = changed_blocks
             .iter()
             .map(agaric_core::ulid::BlockId::as_str)
             .collect();
-        let snapshots = engine.read_blocks_bulk(&block_id_refs)?;
-        let mut states = Vec::with_capacity(changed_blocks.len());
-        for (block_id, snapshot) in changed_blocks.iter().zip(snapshots) {
+        let changed_len = all_refs.len();
+        // #4083: the ancestors this import did NOT touch. `changed_blocks` is
+        // depth-sorted, so a changed PARENT is always projected before its
+        // changed child — but an untouched ancestor is merely ASSUMED to
+        // already have a `blocks` row, and `blocks.parent_id` is a self-FK.
+        // Named here (one cheap parent-hop walk) so the SQL probe inside the
+        // projection tx can tell which of them are missing.
+        // `all_refs` is still exactly the changed set at this point — the
+        // candidates are appended below — so this is the whole slice, not a
+        // guard against anything.
+        let ancestor_candidates = engine.ancestors_outside(&all_refs);
+        // #4100: the candidates' state is read HERE, under the guard that is
+        // already held, not under a second acquisition gated on the probe
+        // result. #540's property is not merely "acquire once on the healthy
+        // path" — it is that a projection reads ONE atomic view of the engine.
+        // A second acquisition after the probe let the backfilled ancestors
+        // come from a later engine state than the changed blocks they are
+        // merged with.
+        //
+        // NOT a deadlock argument, and it must not be read as one. With the
+        // probe moved INSIDE the projection tx (#4099), a lazily-gated second
+        // acquisition would block on the engine mutex while this connection
+        // holds SQLite's `BEGIN IMMEDIATE` writer lock — but that is the
+        // ordering the LOCAL apply path already takes on every single op
+        // (`apply_*_via_loro` calls `for_space_recording` with the caller's
+        // write tx open), and the reverse edge cannot exist anywhere:
+        // `EngineGuard` is `!Send`, pinned by the compile-time tripwire in
+        // `loro::registry`, so no async code can hold the engine mutex across
+        // the `.await` that acquiring a SQLite lock requires. What the single
+        // acquisition buys here is LATENCY, not the absence of a cycle:
+        // waiting on the engine mutex while holding the writer lock stalls
+        // every other writer for the length of that wait.
+        //
+        // The cost is reading ancestor states that usually turn out to be
+        // present already, and it is a real cost — the one jfolcini flagged on
+        // #4100 when preferring option 2. `read_blocks_bulk` is called ONCE
+        // over `changed ++ candidates` (so the per-parent rank index is still
+        // built once for the whole projection) and the extra per-candidate
+        // work is the same three engine reads a changed block pays, but the
+        // candidate count is not a constant: it is the number of DISTINCT
+        // untouched ancestors of the changed set. For a sparse edit that is
+        // tree depth — a handful — while a long offline catch-up can push it
+        // into the hundreds (the same scenario #4099 cites), bounded above by
+        // the live vault. Judged worth it because the alternative keeps a
+        // split engine view on precisely the path that is already repairing
+        // damage. On the whole-tree changed set a snapshot import or the
+        // untrusted no-op fallback produces, every ancestor is IN the input,
+        // so `ancestors_outside` returns EMPTY and this costs exactly nothing.
+        all_refs.extend(
+            ancestor_candidates
+                .iter()
+                .map(agaric_core::ulid::BlockId::as_str),
+        );
+        let snapshots = engine.read_blocks_bulk(&all_refs)?;
+        let mut snapshots = snapshots.into_iter();
+        let mut states = Vec::with_capacity(changed_len);
+        for (block_id, snapshot) in changed_blocks
+            .iter()
+            .zip(snapshots.by_ref().take(changed_len))
+        {
             // #3162: a rank-only sibling is in this set solely because a
             // create / move / delete elsewhere in its sibling group shifted
             // its dense `position` — which `snapshot` already carries. The
@@ -1393,109 +1581,31 @@ pub(crate) async fn import_and_project(
             };
             states.push((snapshot, full_state));
         }
-        // #4083: the ancestors this import did NOT touch. `changed_blocks` is
-        // depth-sorted, so a changed PARENT is always projected before its
-        // changed child — but an untouched ancestor is merely ASSUMED to
-        // already have a `blocks` row, and `blocks.parent_id` is a self-FK.
-        // Named here (one cheap parent-hop walk, under the guard we already
-        // hold) so the SQL check below can tell which of them are missing.
-        let ancestor_candidates = engine.ancestors_outside(&block_id_refs);
-        (states, ancestor_candidates)
-    };
-
-    // #4083 — heal the ancestor gap BEFORE the projection tx opens.
-    //
-    // The incremental diff path emits only the blocks the import touched; every
-    // untouched ancestor must already be in SQL. It may not be: a
-    // `project_block_full_to_sql` warn-and-skip, a purge, or a previously
-    // rolled-back `sync_apply_remote` all leave that hole — and the last one
-    // makes the failure self-perpetuating, because the retry re-imports the same
-    // blob and aborts on the same dangling `parent_id` (787), permanently
-    // blocking this direction of sync (a session is one-directional: only the
-    // INITIATOR applies remote data).
-    //
-    // The ancestor is NOT degraded to a NULL parent: that would silently
-    // reparent the block to the vault root with nothing to reconcile it
-    // afterwards (unlike `blocks.space_id`, which a boot backfill heals). The
-    // engine holds the real ancestor, so we project it for real, with its full
-    // state (core columns + properties + tags + soft-delete) — a row SQL never
-    // had needs all of it, not just the column the FK points at — and report it
-    // as changed so the caller's FTS / derived-cache fan-out covers it too.
-    //
-    // Cost in the healthy case (the overwhelmingly common one) is one existence
-    // probe per untouched ancestor and nothing else; the extra engine guard
-    // acquisition happens ONLY when a row is genuinely missing, so #540's
-    // "one acquisition for the whole projection" still holds on every normal
-    // apply. Runtime query form, like the #2264 probe above: a rare path that
-    // does not need to sit in the macro cache.
-    let mut missing_ancestors: Vec<agaric_core::ulid::BlockId> = Vec::new();
-    for candidate in &ancestor_candidates {
-        // dynamic-sql: static-string existence probe for the #4083 ancestor
-        // backfill; runtime form (like the #2264 probe above) keeps this rare
-        // path off the macro cache.
-        let present: Option<i64> = sqlx::query_scalar("SELECT 1 FROM blocks WHERE id = ?")
-            .bind(candidate.as_str())
-            .fetch_optional(pool)
-            .await?;
-        if present.is_none() {
-            missing_ancestors.push(candidate.clone());
-        }
-    }
-    // Known gap in this healing pass: Pass B writes the backfilled ancestor's
-    // own `block_tags`, but `tag_scope` was resolved from the import's subtree
-    // roots and does not include an ancestor sitting ABOVE them — so
-    // `block_tag_inherited` can stay stale for that ancestor until the next
-    // full rebuild. Strictly better than the abort this replaces, and recorded
-    // here so it is not rediscovered as a new defect.
-    if !missing_ancestors.is_empty() {
-        tracing::warn!(
-            space_id = space_id.as_str(),
-            missing_ancestors = ?missing_ancestors
-                .iter()
-                .map(agaric_core::ulid::BlockId::as_str)
-                .collect::<Vec<_>>(),
-            "#4083: inbound projection found engine ancestors with no `blocks` \
-             row; projecting them ahead of the changed set so the changed \
-             blocks' parent_id self-FK resolves"
-        );
-        let missing_refs: Vec<&str> = missing_ancestors
-            .iter()
-            .map(agaric_core::ulid::BlockId::as_str)
-            .collect();
-        let mut ancestor_states: Vec<_> = {
-            let mut guard = registry.for_space(space_id, device_id)?;
-            let engine = guard.engine_mut();
-            let snapshots = engine.read_blocks_bulk(&missing_refs)?;
-            let mut states = Vec::with_capacity(missing_refs.len());
-            for (block_id, snapshot) in missing_refs.iter().zip(snapshots) {
-                let full_state = Some((
-                    engine.read_all_properties_typed(block_id)?,
-                    engine.read_tags(block_id)?,
-                    engine.read_deleted_at(block_id)?,
-                ));
-                states.push((snapshot, full_state));
-            }
-            states
-        };
-        // Root-first ancestors, then the depth-sorted changed set.
+        // The remainder of `snapshots` is the candidates', in `ancestor_candidates`
+        // order — index-aligned, so the probe below can filter both together.
+        // Always the FULL state: a row SQL never had needs all of it, not just
+        // the column the FK points at, so there is no `rank_only` analogue here.
         //
-        // NOTE: the concatenation is NOT globally parent-before-child, and does
-        // not need to be. `ancestors_outside` climbs PAST an ancestor that is
-        // itself in the changed set, so on `AA→BB→CC→DD` with changed `[BB, DD]`
-        // it returns `[AA, CC]` and the merged order is `[AA, CC, BB, DD]` —
-        // `CC` before its parent `BB`. That commits only because this whole tx
-        // runs under `PRAGMA defer_foreign_keys = ON` below, which is therefore
-        // load-bearing for the backfill, not merely defence in depth
-        // (`apply_remote_backfills_interleaved_ancestor_gap_4083` is the shape
-        // that reddens if it is removed). Re-sorting the union by engine depth
-        // would need a third guard acquisition to answer "how deep is this id",
-        // which is what the deferral buys us out of.
-        ancestor_states.append(&mut block_states);
-        block_states = ancestor_states;
-        let mut merged = missing_ancestors;
-        merged.append(&mut changed_blocks);
-        changed_blocks = merged;
-    }
+        // Widened failure surface, accepted knowingly: these reads now run for
+        // EVERY candidate, not only the ones SQL turns out to lack. A corrupt
+        // engine node that `ancestors_outside` could still name — its `block_id`
+        // was readable, so the #4111 truncation warn did not fire — but whose
+        // properties/tags are not, now fails the whole apply rather than only
+        // the healing path. That is the same hard failure a CHANGED block with
+        // the same corruption already causes, and it fails loudly into the #535
+        // inbox retry rather than silently; it is a consequence of the single
+        // acquisition, not an oversight in it.
+        let mut ancestor_states = Vec::with_capacity(ancestor_candidates.len());
+        for (block_id, snapshot) in all_refs[changed_len..].iter().zip(snapshots) {
+            let full_state = Some((
+                engine.read_all_properties_typed(block_id)?,
+                engine.read_tags(block_id)?,
+                engine.read_deleted_at(block_id)?,
+            ));
+            ancestor_states.push((snapshot, full_state));
+        }
+        (states, ancestor_candidates, ancestor_states)
+    };
 
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "sync_apply_remote").await?;
     // #4083: defer FK enforcement to COMMIT for the WHOLE projection tx, not
@@ -1514,6 +1624,93 @@ pub(crate) async fn import_and_project(
     sqlx::query("PRAGMA defer_foreign_keys = ON")
         .execute(&mut *tx)
         .await?;
+
+    // #4083 — heal the ancestor gap.
+    //
+    // The incremental diff path emits only the blocks the import touched; every
+    // untouched ancestor must already be in SQL. It may not be: a
+    // `project_block_full_to_sql` warn-and-skip, a purge, or a previously
+    // rolled-back `sync_apply_remote` all leave that hole — and the last one
+    // makes the failure self-perpetuating, because the retry re-imports the same
+    // blob and aborts on the same dangling `parent_id` (787), permanently
+    // blocking this direction of sync (a session is one-directional: only the
+    // INITIATOR applies remote data).
+    //
+    // The ancestor is NOT degraded to a NULL parent: that would silently
+    // reparent the block to the vault root with nothing to reconcile it
+    // afterwards (unlike `blocks.space_id`, which a boot backfill heals). The
+    // engine holds the real ancestor, so we project it for real, with its full
+    // state (core columns + properties + tags + soft-delete) — a row SQL never
+    // had needs all of it, not just the column the FK points at — and report it
+    // as changed so the caller's FTS / derived-cache fan-out covers it too.
+    //
+    // #4099 — ONE batched probe, and it runs INSIDE this transaction.
+    //
+    // Batched: the probe used to be a `SELECT 1 FROM blocks WHERE id = ?` per
+    // candidate. A large offline catch-up (a device returning after a long
+    // absence) can produce hundreds of candidates, i.e. hundreds of sequential
+    // round-trips, on the path that is already the slow one.
+    //
+    // Inside the tx: the per-candidate probes ran on `pool` in AUTOCOMMIT,
+    // before `begin_immediate_logged` — so a writer that removed an ancestor
+    // row between the probe and the projection put the apply straight back into
+    // a commit-time 787. It self-healed (the #535 inbox slot survives the
+    // rollback and the replay re-probes), but running the probe on the
+    // connection that already holds the writer lock closes the window outright,
+    // and costs nothing now that it is a single statement.
+    if !ancestor_candidates.is_empty() {
+        let candidate_refs: Vec<&str> = ancestor_candidates
+            .iter()
+            .map(agaric_core::ulid::BlockId::as_str)
+            .collect();
+        let absent = absent_block_ids(&mut *tx, &candidate_refs).await?;
+        // Filter BOTH index-aligned vectors by the same membership test,
+        // keeping `ancestors_outside`'s root-first order.
+        let mut missing_ancestors: Vec<agaric_core::ulid::BlockId> = Vec::new();
+        let mut missing_states = Vec::new();
+        for (candidate, state) in ancestor_candidates.iter().zip(ancestor_states) {
+            if absent.contains(candidate.as_str()) {
+                missing_ancestors.push(candidate.clone());
+                missing_states.push(state);
+            }
+        }
+        // Known gap in this healing pass: Pass B writes the backfilled
+        // ancestor's own `block_tags`, but `tag_scope` was resolved from the
+        // import's subtree roots and does not include an ancestor sitting ABOVE
+        // them — so `block_tag_inherited` can stay stale for that ancestor until
+        // the next full rebuild. Strictly better than the abort this replaces,
+        // and recorded here so it is not rediscovered as a new defect.
+        if !missing_ancestors.is_empty() {
+            tracing::warn!(
+                space_id = space_id.as_str(),
+                missing_ancestors = ?missing_ancestors
+                    .iter()
+                    .map(agaric_core::ulid::BlockId::as_str)
+                    .collect::<Vec<_>>(),
+                "#4083: inbound projection found engine ancestors with no `blocks` \
+                 row; projecting them ahead of the changed set so the changed \
+                 blocks' parent_id self-FK resolves"
+            );
+            // Root-first ancestors, then the depth-sorted changed set.
+            //
+            // NOTE: the concatenation is NOT globally parent-before-child, and
+            // does not need to be. `ancestors_outside` climbs PAST an ancestor
+            // that is itself in the changed set, so on `AA→BB→CC→DD` with
+            // changed `[BB, DD]` it returns `[AA, CC]` and the merged order is
+            // `[AA, CC, BB, DD]` — `CC` before its parent `BB`. That commits
+            // only because this whole tx runs under `PRAGMA defer_foreign_keys
+            // = ON` above, which is therefore load-bearing for the backfill,
+            // not merely defence in depth
+            // (`apply_remote_backfills_interleaved_ancestor_gap_4083` is the
+            // shape that reddens if it is removed). Re-sorting the union by
+            // engine depth would need another guard acquisition to answer "how
+            // deep is this id", which is what the deferral buys us out of.
+            missing_states.append(&mut block_states);
+            block_states = missing_states;
+            missing_ancestors.append(&mut changed_blocks);
+            changed_blocks = missing_ancestors;
+        }
+    }
 
     // Pass A — core columns + properties.  This upserts EVERY changed
     // block (including the tag blocks themselves), so all `blocks` rows
@@ -2371,6 +2568,139 @@ mod tests {
     use agaric_store::test_support::{insert_block, test_pool};
 
     use super::*;
+
+    /// #4099 — the ancestor probe is ONE statement whatever the candidate count.
+    ///
+    /// The pre-#4099 shape was a `SELECT 1 FROM blocks WHERE id = ?` per
+    /// candidate, so the round-trip count was the candidate count: a device
+    /// returning from a long absence applies a deep incremental update, and the
+    /// path that is already the slow one pays hundreds of sequential probes.
+    /// One candidate and fifty candidates must cost the same number of
+    /// statements — that is the property, and it is not visible from the
+    /// answer, only from the counter.
+    #[tokio::test]
+    async fn the_absent_id_probe_costs_one_statement_whatever_the_id_count_4099() {
+        let (pool, _dir) = test_pool().await;
+        for i in 0..25 {
+            insert_block(&pool, &format!("present-{i}"), "page", "", None, Some(0)).await;
+        }
+
+        // One id.
+        let before = probe_statement_spy::count();
+        let absent = absent_block_ids(&pool, &["present-0"])
+            .await
+            .expect("probe");
+        assert!(
+            absent.is_empty(),
+            "a row the table holds is not absent, got {absent:?}"
+        );
+        let one_id_statements = probe_statement_spy::count() - before;
+        assert_eq!(one_id_statements, 1, "one id, one statement");
+
+        // Fifty ids — 25 held, 25 not.
+        let held: Vec<String> = (0..25).map(|i| format!("present-{i}")).collect();
+        let gone: Vec<String> = (0..25).map(|i| format!("missing-{i}")).collect();
+        let mut ids: Vec<&str> = held.iter().map(String::as_str).collect();
+        ids.extend(gone.iter().map(String::as_str));
+
+        let before = probe_statement_spy::count();
+        let absent = absent_block_ids(&pool, &ids).await.expect("probe");
+        let fifty_id_statements = probe_statement_spy::count() - before;
+        assert_eq!(
+            fifty_id_statements, one_id_statements,
+            "#4099: fifty candidates must cost the same {one_id_statements} \
+             statement(s) as one — a probe whose round-trip count grows with the \
+             candidate set is the N+1 this replaced"
+        );
+
+        // …and the batched answer is still the right one.
+        let mut got: Vec<String> = absent.into_iter().collect();
+        got.sort();
+        let mut want = gone;
+        want.sort();
+        assert_eq!(
+            got, want,
+            "exactly the ids the `blocks` table does not hold"
+        );
+
+        // An empty list asks nothing at all.
+        let before = probe_statement_spy::count();
+        assert!(
+            absent_block_ids(&pool, &[])
+                .await
+                .expect("probe")
+                .is_empty(),
+            "no ids, no absent ids"
+        );
+        assert_eq!(
+            probe_statement_spy::count(),
+            before,
+            "an empty id list must not reach the database"
+        );
+    }
+
+    /// #4111 — the 787 diagnostic probes once for the whole edge set, not once
+    /// per edge.
+    ///
+    /// On the untrusted no-op fallback `block_states` is `live_blocks_preorder()`
+    /// — the entire vault — so the pre-#4111 loop emitted one round-trip per
+    /// block in the vault, on an already-failing path, before the operator saw a
+    /// single line. Distinct parents also collapse: a hundred edges pointing at
+    /// one missing parent probe that parent once.
+    #[tokio::test]
+    async fn the_787_diagnostic_probes_once_for_the_whole_edge_set_4111() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "held-parent", "page", "", None, Some(0)).await;
+
+        let children: Vec<String> = (0..100).map(|i| format!("child-{i}")).collect();
+        let edges: Vec<(&str, &str)> = children
+            .iter()
+            .enumerate()
+            .map(|(i, child)| {
+                (
+                    child.as_str(),
+                    if i % 2 == 0 {
+                        "held-parent"
+                    } else {
+                        "never-inserted"
+                    },
+                )
+            })
+            .collect();
+
+        let before = probe_statement_spy::count();
+        let probe = probe_parent_edges(&pool, &edges).await;
+        assert_eq!(
+            probe_statement_spy::count() - before,
+            1,
+            "#4111: 100 edges over 2 distinct parents must cost ONE statement"
+        );
+
+        assert_eq!(probe.probes_failed, 0);
+        assert_eq!(
+            probe.dangling.len(),
+            50,
+            "every edge naming the absent parent is reported, one line each"
+        );
+        assert_eq!(
+            probe.dangling.first().map(String::as_str),
+            Some("child-1 -> never-inserted"),
+            "and in EDGE order, not probe order — the reader matches this list \
+             against the projection that just failed"
+        );
+
+        // An empty edge set asks nothing.
+        let before = probe_statement_spy::count();
+        assert_eq!(
+            probe_parent_edges(&pool, &[]).await,
+            ParentEdgeProbe::default()
+        );
+        assert_eq!(
+            probe_statement_spy::count(),
+            before,
+            "no edges, no round-trip"
+        );
+    }
 
     /// The ordinary answer: exactly the edges whose parent is missing, and a
     /// clean `probes_failed` so the list can be read as complete.

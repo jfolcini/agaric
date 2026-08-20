@@ -217,6 +217,23 @@ impl LoroEngineRegistry {
         self.dirty.lock().len()
     }
 
+    /// #4100 test instrument — how many engine-guard acquisitions this registry
+    /// has served since it was created.
+    ///
+    /// `mark_seq` is bumped exactly once per [`shared_for_space`](Self::shared_for_space)
+    /// call, which is the sole path to a guard ([`for_space`](Self::for_space)
+    /// and [`for_space_recording`](Self::for_space_recording) both go through
+    /// it, and nothing else calls [`mark_dirty`](Self::mark_dirty)). So the
+    /// delta across an operation is exactly that operation's acquisition count
+    /// — which is the property #540 states and #4100 is about, and which is
+    /// otherwise unobservable from outside the registry.
+    ///
+    /// Test-only: production code must not branch on an acquisition count.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn guard_acquisitions(&self) -> u64 {
+        self.mark_seq.load(Ordering::Relaxed)
+    }
+
     /// #2201 — mark `space_id` dirty. Records a fresh global-monotonic
     /// stamp (see the `mark_seq` field docs) so a re-mark that races a
     /// concurrent persist always out-ranks the stamp the saver captured.
