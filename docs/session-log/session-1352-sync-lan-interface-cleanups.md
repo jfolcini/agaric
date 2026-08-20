@@ -100,9 +100,13 @@ separately:
   verdict, changing nothing about the outcome but everything about the diagnosis.
 
 That leaves BSD-family hosts where `ifconfig` was used to set a genuinely non-contiguous
-mask — the case the issue is about, where the new refusal is the point. There is no
-IPv6 path to worry about: `LanInterface` is IPv4-only and `host_candidates` filters
-`IfAddr::V4` before constructing one.
+mask — the case the issue is about, where the new refusal is the point. There the gate
+firing is not a no-op: a NIC that used to bind on its fictitious bit-count prefix now
+falls through to the loopback fallback (sync unreachable) instead of a wrong-but-working
+bind. That is the intended trade, and it is loud, but it is a real behaviour change on
+exactly that one platform family, not a no-op everywhere. There is no IPv6 path to worry
+about: `LanInterface` is IPv4-only and `host_candidates` filters `IfAddr::V4` before
+constructing one.
 
 ## #4106 also loosens a gate, and the diff did not say so
 
@@ -180,8 +184,7 @@ confirming the red, then restoring:
 | move the gate below the prefix gates | **green before this session**, red after the new test |
 | reword the `NetmaskNotContiguous` reason | **green before this session**, red after the new assertion |
 | `.min()` → `.max()` in the winner search | red (2 ranking tests) |
-| restore the pre-#4107 `.ok()` swallow | red (probe-failure test) |
-| count a failed probe as dangling | red (probe-failure test) |
+| restore the pre-#4107 `.ok()` swallow (a failed probe collapses to `None` and is counted as dangling, same as a genuinely absent parent) | red (probe-failure test) |
 | drop the `first_error` capture | red (probe-failure test) |
 | report every probed edge as dangling | red (probe-shape test) |
 

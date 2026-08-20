@@ -736,10 +736,14 @@ pub async fn resolve_changed_page_ids(
 /// yet — and SQLite admits one writer, so a probe taking a different pooled
 /// connection can come back `SQLITE_BUSY`. The first version swallowed each
 /// probe's error with `.ok()`, which made a *failed* probe indistinguishable
-/// from a parent that is present: the list could come back short, or empty, on
-/// a real violation, and "no dangling edges found" would send the reader
-/// looking somewhere else. That is worse than admitting ignorance, because it
-/// invites a wrong conclusion at the moment someone is already confused.
+/// from a parent that is genuinely absent: `.ok().flatten()` turned an `Err`
+/// into the same `None` a genuinely-absent parent produces, so every failed
+/// probe was pushed onto the list as a dangling edge regardless of whether
+/// the parent actually existed. The list could come back with edges that were never
+/// established to be dangling at all, and "N dangling edges found" would
+/// send the reader chasing parents that are actually fine. That is worse
+/// than admitting ignorance, because it invites a wrong conclusion at the
+/// moment someone is already confused.
 ///
 /// The failures are counted and logged instead of retried. Retrying would mean
 /// blocking the apply path on a rollback that has no deadline, for a line in a
@@ -786,8 +790,9 @@ async fn report_parent_fk_violation(
 ///
 /// The two fields are deliberately separate facts: `dangling` is what the probes
 /// *found*, `probes_failed` is how much of the answer is missing. Collapsing
-/// them — the pre-#4107 shape, where a failed probe simply did not append —
-/// makes a short list unreadable.
+/// them — the pre-#4107 shape, where a failed probe was `.ok().flatten()`-ed
+/// into `None` and appended to `dangling` the same as a genuinely absent
+/// parent — fabricates dangling edges that were never established.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ParentEdgeProbe {
     /// `"{block_id} -> {parent_id}"` for every edge whose parent the `blocks`
@@ -2413,10 +2418,15 @@ mod tests {
     /// of the conclusion: an empty `dangling` list next to a non-zero
     /// `probes_failed` rather than an empty list that reads as "nothing wrong".
     ///
-    /// Both parents below are rows the table genuinely lacks, so the pre-#4107
-    /// code and this one disagree on nothing except that: with `.ok()`
-    /// swallowing the error, the loop appended nothing and reported "0 dangling
-    /// edges" for two edges it had established nothing about.
+    /// Both parents below are rows the table genuinely lacks, so on this
+    /// fixture the pre-#4107 code would have landed on the same `dangling`
+    /// list as this one — by coincidence, not by honesty: `.ok().flatten()`
+    /// collapsed a failed probe to the same `None` a genuinely-absent parent
+    /// produces, so both edges would have been pushed onto `dangling` either
+    /// way. The disagreement this test actually pins is that the old code had
+    /// no way to say it never got an answer; on a fixture where the failed
+    /// probes pointed at parents that *do* exist, it would have fabricated
+    /// dangling edges instead of reporting them as present.
     #[tokio::test]
     async fn a_probe_that_cannot_run_is_counted_rather_than_read_as_a_present_parent() {
         let (pool, _dir) = test_pool().await;

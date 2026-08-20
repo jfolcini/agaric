@@ -557,6 +557,15 @@ pub(crate) enum Verdict {
     /// where binding the fiction is silent and wrong. The mask itself is in
     /// [`BindDecision::passed_over`], because "not contiguous" without the value is not
     /// something an operator can act on.
+    ///
+    /// In practice this verdict is reachable at all only on BSD-family hosts, macOS
+    /// included: Linux's netlink addressing and Windows' `OnLinkPrefixLength` synthesis
+    /// both yield contiguous masks by construction, so a genuinely non-contiguous mask
+    /// only ever reaches [`rejection`] there. On that one platform family the gate is a
+    /// real behaviour change, not a no-op — a NIC that used to bind on its (fictitious)
+    /// bit-count prefix now falls through to the loopback fallback instead. That is the
+    /// intended trade, and it is loud, but it is worth saying plainly rather than leaving
+    /// it implied.
     NetmaskNotContiguous,
     /// Rankable, but a virtual / point-to-point interface and a better class existed.
     PassedOverVirtual,
