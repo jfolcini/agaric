@@ -397,6 +397,14 @@ const arbDoc: fc.Arbitrary<DocNode> = fc
  * `bulletList` is deliberately NOT in the set: adjacent bullet lists merge too,
  * but nothing renumbers, so the STRING is a fixpoint and excluding them would
  * only cost coverage. Pinned by the bullet-list seeds in `FIXPOINT_SEEDS`.
+ *
+ * `table` stays in the set even though `splitTableRuns` (#4012 item 1) does
+ * split SOME adjacent-table runs back apart — only those whose width changes
+ * at the boundary, where the merged reading would be malformed GFM. Such a
+ * pair is already a strict fixpoint, so keeping `table` here is merely
+ * conservative (it costs a little coverage, exactly as excluding `bulletList`
+ * would); a same-width pair genuinely merges and must stay excluded. The
+ * split half is pinned by name in `markdown-roundtrip-fidelity.test.ts`.
  */
 function hasGreedyAdjacency(node: DocNode | BlockLevelNode | ListItemNode): boolean {
   const greedy = new Set<string>(['blockquote', 'table', 'orderedList'])

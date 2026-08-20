@@ -328,6 +328,18 @@ export function parseHeading(
  * the only position GFM allows a delimiter row in. Whether the row AT index 1
  * is really a delimiter (rather than a dash-only first data row of foreign
  * markdown that never had one) is decided by `isSeparatorRow` (#4003).
+ *
+ * A run collected this way may span TWO OR MORE sibling tables typed (or
+ * pasted) with no blank line between them — nothing here looks ahead for a
+ * second header/delimiter pair, so such a run is built as ONE table whose
+ * absorbed header reads as data and whose absorbed delimiter reads as a
+ * literal `---` data row (the canonical merge, #3274/#4008). `splitTableRuns`
+ * (#4012 item 1) partitions the run back into its tables in the one case
+ * where that merge is DECIDABLY wrong — where the absorbed delimiter cannot
+ * be a legal data row of the table it would otherwise join. Everywhere else
+ * the run stays whole; `splitTableRuns` documents why the two readings are
+ * otherwise indistinguishable, and why guessing between them corrupts valid
+ * GFM.
  */
 export function parseTable(
   lines: readonly string[],
@@ -342,11 +354,117 @@ export function parseTable(
     tableLines.push(lines[j] as string)
     j++
   }
-  const rows = buildTableRows(tableLines, depth)
   const consumed = j - i
-  if (rows.length === 0) return { blocks: [], consumed }
-  const block: TableNode = { type: 'table', content: rows }
-  return { blocks: [block], consumed }
+  const blocks: TableNode[] = []
+  for (const group of splitTableRuns(tableLines)) {
+    const rows = buildTableRows(group, depth)
+    if (rows.length > 0) blocks.push({ type: 'table', content: rows })
+  }
+  return { blocks, consumed }
+}
+
+/**
+ * A row shape ONLY `serializeTable`'s own separator ever takes: `---` in
+ * every populated cell — 3 OR MORE bare dashes, no colons, no shorter form.
+ * Deliberately narrower than `DELIMITER_CELL` / `isSeparatorRow`'s full GFM
+ * delimiter grammar (colons, `-`, `--` all qualify there): a genuine data
+ * cell can legally hold `--` or `:-` and nothing escapes it on serialize, so
+ * treating those shapes as a split signal here — with no header context to
+ * disambiguate, unlike row 1 — would misfire on real content. A bare 3+-dash
+ * cell has no such escape hatch in OUR OWN output: `serializeParagraph`'s
+ * horizontal-rule guard (`^-{3,}$`, table cells go through it too) escapes a
+ * genuine one to `\---` — including a cell whose text has surrounding
+ * whitespace (`"--- "`), because `serializeTable` trims the cell at the NODE
+ * level, via `canonicalCellParagraphs`, BEFORE `serializeParagraph` ever sees
+ * it; the `.trim()` on the emitted string is only a finisher for the
+ * multi-paragraph seam (pinned in `markdown-roundtrip-fidelity.test.ts`).
+ *
+ * NECESSARY, NOT SUFFICIENT. That guarantee covers our own re-serialized
+ * output only. FOREIGN markdown escapes nothing, so an unescaped bare-dash
+ * row there is equally likely to be a data cell (`---` is a common "n/a"
+ * placeholder) — which is why `splitTableRuns` requires a second, decidable
+ * condition on top of this shape test.
+ */
+const ABSORBED_TABLE_SEPARATOR_CELL = /^-{3,}$/
+
+function looksLikeAbsorbedTableSeparator(cells: readonly string[]): boolean {
+  const written = cells.filter((cell) => cell !== '')
+  return written.length > 0 && written.every((cell) => ABSORBED_TABLE_SEPARATOR_CELL.test(cell))
+}
+
+/**
+ * Partition one run of consecutive `|`-lines (as collected by `parseTable`)
+ * into the table(s) it actually represents (#4012 item 1) — but ONLY where
+ * the two-table reading is the UNIQUE well-formed one. Every other run is
+ * returned whole, as a single group: the common case, and the only one
+ * `buildTableRows` ever saw before this split existed.
+ *
+ * WHY THE BAR IS THAT HIGH. A dash-only row past the run's own header pair is
+ * not, by itself, evidence of a second table. On a RECTANGULAR run the two
+ * readings are isomorphic — same rows, same widths, no property of the text
+ * separating them:
+ *
+ *     | Name | Value |    (a) ONE table with three data rows, the `---` row
+ *     | --- | --- |           being the conventional "n/a" placeholder. This
+ *     | x | 1 |               is GFM's own reading, and what every other
+ *     | --- | --- |           renderer shows.
+ *     | y | 2 |          (b) TWO tables: a header-only `Name | Value`, then
+ *                            one headed `x | 1`. This is byte-for-byte what
+ *                            `serialize` emits for that pair of table nodes.
+ *
+ * Both readings are legal, both are string fixpoints, and the input carries
+ * nothing that decides between them (the escaping guarantee above holds for
+ * our own output, not for the foreign markdown this same parser is fed on
+ * import, paste and every reparse of a stored block). Splitting on the shape
+ * alone therefore DELETES the `---` row — it becomes table 2's delimiter —
+ * and promotes a data row to a header, in a table that is valid GFM: the
+ * exact silent data loss #3274/#4003 exist to prevent.
+ *
+ * WHAT IS DECIDABLE: a width disagreement. If the absorbed delimiter row —
+ * and the row before it, its own header — have a cell count DIFFERENT from
+ * the current table's header, then reading (a) is malformed GFM: a row whose
+ * width disagrees with its header is not a row of that table (renderers
+ * truncate or pad it, and the merged `TableNode` it builds is ragged), while
+ * reading (b) is two well-formed tables. Only there does the split lose
+ * nothing, and only there does it fire.
+ *
+ * Two deliberate consequences:
+ *
+ *  - two adjacent tables of the SAME width still merge, their absorbed
+ *    delimiter surviving as an escaped `\---` data row — the canonical
+ *    normalization pinned in `markdown-roundtrip-fidelity.test.ts`. Ugly, but
+ *    it keeps every row the author wrote, which the alternative does not.
+ *  - the scan starts at `k = 3`, never 2. An absorbed table's delimiter is
+ *    index 1 OF ITS OWN table, so the earliest one can sit in a run is index
+ *    3 (`header, delimiter, header, delimiter`). At `k = 2` the split point
+ *    `k - 1` would be 1 — the run's own delimiter — leaving group 1 a header
+ *    with no delimiter at all and group 2 a table headed by the literal
+ *    `---`.
+ */
+function splitTableRuns(tableLines: readonly string[]): string[][] {
+  const cells = tableLines.map((line) => rowCells(line))
+  const starts: number[] = [0]
+  // The column count of the group currently being collected, i.e. of the row
+  // at `starts.at(-1)` — GFM defines a table's width by its header row.
+  let headerWidth = (cells[0] as string[]).length
+  for (let k = 3; k < cells.length; k++) {
+    const delimiter = cells[k] as string[]
+    if (!looksLikeAbsorbedTableSeparator(delimiter)) continue
+    // A table's delimiter always matches its own header's width, so the row
+    // before the candidate must agree with it — this is what keeps a lone
+    // narrow `| --- |` typed mid-table as a visual rule from promoting the
+    // (differently shaped) data row above it to a header.
+    if (delimiter.length !== (cells[k - 1] as string[]).length) continue
+    // …and it must DISAGREE with the table it would otherwise join, which is
+    // what makes the merged reading malformed and the split decidable.
+    if (delimiter.length === headerWidth) continue
+    starts.push(k - 1)
+    headerWidth = delimiter.length
+  }
+  return starts.map((start, idx) => {
+    const end = idx + 1 < starts.length ? (starts[idx + 1] as number) : tableLines.length
+    return tableLines.slice(start, end)
+  })
 }
 
 /**
