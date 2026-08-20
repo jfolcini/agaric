@@ -262,6 +262,14 @@ pub(crate) async fn daemon_loop(
     // it owns is chosen before this point or not at all. The gain is that the failure is
     // now the operating system reporting a fact rather than our own configuration layer
     // rejecting an address it had itself selected a moment earlier.
+    //
+    // #4116: the list is **not** read on every start. `bind_locality_ok` short-circuits
+    // on `!is_publicly_routable(bind)`, so an RFC 1918 bind — and the loopback fallback,
+    // which is the case worth naming — never consults it and this `Vec` is built for
+    // nothing. It is built unconditionally anyway: skipping it would mean predicting the
+    // gate's short-circuit from out here, and a later widening of the gate would then be
+    // handed an empty list and refuse a bind this code had already chosen. That is the
+    // #3869 failure again, traded for one allocation per daemon start.
     let host_addrs = bind_decision.host_addrs();
     let service = Arc::new(
         SyncService::bind(
@@ -2380,6 +2388,9 @@ mod tests {
             name: name.to_owned(),
             ip: ip.parse().expect("test literal is a valid IPv4 address"),
             prefix_len,
+            // The contiguous mask that prefix names — what `getifaddrs(3)` reports for
+            // an ordinary NIC, and what `prefix_len` is derived from there (#4105).
+            netmask: crate::sync_daemon::lan_interface::netmask_for_prefix(prefix_len),
             is_up: true,
             is_p2p: false,
         }
