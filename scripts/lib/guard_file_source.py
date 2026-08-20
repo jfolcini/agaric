@@ -198,6 +198,22 @@ _NESTED_GIT_DIRS = frozenset({"worktrees", "modules"})
 # redundancy, not on absence; and a relative `GIT_DIR=.git` resolves against
 # the git process's cwd, which every call here fixes at `root`.
 #
+# The invariant has one honest counterexample, not a shape any of the above
+# and not one this repo uses: a DETACHED WORK TREE (`git --git-dir=X
+# --work-tree=Y <command>`, the bare-dotfiles-repo shape), where `Y` carries
+# no `.git` of its own. There `GIT_WORK_TREE` is not redundant with
+# discovery — discovery has nothing under `Y` to find. Verified (git 2.43):
+# with `GIT_DIR`/`GIT_WORK_TREE` scrubbed and `cwd` at such a `Y`, `git
+# rev-parse --show-toplevel` answers "not a git repository" when `Y` sits
+# nowhere near another repo, and every caller here that treats that as
+# fail-open ends up reporting nothing rather than judging `Y`. Worse when
+# `Y` is nested inside an unrelated repo: discovery does not fail, it finds
+# the ANCESTOR, and a guard judges that tree instead, quietly, with no error
+# to notice. Not a shape this repo's guards ever run in, and the shapes
+# above really are redundant, so this does not change what the scrub list
+# removes — but the invariant above is stated unconditionally, and this is
+# the case where it is false.
+#
 # `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are ONE
 # mechanism in two variables — git's `receive-pack` quarantine exports the
 # pair together — and re-aim the OBJECT STORE the way the others re-aim the
@@ -213,6 +229,16 @@ _NESTED_GIT_DIRS = frozenset({"worktrees", "modules"})
 # been removed: exit 2 (the fail-closed "damaged object store" refusal) became
 # exit 0 over a forged clean body. Pinned in section 5c of
 # `scripts/test-py-guard-file-source.sh`.
+#
+# Scrubbing the pair is not costless in every direction, only every
+# direction that matters HERE: a guard run as a server-side `pre-receive` /
+# `update` hook has its incoming objects held in exactly this quarantine, so
+# scrubbing it there makes those objects invisible too. That failure is
+# FAIL-CLOSED (`cat-file` misses, this module's own `GitError`, exit 2 with
+# the cause named) rather than the fail-open a leaked alternate risks in a
+# pre-commit guard, so it is safe — this module has no server-side hook
+# consumer today, but the pair is not only ever a hostile leak, just one
+# whose one legitimate use this list does not attempt to accommodate.
 #
 # What is deliberately NOT here, measured rather than argued, because the
 # test for membership is "can it change what a guard READS about the tree in

@@ -1305,6 +1305,34 @@ _eq 'orphan discard: …while damage behind an entry the sweep DOES read is stil
   '2' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
 
 # ---------------------------------------------------------------------------
+# 14. THE PYTHON AND NODE REDIRECT-VAR LISTS ARE ACTUALLY IDENTICAL (#4206)
+# ---------------------------------------------------------------------------
+# `_GIT_REDIRECT_VARS` (guard_file_source.py) and `GIT_REDIRECT_VARS`
+# (guard-file-source.mjs) each carry a comment asserting the two lists are
+# identical, citing #4062 as the class of bug a divergence would be — but
+# until now nothing enforced it. `GIT_ALTERNATE_OBJECT_DIRECTORIES` missing
+# from one side is exactly the shape #4206 repaired by hand; this section
+# makes a future repeat fail a test instead of surviving as a comment nobody
+# re-reads. Compares the two SOURCE lists directly (imported, not
+# retyped) — order-independent, since neither side's order is a contract.
+py_redirect_vars="$(python3 -c '
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location(
+    "_gfs", pathlib.Path(sys.argv[1]) / "lib" / "guard_file_source.py"
+)
+gfs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gfs)
+print("\n".join(sorted(gfs._GIT_REDIRECT_VARS)))
+' "$SCRIPTS_DIR")"
+node_redirect_vars="$(node --input-type=module -e '
+import { pathToFileURL } from "node:url"
+const { GIT_REDIRECT_VARS } = await import(pathToFileURL(process.argv[1]).href)
+console.log([...GIT_REDIRECT_VARS].sort().join("\n"))
+' "$SCRIPTS_DIR/lib/guard-file-source.mjs")"
+_eq 'GIT_REDIRECT_VARS: the Python and Node lists name exactly the same variables' \
+  "$py_redirect_vars" "$node_redirect_vars"
+
+# ---------------------------------------------------------------------------
 if [ "$failures" -gt 0 ]; then
   printf '\npy guard file-source suite: %s assertion(s) failed\n' "$failures" >&2
   exit 1

@@ -825,15 +825,33 @@ function verifyLeakedGitContext({
     deflateSync(Buffer.concat([Buffer.from(`blob ${forgedBody.length}\0`, 'utf8'), forgedBody])),
   )
   const leakedAlternates = { GIT_ALTERNATE_OBJECT_DIRECTORIES: forgedStore }
-  const gitHonoursForgery = execFileSync('git', ['cat-file', 'blob', stagedOid], {
-    cwd: dir,
-    env: { ...env, ...leakedAlternates },
-    encoding: 'utf8',
-  })
+  // Wrapped, not a bare call: this is a PROBE of git's own behaviour, not the
+  // guard's, and today's git (2.43) always exits 0 here. A future git that
+  // verifies an object's body against the hash it was asked for on read
+  // would make this exit non-zero instead — and an unwrapped `execFileSync`
+  // would then THROW out of `runScenarios`, a stack trace across all five
+  // consuming guards' self-tests instead of a named red. The shell twin
+  // (`test-py-guard-file-source.sh` section 5c) degrades gracefully for the
+  // same case: its `$(...)` failure just captures empty stdout and compares
+  // unequal. Catching here and forcing the same "does not match" outcome
+  // keeps the two behaving alike.
+  let gitHonoursForgery = ''
+  let gitHonoursForgeryError = ''
+  try {
+    gitHonoursForgery = execFileSync('git', ['cat-file', 'blob', stagedOid], {
+      cwd: dir,
+      env: { ...env, ...leakedAlternates },
+      encoding: 'utf8',
+    })
+  } catch (err) {
+    gitHonoursForgeryError = err.message
+  }
   check(
     "leaked alternates: …and git itself DOES serve the forged body under the violation's oid (the leak is real)",
     gitHonoursForgery === `${goodLine}\n`,
-    `expected the forged good line back from git, got ${JSON.stringify(gitHonoursForgery)}`,
+    gitHonoursForgeryError
+      ? `git refused to serve the forged blob instead of honouring the leaked alternate: ${gitHonoursForgeryError}`
+      : `expected the forged good line back from git, got ${JSON.stringify(gitHonoursForgery)}`,
   )
   const cachedWithAlternates = run(dir, env, ['--cached'], leakedAlternates)
   check(

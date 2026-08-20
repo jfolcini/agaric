@@ -541,6 +541,12 @@ def changed_production_files() -> list[str]:
     """
     import subprocess  # local: only the update path shells out
 
+    # Scrubbed for the same reason every other git call a guard makes is
+    # (#4191): an inherited GIT_DIR/GIT_INDEX_FILE/... would re-aim these two
+    # calls at whatever repository leaked them, while `cwd=REPO_ROOT` made it
+    # look otherwise. `--update-baseline` is a manual, not-CI-reachable path,
+    # but the sweep is only true if this call is scrubbed too.
+    env = guard_file_source.git_env(REPO_ROOT, os.environ)
     out: list[str] = []
     for cmd in (
         ["git", "diff", "--name-only", "HEAD"],
@@ -548,7 +554,7 @@ def changed_production_files() -> list[str]:
     ):
         try:
             res = subprocess.run(
-                cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=False
+                cmd, cwd=REPO_ROOT, env=env, capture_output=True, text=True, check=False
             )
         except OSError:
             continue
