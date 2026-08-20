@@ -6,8 +6,8 @@
 | **Subagents** | orchestrator-only (adversarial review of an uncommitted builder diff) |
 | **Items closed** | `#4084`, `#4120` |
 | **Items modified** | — |
-| **Tests added** | +0 (frontend) / +9 (backend, all in `agaric-sync`) |
-| **Files touched** | 3 |
+| **Tests added** | +0 (frontend) / +12 (backend: 11 in `agaric-sync`, 1 in `agaric`) |
+| **Files touched** | 4 |
 
 **Summary:** Reviewed an uncommitted diff that suppresses the repeated red
 `Sync failed:` toast a responder-only device raises on every resync cycle
@@ -32,6 +32,8 @@ claims to guard.
   whole point of the change
 - `src-tauri/src/db/tests.rs` (+2/−2) — #4120 note 3: two seed INSERTs relied on
   SQLite's DQS misfeature (`"Javier's Phone"`); now `'Javier''s Phone'`
+- `src-tauri/src/sync_daemon/tests.rs` (+150, review follow-up) — the wiring
+  test that drives the suppression through `try_sync_with_peer`
 
 ## The adjudication: the builder's refusal was correct
 
@@ -157,6 +159,63 @@ report, the suppression key is the design. "Once per peer" and "once per cause"
 read identically in a one-fault test and diverge exactly where it matters — a
 fault that changes while the peer stays broken. Ask what the key *is*, not just
 whether the first report survives.
+
+## Review follow-up (PR #4197)
+
+The PR was approved with eight non-blocking notes. Three were addressed in the
+branch; three were filed as issues; two were bookkeeping.
+
+**Note 6 — the wiring was untested (the important one).** All nine tests called
+the private `record_pull_failure` directly, so a call site handing it the wrong
+`peer_id` or a `peer_refs` slice without this peer would have passed every one
+of them while re-raising the toast exactly as before. Now
+`the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120`
+(`src-tauri/src/sync_daemon/tests.rs`) drives the real initiator path against a
+peer that never answers, using the existing `ServiceHarness` /
+`unreachable_peer` fixtures.
+
+Driving *two* real cycles is not possible in a unit test: the first failure arms
+the backoff gate and each dial costs a full `CONNECT_TIMEOUT` (10 s). So the
+second-cycle state is seeded (`record_failure` + `set_last_reported_failure`,
+then the gate is waited out as the daemon waits it out) and the seeded text is
+the text a *real* failure produced in the test's own first arm — nothing is
+hardcoded. Two arms: a dark peer still reports (and supplies that text), and the
+same failure against a peer whose `streamed_at` is fresh is silent while the
+`connecting` progress event proves the run really dialled rather than returning
+early. Falsified twice, against both mis-wirings the note names: passing `&[]`
+for `peer_refs` and passing a different `peer_id` each redden it.
+
+**Note 1 — the freshness-window invariant was advisory.** The 30 s tick was a
+bare literal in `run_sync_daemon` while the window derived from
+`resync_interval * 2`, so any `resync_interval <= 30 s` silently violated
+`window > resync_interval + resync_tick` and the toast would return
+intermittently on a healthy pair. There is now a shared `RESYNC_TICK` constant
+used by the daemon's `tokio::time::interval` *and* by a `debug_assert!` in
+`peer_pulled_from_us_recently`, plus two tests: one pinning that the shipped
+defaults clear the invariant, one (`#[should_panic]`) pinning that the assert
+itself exists.
+
+**Note 5 — the unrelated SQL-literal change.** Checked empirically rather than
+argued: with `"Javier's Phone"` restored, both
+`peer_refs_0107_endpoint_id_add_preserves_existing_rows_3464` and
+`peer_refs_0111_streamed_at_add_preserves_existing_rows_4084` still pass, so the
+change was **opportunistic hygiene, not needed for the suite** — this build's
+SQLite has the DQS fallback enabled. The literals stay (relying on the fallback
+is wrong), and each site now carries a comment saying why, committed separately
+from the fix.
+
+**Notes 2, 3 and 4 — filed, not fixed here.** The single-slot
+`last_reported_error` (an A/B/A/B fault alternation, or an error whose `Display`
+carries a varying detail, never engages suppression), the three separate mutex
+acquisitions in a helper that reads as one critical section, and the
+pinned-identity refusal still emitting unconditionally every cycle. All three
+are safe-direction and none blocks the fix; each is now an issue so the argument
+can be revisited from something.
+
+**Notes 7 and 8 — bookkeeping.** The PR body's claim that `sync_scheduler.rs`
+"gains only a test" was wrong (it gains a `BackoffState` field and two public
+methods; the test lives in `session_supervisor.rs`) and has been corrected. CI
+was still pending at review time and must be green before merge.
 
 **Commit plan:** not pushed — working tree left for the caller to commit with
 `Closes #4084` and `Closes #4120`.

@@ -76,6 +76,27 @@ use super::server::{Rejection, handle_incoming_sync};
 use super::snapshot_transfer;
 
 // ---------------------------------------------------------------------------
+// RESYNC_TICK — the daemon's periodic-resync cadence
+// ---------------------------------------------------------------------------
+
+/// How often [`daemon_loop`]'s periodic-resync branch wakes up and asks
+/// [`SyncScheduler::peers_due_for_resync`] who is due.
+///
+/// This is a *tick*, not an interval: a peer becomes due after
+/// `SyncScheduler::resync_interval` (60 s by default) and is noticed up to one
+/// tick later, so a healthy peer's real period is
+/// `(resync_interval, resync_interval + RESYNC_TICK]`.
+///
+/// #4120 note 1: it is a named constant rather than a literal in the
+/// `tokio::time::interval` call because a second site depends on it —
+/// [`peer_pulled_from_us_recently`]'s freshness window must stay strictly
+/// wider than that period, or the suppressed toast returns intermittently on a
+/// pair that is working. That site now `debug_assert!`s the invariant against
+/// this constant, so moving either number trips a test rather than a user's
+/// toast.
+const RESYNC_TICK: std::time::Duration = std::time::Duration::from_secs(30);
+
+// ---------------------------------------------------------------------------
 // SyncDaemonContext — owned bundle of daemon-wide startup state
 // ---------------------------------------------------------------------------
 
@@ -420,8 +441,10 @@ pub(crate) async fn daemon_loop(
     //    parameter; see this function's docs for why. Branch A still owns every
     //    write to it.
 
-    // 6. Periodic resync interval (replaces the former 500ms poll cadence)
-    let mut resync_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    // 6. Periodic resync interval (replaces the former 500ms poll cadence).
+    //    `RESYNC_TICK`, not a literal: `peer_pulled_from_us_recently` derives
+    //    its freshness window from this cadence and asserts against it (#4120).
+    let mut resync_interval = tokio::time::interval(RESYNC_TICK);
     resync_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Counter driving the coarse (~hourly) peer-lock GC cadence; see
@@ -1246,8 +1269,8 @@ fn record_pull_failure(
 ///
 /// * A device pulls a peer when [`SyncScheduler::peers_due_for_resync`] finds
 ///   it strictly older than `resync_interval` (60 s by default), and that check
-///   runs on the daemon's periodic-resync tick, which is 30 s
-///   (`tokio::time::interval` in `run_sync_daemon`).
+///   runs on the daemon's periodic-resync tick, which is [`RESYNC_TICK`] (30 s)
+///   — the same constant `daemon_loop` builds its `tokio::time::interval` from.
 /// * So a *healthy* peer stamps our `streamed_at` every `(60 s, 90 s]` —
 ///   one interval to become due, then up to one tick to be noticed.
 ///
@@ -1258,7 +1281,13 @@ fn record_pull_failure(
 /// with 30 s — half an interval — of slack, and still goes false about two
 /// minutes after a peer genuinely stops pulling. If either constant moves, this
 /// multiple is what has to be rechecked: the invariant is
-/// `window > resync_interval + resync_tick`, not the literal `2`.
+/// `window > resync_interval + RESYNC_TICK`, not the literal `2`.
+///
+/// #4120 note 1: that recheck is no longer advisory. The body `debug_assert!`s
+/// the invariant against the same [`RESYNC_TICK`] the daemon ticks on, so a
+/// `resync_interval` at or below the tick — where `resync_interval * 2` stops
+/// clearing a healthy peer's own period — fails a test instead of intermittently
+/// re-raising the toast on a working pair.
 ///
 /// A peer with no row here, or a row with no `streamed_at`, answers `false` —
 /// the conservative direction, because the fallback is the unsuppressed report.
@@ -1276,8 +1305,22 @@ fn peer_pulled_from_us_recently(
     else {
         return false;
     };
-    let window_ms =
-        i64::try_from(scheduler.resync_interval.as_millis().saturating_mul(2)).unwrap_or(i64::MAX);
+    let window = scheduler.resync_interval.saturating_mul(2);
+    // The doc above derives the multiple `2` from the daemon's own cadence;
+    // this is that derivation made executable. A `resync_interval` at or below
+    // `RESYNC_TICK` makes `interval * 2` narrower than a *healthy* peer's own
+    // stamping period, and the suppressed toast comes back at random on a pair
+    // that is working — the #4084 symptom, re-introduced by a constant nobody
+    // thought was related. Debug-only: the cost of being wrong is a spurious
+    // toast, not corruption, so a release build should not abort over it.
+    debug_assert!(
+        window > scheduler.resync_interval + RESYNC_TICK,
+        "the freshness window ({window:?}) must stay strictly wider than a healthy \
+         peer's own stamping period (resync_interval {:?} + RESYNC_TICK {RESYNC_TICK:?}); \
+         raise the multiple or the interval",
+        scheduler.resync_interval,
+    );
+    let window_ms = i64::try_from(window.as_millis()).unwrap_or(i64::MAX);
     agaric_store::db::now_ms() - streamed_ms <= window_ms
 }
 
@@ -2869,6 +2912,52 @@ mod tests {
             "clock skew is not the user's problem: the peer demonstrably streamed to \
              us, so the repeat is still a repeat; got {:?}",
             typed.events()
+        );
+    }
+
+    /// The defaults ship an invariant, not a coincidence: the freshness window
+    /// (`resync_interval * 2`) has to stay strictly wider than a healthy peer's
+    /// own stamping period (`resync_interval` to become due, plus up to one
+    /// [`RESYNC_TICK`] to be noticed). Pinned here so a future edit to either
+    /// constant is caught by a test rather than by an intermittent toast on a
+    /// pair that is working.
+    #[test]
+    fn the_shipped_resync_cadence_clears_the_freshness_window_invariant_4120() {
+        let scheduler = SyncScheduler::new();
+        let window = scheduler.resync_interval.saturating_mul(2);
+        assert!(
+            window > scheduler.resync_interval + RESYNC_TICK,
+            "window {window:?} must exceed resync_interval {:?} + RESYNC_TICK \
+             {RESYNC_TICK:?}",
+            scheduler.resync_interval,
+        );
+    }
+
+    /// …and the invariant is self-executing, not advisory (#4120 note 1).
+    ///
+    /// A `resync_interval` equal to the daemon tick makes the doubled window
+    /// exactly a healthy peer's worst-case period — the first value at which
+    /// suppression starts going false on a pair that is exchanging data, i.e.
+    /// the #4084 toast returning intermittently. The `debug_assert!` in
+    /// `peer_pulled_from_us_recently` is what turns that into a test failure,
+    /// so this pins the assert itself: delete it and this test goes green
+    /// while the freshness window is wrong.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "must stay strictly wider")]
+    fn a_resync_interval_at_the_daemon_tick_trips_the_window_invariant_4120() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler =
+            SyncScheduler::with_intervals(std::time::Duration::from_millis(50), RESYNC_TICK);
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+
+        record_pull_failure(
+            &scheduler,
+            &sink,
+            &refs,
+            RESPONDER_ONLY_PEER,
+            "Sync failed: connection lost".into(),
         );
     }
 }

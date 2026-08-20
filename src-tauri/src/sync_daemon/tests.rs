@@ -947,6 +947,157 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
     materializer.shutdown();
 }
 
+/// #4120 note 6: the repeat-report suppression is *wired into* the real
+/// initiator path, not merely correct inside its helper.
+///
+/// Every other #4120 test calls `record_pull_failure` directly, which pins the
+/// predicate but not the call. A call site that handed it the wrong `peer_id`,
+/// or a `peer_refs` slice that did not contain this peer, would satisfy all of
+/// them and still re-raise the toast on every cycle — the exact bug. So this
+/// one drives `try_sync_with_peer` end to end against a peer that does not
+/// answer, and asserts on what the user is told.
+///
+/// The daemon reaches the suppressed state by failing twice; a test cannot,
+/// because the first failure arms the backoff gate and the second dial costs
+/// another connect budget. So the "already reported once" state is *seeded*
+/// (`record_failure` + `set_last_reported_failure`, then the gate is waited
+/// out, exactly as the daemon waits it out) and the observed text of a real
+/// failure is what gets seeded — arm A produces it, arm B feeds it back.
+/// Nothing here hardcodes the message.
+///
+/// Two arms, because one alone is vacuous:
+///
+/// * **A — a dark peer still reports.** It also supplies the failure text and
+///   proves the run reaches `record_pull_failure` at all.
+/// * **B — the same failure against a peer that is still pulling from us is
+///   silent**, and the `connecting` progress event proves the run got past the
+///   backoff gate and really dialled rather than returning early.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
+    const PEER: &str = "PEER_RESPONDER_ONLY_4120";
+
+    /// One daemon cycle against an unreachable peer, entered in the state a
+    /// second cycle of a streak is in: one failure booked, `already_reported`
+    /// already shown to the user, backoff expired.
+    ///
+    /// Returns every event the sink saw plus the peer's failure count.
+    async fn cycle(streamed_at: Option<i64>, already_reported: &str) -> (Vec<SyncEvent>, u32) {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let scheduler = Arc::new(SyncScheduler::new());
+        let sink = Arc::new(RecordingEventSink::new());
+        let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+        let cancel = AtomicBool::new(false);
+        let harness = ServiceHarness::new().await;
+
+        // `set_last_reported_failure` is a no-op without a backoff entry, so
+        // the booking has to come first — which is also the real ordering.
+        scheduler.record_failure(PEER);
+        scheduler.set_last_reported_failure(PEER, already_reported);
+        // …and that booking arms the backoff gate (~2 s for the first
+        // failure). Waiting it out is what makes this a *second cycle* rather
+        // than an early return at step 1.
+        let waited_from = std::time::Instant::now();
+        while !scheduler.may_retry(PEER) {
+            assert!(
+                waited_from.elapsed() < std::time::Duration::from_secs(30),
+                "the first failure's backoff must expire in seconds, not minutes"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        let peer = unreachable_peer(PEER);
+        let mut peer_ref = make_peer_ref(PEER);
+        peer_ref.streamed_at = streamed_at;
+        let refs = vec![peer_ref];
+
+        let apply_host: Arc<dyn agaric_sync::apply_host::ApplyHost> =
+            Arc::new(materializer.clone());
+        let ctx = SyncSessionContext {
+            pool: &pool,
+            device_id: "LOCAL_DEV",
+            materializer: &apply_host,
+            scheduler: &scheduler,
+            event_sink: &event_sink,
+            cancel: &cancel,
+            endpoint: &harness.client_endpoint,
+        };
+        tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            try_sync_with_peer(&ctx, &peer, &refs),
+        )
+        .await
+        .expect("the dial must exhaust its own budget well inside the test timeout");
+
+        let events = sink.events();
+        let failures = scheduler.failure_count(PEER);
+        materializer.shutdown();
+        (events, failures)
+    }
+
+    fn error_texts(events: &[SyncEvent]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                SyncEvent::Error { message, .. } => Some(message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // ---- Arm A: a peer that is not pulling from us either. Reports, and
+    // hands us the exact text a real failure produces.
+    let (dark_events, dark_failures) =
+        cycle(None, "a failure text nothing will ever produce").await;
+    let reported = error_texts(&dark_events);
+    assert_eq!(
+        reported.len(),
+        1,
+        "a peer that is not pulling from us in either direction is a total sync \
+         outage and must keep saying so; got {dark_events:?}"
+    );
+    assert!(
+        reported[0].starts_with("Connection failed"),
+        "the dial-failure arms of try_sync_with_peer report a 'Connection failed: …' \
+         text; got {:?}",
+        reported[0]
+    );
+    assert_eq!(
+        dark_failures, 2,
+        "the seeded failure plus this one — the backoff is booked on every cycle"
+    );
+
+    // ---- Arm B: the same failure, same peer id, against a peer whose
+    // `streamed_at` says it is still pulling from us. Silent.
+    //
+    // This is the assertion the helper-level tests cannot make: it goes red if
+    // the call site passes a `peer_id` the scheduler's memory is not keyed on,
+    // or a `peer_refs` slice this peer is not in.
+    let (fresh_events, fresh_failures) =
+        cycle(Some(agaric_store::db::now_ms()), &reported[0]).await;
+    assert!(
+        error_texts(&fresh_events).is_empty(),
+        "#4084/#4120: the SAME failure against a peer that is still streaming to us \
+         must not re-raise the toast, through the real call path and not just the \
+         helper; got {fresh_events:?}"
+    );
+    assert!(
+        fresh_events.iter().any(|e| matches!(
+            e,
+            SyncEvent::Progress { state, remote_device_id, .. }
+                if state == "connecting" && remote_device_id == PEER
+        )),
+        "…and the run must actually have dialled: without the 'connecting' event \
+         this arm would be green because nothing ran, not because the report was \
+         suppressed; got {fresh_events:?}"
+    );
+    assert_eq!(
+        fresh_failures, 2,
+        "suppressing the report must not suppress the booking — the backoff is what \
+         paces the retry (#4120)"
+    );
+}
+
 // The old `handle_incoming_sync_rejects_sync_with_self` lived here. It was the
 // real-loopback-TLS twin of the in-memory self-sync test, and the two collapsed
 // into one when the fixtures did: there is now a single responder fixture (a
