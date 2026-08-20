@@ -487,13 +487,39 @@ def orphan_entries(baseline: dict[str, int]) -> list[str]:
     `SOURCE.read` -> `_blob`, one `git cat-file blob <sha>` spawn each, on
     every commit that touched a scanned `.rs` file — independent of how
     small that commit was. `read_many` below warms `SOURCE`'s cache for the
-    whole baseline through chunked `git cat-file --batch` calls before the
-    loop reads any of them, so `is_test_only_module(read_source(path))` is a
+    baseline through chunked `git cat-file --batch` calls before the loop
+    reads any of them, so `is_test_only_module(read_source(path))` is a
     cache hit; under the working tree (`--update-baseline`, a manual run)
     it is a no-op, since a disk read has no spawn to amortize in the first
     place.
+
+    THE WARM-UP READS ONLY WHAT THE LOOP WILL READ (#4193). Its first
+    spelling passed the WHOLE baseline, including the entries the two
+    branches below discard without ever looking at their content — and
+    `read_many` is fail-closed about a blob the index names but the object
+    store cannot produce, so a damaged object behind a DISCARDED entry
+    turned an actionable orphan report (exit 1, naming the real violation)
+    into a `GitError` (exit 2) over an entry that could not have changed the
+    verdict. Fail-closed is the right disposition for content this guard
+    actually judges; it is the wrong one for content it has already decided
+    not to read. Before batching, per-entry reads gave that for free —
+    an entry was read only if the loop reached it — so this filter is what
+    keeps the change to HOW MANY SPAWNS from also being a change to WHICH
+    ENTRIES CAN FAIL THE RUN.
+
+    The filter is the loop's own keep-set, spelled the same way: an entry
+    reaches `read_source` below only if it exists in the source and is not
+    an excluded path. (`read_many` already skips an entry with no stage-0
+    blob, so `exists_in_source` is belt to that braces under `--cached`; it
+    is stated anyway, because "the same set the loop keeps" is the property
+    that has to stay true, not the two implementations that happen to
+    agree today.)
     """
-    SOURCE.read_many(baseline)
+    SOURCE.read_many(
+        rel
+        for rel in baseline
+        if not is_excluded_file(rel) and exists_in_source(REPO_ROOT / rel)
+    )
     orphans: list[str] = []
     for rel in sorted(baseline):
         path = REPO_ROOT / rel

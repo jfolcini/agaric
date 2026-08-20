@@ -506,6 +506,153 @@ _eq 'merge-result: …and --worktree is unaffected by the same leaked GIT_DIR' \
     echo $?)"
 
 # ---------------------------------------------------------------------------
+# 5b. …AND THE LEAKED GIT_DIR REACHES THE READER, NOT ONLY THE PROBE (#4191)
+# ---------------------------------------------------------------------------
+# `git_env` used to strip a foreign `GIT_INDEX_FILE` and leave everything else
+# "exactly as given" — including `GIT_DIR`, which re-aims the very `git
+# ls-files` that env is built for. Measured on git 2.43, from a cwd inside
+# repo A: `GIT_DIR=<B>/.git git -C <A> ls-files` lists B's tracked paths, not
+# A's; `-C` and `cwd` both lose to it. So `--cached` under a leaked `GIT_DIR`
+# enumerated the OTHER repository's index, found the path under judgement
+# simply absent, read nothing, and exited 0 over a staged violation — the
+# same silent false green the exit-2 refusal above exists to prevent, one
+# explicit flag away from it. Measured against this exact fixture before the
+# fix: exit 0 with empty stderr, both with and without a foreign
+# `GIT_INDEX_FILE` beside the leak.
+#
+# `--worktree` is unaffected on the Python side (asserted just above): it
+# reads the given path straight off disk with no `git` subprocess to
+# redirect. The `.mjs` sibling has no such immunity — its `--worktree` still
+# ENUMERATES through `git ls-files` — which is why scenario 9 of
+# `runSourceScenarios` asserts the same fix from the other end.
+_run_leaked_git_dir() {
+  local cwd="$1" dir="$2" guard="$3"
+  shift 3
+  # Held in a variable rather than spelled inline, because
+  # check-git-fixture-isolation.mjs reads an `env -u GIT_… … git …` logical
+  # line as a hand-rolled fixture scrub (its design call 1) and would report
+  # this file. This is the OPPOSITE of a scrub: it PLANTS a leak on the guard
+  # under test, and no git command runs under that environment at all.
+  local leaked_dir="$other/.git"
+  (
+    cd "$cwd" || exit 99
+    env -u GIT_INDEX_FILE GIT_DIR="$leaked_dir" \
+      python3 "$dir/$guard" "$@" >/dev/null 2>&1
+  )
+  printf '%s\n' "$?"
+}
+_eq 'leaked GIT_DIR: --cached must read THIS index, not the one GIT_DIR points at (#4191)' \
+  '1' "$(_run_leaked_git_dir "$other" "$fx" "$GUARD_RAW_TX" --cached "$fx/$RAW_TX_FILE")"
+_eq 'leaked GIT_DIR: …and with a foreign GIT_INDEX_FILE beside it, already stripped by belonging' \
+  '1' "$(_run_foreign_commit_and_git_dir "$other" "$fx" --cached "$fx/$RAW_TX_FILE")"
+# THE CONTROL. Both reds above must be about the violation, not about the
+# leak: the same leaked `GIT_DIR`, over a fixture with nothing to find, is
+# green. Without this, "expected 1" is satisfied by a guard that reddens on
+# anything the moment it sees a `GIT_DIR` — the mirror image of the defect.
+_eq 'leaked GIT_DIR: …and a CLEAN fixture under the same leak is still green (not red-on-anything)' \
+  '0' "$(_run_leaked_git_dir "$other" "$tmp/raw-tx-clean" "$GUARD_RAW_TX" --cached \
+    "$tmp/raw-tx-clean/$RAW_TX_FILE")"
+
+# THE LEGITIMATE COMMIT HOOK, which that scrub must not break. Scrubbing
+# `GIT_DIR` is safe only because a hook's own `GIT_DIR` is REDUNDANT with what
+# `cwd=root` discovers — never because the fix can tell an honest export from
+# a hostile one — so both shapes git can produce are pinned here, over the
+# false-green fixture whose violation is STAGED and whose disk copy is clean.
+# A guard that had stopped honouring the exported index would exit 0.
+_eq 'commit hook: a RELATIVE GIT_DIR=.git beside the index still reads the staged index' \
+  '1' "$(cd "$tmp/raw-tx-false-green" || exit 99
+    GIT_DIR=.git GIT_INDEX_FILE=.git/index \
+      python3 "$GUARD_RAW_TX" "$RAW_TX_FILE" >/dev/null 2>&1
+    echo $?)"
+_eq 'commit hook: …and an ABSOLUTE GIT_DIR naming this tree own git dir does too' \
+  '1' "$(cd "$tmp/raw-tx-false-green" || exit 99
+    GIT_DIR="$tmp/raw-tx-false-green/.git" \
+      GIT_INDEX_FILE="$tmp/raw-tx-false-green/.git/index" \
+      python3 "$GUARD_RAW_TX" "$RAW_TX_FILE" >/dev/null 2>&1
+    echo $?)"
+
+# …and a PARTIAL commit, the one shape where `GIT_INDEX_FILE` carries
+# something the git dir cannot reproduce: `git commit -- <path>` writes a
+# `.git/next-index-<pid>.lock` TEMP index and exports THAT (measured on git
+# 2.43, alongside `.git/index.lock` for `git commit -a`). The two checks above
+# cannot see the difference — in an ordinary fixture `.git/index` is also what
+# git falls back to when the variable is dropped — so this is what makes "keep
+# GIT_INDEX_FILE, scrub the rest" a real distinction rather than a stylistic
+# one. The fixture builds the divergence by hand: the staged violation is
+# copied into a temp index under this tree own git dir, and `.git/index` is
+# then made clean.
+fx="$tmp/raw-tx-temp-index"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src"
+printf '%s\n' "$RAW_TX_GOOD" > "$fx/$RAW_TX_FILE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+printf '%s\n' "$RAW_TX_BAD" > "$fx/$RAW_TX_FILE"
+git -C "$fx" add -A                               # the violation is STAGED…
+cp "$fx/.git/index" "$fx/.git/next-index-fake.lock" # …captured in a temp index…
+printf '%s\n' "$RAW_TX_GOOD" > "$fx/$RAW_TX_FILE"
+git -C "$fx" add -A                               # …and the DEFAULT index is clean
+_eq 'commit hook: the temp-index fixture really did clean the DEFAULT index (else the next case is vacuous)' \
+  '0' "$(_run "$fx" "$GUARD_RAW_TX" --cached "$RAW_TX_FILE")"
+_eq 'commit hook: the TEMP index of a partial commit is honoured, not replaced by the default one' \
+  '1' "$(cd "$fx" || exit 99
+    GIT_DIR="$fx/.git" GIT_INDEX_FILE="$fx/.git/next-index-fake.lock" \
+      python3 "$GUARD_RAW_TX" "$RAW_TX_FILE" >/dev/null 2>&1
+    echo $?)"
+
+# ---------------------------------------------------------------------------
+# 5c. …AND THE OBJECT STORE, WHICH THE GIT DIR IS ONLY HALF OF (#4191)
+# ---------------------------------------------------------------------------
+# `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are one
+# mechanism in two variables — git's `receive-pack` quarantine exports the
+# pair together — so scrubbing only the first leaves the second able to answer
+# for any oid the primary store LACKS. And `git cat-file` does not verify that
+# a body hashes to the name it was asked for (measured on git 2.43, through
+# `cat-file blob` and `cat-file --batch` alike), so a leaked alternate can
+# hand the guard an ATTACKER-CHOSEN body for an oid `git ls-files -s` named.
+# That is the same "reported a verdict about content it never read from this
+# tree" as a leaked `GIT_DIR`, one layer down: measured before the variable
+# joined `_GIT_REDIRECT_VARS`, exit 2 (the fail-closed damaged-store refusal)
+# became exit 0 over a forged clean body.
+#
+# Built so the answer cannot be a coincidence: the violation is staged, its
+# loose object is REMOVED (a fresh fixture never packs — the same trick
+# section 13 uses), and the forged store holds the GOOD line's bytes under the
+# VIOLATION's oid. The interesting assertion is a non-event, so the three
+# before it pin that there was an event to prevent.
+fx="$tmp/raw-tx-alternates"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src"
+printf '%s\n' "$RAW_TX_GOOD" > "$fx/$RAW_TX_FILE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+printf '%s\n' "$RAW_TX_BAD" > "$fx/$RAW_TX_FILE"
+git -C "$fx" add -A # the violation is STAGED, and its blob is loose
+_eq 'leaked alternates: the fixture really stages the violation (else the rest is vacuous)' \
+  '1' "$(_run "$fx" "$GUARD_RAW_TX" --cached "$RAW_TX_FILE")"
+alt_oid="$(git -C "$fx" ls-files -s -- "$RAW_TX_FILE" | awk '{print $2}')"
+rm -f "$fx/.git/objects/${alt_oid:0:2}/${alt_oid:2}"
+_eq 'leaked alternates: …and with its loose object removed the guard refuses fail-closed, not silently' \
+  '2' "$(_run "$fx" "$GUARD_RAW_TX" --cached "$RAW_TX_FILE")"
+alt_store="$tmp/forged-objects"
+mkdir -p "$alt_store/${alt_oid:0:2}"
+RAW_TX_GOOD="$RAW_TX_GOOD" python3 - "$alt_store/${alt_oid:0:2}/${alt_oid:2}" <<'PY'
+import os, sys, zlib
+
+body = (os.environ["RAW_TX_GOOD"] + "\n").encode()
+with open(sys.argv[1], "wb") as fh:
+    fh.write(zlib.compress(b"blob %d\0" % len(body) + body))
+PY
+_eq 'leaked alternates: …and git itself DOES serve the forged body under that oid (the leak is real)' \
+  "$RAW_TX_GOOD" "$(GIT_ALTERNATE_OBJECT_DIRECTORIES="$alt_store" \
+    git -C "$fx" cat-file blob "$alt_oid")"
+_eq 'leaked alternates: …yet the guard still refuses, because the variable never reaches its cat-file' \
+  '2' "$(cd "$fx" || exit 99
+    GIT_ALTERNATE_OBJECT_DIRECTORIES="$alt_store" \
+      env -u GIT_INDEX_FILE python3 "$GUARD_RAW_TX" --cached "$RAW_TX_FILE" >/dev/null 2>&1
+    echo $?)"
+
+# ---------------------------------------------------------------------------
 # 6. exists() AND read() ANSWER ABOUT THE SAME SET (#4058)
 # ---------------------------------------------------------------------------
 # `read` used to fall back to disk for ANY path with no stage-0 entry. That
@@ -1077,6 +1224,85 @@ PY
 }
 _eq 'read_many: every path across a chunk boundary is cached with ITS OWN content, not a neighbours' \
   'ok' "$(_probe_read_many_chunks "$fx" "${CHUNK_RELS[@]}")"
+
+# ---------------------------------------------------------------------------
+# 13. THE ORPHAN SWEEP WARMS ONLY WHAT IT WILL READ (#4193)
+# ---------------------------------------------------------------------------
+# `orphan_entries` batches its reads through `read_many` (#4063), and the
+# first spelling passed the WHOLE baseline — including the entries the sweep
+# discards without ever looking at their content. `read_many` is fail-closed
+# about a blob the index names but the object store cannot produce, so a
+# damaged object behind a DISCARDED entry turned an actionable orphan report
+# (exit 1, naming the real violation) into a `GitError` (exit 2) over an entry
+# that could not have changed the verdict. Before batching, per-entry reads
+# gave the right behaviour for free: an entry was read only if the loop
+# reached it.
+#
+# The fixture holds both kinds of baseline entry at once, so the two possible
+# answers are distinguishable rather than merely "some non-zero exit":
+#
+#   * an EXCLUDED path (`**/src/bin/**`, one of `EXTRA_TEST_FILE_GLOBS`) whose
+#     staged blob has been deleted from the object store. The sweep discards
+#     it on its path alone and must never read it;
+#   * a genuine orphan naming a file that was never created, which the sweep
+#     must still report BY NAME.
+#
+# A fresh fixture never packs, so the staged blob is loose and removable —
+# the same trick scenario 6 of `runSourceScenarios` uses.
+DYN_DAMAGED_REL="src-tauri/src/bin/excluded_4193.rs"
+DYN_GONE_REL="src-tauri/src/orphan_4193_gone.rs"
+fx="$tmp/dyn-orphan-discarded-damaged"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src/bin"
+printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
+# DISTINCT content, deliberately: git addresses blobs by content, so two
+# byte-identical files share ONE object and removing it would damage the
+# target file's blob as well — the assertions below would then pass for
+# entirely the wrong reason (they did, on the first draft: exit 2 naming
+# `thing_4017.rs`, not the excluded path).
+printf '// excluded_4193 %s\n' "$DYN_GOOD" > "$fx/$DYN_DAMAGED_REL"
+{
+  printf '# Format: <count> <path-relative-to-repo-root>\n'
+  printf '1 %s\n' "$DYN_DAMAGED_REL"
+  printf '1 %s\n' "$DYN_GONE_REL"
+} > "$fx/$DYN_BASELINE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+dyn_damaged_sha="$(git -C "$fx" ls-files -s -- "$DYN_DAMAGED_REL" | awk '{print $2}')"
+rm -f "$fx/.git/objects/${dyn_damaged_sha:0:2}/${dyn_damaged_sha:2}"
+# The fixture really is damaged — else every assertion below is vacuous.
+_eq 'orphan discard: the fixture really did remove the excluded path staged blob' \
+  '1' "$(git -C "$fx" cat-file --batch <<<"$dyn_damaged_sha" 2>/dev/null | grep -c ' missing$')"
+_eq 'orphan discard: a damaged object behind a DISCARDED entry is exit 1, not exit 2 (#4193)' \
+  '1' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
+_eq 'orphan discard: …and the real orphan is still named, rather than lost behind the GitError' \
+  '1' "$(cd "$fx" && env -u GIT_INDEX_FILE python3 "$GUARD_DYN" --cached "$DYN_FILE" 2>&1 >/dev/null \
+    | grep -c 'orphan_4193_gone.rs: no such file')"
+_eq 'orphan discard: …and the excluded entry is reclaimed on its PATH, without its content' \
+  '1' "$(cd "$fx" && env -u GIT_INDEX_FILE python3 "$GUARD_DYN" --cached "$DYN_FILE" 2>&1 >/dev/null \
+    | grep -c 'excluded_4193.rs: now a test/fixture path')"
+# THE CONTROL: the fail-closed behaviour is NARROWED, not removed. The same
+# damage behind an entry the sweep DOES read — an in-scope, present,
+# non-excluded path — must still be exit 2 with the cause named, or this fix
+# would have bought its exit 1 by making the guard tolerate a damaged object
+# store.
+fx="$tmp/dyn-orphan-kept-damaged"
+_new_fixture "$fx"
+mkdir -p "$fx/src-tauri/src"
+printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
+printf '// kept_4193 %s\n' "$DYN_GOOD" > "$fx/src-tauri/src/kept_4193.rs" # distinct, as above
+{
+  printf '# Format: <count> <path-relative-to-repo-root>\n'
+  printf '1 src-tauri/src/kept_4193.rs\n'
+} > "$fx/$DYN_BASELINE"
+git -C "$fx" add -A
+git -C "$fx" commit -qm base
+dyn_kept_sha="$(git -C "$fx" ls-files -s -- src-tauri/src/kept_4193.rs | awk '{print $2}')"
+rm -f "$fx/.git/objects/${dyn_kept_sha:0:2}/${dyn_kept_sha:2}"
+_eq 'orphan discard: the CONTROL fixture really did remove the kept path staged blob' \
+  '1' "$(git -C "$fx" cat-file --batch <<<"$dyn_kept_sha" 2>/dev/null | grep -c ' missing$')"
+_eq 'orphan discard: …while damage behind an entry the sweep DOES read is still exit 2' \
+  '2' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
 
 # ---------------------------------------------------------------------------
 if [ "$failures" -gt 0 ]; then
