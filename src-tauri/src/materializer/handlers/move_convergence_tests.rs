@@ -1738,3 +1738,110 @@ async fn sweep_converges_the_inherited_tag_cache_with_the_arbiter_4112() {
         );
     }
 }
+
+/// Tag id for the `tags_cache.usage_count` fixture below.
+const TAG_ID_4200: &str = "01HZ0000000000000000MVTAG2";
+
+/// `tags_cache.usage_count` for one tag, or `None` when the tag has no cache
+/// row.
+async fn cached_usage_count(pool: &SqlitePool, tag_id: &str) -> Option<i64> {
+    sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+        .bind(tag_id)
+        .fetch_optional(pool)
+        .await
+        .expect("tags_cache read-back")
+}
+
+/// #4200 — a tagged block that the #4112 sweep turns into a TOMBSTONE must not
+/// leave `tags_cache.usage_count` over-counting.
+///
+/// `DESIRED_TAGS_SQL` (`agaric-store/src/cache/tags.rs`) derives `usage_count`
+/// through `JOIN blocks blk … WHERE blk.deleted_at IS NULL` on both the
+/// `block_tags` and the `block_tag_refs` half, so a holder the sweep tombstones
+/// stops counting. The `DeleteBlock` arm of
+/// `materializer::dispatch::invalidations_for_op` carries `RebuildTagsCache`
+/// for exactly that reason; before #4200 the `MoveBlock` arm did not, and
+/// #4112 made a move able to tombstone a subtree. The affected tags then
+/// over-counted until an unrelated lifecycle/tag op or a full rebuild healed
+/// them.
+///
+/// The driver runs PRODUCTION's own fan-out table for the move record — every
+/// task `invalidations_for_op` returns, through the real background handler —
+/// rather than a hand-picked task list, so a task the table forgets is a task
+/// this test does not run. Dropping the `RebuildTagsCache` push from the
+/// `MoveBlock` arm therefore leaves the stale count in place and reddens the
+/// final assertion.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sweep_does_not_leave_the_tags_cache_over_counting_4200() {
+    let (_dir, pool, state) = seed_engine_world("tags_cache_sweep.db").await;
+
+    // A live tag, held DIRECTLY by two blocks that the sweep will tombstone
+    // together (C1A is the move subject, G1A its child — the sweep stamps the
+    // whole cohort, so both leave the count).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'tag', 'sweep-count-tag', NULL, 0)",
+    )
+    .bind(TAG_ID_4200)
+    .execute(&pool)
+    .await
+    .expect("insert tag block");
+    for holder in [C1A_ID, G1A_ID] {
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(holder)
+            .bind(TAG_ID_4200)
+            .execute(&pool)
+            .await
+            .expect("tag a soon-to-be-swept block");
+    }
+    agaric_store::cache::rebuild_tags_cache(&pool)
+        .await
+        .expect("seed tags_cache from the arbiter");
+    assert_eq!(
+        cached_usage_count(&pool, TAG_ID_4200).await,
+        Some(2),
+        "fixture precondition: both live holders must be counted before the sweep"
+    );
+
+    // The #4112 shape: delete the target parent, then replay the peer's move
+    // INTO it. The move is applied, and the sweep stamps C1A + G1A with P2's
+    // cohort timestamp.
+    let del = append_delete(&pool, P2_ID).await;
+    replay(&pool, &state, &del).await;
+    let mv = append_move(&pool, C1A_ID, P2_ID, MOVE_INDEX).await;
+    replay(&pool, &state, &mv).await;
+    assert!(
+        shape_of(&pool, C1A_ID).await.1.is_some() && shape_of(&pool, G1A_ID).await.1.is_some(),
+        "fixture precondition: the sweep must actually have fired (both holders \
+         tombstoned)"
+    );
+
+    // Nothing in the apply tx repairs the count — the cache is genuinely stale
+    // at commit, which is why the invalidation matrix has to carry the repair.
+    assert_eq!(
+        cached_usage_count(&pool, TAG_ID_4200).await,
+        Some(2),
+        "the sweep does not (and should not) write tags_cache in-tx; the repair \
+         belongs to the background fan-out"
+    );
+
+    // Production's fan-out for this exact op record. `None` for both hints is
+    // the remote-replay / inbound-sync / boot path — the one that actually
+    // replays a peer's move.
+    for task in
+        crate::materializer::invalidations_for_op(&mv, None, None).expect("invalidations_for_op")
+    {
+        handle_background_task(&pool, &task, None, None)
+            .await
+            .unwrap_or_else(|e| panic!("background task {task:?} failed: {e}"));
+    }
+
+    assert_eq!(
+        cached_usage_count(&pool, TAG_ID_4200).await,
+        Some(0),
+        "#4200: after the sweep tombstoned both holders, the move's own \
+         invalidation fan-out must bring tags_cache.usage_count back to the \
+         live-holder count; a stale 2 means the MoveBlock arm never enqueued \
+         RebuildTagsCache"
+    );
+}

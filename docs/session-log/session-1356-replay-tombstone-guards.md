@@ -6,9 +6,8 @@
 | **Subagents** | orchestrator-only |
 | **Items closed** | `#4112`, `#4121` |
 | **Items modified** | — |
-| **Items filed** | `#4187`, `#4188` |
-| **Tests added** | +0 (frontend) / +10 (backend — 5 in the reviewed diff, 5 added by this review) |
-| **Files touched** | 6 |
+| **Items filed** | `#4187`, `#4188`, `#4204`, `#4205` |
+| **Tests added** | backend only — five in the reviewed diff, five added by this review, four more by the review-response pass below |
 
 **Summary:** Reviewed an uncommitted diff against the apply/replay kernel that nobody in
 this session wrote. Both fixes hold: the #4112 sweep converges every ordering tested, and
@@ -252,12 +251,20 @@ before any code is touched. Simulating the suspected defect and diffing the fail
 against the report turns that from a hunch into a proof.
 
 **Files touched (this session):**
-- `src-tauri/agaric-engine/src/apply/sql_only.rs` (+147 / -1)
-- `src-tauri/agaric-engine/src/apply/loro_apply.rs` (+51 / -1)
-- `src-tauri/agaric-store/src/tag_inheritance_macros.rs` (+78 / -16)
-- `src-tauri/agaric-store/src/tag_inheritance/incremental.rs` (+33 / -0)
-- `src-tauri/agaric-store/src/tag_inheritance/tests.rs` (+122 / -0)
-- `src-tauri/src/materializer/handlers/move_convergence_tests.rs` (+798 / -1)
+- `src-tauri/agaric-engine/src/apply/sql_only.rs`
+- `src-tauri/agaric-engine/src/apply/loro_apply.rs`
+- `src-tauri/agaric-store/src/tag_inheritance_macros.rs`
+- `src-tauri/agaric-store/src/tag_inheritance/incremental.rs`
+- `src-tauri/agaric-store/src/tag_inheritance/tests.rs`
+- `src-tauri/src/materializer/handlers/move_convergence_tests.rs`
+- this log
+
+Plus, in the review-response pass below: `src-tauri/src/materializer/dispatch.rs`,
+`src-tauri/src/commands/blocks/move_ops.rs`,
+`src-tauri/src/materializer/handlers/apply_reproject_proptest.rs`, and
+`src-tauri/src/command_integration_tests/pages_cache_counts.rs`. Diffstat
+numbers are deliberately omitted — they go stale the moment anything else lands
+in these files, and `git diff --stat` is authoritative.
 
 **Verification:**
 - `cd src-tauri && cargo nextest run --workspace` — run in package groups because the
@@ -293,5 +300,85 @@ asserted the intermediate state as well. The general rule: when a test's final o
 idempotent-ish or absorbing, assert *before* it too, and prove the whole thing red by
 deleting the production change rather than by reasoning about it.
 
-**Commit plan:** not committed — review deliverable only; the branch is left uncommitted for
-the caller.
+**Commit plan:** committed on `claude/sync-replay-tombstone-guards` and opened as PR #4200.
+The review-response pass below is a second commit on the same branch, pre-merge.
+
+## Review response (PR #4200)
+
+The PR was approved with five non-blocking notes. Note 1 was a real defect the
+change introduced, and it is the reason this section exists.
+
+**Note 1 — `tags_cache.usage_count` went stale when the sweep fired.** Confirmed
+before changing anything, then reproduced. `DESIRED_TAGS_SQL`
+(`agaric-store/src/cache/tags.rs`) derives `usage_count` through
+`JOIN blocks blk … WHERE blk.deleted_at IS NULL` on both the `block_tags` and
+the `block_tag_refs` half, which is exactly why the `DeleteBlock` arm of
+`invalidations_for_op` keeps `RebuildTagsCache` in its lifecycle set. #4112 made
+a `MoveBlock` able to tombstone a subtree, and the `MoveBlock` arm carried no
+tags rebuild — so a tag held by a swept block kept counting it. Measured on the
+engine-backed fixture: two holders swept, `usage_count` stuck at 2 after the
+whole of production's own fan-out for that move record had run.
+
+The scoping in the note held up on inspection. `pages_cache` counts are
+maintained in the SAME transaction, AFTER the sweep
+(`maintain_pages_cache_counts_after_op`, `agaric-engine/src/apply/kernel.rs`);
+the FTS read path filters `deleted_at` in its own SQL
+(`fts/toggle_filter.rs`); `block_tag_inherited` is wiped in-tx by the sweep's
+`remove_subtree_inherited`; and `page_id` / `space_id` are untouched by a
+`deleted_at` stamp. One cache the note did not name is in the same class:
+`page_link_cache`'s roll-up filters `sb.deleted_at IS NULL`
+(`cache/page_links.rs`), and the `MoveBlock` arm only rebuilds it when the
+same-page hint is not claimed — so a swept same-page reorder stranded that too.
+
+**The repair is conditional, not a blanket widening.** `RebuildTagsCache` is
+enqueued whenever the move does not claim #2700's narrowing hint, and
+`move_same_page_hint` — the hint's sole producer, and the place its doc already
+says the *properties of the skip* live — now additionally refuses `Some(true)`
+for a move that swept. The local command proves that by reading the moved
+block's `deleted_at` back in the same round-trip as the post-rederive `page_id`
+it already reads: `validate_move_in_tx` has proven the subject was live going
+in, so a non-NULL stamp coming out can only be #4112's sweep. Net effect: an
+ordinary same-parent reorder or same-page indent — the 200 ms interactive path —
+pays nothing, and picking up the sweep's `page_link_cache` hole came free with
+the same term. It is broader than "only when the sweep fired" for cross-page and
+remote moves, which pay a rebuild they do not need; narrowing that further would
+need a second hint channel threaded through every non-local dispatcher for no
+correctness gain.
+
+Four tests, each proven red by reverting the production change it covers:
+`move_same_page_hint_rejects_a_swept_move_4200` and
+`invalidations_for_op_move_block_swept_keeps_tags_rebuild_4200` (the producer and
+the consumer, in `materializer::dispatch`),
+`sweep_does_not_leave_the_tags_cache_over_counting_4200` (the replay path, driving
+production's own fan-out table through the real background handler rather than a
+hand-picked task list), and
+`local_move_that_sweeps_a_subtree_rebuilds_the_tags_cache_4200` (the LOCAL command
+path, which is the only one that can claim the hint at all).
+
+**Note 2 — the "what it deliberately does NOT do" section read as exhaustive.**
+The missing shape is a delete of the OLD parent racing a move OUT, with the
+target parent live. Verified by driving `{Delete(P1), Move(C1A: P1 → P2)}`
+through the real pipeline in both orders on two engine-backed worlds:
+delete-first ends with `C1A` and `G1A` under `P2` stamped at `P1`'s cohort
+timestamp; move-first ends with both under `P2` and `deleted_at NULL`. `P2` is
+live in both. The sweep never fires either way, so this predates #4112 — and it
+is strictly worse than #4188's residue, which diverges only on *which* restore
+cohort a block that is trashed everywhere belongs to. Filed as #4204, referenced
+from the section, and the section now says outright that it lists the shapes
+that have been walked rather than claiming exhaustiveness.
+
+**Notes 3 and 4 — accepted trade-offs with no numbers.** The unconditional
+`nearest_tombstoned_ancestor` climb on every move (interactive path and boot
+replay) and the sweep's inline, unbounded in-tx engine fan-out under the
+per-space guard. Both reasons are sound and neither is changed here; filed
+together as #4205 asking for the measurement, since the whole point of the
+objection is that the cost is argued rather than observed.
+
+**Note 5 — this log's own bookkeeping.** The stale "not committed" close and the
+drift-prone file/diffstat counts are corrected above.
+
+**Verification (review-response pass):** `cargo nextest run --workspace`,
+`cargo fmt --check`, `cargo check --all-targets`, `cargo sqlx prepare --check` —
+see the PR comment for the run output. The one new production query is a runtime
+`query_as` (two columns, no `.sqlx` entry), replacing a runtime `query_scalar` at
+the same site, so the dynamic-SQL site count is unchanged.

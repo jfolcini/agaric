@@ -344,6 +344,25 @@ pub async fn apply_move_block_sql_only(
 /// here — this sweep narrows it (it no longer leaves `B` live) rather than
 /// closing it.
 ///
+/// #4204 is the neighbouring residue, and it is NOT covered by #4188's
+/// "both endpoints deleted" scoping: a delete of the OLD parent racing a move
+/// OUT, with the target parent LIVE. For `{Delete(P1), Move(C1A: P1 → P2)}`
+/// with `P2` live, replayed delete-first, `P1`'s cascade stamps `C1A` and the
+/// move — which does not refuse a tombstoned subject, see above — carries it
+/// under `P2` still trashed; replayed move-first,
+/// `collect_subtree_ids_unbounded(P1)` no longer reaches `C1A` and it stays
+/// LIVE under `P2`. This sweep never fires in either order (after the move the
+/// whole ancestor chain is live, so `nearest_tombstoned_ancestor` returns
+/// `None`), so the divergence predates #4112 and is untouched by it — but it is
+/// strictly worse than #4188's, which diverges only on WHICH restore cohort a
+/// block that is trashed everywhere belongs to. Here the two devices disagree
+/// about whether the subtree is in the tree at all.
+///
+/// This list is the set of shapes that have been WALKED, not a proof of
+/// exhaustiveness. It covers what the sweep's own choices imply; a new op
+/// combination that resolves `deleted_at` by replay order belongs here (and in
+/// an issue) rather than being assumed absent because it is unlisted.
+///
 /// Returns `Some((cohort_ts, cohort))` when it swept — the ids it stamped,
 /// for the caller's engine fan-out — and `None` when the block is healthy
 /// (the overwhelmingly common case). The healthy path costs one PK lookup
