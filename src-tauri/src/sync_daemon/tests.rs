@@ -7145,6 +7145,162 @@ async fn issue610_empty_registry_initiator_records_via_synccomplete() {
     mat_b.shutdown();
 }
 
+/// #4096 — the empty-stream short-circuit is a real session, and it records
+/// the bookkeeping a real session owes.
+///
+/// Same shape as `issue610_empty_registry_initiator_records_via_synccomplete`
+/// (B's registry is empty, so B replies `SyncComplete` straight out of
+/// `head_exchange_outgoing_loro` without ever entering `StreamingOps`), but
+/// asserted from **B's** side, which that test only ever checked a negative on.
+///
+/// The short-circuit returns *before* `streamed_to_peer = true` and before the
+/// `SyncComplete`-receive arm that carries every other completion's
+/// bookkeeping, so it used to record nothing whatsoever: no `streamed_at`, no
+/// `synced_at`, no `loro_vv_bytes`. A device whose sessions all take this
+/// branch — a fresh install, or one whose spaces the #1257 freshness gate keeps
+/// refusing — completed session after session while its `peer_refs` row stayed
+/// as blank as a peer it had never met.
+///
+/// Which column it writes is the substance, not a detail:
+///   * `streamed_at` — this is the responder half; the peer pulled from us,
+///     and got zero bytes, but it pulled.
+///   * NOT `synced_at` — we received no state at all, and `synced_at` is the
+///     scheduler's only staleness input (`peers_due_for_resync`). A responder
+///     stamping it on every inbound session never finds the initiator overdue:
+///     #610's starvation, re-entered through the short-circuit.
+/// The negative assertion is the load-bearing one — a "just stamp synced_at"
+/// fix passes every positive check below and re-opens #610.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue4096_empty_stream_short_circuit_records_streamed_at() {
+    use agaric_sync::sync_protocol::{SyncOrchestrator, SyncState};
+
+    const DEV_A: &str = "DEV4096A";
+    const DEV_B: &str = "DEV4096B";
+    const BLOCK_A: &str = "01HZ4096BLKAXXXXXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ4096SPACEXXXXXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+    let state_a = std::sync::Arc::clone(mat_a.loro_state());
+
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    // Only A has state. B's Loro registry stays EMPTY and B's op_log holds no
+    // audit records either, so B takes the `messages.is_empty() &&
+    // op_batches.is_empty()` short-circuit — the path under test.
+    make_local_edit_602(
+        &pool_a,
+        &mat_a,
+        &state_a,
+        DEV_A,
+        &space,
+        BLOCK_A,
+        "edit from device A",
+        1_736_942_400_000,
+    )
+    .await;
+
+    let before_ms = agaric_store::db::now_ms();
+
+    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_expected_remote_id(DEV_A.into());
+    pump_full_session_602(&mut init_a, &mut resp_b).await;
+
+    assert_eq!(
+        resp_b.session().state,
+        SyncState::Complete,
+        "the empty-registry responder must complete via the short-circuit — \
+         without a completed session there is no bookkeeping question to answer"
+    );
+    assert_eq!(init_a.session().state, SyncState::Complete);
+    assert_eq!(
+        init_a.session().ops_received,
+        0,
+        "the short-circuit must have shipped nothing: this is the EMPTY-stream \
+         path, not a one-message stream"
+    );
+
+    let after_ms = agaric_store::db::now_ms();
+
+    let b_view_of_a = peer_refs::get_peer_ref(&pool_b, DEV_A)
+        .await
+        .unwrap()
+        .expect("B's peer row for A must exist");
+
+    // ── What it must record ─────────────────────────────────────────
+    let streamed = b_view_of_a.streamed_at.expect(
+        "#4096: the empty-stream short-circuit completes a session, so it must \
+         record one. Before the fix it returned before `streamed_to_peer = true` \
+         and before the SyncComplete arm, leaving peer_refs completely untouched \
+         — a device whose every session takes this branch reads as 'never \
+         synced' forever",
+    );
+    assert!(
+        (before_ms..=after_ms).contains(&streamed),
+        "streamed_at must be stamped during THIS session, not inherited from an \
+         earlier one: {streamed} not in {before_ms}..={after_ms}"
+    );
+    assert!(
+        peer_refs::get_loro_vv_bytes(&pool_b, DEV_A)
+            .await
+            .unwrap()
+            .is_some(),
+        "#4096/#2502: the session completed, so the frontier A advertised in its \
+         HeadExchange is a valid export floor for next time. Dropping it on this \
+         branch is what leaves the short-circuit re-deriving from nothing"
+    );
+
+    // ── What it must NOT record ─────────────────────────────────────
+    assert!(
+        b_view_of_a.synced_at.is_none(),
+        "#4096/#610: B pulled NOTHING this session — it only answered. Stamping \
+         synced_at here is not a display change, it is a scheduling change: \
+         `peers_due_for_resync` reads synced_at and only synced_at, so a \
+         responder refreshing it every inbound session never finds the initiator \
+         overdue. That is #610's starvation, re-entered through the short-circuit"
+    );
+    assert!(
+        b_view_of_a.last_hash.is_none(),
+        "last_hash is the pulled frontier and B pulled nothing; writing it would \
+         mean recording the pull that did not happen"
+    );
+
+    // ── And the scheduler must be unmoved by the new stamp ──────────
+    let scheduler = agaric_sync::sync_scheduler::SyncScheduler::default();
+    let b_peers = peer_refs::list_peer_refs(&pool_b).await.unwrap();
+    assert!(
+        scheduler
+            .peers_due_for_resync(&b_peers)
+            .iter()
+            .any(|p| p == DEV_A),
+        "#4096/#4084: a fresh streamed_at must not suppress B's own pull toward \
+         A — the reverse direction is exactly how A's edits reach B"
+    );
+
+    // ── The initiator's own halves stay where #610 put them ─────────
+    let a_view_of_b = peer_refs::get_peer_ref(&pool_a, DEV_B)
+        .await
+        .unwrap()
+        .expect("A's peer row for B must exist");
+    assert!(
+        a_view_of_b.synced_at.is_some(),
+        "#610: A pulled (an empty state is still a state), so A records synced_at"
+    );
+    assert!(
+        a_view_of_b.streamed_at.is_none(),
+        "A streamed nothing — the two columns record two directions, not one \
+         event twice"
+    );
+
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
 /// Incremental sync (#87 §10.5): when the initiator advertises a
 /// per-space Loro version vector in `HeadExchange`, the responder ships a
 /// delta `Update` (the ops since that vv) instead of a full `Snapshot`. A

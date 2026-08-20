@@ -1108,6 +1108,11 @@ impl SyncOrchestrator {
     ///
     /// Ensure-row + stamp share one `BEGIN IMMEDIATE` transaction for the same
     /// crash-atomicity reason as the pull path.
+    ///
+    /// Two callers, both the streamer: the `SyncComplete` arm when a stream
+    /// actually went out, and [`Self::reply_sync_complete`] when the
+    /// empty-stream short-circuit fired (#4096) — the second is not gated on
+    /// `streamed_to_peer`, which that path never sets.
     async fn record_stream_in_tx(&self, peer_id: &str) -> Result<(), AppError> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
@@ -1273,6 +1278,13 @@ impl SyncOrchestrator {
         // waste a round-trip on an empty `LoroSync`; the remote's state
         // validation accepts `SyncComplete` in `ExchangingHeads` for exactly
         // this case.
+        //
+        // #4096: `streamed_to_peer` is deliberately NOT set on this path — we
+        // queued no stream, and the flag's job (below) is to keep the SyncComplete
+        // arm from advancing `synced_at`, an arm this return never reaches. The
+        // bookkeeping this session still owes lives inside `reply_sync_complete`
+        // itself, unconditionally, for exactly that reason: a bookkeeping call
+        // gated on `if self.streamed_to_peer` would silently skip this path.
         if messages.is_empty() && op_batches.is_empty() {
             return self.reply_sync_complete().await;
         }
@@ -1319,6 +1331,69 @@ impl SyncOrchestrator {
     /// gate, and no #2481 audit records to replicate). Transitions to
     /// `Complete` and emits the terminal event, mirroring the puller-side
     /// completion but from the streamer's empty-stream short-circuit.
+    ///
+    /// # Bookkeeping (#4096)
+    ///
+    /// This path used to record **nothing**: no `streamed_at`, no `synced_at`,
+    /// no `loro_vv_bytes`. It returns before `streamed_to_peer` is set and
+    /// before the `SyncComplete`-receive arm that carries every other
+    /// completion's bookkeeping, so a device whose sessions all take this
+    /// branch completed session after session while its `peer_refs` row stayed
+    /// exactly as blank as a peer it had never met — the hole #4084's
+    /// `streamed_at` column exists to close, still open on one branch.
+    ///
+    /// It stamps **`streamed_at`**, not `synced_at`, and the distinction is the
+    /// whole point of the two columns. This is the responder half of the
+    /// session — we processed the peer's `HeadExchange` and the peer pulled
+    /// from us — so "this peer pulled from us" (`streamed_at`) is what actually
+    /// happened, while "we pulled from this peer" (`synced_at`) did not: we
+    /// received no state at all. Stamping `synced_at` here would also be a
+    /// scheduling change, not just a display one — `peers_due_for_resync` reads
+    /// `synced_at` and only `synced_at`, so a responder refreshing it on every
+    /// inbound session would never find the initiator overdue, which is #610's
+    /// starvation exactly. An empty stream is still a stream of zero bytes the
+    /// peer asked for and got.
+    ///
+    /// # What the stamp does and does not claim
+    ///
+    /// `streamed_at` never meant "bytes moved", on this branch or any other.
+    /// `loro_sync::prepare_outgoing`'s incremental arm returns a `LoroSyncMessage`
+    /// for a space with no new ops just as it does for one with a thousand, so a
+    /// steady-state responder already stamped `streamed_at` on sessions that
+    /// shipped nothing of substance. The column means "a peer completed a pull
+    /// session against us this recently", and that is exactly as true here.
+    ///
+    /// That matters because `streamed_at` has one consumer beyond the device
+    /// list's `MAX(synced_at, streamed_at)`: `peer_pulled_from_us_recently`
+    /// (#4120), which suppresses *repeat* reports of an *already-reported*
+    /// outbound pull failure while the peer is still pulling from us. Stamping
+    /// here feeds that window, and deliberately so — a peer completing sessions
+    /// against us every cycle is the condition the window is asking about. The
+    /// first report of any failure still lands unconditionally, so nothing goes
+    /// unreported; only the second identical toast about a peer we are visibly
+    /// still serving is withheld.
+    ///
+    /// The one arguable case is the *degraded* reason this branch fires: the
+    /// #1257 freshness gate refusing **every** registered space, i.e. we held
+    /// state and declined to export it. Stamping is still the consistent
+    /// answer — a *partial* refusal already streams and already stamps, so
+    /// exempting the total refusal would buy no guarantee while adding a third
+    /// meaning to the column — and the refusal is not silent: `prepare_outgoing`
+    /// `warn!`s per space per round and signals that a rebuild-from-op-log is
+    /// required.
+    ///
+    /// The peer's advertised frontier is persisted for the same reason the
+    /// normal streaming path persists it (#2502): the session completed, so the
+    /// frontier the peer advertised is a valid export floor for next time.
+    /// `persist_peer_loro_vvs` is a no-op when the stash is empty.
+    ///
+    /// Note what the floor *is*, which is why the degraded case does not make it
+    /// unsafe to persist: it is the frontier the **peer** advertised holding, not
+    /// a record of what we sent. Failing to satisfy it does not make it false.
+    /// It is consulted only when the peer advertises no vv for a space next time
+    /// (`head_exchange_outgoing_loro`'s `or_else`), and a stale or ahead floor is
+    /// already handled by the receiver's `apply_remote` reachability gate, which
+    /// falls back to a snapshot on an unbridgeable `from_vv`.
     async fn reply_sync_complete(&mut self) -> Result<Option<SyncMessage>, AppError> {
         let last_hash = get_local_heads(&self.pool)
             .await?
@@ -1326,6 +1401,20 @@ impl SyncOrchestrator {
             .find(|h| h.device_id == self.device_id)
             .map(|h| h.hash)
             .unwrap_or_default();
+
+        // #4096: record the session before announcing it. `resolve_remote_peer_id`
+        // also back-fills `session.remote_device_id`, so the `Complete` event
+        // below is attributable even on a cert-less session that learned the id
+        // only from the advertised heads. `None` means no identity from either
+        // source (it logs the warning itself); there is no peer to key a row on,
+        // so the session still completes — it shipped nothing and applied
+        // nothing — but writes no bookkeeping rather than a bogus `peer_id = ""`
+        // row, matching `complete_pull_session`'s handling of the same case.
+        if let Some(peer_id) = self.resolve_remote_peer_id() {
+            self.record_stream_in_tx(&peer_id).await?;
+            self.persist_peer_loro_vvs(&peer_id).await?;
+        }
+
         self.state = SyncState::Complete;
         self.session.state = SyncState::Complete;
         self.emit(crate::sync_events::SyncEvent::Complete {
