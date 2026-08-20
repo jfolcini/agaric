@@ -673,6 +673,35 @@ pub enum CatchupOutcome {
     },
 }
 
+/// Resolve the peer identity a catch-up should be attributed to, preferring
+/// the session-level id and falling back to the daemon-supplied one.
+///
+/// The pure half of what
+/// [`SyncOrchestrator::resolve_remote_peer_id`](crate::sync_protocol::SyncOrchestrator)
+/// does inside the state machine, extracted (#4097) because the two catch-up
+/// entry points below had grown two hand-rolled copies of the same three-way
+/// choice — one of which logged the *expected* fallback at `warn!` while the
+/// other logged it not at all.
+///
+/// `None` means neither source carried an identity; the caller turns that into
+/// a hard error rather than key a `peer_refs` row on the empty string.
+///
+/// Deliberately silent, and called exactly once per catch-up — at the entry
+/// point, before any event is emitted — so both catch-up flavours inherit one
+/// resolution and one log line instead of re-deciding at their completion
+/// writes. The logging lives at the call sites because only they know whether
+/// taking the fallback is routine (on this path it is) or whether having no
+/// identity at all is about to fail the session.
+fn catchup_peer_identity<'a>(
+    remote_device_id: &'a str,
+    expected_remote_id: Option<&'a str>,
+) -> Option<&'a str> {
+    if !remote_device_id.is_empty() {
+        return Some(remote_device_id);
+    }
+    expected_remote_id.filter(|id| !id.is_empty())
+}
+
 /// Attempt to receive + apply a snapshot from the responder after the
 /// initiator's main loop reached [`SyncState::ResetRequired`].
 ///
@@ -710,6 +739,22 @@ pub enum CatchupOutcome {
 /// peer cannot be remembered (the next sync would treat this peer
 /// as fully unknown again).
 ///
+/// #4097 resolves that choice **once, up front** rather than at the
+/// completion write, so the resolved id is what every `Progress` /
+/// `Error` / `SnapshotProgress` event carries and what every log line
+/// names — the same "make the identity available from frame 0" move
+/// #4085 made in the state machine, where the fix was not cosmetic: a
+/// UI keyed on `remote_device_id` drops an event carrying `""`.
+///
+/// Taking the fallback logs at `debug!`, not `warn!`. `HeadExchange`
+/// is initiator-*sent*, so on the initiator — the only role that
+/// reaches a catch-up — a session id that had to come from the
+/// authenticated peer identity is the *designed* path, not an
+/// anomaly, and a per-session WARN on a healthy path is what teaches
+/// readers to ignore the level. The `warn!` moves to the case that is
+/// genuinely surprising: no identity from *either* source, which
+/// fails the session.
+///
 /// # In-process engine reload (#607 / #779)
 ///
 /// `apply_snapshot` wipes the Loro sidecar tables (`loro_doc_state`,
@@ -741,6 +786,22 @@ pub async fn try_receive_snapshot_catchup(
     expected_remote_id: Option<&str>,
     engine_reload: Option<EngineReloadCtx<'_>>,
 ) -> Result<CatchupOutcome, AppError> {
+    // #4097: settle the peer identity before anything is emitted, and shadow
+    // the parameter with it so every event, log field and bookkeeping write
+    // below is attributed to the peer we actually resolved instead of to `""`.
+    // Resolution itself is unchanged (session id wins, daemon identity fills
+    // in); only its *timing* moves, and the empty-string value survives for the
+    // no-identity case so the failure below reads exactly as it did.
+    let resolved_identity = catchup_peer_identity(remote_device_id, expected_remote_id);
+    if resolved_identity.is_some() && remote_device_id.is_empty() {
+        tracing::debug!(
+            expected_remote_id = expected_remote_id.unwrap_or_default(),
+            "remote_device_id was empty at snapshot catch-up; falling back to \
+             the daemon-supplied peer identity"
+        );
+    }
+    let remote_device_id: &str = resolved_identity.unwrap_or_default();
+
     // #2503: read the responder's first post-ResetRequired message. Under
     // QUIC this is one length-prefixed frame however large — there is no
     // chunked reassembly step, because there is no message-size cap to
@@ -763,7 +824,6 @@ pub async fn try_receive_snapshot_catchup(
                     materializer,
                     event_sink,
                     remote_device_id,
-                    expected_remote_id,
                     engine_reload,
                     msg,
                     is_last,
@@ -1017,29 +1077,26 @@ pub async fn try_receive_snapshot_catchup(
         "applied snapshot; frontier advanced"
     );
 
-    // Mirror the SyncComplete fallback. Prefer the orchestrator's
-    // session-level `remote_device_id`; if that is empty (HeadExchange
-    // carried only our own heads), fall back to the daemon-provided
-    // `expected_remote_id` (mTLS / mDNS peer identity). If neither is
-    // available, refuse to silently complete: the snapshot is already
-    // durable but a peer_refs row keyed by the empty string would
-    // corrupt the bookkeeping, and the next sync would treat this
-    // peer as fully unknown again.
-    let resolved_peer_id: &str = if !remote_device_id.is_empty() {
-        remote_device_id
-    } else if let Some(expected) = expected_remote_id.filter(|s| !s.is_empty()) {
+    // The identity was resolved (and the fallback logged at `debug!`) at
+    // function entry — #4097. It is empty here only when neither the
+    // session-level id nor the daemon's authenticated peer identity carried
+    // one, and that is the genuinely surprising case that keeps the `warn!`:
+    // refuse to silently complete, because the snapshot is already durable but
+    // a peer_refs row keyed by the empty string would corrupt the bookkeeping
+    // and the next sync would treat this peer as fully unknown again.
+    if remote_device_id.is_empty() {
         tracing::warn!(
-            expected_remote_id = expected,
-            "remote_device_id was empty at snapshot catch-up; falling back to expected_remote_id"
+            "snapshot catch-up applied a snapshot but carried no remote device_id from \
+             either the session or the daemon-supplied peer identity; refusing to key \
+             peer_refs bookkeeping on an empty peer_id"
         );
-        expected
-    } else {
         return Err(AppError::InvalidOperation(
             "snapshot catch-up completed with empty remote_device_id and no expected_remote_id; \
              refusing to record peer_refs row keyed by empty string"
                 .into(),
         ));
-    };
+    }
+    let resolved_peer_id: &str = remote_device_id;
 
     // Update peer_refs so the scheduler's "last synced" bookkeeping
     // reflects the catch-up. `last_sent_hash` stays empty — we did not
@@ -1129,6 +1186,13 @@ pub async fn try_receive_snapshot_catchup(
 /// `_send` is unused — this phase only reads; every message it consumes is
 /// pushed by the responder and none is acknowledged. It is taken so every
 /// catch-up entry point in this module has the same `(send, recv)` prefix.
+///
+/// `remote_device_id` arrives **already resolved** (#4097): its sole caller,
+/// [`try_receive_snapshot_catchup`], runs [`catchup_peer_identity`] before it
+/// dispatches here, so this function no longer takes `expected_remote_id` and
+/// no longer carries a third hand-rolled copy of the same fallback. Empty here
+/// therefore means "neither source had an identity", which is fatal at the
+/// bookkeeping write below — not a cue to look somewhere else for one.
 #[tracing::instrument(skip_all, err)]
 #[allow(clippy::too_many_arguments)]
 async fn receive_loro_snapshot_catchup(
@@ -1138,7 +1202,6 @@ async fn receive_loro_snapshot_catchup(
     materializer: &dyn ApplyHost,
     event_sink: &Arc<dyn SyncEventSink>,
     remote_device_id: &str,
-    expected_remote_id: Option<&str>,
     engine_reload: Option<EngineReloadCtx<'_>>,
     first_msg: LoroSyncMessage,
     first_is_last: bool,
@@ -1228,20 +1291,23 @@ async fn receive_loro_snapshot_catchup(
         }
     }
 
-    // Resolve the peer identity for bookkeeping (mirrors the CBOR path /
-    // SyncComplete fallback): prefer the session-level id, else the daemon's
-    // mTLS/mDNS `expected_remote_id`; refuse an empty-keyed row.
-    let resolved_peer_id: &str = if !remote_device_id.is_empty() {
-        remote_device_id
-    } else if let Some(expected) = expected_remote_id.filter(|s| !s.is_empty()) {
-        expected
-    } else {
+    // #4097: the caller already resolved the identity (session id, else the
+    // daemon's authenticated peer identity, logged there). Empty at this point
+    // means neither source had one — the genuinely surprising case, and the one
+    // that keeps a `warn!`: refuse an empty-keyed row.
+    if remote_device_id.is_empty() {
+        tracing::warn!(
+            "loro-snapshot catch-up merged peer state but carried no remote device_id from \
+             either the session or the daemon-supplied peer identity; refusing to key \
+             peer_refs bookkeeping on an empty peer_id"
+        );
         return Err(AppError::InvalidOperation(
             "loro-snapshot catch-up completed with empty remote_device_id and no \
              expected_remote_id; refusing to record peer_refs row keyed by empty string"
                 .into(),
         ));
-    };
+    }
+    let resolved_peer_id: &str = remote_device_id;
 
     // `last_hash` is our own post-merge local frontier hash — this catch-up
     // is a PULL (we received, did not send), so it advances the pull

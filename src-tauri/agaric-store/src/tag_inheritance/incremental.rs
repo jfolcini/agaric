@@ -22,6 +22,27 @@ use agaric_core::error::AppError;
 /// descendant of `block_id`. Uses `INSERT OR IGNORE` to handle races and
 /// re-application safely (a descendant might already inherit the same tag from
 /// a closer ancestor — the PK constraint keeps the existing row).
+///
+/// #4121 — a soft-deleted `block_id` propagates NOTHING. This is #3944's
+/// deleted-SUBJECT direction on the AddTag side: for `R(soft-deleted, #T) >
+/// D(live)` this helper used to write `(D, T, R)`, attributing the tag to a
+/// tombstoned tagger, while [`crate::tag_inheritance::rebuild_all`]'s
+/// `tag_inh_descendant_tags_full!` seed carries `tagged.deleted_at IS NULL`
+/// and emits nothing. The subject filter now lives in
+/// [`crate::tag_inh_descendants_active`]'s seed — sound there because that
+/// CTE feeds INSERTs only at both of its call-sites (here, and
+/// [`remove_inherited_tag`] step 3), which is exactly the property
+/// `tag_inh_subtree_active!` lacks.
+///
+/// Reached from `apply_add_tag_via_loro` / `apply_add_tag_sql_only`, the
+/// remote/replay shape where the local command path's own liveness guard does
+/// not apply. Materially less severe than #3944 because AddTag keeps its
+/// whole-vault `RebuildTagInheritanceCache` fan-out, so the bad row self-heals
+/// rather than persisting the way a `RemoveTag`-written one does (#2669) —
+/// but a window in which the incremental path disagrees with the arbiter is a
+/// window in which the oracle cannot be trusted as a gate, which is the reason
+/// the whole family gets closed. Pinned by
+/// `propagate_tag_rooted_at_soft_deleted_block_matches_rebuild_4121`.
 pub async fn propagate_tag_to_descendants(
     conn: &mut SqliteConnection,
     block_id: &str,
@@ -85,6 +106,18 @@ pub async fn propagate_tag_to_descendants(
 /// attributes a live descendant to a live tagger STRICTLY below `?1`, which
 /// is a chain the arbiter propagates through. Pinned by
 /// `remove_tag_rooted_at_soft_deleted_block_matches_rebuild_3944`.
+///
+/// #4121 — step 3's `descendants` CTE gained the same subject filter, and
+/// that is a NON-change here by construction: step 3 CROSS JOINs
+/// `descendants` with `nearest_ancestor`, which comes from
+/// `tag_inh_ancestors_walk!(1)` and has been empty for a tombstoned `?1`
+/// since #3944, so the step already inserted nothing in that case. The
+/// filter removes the second, redundant reason rather than an outcome.
+/// Step 1's `DELETE` is keyed on `inherited_from = ?1` and never touched the
+/// CTE, so no repair scope narrows — the #3944 trap (filtering a seed that
+/// also scopes a `DELETE`) does not apply to `descendants_active` at either
+/// call-site. Step 2 hand-rolls its own copy of the descendants walk and is
+/// untouched.
 ///
 /// ## No backfill for pre-#3923 vaults — and why none is needed
 ///

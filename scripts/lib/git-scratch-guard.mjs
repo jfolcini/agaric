@@ -27,8 +27,17 @@
 // green for the wrong reason, and one `git add` away from being destructive.
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
+import { deflateSync } from 'node:zlib'
 
 import {
   listTrackedEntries,
@@ -513,6 +522,25 @@ function verifyLinkedWorktreeOwnership({
     ownIndex.status === 1 && namesFile(ownIndex),
     `expected 1 naming ${file}, got ${ownIndex.status}: ${ownIndex.stderr}`,
   )
+  // …and the same, under the FULL environment a real commit in a linked
+  // worktree exports. This is the one legitimate hook shape that carries a
+  // GIT_DIR at all — measured on git 2.43, a `git commit` in a main checkout
+  // exports none, while one in a linked worktree exports an ABSOLUTE
+  // `GIT_DIR=<main>/.git/worktrees/<name>` beside the matching index. It is
+  // therefore the case that decides whether #4191's unconditional scrub of
+  // the redirect variables is safe, and the answer is that the exported
+  // value is REDUNDANT: `git -C <worktree> rev-parse --absolute-git-dir`
+  // returns exactly that directory with the variable removed, because the
+  // worktree's `.git` FILE points at it. Asserted rather than argued, since
+  // "redundant" is a claim about git's behaviour and this repo's own commits
+  // are made from worktrees.
+  const gitDirA = gitIn(wtA, 'rev-parse', '--absolute-git-dir').trim()
+  const hookInWorktree = run(wtA, env, [], { GIT_DIR: gitDirA, GIT_INDEX_FILE: idxA })
+  check(
+    'linked worktree: the FULL hook environment (absolute GIT_DIR + index) still reads its own index',
+    hookInWorktree.status === 1 && namesFile(hookInWorktree),
+    `expected 1 naming ${file}, got ${hookInWorktree.status}: ${hookInWorktree.stderr}`,
+  )
   const siblingIndex = run(wtA, env, [], { GIT_INDEX_FILE: idxB })
   check(
     "linked worktree: a SIBLING worktree's index is refused, not read as this tree's",
@@ -561,6 +589,275 @@ function verifyLinkedWorktreeOwnership({
     "linked worktree: …and refuses a WORKTREE's index nested inside its own .git",
     worktreeIndexInMain.status === 2 && /different repository/.test(worktreeIndexInMain.stderr),
     `expected 2, got ${worktreeIndexInMain.status}: ${worktreeIndexInMain.stderr}`,
+  )
+}
+
+// ── SCENARIO 9b: A LEAKED GIT CONTEXT, AND THE HOOK IT MUST NOT BREAK
+// (#4061 / #4191 / #4192). Extracted from scenario 9's block only because
+// `runScenarios` had grown past the complexity ceiling; `dir`, `env` and
+// `foreignDir` are that scenario's own fixtures, and `run`, `namesFile` and
+// `check` the runner's helpers, all passed in.
+//
+// Entry state, established by the caller and load-bearing throughout: the
+// VIOLATION IS STAGED in `dir`'s index AND present on disk. Every assertion
+// below either keeps that or says where it changes it, because "exit 0" is
+// only evidence of a clean scan when there was something findable to miss.
+function verifyLeakedGitContext({
+  file,
+  badLine,
+  goodLine,
+  dir,
+  env,
+  foreignDir,
+  run,
+  namesFile,
+  check,
+}) {
+  // An INHERITED GIT_DIR must not let the ownership probe answer about the
+  // FOREIGN repository (#4061). `indexBelongsTo` asks `git -C <repoRoot>
+  // rev-parse --absolute-git-dir`, and an ambient GIT_DIR outranks `-C`
+  // (measured: `GIT_DIR=<other>/.git git -C <root> rev-parse
+  // --absolute-git-dir` answers about <other>, not <root>). A real commit
+  // hook running INSIDE `foreignDir` would leave BOTH GIT_DIR and
+  // GIT_INDEX_FILE exported from it — the shape below — and before the fix
+  // the leaked GIT_DIR made the probe answer about `foreignDir`, so
+  // GIT_INDEX_FILE (also naming a path under that same leaked git dir)
+  // compared EQUAL to it: a false ACCEPT of the foreign index as belonging
+  // to `dir`, silently defeating the refusal the caller checked with `auto`.
+  const foreignWithGitDir = {
+    GIT_DIR: join(foreignDir, '.git'),
+    GIT_INDEX_FILE: join(foreignDir, '.git', 'index'),
+  }
+  const autoWithGitDir = run(dir, env, [], foreignWithGitDir)
+  check(
+    'foreign index: an inherited GIT_DIR must not make the probe answer about the OTHER repo (#4061)',
+    autoWithGitDir.status === 2 && /different repository/.test(autoWithGitDir.stderr),
+    `expected 2 naming a different repository, got ${autoWithGitDir.status}: ${autoWithGitDir.stderr}`,
+  )
+  // --worktree sidesteps AUTO (and therefore the ownership probe)
+  // entirely, so it must not inherit AUTO's exit-2 refusal under the same
+  // leaked GIT_DIR — and, since #4191, it must also genuinely SCAN `dir`
+  // while not doing so. `dir`'s working tree is dirty here (written above,
+  // for the `wt` check), so the only passing answer is exit 1 NAMING the
+  // file.
+  //
+  // That second half is the whole point, and this assertion used to lack
+  // it: it read `status === 0` and PASSED, documenting the defect rather
+  // than the fix. `gitEnv()` (guard-file-source.mjs) left the leaked
+  // `GIT_DIR` in the env it handed `listTrackedEntries`, so `git ls-files`
+  // fell back to that git dir's OWN default index and enumerated
+  // `foreignDir`'s tracked files instead of `dir`'s — the guard silently
+  // judged the WRONG repository as clean, under `--worktree` and
+  // `--cached` alike, and for every explicit source flag rather than only
+  // under AUTO. An "expected 0" over a fixture that is clean on disk
+  // cannot tell "scanned the tree and found nothing" from "enumerated
+  // nothing at all", which is exactly why the violation on disk is what
+  // makes this check mean anything.
+  const wtWithGitDir = run(dir, env, ['--worktree'], foreignWithGitDir)
+  check(
+    'foreign index: …and --worktree under the same leaked GIT_DIR still SCANS this tree (#4191)',
+    wtWithGitDir.status === 1 && namesFile(wtWithGitDir),
+    `expected 1 naming ${file}, got ${wtWithGitDir.status}: ${wtWithGitDir.stderr}`,
+  )
+  // …and the leak that moves the ROOT itself, before any of the ownership
+  // machinery is consulted (#4192). The five cwd-anchored guards ask `git
+  // rev-parse --show-toplevel`, and a bare `GIT_DIR` does NOT move that
+  // answer — the work tree defaults to cwd — which is why this vector
+  // survived #4061 unnoticed while looking covered. `GIT_WORK_TREE` does
+  // move it (measured on git 2.43: `GIT_DIR=<B>/.git GIT_WORK_TREE=<B> git
+  // rev-parse --show-toplevel` answers B from a cwd inside A), and so does
+  // a foreign repository with `core.worktree` set. A guard rooted at B
+  // enumerates B, reads B and reports about B, with nothing downstream
+  // able to notice — so it is asserted through a red the wrong root cannot
+  // produce.
+  const foreignWorkTree = {
+    GIT_DIR: join(foreignDir, '.git'),
+    GIT_WORK_TREE: foreignDir,
+    GIT_INDEX_FILE: join(foreignDir, '.git', 'index'),
+  }
+  const wtForeignRoot = run(dir, env, ['--worktree'], foreignWorkTree)
+  check(
+    'foreign index: a leaked GIT_WORK_TREE must not move the ROOT the guard judges (#4192)',
+    wtForeignRoot.status === 1 && namesFile(wtForeignRoot),
+    `expected 1 naming ${file}, got ${wtForeignRoot.status}: ${wtForeignRoot.stderr}`,
+  )
+  // Put the fixed line back on disk, so every `--cached` answer below can
+  // ONLY have come from `dir`'s own STAGED index: a run that enumerated
+  // `foreignDir` exits 0, and so does one that quietly read the working
+  // tree under a `(judged the staged index)` banner.
+  writeFileSync(join(dir, file), `${goodLine}\n`)
+  const cachedWithGitDir = run(dir, env, ['--cached'], foreignWithGitDir)
+  check(
+    "foreign index: …and --cached under a leaked GIT_DIR reads THIS tree's staged index (#4191)",
+    cachedWithGitDir.status === 1 && namesFile(cachedWithGitDir),
+    `expected 1 naming ${file}, got ${cachedWithGitDir.status}: ${cachedWithGitDir.stderr}`,
+  )
+  const cachedForeignRoot = run(dir, env, ['--cached'], foreignWorkTree)
+  check(
+    'foreign index: …and --cached under a leaked GIT_WORK_TREE too (#4192)',
+    cachedForeignRoot.status === 1 && namesFile(cachedForeignRoot),
+    `expected 1 naming ${file}, got ${cachedForeignRoot.status}: ${cachedForeignRoot.stderr}`,
+  )
+  // THE CONTROL for the four checks above: with the disk clean, the SAME
+  // leaked environment must go GREEN under `--worktree`. Without it, every
+  // "expected 1" here is satisfied by a guard that reddens on anything the
+  // moment it sees a `GIT_DIR`, which is the mirror image of the defect
+  // and just as wrong.
+  const wtLeakedClean = run(dir, env, ['--worktree'], foreignWithGitDir)
+  check(
+    'foreign index: …and the same leak over a CLEAN working tree is still green (not red-on-anything)',
+    wtLeakedClean.status === 0,
+    `expected 0, got ${wtLeakedClean.status}: ${wtLeakedClean.stderr}`,
+  )
+
+  // ── THE LEGITIMATE COMMIT HOOK, which the scrub above must not break.
+  //
+  // A guard runs under a real hook far more often than under a leak, and
+  // "scrub GIT_DIR" is a safe answer only because the hook's own GIT_DIR
+  // is REDUNDANT with what `cwd=repoRoot` discovers — never because the
+  // fix can tell an honest export from a hostile one. Both shapes are
+  // asserted with the working tree CLEAN, so only a genuine read of THIS
+  // tree's index can redden. Measured on git 2.43:
+  //
+  //   * a main checkout exports NO GIT_DIR at all, and a RELATIVE
+  //     `GIT_INDEX_FILE=.git/index` resolved against the hook's cwd, which
+  //     git fixes at the work-tree toplevel (scenario 1 pins that alone);
+  //   * a relative `GIT_DIR=.git` beside it is the shape githooks(5)
+  //     describes and some hook runners still export — it resolves the
+  //     same way, and a fix that scrubbed only ABSOLUTE values would have
+  //     to reason about it;
+  //   * a LINKED WORKTREE exports an ABSOLUTE
+  //     `GIT_DIR=<main>/.git/worktrees/<name>` — asserted where the
+  //     fixture for it already exists, in `verifyLinkedWorktreeOwnership`.
+  const hookRelative = run(dir, env, [], {
+    GIT_DIR: '.git',
+    GIT_INDEX_FILE: join('.git', 'index'),
+  })
+  check(
+    'commit hook: a RELATIVE GIT_DIR=.git beside the index still reads the staged index',
+    hookRelative.status === 1 && namesFile(hookRelative),
+    `expected 1 naming ${file}, got ${hookRelative.status}: ${hookRelative.stderr}`,
+  )
+  const hookAbsolute = run(dir, env, [], {
+    GIT_DIR: join(dir, '.git'),
+    GIT_INDEX_FILE: join(dir, '.git', 'index'),
+  })
+  check(
+    "commit hook: …and an ABSOLUTE GIT_DIR naming this tree's own git dir does too",
+    hookAbsolute.status === 1 && namesFile(hookAbsolute),
+    `expected 1 naming ${file}, got ${hookAbsolute.status}: ${hookAbsolute.stderr}`,
+  )
+  // …and a PARTIAL commit, which is the one shape where GIT_INDEX_FILE
+  // carries something the git dir cannot reproduce: `git commit -- <path>`
+  // writes a `.git/next-index-<pid>.lock` TEMP index and exports that
+  // (measured on git 2.43, alongside `.git/index.lock` for `git commit -a`)
+  // — so "keep GIT_INDEX_FILE, scrub the rest" is a real distinction rather
+  // than a stylistic one, and the two checks above cannot see it: in an
+  // ordinary fixture `.git/index` is ALSO what git falls back to when the
+  // variable is dropped, so both answers coincide.
+  //
+  // The fixture builds the divergence by hand: the staged violation is
+  // copied into a temp index under this tree's own git dir, and `.git/index`
+  // is then made clean. A run that dropped GIT_INDEX_FILE — or resolved it
+  // against the wrong git dir — reads the clean default index and exits 0.
+  const tempIndex = join(dir, '.git', `next-index-${process.pid}.lock`)
+  copyFileSync(join(dir, '.git', 'index'), tempIndex)
+  execFileSync('git', ['add', '-A'], { cwd: dir, env, stdio: 'ignore' })
+  const stagedNow = run(dir, env, ['--cached'])
+  check(
+    'commit hook: the temp-index fixture really did clean the DEFAULT index (else the next case is vacuous)',
+    stagedNow.status === 0,
+    `expected 0 from .git/index, got ${stagedNow.status}: ${stagedNow.stderr}`,
+  )
+  const hookTempIndex = run(dir, env, [], {
+    GIT_DIR: join(dir, '.git'),
+    GIT_INDEX_FILE: tempIndex,
+  })
+  check(
+    'commit hook: the TEMP index of a partial commit is honoured, not replaced by the default one',
+    hookTempIndex.status === 1 && namesFile(hookTempIndex),
+    `expected 1 naming ${file}, got ${hookTempIndex.status}: ${hookTempIndex.stderr}`,
+  )
+
+  // ── AND THE OBJECT STORE, which the git dir is only half of.
+  //
+  // `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are one
+  // mechanism in two variables (receive-pack's quarantine exports the pair),
+  // so scrubbing only the first leaves the second able to answer for any oid
+  // the primary store LACKS — and `git cat-file` does not verify that a body
+  // hashes to the name it was asked for. A leaked alternate can therefore
+  // hand the guard an ATTACKER-CHOSEN body for an oid `ls-files -s` named,
+  // which is the same "reported a verdict about content it never read from
+  // this tree" as a leaked GIT_DIR, one layer down.
+  //
+  // Built so the answer cannot be a coincidence: the violation is staged,
+  // its loose object is REMOVED (a fresh fixture never packs), and the
+  // forged store holds `goodLine`'s bytes under the VIOLATION's oid. Three
+  // assertions, because the interesting one is a non-event — the fixture
+  // really stages the violation, the damaged store really refuses it
+  // fail-closed, git really would serve the forgery — and only then that the
+  // guard does not.
+  writeFileSync(join(dir, file), `${badLine}\n`)
+  execFileSync('git', ['add', '-A'], { cwd: dir, env, stdio: 'ignore' })
+  const stagedBad = run(dir, env, ['--cached'])
+  check(
+    'leaked alternates: the fixture really stages the violation (else the next cases are vacuous)',
+    stagedBad.status === 1 && namesFile(stagedBad),
+    `expected 1 naming ${file}, got ${stagedBad.status}: ${stagedBad.stderr}`,
+  )
+  const stagedOid = execFileSync('git', ['ls-files', '-s', '--', file], {
+    cwd: dir,
+    env,
+    encoding: 'utf8',
+  }).split(' ')[1]
+  rmSync(join(dir, '.git', 'objects', stagedOid.slice(0, 2), stagedOid.slice(2)), { force: true })
+  const damaged = run(dir, env, ['--cached'])
+  check(
+    'leaked alternates: …and with its loose object removed the guard refuses fail-closed, not silently',
+    damaged.status === 2,
+    `expected 2 (damaged object store), got ${damaged.status}: ${damaged.stderr}`,
+  )
+  const forgedStore = join(dirname(dir), 'forged-objects')
+  mkdirSync(join(forgedStore, stagedOid.slice(0, 2)), { recursive: true })
+  const forgedBody = Buffer.from(`${goodLine}\n`, 'utf8')
+  writeFileSync(
+    join(forgedStore, stagedOid.slice(0, 2), stagedOid.slice(2)),
+    deflateSync(Buffer.concat([Buffer.from(`blob ${forgedBody.length}\0`, 'utf8'), forgedBody])),
+  )
+  const leakedAlternates = { GIT_ALTERNATE_OBJECT_DIRECTORIES: forgedStore }
+  // Wrapped, not a bare call: this is a PROBE of git's own behaviour, not the
+  // guard's, and today's git (2.43) always exits 0 here. A future git that
+  // verifies an object's body against the hash it was asked for on read
+  // would make this exit non-zero instead — and an unwrapped `execFileSync`
+  // would then THROW out of `runScenarios`, a stack trace across all five
+  // consuming guards' self-tests instead of a named red. The shell twin
+  // (`test-py-guard-file-source.sh` section 5c) degrades gracefully for the
+  // same case: its `$(...)` failure just captures empty stdout and compares
+  // unequal. Catching here and forcing the same "does not match" outcome
+  // keeps the two behaving alike.
+  let gitHonoursForgery = ''
+  let gitHonoursForgeryError = ''
+  try {
+    gitHonoursForgery = execFileSync('git', ['cat-file', 'blob', stagedOid], {
+      cwd: dir,
+      env: { ...env, ...leakedAlternates },
+      encoding: 'utf8',
+    })
+  } catch (err) {
+    gitHonoursForgeryError = err.message
+  }
+  check(
+    "leaked alternates: …and git itself DOES serve the forged body under the violation's oid (the leak is real)",
+    gitHonoursForgery === `${goodLine}\n`,
+    gitHonoursForgeryError
+      ? `git refused to serve the forged blob instead of honouring the leaked alternate: ${gitHonoursForgeryError}`
+      : `expected the forged good line back from git, got ${JSON.stringify(gitHonoursForgery)}`,
+  )
+  const cachedWithAlternates = run(dir, env, ['--cached'], leakedAlternates)
+  check(
+    'leaked alternates: …yet the guard still refuses, because the variable never reaches its cat-file (#4191)',
+    cachedWithAlternates.status === 2,
+    `expected 2, got ${cachedWithAlternates.status}: ${cachedWithAlternates.stderr}`,
   )
 }
 
@@ -1073,11 +1370,17 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
       auto.status === 2 && /different repository/.test(auto.stderr),
       `expected 2 naming a different repository, got ${auto.status}: ${auto.stderr}`,
     )
+    // Stage the working tree DIRTY right before this run: a `status === 0`
+    // check against a fixture whose disk copy is already clean cannot tell
+    // "the guard scanned `dir` and found nothing" from "the guard enumerated
+    // nothing at all under the leaked `GIT_INDEX_FILE`". Requiring exit 1
+    // over a real, findable violation proves the scan is genuine.
+    writeFileSync(join(dir, file), `${badLine}\n`)
     const wt = run(dir, env, ['--worktree'], foreign)
     check(
-      'foreign index: --worktree resolves the ambiguity and judges the files on disk',
-      wt.status === 0,
-      `expected 0, got ${wt.status}: ${wt.stderr}`,
+      'foreign index: --worktree resolves the ambiguity and genuinely judges the files on disk',
+      wt.status === 1 && namesFile(wt),
+      `expected 1 naming ${file}, got ${wt.status}: ${wt.stderr}`,
     )
     // The env-binding half: `cwd` does NOT decide which index git reads, so
     // without `gitEnv` this `--cached` run enumerated the FOREIGN index — a
@@ -1098,6 +1401,10 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
       own.status === 1 && namesFile(own),
       `expected 1 naming ${file}, got ${own.status}: ${own.stderr}`,
     )
+
+    // …and everything the same leak can still reach once AUTO has refused —
+    // see `verifyLeakedGitContext`, where the reasoning lives.
+    verifyLeakedGitContext({ file, badLine, goodLine, dir, env, foreignDir, run, namesFile, check })
   }
 
   // ── 10. A LINKED WORKTREE — see `verifyLinkedWorktreeOwnership`, which is

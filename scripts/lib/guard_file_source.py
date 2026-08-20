@@ -137,12 +137,28 @@ path that is simply not in the commit.
 
 ─── Cost ───────────────────────────────────────────────────────────────
 
-One `git cat-file blob <sha>` spawn per file read from the index, cached
-per path. That is affordable precisely because of the AUTO rule: the
-whole-tree runs (`prek run --all-files`, CI, a manual invocation) have no
-`GIT_INDEX_FILE` and so never take this path at all. The index path only
-runs inside a real commit hook, where the file list is the commit's
-changed set — tens of files, not thousands.
+`read()` costs one `git cat-file blob <sha>` spawn per file read from the
+index, cached per path. That is affordable precisely because of the AUTO
+rule: the whole-tree runs (`prek run --all-files`, CI, a manual invocation)
+have no `GIT_INDEX_FILE` and so never take this path at all. For
+`check-raw-tx.py` and `check-command-arity.py`, and for
+`check-dynamic-sql.py`'s marker check, the index path only runs inside a
+real commit hook, where the file list is the commit's changed set — tens of
+files, not thousands.
+
+That is NOT true of `check-dynamic-sql.py`'s orphan sweep (#4063): it is
+deliberately GLOBAL over the baseline — an entry naming a file that is
+going away must be reclaimed, and prek's changed-file list omits deletions
+— so under the index it used to cost one `_blob` spawn per baseline entry
+(~70 today) on every commit that touches a scanned `.rs` file, independent
+of how small that commit is. `read_many` exists for exactly this shape: it
+warms the cache for several paths through chunked `git cat-file --batch`
+calls — one spawn per `_CAT_FILE_CHUNK` paths rather than one per path —
+mirroring `readFromIndex`/`parseBatchStream` in the `.mjs` sibling
+verbatim, including the fail-closed handling of a desynchronised stream or
+a `missing` object (see `_read_batch`). A caller with more than a handful
+of paths to read should call it first; `read()` on each path afterwards is
+then a cache hit.
 """
 
 from __future__ import annotations
@@ -160,6 +176,131 @@ SOURCE_WORKTREE = "worktree"
 # belongs to that repository, never to the root whose `$GIT_DIR` contains it.
 # See `_index_belongs_to`; the `.mjs` twin spells this `NESTED_GIT_DIRS`.
 _NESTED_GIT_DIRS = frozenset({"worktrees", "modules"})
+
+# ─── The variables that RE-AIM git, and the one that INFORMS it ───────────
+#
+# Every name below merely points git at a directory it would otherwise
+# DISCOVER for itself, whether the caller meant it to or not: they outrank
+# `-C root` (#4061, the ownership probe) and they outrank `cwd=root` (#4191,
+# the guard's own `ls-files`/`cat-file`). That redundancy is what makes
+# removing them safe, and it is the whole distinction this module draws
+# between a leaked git context and a legitimate one — with `cwd` at the tree
+# being judged, ordinary discovery finds that tree's own git dir and answers
+# identically, so scrubbing is a no-op when the ambient context is honest and
+# corrective when it is not. There is nothing to sniff. Measured on git 2.43:
+# an ordinary `git commit` in a main checkout exports NO `GIT_DIR` at all; a
+# commit in a LINKED WORKTREE exports the absolute
+# `<main>/.git/worktrees/<name>` that `rev-parse --absolute-git-dir` answers
+# with the variable removed; so does a checkout whose `.git` is a GITFILE
+# (`git init --separate-git-dir`, and every submodule), which is a MAIN
+# checkout exporting an absolute `GIT_DIR` and equally redundant, since
+# discovery reads the same target out of the gitfile — the argument rests on
+# redundancy, not on absence; and a relative `GIT_DIR=.git` resolves against
+# the git process's cwd, which every call here fixes at `root`.
+#
+# The invariant has one honest counterexample, not a shape any of the above
+# and not one this repo uses: a DETACHED WORK TREE (`git --git-dir=X
+# --work-tree=Y <command>`, the bare-dotfiles-repo shape), where `Y` carries
+# no `.git` of its own. There `GIT_WORK_TREE` is not redundant with
+# discovery — discovery has nothing under `Y` to find. Verified (git 2.43):
+# with `GIT_DIR`/`GIT_WORK_TREE` scrubbed and `cwd` at such a `Y`, `git
+# rev-parse --show-toplevel` answers "not a git repository" when `Y` sits
+# nowhere near another repo, and every caller here that treats that as
+# fail-open ends up reporting nothing rather than judging `Y`. Worse when
+# `Y` is nested inside an unrelated repo: discovery does not fail, it finds
+# the ANCESTOR, and a guard judges that tree instead, quietly, with no error
+# to notice. Not a shape this repo's guards ever run in, and the shapes
+# above really are redundant, so this does not change what the scrub list
+# removes — but the invariant above is stated unconditionally, and this is
+# the case where it is false.
+#
+# `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are ONE
+# mechanism in two variables — git's `receive-pack` quarantine exports the
+# pair together — and re-aim the OBJECT STORE the way the others re-aim the
+# git dir: the alternates git would otherwise use are discovered from
+# `<gitdir>/objects/info/alternates`. Scrubbing one and keeping the other
+# leaves a half-configured store, and the half left behind is not harmless.
+# Measured on git 2.43: `git cat-file` does NOT verify that an object's body
+# hashes to the name it was asked for, and an alternate is consulted for any
+# oid the primary store lacks — so a leaked `GIT_ALTERNATE_OBJECT_DIRECTORIES`
+# can serve an ATTACKER-CHOSEN body for an oid `git ls-files -s` names,
+# through `cat-file blob` and `cat-file --batch` alike. Reproduced against
+# `check-raw-tx.py --cached` over a staged violation whose loose object had
+# been removed: exit 2 (the fail-closed "damaged object store" refusal) became
+# exit 0 over a forged clean body. Pinned in section 5c of
+# `scripts/test-py-guard-file-source.sh`.
+#
+# Scrubbing the pair is not costless in every direction, only every
+# direction that matters HERE: a guard run as a server-side `pre-receive` /
+# `update` hook has its incoming objects held in exactly this quarantine, so
+# scrubbing it there makes those objects invisible too. That failure is
+# FAIL-CLOSED (`cat-file` misses, this module's own `GitError`, exit 2 with
+# the cause named) rather than the fail-open a leaked alternate risks in a
+# pre-commit guard, so it is safe — this module has no server-side hook
+# consumer today, but the pair is not only ever a hostile leak, just one
+# whose one legitimate use this list does not attempt to accommodate.
+#
+# What is deliberately NOT here, measured rather than argued, because the
+# test for membership is "can it change what a guard READS about the tree in
+# front of it" and not "is it a `GIT_` variable": `GIT_CONFIG_GLOBAL` /
+# `GIT_CONFIG_SYSTEM` / `GIT_CONFIG_COUNT` / `GIT_CONFIG_PARAMETERS` (git
+# ignores `core.worktree` and `core.bare` from anywhere but the repository's
+# own config, and all three spellings left `--show-toplevel` and `ls-files`
+# answering about the tree at `cwd`; scrubbing them would also make a fixture
+# that isolates itself with `GIT_CONFIG_GLOBAL` read the developer's real
+# `~/.gitconfig` instead); `GIT_PREFIX` (exported to every hook, consumed by
+# none of these calls); and `GIT_CEILING_DIRECTORIES` /
+# `GIT_DISCOVERY_ACROSS_FILESYSTEM`, which bound the UPWARD walk rather than
+# aiming it — the worst either can do is truncate or extend the ANCESTRY of
+# `cwd`, never name an unrelated repository, and both were measured inert
+# when `cwd` IS the toplevel, which is the only shape a guard runs in.
+#
+# `GIT_INDEX_FILE` is deliberately ABSENT, in both of its roles. For
+# `_index_belongs_to` it is the value under TEST rather than ambient context
+# to strip (and `rev-parse --absolute-git-dir` never consults it). For
+# `git_env` it is the one variable that is NOT redundant with discovery: a
+# commit in flight names a temp index — `.git/index.lock`,
+# `.git/next-index-<pid>.lock` — that exists nowhere in git's layout and
+# cannot be re-derived, so it is KEPT when it belongs to the tree being
+# judged rather than dropped wholesale.
+#
+# A subset of `GIT_SCRATCH_LEAK_VARS` (`scripts/lib/git-scratch-guard.sh`) —
+# that list scrubs a whole fixture's environment for a battery of git
+# subcommands; this one scrubs the calls a guard makes about the tree it is
+# judging. The Python twin of `GIT_REDIRECT_VARS` in `guard-file-source.mjs`;
+# the two lists are identical, which is the point.
+_GIT_REDIRECT_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+)
+
+
+def scrub_git_redirects(env) -> dict:
+    """A copy of `env` with the path-redirect variables above removed.
+
+    The one spelling of "ask git about the directory in front of you, not
+    about wherever an inherited environment points" — used by the ownership
+    probe (#4061) and by `git_env` for the guard's own enumeration and blob
+    reads (#4191). Those were two separate exposures of one question, and
+    they had two different answers before this existed.
+
+    `GIT_INDEX_FILE` survives this call untouched — see the list's own note.
+    """
+    out = dict(env)
+    for name in _GIT_REDIRECT_VARS:
+        out.pop(name, None)
+    return out
+
+
+# `read_many`'s chunk size (#4063), matching `CAT_FILE_CHUNK` in the `.mjs`
+# sibling exactly, for the same reason: peak memory is bounded by the
+# chunk rather than by however many paths a caller passes, and one spawn per
+# chunk of this many paths — rather than one per path — is the whole point.
+_CAT_FILE_CHUNK = 500
 
 
 class UsageError(Exception):
@@ -182,6 +323,17 @@ class AmbiguousSourceError(Exception):
     guess available here, so there is no guess: the caller is told to say
     which copy it means with `--worktree` or `--cached`, and the guard exits
     2 until it does.
+
+    This holds UNCONDITIONALLY — not only while the ambient environment
+    carries no `GIT_DIR` of its own. It used to hold only in that narrower
+    case: `_index_belongs_to`'s ownership probe ran under the ambient
+    environment, and an inherited `GIT_DIR` outranks `-C root`, so a
+    `GIT_DIR` exported alongside a foreign `GIT_INDEX_FILE` could make the
+    probe answer about that foreign repository and accept its index as this
+    one's (#4061). The probe now scrubs its own environment of exactly the
+    variables that could redirect it, so the guarantee this exception exists
+    to state — a foreign index is refused, never silently read — is true
+    regardless of what the caller's shell happens to have exported.
     """
 
 
@@ -248,17 +400,50 @@ def _index_belongs_to(index_file: str, root: Path) -> bool:
     checkout's index read from a worktree, and a worktree's index read from
     the main checkout. Pinned there, and by scenario 10 of
     `runSourceScenarios`.
+
+    ─── An inherited GIT_DIR outranks -C too (#4061) ────────────────────
+
+    `-C root` tells THIS `git` command where to look — but an ambient
+    `GIT_DIR` outranks it (measured on git 2.43: `GIT_DIR=<other>/.git git
+    -C <root> rev-parse --absolute-git-dir` answers about `<other>`, not
+    `root`). So with both `GIT_DIR` and `GIT_INDEX_FILE` exported from
+    ANOTHER repository — exactly what a real commit hook leaves in the
+    environment of that repository — the leaked `GIT_DIR` made this probe
+    answer about that other repository, and `index_file` (also naming a
+    path under that same leaked git dir) then compared EQUAL to it: a false
+    ACCEPT of a foreign index as belonging to `root`, silently defeating the
+    exit-2 refusal `AmbiguousSourceError` exists to raise.
+
+    The probe's OWN environment is scrubbed of `_GIT_REDIRECT_VARS` before
+    this call for exactly that reason — asking "what repository is at this
+    path" is a question no ambient git context should get to answer on
+    `root`'s behalf. `git_env` still binds the rest of it, and
+    `GIT_INDEX_FILE` is still the one variable it decides by BELONGING —
+    kept when this probe (now honest about `root`) says it is this tree's,
+    dropped when it says otherwise. What is no longer true of that function
+    is "and strips nothing else": since #4191 it removes the whole of
+    `_GIT_REDIRECT_VARS` unconditionally, because those re-aim its
+    `ls-files`/`cat-file` exactly as they re-aimed this probe.
+
+    Measured before this fix, in a two-repository scratch fixture with
+    `GIT_DIR` and `GIT_INDEX_FILE` both exported from the second: AUTO
+    accepted the foreign index as belonging to the first, and the guard
+    exited 0 over a staged violation it never read. Pinned in section 5 of
+    `scripts/test-py-guard-file-source.sh` and scenario 9 of
+    `runSourceScenarios`.
     """
     path = Path(index_file)
     if not path.is_absolute():
         path = Path.cwd() / path
     path = Path(os.path.normpath(path))
+    probe_env = scrub_git_redirects(os.environ)
     try:
         out = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
             capture_output=True,
             text=True,
             check=False,
+            env=probe_env,
         )
     except OSError:
         return False
@@ -289,11 +474,40 @@ def git_env(root: Path, env) -> dict:
     commit hook (where the exported index IS this tree's, often a
     `next-index-<pid>.lock` that MUST be honoured) and
     `pr-merge-result-check.sh` (where it is somebody else's and must not
-    be). Belonging decides, and nothing else is stripped — a foreign
-    `GIT_DIR`/`GIT_WORK_TREE` is out of scope here and would already have
-    made `root` itself wrong.
+    be). Belonging decides which INDEX is read.
+
+    ─── …and an ambient GIT_DIR outranks `cwd` in exactly the same way ───
+
+    This function used to leave the rest of the environment exactly as
+    given, on the stated grounds that "a foreign `GIT_DIR`/`GIT_WORK_TREE`
+    in `env` is out of scope for this function". It was not (#4191):
+    `GIT_DIR` re-aims the very `git ls-files` this env is built for.
+    Measured on git 2.43, from a cwd inside repo A:
+    `GIT_DIR=<B>/.git git -C <A> ls-files` lists B's tracked paths, not
+    A's — `-C` and `cwd` both lose to it. So a leaked `GIT_DIR` made
+    `_entries` enumerate the OTHER repository's index while `cwd=root` made
+    it look otherwise, and the guard reported a verdict about a tree it
+    never opened. Reproduced against `check-raw-tx.py --cached` in a
+    two-repository fixture, with the foreign `GIT_INDEX_FILE` correctly
+    stripped by the rule above and `GIT_DIR` alone left in place: exit 0
+    over a staged violation, because `ls-files` fell back to that git dir's
+    own default index and the path under judgement was simply not in it.
+
+    The redirect variables are therefore scrubbed here too, unconditionally
+    — see `_GIT_REDIRECT_VARS` for why that does not need to distinguish a
+    hostile leak from an honest one, and why `GIT_INDEX_FILE` is the one
+    variable that gets a belonging test rather than a blanket removal.
+    Nothing about a real commit hook's environment changes: the hook's
+    `GIT_DIR`, when it exports one at all, names the same directory
+    `cwd=root` already discovers.
+
+    That leaves `_index_belongs_to`'s OWN probe (#4061) as the second half
+    of the same rule rather than the whole of it: before that fix,
+    "belonging decides" was true in name only — a `GIT_DIR` exported
+    alongside a foreign `GIT_INDEX_FILE` could make the probe answer about
+    that foreign repository and accept its index as `root`'s.
     """
-    out = dict(env)
+    out = scrub_git_redirects(env)
     index_file = out.get("GIT_INDEX_FILE")
     if index_file and not _index_belongs_to(index_file, root):
         del out["GIT_INDEX_FILE"]
@@ -509,6 +723,151 @@ class FileSource:
         self._blobs[rel] = text
         return text
 
+    def read_many(self, rels, chunk_size: int = _CAT_FILE_CHUNK) -> None:
+        """Warm the blob cache for several paths at once (#4063).
+
+        A no-op under the working tree: a disk read is already a single
+        syscall with no spawn to amortize, so there is nothing here to
+        batch. Under the index it is `_blob`'s per-call `git cat-file blob
+        <sha>` collapsed into chunked `git cat-file --batch` calls — one
+        spawn per `chunk_size` paths, not one per path — so a caller
+        that is about to `read()` many paths (`check-dynamic-sql.py`'s
+        orphan sweep, global over the baseline: ~70 entries today, one spawn
+        each before this existed) can pay for it once up front. `read()`
+        afterwards is a cache hit for every path this warmed; it is
+        unaffected for any path this did not (already cached, no stage-0
+        blob, or not passed here at all).
+
+        `chunk_size` defaults to `_CAT_FILE_CHUNK` and exists as an explicit
+        parameter — rather than a module global a caller reaches into — for
+        the same reason the `.mjs` sibling threads `chunkSize` through
+        `readContents`/`readFromIndex`: "ONLY so a self-test can drive the
+        chunk-boundary path" without depending on a private name that could
+        be renamed or inlined out from under a monkeypatch.
+
+        Ports `readFromIndex`/`parseBatchStream` from the `.mjs` sibling
+        (`scripts/lib/guard-file-source.mjs`) verbatim in behaviour,
+        including the fail-closed handling `_read_batch`/`_parse_batch`
+        describe: a malformed stream or a `missing` object raises `GitError`
+        rather than silently leaving the remainder of the chunk unread.
+        """
+        if self.source != SOURCE_INDEX:
+            return
+        entries = self._entries()
+        wanted: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for rel in rels:
+            if rel in seen or rel in self._blobs:
+                continue
+            seen.add(rel)
+            entry = entries.get(rel)
+            if entry is None or entry[0] == "160000":
+                continue
+            wanted.append((rel, entry[1]))
+        for i in range(0, len(wanted), chunk_size):
+            self._read_batch(wanted[i : i + chunk_size])
+
+    def _read_batch(self, chunk: list[tuple[str, str]]) -> None:
+        """Run ONE `git cat-file --batch` over `chunk` and cache every body.
+
+        Split out of `read_many` only so the chunking loop stays readable;
+        see `read_many` for what this is for and `_parse_batch` for the
+        framing it trusts git to honour.
+        """
+        stdin = ("\n".join(sha for _, sha in chunk) + "\n").encode("utf-8")
+        out = subprocess.run(
+            ["git", "cat-file", "--batch"],
+            cwd=self.repo_root,
+            env=self.env,
+            input=stdin,
+            capture_output=True,
+            check=False,
+        )
+        if out.returncode != 0:
+            raise GitError(
+                f"`git cat-file --batch` failed over {len(chunk)} path(s) "
+                f"(exit {out.returncode}): "
+                f"{out.stderr.decode('utf-8', 'replace').strip()}\n"
+                "  The index names these blobs, so this is a damaged or "
+                "unreadable object store — the staged content cannot be read."
+            )
+        self._parse_batch(out.stdout, chunk)
+
+    def _parse_batch(self, data: bytes, chunk: list[tuple[str, str]]) -> None:
+        """Walk ONE `cat-file --batch` response against the chunk that made it.
+
+        The Python twin of `parseBatchStream` in the `.mjs` sibling — same
+        framing, same two failure modes, same reason each one THROWS rather
+        than abandoning the rest of the chunk to a silent skip. See that
+        function's docstring for why: in short, a `break` here used to leave
+        up to `_CAT_FILE_CHUNK` staged paths absent from `self._blobs` with
+        no fallback behind them, which is the loudest possible version of
+        the "unscanned file" failure this whole module exists to prevent — a
+        guard that exits 0 having read almost nothing. `<oid> missing` is
+        thrown too, for the same #4046 reason `_blob` already throws on it:
+        the sha came out of the index moments earlier, so the object store
+        not having it is damage, not a benign per-file answer, and the
+        working-tree copy would be DIFFERENT content offered under a verdict
+        claiming the index.
+        """
+        off = 0
+        n = len(chunk)
+        for i, (rel, sha) in enumerate(chunk):
+            nl = data.find(b"\n", off)
+            if nl == -1:
+                raise GitError(
+                    "`git cat-file --batch` desynchronised: the stream ended "
+                    f"before the header for '{rel}'. {n - i} of {n} staged "
+                    "path(s) in this batch would have gone unread, so the "
+                    "read is abandoned rather than reported clean."
+                )
+            header = data[off:nl].decode("utf-8", "replace")
+            off = nl + 1
+            parts = header.split(" ")
+            if len(parts) >= 2 and parts[1] == "missing":
+                raise GitError(
+                    f"`git cat-file --batch`: the index names blob {sha} for "
+                    f"'{rel}', but the object store does not have it. The "
+                    "staged content cannot be read, and the copy on disk is "
+                    "different content — reporting it under a verdict "
+                    "claiming the index would be a verdict about a file "
+                    "nobody staged, so the read is abandoned rather than "
+                    "re-aimed."
+                )
+            if len(parts) < 3:
+                raise GitError(
+                    "`git cat-file --batch` desynchronised: header "
+                    f"{header!r} for '{rel}' carries no readable size. "
+                    f"{n - i} of {n} staged path(s) in this batch would have "
+                    "gone unread, so the read is abandoned rather than "
+                    "reported clean."
+                )
+            try:
+                size = int(parts[2])
+            except ValueError:
+                raise GitError(
+                    "`git cat-file --batch` desynchronised: header "
+                    f"{header!r} for '{rel}' carries no readable size. "
+                    f"{n - i} of {n} staged path(s) in this batch would have "
+                    "gone unread, so the read is abandoned rather than "
+                    "reported clean."
+                ) from None
+            if off + size > len(data):
+                raise GitError(
+                    "`git cat-file --batch` desynchronised: the payload for "
+                    f"'{rel}' claims {size} bytes but only {len(data) - off} "
+                    f"remain. {n - i} of {n} staged path(s) in this batch "
+                    "would have gone unread, so the read is abandoned rather "
+                    "than reported clean."
+                )
+            # `size == 0` (a zero-byte tracked file) sets `""` deliberately —
+            # see `read`'s note that None is not the empty string. `off`
+            # still advances by 1 past the LF git writes after the payload,
+            # empty or not.
+            if parts[1] == "blob":
+                self._blobs[rel] = data[off : off + size].decode("utf-8", "replace")
+            off += size + 1
+
     # -- public API -------------------------------------------------------
 
     def exists(self, rel: str) -> bool:
@@ -550,6 +909,23 @@ class FileSource:
         disk, so `exists()` said "not in the commit" while `read()` handed
         back the 68-entry ceiling being deleted, and the ratchet judged the
         commit against a baseline that commit removes.
+
+        AN UNDECODABLE FILE IS LOSSY-DECODED, NOT SKIPPED (#4062). Both
+        sources now agree here: `_blob` has always turned invalid UTF-8 into
+        U+FFFD replacement characters (`out.stdout.decode("utf-8",
+        "replace")`), so a tracked file with a bad byte was SCANNED under
+        `--cached` and silently SKIPPED under `--worktree` — the same
+        divergence #4048 exists to close, arriving through the decoder
+        instead of the source choice. `errors="replace"` here matches `_blob`
+        and the `.mjs` sibling (`readFileSync(…, 'utf8')` /
+        `Buffer.toString('utf8')` are both lossy-replace on both its
+        sources), so `errors="replace"` should make a decode failure
+        unreachable here. `UnicodeError` (the broader class, not just
+        `UnicodeDecodeError`) stays in the `except` regardless, as a second
+        line of defence rather than a claim that no decode path can ever
+        raise — `OSError`, a genuinely unreadable file, is the case that
+        still must answer None either way. An unscanned file is the failure
+        this module exists to prevent; a mangled-but-scanned one is not.
         """
         if self.source == SOURCE_INDEX:
             if rel in self._entries():
@@ -558,8 +934,8 @@ class FileSource:
                 return None
             # UNMERGED — fall through to the conflicted copy on disk.
         try:
-            return (self.repo_root / rel).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+            return (self.repo_root / rel).read_text(encoding="utf-8", errors="replace")
+        except (OSError, UnicodeError):
             return None
 
     def list_paths(self, prefix: str, suffix: str = "") -> list[str]:

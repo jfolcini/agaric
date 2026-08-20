@@ -207,3 +207,14 @@ describe('stable-id source', () => {
     expect(new Set([a.id, b.id, c.id]).size).toBe(3)
   })
 })
+
+describe('makeGroup', () => {
+  it('defaults the combinator to "and" when called with no argument', () => {
+    // Every other call site in this file passes 'and' explicitly, which
+    // never exercises the `op: TagBuilderOp = 'and'` default parameter
+    // itself — call with zero arguments so the default is what supplies the
+    // value under test (#3762).
+    const g = makeGroup()
+    expect(g.op).toBe('and')
+  })
+})

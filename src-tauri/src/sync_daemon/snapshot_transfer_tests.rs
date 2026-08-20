@@ -1372,10 +1372,18 @@ fn max_snapshot_size_is_at_least_one_copy_buffer() {
 /// `expected_remote_id` pair and return the receive-side result so
 /// the caller can assert on the resolved peer_refs row (or the
 /// returned error).
+///
+/// The recording sink is returned as well (#4097): which peer id the emitted
+/// events are attributed to is part of this path's contract, not incidental.
 async fn run_catchup_with_ids(
     remote_device_id: &str,
     expected_remote_id: Option<&str>,
-) -> (SqlitePool, TempDir, Result<CatchupOutcome, AppError>) {
+) -> (
+    SqlitePool,
+    TempDir,
+    Result<CatchupOutcome, AppError>,
+    Arc<RecordingEventSink>,
+) {
     // Build a "responder" DB with a snapshot to offer.
     let (resp_pool, _resp_dir) = test_pool().await;
     let resp_materializer = Materializer::new(resp_pool.clone());
@@ -1390,7 +1398,8 @@ async fn run_catchup_with_ids(
 
     let mut pair = quic_pair().await;
     let (client, server) = (&mut pair.client, &mut pair.server);
-    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let recording = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = recording.clone();
 
     let snap_hash = blake3::hash(&snap_bytes).to_hex().to_string();
 
@@ -1427,7 +1436,7 @@ async fn run_catchup_with_ids(
     materializer.shutdown();
     resp_materializer.shutdown();
 
-    (init_pool, init_dir, result)
+    (init_pool, init_dir, result, recording)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1436,7 +1445,7 @@ async fn try_receive_snapshot_catchup_falls_back_to_expected_remote_id_when_sess
     // the initiator's `session.remote_device_id` ends up empty.
     // The daemon's `expected_remote_id` (from mTLS / mDNS) must
     // fill in so the peer_refs row uses the real peer identity.
-    let (init_pool, _dir, result) = run_catchup_with_ids("", Some(REMOTE_DEV)).await;
+    let (init_pool, _dir, result, _sink) = run_catchup_with_ids("", Some(REMOTE_DEV)).await;
     result.expect("catch-up must succeed when expected_remote_id provides the fallback");
 
     // Empty `remote_device_id` must NOT have produced an empty-keyed
@@ -1467,7 +1476,7 @@ async fn try_receive_snapshot_catchup_errors_when_both_remote_ids_empty() {
     // records a failed session — silently completing would write a
     // peer_refs row keyed by the empty string and corrupt the
     // bookkeeping.
-    let (_init_pool, _dir, result) = run_catchup_with_ids("", None).await;
+    let (_init_pool, _dir, result, _sink) = run_catchup_with_ids("", None).await;
     let err = result.expect_err("catch-up must fail when both remote ids are empty");
     match err {
         AppError::InvalidOperation(msg) => {
@@ -1485,7 +1494,7 @@ async fn try_receive_snapshot_catchup_prefers_session_id_over_expected() {
     // When both ids are present and disagree, the
     // session-level `remote_device_id` (from HeadExchange) wins
     // because that's the value the protocol actually exchanged.
-    let (init_pool, _dir, result) =
+    let (init_pool, _dir, result, _sink) =
         run_catchup_with_ids(REMOTE_DEV, Some("OTHER_PEER_FROM_MTLS")).await;
     result.expect("catch-up must succeed when remote_device_id is non-empty");
 
@@ -1498,6 +1507,199 @@ async fn try_receive_snapshot_catchup_prefers_session_id_over_expected() {
     assert!(
         session_owned.is_some() && expected_owned.is_none(),
         "session-level remote_device_id must own the peer_refs row when both ids are present",
+    );
+}
+
+// -----------------------------------------------------------------
+// #4097 — the fallback's log level, and who the events name
+// -----------------------------------------------------------------
+
+/// Thread-safe buffered writer for in-process log capture.
+///
+/// Mirrors the helper in `sync_protocol/tests.rs`. Kept module-local so each
+/// test module stays self-contained (see AGENTS.md § "Test helper duplication
+/// is intentional").
+#[derive(Clone, Default)]
+struct CatchupLogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for CatchupLogBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CatchupLogBuf {
+    type Writer = CatchupLogBuf;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+impl CatchupLogBuf {
+    fn contents(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+/// Install a scoped subscriber capturing every `agaric_sync` event down to
+/// DEBUG, with the level rendered so a test can assert on it.
+///
+/// The catch-up runs inline on the test task (`tokio::join!` polls, it does not
+/// spawn), and `block_on` drives that task on the thread `set_default` was
+/// called from — so the thread-local subscriber is visible for the whole
+/// transfer. Anything the runtime moves to a worker thread simply is not
+/// captured, and none of the lines under test live there.
+fn capture_catchup_logs() -> (CatchupLogBuf, tracing::subscriber::DefaultGuard) {
+    use tracing_subscriber::layer::SubscriberExt;
+    let writer = CatchupLogBuf::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("agaric_sync=debug"))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false)
+                .with_level(true)
+                .with_target(true),
+        );
+    let guard = tracing::subscriber::set_default(subscriber);
+    (writer, guard)
+}
+
+/// Return the captured lines that mention the identity fallback.
+fn fallback_lines(logged: &str) -> Vec<&str> {
+    logged
+        .lines()
+        .filter(|l| l.contains("remote_device_id was empty at snapshot catch-up"))
+        .collect()
+}
+
+/// #4097 — falling back to the daemon-supplied peer identity is the DESIGNED
+/// path on this code path, so it logs at DEBUG.
+///
+/// `HeadExchange` is initiator-*sent*, and the initiator is the only role that
+/// ever reaches a catch-up, so a session id sourced from the authenticated peer
+/// identity rather than from the wire is routine, not an anomaly. This site
+/// logged it at `warn!` — a per-session warning on a healthy path, which is
+/// precisely the shape of alert that trains people to ignore the level. #4085
+/// demoted the structurally identical fallback in the session state machine;
+/// leaving this one shouting made the pair inconsistent as well as wrong.
+///
+/// Both halves matter and the test pins both: the line must still be THERE
+/// (demoting is not deleting — an operator diagnosing a mis-keyed `peer_refs`
+/// row needs to know which source supplied the id), and it must be DEBUG.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn snapshot_catchup_identity_fallback_logs_at_debug_not_warn_4097() {
+    let (writer, guard) = capture_catchup_logs();
+    let (_init_pool, _dir, result, _sink) = run_catchup_with_ids("", Some(REMOTE_DEV)).await;
+    drop(guard);
+    result.expect("precondition: the fallback path must still complete the catch-up");
+
+    let logged = writer.contents();
+    let lines = fallback_lines(&logged);
+    assert_eq!(
+        lines.len(),
+        1,
+        "the fallback must still say which source supplied the peer id — \
+         demoting a level is not deleting the line. Captured:\n{logged}"
+    );
+    assert!(
+        !lines[0].contains("WARN"),
+        "#4097: the expected fallback must not WARN — it fires on the healthy \
+         path, and a per-session warning on a healthy path is what teaches \
+         readers to ignore warnings. Line: {}",
+        lines[0]
+    );
+    assert!(
+        lines[0].contains("DEBUG"),
+        "#4097: and it must be DEBUG specifically, matching #4085's treatment of \
+         the identical fallback in the session state machine. Line: {}",
+        lines[0]
+    );
+}
+
+/// #4097 — the WARN moves to the case that is actually surprising: a catch-up
+/// that completed with no peer identity from *either* source.
+///
+/// This is the half that makes the demotion above safe to make. The level is
+/// not being lowered because nothing here is worth warning about; it is being
+/// lowered because the warning was attached to the wrong branch. Completing a
+/// catch-up we cannot key a `peer_refs` row on is a real anomaly — the snapshot
+/// is durable but unattributable, and the next sync treats the peer as unknown
+/// again — and it logged *nothing* at `warn!` before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn snapshot_catchup_with_no_identity_at_all_still_warns_4097() {
+    let (writer, guard) = capture_catchup_logs();
+    let (_init_pool, _dir, result, _sink) = run_catchup_with_ids("", None).await;
+    drop(guard);
+    result.expect_err("precondition: no identity from either source must fail the catch-up");
+
+    let logged = writer.contents();
+    let warned = logged.lines().any(|l| {
+        l.contains("WARN")
+            && l.contains("refusing to key peer_refs bookkeeping on an empty peer_id")
+    });
+    assert!(
+        warned,
+        "#4097: the genuinely-no-identity case must WARN. That is the branch \
+         worth a warning, and the one that had none. Captured:\n{logged}"
+    );
+    assert!(
+        fallback_lines(&logged).is_empty(),
+        "and it must not also claim a fallback happened — there was nothing to \
+         fall back to. Captured:\n{logged}"
+    );
+}
+
+/// #4097, the non-cosmetic half (the same one #4085 had): when the identity
+/// comes from the fallback, every event the catch-up emits must still name the
+/// peer.
+///
+/// The id was resolved only at the completion write, so a fallback session
+/// emitted `Progress`, `SnapshotProgress` and its terminal `Complete` with
+/// `remote_device_id: ""` — a UI keyed on that field drops or mis-attributes
+/// the whole transfer, including the progress bar for a multi-hundred-MB
+/// snapshot. Resolving up front fixes the events, not just the log line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn snapshot_catchup_events_carry_the_resolved_peer_id_4097() {
+    let (_init_pool, _dir, result, sink) = run_catchup_with_ids("", Some(REMOTE_DEV)).await;
+    result.expect("the fallback path must complete the catch-up");
+
+    let events = sink.events();
+    // The four peer-keyed variants a catch-up emits. The daemon-level
+    // variants (MdnsDisabled, InternetFacingBind, …) are not peer-scoped and
+    // this path never emits them.
+    let peer_ids: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            SyncEvent::Progress {
+                remote_device_id, ..
+            }
+            | SyncEvent::SnapshotProgress {
+                remote_device_id, ..
+            }
+            | SyncEvent::Complete {
+                remote_device_id, ..
+            }
+            | SyncEvent::Error {
+                remote_device_id, ..
+            } => Some(remote_device_id.clone()),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        !peer_ids.is_empty(),
+        "precondition: the catch-up must emit events at all"
+    );
+    assert!(
+        peer_ids.iter().all(|id| id == REMOTE_DEV),
+        "#4097: every event of a fallback-identity catch-up must name the peer \
+         the daemon authenticated. An event carrying \"\" is dropped or \
+         mis-attributed by any peer-keyed UI. Got: {peer_ids:?}"
     );
 }
 

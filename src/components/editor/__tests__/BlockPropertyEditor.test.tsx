@@ -126,20 +126,41 @@ vi.mock('sonner', () => ({
 // `autoUpdate` mock invokes the update callback once on registration and
 // re-invokes it on `window` `resize`, returning a cleanup fn — that is the
 // minimal contract callers depend on.
+//
+// Default implementations are named (rather than inlined in the `vi.mock`
+// factory) so `beforeEach` below can re-seed them after `mockReset()` — see
+// the #4040 note there (`computePosition` takes a `mockRejectedValueOnce`
+// elsewhere in this file, the same hazard `mockGetPropertyDef` has).
+// `Parameters`/`Awaited<ReturnType<...>>` of the REAL import, not a hand-typed
+// signature, so this cannot silently drift from the library's actual contract.
+function defaultAutoUpdate(...args: Parameters<typeof import('@floating-ui/dom').autoUpdate>) {
+  const [, , update] = args
+  update()
+  const handler = (): void => update()
+  window.addEventListener('resize', handler)
+  return () => window.removeEventListener('resize', handler)
+}
+function defaultComputePositionResult(): Awaited<
+  ReturnType<typeof import('@floating-ui/dom').computePosition>
+> {
+  return { x: 42, y: 84, placement: 'bottom', strategy: 'absolute', middlewareData: {} }
+}
+// The three middleware stubs are inert: the component only passes whatever
+// they return straight to `computePosition`, which is itself mocked, so the
+// value never has to be a real `Middleware`. Named here (like the two above)
+// so `beforeEach` can re-seed them after `mockReset()`.
+function defaultMiddleware(): ReturnType<typeof import('@floating-ui/dom').flip> {
+  return {} as ReturnType<typeof import('@floating-ui/dom').flip>
+}
 vi.mock('@floating-ui/dom', () => ({
-  computePosition: vi.fn().mockResolvedValue({ x: 42, y: 84 }),
-  autoUpdate: vi.fn((_anchor: Element, _floating: Element, update: () => void) => {
-    update()
-    const handler = () => update()
-    window.addEventListener('resize', handler)
-    return () => window.removeEventListener('resize', handler)
-  }),
-  flip: vi.fn(() => ({})),
-  shift: vi.fn(() => ({})),
-  offset: vi.fn(() => ({})),
+  computePosition: vi.fn().mockResolvedValue(defaultComputePositionResult()),
+  autoUpdate: vi.fn(defaultAutoUpdate),
+  flip: vi.fn(defaultMiddleware),
+  shift: vi.fn(defaultMiddleware),
+  offset: vi.fn(defaultMiddleware),
 }))
 
-import { autoUpdate, computePosition } from '@floating-ui/dom'
+import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom'
 
 import {
   BlockPropertyEditor,
@@ -175,17 +196,44 @@ function makeProps(overrides: Partial<BlockPropertyEditorProps> = {}): BlockProp
 
 describe('BlockPropertyEditor', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-    // `clearAllMocks` clears CALLS, not implementations, so every mock whose
-    // implementation a test replaces has to be re-seeded here or it leaks into
-    // the next test (see the `mockReturnValueOnce` note in the review).
-    mockSetProperty.mockImplementation(defaultSetProperty)
-    mockGetProperties.mockResolvedValue({ status: 'ok', data: [] })
-    mockGetPropertyDef.mockResolvedValue({ status: 'ok', data: null })
-    mockCreatePropertyDef.mockResolvedValue({ status: 'ok', data: null })
-    mockDeleteProperty.mockResolvedValue({ status: 'ok', data: {} })
-    mockListPropertyKeys.mockResolvedValue({ status: 'ok', data: [] })
-    mockDeletePropertyDef.mockResolvedValue({ status: 'ok', data: null })
+    // #4040 — `clearAllMocks()` clears CALLS but does NOT drain a queued
+    // `mockReturnValueOnce`/`mockResolvedValueOnce`. When a test queues one
+    // (the `#4009 — late-resolving property definition` tests below do, on
+    // `mockGetPropertyDef`) and the code path it exercises does not end up
+    // calling that mock, the once-value stays queued and is handed to the
+    // NEXT test that calls the same mock instead — which then hangs on a
+    // promise nobody will ever resolve until `waitFor` times out, ~8s later,
+    // in a test that has nothing to do with the one that queued it.
+    // `mockReset()` clears the once-queue AND the base implementation
+    // (unlike `clearAllMocks()`), so every mock is unconditionally re-seeded
+    // below regardless of what a previous test left queued.
+    mockSetProperty.mockReset().mockImplementation(defaultSetProperty)
+    mockGetProperties.mockReset().mockResolvedValue({ status: 'ok', data: [] })
+    mockGetPropertyDef.mockReset().mockResolvedValue({ status: 'ok', data: null })
+    mockCreatePropertyDef.mockReset().mockResolvedValue({ status: 'ok', data: null })
+    mockDeleteProperty.mockReset().mockResolvedValue({ status: 'ok', data: {} })
+    mockListPropertyKeys.mockReset().mockResolvedValue({ status: 'ok', data: [] })
+    mockDeletePropertyDef.mockReset().mockResolvedValue({ status: 'ok', data: null })
+    mockToastError.mockReset()
+    // `computePosition` also takes a `mockRejectedValueOnce` below (the
+    // "logs a warning when computePosition rejects" test) — the identical
+    // hazard, the identical fix. `autoUpdate` never queues a `...Once`
+    // today, but re-seeding it here too (rather than leaving it to
+    // `clearAllMocks`, which this file no longer calls) keeps its default
+    // implementation intact regardless.
+    vi.mocked(computePosition).mockReset().mockResolvedValue(defaultComputePositionResult())
+    vi.mocked(autoUpdate).mockReset().mockImplementation(defaultAutoUpdate)
+    // #4012 review note 8 — `flip`/`shift`/`offset` are inert stubs that
+    // nothing asserts on TODAY, which is exactly why they need to be here:
+    // dropping `clearAllMocks()` means every mock this file does not name
+    // keeps its call history for the whole file, so the first future
+    // assertion on one of them would see calls from earlier tests and fail
+    // for a reason nothing in that test explains. Reset them with the rest,
+    // so the file's rule is "every mock is reset here", with no exceptions
+    // to rediscover.
+    vi.mocked(flip).mockReset().mockImplementation(defaultMiddleware)
+    vi.mocked(shift).mockReset().mockImplementation(defaultMiddleware)
+    vi.mocked(offset).mockReset().mockImplementation(defaultMiddleware)
   })
 
   it('renders nothing when editingProp and editingKey are null', () => {
@@ -858,6 +906,94 @@ describe('BlockPropertyEditor', () => {
         expect(mockToastError).toHaveBeenCalledWith('Invalid boolean value — use true or false')
       })
       expect(mockSetProperty).not.toHaveBeenCalled()
+    })
+  })
+
+  // #4040 — the tests immediately above queue a `mockGetPropertyDef`
+  // `mockReturnValueOnce` for the late-resolving-definition race and rely on
+  // the render they follow it with to consume it (via blur, on the
+  // `valueType === null` path). This pair reproduces the failure mode
+  // directly instead of trusting that every future edit to those tests keeps
+  // consuming it: the first `it` queues a never-resolving promise and then
+  // deliberately exercises the OTHER path — `valueType` already resolved —
+  // so `getPropertyDef` is never called and the queued promise is never
+  // consumed; the second `it` then does a late-resolving-definition render of
+  // its own and must resolve against the freshly re-seeded default, not
+  // inherit the leftover promise from its predecessor.
+  //
+  // With `beforeEach` reset back to a bare `vi.clearAllMocks()` (`#4040`'s
+  // reported bug), the second test hangs on the first test's never-resolving
+  // promise until `waitFor`'s ~1s default timeout — reproducing, at smaller
+  // scale, the real ~8s cross-test failure the issue describes.
+  describe('#4040 — an unconsumed mockGetPropertyDef queue must not survive into the next test', () => {
+    // #4012 review note 7 — this pair is one experiment in two halves, and
+    // they are not interchangeable: the leftover queue must be created BEFORE
+    // the test that must not inherit it. Run the other way round (a future
+    // `sequence.shuffle`, an `.only` on the second, a copy-paste into another
+    // file) the second test passes without proving anything at all. The flag
+    // below turns that ordering from an assumption into an assertion: out of
+    // order this now FAILS, instead of quietly going vacuous.
+    let leftoverQueuedByPreviousTest = false
+
+    it('queues a deferred lookup that this render never consumes', () => {
+      // Modeled on a real regression shape: a lookup queued for the
+      // late-resolving-definition race, but the render below takes the
+      // ALREADY-resolved path (`valueType: 'text'`), which never calls
+      // `getPropertyDef` at all — mirroring #4009's own "uses an
+      // already-resolved definition as-is, with no extra lookup" case one
+      // section up. The promise below is never even given a `resolve`.
+      mockGetPropertyDef.mockReturnValueOnce(new Promise(() => {}))
+
+      render(
+        <BlockPropertyEditor
+          {...makeProps({ editingProp: { key: 'effort', value: '2h' }, valueType: 'text' })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '4h' } })
+      fireEvent.blur(input)
+
+      // Confirms the premise: the queued lookup really is unconsumed.
+      expect(mockGetPropertyDef).not.toHaveBeenCalled()
+      leftoverQueuedByPreviousTest = true
+    })
+
+    it('does not inherit the previous test leftover queue — resolves against the fresh default', async () => {
+      // The ordering requirement, pinned (see the note above): without the
+      // test before this one having queued an unconsumed promise, there is
+      // nothing here for the reset to have to survive.
+      expect(leftoverQueuedByPreviousTest).toBe(true)
+
+      // A late-resolving-definition render of its own: this DOES call
+      // `getPropertyDef` on blur. If the once-queue from the test above
+      // survived the reset, this call would receive that never-resolving
+      // promise instead of the re-seeded `{ status: 'ok', data: null }`
+      // default, and the assertions below would time out rather than pass.
+      render(
+        <BlockPropertyEditor
+          {...makeProps({ editingProp: { key: 'estimate', value: '5' }, valueType: null })}
+        />,
+      )
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '8' } })
+      fireEvent.blur(input)
+
+      await waitFor(
+        () => {
+          expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'estimate', {
+            value_text: '8',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          })
+        },
+        // Short on purpose: against the fresh default this resolves almost
+        // immediately, and a leftover never-resolving promise must fail
+        // (not merely go slow) well inside the file's default `waitFor`
+        // budget, not paper over a hang with a long timeout.
+        { timeout: 1000 },
+      )
     })
   })
 
@@ -1634,6 +1770,32 @@ describe('BlockPropertyEditor', () => {
           expect.objectContaining({ placement: 'bottom-start' }),
         )
       })
+    })
+
+    // #4012 review note 8 — this file resets its mocks one by one (no
+    // `clearAllMocks()`, which cannot drain a `...Once` queue), so a mock
+    // left off that list keeps its call history for the WHOLE file. The
+    // middleware stubs are the ones nothing asserted on, which is exactly how
+    // such a leak stays invisible until some future test does assert on them
+    // and fails for a reason nothing in it explains. Pin the reset itself.
+    it('starts each test with a clean middleware call history', async () => {
+      expect(flip).not.toHaveBeenCalled()
+      expect(shift).not.toHaveBeenCalled()
+      expect(offset).not.toHaveBeenCalled()
+
+      render(
+        <BlockPropertyEditor {...makeProps({ editingProp: { key: 'effort', value: '2h' } })} />,
+      )
+      await waitFor(() => {
+        expect(computePosition).toHaveBeenCalled()
+      })
+
+      // Confirms the premise: a popup render really does call all three, so
+      // the "clean" assertions above are about a history that would otherwise
+      // have been non-empty — the popup tests above this one render too.
+      expect(flip).toHaveBeenCalledTimes(1)
+      expect(shift).toHaveBeenCalledTimes(1)
+      expect(offset).toHaveBeenCalledTimes(1)
     })
 
     it('recomputes position on window resize', async () => {

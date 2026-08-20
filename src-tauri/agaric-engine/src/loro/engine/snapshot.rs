@@ -666,16 +666,49 @@ impl LoroEngine {
             };
             let mut chain: Vec<agaric_core::ulid::BlockId> = Vec::new();
             let mut cur = node;
-            // Same defensive hop bound as `tree_depth_of` / `has_ancestor_in`:
-            // the tree is convergent and cycle-free, so this never trips.
+            // #4111: `hops` is a belt-and-braces DEPTH cap, not the cycle guard.
+            // Termination is guaranteed by `visited` below — a repeated node
+            // breaks the loop on its second insert, so even a cyclic
+            // `A→B→A` stops after two hops. This counter would need a
+            // million-deep ancestor chain (a million DISTINCT blocks) to fire,
+            // and it is kept only to match `tree_depth_of` / `has_ancestor_in`.
+            // Do not read it as making the `visited` break redundant: deleting
+            // that break would remove the real guard and keep the decorative
+            // one.
             let mut hops = 0usize;
             while let Some(TreeParentId::Node(p)) = tree.parent(cur) {
-                let Ok(meta) = tree.get_meta(p) else { break };
-                let Ok(parent_block_id) = read_string(&meta, FIELD_BLOCK_ID) else {
-                    break;
+                let parent_block_id = match tree
+                    .get_meta(p)
+                    .map_err(|e| e.to_string())
+                    .and_then(|meta| read_string(&meta, FIELD_BLOCK_ID).map_err(|e| e.to_string()))
+                {
+                    Ok(id) => id,
+                    // #4111: a corrupt/unreadable node truncates this chain —
+                    // and because `visited` is SHARED across input chains, every
+                    // LATER chain that reaches this boundary stops at the last
+                    // id this one managed to record, so the ancestors above it
+                    // are never named for ANY input. The observable result is a
+                    // return to the pre-#4083 787 with nothing explaining why
+                    // the walk stopped short, which is exactly the diagnosis
+                    // #4083 exists to make possible. Say so.
+                    Err(err) => {
+                        tracing::warn!(
+                            from_block = *block_id,
+                            emitted_before_truncation = chain.len(),
+                            error = %err,
+                            "#4111: ancestor walk truncated — a parent node's \
+                             block_id could not be read, so this chain and every \
+                             later chain that reaches the same boundary stop \
+                             short; ancestors above it will not be backfilled \
+                             (#4083) and a dangling parent_id may still abort \
+                             the inbound projection with a 787"
+                        );
+                        break;
+                    }
                 };
                 // Already walked by an earlier chain ⇒ so were all of ITS
-                // ancestors, and both are already in `out` ahead of us.
+                // ancestors, and both are already in `out` ahead of us. THIS is
+                // what makes the walk terminate (see the `hops` note above).
                 if !visited.insert(parent_block_id.clone()) {
                     break;
                 }
@@ -2050,6 +2083,97 @@ mod parent_id_ancestor_tests {
             ids(&e.ancestors_outside(&["BB", "DD"])),
             vec!["AA", "CC"],
             "CC is returned even though its parent BB is only in the input set"
+        );
+    }
+
+    /// #4111 — a parent whose `block_id` cannot be read truncates the walk, and
+    /// that truncation is now REPORTED instead of vanishing.
+    ///
+    /// Corrupt-document condition, but it degrades exactly what #4083 shipped:
+    /// the ancestors above the bad node are never named, so the inbound
+    /// projection is back to a dangling `parent_id` and a bare `(code: 787)`
+    /// with nothing in the log saying the walk stopped short.
+    ///
+    /// The fixture also pins the POISONING the issue describes, which is what
+    /// makes the silence expensive. `visited` is shared across input chains, so
+    /// once `CC`'s walk records `BB` and then dies on `AA`, `DD`'s walk stops at
+    /// `BB` on the ordinary already-visited break — a break that is only correct
+    /// under the assumption "everything above `BB` was already emitted", which
+    /// the truncation falsified. `AA` is therefore missing for BOTH inputs.
+    #[test]
+    fn ancestors_outside_reports_a_walk_truncated_by_an_unreadable_parent_4111() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        #[derive(Clone, Default)]
+        struct LogBufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for LogBufWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBufWriter {
+            type Writer = LogBufWriter;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+        let capture = |e: &LoroEngine, inputs: &[&str]| -> (Vec<String>, String) {
+            let writer = LogBufWriter::default();
+            let subscriber = tracing_subscriber::registry().with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer.clone())
+                    .with_ansi(false)
+                    .with_level(true)
+                    .with_target(false),
+            );
+            let out = {
+                let _guard = tracing::subscriber::set_default(subscriber);
+                ids(&e.ancestors_outside(inputs))
+            };
+            let logs = String::from_utf8_lossy(&writer.0.lock().unwrap()).into_owned();
+            (out, logs)
+        };
+
+        // Control: an intact chain walks to the root and says nothing.
+        let healthy = chain();
+        let (got, logs) = capture(&healthy, &["DD", "CC"]);
+        assert_eq!(got, vec!["AA", "BB"]);
+        assert!(
+            !logs.contains("WARN"),
+            "an intact walk must stay quiet, captured: {logs:?}"
+        );
+
+        // Corrupt the ROOT's meta so its `block_id` is unreadable. `CC`'s walk
+        // records `BB`, then dies climbing to `AA`.
+        let corrupt = chain();
+        let aa = *corrupt.index.get("AA").expect("AA is indexed");
+        corrupt
+            .tree()
+            .get_meta(aa)
+            .expect("AA meta")
+            .delete(FIELD_BLOCK_ID)
+            .expect("drop AA's block_id");
+
+        let (got, logs) = capture(&corrupt, &["CC", "DD"]);
+        assert_eq!(
+            got,
+            vec!["BB"],
+            "the walk stops below the unreadable root, so AA is named for \
+             neither input — the shared `visited` set makes DD's chain stop at \
+             BB too"
+        );
+        assert!(
+            logs.contains("WARN") && logs.contains("#4111"),
+            "a truncated walk must be reported, not silently short; captured: {logs:?}"
+        );
+        assert!(
+            logs.contains("ancestor walk truncated") && logs.contains("from_block=\"CC\""),
+            "the report must name the input chain that died so it is diagnosable; \
+             captured: {logs:?}"
         );
     }
 

@@ -76,6 +76,27 @@ use super::server::{Rejection, handle_incoming_sync};
 use super::snapshot_transfer;
 
 // ---------------------------------------------------------------------------
+// RESYNC_TICK — the daemon's periodic-resync cadence
+// ---------------------------------------------------------------------------
+
+/// How often [`daemon_loop`]'s periodic-resync branch wakes up and asks
+/// [`SyncScheduler::peers_due_for_resync`] who is due.
+///
+/// This is a *tick*, not an interval: a peer becomes due after
+/// `SyncScheduler::resync_interval` (60 s by default) and is noticed up to one
+/// tick later, so a healthy peer's real period is
+/// `(resync_interval, resync_interval + RESYNC_TICK]`.
+///
+/// #4120 note 1: it is a named constant rather than a literal in the
+/// `tokio::time::interval` call because a second site depends on it —
+/// [`peer_pulled_from_us_recently`]'s freshness window must stay strictly
+/// wider than that period, or the suppressed toast returns intermittently on a
+/// pair that is working. That site now `debug_assert!`s the invariant against
+/// this constant, so moving either number trips a test rather than a user's
+/// toast.
+const RESYNC_TICK: std::time::Duration = std::time::Duration::from_secs(30);
+
+// ---------------------------------------------------------------------------
 // SyncDaemonContext — owned bundle of daemon-wide startup state
 // ---------------------------------------------------------------------------
 
@@ -241,6 +262,14 @@ pub(crate) async fn daemon_loop(
     // it owns is chosen before this point or not at all. The gain is that the failure is
     // now the operating system reporting a fact rather than our own configuration layer
     // rejecting an address it had itself selected a moment earlier.
+    //
+    // #4116: the list is **not** read on every start. `bind_locality_ok` short-circuits
+    // on `!is_publicly_routable(bind)`, so an RFC 1918 bind — and the loopback fallback,
+    // which is the case worth naming — never consults it and this `Vec` is built for
+    // nothing. It is built unconditionally anyway: skipping it would mean predicting the
+    // gate's short-circuit from out here, and a later widening of the gate would then be
+    // handed an empty list and refuse a bind this code had already chosen. That is the
+    // #3869 failure again, traded for one allocation per daemon start.
     let host_addrs = bind_decision.host_addrs();
     let service = Arc::new(
         SyncService::bind(
@@ -420,8 +449,10 @@ pub(crate) async fn daemon_loop(
     //    parameter; see this function's docs for why. Branch A still owns every
     //    write to it.
 
-    // 6. Periodic resync interval (replaces the former 500ms poll cadence)
-    let mut resync_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    // 6. Periodic resync interval (replaces the former 500ms poll cadence).
+    //    `RESYNC_TICK`, not a literal: `peer_pulled_from_us_recently` derives
+    //    its freshness window from this cadence and asserts against it (#4120).
+    let mut resync_interval = tokio::time::interval(RESYNC_TICK);
     resync_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Counter driving the coarse (~hourly) peer-lock GC cadence; see
@@ -1115,6 +1146,193 @@ async fn peer_rejection_during_pairing_window(
 }
 
 // ---------------------------------------------------------------------------
+// record_pull_failure — book the failure, report it once per streak (#4120)
+// ---------------------------------------------------------------------------
+
+/// Book an initiator-side pull failure: **always** the backoff, **always** the
+/// log, but the generic `Sync failed: …` / `Connection failed: …` event only
+/// once per *distinct failure text* per streak, and then only while the peer is
+/// demonstrably still pulling from us.
+///
+/// # The shape this exists for (#4084 → #4103 → #4120)
+///
+/// A sync session is one-directional (#610): the initiator pulls, the
+/// responder streams. A device whose outbound dial persistently fails while
+/// its inbound sessions succeed is therefore *responder-only* — it serves the
+/// peer every window and never pulls it.
+///
+/// `peer_refs` already records that faithfully: #4103 added `streamed_at`, so
+/// the streamer stamps the session it actually performed and the device list
+/// renders `MAX(synced_at, streamed_at)` instead of "never synced".
+/// [`SyncScheduler::peers_due_for_resync`] still reads `synced_at` **only**,
+/// which is correct and is pinned: a `streamed_at`-aware due-check hands the
+/// peer a starvation lever, because it is the *peer's* activity that refreshes
+/// our `streamed_at`, inside every one of our windows (#610; pinned on both
+/// the `None` and stale-`Some` arms by
+/// `peers_due_for_resync_ignores_streamed_at_4084`).
+///
+/// So the pull is genuinely owed and genuinely retried, and the retry *cadence*
+/// is already the resync cadence — `record_failure`'s ladder caps at
+/// `MAX_BACKOFF`, which is `DEFAULT_RESYNC`. What was left of #4084's reported
+/// impact is the reporting: a red toast once a minute, forever, about a
+/// condition the user was told about the first time and that has not changed
+/// since — while the pair is, by the peer's own inbound sessions, visibly
+/// exchanging data.
+///
+/// That is #3505's lesson in a second place. There the generic wrapper said
+/// "Sync failed" about a handshake that was working; here it says it about a
+/// stable, already-reported one-way condition. Either way a toast the user
+/// cannot act on again is a toast they learn to dismiss unread — including on
+/// the sessions that really did just fail.
+///
+/// # Why both conditions, and not either
+///
+/// *Freshness alone* is not enough. The first report of a given failure is news
+/// and must always land, or a peer going from healthy to unreachable would fail
+/// in silence — the one transition a user does need to see.
+///
+/// *Repetition alone* is not enough either. A peer with no recent
+/// `streamed_at` is not exchanging with us in **either** direction, so a
+/// repeated "Sync failed" is the literal truth about a device that has gone
+/// dark, and suppressing it would hide a total sync outage behind a single
+/// toast the user may have missed.
+///
+/// # What counts as a repeat, and where the memory resets
+///
+/// A repeat is the *same failure text* against the *same peer*. Keying on the
+/// peer's failure count alone would swallow a failure whose cause changed
+/// mid-streak — see the inline comment in the body for why that is two bugs,
+/// not one.
+///
+/// The memory resets exactly where the situation changes, because it rides on
+/// the scheduler's per-peer backoff entry: [`SyncScheduler::record_success`]
+/// drops the entry on the next successful pull, and
+/// [`SyncScheduler::clear_backoff`] drops every entry on a pairing act (#3547).
+/// The next failure after either is reported again, in full.
+///
+/// # What this deliberately does not do
+///
+/// It does not touch the backoff (the retry pacing is right), it does not touch
+/// `peers_due_for_resync` (see above), and it does not suppress the *identity
+/// mismatch* refusal above — that one is not a pull that failed, it is a
+/// different device answering to a paired peer's name, and it stays loud.
+fn record_pull_failure(
+    scheduler: &SyncScheduler,
+    event_sink: &Arc<dyn SyncEventSink>,
+    peer_refs: &[PeerRef],
+    peer_id: &str,
+    message: String,
+) {
+    // "Already reported" is per `(peer, message)`, NOT per peer. Read before
+    // recording, though nothing here writes it — the streak count would be a
+    // wrong key twice over:
+    //
+    //   * A failure whose *cause changes* mid-streak is news. The user was told
+    //     "Connection failed: peer did not answer within 10s"; the peer now
+    //     answers and the session dies with "Sync failed: …". A per-peer streak
+    //     calls that a repeat and swallows it.
+    //   * The streak is incremented by routes that do not report through here
+    //     at all — the pinned-identity refusal below books a failure and emits
+    //     its own event. Keyed on the count, the *first* pull failure after one
+    //     of those would be suppressed as a "repeat" of something it has no
+    //     relation to.
+    //
+    // The failure mode of the message key is bounded in the safe direction: a
+    // failure text that churns (an error string carrying a varying detail)
+    // degrades to reporting every cycle — i.e. back to the pre-#4120 behaviour,
+    // never quieter than it.
+    let already_reported = scheduler.last_reported_failure(peer_id).as_deref() == Some(&*message);
+    let still_serving_this_peer = peer_pulled_from_us_recently(scheduler, peer_refs, peer_id);
+
+    scheduler.record_failure(peer_id);
+
+    if already_reported && still_serving_this_peer {
+        // `reason`, not `message`: `message` is tracing's own implicit field
+        // for the format string, and a second one would be dropped silently —
+        // taking the only surviving copy of the failure text with it.
+        tracing::info!(
+            peer_id,
+            reason = %message,
+            failures = scheduler.failure_count(peer_id),
+            "pull failed again against a peer that is still pulling from us; backoff \
+             recorded, repeat report suppressed (#4084/#4120)"
+        );
+        return;
+    }
+
+    // Recorded only when the user is actually told, so the stored text always
+    // answers "what has this user been shown about this peer?".
+    scheduler.set_last_reported_failure(peer_id, &message);
+    event_sink.on_sync_event(SyncEvent::Error {
+        message,
+        remote_device_id: peer_id.to_string(),
+    });
+}
+
+/// Has this peer pulled from *us* recently enough that a second "sync failed"
+/// would be a claim about the pair rather than a fact about our own pull?
+///
+/// The window is **two** resync intervals, and the multiple is derived from the
+/// peer's own achievable cadence rather than picked:
+///
+/// * A device pulls a peer when [`SyncScheduler::peers_due_for_resync`] finds
+///   it strictly older than `resync_interval` (60 s by default), and that check
+///   runs on the daemon's periodic-resync tick, which is [`RESYNC_TICK`] (30 s)
+///   — the same constant `daemon_loop` builds its `tokio::time::interval` from.
+/// * So a *healthy* peer stamps our `streamed_at` every `(60 s, 90 s]` —
+///   one interval to become due, then up to one tick to be noticed.
+///
+/// One interval (60 s) is therefore provably too short: it is below the lower
+/// bound of a working peer's own period, so it would go false on a pair that is
+/// working perfectly and the toast would reappear at random depending on which
+/// device's tick landed first. Two intervals (120 s) clears the 90 s worst case
+/// with 30 s — half an interval — of slack, and still goes false about two
+/// minutes after a peer genuinely stops pulling. If either constant moves, this
+/// multiple is what has to be rechecked: the invariant is
+/// `window > resync_interval + RESYNC_TICK`, not the literal `2`.
+///
+/// #4120 note 1: that recheck is no longer advisory. The body `debug_assert!`s
+/// the invariant against the same [`RESYNC_TICK`] the daemon ticks on, so a
+/// `resync_interval` at or below the tick — where `resync_interval * 2` stops
+/// clearing a healthy peer's own period — fails a test instead of intermittently
+/// re-raising the toast on a working pair.
+///
+/// A peer with no row here, or a row with no `streamed_at`, answers `false` —
+/// the conservative direction, because the fallback is the unsuppressed report.
+/// A `streamed_at` in the future (the peer's clock ahead of ours) answers
+/// `true`: the stream still happened, and the skew is not the user's problem.
+fn peer_pulled_from_us_recently(
+    scheduler: &SyncScheduler,
+    peer_refs: &[PeerRef],
+    peer_id: &str,
+) -> bool {
+    let Some(streamed_ms) = peer_refs
+        .iter()
+        .find(|p| p.peer_id == peer_id)
+        .and_then(|p| p.streamed_at)
+    else {
+        return false;
+    };
+    let window = scheduler.resync_interval.saturating_mul(2);
+    // The doc above derives the multiple `2` from the daemon's own cadence;
+    // this is that derivation made executable. A `resync_interval` at or below
+    // `RESYNC_TICK` makes `interval * 2` narrower than a *healthy* peer's own
+    // stamping period, and the suppressed toast comes back at random on a pair
+    // that is working — the #4084 symptom, re-introduced by a constant nobody
+    // thought was related. Debug-only: the cost of being wrong is a spurious
+    // toast, not corruption, so a release build should not abort over it.
+    debug_assert!(
+        window > scheduler.resync_interval + RESYNC_TICK,
+        "the freshness window ({window:?}) must stay strictly wider than a healthy \
+         peer's own stamping period (resync_interval {:?} + RESYNC_TICK {RESYNC_TICK:?}); \
+         raise the multiple or the interval",
+        scheduler.resync_interval,
+    );
+    let window_ms = i64::try_from(window.as_millis()).unwrap_or(i64::MAX);
+    agaric_store::db::now_ms() - streamed_ms <= window_ms
+}
+
+// ---------------------------------------------------------------------------
 // try_sync_with_peer — single sync session with backoff
 // ---------------------------------------------------------------------------
 
@@ -1334,14 +1552,16 @@ pub async fn try_sync_with_peer(
                 timeout_s = CONNECT_TIMEOUT.as_secs(),
                 "peer did not answer the dial within the connect budget"
             );
-            ctx.scheduler.record_failure(peer_id);
-            ctx.event_sink.on_sync_event(SyncEvent::Error {
-                message: format!(
+            record_pull_failure(
+                ctx.scheduler,
+                ctx.event_sink,
+                peer_refs,
+                peer_id,
+                format!(
                     "Connection failed: peer did not answer within {}s",
                     CONNECT_TIMEOUT.as_secs()
                 ),
-                remote_device_id: peer_id.clone(),
-            });
+            );
             return false;
         }
         Ok(Ok(conn)) => conn,
@@ -1352,11 +1572,13 @@ pub async fn try_sync_with_peer(
                 error = %e,
                 "failed to connect to peer"
             );
-            ctx.scheduler.record_failure(peer_id);
-            ctx.event_sink.on_sync_event(SyncEvent::Error {
-                message: format!("Connection failed: {e}"),
-                remote_device_id: peer_id.clone(),
-            });
+            record_pull_failure(
+                ctx.scheduler,
+                ctx.event_sink,
+                peer_refs,
+                peer_id,
+                format!("Connection failed: {e}"),
+            );
             // Connection never established, no real session ran.
             // #637: guard.owns is still false → don't clear a sibling's cancel; this
             // early-exit must not swallow a pending user cancel aimed at a
@@ -1372,11 +1594,13 @@ pub async fn try_sync_with_peer(
         Ok(halves) => halves,
         Err(e) => {
             tracing::warn!(peer_id, error = %e, "failed to open a sync stream to peer");
-            ctx.scheduler.record_failure(peer_id);
-            ctx.event_sink.on_sync_event(SyncEvent::Error {
-                message: format!("Connection failed: {e}"),
-                remote_device_id: peer_id.clone(),
-            });
+            record_pull_failure(
+                ctx.scheduler,
+                ctx.event_sink,
+                peer_refs,
+                peer_id,
+                format!("Connection failed: {e}"),
+            );
             return false;
         }
     };
@@ -1532,11 +1756,16 @@ pub async fn try_sync_with_peer(
                      recording it as a sync failure (#3505)"
                 );
             } else {
-                ctx.scheduler.record_failure(peer_id);
-                ctx.event_sink.on_sync_event(SyncEvent::Error {
-                    message: format!("Sync failed: {e}"),
-                    remote_device_id: peer_id.clone(),
-                });
+                // #4120: books the backoff unconditionally; emits the generic
+                // wrapper only on the first failure of a streak while the peer
+                // is still pulling from us. See `record_pull_failure`.
+                record_pull_failure(
+                    ctx.scheduler,
+                    ctx.event_sink,
+                    peer_refs,
+                    peer_id,
+                    format!("Sync failed: {e}"),
+                );
                 tracing::warn!(peer_id, error = %e, "sync session failed");
             }
         }
@@ -1704,12 +1933,23 @@ pub async fn run_sync_session(
     // session as successful. The next scheduled sync picks up any
     // post-snapshot deltas via a normal `HeadExchange`.
     if matches!(orch.session().state, SyncState::ResetRequired) {
-        let peer_id = orch.session().remote_device_id.clone();
         // Pass the orchestrator's daemon-provided
         // `expected_remote_id` so the catch-up can mirror the
         // SyncComplete fallback when `peer_id` is empty (HeadExchange
         // carried only our own heads).
         let expected_remote_id = orch.expected_remote_id().map(str::to_owned);
+        // Mirror `catchup_peer_identity`'s own fallback here too: this
+        // binding is also what the `peer_id = %peer_id` log lines below the
+        // call use, and `try_receive_snapshot_catchup` resolves its
+        // *internal* `remote_device_id` independently, so without this a
+        // never-seeded id would log as "" here while every line inside the
+        // call already named the resolved peer.
+        let remote_device_id = &orch.session().remote_device_id;
+        let peer_id = if !remote_device_id.is_empty() {
+            remote_device_id.clone()
+        } else {
+            expected_remote_id.clone().unwrap_or_default()
+        };
         // #607: thread the session's engine state (override-aware in tests,
         // process-global in production) plus our own device id into the
         // catch-up so it can drop + reload the in-memory engines right
@@ -2159,6 +2399,9 @@ mod tests {
             name: name.to_owned(),
             ip: ip.parse().expect("test literal is a valid IPv4 address"),
             prefix_len,
+            // The contiguous mask that prefix names — what `getifaddrs(3)` reports for
+            // an ordinary NIC, and what `prefix_len` is derived from there (#4105).
+            netmask: crate::sync_daemon::lan_interface::netmask_for_prefix(prefix_len),
             is_up: true,
             is_p2p: false,
         }
@@ -2285,5 +2528,498 @@ mod tests {
                 "no LAN address means the loopback fallback, nothing else; got {bind_addr}"
             ),
         }
+    }
+
+    // ======================================================================
+    // #4120 — the reporting half of #4084: a responder-only device
+    // ======================================================================
+
+    const RESPONDER_ONLY_PEER: &str = "peer-4120";
+
+    /// The row shape #4084 reported, post-#4103: `endpoint_id` bound,
+    /// `synced_at` still NULL because we have never once pulled this peer, and
+    /// `streamed_at` moving because the peer pulls from *us* every window.
+    fn responder_only_ref(streamed_at: Option<i64>) -> PeerRef {
+        PeerRef {
+            peer_id: RESPONDER_ONLY_PEER.to_string(),
+            last_hash: None,
+            last_sent_hash: None,
+            synced_at: None,
+            streamed_at,
+            reset_count: 0,
+            last_reset_at: None,
+            cert_hash: None,
+            device_name: Some("Pixel 8".into()),
+            last_address: None,
+            endpoint_id: Some("c".repeat(64)),
+        }
+    }
+
+    fn error_messages(sink: &RecordingEventSink) -> Vec<String> {
+        sink.events()
+            .into_iter()
+            .filter_map(|e| match e {
+                SyncEvent::Error { message, .. } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The bug #4120 note 1 is about: a responder-only device dials, fails, and
+    /// re-raises the red toast on every cycle, forever.
+    ///
+    /// The first failure is news and must land. The second, third and
+    /// hundredth say the same thing about the same unchanged condition — while
+    /// the peer's own inbound sessions keep stamping `streamed_at`, i.e. while
+    /// the pair is visibly exchanging data. Only the repeat is suppressed, and
+    /// the backoff is booked either way.
+    #[test]
+    fn a_repeat_pull_failure_against_a_peer_still_pulling_from_us_is_reported_once_4120() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+
+        record_pull_failure(
+            &scheduler,
+            &sink,
+            &refs,
+            RESPONDER_ONLY_PEER,
+            "Connection failed: peer did not answer within 10s".into(),
+        );
+        assert_eq!(
+            error_messages(&typed).len(),
+            1,
+            "the FIRST failure of a streak is news and must always reach the user, \
+             got {:?}",
+            typed.events()
+        );
+
+        for _ in 0..5 {
+            record_pull_failure(
+                &scheduler,
+                &sink,
+                &refs,
+                RESPONDER_ONLY_PEER,
+                "Connection failed: peer did not answer within 10s".into(),
+            );
+        }
+
+        assert_eq!(
+            error_messages(&typed).len(),
+            1,
+            "#4120: five more cycles of the SAME unchanged condition, against a peer \
+             that is still pulling from us every window, must not re-raise the toast; \
+             got {:?}",
+            typed.events()
+        );
+        assert_eq!(
+            scheduler.failure_count(RESPONDER_ONLY_PEER),
+            6,
+            "…and every one of them must still be booked as a failure: the backoff is \
+             what paces the retry, and suppressing it would turn a 60 s cadence back \
+             into a hot loop"
+        );
+    }
+
+    /// #4096: `reply_sync_complete`'s empty-stream short-circuit now stamps
+    /// `streamed_at` even on the degraded branch — the #1257 freshness gate
+    /// refused *every* registered space, so nothing was actually shipped —
+    /// which widens `still_serving_this_peer` to cover a peer we are
+    /// currently declining to serve. That is only safe because suppression
+    /// requires `already_reported && still_serving`, never `still_serving`
+    /// alone: this pins that the FIRST report against such a peer still
+    /// lands unconditionally, same as any other peer. Only a *repeat* of the
+    /// identical message would be withheld (covered by the `_4120` test
+    /// above); nothing here should ever have to change if that widening's
+    /// reasoning holds.
+    #[test]
+    fn first_report_lands_for_a_peer_we_are_declining_to_serve_4096() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        // Stands in for the row `reply_sync_complete`'s degraded branch
+        // produces: `streamed_at` freshly stamped, `synced_at` still NULL —
+        // a peer we have never pulled and are, this round, refusing to
+        // export anything to.
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+
+        record_pull_failure(
+            &scheduler,
+            &sink,
+            &refs,
+            RESPONDER_ONLY_PEER,
+            "Sync failed: connection lost".into(),
+        );
+
+        assert_eq!(
+            error_messages(&typed).len(),
+            1,
+            "the first failure report against a peer we are declining to serve must \
+             still reach the user — suppression is keyed on already_reported, not on \
+             still_serving alone; got {:?}",
+            typed.events()
+        );
+    }
+
+    /// The other arm of "why both conditions": a peer with no recent
+    /// `streamed_at` is not exchanging with us in EITHER direction. That is a
+    /// total sync outage for that device, and it keeps saying so.
+    ///
+    /// Pinned with two shapes, because the two ways to get the predicate wrong
+    /// fail differently: `None` is the never-streamed peer (a fresh pair that
+    /// has never worked), and a stale `Some` is the peer that used to stream
+    /// and went dark — a "has it ever streamed?" check would pass the second.
+    #[test]
+    fn a_repeat_pull_failure_against_a_dark_peer_is_still_reported_4120() {
+        for (label, streamed_at) in [
+            ("never streamed to us at all", None),
+            (
+                "streamed to us an hour ago, then went dark",
+                Some(agaric_store::db::now_ms() - 3_600_000),
+            ),
+        ] {
+            let typed = Arc::new(RecordingEventSink::new());
+            let sink: Arc<dyn SyncEventSink> = typed.clone();
+            let scheduler = SyncScheduler::new();
+            let refs = vec![responder_only_ref(streamed_at)];
+
+            for _ in 0..3 {
+                record_pull_failure(
+                    &scheduler,
+                    &sink,
+                    &refs,
+                    RESPONDER_ONLY_PEER,
+                    "Sync failed: connection lost".into(),
+                );
+            }
+
+            assert_eq!(
+                error_messages(&typed).len(),
+                3,
+                "a peer that is not pulling from us either ({label}) has a real, total \
+                 sync outage; suppressing the repeat would hide it behind one toast the \
+                 user may never have seen. Got {:?}",
+                typed.events()
+            );
+        }
+    }
+
+    /// A peer that is not in `peer_refs` at all cannot be shown to be pulling
+    /// from us, so it gets the unsuppressed report — the conservative
+    /// direction, and the one a `find(...).map_or(true, …)` slip would invert.
+    #[test]
+    fn a_pull_failure_against_an_unknown_peer_is_always_reported_4120() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        // A row for a DIFFERENT peer, freshly streamed — the wrong-peer lookup
+        // this guards against would read it and suppress.
+        let mut other = responder_only_ref(Some(agaric_store::db::now_ms()));
+        other.peer_id = "some-other-peer".into();
+
+        for _ in 0..3 {
+            record_pull_failure(
+                &scheduler,
+                &sink,
+                &[other.clone()],
+                RESPONDER_ONLY_PEER,
+                "Sync failed: connection lost".into(),
+            );
+        }
+
+        assert_eq!(
+            error_messages(&typed).len(),
+            3,
+            "the freshness check must read THIS peer's row; got {:?}",
+            typed.events()
+        );
+    }
+
+    /// The streak is the scheduler's own failure count, so it resets exactly
+    /// where the situation changed — a successful pull, or a pairing act
+    /// (#3547). The next failure after either is news again.
+    #[test]
+    fn a_pull_failure_after_the_streak_resets_is_reported_again_4120() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+        let fail = |sched: &SyncScheduler, sink: &Arc<dyn SyncEventSink>| {
+            record_pull_failure(
+                sched,
+                sink,
+                &refs,
+                RESPONDER_ONLY_PEER,
+                "Sync failed: connection lost".into(),
+            );
+        };
+
+        fail(&scheduler, &sink); // reported (1)
+        fail(&scheduler, &sink); // suppressed
+        scheduler.record_success(RESPONDER_ONLY_PEER);
+        fail(&scheduler, &sink); // reported again (2)
+        fail(&scheduler, &sink); // suppressed
+        scheduler.clear_backoff();
+        fail(&scheduler, &sink); // reported again (3)
+
+        assert_eq!(
+            error_messages(&typed).len(),
+            3,
+            "a success (#610's reverse direction finally landing) and a pairing act \
+             (#3547) both mean the situation changed; the next failure is news. \
+             Got {:?}",
+            typed.events()
+        );
+    }
+
+    /// The non-change #4120 note 1 exists to protect, restated at the layer
+    /// that consumes it: suppressing the *report* must not, by any route, stop
+    /// the responder-only peer being selected for a pull.
+    ///
+    /// `peers_due_for_resync` is pinned in `sync_scheduler`'s own tests
+    /// (`peers_due_for_resync_ignores_streamed_at_4084`); what is pinned here
+    /// is that this fix left it that way — the peer is still due the moment
+    /// its backoff window elapses, exactly as it was before.
+    #[test]
+    fn suppressing_the_repeat_report_does_not_make_the_peer_stop_being_due_4120() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+
+        assert_eq!(
+            scheduler.peers_due_for_resync(&refs),
+            vec![RESPONDER_ONLY_PEER.to_string()],
+            "precondition (#610): we have never pulled this peer, so it is due — \
+             however recently it streamed to us"
+        );
+
+        for _ in 0..3 {
+            record_pull_failure(
+                &scheduler,
+                &sink,
+                &refs,
+                RESPONDER_ONLY_PEER,
+                "Sync failed: connection lost".into(),
+            );
+        }
+
+        assert_eq!(
+            error_messages(&typed).len(),
+            1,
+            "precondition: the repeats were suppressed"
+        );
+        assert!(
+            !scheduler.may_retry(RESPONDER_ONLY_PEER),
+            "…because the backoff was booked every time"
+        );
+        // Step past the backoff window the failures just set. `clear_backoff`
+        // rather than a `sleep`: it is the deterministic equivalent of waiting
+        // ~8 s of jittered ladder out, and this test is about the due-ness
+        // predicate, not about the ladder (which `sync_scheduler` pins itself).
+        scheduler.clear_backoff();
+        assert_eq!(
+            scheduler.peers_due_for_resync(&refs),
+            vec![RESPONDER_ONLY_PEER.to_string()],
+            "#4120/#610: the pull is still owed. A quieter report must never become a \
+             quieter scheduler — that is the starvation this issue explicitly refused"
+        );
+    }
+
+    /// The suppression is keyed on the failure *text*, not on the peer's streak
+    /// count, and this is the case that separates the two.
+    ///
+    /// The user is told "Connection failed: peer did not answer". Next cycle the
+    /// peer answers and the session dies of something else entirely. That second
+    /// cause is news — it is a different fault, with a different remedy — and a
+    /// per-peer streak would have called it a repeat and swallowed it, for as
+    /// long as the peer kept pulling from us.
+    #[test]
+    fn a_pull_failure_whose_cause_changes_mid_streak_is_reported_4120() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+        let fail = |msg: &str| {
+            record_pull_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg.into());
+        };
+
+        fail("Connection failed: peer did not answer within 10s"); // reported
+        fail("Connection failed: peer did not answer within 10s"); // suppressed
+        fail("Sync failed: connection lost"); // DIFFERENT cause — reported
+        fail("Sync failed: connection lost"); // now itself a repeat — suppressed
+        fail("Sync failed: connection lost"); // …still suppressed
+
+        assert_eq!(
+            error_messages(&typed),
+            vec![
+                "Connection failed: peer did not answer within 10s".to_string(),
+                "Sync failed: connection lost".to_string(),
+            ],
+            "#4120: the streak is per peer, but the report is per cause — a failure \
+             that changes cause mid-streak is news the user must be told, and its own \
+             repeats are then suppressed in turn. Got {:?}",
+            typed.events()
+        );
+        assert_eq!(
+            scheduler.failure_count(RESPONDER_ONLY_PEER),
+            5,
+            "every one of them is still booked as a failure"
+        );
+    }
+
+    /// The pinned-identity refusal books a failure and emits its own, different
+    /// event without going through this helper. A streak-count key would read
+    /// that bump as "already reported" and swallow the *first* real pull failure
+    /// after it — a report the user has never seen, about an unrelated fault.
+    #[test]
+    fn a_pull_failure_after_an_unrelated_failure_booking_is_still_reported_4120() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+
+        // What the identity-mismatch arm does: books the backoff, reports via its
+        // own event, and never touches this helper's memory.
+        scheduler.record_failure(RESPONDER_ONLY_PEER);
+
+        record_pull_failure(
+            &scheduler,
+            &sink,
+            &refs,
+            RESPONDER_ONLY_PEER,
+            "Sync failed: connection lost".into(),
+        );
+
+        assert_eq!(
+            error_messages(&typed).len(),
+            1,
+            "the first pull failure must reach the user even though the peer's streak \
+             was already non-zero for an unrelated reason; got {:?}",
+            typed.events()
+        );
+    }
+
+    /// The freshness window is two resync intervals, inclusive at the boundary.
+    ///
+    /// Both edges are pinned because both are wrong in a way the other would
+    /// not catch: one interval would go false on a healthy pair (a peer becomes
+    /// due after one interval and is noticed up to one 30 s tick later, so its
+    /// real period runs to 90 s), and an unbounded window would never let a
+    /// peer that went dark start reporting again.
+    #[test]
+    fn the_freshness_window_is_two_resync_intervals_4120() {
+        let interval = std::time::Duration::from_secs(60);
+        for (label, age_ms, expected_reports) in [
+            ("one interval — well inside the window", 60_000, 1),
+            ("exactly two intervals — the inclusive edge", 120_000, 1),
+            ("a second past two intervals — outside", 121_000, 3),
+        ] {
+            let typed = Arc::new(RecordingEventSink::new());
+            let sink: Arc<dyn SyncEventSink> = typed.clone();
+            let scheduler =
+                SyncScheduler::with_intervals(std::time::Duration::from_millis(50), interval);
+            let refs = vec![responder_only_ref(Some(
+                agaric_store::db::now_ms() - age_ms,
+            ))];
+
+            for _ in 0..3 {
+                record_pull_failure(
+                    &scheduler,
+                    &sink,
+                    &refs,
+                    RESPONDER_ONLY_PEER,
+                    "Sync failed: connection lost".into(),
+                );
+            }
+
+            assert_eq!(
+                error_messages(&typed).len(),
+                expected_reports,
+                "{label}: with a {}s resync interval the window is {}s",
+                interval.as_secs(),
+                interval.as_secs() * 2
+            );
+        }
+    }
+
+    /// A `streamed_at` ahead of our clock is a peer whose clock is ahead of
+    /// ours, not a peer from the future. The stream still happened, so it counts
+    /// as fresh — and the arithmetic must not wrap or invert into "reported
+    /// forever" on a device with a skewed peer.
+    #[test]
+    fn a_streamed_at_in_the_future_counts_as_fresh_4120() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        // Ten minutes of skew — far beyond any plausible window.
+        let refs = vec![responder_only_ref(Some(
+            agaric_store::db::now_ms() + 600_000,
+        ))];
+
+        for _ in 0..4 {
+            record_pull_failure(
+                &scheduler,
+                &sink,
+                &refs,
+                RESPONDER_ONLY_PEER,
+                "Sync failed: connection lost".into(),
+            );
+        }
+
+        assert_eq!(
+            error_messages(&typed).len(),
+            1,
+            "clock skew is not the user's problem: the peer demonstrably streamed to \
+             us, so the repeat is still a repeat; got {:?}",
+            typed.events()
+        );
+    }
+
+    /// The defaults ship an invariant, not a coincidence: the freshness window
+    /// (`resync_interval * 2`) has to stay strictly wider than a healthy peer's
+    /// own stamping period (`resync_interval` to become due, plus up to one
+    /// [`RESYNC_TICK`] to be noticed). Pinned here so a future edit to either
+    /// constant is caught by a test rather than by an intermittent toast on a
+    /// pair that is working.
+    #[test]
+    fn the_shipped_resync_cadence_clears_the_freshness_window_invariant_4120() {
+        let scheduler = SyncScheduler::new();
+        let window = scheduler.resync_interval.saturating_mul(2);
+        assert!(
+            window > scheduler.resync_interval + RESYNC_TICK,
+            "window {window:?} must exceed resync_interval {:?} + RESYNC_TICK \
+             {RESYNC_TICK:?}",
+            scheduler.resync_interval,
+        );
+    }
+
+    /// …and the invariant is self-executing, not advisory (#4120 note 1).
+    ///
+    /// A `resync_interval` equal to the daemon tick makes the doubled window
+    /// exactly a healthy peer's worst-case period — the first value at which
+    /// suppression starts going false on a pair that is exchanging data, i.e.
+    /// the #4084 toast returning intermittently. The `debug_assert!` in
+    /// `peer_pulled_from_us_recently` is what turns that into a test failure,
+    /// so this pins the assert itself: delete it and this test goes green
+    /// while the freshness window is wrong.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "must stay strictly wider")]
+    fn a_resync_interval_at_the_daemon_tick_trips_the_window_invariant_4120() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler =
+            SyncScheduler::with_intervals(std::time::Duration::from_millis(50), RESYNC_TICK);
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+
+        record_pull_failure(
+            &scheduler,
+            &sink,
+            &refs,
+            RESPONDER_ONLY_PEER,
+            "Sync failed: connection lost".into(),
+        );
     }
 }

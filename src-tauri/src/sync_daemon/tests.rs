@@ -947,6 +947,157 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
     materializer.shutdown();
 }
 
+/// #4120 note 6: the repeat-report suppression is *wired into* the real
+/// initiator path, not merely correct inside its helper.
+///
+/// Every other #4120 test calls `record_pull_failure` directly, which pins the
+/// predicate but not the call. A call site that handed it the wrong `peer_id`,
+/// or a `peer_refs` slice that did not contain this peer, would satisfy all of
+/// them and still re-raise the toast on every cycle — the exact bug. So this
+/// one drives `try_sync_with_peer` end to end against a peer that does not
+/// answer, and asserts on what the user is told.
+///
+/// The daemon reaches the suppressed state by failing twice; a test cannot,
+/// because the first failure arms the backoff gate and the second dial costs
+/// another connect budget. So the "already reported once" state is *seeded*
+/// (`record_failure` + `set_last_reported_failure`, then the gate is waited
+/// out, exactly as the daemon waits it out) and the observed text of a real
+/// failure is what gets seeded — arm A produces it, arm B feeds it back.
+/// Nothing here hardcodes the message.
+///
+/// Two arms, because one alone is vacuous:
+///
+/// * **A — a dark peer still reports.** It also supplies the failure text and
+///   proves the run reaches `record_pull_failure` at all.
+/// * **B — the same failure against a peer that is still pulling from us is
+///   silent**, and the `connecting` progress event proves the run got past the
+///   backoff gate and really dialled rather than returning early.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
+    const PEER: &str = "PEER_RESPONDER_ONLY_4120";
+
+    /// One daemon cycle against an unreachable peer, entered in the state a
+    /// second cycle of a streak is in: one failure booked, `already_reported`
+    /// already shown to the user, backoff expired.
+    ///
+    /// Returns every event the sink saw plus the peer's failure count.
+    async fn cycle(streamed_at: Option<i64>, already_reported: &str) -> (Vec<SyncEvent>, u32) {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let scheduler = Arc::new(SyncScheduler::new());
+        let sink = Arc::new(RecordingEventSink::new());
+        let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+        let cancel = AtomicBool::new(false);
+        let harness = ServiceHarness::new().await;
+
+        // `set_last_reported_failure` is a no-op without a backoff entry, so
+        // the booking has to come first — which is also the real ordering.
+        scheduler.record_failure(PEER);
+        scheduler.set_last_reported_failure(PEER, already_reported);
+        // …and that booking arms the backoff gate (~2 s for the first
+        // failure). Waiting it out is what makes this a *second cycle* rather
+        // than an early return at step 1.
+        let waited_from = std::time::Instant::now();
+        while !scheduler.may_retry(PEER) {
+            assert!(
+                waited_from.elapsed() < std::time::Duration::from_secs(30),
+                "the first failure's backoff must expire in seconds, not minutes"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        let peer = unreachable_peer(PEER);
+        let mut peer_ref = make_peer_ref(PEER);
+        peer_ref.streamed_at = streamed_at;
+        let refs = vec![peer_ref];
+
+        let apply_host: Arc<dyn agaric_sync::apply_host::ApplyHost> =
+            Arc::new(materializer.clone());
+        let ctx = SyncSessionContext {
+            pool: &pool,
+            device_id: "LOCAL_DEV",
+            materializer: &apply_host,
+            scheduler: &scheduler,
+            event_sink: &event_sink,
+            cancel: &cancel,
+            endpoint: &harness.client_endpoint,
+        };
+        tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            try_sync_with_peer(&ctx, &peer, &refs),
+        )
+        .await
+        .expect("the dial must exhaust its own budget well inside the test timeout");
+
+        let events = sink.events();
+        let failures = scheduler.failure_count(PEER);
+        materializer.shutdown();
+        (events, failures)
+    }
+
+    fn error_texts(events: &[SyncEvent]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                SyncEvent::Error { message, .. } => Some(message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // ---- Arm A: a peer that is not pulling from us either. Reports, and
+    // hands us the exact text a real failure produces.
+    let (dark_events, dark_failures) =
+        cycle(None, "a failure text nothing will ever produce").await;
+    let reported = error_texts(&dark_events);
+    assert_eq!(
+        reported.len(),
+        1,
+        "a peer that is not pulling from us in either direction is a total sync \
+         outage and must keep saying so; got {dark_events:?}"
+    );
+    assert!(
+        reported[0].starts_with("Connection failed"),
+        "the dial-failure arms of try_sync_with_peer report a 'Connection failed: …' \
+         text; got {:?}",
+        reported[0]
+    );
+    assert_eq!(
+        dark_failures, 2,
+        "the seeded failure plus this one — the backoff is booked on every cycle"
+    );
+
+    // ---- Arm B: the same failure, same peer id, against a peer whose
+    // `streamed_at` says it is still pulling from us. Silent.
+    //
+    // This is the assertion the helper-level tests cannot make: it goes red if
+    // the call site passes a `peer_id` the scheduler's memory is not keyed on,
+    // or a `peer_refs` slice this peer is not in.
+    let (fresh_events, fresh_failures) =
+        cycle(Some(agaric_store::db::now_ms()), &reported[0]).await;
+    assert!(
+        error_texts(&fresh_events).is_empty(),
+        "#4084/#4120: the SAME failure against a peer that is still streaming to us \
+         must not re-raise the toast, through the real call path and not just the \
+         helper; got {fresh_events:?}"
+    );
+    assert!(
+        fresh_events.iter().any(|e| matches!(
+            e,
+            SyncEvent::Progress { state, remote_device_id, .. }
+                if state == "connecting" && remote_device_id == PEER
+        )),
+        "…and the run must actually have dialled: without the 'connecting' event \
+         this arm would be green because nothing ran, not because the report was \
+         suppressed; got {fresh_events:?}"
+    );
+    assert_eq!(
+        fresh_failures, 2,
+        "suppressing the report must not suppress the booking — the backoff is what \
+         paces the retry (#4120)"
+    );
+}
+
 // The old `handle_incoming_sync_rejects_sync_with_self` lived here. It was the
 // real-loopback-TLS twin of the in-memory self-sync test, and the two collapsed
 // into one when the fixtures did: there is now a single responder fixture (a
@@ -6988,6 +7139,162 @@ async fn issue610_empty_registry_initiator_records_via_synccomplete() {
     assert!(
         b_view_of_a.synced_at.is_none(),
         "#610: the empty-registry responder must not record synced_at"
+    );
+
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
+/// #4096 — the empty-stream short-circuit is a real session, and it records
+/// the bookkeeping a real session owes.
+///
+/// Same shape as `issue610_empty_registry_initiator_records_via_synccomplete`
+/// (B's registry is empty, so B replies `SyncComplete` straight out of
+/// `head_exchange_outgoing_loro` without ever entering `StreamingOps`), but
+/// asserted from **B's** side, which that test only ever checked a negative on.
+///
+/// The short-circuit returns *before* `streamed_to_peer = true` and before the
+/// `SyncComplete`-receive arm that carries every other completion's
+/// bookkeeping, so it used to record nothing whatsoever: no `streamed_at`, no
+/// `synced_at`, no `loro_vv_bytes`. A device whose sessions all take this
+/// branch — a fresh install, or one whose spaces the #1257 freshness gate keeps
+/// refusing — completed session after session while its `peer_refs` row stayed
+/// as blank as a peer it had never met.
+///
+/// Which column it writes is the substance, not a detail:
+///   * `streamed_at` — this is the responder half; the peer pulled from us,
+///     and got zero bytes, but it pulled.
+///   * NOT `synced_at` — we received no state at all, and `synced_at` is the
+///     scheduler's only staleness input (`peers_due_for_resync`). A responder
+///     stamping it on every inbound session never finds the initiator overdue:
+///     #610's starvation, re-entered through the short-circuit.
+/// The negative assertion is the load-bearing one — a "just stamp synced_at"
+/// fix passes every positive check below and re-opens #610.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue4096_empty_stream_short_circuit_records_streamed_at() {
+    use agaric_sync::sync_protocol::{SyncOrchestrator, SyncState};
+
+    const DEV_A: &str = "DEV4096A";
+    const DEV_B: &str = "DEV4096B";
+    const BLOCK_A: &str = "01HZ4096BLKAXXXXXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ4096SPACEXXXXXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+    let state_a = std::sync::Arc::clone(mat_a.loro_state());
+
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    // Only A has state. B's Loro registry stays EMPTY and B's op_log holds no
+    // audit records either, so B takes the `messages.is_empty() &&
+    // op_batches.is_empty()` short-circuit — the path under test.
+    make_local_edit_602(
+        &pool_a,
+        &mat_a,
+        &state_a,
+        DEV_A,
+        &space,
+        BLOCK_A,
+        "edit from device A",
+        1_736_942_400_000,
+    )
+    .await;
+
+    let before_ms = agaric_store::db::now_ms();
+
+    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_expected_remote_id(DEV_A.into());
+    pump_full_session_602(&mut init_a, &mut resp_b).await;
+
+    assert_eq!(
+        resp_b.session().state,
+        SyncState::Complete,
+        "the empty-registry responder must complete via the short-circuit — \
+         without a completed session there is no bookkeeping question to answer"
+    );
+    assert_eq!(init_a.session().state, SyncState::Complete);
+    assert_eq!(
+        init_a.session().ops_received,
+        0,
+        "the short-circuit must have shipped nothing: this is the EMPTY-stream \
+         path, not a one-message stream"
+    );
+
+    let after_ms = agaric_store::db::now_ms();
+
+    let b_view_of_a = peer_refs::get_peer_ref(&pool_b, DEV_A)
+        .await
+        .unwrap()
+        .expect("B's peer row for A must exist");
+
+    // ── What it must record ─────────────────────────────────────────
+    let streamed = b_view_of_a.streamed_at.expect(
+        "#4096: the empty-stream short-circuit completes a session, so it must \
+         record one. Before the fix it returned before `streamed_to_peer = true` \
+         and before the SyncComplete arm, leaving peer_refs completely untouched \
+         — a device whose every session takes this branch reads as 'never \
+         synced' forever",
+    );
+    assert!(
+        (before_ms..=after_ms).contains(&streamed),
+        "streamed_at must be stamped during THIS session, not inherited from an \
+         earlier one: {streamed} not in {before_ms}..={after_ms}"
+    );
+    assert!(
+        peer_refs::get_loro_vv_bytes(&pool_b, DEV_A)
+            .await
+            .unwrap()
+            .is_some(),
+        "#4096/#2502: the session completed, so the frontier A advertised in its \
+         HeadExchange is a valid export floor for next time. Dropping it on this \
+         branch is what leaves the short-circuit re-deriving from nothing"
+    );
+
+    // ── What it must NOT record ─────────────────────────────────────
+    assert!(
+        b_view_of_a.synced_at.is_none(),
+        "#4096/#610: B pulled NOTHING this session — it only answered. Stamping \
+         synced_at here is not a display change, it is a scheduling change: \
+         `peers_due_for_resync` reads synced_at and only synced_at, so a \
+         responder refreshing it every inbound session never finds the initiator \
+         overdue. That is #610's starvation, re-entered through the short-circuit"
+    );
+    assert!(
+        b_view_of_a.last_hash.is_none(),
+        "last_hash is the pulled frontier and B pulled nothing; writing it would \
+         mean recording the pull that did not happen"
+    );
+
+    // ── And the scheduler must be unmoved by the new stamp ──────────
+    let scheduler = agaric_sync::sync_scheduler::SyncScheduler::default();
+    let b_peers = peer_refs::list_peer_refs(&pool_b).await.unwrap();
+    assert!(
+        scheduler
+            .peers_due_for_resync(&b_peers)
+            .iter()
+            .any(|p| p == DEV_A),
+        "#4096/#4084: a fresh streamed_at must not suppress B's own pull toward \
+         A — the reverse direction is exactly how A's edits reach B"
+    );
+
+    // ── The initiator's own halves stay where #610 put them ─────────
+    let a_view_of_b = peer_refs::get_peer_ref(&pool_a, DEV_B)
+        .await
+        .unwrap()
+        .expect("A's peer row for B must exist");
+    assert!(
+        a_view_of_b.synced_at.is_some(),
+        "#610: A pulled (an empty state is still a state), so A records synced_at"
+    );
+    assert!(
+        a_view_of_b.streamed_at.is_none(),
+        "A streamed nothing — the two columns record two directions, not one \
+         event twice"
     );
 
     mat_a.shutdown();

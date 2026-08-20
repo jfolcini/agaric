@@ -76,7 +76,7 @@
 //
 // Exit codes: 0 clean / 1 matches found / 2 invocation error.
 
-import { execSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -87,26 +87,25 @@ import {
   gitEnv,
   listTrackedEntries,
   readContents,
+  repoRootFromCwd,
   resolveSource,
 } from './lib/guard-file-source.mjs'
 
 // cwd-derived, not script-anchored — the documented EXCEPTION to "a guard judges
-// the tree that contains it". The rule, the exception, the four guards that take
-// it and what to do instead are stated once, in
-// `scripts/lib/guard-file-source.mjs` ("Which TREE is judged, and the one
-// documented exception").
-const REPO_ROOT = (() => {
-  try {
-    return execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim()
-  } catch {
-    return process.cwd()
-  }
-})()
+// the tree that contains it", taken through the SHARED `repoRootFromCwd` rather
+// than a private `show-toplevel` (#4192: a private copy asked git under the
+// ambient environment, where a leaked git context redirects the root itself).
+// The rule, the exception, the five guards that take it and what to do instead
+// are stated once, in `scripts/lib/guard-file-source.mjs` ("Which TREE is
+// judged, and the one documented exception").
+const REPO_ROOT = repoRootFromCwd()
 
 // The environment this guard's OWN `git` calls run under. An ambient
-// `GIT_INDEX_FILE` outranks `cwd`, so without this an explicit `--cached`
-// under somebody else's commit would enumerate that repository while
-// `cwd=REPO_ROOT` made it look otherwise — see `gitEnv`.
+// `GIT_INDEX_FILE` outranks `cwd` for the INDEX and an ambient `GIT_DIR`
+// outranks it for the REPOSITORY (#4191), so without this a leaked git
+// context would enumerate somebody else's tree — under `--worktree` as
+// readily as `--cached` — while `cwd=REPO_ROOT` made it look otherwise. See
+// `gitEnv`.
 const GIT_ENV = gitEnv(REPO_ROOT, process.env)
 
 // This file's own repo-relative path. `scanTargets` below only ever matches
