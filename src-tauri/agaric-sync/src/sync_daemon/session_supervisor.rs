@@ -1933,12 +1933,23 @@ pub async fn run_sync_session(
     // session as successful. The next scheduled sync picks up any
     // post-snapshot deltas via a normal `HeadExchange`.
     if matches!(orch.session().state, SyncState::ResetRequired) {
-        let peer_id = orch.session().remote_device_id.clone();
         // Pass the orchestrator's daemon-provided
         // `expected_remote_id` so the catch-up can mirror the
         // SyncComplete fallback when `peer_id` is empty (HeadExchange
         // carried only our own heads).
         let expected_remote_id = orch.expected_remote_id().map(str::to_owned);
+        // Mirror `catchup_peer_identity`'s own fallback here too: this
+        // binding is also what the `peer_id = %peer_id` log lines below the
+        // call use, and `try_receive_snapshot_catchup` resolves its
+        // *internal* `remote_device_id` independently, so without this a
+        // never-seeded id would log as "" here while every line inside the
+        // call already named the resolved peer.
+        let remote_device_id = &orch.session().remote_device_id;
+        let peer_id = if !remote_device_id.is_empty() {
+            remote_device_id.clone()
+        } else {
+            expected_remote_id.clone().unwrap_or_default()
+        };
         // #607: thread the session's engine state (override-aware in tests,
         // process-global in production) plus our own device id into the
         // catch-up so it can drop + reload the in-memory engines right
@@ -2608,6 +2619,46 @@ mod tests {
             "…and every one of them must still be booked as a failure: the backoff is \
              what paces the retry, and suppressing it would turn a 60 s cadence back \
              into a hot loop"
+        );
+    }
+
+    /// #4096: `reply_sync_complete`'s empty-stream short-circuit now stamps
+    /// `streamed_at` even on the degraded branch — the #1257 freshness gate
+    /// refused *every* registered space, so nothing was actually shipped —
+    /// which widens `still_serving_this_peer` to cover a peer we are
+    /// currently declining to serve. That is only safe because suppression
+    /// requires `already_reported && still_serving`, never `still_serving`
+    /// alone: this pins that the FIRST report against such a peer still
+    /// lands unconditionally, same as any other peer. Only a *repeat* of the
+    /// identical message would be withheld (covered by the `_4120` test
+    /// above); nothing here should ever have to change if that widening's
+    /// reasoning holds.
+    #[test]
+    fn first_report_lands_for_a_peer_we_are_declining_to_serve_4096() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        // Stands in for the row `reply_sync_complete`'s degraded branch
+        // produces: `streamed_at` freshly stamped, `synced_at` still NULL —
+        // a peer we have never pulled and are, this round, refusing to
+        // export anything to.
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+
+        record_pull_failure(
+            &scheduler,
+            &sink,
+            &refs,
+            RESPONDER_ONLY_PEER,
+            "Sync failed: connection lost".into(),
+        );
+
+        assert_eq!(
+            error_messages(&typed).len(),
+            1,
+            "the first failure report against a peer we are declining to serve must \
+             still reach the user — suppression is keyed on already_reported, not on \
+             still_serving alone; got {:?}",
+            typed.events()
         );
     }
 

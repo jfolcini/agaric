@@ -1107,7 +1107,14 @@ impl SyncOrchestrator {
     /// synced.
     ///
     /// Ensure-row + stamp share one `BEGIN IMMEDIATE` transaction for the same
-    /// crash-atomicity reason as the pull path.
+    /// crash-atomicity reason as the pull path — but that atomicity is scoped
+    /// to this function's own two writes, not to the caller. Both callers
+    /// immediately follow this with [`Self::persist_peer_loro_vvs`] in a
+    /// *second*, independent `BEGIN IMMEDIATE`, so a crash between the two
+    /// calls can leave `streamed_at` stamped with no `loro_vv_bytes` written.
+    /// That is not a regression — the `SyncComplete` arm has run the same two
+    /// separate transactions back-to-back since #4084/#2502 — but the pair is
+    /// not atomic with each other, only internally consistent on their own.
     ///
     /// Two callers, both the streamer: the `SyncComplete` arm when a stream
     /// actually went out, and [`Self::reply_sync_complete`] when the
@@ -1394,6 +1401,18 @@ impl SyncOrchestrator {
     /// (`head_exchange_outgoing_loro`'s `or_else`), and a stale or ahead floor is
     /// already handled by the receiver's `apply_remote` reachability gate, which
     /// falls back to a snapshot on an unbridgeable `from_vv`.
+    ///
+    /// # A new failure mode (#4096)
+    ///
+    /// Writing bookkeeping here puts `record_stream_in_tx` and
+    /// `persist_peer_loro_vvs` on the error path: a transient `SQLITE_BUSY`
+    /// acquiring either `BEGIN IMMEDIATE` now fails this reply via `?`, where
+    /// the empty-registry responder previously always completed and sent
+    /// `SyncComplete`. This matches the `SyncComplete` arm, which has
+    /// propagated the same errors for the non-empty-stream case since #4084;
+    /// it fails safe (the caller's normal backoff/retry picks the session back
+    /// up, and nothing recorded so far needs undoing), but it is a failure
+    /// mode this branch did not have before, and no test exercises it.
     async fn reply_sync_complete(&mut self) -> Result<Option<SyncMessage>, AppError> {
         let last_hash = get_local_heads(&self.pool)
             .await?
@@ -1409,7 +1428,10 @@ impl SyncOrchestrator {
         // source (it logs the warning itself); there is no peer to key a row on,
         // so the session still completes — it shipped nothing and applied
         // nothing — but writes no bookkeeping rather than a bogus `peer_id = ""`
-        // row, matching `complete_pull_session`'s handling of the same case.
+        // row. `complete_pull_session` handles the same `None` case the same
+        // way (skip the write, still complete), though its own `else { warn! }`
+        // means that site logs the miss twice where this one — relying solely
+        // on `resolve_remote_peer_id`'s own warning — logs it once.
         if let Some(peer_id) = self.resolve_remote_peer_id() {
             self.record_stream_in_tx(&peer_id).await?;
             self.persist_peer_loro_vvs(&peer_id).await?;
