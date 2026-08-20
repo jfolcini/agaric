@@ -929,6 +929,22 @@ async fn block_page_id(pool: &SqlitePool, block_id: &str) -> Option<String> {
         .flatten()
 }
 
+/// #4200: whether a block is currently tombstoned. B6's move driver reads this
+/// AFTER the apply, exactly as the LOCAL move command does, so the hint it
+/// feeds `move_same_page_hint` carries the same "did #4112's sweep fire?" proof
+/// production carries — rather than hard-coding `false` and modelling a
+/// narrowing production would not take.
+async fn block_is_tombstoned(pool: &SqlitePool, block_id: &str) -> bool {
+    // dynamic-sql: test-only harness read-back (not a production query path)
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_optional(pool)
+        .await
+        .expect("deleted_at read-back")
+        .flatten()
+        .is_some()
+}
+
 /// Rows currently in `page_link_cache`. Used only by B6's non-vacuity
 /// tracking (the PEAK across the chain — a chain may add a link and then edit
 /// or delete it away, so the end-of-chain count is not evidence of what the
@@ -1059,6 +1075,7 @@ proptest! {
                         Some(crate::materializer::move_same_page_hint(
                             page_id_before.as_deref(),
                             after.as_deref(),
+                            block_is_tombstoned(&pool, id).await,
                         ))
                     }
                     None => None,

@@ -345,13 +345,31 @@ async fn move_block_in_tx(
     // the subtree dragged a nested page along and this branch additionally
     // required `!subtree_has_nested_page`. Now that the cascade honours page
     // boundaries the flattening is gone, so that carve-out has been removed.
-    let new_page_id: Option<String> =
-        // dynamic-sql: static single-column page_id read; runtime query_scalar so no `.sqlx` entry.
-        sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+    //
+    // #4200: `deleted_at` comes back in the SAME round-trip. A `MoveBlock`
+    // apply has exactly one way to stamp it — #4112's
+    // `sweep_move_under_tombstoned_ancestor`, which sweeps a block that landed
+    // LIVE under a TOMBSTONED ancestor into that ancestor's trash cohort,
+    // taking the block's whole subtree with it. `validate_move_in_tx` above
+    // already proved the subject was `deleted_at IS NULL` going in, so a
+    // non-NULL stamp coming out can only be the sweep. A swept move tombstoned
+    // live tag holders, so it must not claim the narrowing hint (see
+    // `move_same_page_hint`): both `tags_cache.usage_count` and the
+    // `page_link_cache` roll-up count only `deleted_at IS NULL` rows.
+    let (new_page_id, swept_into_tombstone): (Option<String>, bool) = {
+        // dynamic-sql: static two-column page_id/deleted_at read; runtime query_as so no `.sqlx` entry.
+        let row: Option<(Option<String>, Option<i64>)> =
+            sqlx::query_as::<_, (Option<String>, Option<i64>)>(
+                "SELECT page_id, deleted_at FROM blocks WHERE id = ?",
+            )
             .bind(&block_id)
             .fetch_optional(&mut ***tx)
-            .await?
-            .flatten();
+            .await?;
+        match row {
+            Some((page_id, deleted_at)) => (page_id, deleted_at.is_some()),
+            None => (None, false),
+        }
+    };
 
     // #3886: the hint is computed by the dispatch-side
     // `move_same_page_hint`, not inline here — `Some(true)` unlocks the
@@ -361,8 +379,11 @@ async fn move_block_in_tx(
     // take the fast path. Keeping the rule next to the arm that consumes it
     // also means the reconciliation oracle's B6 driver audits the SAME
     // function production calls, rather than a mirror of it.
-    let same_page =
-        crate::materializer::move_same_page_hint(old_page_id.as_deref(), new_page_id.as_deref());
+    let same_page = crate::materializer::move_same_page_hint(
+        old_page_id.as_deref(),
+        new_page_id.as_deref(),
+        swept_into_tombstone,
+    );
 
     // 6. Enqueue the op for background dispatch. The CALLER's single
     //    `commit_and_dispatch` drains every enqueued op in FIFO order (one op

@@ -177,22 +177,124 @@ SOURCE_WORKTREE = "worktree"
 # See `_index_belongs_to`; the `.mjs` twin spells this `NESTED_GIT_DIRS`.
 _NESTED_GIT_DIRS = frozenset({"worktrees", "modules"})
 
-# The variables through which an inherited git context can redirect the
-# ownership probe in `_index_belongs_to` away from `root`, despite `-C root`
-# (#4061). `GIT_INDEX_FILE` is deliberately absent: it is the value under
-# test, not ambient context to strip, and `rev-parse --absolute-git-dir`
-# never consults it. A subset of `GIT_SCRATCH_LEAK_VARS`
-# (`scripts/lib/git-scratch-guard.sh`) — that list scrubs a whole fixture's
-# environment for a battery of git subcommands; this one scrubs a single
-# `rev-parse --absolute-git-dir` call for the variables that can change its
-# answer.
-_PROBE_SCRUB_VARS = (
+# ─── The variables that RE-AIM git, and the one that INFORMS it ───────────
+#
+# Every name below merely points git at a directory it would otherwise
+# DISCOVER for itself, whether the caller meant it to or not: they outrank
+# `-C root` (#4061, the ownership probe) and they outrank `cwd=root` (#4191,
+# the guard's own `ls-files`/`cat-file`). That redundancy is what makes
+# removing them safe, and it is the whole distinction this module draws
+# between a leaked git context and a legitimate one — with `cwd` at the tree
+# being judged, ordinary discovery finds that tree's own git dir and answers
+# identically, so scrubbing is a no-op when the ambient context is honest and
+# corrective when it is not. There is nothing to sniff. Measured on git 2.43:
+# an ordinary `git commit` in a main checkout exports NO `GIT_DIR` at all; a
+# commit in a LINKED WORKTREE exports the absolute
+# `<main>/.git/worktrees/<name>` that `rev-parse --absolute-git-dir` answers
+# with the variable removed; so does a checkout whose `.git` is a GITFILE
+# (`git init --separate-git-dir`, and every submodule), which is a MAIN
+# checkout exporting an absolute `GIT_DIR` and equally redundant, since
+# discovery reads the same target out of the gitfile — the argument rests on
+# redundancy, not on absence; and a relative `GIT_DIR=.git` resolves against
+# the git process's cwd, which every call here fixes at `root`.
+#
+# The invariant has one honest counterexample, not a shape any of the above
+# and not one this repo uses: a DETACHED WORK TREE (`git --git-dir=X
+# --work-tree=Y <command>`, the bare-dotfiles-repo shape), where `Y` carries
+# no `.git` of its own. There `GIT_WORK_TREE` is not redundant with
+# discovery — discovery has nothing under `Y` to find. Verified (git 2.43):
+# with `GIT_DIR`/`GIT_WORK_TREE` scrubbed and `cwd` at such a `Y`, `git
+# rev-parse --show-toplevel` answers "not a git repository" when `Y` sits
+# nowhere near another repo, and every caller here that treats that as
+# fail-open ends up reporting nothing rather than judging `Y`. Worse when
+# `Y` is nested inside an unrelated repo: discovery does not fail, it finds
+# the ANCESTOR, and a guard judges that tree instead, quietly, with no error
+# to notice. Not a shape this repo's guards ever run in, and the shapes
+# above really are redundant, so this does not change what the scrub list
+# removes — but the invariant above is stated unconditionally, and this is
+# the case where it is false.
+#
+# `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are ONE
+# mechanism in two variables — git's `receive-pack` quarantine exports the
+# pair together — and re-aim the OBJECT STORE the way the others re-aim the
+# git dir: the alternates git would otherwise use are discovered from
+# `<gitdir>/objects/info/alternates`. Scrubbing one and keeping the other
+# leaves a half-configured store, and the half left behind is not harmless.
+# Measured on git 2.43: `git cat-file` does NOT verify that an object's body
+# hashes to the name it was asked for, and an alternate is consulted for any
+# oid the primary store lacks — so a leaked `GIT_ALTERNATE_OBJECT_DIRECTORIES`
+# can serve an ATTACKER-CHOSEN body for an oid `git ls-files -s` names,
+# through `cat-file blob` and `cat-file --batch` alike. Reproduced against
+# `check-raw-tx.py --cached` over a staged violation whose loose object had
+# been removed: exit 2 (the fail-closed "damaged object store" refusal) became
+# exit 0 over a forged clean body. Pinned in section 5c of
+# `scripts/test-py-guard-file-source.sh`.
+#
+# Scrubbing the pair is not costless in every direction, only every
+# direction that matters HERE: a guard run as a server-side `pre-receive` /
+# `update` hook has its incoming objects held in exactly this quarantine, so
+# scrubbing it there makes those objects invisible too. That failure is
+# FAIL-CLOSED (`cat-file` misses, this module's own `GitError`, exit 2 with
+# the cause named) rather than the fail-open a leaked alternate risks in a
+# pre-commit guard, so it is safe — this module has no server-side hook
+# consumer today, but the pair is not only ever a hostile leak, just one
+# whose one legitimate use this list does not attempt to accommodate.
+#
+# What is deliberately NOT here, measured rather than argued, because the
+# test for membership is "can it change what a guard READS about the tree in
+# front of it" and not "is it a `GIT_` variable": `GIT_CONFIG_GLOBAL` /
+# `GIT_CONFIG_SYSTEM` / `GIT_CONFIG_COUNT` / `GIT_CONFIG_PARAMETERS` (git
+# ignores `core.worktree` and `core.bare` from anywhere but the repository's
+# own config, and all three spellings left `--show-toplevel` and `ls-files`
+# answering about the tree at `cwd`; scrubbing them would also make a fixture
+# that isolates itself with `GIT_CONFIG_GLOBAL` read the developer's real
+# `~/.gitconfig` instead); `GIT_PREFIX` (exported to every hook, consumed by
+# none of these calls); and `GIT_CEILING_DIRECTORIES` /
+# `GIT_DISCOVERY_ACROSS_FILESYSTEM`, which bound the UPWARD walk rather than
+# aiming it — the worst either can do is truncate or extend the ANCESTRY of
+# `cwd`, never name an unrelated repository, and both were measured inert
+# when `cwd` IS the toplevel, which is the only shape a guard runs in.
+#
+# `GIT_INDEX_FILE` is deliberately ABSENT, in both of its roles. For
+# `_index_belongs_to` it is the value under TEST rather than ambient context
+# to strip (and `rev-parse --absolute-git-dir` never consults it). For
+# `git_env` it is the one variable that is NOT redundant with discovery: a
+# commit in flight names a temp index — `.git/index.lock`,
+# `.git/next-index-<pid>.lock` — that exists nowhere in git's layout and
+# cannot be re-derived, so it is KEPT when it belongs to the tree being
+# judged rather than dropped wholesale.
+#
+# A subset of `GIT_SCRATCH_LEAK_VARS` (`scripts/lib/git-scratch-guard.sh`) —
+# that list scrubs a whole fixture's environment for a battery of git
+# subcommands; this one scrubs the calls a guard makes about the tree it is
+# judging. The Python twin of `GIT_REDIRECT_VARS` in `guard-file-source.mjs`;
+# the two lists are identical, which is the point.
+_GIT_REDIRECT_VARS = (
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
     "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_NAMESPACE",
 )
+
+
+def scrub_git_redirects(env) -> dict:
+    """A copy of `env` with the path-redirect variables above removed.
+
+    The one spelling of "ask git about the directory in front of you, not
+    about wherever an inherited environment points" — used by the ownership
+    probe (#4061) and by `git_env` for the guard's own enumeration and blob
+    reads (#4191). Those were two separate exposures of one question, and
+    they had two different answers before this existed.
+
+    `GIT_INDEX_FILE` survives this call untouched — see the list's own note.
+    """
+    out = dict(env)
+    for name in _GIT_REDIRECT_VARS:
+        out.pop(name, None)
+    return out
+
 
 # `read_many`'s chunk size (#4063), matching `CAT_FILE_CHUNK` in the `.mjs`
 # sibling exactly, for the same reason: peak memory is bounded by the
@@ -312,13 +414,16 @@ def _index_belongs_to(index_file: str, root: Path) -> bool:
     ACCEPT of a foreign index as belonging to `root`, silently defeating the
     exit-2 refusal `AmbiguousSourceError` exists to raise.
 
-    The probe's OWN environment is scrubbed of `_PROBE_SCRUB_VARS` before
+    The probe's OWN environment is scrubbed of `_GIT_REDIRECT_VARS` before
     this call for exactly that reason — asking "what repository is at this
     path" is a question no ambient git context should get to answer on
-    `root`'s behalf. Nothing else about the caller's environment changes:
-    `git_env` still binds the rest of it, and still strips only
-    `GIT_INDEX_FILE`, and only when this probe (now honest about `root`)
-    says it does not belong.
+    `root`'s behalf. `git_env` still binds the rest of it, and
+    `GIT_INDEX_FILE` is still the one variable it decides by BELONGING —
+    kept when this probe (now honest about `root`) says it is this tree's,
+    dropped when it says otherwise. What is no longer true of that function
+    is "and strips nothing else": since #4191 it removes the whole of
+    `_GIT_REDIRECT_VARS` unconditionally, because those re-aim its
+    `ls-files`/`cat-file` exactly as they re-aimed this probe.
 
     Measured before this fix, in a two-repository scratch fixture with
     `GIT_DIR` and `GIT_INDEX_FILE` both exported from the second: AUTO
@@ -331,9 +436,7 @@ def _index_belongs_to(index_file: str, root: Path) -> bool:
     if not path.is_absolute():
         path = Path.cwd() / path
     path = Path(os.path.normpath(path))
-    probe_env = dict(os.environ)
-    for name in _PROBE_SCRUB_VARS:
-        probe_env.pop(name, None)
+    probe_env = scrub_git_redirects(os.environ)
     try:
         out = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
@@ -371,19 +474,40 @@ def git_env(root: Path, env) -> dict:
     commit hook (where the exported index IS this tree's, often a
     `next-index-<pid>.lock` that MUST be honoured) and
     `pr-merge-result-check.sh` (where it is somebody else's and must not
-    be). Belonging decides, and nothing else is stripped from the
-    environment returned HERE — a foreign `GIT_DIR`/`GIT_WORK_TREE` in
-    `env` is out of scope for this function and left exactly as given.
+    be). Belonging decides which INDEX is read.
 
-    That is safe only because `_index_belongs_to`'s OWN probe no longer
-    trusts a leaked `GIT_DIR` either (#4061): before that fix, "belonging
-    decides" was true in name only — a `GIT_DIR` exported alongside a
-    foreign `GIT_INDEX_FILE` could make the probe answer about that foreign
-    repository and accept its index as `root`'s. The probe scrubs its own
-    environment for that one call; this function's own contract (leave
-    `env` otherwise untouched) is unaffected.
+    ─── …and an ambient GIT_DIR outranks `cwd` in exactly the same way ───
+
+    This function used to leave the rest of the environment exactly as
+    given, on the stated grounds that "a foreign `GIT_DIR`/`GIT_WORK_TREE`
+    in `env` is out of scope for this function". It was not (#4191):
+    `GIT_DIR` re-aims the very `git ls-files` this env is built for.
+    Measured on git 2.43, from a cwd inside repo A:
+    `GIT_DIR=<B>/.git git -C <A> ls-files` lists B's tracked paths, not
+    A's — `-C` and `cwd` both lose to it. So a leaked `GIT_DIR` made
+    `_entries` enumerate the OTHER repository's index while `cwd=root` made
+    it look otherwise, and the guard reported a verdict about a tree it
+    never opened. Reproduced against `check-raw-tx.py --cached` in a
+    two-repository fixture, with the foreign `GIT_INDEX_FILE` correctly
+    stripped by the rule above and `GIT_DIR` alone left in place: exit 0
+    over a staged violation, because `ls-files` fell back to that git dir's
+    own default index and the path under judgement was simply not in it.
+
+    The redirect variables are therefore scrubbed here too, unconditionally
+    — see `_GIT_REDIRECT_VARS` for why that does not need to distinguish a
+    hostile leak from an honest one, and why `GIT_INDEX_FILE` is the one
+    variable that gets a belonging test rather than a blanket removal.
+    Nothing about a real commit hook's environment changes: the hook's
+    `GIT_DIR`, when it exports one at all, names the same directory
+    `cwd=root` already discovers.
+
+    That leaves `_index_belongs_to`'s OWN probe (#4061) as the second half
+    of the same rule rather than the whole of it: before that fix,
+    "belonging decides" was true in name only — a `GIT_DIR` exported
+    alongside a foreign `GIT_INDEX_FILE` could make the probe answer about
+    that foreign repository and accept its index as `root`'s.
     """
-    out = dict(env)
+    out = scrub_git_redirects(env)
     index_file = out.get("GIT_INDEX_FILE")
     if index_file and not _index_belongs_to(index_file, root):
         del out["GIT_INDEX_FILE"]

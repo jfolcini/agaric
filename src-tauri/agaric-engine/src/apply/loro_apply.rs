@@ -674,6 +674,14 @@ pub async fn apply_delete_block_via_loro(
 /// LWW; we read back the engine's post-apply snapshot and project
 /// both fields into SQL. No sibling-shift on either side (see
 /// projection helper's docstring for the rationale).
+///
+/// #4112 — the tail runs [`super::sql_only::sweep_move_under_tombstoned_ancestor`]
+/// before the tag maintenance: a replayed move can land a LIVE block under a
+/// TOMBSTONED ancestor (concurrent delete-on-A / move-on-B), which is the one
+/// shape the local command path's `deleted_at IS NULL` probes make unreachable
+/// locally. See that helper for why the answer is a sweep into the ancestor's
+/// cohort rather than the local path's rejection — refusing a peer's op is the
+/// divergence, not the cure.
 pub async fn apply_move_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
@@ -796,7 +804,49 @@ pub async fn apply_move_block_via_loro(
             projection::reproject_dense_positions(conn, &new_siblings).await?;
         }
     }
-    tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
+    // #4112: a remote move can land a LIVE block under a TOMBSTONED ancestor —
+    // the concurrent delete-on-A / move-on-B merge. Sweep it into that
+    // ancestor's trash cohort (the SAME R9 rule the snapshot-import path
+    // applies); see `sweep_move_under_tombstoned_ancestor` for why a sweep
+    // rather than the local path's rejection is the convergent answer. The
+    // `sql_only` arm runs the byte-identical tail, so the two arms cannot
+    // drift.
+    match sweep_move_under_tombstoned_ancestor(&mut *conn, p.block_id.as_str()).await? {
+        None => {
+            tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
+        }
+        Some((cohort_ts, cohort)) => {
+            // Mirror the tombstone onto the per-space engine INLINE rather than
+            // through `ApplyEffects` + the post-commit
+            // `dispatch_delete_descendants` fan-out. The op arm has no
+            // `DeleteBlock` record to hang a cohort off, and inline keeps the
+            // engine mutation inside the caller's `for_space_recording`
+            // checkpoint window, so a tx rollback rewinds it with everything
+            // else this op did. Without it the engine keeps the subtree ALIVE
+            // while SQL says deleted, and the next
+            // `reproject_block_deleted_at_from_engine` would resurrect the
+            // rows — the self-perpetuating divergence #2017 documents in the
+            // restore direction.
+            let mut guard =
+                state
+                    .registry
+                    .for_space_recording(&space_id, device_id, &state.revert)?;
+            let engine = guard.engine_mut();
+            // #109 Phase 2: the engine seed carries `deleted_at` as a String
+            // slot; stringify the cohort timestamp exactly as
+            // `apply_delete_block_via_loro` does.
+            let marker = cohort_ts.to_string();
+            for cohort_id in &cohort {
+                // A block projected SQL-only during a no-space window never
+                // entered this engine; skip it rather than erroring (the same
+                // `read_block` probe the delete arm uses).
+                if engine.read_block(cohort_id.as_str())?.is_some() {
+                    engine.apply_delete_block(cohort_id.as_str(), &marker)?;
+                }
+            }
+            drop(guard);
+        }
+    }
     Ok(())
 }
 
