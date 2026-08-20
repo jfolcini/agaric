@@ -171,7 +171,7 @@
 //
 // Exit codes: 0 clean / 1 an expired or malformed marker / 2 invocation error.
 
-import { execSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -186,19 +186,16 @@ import {
   gitEnv,
   listTrackedEntries,
   readContents,
+  repoRootFromCwd,
   resolveSource,
 } from './lib/guard-file-source.mjs'
 
 // cwd-derived, not script-anchored — the documented EXCEPTION to "a guard
-// judges the tree that contains it" (see `scripts/lib/guard-file-source.mjs`,
-// "Which TREE is judged, and the one documented exception").
-const REPO_ROOT = (() => {
-  try {
-    return execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim()
-  } catch {
-    return process.cwd()
-  }
-})()
+// judges the tree that contains it", taken through the SHARED
+// `repoRootFromCwd` rather than a private `show-toplevel` (#4192). See
+// `scripts/lib/guard-file-source.mjs`, "Which TREE is judged, and the one
+// documented exception".
+const REPO_ROOT = repoRootFromCwd()
 
 const GIT_ENV = gitEnv(REPO_ROOT, process.env)
 
