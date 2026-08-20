@@ -185,6 +185,72 @@ Two prose claims that were load-bearing and wrong:
 A pointer to #4188 was added to the "what it deliberately does NOT do" section, so the known
 residue sits where the decision lives.
 
+## Postscript — a pre-push red that was the build, not the code
+
+After the branch was committed (`1b439f17f`) and `origin/main` merged in (`c8ec6a88b`), the
+pre-push gate failed at Phase D with **6 failed** tests, all of them from this change. The
+natural reading — several PRs landed on `main` overnight, so this is the stale-base hazard —
+turned out to be wrong, and the way it was ruled out is the part worth keeping.
+
+**`main` brought in no Rust at all.** The four commits merged were three CI-script changes,
+one frontend change, and three session logs: `.github/workflows/`, `scripts/`,
+`src/components/block-tree/`, `CONTRIBUTING.md`. No `.rs`, no `.config/nextest.toml`, no
+`.sqlx`. There was no interaction available to have.
+
+**The failure did not reproduce.** Running Phase D's exact command — recovered from
+`scripts/test-related-rust.sh --range … --dry` rather than guessed:
+
+```
+cargo nextest run --workspace --no-tests=pass   -E "test(~materializer::handlers::move_convergence_tests) + package(agaric-engine) + package(agaric-store)"
+```
+
+green at 4 threads, green at 16, green six times in a row, and green after
+`cargo clean -p agaric-engine -p agaric-store -p agaric` forced all three changed crates to
+rebuild from scratch. The `move_convergence_tests` module was looped 40 times (600 test
+processes) with no failure.
+
+**The failure count was the fingerprint.** Six is not an arbitrary number here. Of the eight
+`4112` tests, exactly two are insensitive to whether the sweep runs:
+`move_of_a_tombstoned_block_is_applied_not_dropped_4112` (its subject is the half the sweep
+deliberately leaves alone) and `sweep_converges_the_inherited_tag_cache_with_the_arbiter_4112`
+(with no sweep at all, both replay orders lose the moved subtree's inherited rows anyway —
+one via `recompute_subtree_inheritance`, the other via the delete's own subtree wipe — so
+they still agree, and still agree with `rebuild_all`). That leaves **exactly six** that
+depend on the sweep.
+
+So the prediction was: the gate ran a binary in which the sweep had no effect. Tested by
+disabling the sweep on the current tree and re-running the gate command. The result matched
+on every axis available: 6 failed, the same six test names, and the three quoted assertion
+strings **verbatim**, down to
+`the sweep must inherit the NEAREST tombstoned ancestor's cohort (1600000000000), not the
+outer P1 cohort (1700000000000) and not `now`` and
+`precondition: the first replay swept C1A into P2's cohort`. The observed left-hand value
+was `(Some("…MVC1AA"), None)` — the block never got stamped, i.e. the sweep never ran.
+
+**The test count was the second, independent signature.** The gate reported *1769* tests
+run; the same filter on the same tree selects **1771**. A binary that exposes two fewer
+tests than its own source defines is a stale binary — nextest can only run what was linked.
+Two tests missing and a whole helper's behaviour missing are the same fact.
+
+The cause is therefore a **partially-rebuilt `agaric-engine`**: the test source (in the
+`agaric` crate) recompiled while the engine crate was linked from an artifact predating the
+sweep. This machine OOM-killed a build during the session, which is exactly how that state
+is produced, and the repo's own notes already record the failure mode ("nextest substring
+filters can silently skip a binary whose compile was interrupted"; "OOM from lingering
+rustc/rust-analyzer kills the gate").
+
+**No production or test code was changed in response to this red.** The right response to a
+gate failure whose *shape* says "the fix isn't in the binary" is `cargo clean -p <crate>` and
+a re-run, not an edit. Relaxing any of these six assertions would have deleted the
+convergence property the change exists to establish, and the diff would have shipped looking
+green while proving nothing.
+
+**Lesson.** When a gate reddens on tests you just wrote, count the failures against the
+subset that *can* fail for the reason proposed, and check the reported test count against the
+source. Both are cheap, and both distinguish "the code is wrong" from "the binary is old"
+before any code is touched. Simulating the suspected defect and diffing the failure text
+against the report turns that from a hunch into a proof.
+
 **Files touched (this session):**
 - `src-tauri/agaric-engine/src/apply/sql_only.rs` (+147 / -1)
 - `src-tauri/agaric-engine/src/apply/loro_apply.rs` (+51 / -1)
@@ -195,12 +261,18 @@ residue sits where the decision lives.
 
 **Verification:**
 - `cd src-tauri && cargo nextest run --workspace` — run in package groups because the
-  single invocation exceeds the 10-minute tool ceiling; 5931 tests run, 5931 passed
-  (`agaric-core`/`agaric-observability`/`agaric-diagnostics`/`agaric-store` 1573,
-  `agaric-engine`/`agaric-sync` 777, `agaric` 3581). One flake,
-  `sync_daemon::tests::daemon_branch_b_dispatches_all_peers_in_round_l61`, green on retry
-  and unrelated to this diff. (The bare form without `--workspace` is package-scoped to
-  `agaric` only — #3212.)
+  single invocation exceeds the 10-minute tool ceiling. Pre-merge: 5931 run, 5931 passed.
+  Re-run in full after the `origin/main` merge and after a package-scoped
+  `cargo clean` of all three changed crates: `agaric` 3581/3581,
+  `agaric-engine` + `agaric-store` 1756/1756 (inside the Phase D filter below),
+  `agaric-core` + `agaric-observability` + `agaric-diagnostics` + `agaric-sync` 592/592.
+  One flake, `sync_daemon::tests::daemon_branch_b_dispatches_all_peers_in_round_l61`, green
+  on retry and unrelated to this diff. (The bare form without `--workspace` is
+  package-scoped to `agaric` only — #3212.)
+- Pre-push Phase D, the gate's own command
+  (`scripts/test-related-rust.sh --range origin/main...HEAD`) — 1771 tests run, 1771 passed,
+  six consecutive times, and once more after a from-scratch rebuild of the changed crates.
+  See the postscript for why an earlier run of this same command reported six failures.
 - `cargo fmt --check` — clean (one wrapping fix applied to a new test helper first).
 - `cargo check --all-targets` — clean, no warnings.
 - `cargo clippy --workspace --all-targets` — exit 0, no warnings.
