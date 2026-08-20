@@ -5312,6 +5312,120 @@ async fn apply_remote_backfills_ancestor_missing_from_sql_parent_id_4083() {
     assert_eq!(root_content, "grandparent");
 }
 
+/// #4100 — the ancestor-backfill HEALING path must read one atomic view of the
+/// engine, exactly like the healthy path.
+///
+/// #540's property is not "acquire the engine guard once when nothing is
+/// wrong". It is that a projection reads ONE atomic view: every snapshot it
+/// writes comes from the same engine state. #4083's backfill took a SECOND
+/// acquisition, gated on the existence probe finding a missing row, so on the
+/// healing path the backfilled ancestors' snapshots could come from a later
+/// engine state than the changed blocks they were merged with — with a window
+/// in between during which the engine can move.
+///
+/// The two runs below are the SAME apply over the SAME engine state, differing
+/// only in whether SQL holds the untouched ancestors. `ancestors_outside`
+/// therefore returns the same candidates in both, and every other engine access
+/// in `apply_remote` is identical — so any difference in the acquisition count
+/// is the healing branch's, and nothing else's.
+///
+/// `guard_acquisitions` is the registry's own `mark_seq`, bumped exactly once
+/// per guard handed out; the delta across the apply is that apply's acquisition
+/// count.
+#[tokio::test]
+async fn apply_remote_healing_reads_one_engine_view_like_the_healthy_path_4100() {
+    /// Returns (guard acquisitions during the apply, whether the root row was
+    /// missing just before it, whether the root row is present just after).
+    async fn run_apply(open_the_gap: bool) -> (u64, bool, bool) {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "grandparent", None, 0)
+                .expect("create A");
+            e.apply_create_block(BLOCK_B, "content", "parent", Some(BLOCK_A), 0)
+                .expect("create B");
+            e.apply_create_block(BLOCK_C, "content", "child", Some(BLOCK_B), 0)
+                .expect("create C");
+        }
+        let registry_b = seed_receiver_via_snapshot(&pool, &registry_a, &space).await;
+
+        if open_the_gap {
+            // Deepest first — the FK forbids the other order.
+            for id in [BLOCK_C, BLOCK_B, BLOCK_A] {
+                sqlx::query("DELETE FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .execute(&pool)
+                    .await
+                    .expect("open the ancestor gap");
+            }
+        }
+
+        // Remote edits ONLY the deepest block → changed set = [C], so A and B
+        // are untouched ancestors in BOTH runs.
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_edit_content(BLOCK_C, 0, 0, "x")
+                .expect("edit C");
+        }
+
+        let root_missing_before: Option<String> =
+            sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_optional(&pool)
+                .await
+                .expect("probe root before");
+
+        let before = registry_b.guard_acquisitions();
+        let outcome = round_trip_update(&pool, &registry_a, &registry_b, &space).await;
+        let acquisitions = registry_b.guard_acquisitions() - before;
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported { .. }),
+            "the update must apply, got {outcome:?}"
+        );
+
+        let root_after: Option<String> =
+            sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_optional(&pool)
+                .await
+                .expect("probe root after");
+
+        (
+            acquisitions,
+            root_missing_before.is_none(),
+            root_after.is_some(),
+        )
+    }
+
+    let (healthy_acquisitions, healthy_gap, healthy_root) = run_apply(false).await;
+    let (healing_acquisitions, healing_gap, healing_root) = run_apply(true).await;
+
+    // Non-vacuity: the two runs really did take different branches.
+    assert!(
+        !healthy_gap && healthy_root,
+        "the control run must have its ancestor row throughout"
+    );
+    assert!(
+        healing_gap && healing_root,
+        "the healing run must start with the ancestor row missing and end with \
+         it backfilled — otherwise this test compares two healthy applies"
+    );
+
+    assert_eq!(
+        healing_acquisitions, healthy_acquisitions,
+        "#4100: healing must cost no extra engine-guard acquisition. A second \
+         acquisition means the backfilled ancestors' snapshots come from a \
+         later engine state than the changed blocks they are merged with, which \
+         is the #540 property the healing path used to drop (healthy took \
+         {healthy_acquisitions}, healing took {healing_acquisitions})"
+    );
+}
+
 /// #4083 — the shape where the ancestor backfill's own output order is NOT
 /// parent-before-child, and only the tx-wide `PRAGMA defer_foreign_keys = ON`
 /// carries it.
