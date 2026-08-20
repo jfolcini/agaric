@@ -4830,6 +4830,13 @@ async fn peer_refs_0107_endpoint_id_add_preserves_existing_rows_3464() {
     apply_migrations_through(&pool, 0, 106).await;
 
     let vv: Vec<u8> = vec![0x00, 0xff, 0x10, 0x42];
+    // The device name is single-quoted with a doubled apostrophe, not
+    // `"Javier's Phone"`. A double-quoted token is an *identifier* in SQL;
+    // SQLite only falls back to reading it as a string literal when no such
+    // column exists (the DQS misfeature, off by default in newer builds and in
+    // any build compiled with `SQLITE_DQS=0`). Relying on that fallback means a
+    // seed row whose meaning depends on the schema not growing a column of that
+    // name — see the note on this in PR #4197.
     sqlx::query(
         "INSERT INTO peer_refs \
              (peer_id, last_hash, last_sent_hash, synced_at, reset_count, \
@@ -5576,6 +5583,13 @@ async fn peer_refs_0111_streamed_at_add_preserves_existing_rows_4084() {
 
     let vv: Vec<u8> = vec![0x00, 0xff, 0x10, 0x42];
     let endpoint_id = "b".repeat(64);
+    // The device name is single-quoted with a doubled apostrophe, not
+    // `"Javier's Phone"`. A double-quoted token is an *identifier* in SQL;
+    // SQLite only falls back to reading it as a string literal when no such
+    // column exists (the DQS misfeature, off by default in newer builds and in
+    // any build compiled with `SQLITE_DQS=0`). Relying on that fallback means a
+    // seed row whose meaning depends on the schema not growing a column of that
+    // name — see the note on this in PR #4197.
     sqlx::query(
         "INSERT INTO peer_refs \
              (peer_id, last_hash, last_sent_hash, synced_at, reset_count, \
