@@ -1245,11 +1245,36 @@ impl Materializer {
 /// #2700's optimisation is preserved for the overwhelmingly common case of
 /// content that lives on a page.
 ///
+/// #4200 — and `Some(true)` additionally requires that the move did NOT SWEEP
+/// the block into a tombstone cohort. Since #4112 the move apply ends in
+/// `sweep_move_under_tombstoned_ancestor` (agaric-engine
+/// `apply/sql_only.rs`): a move that lands a LIVE block under a TOMBSTONED
+/// ancestor stamps that block and its whole subtree with the ancestor's
+/// `deleted_at`, in-tx. That is a delete in everything but the op type, and the
+/// caches this skip drops are precisely the ones that count only LIVE rows —
+/// `DESIRED_TAGS_SQL` joins `blocks blk … WHERE blk.deleted_at IS NULL` for
+/// both halves of `usage_count` (`agaric-store/src/cache/tags.rs`) and the
+/// `page_link_cache` roll-up filters `sb.deleted_at IS NULL`
+/// (`cache/page_links.rs`). A swept move must therefore take the conservative
+/// set even when its `page_id` never moved: the sweep also doubles as a repair
+/// pass for a pre-existing invisible orphan, and THAT shape can be a
+/// same-parent reorder, where every page-derived comparison is legitimately
+/// "unchanged".
+///
+/// The caller proves it by reading the moved block's `deleted_at` back after
+/// the in-tx apply (`commands/blocks/move_ops.rs`); `validate_move_in_tx` has
+/// already proven the subject was live going in, so a non-NULL stamp coming out
+/// can only be the sweep.
+///
 /// Kept here, next to the arm that consumes it, rather than inline at the
 /// command site: the condition is a property of the SKIP, not of the move, and
 /// a future reader widening the skip has to walk past this doc to do it.
-pub(crate) fn move_same_page_hint(old_page_id: Option<&str>, new_page_id: Option<&str>) -> bool {
-    old_page_id == new_page_id && old_page_id.is_some()
+pub(crate) fn move_same_page_hint(
+    old_page_id: Option<&str>,
+    new_page_id: Option<&str>,
+    swept_into_tombstone: bool,
+) -> bool {
+    old_page_id == new_page_id && old_page_id.is_some() && !swept_into_tombstone
 }
 
 /// Pure mapping from an [`OpRecord`] (and optional `block_type_hint`
@@ -1271,6 +1296,13 @@ pub(crate) fn move_same_page_hint(old_page_id: Option<&str>, new_page_id: Option
 /// the full conservative set. `RebuildAgendaCache` (#2657) is NOT gated on this
 /// hint — it stays enqueued on a same-page move (out of #2700 scope; a
 /// correct-but-broader rebuild is never stale).
+///
+/// #4200: `RebuildTagsCache` is ALSO gated on this hint, in the opposite
+/// direction — it is enqueued whenever `Some(true)` is not claimed. A move that
+/// trips #4112's `sweep_move_under_tombstoned_ancestor` tombstones a subtree,
+/// and `tags_cache.usage_count` counts only live holders; see the arm for the
+/// full argument and [`move_same_page_hint`] for why the producer refuses
+/// `Some(true)` after a sweep.
 ///
 /// Lifted out of the former imperative match in
 /// [`Materializer::enqueue_background_tasks`] so the per-op-type cache
@@ -1761,6 +1793,41 @@ pub(crate) fn invalidations_for_op(
             // cross-page reparent) keeps the full conservative set. Note
             // `RebuildAgendaCache` (#2657) below is deliberately NOT gated here.
             let same_page = move_same_page == Some(true);
+            // #4200: `tags_cache.usage_count` counts only LIVE holders —
+            // `DESIRED_TAGS_SQL` joins `blocks blk … WHERE blk.deleted_at IS
+            // NULL` for the `block_tags` half AND the `block_tag_refs` half
+            // (`agaric-store/src/cache/tags.rs`). That is exactly why the
+            // `DeleteBlock` arm keeps `RebuildTagsCache` in its lifecycle set.
+            // Since #4112 a `MoveBlock` can tombstone blocks too:
+            // `sweep_move_under_tombstoned_ancestor` stamps the moved block and
+            // its whole subtree with the nearest tombstoned ancestor's
+            // `deleted_at` on the way out of the apply, in the same tx. Nothing
+            // else in this arm's fan-out repairs the count, and nothing outside
+            // it does either — `pages_cache` counts ARE maintained in that same
+            // tx AFTER the sweep (`maintain_pages_cache_counts_after_op`,
+            // agaric-engine `apply/kernel.rs`), the FTS read path filters
+            // `deleted_at` in its own SQL (`fts/toggle_filter.rs`), and
+            // `block_tag_inherited` is wiped in-tx by the sweep's own
+            // `remove_subtree_inherited` — so tags_cache is the ONE cache the
+            // move's narrower matrix misses, and the affected tags OVER-COUNT
+            // until an unrelated lifecycle/tag op or a full rebuild heals them.
+            //
+            // Gated on the same `same_page` hint rather than pushed
+            // unconditionally: this arm is the 200 ms interactive drag/reorder
+            // path and a sweep is almost never what a move does. The gate is
+            // sound because the hint's SOLE producer (`move_same_page_hint`)
+            // refuses `Some(true)` for a move that swept, so `Some(true)` means
+            // "page unchanged AND a real page AND nothing was tombstoned" —
+            // under which a move cannot change any tag's live-holder count.
+            // `Some(false)` (a proven cross-page reparent) and `None` (remote
+            // replay / inbound sync / boot / undo, which never carry the hint)
+            // both keep the rebuild. That is broader than "only when the sweep
+            // fired" — a cross-page move that swept nothing still pays — but
+            // narrowing it further would need a second hint channel threaded
+            // through every non-local dispatcher for no correctness gain.
+            if !same_page {
+                tasks.push(MaterializeTask::RebuildTagsCache);
+            }
             if !same_page {
                 tasks.push(MaterializeTask::RebuildPagesCache);
             }
@@ -2908,6 +2975,10 @@ mod tests {
         assert_eq!(
             labels(&tasks),
             vec![
+                // #4200: a move can tombstone a subtree (#4112's sweep), and
+                // `tags_cache.usage_count` counts only live holders — so the
+                // conservative (hint-absent) set carries the tags rebuild.
+                "RebuildTagsCache",
                 "RebuildPagesCache",
                 "RebuildPageLinkCache",
                 // #2657: a move changes `page_id`; `DESIRED_AGENDA_SQL` excludes
@@ -2991,6 +3062,7 @@ mod tests {
         assert_eq!(
             labels(&tasks),
             vec![
+                "RebuildTagsCache",
                 "RebuildPagesCache",
                 "RebuildPageLinkCache",
                 "RebuildAgendaCache",
@@ -3023,6 +3095,10 @@ mod tests {
             MaterializeTask::RebuildPagesCache,
             MaterializeTask::RebuildPageLinkCache,
             MaterializeTask::RebuildProjectedAgendaCache,
+            // #4200: the tags rebuild rides the same gate. `Some(true)` is only
+            // claimable when the move swept nothing (`move_same_page_hint`), so
+            // no tag's live-holder count can have changed.
+            MaterializeTask::RebuildTagsCache,
         ] {
             assert!(
                 !contains_kind(&tasks, &probe),
@@ -3043,13 +3119,13 @@ mod tests {
     #[test]
     fn move_same_page_hint_rejects_a_pageless_move_3886() {
         assert!(
-            !move_same_page_hint(None, None),
+            !move_same_page_hint(None, None, false),
             "a NULL → NULL move keeps `page_id` but MOVES the \
              COALESCE(page_id, parent_id, id) roll-up key, so it must not claim \
              the same-page fast path (#3886)"
         );
         assert!(
-            move_same_page_hint(Some("PAGE1"), Some("PAGE1")),
+            move_same_page_hint(Some("PAGE1"), Some("PAGE1"), false),
             "#2700's optimisation must survive for the common case: an unchanged \
              REAL page cannot move the roll-up key"
         );
@@ -3059,7 +3135,7 @@ mod tests {
             (None, Some("PAGE1")),
         ] {
             assert!(
-                !move_same_page_hint(old, new),
+                !move_same_page_hint(old, new, false),
                 "a changed page_id ({old:?} → {new:?}) is a cross-page reparent",
             );
         }
@@ -3085,7 +3161,7 @@ mod tests {
         // The hint production code computes for a reparent inside a page-less
         // subtree — NOT a hand-written `Some(false)`, so that reverting the
         // producer turns this test red.
-        let hint = Some(move_same_page_hint(None, None));
+        let hint = Some(move_same_page_hint(None, None, false));
         let tasks = invalidations_for_op(&r, None, hint).unwrap();
         assert!(
             contains_kind(&tasks, &MaterializeTask::RebuildPageLinkCache),
@@ -3093,6 +3169,76 @@ mod tests {
              old parent to the new one, so the full page-link rebuild must be \
              enqueued; got {:?}",
             labels(&tasks),
+        );
+    }
+
+    /// #4200 — the hint producer refuses to claim "same page" for a move that
+    /// SWEPT the block into a tombstone cohort, even when the `page_id` is
+    /// genuinely unchanged and genuinely a real page.
+    ///
+    /// #4112's `sweep_move_under_tombstoned_ancestor` doubles as a repair pass
+    /// for a subtree that was ALREADY an invisible orphan, and that shape can
+    /// be a same-parent REORDER — every page comparison says "unchanged" while
+    /// the apply quietly tombstones the moved subtree. The narrowed set drops
+    /// `RebuildTagsCache` and `RebuildPageLinkCache`, and both of those caches
+    /// count only `deleted_at IS NULL` rows, so claiming the fast path there
+    /// strands an over-count.
+    ///
+    /// To falsify: drop the `&& !swept_into_tombstone` term from
+    /// [`move_same_page_hint`].
+    #[test]
+    fn move_same_page_hint_rejects_a_swept_move_4200() {
+        assert!(
+            !move_same_page_hint(Some("PAGE1"), Some("PAGE1"), true),
+            "a move that swept its subtree into a tombstone cohort tombstoned \
+             live tag holders, so it must not claim the narrowing fast path \
+             even though its page_id never moved (#4200)"
+        );
+        assert!(
+            move_same_page_hint(Some("PAGE1"), Some("PAGE1"), false),
+            "#2700's optimisation must survive for the ordinary reorder: an \
+             unchanged REAL page with no sweep changes no cache this arm gates"
+        );
+    }
+
+    /// #4200 — and the arm that CONSUMES the hint must enqueue
+    /// `RebuildTagsCache` for that swept move.
+    ///
+    /// Paired with the producer test above so the guard is covered at both
+    /// ends. The hint is COMPUTED by the production producer rather than
+    /// hand-written, so reverting either half turns this red.
+    ///
+    /// `tags_cache.usage_count` is the load-bearing column: `DESIRED_TAGS_SQL`
+    /// counts a tag's holders through `JOIN blocks blk … WHERE blk.deleted_at
+    /// IS NULL` on BOTH the `block_tags` and the `block_tag_refs` half, so a
+    /// subtree the sweep tombstones drops out of the count and the cache
+    /// over-counts until something rebuilds it.
+    #[test]
+    fn invalidations_for_op_move_block_swept_keeps_tags_rebuild_4200() {
+        let r = make_record(
+            "move_block",
+            r#"{"block_id":"BLK1","new_position":0}"#,
+            Some("BLK1"),
+        );
+        let swept = Some(move_same_page_hint(Some("PAGE1"), Some("PAGE1"), true));
+        assert!(
+            contains_kind(
+                &invalidations_for_op(&r, None, swept).unwrap(),
+                &MaterializeTask::RebuildTagsCache
+            ),
+            "a same-page move that swept a subtree into a tombstone must \
+             enqueue RebuildTagsCache — the swept blocks stop counting toward \
+             every tag they held (#4200); got {:?}",
+            labels(&invalidations_for_op(&r, None, swept).unwrap()),
+        );
+        let clean = Some(move_same_page_hint(Some("PAGE1"), Some("PAGE1"), false));
+        assert!(
+            !contains_kind(
+                &invalidations_for_op(&r, None, clean).unwrap(),
+                &MaterializeTask::RebuildTagsCache
+            ),
+            "an ordinary same-page reorder tombstones nothing, so it must NOT \
+             pay the vault-wide tags rebuild on the interactive path (#4200)",
         );
     }
 

@@ -253,8 +253,173 @@ pub async fn apply_move_block_sql_only(
         position,
     };
     crate::loro::projection::project_move_block_to_sql(conn, &snapshot).await?;
-    tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
+    // #4112: the moved block may now sit LIVE under a tombstone. Sweep it into
+    // the tombstone's cohort — the SAME R9 rule the sync-import path applies —
+    // and let the sweep own the tag maintenance when it fires (a fully
+    // tombstoned subtree wants `remove_subtree_inherited`'s unfiltered wipe,
+    // not a recompute whose `subtree_active` walk can no longer see past the
+    // root it just tombstoned — `sweep_converges_the_inherited_tag_cache_with_the_arbiter_4112`
+    // reddens on that substitution).
+    //
+    // The engine arm runs the SAME sweep, then additionally mirrors the cohort
+    // onto its per-space engine; this arm has no engine to mirror to in its
+    // primary case (`SpaceUnresolved` — the block never entered one). In the
+    // `EngineMissingTarget` sub-case the block CAN be in an engine that now
+    // disagrees (engine live / SQL deleted), which is the pre-existing #2250
+    // fallback degradation boot replay reconciles: it cannot RESURRECT the row,
+    // because `reproject_block_deleted_at_from_engine`'s `(Some(_), Some(_))`
+    // resurrection-guard arm is exactly "SQL-deleted under a tombstoned
+    // ancestor → no-op".
+    if sweep_move_under_tombstoned_ancestor(&mut *conn, block_id_str)
+        .await?
+        .is_none()
+    {
+        tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
+    }
     Ok(())
+}
+
+/// #4112 — the shared post-`MoveBlock` repair for the one tree shape a remote
+/// move can create and no local command can: a **LIVE block under a
+/// TOMBSTONED ancestor**.
+///
+/// ## What the local path does, and why the replay path cannot copy it
+///
+/// `commands::blocks::move_ops::validate_move_in_tx` probes
+/// `SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL` for BOTH the
+/// subject and the target parent and returns [`AppError::NotFound`] — so a
+/// user-driven move into the trash never becomes an op at all. The replay path
+/// is structurally different in the way that matters: by the time it runs, the
+/// op EXISTS. It was authored on a peer against a state where the parent was
+/// still live, and refusing it here is not "validation", it is **dropping a
+/// peer's op on one device only** — the divergence that is strictly worse than
+/// the state it would prevent. Concretely, for the op set
+/// `{Delete(P), Move(B → P)}`:
+///
+/// * replayed `Delete` first, a refusing guard leaves `B` live under its OLD
+///   parent;
+/// * replayed `Move` first, `Delete`'s cascade tombstones `B` under `P`.
+///
+/// Two devices, same ops, different states. Applying the move unguarded (the
+/// pre-#4112 behaviour) diverges the same way — `B` live under a tombstone
+/// versus `B` trashed. The sweep is the only one of the candidate behaviours
+/// that converges: BOTH orders end with `B` under `P`, tombstoned at `P`'s
+/// `deleted_at`, because the sweep computes exactly the cascade the
+/// delete-last order computes.
+///
+/// ## This is not a new semantics — it is R9's, applied on the op path
+///
+/// [`crate::loro::projection::reproject_block_deleted_at_from_engine`] already
+/// resolves this exact merge on the SNAPSHOT-import path, and already names it:
+/// *"LIVE in both engine and SQL but sitting under a tombstoned ancestor — the
+/// concurrent delete-vs-move-in merge. Inherit the nearest tombstoned
+/// ancestor's cohort."* So #4112's open question ("is a live block under a
+/// tombstoned parent legal?") is already answered NO in this codebase; the gap
+/// was that the answer was only enforced where blocks arrive as an imported
+/// CRDT snapshot, not where they arrive as replayed `MoveBlock` ops. This
+/// helper reuses the same ancestor probe
+/// ([`agaric_store::block_descendants::nearest_tombstoned_ancestor`]), the same
+/// cohort source ([`crate::loro::projection::project_delete_block_to_sql`]) and
+/// the same cohort timestamp, so the two entry points cannot drift.
+///
+/// ## What it deliberately does NOT do
+///
+/// A move whose SUBJECT is already tombstoned is applied unchanged. A
+/// tombstoned block under a live parent is the ordinary trash shape (that is
+/// exactly what `delete_block` produces), it is what R9's `(Some(_), Some(_))`
+/// resurrection-guard arm preserves, and applying the move is what CONVERGES:
+/// `Delete(B)` then `Move(B → Q)` and `Move(B → Q)` then `Delete(B)` both end
+/// with `B` under `Q`, tombstoned. `validate_move_in_tx` rejects that case too,
+/// but as a UI affordance (do not let a user drag a trashed block), not as a
+/// state invariant — so it is the half of the local guard that must NOT be
+/// mirrored here. Pinned by
+/// `move_of_a_tombstoned_block_is_applied_not_dropped_4112`, which reddens
+/// when the local path's subject probe IS mirrored onto this arm.
+///
+/// The residue of that choice is #4188: when BOTH the source and the target
+/// parent are deleted concurrently, whichever cascade catches the block first
+/// owns its cohort, so `{Delete(P1), Delete(P2), Move(B: P1 → P2)}` still
+/// resolves `deleted_at` order-dependently. That divergence predates #4112 and
+/// lives in the `DeleteBlock` cascade's skip-an-already-stamped-row rule, not
+/// here — this sweep narrows it (it no longer leaves `B` live) rather than
+/// closing it.
+///
+/// #4204 is the neighbouring residue, and it is NOT covered by #4188's
+/// "both endpoints deleted" scoping: a delete of the OLD parent racing a move
+/// OUT, with the target parent LIVE. For `{Delete(P1), Move(C1A: P1 → P2)}`
+/// with `P2` live, replayed delete-first, `P1`'s cascade stamps `C1A` and the
+/// move — which does not refuse a tombstoned subject, see above — carries it
+/// under `P2` still trashed; replayed move-first,
+/// `collect_subtree_ids_unbounded(P1)` no longer reaches `C1A` and it stays
+/// LIVE under `P2`. This sweep never fires in either order (after the move the
+/// whole ancestor chain is live, so `nearest_tombstoned_ancestor` returns
+/// `None`), so the divergence predates #4112 and is untouched by it — but it is
+/// strictly worse than #4188's, which diverges only on WHICH restore cohort a
+/// block that is trashed everywhere belongs to. Here the two devices disagree
+/// about whether the subtree is in the tree at all.
+///
+/// This list is the set of shapes that have been WALKED, not a proof of
+/// exhaustiveness. It covers what the sweep's own choices imply; a new op
+/// combination that resolves `deleted_at` by replay order belongs here (and in
+/// an issue) rather than being assumed absent because it is unlisted.
+///
+/// Returns `Some((cohort_ts, cohort))` when it swept — the ids it stamped,
+/// for the caller's engine fan-out — and `None` when the block is healthy
+/// (the overwhelmingly common case). The healthy path costs one PK lookup
+/// PLUS one depth-bounded `parent_id` climb
+/// ([`agaric_store::block_descendants::nearest_tombstoned_ancestor`]) — the
+/// climb is what decides "healthy", so it cannot be skipped on a block whose
+/// own row is live. It is not skipped on a same-parent reorder either: the
+/// helper doubles as a repair pass for a subtree that was ALREADY an invisible
+/// orphan (a pre-#4112 vault, or a `sql_only`-fallback move), and a reorder is
+/// a legitimate occasion to notice.
+pub(crate) async fn sweep_move_under_tombstoned_ancestor(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Option<(i64, Vec<String>)>, AppError> {
+    // Only a LIVE block can be an invisible orphan. `Some(None)` = the row
+    // exists and `deleted_at IS NULL`; `Some(Some(_))` = ordinary trash (see
+    // the "deliberately does NOT" note above); `None` = no row, nothing to
+    // sweep.
+    let own_deleted_at: Option<Option<i64>> =
+        sqlx::query_scalar!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    if !matches!(own_deleted_at, Some(None)) {
+        return Ok(None);
+    }
+
+    let Some((ancestor_id, ancestor_ts)) =
+        agaric_store::block_descendants::nearest_tombstoned_ancestor(&mut *conn, block_id).await?
+    else {
+        return Ok(None);
+    };
+
+    // Loud: this is a cross-device reconciliation, not a user action — the
+    // same reason R9's sweep warns.
+    tracing::warn!(
+        block_id = %block_id,
+        ancestor_id = %ancestor_id,
+        cohort_ts = ancestor_ts,
+        "MoveBlock landed a live block under a tombstoned ancestor \
+         (concurrent delete-vs-move merge, #4112); sweeping it into the \
+         ancestor's trash cohort",
+    );
+    // Same cohort source and same timestamp as R9's sweep, so a device that
+    // learns of this move by op replay and one that learns of it by snapshot
+    // import stamp the identical rows at the identical `deleted_at` — which is
+    // also what makes the cohort restorable as one unit (`RestoreBlock` keys on
+    // the shared `deleted_at`).
+    let cohort =
+        crate::loro::projection::project_delete_block_to_sql(&mut *conn, block_id, ancestor_ts)
+            .await?;
+    // Mirror `apply_delete_block_via_loro`'s tag maintenance for a newly
+    // tombstoned subtree: `remove_subtree_inherited` walks UNFILTERED, so it
+    // still reaches the descendants the cascade just tombstoned, which
+    // `recompute_subtree_inheritance` (whose `subtree_active` walk stops at
+    // them) no longer can.
+    tag_inheritance::remove_subtree_inherited(&mut *conn, block_id).await?;
+    Ok(Some((ancestor_ts, cohort)))
 }
 
 /// SQL-only AddTag fallback (formerly `apply_add_tag_tx`).
