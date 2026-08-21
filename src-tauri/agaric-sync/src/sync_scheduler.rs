@@ -128,18 +128,91 @@ struct BackoffState {
     backoff: Duration,
     /// Number of consecutive failures.
     consecutive_failures: u32,
-    /// The user-facing failure text most recently *reported* for this peer
-    /// during the current streak, or `None` if nothing has been reported yet.
+    /// The user-facing failure texts already *reported* for this peer during
+    /// the current streak, oldest first, capped at [`MAX_REMEMBERED_REPORTS`].
     ///
     /// #4120: lives here, next to the streak it belongs to, because the two
     /// places the streak resets — [`SyncScheduler::record_success`] (which
     /// removes the entry) and [`SyncScheduler::clear_backoff`] (which clears
     /// the map) — are exactly the two places "the user has already been told
     /// this" stops being true. Read and written by
-    /// `session_supervisor::record_pull_failure` via
-    /// [`SyncScheduler::last_reported_failure`] /
-    /// [`SyncScheduler::set_last_reported_failure`].
-    last_reported_error: Option<String>,
+    /// `session_supervisor::record_initiator_failure` via
+    /// [`SyncScheduler::record_failure_and_take_report`].
+    ///
+    /// # Why a set and not the single slot #4120 shipped (#4201)
+    ///
+    /// The original was one slot holding the most recent reported text, and
+    /// suppression engaged only on byte-equality with it. A peer failing
+    /// `A, B, A, B, …` — a dial timeout one cycle, a mid-session error the
+    /// next — never matched, so the #4084 forever-toast came straight back at
+    /// half the rate. Remembering the whole streak's reported texts closes
+    /// that, and does it without widening what a *repeat* means: the key is
+    /// still the exact text, so a cause the user has never been shown is
+    /// still news.
+    reported_errors: Vec<String>,
+}
+
+/// What one call to [`SyncScheduler::record_failure_and_take_report`] decided.
+///
+/// The failure count rides along rather than being fetched afterwards so the
+/// caller's log line describes the same instant the decision was taken — a
+/// second `failure_count()` call would be a second acquisition, which is the
+/// shape #4202 is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FailureBooking {
+    /// Should the caller emit the user-facing event for this failure?
+    pub report: bool,
+    /// The peer's consecutive-failure count *including* the failure just
+    /// booked.
+    pub consecutive_failures: u32,
+}
+
+/// Advance one peer's backoff ladder by a single failure, returning the entry.
+///
+/// Split out of [`SyncScheduler::record_failure`] so
+/// [`SyncScheduler::record_failure_and_take_report`] can book the failure and
+/// consult the report memory under **one** acquisition of the mutex, without
+/// the two paths drifting into two different ladders (#4202).
+fn book_failure<'a>(
+    backoff: &'a mut HashMap<String, BackoffState>,
+    peer_id: &str,
+) -> &'a mut BackoffState {
+    let state = backoff.entry(peer_id.to_string()).or_insert(BackoffState {
+        next_retry_at: Instant::now(),
+        backoff: MIN_BACKOFF,
+        consecutive_failures: 0,
+        reported_errors: Vec::new(),
+    });
+    state.consecutive_failures += 1;
+    // Doubling happens *before* we write `next_retry_at`, so the
+    // first call doubles the `MIN_BACKOFF` seed `1s → 2s`. The sequence
+    // an external observer sees is therefore 2, 4, 8, 16, 32, 60s — the
+    // raw `1s` seed is never the value of a scheduled retry.
+    let base = (state.backoff * 2).min(MAX_BACKOFF);
+    // ±10 % jitter to spread out simultaneous retries across devices.
+    let jitter = rand::rng().random_range(0.9..=1.1);
+    let jittered_secs = (base.as_secs_f64() * jitter).max(MIN_BACKOFF.as_secs_f64());
+    state.backoff = base; // store the deterministic base for the next doubling
+    state.next_retry_at = Instant::now() + Duration::from_secs_f64(jittered_secs);
+    state
+}
+
+/// Push `message` onto a streak's report memory, evicting the oldest entry once
+/// the set is full.
+///
+/// Callers must have established that `message` is not already present —
+/// re-pushing a text already remembered would consume a slot and evict a
+/// *different* cause the user has been told about, which is the one direction
+/// of eviction that loses information rather than adding noise.
+fn remember(state: &mut BackoffState, message: &str) {
+    debug_assert!(
+        !state.reported_errors.iter().any(|m| m == message),
+        "remember() is push-only; a duplicate would evict a distinct cause"
+    );
+    if state.reported_errors.len() >= MAX_REMEMBERED_REPORTS {
+        state.reported_errors.remove(0);
+    }
+    state.reported_errors.push(message.to_string());
 }
 
 /// Initial seed for the per-peer backoff state.
@@ -161,6 +234,25 @@ struct BackoffState {
 /// the very first jittered retry from dipping below the seed under
 /// adverse jitter.
 const MIN_BACKOFF: Duration = Duration::from_secs(1);
+/// How many distinct *reported* failure texts one peer's streak remembers
+/// (#4201).
+///
+/// Derived from the number of distinct user-facing failure texts the initiator
+/// path can produce for a single peer, not picked: `try_sync_with_peer` has
+/// **five** sites that reach
+/// `session_supervisor::record_initiator_failure` — the pinned-identity
+/// refusal, the connect timeout, the connect error, the stream-open error and
+/// the session error — so five is the number of *simultaneously alternating*
+/// causes the mechanism has to hold before it degrades. Eight leaves three
+/// slots of headroom for a site added later, and bounds the memory at eight
+/// short strings per peer *in backoff* (the map is emptied by
+/// [`SyncScheduler::record_success`] and [`SyncScheduler::clear_backoff`]).
+///
+/// Overflow evicts the **oldest** remembered text, which makes that text
+/// reportable again — the safe direction, and the same one a churning error
+/// string already degrades to: back to the pre-#4120 behaviour of reporting
+/// every cycle, never quieter than it.
+pub const MAX_REMEMBERED_REPORTS: usize = 8;
 /// Cap on the per-peer backoff. Once `state.backoff` reaches `60s` it
 /// stays there — every further failure schedules another retry roughly
 /// 60s out (±10% jitter).
@@ -378,23 +470,109 @@ impl SyncScheduler {
             .backoff
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let state = backoff.entry(peer_id.to_string()).or_insert(BackoffState {
-            next_retry_at: Instant::now(),
-            backoff: MIN_BACKOFF,
-            consecutive_failures: 0,
-            last_reported_error: None,
-        });
-        state.consecutive_failures += 1;
-        // Doubling happens *before* we write `next_retry_at`, so the
-        // first call doubles the `MIN_BACKOFF` seed `1s → 2s`. The sequence
-        // an external observer sees is therefore 2, 4, 8, 16, 32, 60s — the
-        // raw `1s` seed is never the value of a scheduled retry.
-        let base = (state.backoff * 2).min(MAX_BACKOFF);
-        // ±10 % jitter to spread out simultaneous retries across devices.
-        let jitter = rand::rng().random_range(0.9..=1.1);
-        let jittered_secs = (base.as_secs_f64() * jitter).max(MIN_BACKOFF.as_secs_f64());
-        state.backoff = base; // store the deterministic base for the next doubling
-        state.next_retry_at = Instant::now() + Duration::from_secs_f64(jittered_secs);
+        book_failure(&mut backoff, peer_id);
+    }
+
+    /// Book a failure for `peer_id` **and** decide whether `message` is worth
+    /// telling the user, under a single acquisition of the backoff mutex.
+    ///
+    /// # Why this is one method and not three calls (#4202)
+    ///
+    /// The #4120 shape was `last_reported_failure(peer)` → `record_failure(peer)`
+    /// → `set_last_reported_failure(peer, msg)`: three acquisitions that read
+    /// as one critical section and were not one. Two tasks reaching it for the
+    /// same peer could both observe "not yet reported" and both emit. That
+    /// failure mode is a *duplicate* toast — the safe direction, and exactly
+    /// what the pre-#4120 code did every cycle — which is why #4202 was filed
+    /// as maintainability rather than a bug. Collapsing it here removes the
+    /// window instead of documenting it, and does so **without** holding the
+    /// lock across the event-sink call: the caller emits after this returns.
+    ///
+    /// # The two inputs
+    ///
+    /// * `message` — the exact user-facing text the caller would emit. It is
+    ///   the suppression key, so "repeat" means *this peer, this text, this
+    ///   streak*; a failure whose cause changes mid-streak is never a repeat.
+    /// * `suppress_repeats` — the caller's policy input. `session_supervisor`
+    ///   passes "this peer is demonstrably still pulling from us", so a peer
+    ///   that has gone dark in both directions keeps reporting every cycle.
+    ///   Passing `false` books the failure and always reports, while still
+    ///   remembering the text for a later cycle that does pass `true`.
+    ///
+    /// # What it can and cannot suppress
+    ///
+    /// It can withhold a text byte-equal to one of the last
+    /// [`MAX_REMEMBERED_REPORTS`] texts reported for this peer in this streak,
+    /// and only when the caller also says repeats are suppressible. It cannot
+    /// withhold a first report, a text whose bytes differ by so much as a
+    /// character, anything after [`record_success`](Self::record_success) or
+    /// [`clear_backoff`](Self::clear_backoff), or a text evicted by the cap.
+    /// The backoff booking and the caller's tracing are unconditional either
+    /// way.
+    pub fn record_failure_and_take_report(
+        &self,
+        peer_id: &str,
+        message: &str,
+        suppress_repeats: bool,
+    ) -> FailureBooking {
+        let mut backoff = self
+            .backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let state = book_failure(&mut backoff, peer_id);
+        let consecutive_failures = state.consecutive_failures;
+        let already_reported = state.reported_errors.iter().any(|m| m == message);
+        if already_reported && suppress_repeats {
+            return FailureBooking {
+                report: false,
+                consecutive_failures,
+            };
+        }
+        // Recorded only when the caller is about to tell the user, so the
+        // stored texts always answer "what has this user been shown about this
+        // peer?". A text already in the set (reported again because the peer
+        // is dark) must not be pushed twice or it would consume the cap.
+        if !already_reported {
+            remember(state, message);
+        }
+        FailureBooking {
+            report: true,
+            consecutive_failures,
+        }
+    }
+
+    /// Remember `message` as already reported for `peer_id`, without booking a
+    /// failure.
+    ///
+    /// The seam a test uses to place a peer *mid-streak* — the state a second
+    /// cycle is in — which is otherwise unreachable without driving a real
+    /// failure first (`src/sync_daemon/tests.rs`'s wiring test). Production
+    /// never calls it: the report memory is written by
+    /// [`record_failure_and_take_report`](Self::record_failure_and_take_report)
+    /// at the moment the user is actually told.
+    ///
+    /// A no-op for a peer with no backoff entry, which is also why the wiring
+    /// test books the failure first.
+    ///
+    /// Gated behind `test-util` for the same reason as
+    /// `mdns::test_endpoint_id` and `transport::test_support::quic_pair`: a
+    /// method that writes "the user has already been told this" *without* the
+    /// user having been told is a hole in the mechanism, and the only thing
+    /// keeping it out of production is a doc line unless the compiler keeps it
+    /// out. The app crate re-declares `agaric-sync` with `test-util` in
+    /// `[dev-dependencies]`, so its test target still sees it.
+    #[cfg(any(test, feature = "test-util"))]
+    #[doc(hidden)]
+    pub fn remember_reported_failure(&self, peer_id: &str, message: &str) {
+        let mut backoff = self
+            .backoff
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(state) = backoff.get_mut(peer_id)
+            && !state.reported_errors.iter().any(|m| m == message)
+        {
+            remember(state, message);
+        }
     }
 
     /// Forget every peer's accumulated backoff.
@@ -444,42 +622,17 @@ impl SyncScheduler {
         backoff.get(peer_id).map_or(0, |s| s.consecutive_failures)
     }
 
-    /// The user-facing failure text most recently reported for `peer_id` in
-    /// the current failure streak, or `None` if none has been.
+    /// How many distinct failure texts have been reported for `peer_id` in the
+    /// current streak. `0` for a peer the scheduler has never seen fail.
     ///
-    /// #4120: the caller suppresses a *repeat* report, and "repeat" has to be
-    /// per `(peer, message)` rather than per peer. The streak count alone
-    /// cannot express it — it is incremented by every failure route, including
-    /// ones that report through a different channel entirely (the pinned
-    /// identity refusal), and it says nothing about whether the failure the
-    /// user was told about is the failure happening now.
-    ///
-    /// Returning `None` for an unknown peer is the reporting direction: a peer
-    /// the scheduler has never seen fail has certainly not had this failure
-    /// reported.
-    pub fn last_reported_failure(&self, peer_id: &str) -> Option<String> {
+    /// Exists so the bound in [`MAX_REMEMBERED_REPORTS`] is observable: a set
+    /// that grew without limit would still suppress correctly and would leak.
+    pub fn reported_failure_count(&self, peer_id: &str) -> usize {
         let backoff = self
             .backoff
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        backoff
-            .get(peer_id)
-            .and_then(|s| s.last_reported_error.clone())
-    }
-
-    /// Remember `message` as the failure text reported for `peer_id`.
-    ///
-    /// A no-op for a peer with no backoff entry, which cannot happen on the
-    /// intended path: callers record the failure first, and
-    /// [`record_failure`](Self::record_failure) creates the entry.
-    pub fn set_last_reported_failure(&self, peer_id: &str, message: &str) {
-        let mut backoff = self
-            .backoff
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(state) = backoff.get_mut(peer_id) {
-            state.last_reported_error = Some(message.to_string());
-        }
+        backoff.get(peer_id).map_or(0, |s| s.reported_errors.len())
     }
 
     /// Return `(peer_id, consecutive_failures)` pairs for every peer the
@@ -1112,6 +1265,266 @@ mod tests {
             !flag.load(Ordering::SeqCst),
             "#2537: a cancel racing the last session's teardown must never \
              leave the shared flag latched with no owner left to reset it"
+        );
+    }
+
+    // ======================================================================
+    // #4201 / #4202 — the repeat-report memory
+    // ======================================================================
+
+    /// #4202: the check ("has the user been told this?") and the record
+    /// ("they have now") happen under **one** acquisition of the backoff mutex.
+    ///
+    /// The #4120 shape took the mutex three times — read, book, write — so two
+    /// tasks reaching it for the same peer could both observe "not yet
+    /// reported" and both emit. Under one acquisition exactly one caller in the
+    /// whole race can be handed the report, whatever the interleaving.
+    ///
+    /// The count assertion is the other half: an implementation that made this
+    /// atomic by *skipping* the booking on the losers would pass the first
+    /// assertion and silently stop pacing the retry.
+    #[test]
+    fn the_check_and_record_of_a_report_is_one_critical_section_4202() {
+        const THREADS: usize = 8;
+        const ROUNDS: usize = 300;
+        const MESSAGE: &str = "Connection failed: peer did not answer within 10s";
+
+        // A fresh peer per round, so every round is a fresh check-and-record
+        // race rather than one race at the start followed by 299 uncontended
+        // repeats. Ids are precomputed: allocating inside the loop would put a
+        // malloc between the barrier and the call and blunt the very
+        // interleaving this test exists to catch.
+        let peers: Arc<Vec<String>> =
+            Arc::new((0..ROUNDS).map(|r| format!("peer-4202-{r}")).collect());
+        let sched = Arc::new(SyncScheduler::new());
+        let gate = Arc::new(std::sync::Barrier::new(THREADS));
+        let workers: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let sched = sched.clone();
+                let gate = gate.clone();
+                let peers = peers.clone();
+                std::thread::spawn(move || {
+                    let mut reports = 0usize;
+                    for peer in peers.iter() {
+                        gate.wait();
+                        if sched
+                            .record_failure_and_take_report(peer, MESSAGE, true)
+                            .report
+                        {
+                            reports += 1;
+                        }
+                    }
+                    reports
+                })
+            })
+            .collect();
+        let reports: usize = workers.into_iter().map(|w| w.join().unwrap()).sum();
+
+        assert_eq!(
+            reports, ROUNDS,
+            "#4202: {THREADS} threads race on each of {ROUNDS} peers with the SAME \
+             failure text, and each peer must yield exactly one report — the check \
+             and the record are one critical section, so no interleaving can let two \
+             callers both see 'not yet reported'"
+        );
+        assert!(
+            peers
+                .iter()
+                .all(|p| sched.failure_count(p) == u32::try_from(THREADS).unwrap()),
+            "…and every racing call is still booked as a failure: the backoff is what \
+             paces the retry, and an 'atomic' variant that dropped the losers' \
+             bookings would be a hot loop"
+        );
+    }
+
+    /// The symmetric arm of the test above, and the guard on the direction that
+    /// actually hurts: suppression must never swallow a cause the user has not
+    /// been shown, however busy the peer's streak is.
+    #[test]
+    fn a_new_failure_text_is_always_reported_however_busy_the_streak_4202() {
+        const PEER: &str = "peer-4202-new";
+        let sched = SyncScheduler::new();
+
+        assert!(
+            sched
+                .record_failure_and_take_report(PEER, "cause A", true)
+                .report,
+            "precondition: the first report of a streak always lands"
+        );
+        for _ in 0..20 {
+            assert!(
+                !sched
+                    .record_failure_and_take_report(PEER, "cause A", true)
+                    .report,
+                "precondition: its repeats are suppressed"
+            );
+        }
+
+        assert!(
+            sched
+                .record_failure_and_take_report(PEER, "cause B", true)
+                .report,
+            "a text the user has never been shown is news, no matter how long the \
+             peer has been failing for another reason"
+        );
+    }
+
+    /// #4201's headline shape, at the scheduler layer: a peer alternating
+    /// between two causes remembers **both**, so each is reported once instead
+    /// of both being reported forever.
+    ///
+    /// The single slot #4120 shipped held only the most recent text, so `A` was
+    /// never in the slot when `A` came round again — #4084's toast at half the
+    /// rate.
+    #[test]
+    fn alternating_failure_texts_are_each_remembered_4201() {
+        const PEER: &str = "peer-4201-alt";
+        let sched = SyncScheduler::new();
+        let mut reported = Vec::new();
+
+        for _ in 0..6 {
+            for cause in ["cause A", "cause B"] {
+                if sched
+                    .record_failure_and_take_report(PEER, cause, true)
+                    .report
+                {
+                    reported.push(cause);
+                }
+            }
+        }
+
+        assert_eq!(
+            reported,
+            vec!["cause A", "cause B"],
+            "#4201: an A,B,A,B,… peer must be reported once per distinct cause, not \
+             once per cycle — the memory is a set, not a single slot"
+        );
+        assert_eq!(sched.failure_count(PEER), 12, "every cycle is still booked");
+        assert_eq!(
+            sched.reported_failure_count(PEER),
+            2,
+            "…and only the two distinct texts are remembered"
+        );
+    }
+
+    /// The memory is bounded, and overflowing it degrades toward **reporting**.
+    ///
+    /// A set that grew with every distinct text would suppress just as well and
+    /// would leak — an error string carrying a varying detail is unbounded
+    /// cardinality by construction. Evicting the oldest makes that text
+    /// reportable again, which is the pre-#4120 behaviour for that one cause:
+    /// noisier, never quieter.
+    #[test]
+    fn the_report_memory_is_bounded_and_evicts_the_oldest_4201() {
+        const PEER: &str = "peer-4201-cap";
+        let sched = SyncScheduler::new();
+        let cause = |i: usize| format!("Sync failed: cause #{i}");
+
+        for i in 0..MAX_REMEMBERED_REPORTS {
+            assert!(
+                sched
+                    .record_failure_and_take_report(PEER, &cause(i), true)
+                    .report,
+                "precondition: each distinct cause is news the first time"
+            );
+        }
+        assert_eq!(
+            sched.reported_failure_count(PEER),
+            MAX_REMEMBERED_REPORTS,
+            "precondition: the set is now exactly full"
+        );
+
+        // One more distinct cause pushes the set over the cap.
+        assert!(
+            sched
+                .record_failure_and_take_report(PEER, &cause(MAX_REMEMBERED_REPORTS), true)
+                .report
+        );
+        assert_eq!(
+            sched.reported_failure_count(PEER),
+            MAX_REMEMBERED_REPORTS,
+            "#4201: the memory must stay bounded at MAX_REMEMBERED_REPORTS \
+             ({MAX_REMEMBERED_REPORTS}); an unbounded set leaks on any error text \
+             that carries a varying detail"
+        );
+
+        assert!(
+            sched
+                .record_failure_and_take_report(PEER, &cause(0), true)
+                .report,
+            "the OLDEST remembered text is the one evicted, so it is reported again — \
+             the safe direction (a duplicate toast), not a swallowed one"
+        );
+        assert!(
+            !sched
+                .record_failure_and_take_report(PEER, &cause(MAX_REMEMBERED_REPORTS), true)
+                .report,
+            "…while the newest text is still remembered and still suppressed, which is \
+             what makes the eviction order observable rather than the whole set being \
+             dropped"
+        );
+    }
+
+    /// `suppress_repeats = false` is the caller saying "this peer has gone dark
+    /// in both directions", and it must report every cycle — while still
+    /// remembering the text, so the streak goes quiet again the moment the peer
+    /// starts pulling from us and the caller starts passing `true`.
+    #[test]
+    fn a_report_taken_with_suppression_off_is_still_remembered_4202() {
+        const PEER: &str = "peer-4202-dark";
+        let sched = SyncScheduler::new();
+
+        for _ in 0..3 {
+            assert!(
+                sched
+                    .record_failure_and_take_report(PEER, "cause A", false)
+                    .report,
+                "with suppression off every cycle is reported"
+            );
+        }
+        assert_eq!(
+            sched.reported_failure_count(PEER),
+            1,
+            "…and the text is remembered exactly once, not re-pushed on every \
+             unsuppressed report — re-pushing would consume the cap and evict a \
+             genuinely distinct cause"
+        );
+        assert!(
+            !sched
+                .record_failure_and_take_report(PEER, "cause A", true)
+                .report,
+            "so when the peer starts pulling from us again, the text the user has \
+             already been shown is a repeat"
+        );
+    }
+
+    /// The report memory rides on the backoff entry, so it resets exactly where
+    /// "the user has already been told this" stops being true: a successful
+    /// pull, and a pairing act (#3547).
+    #[test]
+    fn the_report_memory_resets_with_the_streak_4201() {
+        const PEER: &str = "peer-4201-reset";
+        let sched = SyncScheduler::new();
+        let take = |sched: &SyncScheduler| {
+            sched
+                .record_failure_and_take_report(PEER, "cause A", true)
+                .report
+        };
+
+        assert!(take(&sched));
+        assert!(!take(&sched));
+        sched.record_success(PEER);
+        assert_eq!(
+            sched.reported_failure_count(PEER),
+            0,
+            "a successful pull drops the whole entry"
+        );
+        assert!(take(&sched), "…so the next failure is news again");
+        assert!(!take(&sched));
+        sched.clear_backoff();
+        assert!(
+            take(&sched),
+            "#3547: a pairing act is new information about every peer"
         );
     }
 }

@@ -950,7 +950,7 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
 /// #4120 note 6: the repeat-report suppression is *wired into* the real
 /// initiator path, not merely correct inside its helper.
 ///
-/// Every other #4120 test calls `record_pull_failure` directly, which pins the
+/// Every other #4120 test calls `record_initiator_failure` directly, which pins the
 /// predicate but not the call. A call site that handed it the wrong `peer_id`,
 /// or a `peer_refs` slice that did not contain this peer, would satisfy all of
 /// them and still re-raise the toast on every cycle — the exact bug. So this
@@ -960,7 +960,7 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
 /// The daemon reaches the suppressed state by failing twice; a test cannot,
 /// because the first failure arms the backoff gate and the second dial costs
 /// another connect budget. So the "already reported once" state is *seeded*
-/// (`record_failure` + `set_last_reported_failure`, then the gate is waited
+/// (`record_failure` + `remember_reported_failure`, then the gate is waited
 /// out, exactly as the daemon waits it out) and the observed text of a real
 /// failure is what gets seeded — arm A produces it, arm B feeds it back.
 /// Nothing here hardcodes the message.
@@ -968,7 +968,7 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
 /// Two arms, because one alone is vacuous:
 ///
 /// * **A — a dark peer still reports.** It also supplies the failure text and
-///   proves the run reaches `record_pull_failure` at all.
+///   proves the run reaches `record_initiator_failure` at all.
 /// * **B — the same failure against a peer that is still pulling from us is
 ///   silent**, and the `connecting` progress event proves the run got past the
 ///   backoff gate and really dialled rather than returning early.
@@ -990,10 +990,10 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
         let cancel = AtomicBool::new(false);
         let harness = ServiceHarness::new().await;
 
-        // `set_last_reported_failure` is a no-op without a backoff entry, so
+        // `remember_reported_failure` is a no-op without a backoff entry, so
         // the booking has to come first — which is also the real ordering.
         scheduler.record_failure(PEER);
-        scheduler.set_last_reported_failure(PEER, already_reported);
+        scheduler.remember_reported_failure(PEER, already_reported);
         // …and that booking arms the backoff gate (~2 s for the first
         // failure). Waiting it out is what makes this a *second cycle* rather
         // than an early return at step 1.
@@ -1096,6 +1096,127 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
         "suppressing the report must not suppress the booking — the backoff is what \
          paces the retry (#4120)"
     );
+}
+
+/// #4203, through the real initiator path: the pinned-identity refusal now
+/// routes through the same repeat-report gate as every other initiator failure.
+///
+/// The refusal fires at step 4 of `try_sync_with_peer` — before the dial — so
+/// two real cycles cost nothing but the backoff wait between them. That is what
+/// makes this the wiring pin the helper-level tests cannot be: it goes red if
+/// the call site books the failure and emits its own event again (the pre-#4203
+/// shape), if it passes a `peer_id` the scheduler's memory is not keyed on, or
+/// if it passes a `peer_refs` slice this peer is not in.
+///
+/// Both arms are driven because the suppression is `already_reported &&
+/// still_serving`, and the second condition is the one that keeps a
+/// security-relevant refusal loud when the peer has genuinely gone dark.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_pinned_identity_refusal_is_wired_into_try_sync_with_peer_4203() {
+    const PEER: &str = "PEER_IDENTITY_4203";
+    const REFUSAL: &str = "peer identity does not match the one paired with this device";
+
+    /// Two consecutive refusal cycles against the same peer, with the backoff
+    /// the first one arms waited out in between.
+    async fn two_cycles(streamed_at: Option<i64>) -> (Vec<SyncEvent>, u32) {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let scheduler = Arc::new(SyncScheduler::new());
+        let sink = Arc::new(RecordingEventSink::new());
+        let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+        let cancel = AtomicBool::new(false);
+        let harness = ServiceHarness::new().await;
+
+        // The row this peer is pinned to names a DIFFERENT key from the one the
+        // discovery record announces — "a different device answering to a paired
+        // peer's name", which is the condition step 4 refuses on.
+        let peer = unreachable_peer(PEER);
+        let mut peer_ref = make_peer_ref(PEER);
+        peer_ref.endpoint_id = Some(mdns::test_endpoint_id("A_DIFFERENT_DEVICE").to_string());
+        peer_ref.streamed_at = streamed_at;
+        assert_ne!(
+            peer_ref.endpoint_id.as_deref(),
+            peer.endpoint_id.map(|k| k.to_string()).as_deref(),
+            "precondition: the pinned key and the announced key must differ, or this \
+             test would exercise the ordinary dial path"
+        );
+        let refs = vec![peer_ref];
+
+        let apply_host: Arc<dyn agaric_sync::apply_host::ApplyHost> =
+            Arc::new(materializer.clone());
+        for cycle in 0..2 {
+            if cycle > 0 {
+                // The first refusal booked a failure, which arms the ~2 s
+                // backoff gate at step 1. Waiting it out is what makes the
+                // second call a second *cycle* rather than an early return.
+                let waited_from = std::time::Instant::now();
+                while !scheduler.may_retry(PEER) {
+                    assert!(
+                        waited_from.elapsed() < std::time::Duration::from_secs(30),
+                        "the first failure's backoff must expire in seconds"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            }
+            let ctx = SyncSessionContext {
+                pool: &pool,
+                device_id: "LOCAL_DEV",
+                materializer: &apply_host,
+                scheduler: &scheduler,
+                event_sink: &event_sink,
+                cancel: &cancel,
+                endpoint: &harness.client_endpoint,
+            };
+            try_sync_with_peer(&ctx, &peer, &refs).await;
+        }
+
+        let events = sink.events();
+        let failures = scheduler.failure_count(PEER);
+        materializer.shutdown();
+        (events, failures)
+    }
+
+    fn refusals(events: &[SyncEvent]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                SyncEvent::Error { message, .. } => Some(message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // ---- Arm A: the pair is visibly working in the other direction.
+    let (fresh_events, fresh_failures) = two_cycles(Some(agaric_store::db::now_ms())).await;
+    assert_eq!(
+        refusals(&fresh_events),
+        vec![REFUSAL.to_string()],
+        "#4203: two cycles of the same refusal against a peer that is still pulling \
+         from us must raise ONE toast, not one per cycle; got {fresh_events:?}"
+    );
+    assert!(
+        !fresh_events
+            .iter()
+            .any(|e| matches!(e, SyncEvent::Progress { state, .. } if state == "connecting")),
+        "…and the refusal must still refuse: reaching the dial would mean step 4 \
+         stopped gating. Got {fresh_events:?}"
+    );
+    assert_eq!(
+        fresh_failures, 2,
+        "…while the backoff is booked on every cycle — quieting the toast must not \
+         quieten the scheduler"
+    );
+
+    // ---- Arm B: nothing is pulling from us either, so the refusal is the whole
+    // story of a peer we have lost. It keeps saying so.
+    let (dark_events, dark_failures) = two_cycles(None).await;
+    assert_eq!(
+        refusals(&dark_events),
+        vec![REFUSAL.to_string(), REFUSAL.to_string()],
+        "#4203: with no inbound sessions either, a key that is not the paired one is \
+         the only signal the user has; got {dark_events:?}"
+    );
+    assert_eq!(dark_failures, 2);
 }
 
 // The old `handle_incoming_sync_rejects_sync_with_self` lived here. It was the
