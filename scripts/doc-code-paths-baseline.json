@@ -36,6 +36,11 @@
   },
   {
     "file": "docs/architecture/list-ergonomics.md",
+    "ref": "markdown-parse/parser.ts:407",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "docs/architecture/list-ergonomics.md",
     "ref": "markdown-serialize.ts:915",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
   },
@@ -88,6 +93,11 @@
     "file": "e2e/keyboard-customization.spec.ts",
     "ref": "KeyboardTab.tsx:141-165",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
+  },
+  {
+    "file": "e2e/search-results.spec.ts",
+    "ref": "agaric-store/src/fts/search/cursor.rs:103-105",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },
   {
     "file": "e2e/unlinked-references.spec.ts",
@@ -145,9 +155,34 @@
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
   },
   {
+    "file": "src/lib/base64url.ts",
+    "ref": "agaric-store/src/query/engine.rs:176",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
     "file": "src/lib/bindings.ts",
     "ref": "pages.rs:622-637",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/advanced-query-sort.test.ts",
+    "ref": "agaric-store/src/filters/primitive.rs:1035-1052",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/advanced-query-sort.test.ts",
+    "ref": "agaric-store/src/query/engine.rs:141-196",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/advanced-query-sort.test.ts",
+    "ref": "agaric-store/src/query/engine.rs:180-195",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/advanced-query-sort.test.ts",
+    "ref": "agaric-store/src/query/engine.rs:229",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },
   {
     "file": "src/lib/tauri-mock/__tests__/advanced-query-sort.test.ts",
@@ -185,6 +220,21 @@
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
   },
   {
+    "file": "src/lib/tauri-mock/__tests__/blocks-cursor-strictness.test.ts",
+    "ref": "agaric-store/src/pagination/mod.rs:271-276",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/blocks-cursor-strictness.test.ts",
+    "ref": "pagination/agenda.rs:100",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/bulk-pages-history-order.test.ts",
+    "ref": "agaric-store/src/pagination/history.rs:180,222",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
     "file": "src/lib/tauri-mock/__tests__/conformance-coverage.test.ts",
     "ref": "engine.rs:1166",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
@@ -193,6 +243,16 @@
     "file": "src/lib/tauri-mock/__tests__/conformance-coverage.test.ts",
     "ref": "engine.rs:208",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/conformance-coverage.test.ts",
+    "ref": "query/mod.rs:159",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/links-fts-strip.test.ts",
+    "ref": "agaric-store/src/backlink/grouped.rs:598-645",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },
   {
     "file": "src/lib/tauri-mock/__tests__/links-fts-strip.test.ts",
@@ -216,6 +276,21 @@
   },
   {
     "file": "src/lib/tauri-mock/__tests__/search-and-unlinked-residuals.test.ts",
+    "ref": "agaric-store/src/cache/pages.rs:34-41",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/search-and-unlinked-residuals.test.ts",
+    "ref": "agaric-store/src/fts/toggle_filter.rs:155-181",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/search-and-unlinked-residuals.test.ts",
+    "ref": "fts/search/partitioned.rs:53",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/search-and-unlinked-residuals.test.ts",
     "ref": "grouped.rs:601-605",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
   },
@@ -233,6 +308,11 @@
     "file": "src/lib/tauri-mock/__tests__/search-and-unlinked-residuals.test.ts",
     "ref": "toggle_filter.rs:466-473",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/search-blocks-partitioned-residuals.test.ts",
+    "ref": "agaric-store/src/fts/search/partitioned.rs:165-212",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },
   {
     "file": "src/lib/tauri-mock/__tests__/search-blocks-partitioned-residuals.test.ts",
@@ -258,6 +338,36 @@
     "file": "src/lib/tauri-mock/__tests__/search-fts-strip.test.ts",
     "ref": "fetch.rs:292",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/search-fts-strip.test.ts",
+    "ref": "fts/search/fetch.rs:292",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/search-fts-strip.test.ts",
+    "ref": "pagination/mod.rs:654-676",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/search-fts-strip.test.ts",
+    "ref": "pagination/mod.rs:656-667",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/search-fts-strip.test.ts",
+    "ref": "pagination/mod.rs:658-668",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/search-fts-strip.test.ts",
+    "ref": "pagination/mod.rs:855-866",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/__tests__/search-fts-strip.test.ts",
+    "ref": "pagination/mod.rs:856-869",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },
   {
     "file": "src/lib/tauri-mock/__tests__/search-fts-strip.test.ts",
@@ -340,6 +450,31 @@
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
   },
   {
+    "file": "src/lib/tauri-mock/__tests__/search-sort-divergences.test.ts",
+    "ref": "agaric-store/src/fts/toggle_filter.rs:810-816",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/blocks.ts",
+    "ref": "agaric-store/src/pagination/mod.rs:271-276",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/blocks.ts",
+    "ref": "pagination/agenda.rs:100",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/links.ts",
+    "ref": "agaric-store/src/backlink/grouped.rs:598-645",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/links.ts",
+    "ref": "agaric-store/src/backlink/grouped.rs:682-697",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
     "file": "src/lib/tauri-mock/handlers/links.ts",
     "ref": "filters.rs:382-388",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
@@ -348,6 +483,66 @@
     "file": "src/lib/tauri-mock/handlers/links.ts",
     "ref": "seed.ts:653",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/filters/primitive.rs:1035-1052",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/fts/metadata_filter.rs:156-236",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/fts/metadata_filter.rs:240-318",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/pagination/mod.rs:114",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/pagination/mod.rs:55",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/query/engine.rs:123",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/query/engine.rs:1241-1247",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/query/engine.rs:1255-1270",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/query/engine.rs:143",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/query/engine.rs:180-195",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/query/engine.rs:229",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "agaric-store/src/query/engine.rs:417-442",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },
   {
     "file": "src/lib/tauri-mock/handlers/search.ts",
@@ -436,6 +631,41 @@
   },
   {
     "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "filters/primitive.rs:1372-1399",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "fts/filter_builder.rs:120-132",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "fts/filter_builder.rs:634-712",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "fts/filter_builder.rs:80-98",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "fts/search/fetch.rs:292",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "fts/search/partitioned.rs:53",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "fts/search/post_filter.rs:228-250",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
     "ref": "metadata_filter.rs:124-141",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
   },
@@ -508,6 +738,31 @@
     "file": "src/lib/tauri-mock/handlers/search.ts",
     "ref": "mod.rs:866-869",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "pagination/mod.rs:553-564",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "pagination/mod.rs:620-631",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "pagination/mod.rs:645-679",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "pagination/mod.rs:656-667",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
+    "file": "src/lib/tauri-mock/handlers/search.ts",
+    "ref": "pagination/mod.rs:856-865",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },
   {
     "file": "src/lib/tauri-mock/handlers/search.ts",
@@ -705,6 +960,11 @@
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
   },
   {
+    "file": "src/lib/tauri-mock/handlers/shared.ts",
+    "ref": "agaric-store/src/pagination/history.rs:180,222",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
+  },
+  {
     "file": "src/lib/tauri-mock/handlers/sync.ts",
     "ref": "App.tsx:344",
     "reason": "Pre-existing at the #4135 bare-filename-citation widening; not yet fixed."
@@ -723,5 +983,10 @@
     "file": "src/stores/recent-pages.ts",
     "ref": "src/lib/recent-pages.ts",
     "reason": "Prose intentionally describes a REMOVED file (\"the former `lib/recent-pages.ts`\", \"the now-removed `lib/recent-pages.ts`\", used 8 times in this file as historical context for the consolidated store). The file is deliberately gone, not moved; there is no current path to repoint to without rewriting the historical narrative itself."
+  },
+  {
+    "file": "src/stores/search-history.ts",
+    "ref": "stores/recent-pages.ts:99",
+    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   }
 ]

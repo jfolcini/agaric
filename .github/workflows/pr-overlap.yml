@@ -599,7 +599,7 @@ jobs:
               echo "result was never computed: this is a runner-side gap, not a verdict on"
               echo "the PR. See the npm error in the job log above; fix the runner or the"
               echo "PR's dependencies, then re-run."
-            } | tee -a "$GITHUB_STEP_SUMMARY"
+            } | tee -a "$GITHUB_STEP_SUMMARY" || true
             echo "::error::pr-merge-result-check: npm ci failed — verified nothing, see #4169"
             exit 1
           fi
@@ -620,12 +620,25 @@ jobs:
           # exit 2 ("not computed") became an unexplained red. `|| rc=$?` is
           # the -e-safe capture, and the script's --self-test asserts this
           # exact line still reads that way.
+          #
+          # #4178: the same `-e` is still active below `set -uo pipefail`
+          # above (that line only ADDS -u and reasserts pipefail; it never
+          # turns -e off), so every `{ ... } | tee -a "$GITHUB_STEP_SUMMARY"`
+          # in the branches below is itself a pipeline `-e -o pipefail` can
+          # abort on. If `tee` fails (an unwritable $GITHUB_STEP_SUMMARY, a
+          # full disk, a runner-side glitch), the script would stop ON THAT
+          # LINE — before the `::error::` annotation and `exit 1` a few
+          # lines later ever run, the same "bypasses the exit-code contract"
+          # shape #4169 follow-up 1 fixed one step up for the Install step's
+          # bare `npm ci`. `|| true` after every tee pipe below keeps a
+          # tee failure from ever being able to swallow the annotation that
+          # follows it.
           rc=0
           bash scripts/pr-merge-result-check.sh "$BASE_REF" "$HEAD_SHA" || rc=$?
           if [ "$rc" -eq 0 ]; then
             echo "Merge result verified: the ratchet guards pass AND the tree type-checks" \
               "on the ACTUAL merge of $BASE_REF (fetched fresh) and this PR's head." \
-              | tee -a "$GITHUB_STEP_SUMMARY"
+              | tee -a "$GITHUB_STEP_SUMMARY" || true
           elif [ "$rc" -eq 2 ]; then
             {
               echo "### Merge-result check: not computed"
@@ -634,7 +647,7 @@ jobs:
               echo "already owns that case). This is the ONLY not-computed case left —"
               echo "everything else that used to share this code is now exit 3, below,"
               echo "and treated as a failure. See the job log above for the conflict."
-            } | tee -a "$GITHUB_STEP_SUMMARY"
+            } | tee -a "$GITHUB_STEP_SUMMARY" || true
             echo "::warning::pr-merge-result-check: not computed — a real textual conflict, see the job log"
           elif [ "$rc" -eq 3 ]; then
             # Distinct from 2 on purpose: 2 is "this merge is not mine to
@@ -661,7 +674,7 @@ jobs:
               echo "no \`typecheck\` script or no \`tsconfig.json\`). This is not a pass —"
               echo "see the job log for which, and fix the script or the runner rather"
               echo "than the PR."
-            } | tee -a "$GITHUB_STEP_SUMMARY"
+            } | tee -a "$GITHUB_STEP_SUMMARY" || true
             echo "::error::pr-merge-result-check: verified nothing — the check itself is broken"
             exit 1
           elif [ "$rc" -eq 4 ]; then
@@ -686,7 +699,7 @@ jobs:
               echo
               echo "Merge \`$BASE_REF\` into this branch and run \`npm run typecheck\`;"
               echo "the tsc diagnostics are in the job log above."
-            } | tee -a "$GITHUB_STEP_SUMMARY"
+            } | tee -a "$GITHUB_STEP_SUMMARY" || true
             echo "::error::pr-merge-result-check: the merge result does not typecheck — see #4078"
             exit 1
           else
@@ -697,7 +710,19 @@ jobs:
               echo "merge — the #3724 near-miss. Merge \`$BASE_REF\` into this branch and"
               echo "re-run \`prek --all-files\` before merging; see the job log above for"
               echo "which guard and which file."
-            } | tee -a "$GITHUB_STEP_SUMMARY"
+              echo
+              # #4177: #4169 follow-up 4 skips the `npm run typecheck` half of
+              # this check entirely once a ratchet guard has already failed
+              # (exit-code-neutral by construction — see pr-merge-result-
+              # check.sh's run_merge_check). Without this line, fixing the
+              # guard named above and re-pushing reads as "done"; the merge
+              # might still not compile, and that only surfaces on the NEXT
+              # run — a second, avoidable round trip.
+              echo "The typecheck half of this check was SKIPPED — a ratchet guard already"
+              echo "failed, so \`npm run typecheck\` never ran on this merge (#4169 follow-up"
+              echo "4). Fixing the guard above and re-pushing does not confirm the merge"
+              echo "compiles; a second, unrelated failure may still be waiting on the next run."
+            } | tee -a "$GITHUB_STEP_SUMMARY" || true
             echo "::error::pr-merge-result-check: a ratchet guard fails on the merge result — see #3672"
             exit 1
           fi

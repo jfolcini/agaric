@@ -2094,6 +2094,57 @@ STUB
   st_expect 'and always() && ( is NOT the condition anymore (the wrong primitive from an earlier revision)' \
     '0' "$(grep -c '^ *always() && ($' "$wf" || true)"
 
+  # #4178: `run:` steps stay under `-e -o pipefail` for their whole body —
+  # `set -uo pipefail` at the top of the Verify step only ADDS -u and
+  # reasserts pipefail, it never turns -e off. Before this fix, a `tee -a
+  # "$GITHUB_STEP_SUMMARY"` failure (unwritable file, full disk, a
+  # runner-side glitch) aborted the script ON THAT LINE, before the
+  # `::error::` annotation and the `exit 1` a few lines later ever ran —
+  # every branch below still went red, but silently, with neither the
+  # summary nor the annotation explaining why. Comments count too (one
+  # explains the fix in prose, using the same tee invocation as an
+  # example), so both counts below are taken with comment lines excluded —
+  # otherwise the prose line alone would satisfy the "total" assertion
+  # without a single real `|| true` in the code.
+  local verify_step
+  verify_step="$(sed -n '/^      - name: Verify the merge result/,$p' "$wf" | grep -v '^ *#')"
+  st_expect 'the Verify step pipes to $GITHUB_STEP_SUMMARY exactly 5 times (one per rc branch)' \
+    '5' "$(printf '%s\n' "$verify_step" | grep -c 'tee -a "\$GITHUB_STEP_SUMMARY"' || true)"
+  st_expect 'and EVERY one of those 5 is guarded with `|| true` — none can abort the step on its own failure' \
+    '5' "$(printf '%s\n' "$verify_step" | grep -c 'tee -a "\$GITHUB_STEP_SUMMARY" || true' || true)"
+
+  # The two assertions above are scoped to the Verify step, which is where
+  # #4178 was reported. Scoping a guard to the place a bug was FOUND leaves
+  # the rest of the file free to reintroduce it — and it already had: the
+  # "Install npm dependencies" step one step upstream carried the identical
+  # unguarded pipe before its own `::error::`/`exit 1`, found while reviewing
+  # the #4178 fix. So the real invariant is file-wide, not step-wide: every
+  # tee to $GITHUB_STEP_SUMMARY anywhere in this workflow must be guarded,
+  # because every one of them precedes an annotation that has to survive.
+  local wf_no_comments
+  wf_no_comments="$(grep -v '^ *#' "$wf")"
+  st_expect 'file-wide: every tee to $GITHUB_STEP_SUMMARY is guarded with `|| true`' \
+    "$(printf '%s\n' "$wf_no_comments" | grep -c 'tee -a "\$GITHUB_STEP_SUMMARY"' || true)" \
+    "$(printf '%s\n' "$wf_no_comments" | grep -c 'tee -a "\$GITHUB_STEP_SUMMARY" || true' || true)"
+
+  # #4177: #4169 follow-up 4 skips `run_typecheck` once `missing` or
+  # `failures` is already set, so the workflow's final `else` branch (exit
+  # 1, "a ratchet guard fails on the merge result" — the one `failures`
+  # routes to) is reached having never run the typecheck half. Pinned in
+  # BOTH directions, not just the one the issue asked for: present in the
+  # branch it belongs to, AND absent from the neighbouring exit-4 branch
+  # (#4078, "the merge does not typecheck") where the typecheck DID run —
+  # a message claiming a skip that did not happen would be worse than no
+  # message at all.
+  st_expect 'exactly one place in the workflow says the typecheck was skipped' \
+    '1' "$(grep -c 'was SKIPPED' "$wf" || true)"
+  st_expect "and it lives in the ratchet-guard-failure (else) branch's summary text" \
+    '1' "$(sed -n '/A ratchet guard that BOTH branches pass alone fails/,/a ratchet guard fails on the merge result — see #3672/p' "$wf" \
+      | grep -c 'was SKIPPED' || true)"
+  st_expect 'and it is NOT in the exit-4 branch, where the typecheck DID run (and failed)' \
+    '0' "$(sed -n '/THE MERGE DOES NOT TYPECHECK/,/the merge result does not typecheck — see #4078/p' "$wf" \
+      | grep -c 'was SKIPPED' || true)"
+
   # A structural pin, not a behavioural one, and deliberately so: `find`
   # without `-type f` would let a directory or dangling symlink named
   # `*.rs` into `targets`, but every guard already filters on `p.is_file()`
