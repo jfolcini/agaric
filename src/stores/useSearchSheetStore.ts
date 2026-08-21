@@ -19,9 +19,13 @@
 import { create } from 'zustand'
 
 import type { View } from '@/stores/navigation'
+import type { SearchSheetMode } from '@/types/search-sheet-mode'
 
-/** Active segment of the unified search sheet. */
-export type SearchSheetMode = 'in-page' | 'all-pages'
+// #4006 — the mode literal lives in `@/types/search-sheet-mode` so
+// `lib/`-tier consumers can depend on it without importing `stores/`.
+// Re-exported here unchanged so every existing importer of this module
+// keeps working.
+export type { SearchSheetMode } from '@/types/search-sheet-mode'
 
 /**
  * Context-aware default segment picker. The sheet opens to "In this

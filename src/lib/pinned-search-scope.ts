@@ -17,7 +17,7 @@
  */
 
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
-import type { SearchSheetMode } from '@/stores/useSearchSheetStore'
+import type { SearchSheetMode } from '@/types/search-sheet-mode'
 
 /**
  * Read the pinned scope, or `null` when none is pinned / the value is

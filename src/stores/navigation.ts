@@ -42,20 +42,12 @@ import { persist } from 'zustand/middleware'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
+import type { View } from '@/types/view'
 
-export type View =
-  | 'journal'
-  | 'search'
-  | 'pages'
-  | 'tags'
-  | 'trash'
-  | 'status'
-  | 'history'
-  | 'templates'
-  | 'settings'
-  | 'graph'
-  | 'query'
-  | 'page-editor'
+// #4006 — the view-id literal lives in `@/types/view` so `lib/`-tier
+// consumers can depend on it without importing `stores/`. Re-exported here
+// unchanged so every existing importer of this module keeps working.
+export type { View } from '@/types/view'
 
 interface NavigationStore {
   /** Active sidebar / content view. Mirrors `currentViewBySpace[currentSpaceId]`. */

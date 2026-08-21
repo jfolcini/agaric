@@ -8,9 +8,9 @@ import type React from 'react'
 import { useMemo } from 'react'
 import type { useTranslation } from 'react-i18next'
 
+import { renderKeys } from '@/components/common/render-keyboard-shortcut'
 import { CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command'
 import { getCurrentShortcuts } from '@/lib/keyboard-config/storage'
-import { renderKeys } from '@/lib/render-keyboard-shortcut'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 
 /**

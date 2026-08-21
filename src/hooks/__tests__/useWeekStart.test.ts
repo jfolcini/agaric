@@ -1,7 +1,8 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getWeekStartDay, useWeekStart } from '@/hooks/useWeekStart'
+import { useWeekStart } from '@/hooks/useWeekStart'
+import { getWeekStartDay } from '@/lib/preferences'
 
 beforeEach(() => {
   localStorage.clear()

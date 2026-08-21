@@ -13,7 +13,7 @@
  * removed in favor of this hook so the transition isn't announced twice.
  *
  * Localized view names are the same `NAV_ITEMS` manifest the sidebar
- * renders its labels from (`src/components/common/nav-items.ts`), so the
+ * renders its labels from (`src/lib/nav-items.ts`), so the
  * announcement text always agrees with what's on screen.
  *
  * Skipped intentionally:
@@ -33,8 +33,8 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { NAV_ITEMS } from '@/components/common/nav-items'
 import { announce } from '@/lib/announcer'
+import { NAV_ITEMS } from '@/lib/nav-items'
 import { useNavigationStore } from '@/stores/navigation'
 
 export function useViewChangeAnnouncer(): void {

@@ -17,13 +17,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 import { Command, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
-
-export interface AutocompleteItem {
-  /** The string inserted into the input when this item is picked. */
-  value: string
-  /** Display label (defaults to `value`). */
-  label?: string
-}
+import type { AutocompleteItem } from '@/lib/autocomplete-item'
 
 /** Real DOM ids of the rendered listbox + currently-highlighted option,
  *  used by the owning input for `aria-controls` / `aria-activedescendant`.

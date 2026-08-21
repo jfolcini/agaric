@@ -17,7 +17,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { type AutocompleteItem, AutocompletePopover } from '@/components/search/AutocompletePopover'
+import { AutocompletePopover } from '@/components/search/AutocompletePopover'
+import type { AutocompleteItem } from '@/lib/autocomplete-item'
 
 const SAMPLE_RECT = DOMRect.fromRect({ x: 100, y: 200, width: 0, height: 16 })
 
