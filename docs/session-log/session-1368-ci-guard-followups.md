@@ -7,7 +7,7 @@
 | **Items closed** | `#4184`, `#4183`, `#4178`, `#4177` |
 | **Items modified** | — |
 | **Tests added** | +21 self-test assertions |
-| **Files touched** | see PR #4223's file list |
+| **Files touched** | see PR #4225's file list |
 
 **Summary:** Four narrow follow-ups from earlier adversarial reviews, grouped because they
 are all guard-or-workflow harness work in the same two directories.
@@ -59,4 +59,4 @@ is now silent. The annotation surviving is worth more than the tee's exit status
 #4178 named `|| true` as an acceptable fix, so this was a chosen tradeoff rather than a
 reflex — but nothing now distinguishes "tee failed" from "tee succeeded".
 
-**Commit plan:** single commit on `claude/ci-guard-followups`, shipped as PR #4223.
+**Commit plan:** single commit on `claude/ci-guard-followups`, shipped as PR #4225.
