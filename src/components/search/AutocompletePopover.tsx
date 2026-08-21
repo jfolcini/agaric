@@ -17,10 +17,6 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 import { Command, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
-// #4006 — moved down to `@/lib/autocomplete-item` so `hooks/`-tier consumers
-// can depend on it without importing `components/`. Re-exported here
-// unchanged so every existing importer of this module keeps working.
-export type { AutocompleteItem } from '@/lib/autocomplete-item'
 import type { AutocompleteItem } from '@/lib/autocomplete-item'
 
 /** Real DOM ids of the rendered listbox + currently-highlighted option,

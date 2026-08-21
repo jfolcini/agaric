@@ -58,12 +58,12 @@ describe('renderKeys', () => {
     expect(kbds).toEqual(['Ctrl', 'Z', 'Ctrl', 'Shift', 'Z'])
   })
 
-  it('substitutes `Ctrl` with `⌘` (Cmd) on macOS', () => {
+  it('substitutes `Ctrl` with `\u2318` (Cmd) on macOS', () => {
     __resetPlatformCacheForTests()
     Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
     const { container } = render(renderKeys('Ctrl + K'))
     const kbds = Array.from(container.querySelectorAll('kbd')).map((k) => k.textContent)
-    expect(kbds).toEqual(['⌘', 'K'])
+    expect(kbds).toEqual(['\u2318', 'K'])
   })
 
   it('produces kbd elements with the canonical Tailwind classes', () => {

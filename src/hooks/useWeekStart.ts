@@ -13,10 +13,6 @@ import { useCallback } from 'react'
 import { PREFERENCES, usePreference, type WeekStartDay } from '@/lib/preferences'
 
 export type { WeekStartDay } from '@/lib/preferences'
-// #4006 — moved down to `@/lib/preferences` (it's a plain function, not a
-// hook). Re-exported here unchanged so every existing importer of this
-// module keeps working.
-export { getWeekStartDay } from '@/lib/preferences'
 
 export function useWeekStart(): {
   weekStartsOn: WeekStartDay

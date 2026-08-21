@@ -21,6 +21,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
+  type AgendaFilter,
   type AgendaFilterDimension,
   DIMENSION_GROUPS,
   DIMENSION_OPTIONS,
@@ -92,7 +93,6 @@ function collectIsSetPropertyKeys(filters: AgendaFilter[]): Set<string> {
 // consumers can import it without reaching into `components/`. Re-exported
 // here unchanged so every existing importer of this module keeps working.
 export type { AgendaFilter } from '@/lib/filter-dimension-metadata'
-import type { AgendaFilter } from '@/lib/filter-dimension-metadata'
 
 /**
  * Filter augmented with a frontend-only `_addId` React key (#757).
