@@ -420,6 +420,21 @@ const WEEK_START_PREFERENCE: PreferenceDefinition<WeekStartDay> = {
 }
 
 /**
+ * Non-hook getter for use in pure functions (`date-utils.ts`). Runs during
+ * calendar/agenda render, so it must never throw — `readPreference`
+ * degrades to the Monday default on any storage failure.
+ *
+ * #4006 — moved down from `@/hooks/useWeekStart` (which re-exports it
+ * unchanged): it is a plain function, not a hook, so it belongs alongside
+ * `WEEK_START_PREFERENCE` in `lib/` rather than in a `hooks/`-tier module,
+ * letting `date-utils.ts` (a `lib/`-tier module) read it without importing
+ * `hooks/`, which the lib-layering guard (#3121) forbids.
+ */
+export function getWeekStartDay(): WeekStartDay {
+  return readPreference(WEEK_START_PREFERENCE)
+}
+
+/**
  * Allowed journal-title display formats (#1448, `useJournalDateFormat`).
  *
  * - `'locale'` is a sentinel for the app's pre-existing localized rendering

@@ -17,18 +17,14 @@
  */
 
 import { createContext } from 'react'
-import type { ComponentType } from 'react'
 
-export interface EditorSurfaceProps {
-  /** The live TipTap `Editor` instance for the focused block (never null here). */
-  editor: unknown
-  blockId: string
-  currentPriority: string | null
-  /** Whether a file drag is currently hovering the block (renders the drop hint). */
-  isDragOver: boolean
-}
-
-export type EditorSurfaceComponent = ComponentType<EditorSurfaceProps>
+// #4006 — the type-only surface lives in `@/types/editor-surface` so that
+// `hooks/`-tier consumers (useLazyRovingEditor) can depend on it without
+// importing from `components/`, which would invert the lib-layering guard's
+// tier direction. Re-exported here unchanged so every existing importer of
+// this module keeps working.
+export type { EditorSurfaceComponent, EditorSurfaceProps } from '@/types/editor-surface'
+import type { EditorSurfaceComponent } from '@/types/editor-surface'
 
 /**
  * Published by `BlockTree` once the lazy editor-runtime chunk has loaded.

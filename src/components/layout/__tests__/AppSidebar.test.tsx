@@ -13,10 +13,10 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { NAV_GROUPS, NAV_ITEMS } from '@/components/common/nav-items'
 import { AppSidebar, type AppSidebarProps } from '@/components/layout/AppSidebar'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { t } from '@/lib/i18n'
+import { NAV_GROUPS, NAV_ITEMS } from '@/lib/nav-items'
 import { useSpaceStore } from '@/stores/space'
 import { type PeerInfo, type SyncState, useSyncStore } from '@/stores/sync'
 

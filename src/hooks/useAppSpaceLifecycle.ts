@@ -31,7 +31,7 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { NAV_ITEMS } from '@/components/common/nav-items'
+import { NAV_ITEMS } from '@/lib/nav-items'
 import { setWindowTitle } from '@/lib/platform/window'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'

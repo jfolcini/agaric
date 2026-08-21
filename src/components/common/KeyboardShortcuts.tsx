@@ -9,6 +9,7 @@ import { ChevronRight, Keyboard, Settings as SettingsIcon } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { renderKeys } from '@/components/common/render-keyboard-shortcut'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,7 +26,6 @@ import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { loadQuickCaptureShortcut } from '@/lib/quick-capture-shortcut'
-import { renderKeys } from '@/lib/render-keyboard-shortcut'
 import { useNavigationStore } from '@/stores/navigation'
 
 interface ShortcutDef {

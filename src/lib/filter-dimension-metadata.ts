@@ -15,6 +15,17 @@ export type AgendaFilterDimension =
   | 'property'
 
 /**
+ * #4006 — moved down from `@/components/agenda/AgendaFilterBuilder` (which
+ * re-exports it unchanged) so `lib/`-tier consumers (`agenda-filters.ts`)
+ * can depend on the shape without importing `components/`, which the
+ * lib-layering guard (#3121) forbids. Pure data — no React dependency.
+ */
+export interface AgendaFilter {
+  dimension: AgendaFilterDimension
+  values: string[] // e.g. ['TODO','DOING'] for status, ['1','2'] for priority
+}
+
+/**
  * Backwards-compatible accessor for the canonical fixed states. Historically
  * this read from localStorage; it now returns a fresh copy for filter choices.
  */

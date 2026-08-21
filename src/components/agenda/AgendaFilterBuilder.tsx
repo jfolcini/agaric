@@ -87,10 +87,12 @@ function collectIsSetPropertyKeys(filters: AgendaFilter[]): Set<string> {
 // Types
 // ---------------------------------------------------------------------------
 
-export interface AgendaFilter {
-  dimension: AgendaFilterDimension
-  values: string[] // e.g. ['TODO','DOING'] for status, ['1','2'] for priority
-}
+// #4006 — moved down to `@/lib/filter-dimension-metadata` (alongside
+// `AgendaFilterDimension`, which it already depends on) so `lib/`-tier
+// consumers can import it without reaching into `components/`. Re-exported
+// here unchanged so every existing importer of this module keeps working.
+export type { AgendaFilter } from '@/lib/filter-dimension-metadata'
+import type { AgendaFilter } from '@/lib/filter-dimension-metadata'
 
 /**
  * Filter augmented with a frontend-only `_addId` React key (#757).

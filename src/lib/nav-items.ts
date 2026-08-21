@@ -14,6 +14,13 @@
  * destination (the grouped items plus Settings) so the existing
  * lookups in `useHeaderLabel` / `ViewDispatcher` — which `.find()` by id
  * regardless of order — keep working unchanged.
+ *
+ * #4006 — moved down from `@/components/common/nav-items`: this is a data
+ * manifest (icon component *references* + labels/ids), not a component —
+ * it renders nothing — so it belongs in `lib/`, letting the two `hooks/`
+ * consumers (`useAppSpaceLifecycle`, `useViewChangeAnnouncer`) read it
+ * without importing `components/`, which the lib-layering guard (#3121)
+ * forbids.
  */
 
 import {
@@ -31,7 +38,7 @@ import {
 } from 'lucide-react'
 import type React from 'react'
 
-import type { View } from '@/stores/navigation'
+import type { View } from '@/types/view'
 
 export interface NavItem {
   id: Exclude<View, 'page-editor'>

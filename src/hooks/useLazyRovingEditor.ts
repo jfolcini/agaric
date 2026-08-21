@@ -43,12 +43,12 @@ import {
 } from 'react'
 import { useEffect } from 'react'
 
-import type { EditorSurfaceComponent } from '@/components/editor/editor-surface-context'
 import type {
   MountOptions,
   RovingEditorHandle,
   RovingEditorOptions,
 } from '@/editor/use-roving-editor'
+import type { EditorSurfaceComponent } from '@/types/editor-surface'
 
 const LazyRovingEditorHost = lazy(() =>
   import('@/components/editor/RovingEditorHost').then((m) => ({ default: m.RovingEditorHost })),

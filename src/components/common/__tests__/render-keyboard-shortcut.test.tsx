@@ -12,8 +12,8 @@
 import { render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { renderKeys } from '@/components/common/render-keyboard-shortcut'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
-import { renderKeys } from '@/lib/render-keyboard-shortcut'
 
 beforeEach(() => {
   __resetPlatformCacheForTests()
@@ -58,12 +58,12 @@ describe('renderKeys', () => {
     expect(kbds).toEqual(['Ctrl', 'Z', 'Ctrl', 'Shift', 'Z'])
   })
 
-  it('substitutes `Ctrl` with `\u2318` (Cmd) on macOS', () => {
+  it('substitutes `Ctrl` with `⌘` (Cmd) on macOS', () => {
     __resetPlatformCacheForTests()
     Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
     const { container } = render(renderKeys('Ctrl + K'))
     const kbds = Array.from(container.querySelectorAll('kbd')).map((k) => k.textContent)
-    expect(kbds).toEqual(['\u2318', 'K'])
+    expect(kbds).toEqual(['⌘', 'K'])
   })
 
   it('produces kbd elements with the canonical Tailwind classes', () => {

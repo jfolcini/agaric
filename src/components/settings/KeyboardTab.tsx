@@ -8,6 +8,7 @@ import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { renderKeys } from '@/components/common/render-keyboard-shortcut'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -26,7 +27,6 @@ import {
 // the SAME tokenizer the matcher parses with; the two previously drifted
 // (validator accepted `Ctrl+E`/`Cmd + K` formats the matcher saved dead).
 import { type BindingValidationError, validateBindingInput } from '@/lib/keyboard-config/parse'
-import { renderKeys } from '@/lib/render-keyboard-shortcut'
 
 export function KeyboardTab(): React.ReactElement {
   const { t } = useTranslation()

@@ -14,10 +14,10 @@
  * round-trip with cursor-paginated, correctness-preserving output.
  */
 
-import type { AgendaFilter } from '@/components/agenda/AgendaFilterBuilder'
 import type { PageResponse } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { formatDate, getDateRangeForFilter } from '@/lib/date-utils'
+import type { AgendaFilter } from '@/lib/filter-dimension-metadata'
 import { paginationLimit, type SafeLimit } from '@/lib/safe-limit'
 import type { BlockRow, FilteredBlocksPropertyFilter, FilteredBlocksTagFilter } from '@/lib/tauri'
 import {

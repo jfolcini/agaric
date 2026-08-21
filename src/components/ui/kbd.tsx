@@ -5,8 +5,8 @@
  * four different ways across nine-plus call sites (slash menu, command
  * palette, action menu, mode chip, search-help, journal tooltips) and a
  * competing `renderKeys` helper added a fifth. This is the single
- * implementation; `lib/render-keyboard-shortcut.tsx#renderKeys` now
- * delegates here so there is exactly one chip look.
+ * implementation; `components/common/render-keyboard-shortcut.tsx#renderKeys`
+ * now delegates here so there is exactly one chip look.
  *
  * Two exports:
  *  - `<Kbd>`        — a single key/token chip (e.g. `↵`, `Esc`, `Alt+T`).
