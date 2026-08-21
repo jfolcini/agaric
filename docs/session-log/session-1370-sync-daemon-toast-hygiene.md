@@ -7,7 +7,7 @@
 | **Items closed** | `#4203`, `#4202`, `#4201` |
 | **Items modified** | — |
 | **Tests added** | +15 (backend) |
-| **Files touched** | see PR #4232's file list |
+| **Files touched** | see PR #4234's file list |
 
 **Summary:** Three follow-ups from #4197's review that turned out to be three properties of
 one mechanism, so the mechanism changed once rather than three times.
@@ -88,4 +88,4 @@ against broken code and was rewritten to race a fresh peer per round.
 succeeds, and its keys come from mDNS announcements. Pre-existing; this PR multiplies each
 stuck entry's payload by up to eight strings.
 
-**Commit plan:** single commit on `claude/sync-daemon-toast-hygiene`, shipped as PR #4232.
+**Commit plan:** single commit on `claude/sync-daemon-toast-hygiene`, shipped as PR #4234.

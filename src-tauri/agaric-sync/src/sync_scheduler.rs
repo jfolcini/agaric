@@ -237,16 +237,24 @@ const MIN_BACKOFF: Duration = Duration::from_secs(1);
 /// How many distinct *reported* failure texts one peer's streak remembers
 /// (#4201).
 ///
-/// Derived from the number of distinct user-facing failure texts the initiator
-/// path can produce for a single peer, not picked: `try_sync_with_peer` has
-/// **five** sites that reach
-/// `session_supervisor::record_initiator_failure` — the pinned-identity
+/// A bound with a safe overflow — **not** a derivation. An earlier draft of
+/// this comment claimed it was derived from the failure sites, and that claim
+/// was retracted in review: `try_sync_with_peer` has **five** sites that reach
+/// `session_supervisor::record_initiator_failure` (the pinned-identity
 /// refusal, the connect timeout, the connect error, the stream-open error and
-/// the session error — so five is the number of *simultaneously alternating*
-/// causes the mechanism has to hold before it degrades. Eight leaves three
-/// slots of headroom for a site added later, and bounds the memory at eight
-/// short strings per peer *in backoff* (the map is emptied by
-/// [`SyncScheduler::record_success`] and [`SyncScheduler::clear_backoff`]).
+/// the session error), but only **four** distinct text builders serve them —
+/// and two of those interpolate an iroh `Display`. So the number of distinct
+/// texts one peer can produce is **unbounded**, and no denominator here yields
+/// eight.
+///
+/// What makes eight safe is the overflow behaviour below, not the count. It
+/// comfortably holds the fixed-text causes that can genuinely alternate, and
+/// bounds the memory at eight short strings per peer *in backoff* (the map is
+/// emptied by [`SyncScheduler::record_success`] and
+/// [`SyncScheduler::clear_backoff`]).
+///
+/// If you are here because you added a sixth failure site: you do not need to
+/// raise this. Read the overflow paragraph.
 ///
 /// Overflow evicts the **oldest** remembered text, which makes that text
 /// reportable again — the safe direction, and the same one a churning error

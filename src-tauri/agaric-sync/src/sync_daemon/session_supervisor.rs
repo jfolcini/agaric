@@ -3297,14 +3297,20 @@ mod tests {
 
         let target = crate::mdns::test_endpoint_id("PEER_4201_DISPLAY");
         let (first, first_resolver) = failing_dial_text(target).await;
-        let (second, _) = failing_dial_text(target).await;
+        let (second, second_resolver) = failing_dial_text(target).await;
 
-        assert_eq!(
-            first_resolver.queries(),
-            Vec::<String>::new(),
-            "this test must stay offline: the failing dial resolved a hostname, so it \
-             is no longer the hermetic, immediate error it is documented to be"
-        );
+        // Both dials, not just the first: a leak that only affected the second
+        // endpoint would otherwise pass quietly, which is the exact failure
+        // mode switching off the real system resolver was meant to remove.
+        for (which, resolver) in [("first", &first_resolver), ("second", &second_resolver)] {
+            assert_eq!(
+                resolver.queries(),
+                Vec::<String>::new(),
+                "this test must stay offline: the {which} failing dial resolved a \
+                 hostname, so it is no longer the hermetic, immediate error it is \
+                 documented to be"
+            );
+        }
 
         assert_eq!(
             first, second,
