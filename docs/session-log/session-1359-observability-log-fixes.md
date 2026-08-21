@@ -7,7 +7,7 @@
 | **Items closed** | `#4127`, `#4128` |
 | **Items modified** | — |
 | **Tests added** | +0 (frontend) / +7 (backend) |
-| **Files touched** | 3 |
+| **Files touched** | 4 (+653/−28, per PR #4214) |
 
 **Summary:** Adversarially reviewed an inherited, uncommitted diff claiming to fix #4127
 (`recent_errors_from_log_dir`'s unreachable plain-`agaric.log` branch plus a comment
@@ -25,6 +25,7 @@ well as record-count, plus escape injectivity and the one field deliberately exe
 - `src-tauri/agaric-observability/src/exporter.rs` (+441/−12)
 - `src-tauri/src/commands/bug_report.rs` (+97/−12)
 - `src-tauri/src/lib.rs` (+6/−4)
+- `docs/session-log/session-1359-observability-log-fixes.md` (this file, +109/−0)
 
 **What the review established**
 
@@ -106,4 +107,4 @@ separator is only half the format. Assert the FIELD count too — a tab in a key
 later field's position, which is exactly what a positional allowlist (`redact_kv_line`'s
 skeleton) keys off, and a record-count assertion cannot see it.
 
-**Commit plan:** not pushed (working tree left for the caller to stage and commit).
+**Commit plan:** committed and pushed as PR #4214.

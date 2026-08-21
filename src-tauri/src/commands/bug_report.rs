@@ -637,7 +637,17 @@ pub async fn collect_bug_report_metadata(
 ///
 /// Accepts `agaric.log` (today) and `agaric.log.YYYY-MM-DD` files no older
 /// than [`MAX_ROLLED_AGE_DAYS`] days. Rejects anything else.
+///
+/// The plain `agaric.log` arm is a defensive/legacy allowance, not a
+/// description of what the production appender writes: the live appender
+/// never emits an undated `agaric.log` (see the `recent_errors_from_log_dir`
+/// comment for the full explanation). This arm only exists to tolerate a
+/// future rotation-policy change and the hand-written test fixtures that
+/// use the bare name.
 fn should_include_log_file(name: &str, today: chrono::NaiveDate) -> bool {
+    // Defensive/legacy allowance — see the doc comment above and
+    // `recent_errors_from_log_dir` for why the live appender never
+    // actually produces this name.
     if name == "agaric.log" {
         return true;
     }
@@ -1355,15 +1365,22 @@ pub fn read_logs_for_report_inner(
     // Sort newest-first so the bundle-size cap walk in
     // [`apply_bundle_cap`] drops the OLDEST files when the running total
     // exceeds [`MAX_BUNDLE_BYTES`]. `agaric.log` (today, no date suffix)
-    // is unconditionally newest; rolled `agaric.log.YYYY-MM-DD` files
-    // sort by descending date (newer date before older). This also
-    // matches the existing comment's "today first, then reverse-chrono"
-    // intent — the previous plain alphabetic sort accidentally produced
-    // chronological-ascending order on the dated suffixes (oldest dated
-    // first).
+    // is treated as unconditionally newest here, but that name is never
+    // actually produced by the production appender — see
+    // `recent_errors_from_log_dir` for why the live "today" file is always
+    // `agaric.log.YYYY-MM-DD`. This arm is a defensive/legacy allowance for
+    // hand-written test fixtures and a possible future rotation-policy
+    // change, not a description of production sort order. Rolled
+    // `agaric.log.YYYY-MM-DD` files sort by descending date (newer date
+    // before older). This also matches the existing comment's "today
+    // first, then reverse-chrono" intent — the previous plain alphabetic
+    // sort accidentally produced chronological-ascending order on the
+    // dated suffixes (oldest dated first).
     entries.sort_by(|a, b| {
         let an = a.0.file_name().and_then(|s| s.to_str()).unwrap_or("");
         let bn = b.0.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        // Defensive/legacy allowance, not production behavior — see the
+        // comment above and `recent_errors_from_log_dir`.
         let a_today = an == "agaric.log";
         let b_today = bn == "agaric.log";
         match (a_today, b_today) {
