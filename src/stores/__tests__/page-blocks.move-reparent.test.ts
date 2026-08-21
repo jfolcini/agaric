@@ -1043,8 +1043,16 @@ describe('PageBlockStore', () => {
     // merely unobserved — the same canary run recorded 24 hits on
     // `provIndex === 0` and 2 on `!cur`, so it does reach the boundaries.
     //
-    //   270:20 ConditionalExpression `provIndex >= 0` -> `true`
-    //   270:37 OptionalChaining `blocks[provIndex]?.parent_id` -> `blocks[provIndex].parent_id`
+    // Line citations below were re-verified against the CURRENT
+    // `page-blocks-move.ts` (grepped literal expressions) — every one had
+    // drifted since this ledger was written (applyProvisionalMove +47,
+    // reconcileProvisionalMoveSuccess +61, deriveTouched +47), the same class
+    // of drift #3804 was filed about. Corrected in place below; the arguments
+    // themselves are re-checked against the current text, not merely
+    // renumbered.
+    //
+    //   317:20 ConditionalExpression `provIndex >= 0` -> `true`
+    //   317:37 OptionalChaining `blocks[provIndex]?.parent_id` -> `blocks[provIndex].parent_id`
     //     `provIndex` comes from `blocks.findIndex(...)` on the array the
     //     splice just returned, and all seven `computeSpliced` call sites put
     //     the moved/created block INTO that array (dedent splices `movedItems`
@@ -1053,28 +1061,40 @@ describe('PageBlockStore', () => {
     //     `PROVINDEX_NEGATIVE` = 0, `SLOT_UNDEFINED` = 0 of 122. Independently,
     //     even at `provIndex === -1` the forced-true branch would evaluate
     //     `blocks[-1]?.parent_id ?? null` -> `null`, which is exactly what the
-    //     `: null` arm yields — so 270:20 is equivalent twice over. (The other
+    //     `: null` arm yields — so 317:20 is equivalent twice over. (The other
     //     three mutants on that same expression ARE killed, below.)
     //
-    //   300:9  ConditionalExpression `!cur` -> `false`
-    //   300:15 BlockStatement `{ needsReload = true; return {} }` -> `{}`
-    //     `blocksById` is always rebuilt in lockstep with `blocks`
-    //     (`buildBlocksById` / `cloneBlocksByIdWith`), so a missing `cur` means
-    //     the array changed too — and then the `stillInPlace` check below fails
-    //     and sets `needsReload` itself, reaching the same `return {}`. Line 307
-    //     cannot throw on the undefined `cur` either, because the `&&` on 306
-    //     short-circuits first. Canary `CUR_MISSING_BUT_IN_PLACE` = 0 of the 2
-    //     observed `!cur` hits. A defensively redundant guard.
+    //   361:9  ConditionalExpression `!cur` -> `false`
+    //   361:15 BlockStatement `{ needsReload = true; return {} }` -> `{}`
+    //     RETRACTED, not equivalent — do not re-close either mutant on this
+    //     ledger's authority. #3799 Finding 5 originally proposed this same
+    //     "defensively redundant" argument (from this ledger's "never
+    //     observed to matter across 96 reconciles"), but that was an EMPIRICAL
+    //     corpus result, not a proof of unreachability like the `provIndex`
+    //     argument above — and `reconcileProvisionalMoveSuccess`'s own doc
+    //     comment (page-blocks-move.ts, current text) now explicitly REJECTS
+    //     it: "`!cur` genuinely guards a block deleted (or dropped by a racing
+    //     `load()`) between the pre-await provisional splice and this resolve
+    //     callback — a real concurrent-write race, not defensive noise" —
+    //     "kept, not deleted (unlike Findings 2-4 ..., which were PROVABLY
+    //     subsumed by other code reachable from the exact same inputs)". A
+    //     later, more authoritative statement in the production file itself
+    //     supersedes this ledger's original claim for these two mutants only.
+    //     Left as untriaged survivors on #3759 — see the reviewer comment
+    //     there.
     //
-    //   305:7 ConditionalExpression `state.blocks === handle.provBlocks` -> `false`
+    //   366:7 ConditionalExpression `state.blocks === handle.provBlocks` -> `false`
     //     The reference-equality fast path is a pure optimisation: whenever it
     //     holds, the (index, parent) check it short-circuits also holds — the
     //     index by construction of `provIndex`, the parent because the same
     //     splice updated `blocksById` for every re-parented row. Canary
-    //     `FAST_TRUE_SLOW_FALSE` = 0 of 96.
+    //     `FAST_TRUE_SLOW_FALSE` = 0 of 96. Unlike the `!cur` pair above, this
+    //     ONE survived #3799 Finding 5's re-examination unchanged: the same
+    //     current doc comment calls it "redundant-for-CORRECTNESS ... but
+    //     genuine fast path".
     //
-    //   207:9 ConditionalExpression `seen.has(id)` -> `false`  (deriveTouched)
-    //   210:9 ConditionalExpression `b` -> `true`               (deriveTouched)
+    //   254:9 ConditionalExpression `seen.has(id)` -> `false`  (deriveTouched)
+    //   257:9 ConditionalExpression `b` -> `true`               (deriveTouched)
     //     Every `touchedIds` list is derived from ids present in the `blocks`
     //     array returned alongside it, and none repeats: canary
     //     `MISSING_FROM_BLOCKS` = 0 and `DUPLICATE` = 0 of 74. The dedup is

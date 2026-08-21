@@ -178,6 +178,12 @@ export const MODULES = {
     tests: [
       'src/stores/__tests__/page-blocks.reorder.test.ts',
       'src/stores/__tests__/page-blocks.move-reparent.test.ts',
+      // #3799 — wouldCreateMoveCycle + reconcileBatchMove cycle-rejection
+      // coverage; pre-existing but never wired into this scoping list, so the
+      // Stryker-scoped run never saw it and kept reporting already-killed
+      // mutants as survivors (the same #3142 failure mode as `tree-utils`
+      // above).
+      'src/stores/__tests__/page-blocks-move.test.ts',
     ],
   },
 }

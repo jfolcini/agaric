@@ -161,6 +161,22 @@ describe('planSplit', () => {
     expect(plan).toEqual({ kind: 'edit-only', content: '| \\--- |\n| --- |' })
   })
 
+  // EQUIVALENCE (#3750) — `serializeSingleBlock`'s `{ type: 'doc', content: [b]
+  // }` wrapper's `type` field (Stryker StringLiteral mutant: `'doc'` -> `''`).
+  // `serialize` (src/editor/markdown-serialize.ts) is two lines: `if
+  // (!doc.content || doc.content.length === 0) return ''` then
+  // `serializeBlockSequence(doc.content, onUnknownNode).join('\n')` — it never
+  // reads `doc.type` anywhere in its own body or in anything it calls
+  // (`serializeBlockSequence`/`serializeBlockNode` switch on each CHILD node's
+  // own `.type` inside `doc.content`, never on the wrapper's). `type: 'doc'` is
+  // a TypeScript-only literal (`DocNode.type: 'doc'`) with zero runtime
+  // consumers, so no input can make this mutant produce different output — not
+  // "the suite stayed green," but that the field is structurally unread by the
+  // only function it is ever passed to. Killing it would require pinning
+  // behavior against a field the callee provably never inspects. The test
+  // below is the closest this file comes to exercising `serializeSingleBlock`
+  // directly: it pins the case where `serializeSingleBlock` must NOT be
+  // called at all.
   it('does not synthesize a phantom block when parse() yields no content array', () => {
     // #3274 fixed the only real-input path that used to make `parse()`
     // return `{ type: 'doc' }` with `content` genuinely `undefined` (a lone
@@ -425,5 +441,31 @@ describe('computeIndentedBlocks', () => {
     expect(result.map((x) => x.id)).toEqual(['Z', 'A', 'B'])
     expect(result[2]?.parent_id).toBe('A')
     expect(result[2]?.depth).toBe(1)
+  })
+
+  // #3750 (NoCoverage) — `insertAt`'s `?? -1` fallback only fires when
+  // `remainingIndex.get(prevSibling.id)` is `undefined`, i.e. `prevSibling`
+  // is NOT among `blocks` at all. The docstring says "callers are
+  // responsible for validating that `prevSibling` is a legal indent target",
+  // so no in-contract caller reaches this — but the code degrades to a
+  // defensive `-1` (insert at the front) instead of throwing, and no
+  // existing test drove that default, leaving the mutant `?? -1` -> `?? +1`
+  // (insert two slots in, effectively past the end for a short array)
+  // unobserved. A stale/ghost `prevSibling` reference (e.g. a captured
+  // sibling that a concurrent write already removed) exercises exactly that
+  // default without asserting anything about the removed block itself.
+  it('inserts at the front, not past the end, when prevSibling is a ghost reference absent from blocks', () => {
+    const x = makeBlock({ id: 'X', position: 0, parent_id: null, depth: 0 })
+    const y = makeBlock({ id: 'Y', position: 1, parent_id: null, depth: 0 })
+    const ghost = makeBlock({ id: 'GHOST', position: 0, parent_id: null, depth: 0 })
+
+    const result = computeIndentedBlocks([x, y], 'X', ghost)
+
+    // `-1 + 1 = 0`: X (re-parented under the ghost id) lands FIRST. The `+1`
+    // mutant computes `1 + 1 = 2`, which `Array.splice` clamps to the end of
+    // the one-element `remaining` array ([Y]), landing X LAST instead —
+    // ['Y', 'X'].
+    expect(result.map((b) => b.id)).toEqual(['X', 'Y'])
+    expect(result[0]?.parent_id).toBe('GHOST')
   })
 })
