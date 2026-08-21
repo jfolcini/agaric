@@ -152,7 +152,7 @@ function untitledOr(title: string | null): string {
  * (the resolve-store title seed in `searchBlockRefs`).
  */
 function blockContentOr(content: string | null): string {
-  return content === null || content.trim() === '' ? translate('block.untitled') : content
+  return untitledOr(content)
 }
 
 /**
@@ -166,9 +166,7 @@ function blockContentOr(content: string | null): string {
  * `[[` page picker's equivalent fix) left open on this surface.
  */
 function blockFirstLineOr(content: string | null): string {
-  if (content === null) return translate('block.untitled')
-  const firstLine = content.split('\n')[0] as string
-  return firstLine.trim() === '' ? translate('block.untitled') : firstLine
+  return untitledOr(content?.split('\n')[0] ?? null)
 }
 
 /**

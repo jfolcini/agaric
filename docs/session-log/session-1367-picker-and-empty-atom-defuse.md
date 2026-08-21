@@ -58,6 +58,17 @@ Every new test was shown RED against the unfixed production code and restored, i
 the reviewer's own reproduction of the builder's claimed failures. Full frontend suite:
 17701 passed, 1 expected fail; `tsc -b` clean.
 
+**Review pass 2 (on the PR) tightened two things**
+
+The mixed-prefix fidelity test asserted only round-trip stability and the block type. A
+defuse that dropped the italic mark entirely emits `    y`, which is *also* stable and
+*also* a paragraph — so neither assertion could tell a working defuse from a broken one.
+The expected markdown (`    *y*`) is now pinned; the delimiters are the property.
+
+`blockContentOr` was byte-for-byte identical to `untitledOr`, and `blockFirstLineOr` was
+expressible through it. #4150's boundary is about which call site gets the placeholder,
+not about needing three near-identical implementations — both now delegate.
+
 **Filed, not fixed**
 
 `#4221` — an empty text node carrying the italic mark alone still defeats
@@ -65,5 +76,12 @@ the reviewer's own reproduction of the builder's claimed failures. Full frontend
 widening of the empty-atom predicate reaches it; the fix belongs in the vulnerability
 check, not the skip loop. Reproduced live during review. Reachable only from imported or
 hand-built JSON, same class as #4195's own residual.
+
+`#4228` — the resolve-store block title is seeded three ways (full content, and two
+`slice(0, 60)` paths) and rendered two ways (`renderBlockRef` splits and caps; the TipTap
+NodeView does neither, despite its docblock). So the newline-leading case this session
+fixed on the picker *row* still renders a blank chip, and the store version churns
+depending on which seeder ran last. All pre-existing; the fix belongs at the seed, not in
+a third renderer-side `split`.
 
 **Commit plan:** single commit on `claude/fe-picker-math-bugs`, shipped as PR #4222.

@@ -927,6 +927,11 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
   it('a mix of plain-space and empty-math-atom prefixes is defused too', () => {
     const d = doc(paragraph(text('  '), mathInline(' '), text(' '), italic(' y')))
     const md = serialize(d)
+    // Pinned, not just round-trip-stable: a defuse that dropped the italic
+    // mark entirely would emit `    y`, which is ALSO stable and ALSO a
+    // paragraph — so the two assertions below cannot tell a working defuse
+    // from a broken one on their own. The delimiters are the property.
+    expect(md).toBe('    *y*')
     expect(serialize(parse(md))).toBe(md)
     expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
   })
