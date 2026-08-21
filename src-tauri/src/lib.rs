@@ -3258,10 +3258,12 @@ mod log_dir_tests {
     /// Asserting that both callers invoke the same helper would be vacuous:
     /// textually, they already do. What can actually drift is everything the
     /// two sides own SEPARATELY — the appender's rotation + `filename_prefix`
-    /// on the write side (which yields `agaric.log.YYYY-MM-DD`, not the plain
-    /// `agaric.log` the read side tries first) against the filenames
-    /// `recent_errors_from_log_dir` looks for, and either side deriving its
-    /// app-data directory by a different route. So this test drives the real
+    /// on the write side (which yields `agaric.log.YYYY-MM-DD`; #4127 fixed
+    /// the read side, which used to look for a plain `agaric.log` FIRST and
+    /// only reached the real name through a "fallback" branch) against the
+    /// filenames `recent_errors_from_log_dir` looks for, and either side
+    /// deriving its app-data directory by a different route. So this test
+    /// drives the real
     /// write path and then the real read path over the SAME app-data
     /// directory, and asserts the second one finds what the first one wrote.
     ///

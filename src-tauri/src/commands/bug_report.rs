@@ -504,20 +504,30 @@ fn recent_errors_from_log_dir(log_dir: &Path) -> Vec<String> {
         .format("%Y-%m-%d")
         .to_string();
 
-    // `tracing-appender::rolling::daily` writes to `agaric.log` and rolls
-    // the previous day's file to `agaric.log.YYYY-MM-DD`. The "today" file
-    // is the plain `agaric.log`.
-    let today_path = log_dir.join("agaric.log");
-    if !today_path.is_file() {
-        // Fall back to the dated filename in case the rotation convention
-        // ever changes.
-        let dated = log_dir.join(format!("agaric.log.{today}"));
-        if !dated.is_file() {
-            return Vec::new();
-        }
-        return read_errors_from_path(&dated);
+    // #4127 — `build_log_file_appender` (`lib.rs`) configures
+    // `tracing_appender`'s `RollingFileAppender` with `Rotation::DAILY` and
+    // `filename_prefix("agaric.log")` and no suffix. `RollingWriter::join_date`
+    // (the crate's own naming logic) then always names the file
+    // `{prefix}.{date}` for that combination — there is no rotation event
+    // that ever produces a plain, undated `agaric.log`, not even for
+    // "today": the current day's live file is `agaric.log.YYYY-MM-DD` from
+    // the moment it is created, and a rollover just starts a new dated file
+    // under the same scheme. So the dated name IS today's live file, and
+    // that is the primary (and, in production, only) path this must find.
+    let dated_path = log_dir.join(format!("agaric.log.{today}"));
+    if dated_path.is_file() {
+        return read_errors_from_path(&dated_path);
     }
-    read_errors_from_path(&today_path)
+    // Fall back to a plain `agaric.log`: the production appender never
+    // writes one today, but this tolerates a future rotation-policy change
+    // (e.g. `Rotation::NEVER`, which DOES yield the bare prefix with no
+    // date) without silently going blind, and it is what hand-written test
+    // fixtures use.
+    let today_path = log_dir.join("agaric.log");
+    if today_path.is_file() {
+        return read_errors_from_path(&today_path);
+    }
+    Vec::new()
 }
 
 fn read_errors_from_path(path: &Path) -> Vec<String> {
@@ -627,7 +637,17 @@ pub async fn collect_bug_report_metadata(
 ///
 /// Accepts `agaric.log` (today) and `agaric.log.YYYY-MM-DD` files no older
 /// than [`MAX_ROLLED_AGE_DAYS`] days. Rejects anything else.
+///
+/// The plain `agaric.log` arm is a defensive/legacy allowance, not a
+/// description of what the production appender writes: the live appender
+/// never emits an undated `agaric.log` (see the `recent_errors_from_log_dir`
+/// comment for the full explanation). This arm only exists to tolerate a
+/// future rotation-policy change and the hand-written test fixtures that
+/// use the bare name.
 fn should_include_log_file(name: &str, today: chrono::NaiveDate) -> bool {
+    // Defensive/legacy allowance — see the doc comment above and
+    // `recent_errors_from_log_dir` for why the live appender never
+    // actually produces this name.
     if name == "agaric.log" {
         return true;
     }
@@ -1345,15 +1365,22 @@ pub fn read_logs_for_report_inner(
     // Sort newest-first so the bundle-size cap walk in
     // [`apply_bundle_cap`] drops the OLDEST files when the running total
     // exceeds [`MAX_BUNDLE_BYTES`]. `agaric.log` (today, no date suffix)
-    // is unconditionally newest; rolled `agaric.log.YYYY-MM-DD` files
-    // sort by descending date (newer date before older). This also
-    // matches the existing comment's "today first, then reverse-chrono"
-    // intent — the previous plain alphabetic sort accidentally produced
-    // chronological-ascending order on the dated suffixes (oldest dated
-    // first).
+    // is treated as unconditionally newest here, but that name is never
+    // actually produced by the production appender — see
+    // `recent_errors_from_log_dir` for why the live "today" file is always
+    // `agaric.log.YYYY-MM-DD`. This arm is a defensive/legacy allowance for
+    // hand-written test fixtures and a possible future rotation-policy
+    // change, not a description of production sort order. Rolled
+    // `agaric.log.YYYY-MM-DD` files sort by descending date (newer date
+    // before older). This also matches the existing comment's "today
+    // first, then reverse-chrono" intent — the previous plain alphabetic
+    // sort accidentally produced chronological-ascending order on the
+    // dated suffixes (oldest dated first).
     entries.sort_by(|a, b| {
         let an = a.0.file_name().and_then(|s| s.to_str()).unwrap_or("");
         let bn = b.0.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        // Defensive/legacy allowance, not production behavior — see the
+        // comment above and `recent_errors_from_log_dir`.
         let a_today = an == "agaric.log";
         let b_today = bn == "agaric.log";
         match (a_today, b_today) {
@@ -1896,6 +1923,81 @@ mod tests {
         assert_eq!(md.os, std::env::consts::OS);
         assert_eq!(md.arch, std::env::consts::ARCH);
         assert_eq!(md.recent_errors.len(), 2);
+    }
+
+    /// #4127 — pins that `recent_errors_from_log_dir` treats the file the
+    /// real appender actually writes (`agaric.log.YYYY-MM-DD`, per
+    /// `build_log_file_appender` in `lib.rs`) as PRIMARY, not merely as a
+    /// fallback it happens to reach.
+    ///
+    /// A test that only asserts "the dated file's content is found" would
+    /// pass against the pre-fix code too: that code checked a plain
+    /// `agaric.log` first and fell back to the dated file when the plain one
+    /// was absent, so with nothing else on disk the fallback alone already
+    /// finds it. That is exactly why the primary branch's deadness went
+    /// unnoticed. To actually discriminate, this test puts a STALE plain
+    /// `agaric.log` on disk (as if left over from something else, or from a
+    /// hypothetical future `Rotation::NEVER` config change) *alongside* the
+    /// real dated file the appender wrote, with different content in each,
+    /// and asserts the dated file's content wins. Pre-fix, the plain file's
+    /// `is_file()` check comes first and short-circuits the function, so the
+    /// stale content would win instead — silently wrong, and the specific
+    /// shape of "dead primary branch" #4127 describes.
+    #[test]
+    fn recent_errors_from_log_dir_prefers_the_real_tracing_appender_file_over_a_stale_plain_one() {
+        use std::io::Write as _;
+        use tracing_appender::rolling::{RollingFileAppender, Rotation};
+
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        // A stale plain `agaric.log`, distinct from what the appender
+        // writes today. Must NOT win.
+        fs::write(
+            log_dir.join("agaric.log"),
+            "2020-01-01 ERROR [agaric] STALE_MARKER\n",
+        )
+        .unwrap();
+
+        // Mirrors `build_log_file_appender`'s configuration exactly, so the
+        // filename this produces is the filename production actually
+        // writes. Must win.
+        let mut appender = RollingFileAppender::builder()
+            .rotation(Rotation::DAILY)
+            .filename_prefix("agaric.log")
+            .build(&log_dir)
+            .expect("appender must build in a writable temp dir");
+        writeln!(appender, "2025-01-01 ERROR [agaric] M4127_MARKER").unwrap();
+        appender.flush().unwrap();
+
+        // Confirm the premise: both files exist, with distinct markers, so
+        // the assertions below actually discriminate which one was read.
+        assert!(
+            log_dir.join("agaric.log").is_file(),
+            "premise broken: the stale plain agaric.log must exist"
+        );
+        let today = chrono::Utc::now()
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
+        assert!(
+            log_dir.join(format!("agaric.log.{today}")).is_file(),
+            "premise broken: tracing-appender must write agaric.log.YYYY-MM-DD"
+        );
+
+        let errors = recent_errors_from_log_dir(&log_dir);
+
+        assert!(
+            errors.iter().any(|l| l.contains("M4127_MARKER")),
+            "recent_errors_from_log_dir must find the ERROR line in the \
+             real tracing-appender-named file, got: {errors:?}"
+        );
+        assert!(
+            !errors.iter().any(|l| l.contains("STALE_MARKER")),
+            "recent_errors_from_log_dir must NOT read the stale plain \
+             agaric.log ahead of the real dated file, got: {errors:?}"
+        );
     }
 
     #[test]

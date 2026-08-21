@@ -186,13 +186,15 @@ pub fn build_file_exporter(log_dir: &Path) -> Option<FileSpanExporter> {
 /// op-types, counts, durations, and the attribute key/values the
 /// instrumentation chose to attach appear — there is no app content here.
 ///
-/// # Sanitization (#3975)
+/// # Sanitization (#3975, #4128)
 ///
-/// The name and every attribute value are routed through
-/// [`sanitize_inline`], the same escape [`format_log_record`] applies to its
-/// fields, so a `\n`/`\t`/`\\` embedded in either position cannot split or
-/// misalign a record — matching that function's "no field can ever split a
-/// record" guarantee, which previously held only for logs, not spans.
+/// The name, every attribute KEY, and every attribute value are routed
+/// through [`sanitize_inline`], the same escape [`format_log_record`] applies
+/// to its own fields (including its attribute keys), so a `\n`/`\t`/`\\`
+/// embedded in any of those positions cannot split or misalign a record —
+/// matching that function's "no field can ever split a record" guarantee,
+/// which previously held only for logs, not spans (#3975), and which
+/// previously excluded attribute keys in both writers (#4128).
 fn format_span(span: &SpanData) -> String {
     use std::fmt::Write as _;
 
@@ -222,7 +224,12 @@ fn format_span(span: &SpanData) -> String {
         status = span.status,
     );
     for kv in &span.attributes {
-        let _ = write!(line, "\t{}={}", kv.key, sanitize_inline(&kv.value.as_str()));
+        let _ = write!(
+            line,
+            "\t{}={}",
+            sanitize_inline(kv.key.as_str()),
+            sanitize_inline(&kv.value.as_str())
+        );
     }
     line.push('\n');
     line
@@ -287,9 +294,25 @@ fn any_value_to_string(value: &opentelemetry::logs::AnyValue) -> String {
 
 /// Escape the characters that would break the one-line-per-record format.
 ///
-/// Tabs and newlines in a body/attribute value would split or misalign a
-/// record, so they are escaped to literal two-char forms; everything else is
-/// kept verbatim (the body is the same text already written to `agaric.log`).
+/// A tab (the FIELD separator) or a newline (the RECORD separator) in any
+/// field — a name, a body, an attribute value, or an attribute KEY (#4128) —
+/// would split or misalign a record, so all three of `\n`/`\r`/`\t` are
+/// escaped to literal two-char forms; everything else is kept verbatim (the
+/// body is the same text already written to `agaric.log`).
+///
+/// The `\\` replacement MUST stay first, and is not optional. It is what
+/// makes the escape INJECTIVE: without it a literal `\` + `n` already in the
+/// input would render identically to a real newline, and a reader that
+/// unescapes a field could not tell the two apart — the same forgery one
+/// layer down. Pinned by
+/// `sanitize_inline_is_an_injective_escape_over_every_framing_byte`.
+///
+/// Deliberately NOT escaped: U+2028/U+2029. No reader of these files treats
+/// them as a break — `commands::bug_report`'s `redact_log` splits records
+/// with `split_inclusive('\n')` and `redact_kv_line` splits fields with
+/// `split('\t')` — so escaping them would alter legitimate body text for no
+/// benefit. Covered as an explicit case in
+/// `format_span_attribute_key_cannot_forge_a_field_or_a_record`.
 pub(crate) fn sanitize_inline(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('\n', "\\n")
@@ -337,7 +360,8 @@ fn format_log_record(record: &SdkLogRecord) -> String {
     // Sanitized for uniform line integrity. In practice `level` is an
     // enum-derived severity string and `target` a compile-time module path —
     // neither a realistic injection vector — but routing them through the same
-    // escape as `body`/attributes guarantees no field can ever split a record.
+    // escape as `body`/attributes/attribute-keys (below) guarantees no field
+    // can ever split a record.
     let level = sanitize_inline(record.severity_text().unwrap_or("-"));
 
     // The correlation fields: the active span's trace + span id, or `-` when the
@@ -361,10 +385,18 @@ fn format_log_record(record: &SdkLogRecord) -> String {
         "end={end}\tlevel={level}\ttrace={trace}\tspan={span}\ttarget={target}\tbody={body}"
     );
     for (key, value) in record.attributes_iter() {
+        // #4128: attribute KEYS are `tracing` field names, which are
+        // compile-time literals in every reachable caller (`tracing`'s
+        // macros accept no other kind), so no untrusted byte reaches this
+        // position today. Sanitizing anyway — the same escape already
+        // applied to every value on this line — makes the guarantee true
+        // unconditionally rather than true-by-caller-discipline: a key built
+        // through the exporter's own types (not through `tracing`'s macros)
+        // cannot forge a `\n`/`\t`/`\\` into the record framing either.
         let _ = write!(
             line,
             "\t{}={}",
-            key,
+            sanitize_inline(key.as_str()),
             sanitize_inline(&any_value_to_string(value))
         );
     }
@@ -458,6 +490,403 @@ mod tests {
             line.contains("real-value\\nend=2099"),
             "attribute value's embedded newline must be escaped to `\\n`, \
              not dropped or left raw; got:\n{line}"
+        );
+    }
+
+    /// #4128 — attribute KEYS were the one field neither writer sanitized,
+    /// despite the doc comment on [`format_log_record`] claiming "no field
+    /// can ever split a record". Not reachable through `tracing`'s macros
+    /// (a `#[instrument(fields(...))]`/`info_span!` field name is a
+    /// compile-time literal there), so this builds the `SpanData` directly —
+    /// exactly like [`test_span`] above already does — to test the writer
+    /// itself, independent of whether any caller can reach it.
+    #[test]
+    fn format_span_sanitizes_attribute_keys_so_a_newline_cannot_forge_a_line() {
+        let forged_key = "evil\nend=2099-01-01T00:00:00.000Z\tname=forged-by-attacker\t\
+             trace=deadbeefdeadbeefdeadbeefdeadbeef\tspan=cafebabecafebabe\t\
+             parent=-\tdur_ms=0.000\tstatus=Unset";
+        let span = test_span(
+            "legit.span",
+            vec![KeyValue::new(forged_key.to_owned(), "harmless-value")],
+        );
+
+        let line = format_span(&span);
+
+        let newline_count = line.matches('\n').count();
+        assert_eq!(
+            newline_count, 1,
+            "a `\\n` in an attribute KEY must not forge an extra record \
+             line in traces/*.log; got:\n{line}"
+        );
+        assert!(
+            line.contains("evil\\nend=2099"),
+            "attribute key's embedded newline must be escaped to `\\n`, not \
+             dropped or left raw; got:\n{line}"
+        );
+
+        // Round trip: a downstream reader splits the single line on `\t` and
+        // treats each `key=value` piece as one field. A forged key that
+        // reproduced a legitimate-looking second record would show up here
+        // as an extra `name=` field alongside the real one.
+        let forged_field_count = line
+            .trim_end_matches('\n')
+            .split('\t')
+            .filter(|field| field.starts_with("name="))
+            .count();
+        assert_eq!(
+            forged_field_count, 1,
+            "an attribute key must never contribute a second `name=` field \
+             once escaped, or a downstream parser could read the forged key \
+             as a second legitimate record; got:\n{line}"
+        );
+    }
+
+    /// #4128 — the same defect and fix as
+    /// `format_span_sanitizes_attribute_keys_so_a_newline_cannot_forge_a_line`,
+    /// for [`format_log_record`]. `tracing`'s field-name literals mean no
+    /// caller can reach this through the normal logging API either, so the
+    /// record is built through the exporter's own types instead of a
+    /// `tracing::error!`: `SdkLoggerProvider::logger` + `create_log_record`
+    /// gives a real [`SdkLogRecord`], and `LogRecord::add_attribute` accepts
+    /// any `Into<Key>` — including a runtime `String`, which `tracing`'s
+    /// macros could never produce for a field name.
+    #[test]
+    fn format_log_record_sanitizes_attribute_keys_so_a_newline_cannot_forge_a_line() {
+        use opentelemetry::logs::{AnyValue, LogRecord as _, Logger as _, LoggerProvider as _};
+        use opentelemetry_sdk::logs::SdkLoggerProvider;
+
+        let provider = SdkLoggerProvider::builder().build();
+        let logger = provider.logger("test");
+        let mut record = logger.create_log_record();
+        record.set_body(AnyValue::from("legit body"));
+        let forged_key = "evil\nend=2099-01-01T00:00:00.000Z\tlevel=ERROR\ttrace=-\tspan=-\t\
+             target=forged\tbody=forged-by-attacker";
+        record.add_attribute(forged_key.to_owned(), "harmless-value");
+
+        let line = format_log_record(&record);
+
+        // format_log_record always appends exactly one trailing '\n'. If an
+        // attribute key carries an unsanitized '\n', it adds another —
+        // collapsing the record's own line-terminator count is exactly what
+        // "no field can ever split a record" means in practice.
+        let newline_count = line.matches('\n').count();
+        assert_eq!(
+            newline_count, 1,
+            "a `\\n` in an attribute KEY must not forge an extra record \
+             line in otel-logs/*.log; got:\n{line}"
+        );
+        assert!(
+            line.contains("evil\\nend=2099"),
+            "attribute key's embedded newline must be escaped to `\\n`, not \
+             dropped or left raw; got:\n{line}"
+        );
+
+        // Round trip: a downstream reader splits the single line on `\t` and
+        // treats each `key=value` piece as one field. A forged key that
+        // reproduced a legitimate-looking second record would show up here
+        // as an extra `end=` field alongside the real one.
+        let forged_field_count = line
+            .trim_end_matches('\n')
+            .split('\t')
+            .filter(|field| field.starts_with("end="))
+            .count();
+        assert_eq!(
+            forged_field_count, 1,
+            "an attribute key must never contribute a second `end=` field \
+             once escaped, or a downstream parser could read the forged key \
+             as a second legitimate record; got:\n{line}"
+        );
+    }
+
+    /// Undo [`sanitize_inline`]. Only meaningful if the escape is injective,
+    /// which is exactly what
+    /// `sanitize_inline_is_an_injective_escape_over_every_framing_byte` uses
+    /// it to establish.
+    fn unescape_inline(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c != '\\' {
+                out.push(c);
+                continue;
+            }
+            match chars.next() {
+                Some('\\') => out.push('\\'),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                // Not an escape this function emits; keep both chars so the
+                // helper is total rather than lossy.
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        }
+        out
+    }
+
+    /// #4128 — "handles `\n`" is not the property that matters; INJECTIVITY
+    /// is.
+    ///
+    /// Rendering a real newline as the two characters `\` + `n` is only safe
+    /// if a literal `\` + `n` already in the input is *also* escaped.
+    /// Otherwise the two collide, and a reader that unescapes a field to
+    /// recover the original text cannot tell an attacker's literal `\n` text
+    /// from a newline the writer escaped — the same forgery, one layer down,
+    /// in whatever tool reads the bundle. [`sanitize_inline`] escapes `\`
+    /// FIRST and only then the three framing bytes, which makes the mapping
+    /// injective; reordering those `.replace` calls, or dropping the
+    /// backslash rule, reddens the round trip below.
+    #[test]
+    fn sanitize_inline_is_an_injective_escape_over_every_framing_byte() {
+        // The four bytes that can break framing, each to its own two-char form.
+        assert_eq!(sanitize_inline("\\"), r"\\");
+        assert_eq!(sanitize_inline("\n"), r"\n");
+        assert_eq!(sanitize_inline("\r"), r"\r");
+        assert_eq!(sanitize_inline("\t"), r"\t");
+
+        // The collision: a literal backslash-n must not render identically to
+        // a real newline.
+        assert_ne!(
+            sanitize_inline(r"a\nb"),
+            sanitize_inline("a\nb"),
+            "a literal `\\n` in the input must not render the same as a real \
+             newline, or an unescaping reader cannot distinguish them"
+        );
+
+        // Round trip over a corpus that mixes framing bytes, literal escape
+        // sequences, and non-ASCII text. `\u{2028}`/`\u{2029}` are included
+        // deliberately: they are NOT escaped, and must survive verbatim —
+        // see `format_span_attribute_key_cannot_forge_a_field_or_a_record`
+        // for why they are not framing bytes for any reader of these files.
+        for original in [
+            "",
+            "plain",
+            r"a\nb",
+            "a\nb",
+            "\t",
+            "\r\n",
+            "\\",
+            r"\\n",
+            "mixed \\t\treal-tab",
+            "\u{2028}\u{2029}",
+            "unicodé ✓",
+            "trailing backslash \\",
+        ] {
+            let escaped = sanitize_inline(original);
+            assert_eq!(
+                unescape_inline(&escaped),
+                original,
+                "sanitize_inline must round-trip {original:?} (escaped: {escaped:?}); \
+                 a non-injective escape lets a literal escape sequence in the input \
+                 impersonate an escaped framing byte"
+            );
+        }
+    }
+
+    /// Hostile attribute keys, each paired with what it is trying to do.
+    ///
+    /// #4128's acceptance is "no forged record", but a tab-separated
+    /// `key=value` format has TWO separators, and only one of them is the
+    /// newline. A `\t` in a key forges an extra FIELD rather than an extra
+    /// record — invisible to a record-count assertion, and enough to shift
+    /// every later field's position, which is what
+    /// `commands::bug_report::redact_kv_line`'s POSITIONAL skeleton
+    /// allowance keys off. Hence the field-count assertions below alongside
+    /// the record-count ones.
+    const HOSTILE_ATTRIBUTE_KEYS: &[(&str, &str)] = &[
+        (
+            "\tname=forged\tdur_ms=0.000",
+            "a TAB forges extra FIELDS, shifting every later field's position",
+        ),
+        (
+            "\nend=2099-01-01T00:00:00.000Z\tname=forged",
+            "an LF forges an extra record",
+        ),
+        (
+            "\r\nend=2099-01-01T00:00:00.000Z\tname=forged",
+            "a CRLF forges an extra record for a CRLF-splitting reader",
+        ),
+        (
+            "\rname=forged",
+            "a lone CR rewrites the visible line on a terminal",
+        ),
+        (
+            r"k\nend=2099-01-01T00:00:00.000Z",
+            "a LITERAL backslash-n, colliding with the escape for a real newline",
+        ),
+        ("", "an empty key"),
+        ("   ", "an all-whitespace key"),
+        (
+            "has=equals=everywhere",
+            "a key carrying the intra-field `key=value` separator",
+        ),
+        (
+            "\u{2028}end=2099-01-01T00:00:00.000Z",
+            "U+2028 LINE SEPARATOR, in case a reader treats it as a break",
+        ),
+        (
+            "\u{2029}end=2099-01-01T00:00:00.000Z",
+            "U+2029 PARAGRAPH SEPARATOR, likewise",
+        ),
+        ("\\", "a bare trailing backslash"),
+    ];
+
+    /// #4128, widened — an attribute KEY must not be able to forge a record
+    /// OR a field in `traces/*.log`, whatever it contains.
+    ///
+    /// `format_span` writes a fixed 7-field skeleton
+    /// (`end name trace span parent dur_ms status`) and then one field per
+    /// attribute, so exactly one attribute means exactly 8 fields and exactly
+    /// one line terminator, for every possible key. That pair of counts is
+    /// the whole structural guarantee; anything that changes either is a
+    /// forgery, whether it split the record or only misaligned it.
+    ///
+    /// On U+2028/U+2029: they are deliberately NOT escaped, and the counts
+    /// below are still the right assertion. The only reader of these files is
+    /// `commands::bug_report`, whose `redact_log` splits records with
+    /// `split_inclusive('\n')` and whose `redact_kv_line` splits fields with
+    /// `split('\t')` — neither treats a Unicode separator as a break, and
+    /// Rust's `str::lines()` does not either. Escaping them would change
+    /// legitimate body text for no reader's benefit. If a reader that splits
+    /// on them is ever added, these cases are already here to be re-pointed.
+    #[test]
+    fn format_span_attribute_key_cannot_forge_a_field_or_a_record() {
+        // 7 skeleton fields + 1 attribute field.
+        const EXPECTED_FIELDS: usize = 8;
+
+        let long_key = format!("{}\nend=2099-01-01T00:00:00.000Z", "A".repeat(16 * 1024));
+        let cases = HOSTILE_ATTRIBUTE_KEYS
+            .iter()
+            .map(|(key, intent)| ((*key).to_owned(), *intent))
+            .chain(std::iter::once((
+                long_key,
+                "a very long key, to check length alone changes no invariant",
+            )));
+
+        for (key, intent) in cases {
+            let span = test_span("legit.span", vec![KeyValue::new(key.clone(), "safe-value")]);
+            let line = format_span(&span);
+            let body = line
+                .strip_suffix('\n')
+                .expect("format_span always terminates the record with exactly one LF");
+
+            assert!(
+                !body.contains('\n'),
+                "attribute key {key:?} ({intent}) forged an extra RECORD in traces/*.log; \
+                 got:\n{line}"
+            );
+            assert!(
+                !body.contains('\r'),
+                "attribute key {key:?} ({intent}) left a raw CR in the record; a CR-splitting \
+                 or terminal reader sees a forged line; got:\n{line}"
+            );
+            assert_eq!(
+                body.split('\t').count(),
+                EXPECTED_FIELDS,
+                "attribute key {key:?} ({intent}) changed the FIELD count of a one-attribute \
+                 span record; every later field's position shifts, and \
+                 `bug_report::redact_kv_line` allows skeleton values POSITIONALLY; got:\n{line}"
+            );
+            assert!(
+                body.contains(&sanitize_inline(&key)),
+                "attribute key {key:?} ({intent}) must appear ESCAPED, not dropped or \
+                 truncated; got:\n{line}"
+            );
+        }
+    }
+
+    /// #4128, widened — the same structural guarantee for
+    /// [`format_log_record`] (`otel-logs/*.log`), whose skeleton is 6 fields
+    /// (`end level trace span target body`), so one attribute means exactly
+    /// 7 fields and exactly one line terminator.
+    #[test]
+    fn format_log_record_attribute_key_cannot_forge_a_field_or_a_record() {
+        use opentelemetry::logs::{AnyValue, LogRecord as _, Logger as _, LoggerProvider as _};
+        use opentelemetry_sdk::logs::SdkLoggerProvider;
+
+        // 6 skeleton fields + 1 attribute field.
+        const EXPECTED_FIELDS: usize = 7;
+
+        let provider = SdkLoggerProvider::builder().build();
+        let logger = provider.logger("test");
+
+        let long_key = format!("{}\nend=2099-01-01T00:00:00.000Z", "A".repeat(16 * 1024));
+        let cases = HOSTILE_ATTRIBUTE_KEYS
+            .iter()
+            .map(|(key, intent)| ((*key).to_owned(), *intent))
+            .chain(std::iter::once((
+                long_key,
+                "a very long key, to check length alone changes no invariant",
+            )));
+
+        for (key, intent) in cases {
+            let mut record = logger.create_log_record();
+            record.set_body(AnyValue::from("legit body"));
+            record.add_attribute(key.clone(), "safe-value");
+
+            let line = format_log_record(&record);
+            let body = line
+                .strip_suffix('\n')
+                .expect("format_log_record always terminates the record with exactly one LF");
+
+            assert!(
+                !body.contains('\n'),
+                "attribute key {key:?} ({intent}) forged an extra RECORD in otel-logs/*.log; \
+                 got:\n{line}"
+            );
+            assert!(
+                !body.contains('\r'),
+                "attribute key {key:?} ({intent}) left a raw CR in the record; got:\n{line}"
+            );
+            assert_eq!(
+                body.split('\t').count(),
+                EXPECTED_FIELDS,
+                "attribute key {key:?} ({intent}) changed the FIELD count of a one-attribute \
+                 log record; got:\n{line}"
+            );
+            assert!(
+                body.contains(&sanitize_inline(&key)),
+                "attribute key {key:?} ({intent}) must appear ESCAPED, not dropped; got:\n{line}"
+            );
+        }
+    }
+
+    /// The one string-bearing field in [`format_span`] that is NOT routed
+    /// through [`sanitize_inline`]: `status={status:?}`.
+    ///
+    /// The review question behind #4128 is "is the escape applied at EVERY
+    /// write site", and the honest answer for this field is "no, and it does
+    /// not need to be" — `Status::Error`'s description is rendered by the
+    /// derived `Debug`, which goes through `str`'s `Debug` and escapes
+    /// `\n`/`\r`/`\t`/`\\`/`"` itself. Nothing in this workspace calls
+    /// `set_status`, so the value is `Unset` in production; the exemption is
+    /// therefore a property of the FORMATTER, not of the caller set, and
+    /// this pins it. Rendering the description any other way (a `Display`
+    /// impl, or interpolating `description` directly) reddens this.
+    #[test]
+    fn format_span_status_description_cannot_split_a_record() {
+        let mut span = test_span("legit.span", vec![]);
+        span.status = Status::error(
+            "boom\nend=2099-01-01T00:00:00.000Z\tname=forged-by-attacker\tstatus=Unset",
+        );
+
+        let line = format_span(&span);
+        let body = line
+            .strip_suffix('\n')
+            .expect("format_span always terminates the record with exactly one LF");
+
+        assert!(
+            !body.contains('\n'),
+            "a `\\n` in a span status description must not forge an extra record; got:\n{line}"
+        );
+        // 7 skeleton fields, no attributes.
+        assert_eq!(
+            body.split('\t').count(),
+            7,
+            "a `\\t` in a span status description must not forge an extra field; got:\n{line}"
         );
     }
 
