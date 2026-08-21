@@ -1312,13 +1312,18 @@ const BLOCK_LINKS_OWNER: &str = "reindex_block_links_conn (the single-pool write
      materializer::dispatch::invalidations_for_op that enqueues \
      ReindexBlockLinks at all (only CreateBlock and EditBlock do) — plus \
      recovery::cache_refresh's draft-recovery path, which enqueues it \
-     directly. There is NO \
-     vault-wide rebuild_block_links: truncate_block_links' sole caller is \
-     agaric-sync's snapshot-restore WIPE, so a row lost here is lost \
-     PERMANENTLY for that block until its content is edited again — and every \
-     other link artefact (pages_cache.inbound_link_count, page_link_cache) \
-     folds this table as ground truth, so the loss is consistent on both sides \
-     of their diffs and invisible to reconcile()";
+     directly. There is still NO vault-wide rebuild_block_links: \
+     truncate_block_links' sole caller is agaric-sync's snapshot-restore WIPE, \
+     and every other link artefact (pages_cache.inbound_link_count, \
+     page_link_cache) folds this table as ground truth, so a loss here is \
+     consistent on both sides of their diffs and invisible to reconcile(). \
+     Since #4118 the SOURCE-triggered writer is no longer the only path back: \
+     a token the INSERT declines is recorded in block_links_unresolved, keyed \
+     by target, and the ReindexBlockLinks handler re-links those referrers when \
+     the target itself is reindexed (create, edit, or the SetBlockPageId \
+     page/space stamp). A row lost BEFORE that landed is still lost — the \
+     unresolved index is populated by the reindexes that run after the \
+     upgrade, not backfilled";
 
 /// Diff `block_links` against a from-CONTENT rebuild — the artefact that makes
 /// a base table auditable (#3955).
@@ -1357,10 +1362,14 @@ const BLOCK_LINKS_OWNER: &str = "reindex_block_links_conn (the single-pool write
 ///   catch — the insert-time filter dropping an edge it should have kept
 ///   (#3903). It CAN also fire when the target only became linkable after the
 ///   source's last reindex: the target was created later, or its `space_id`
-///   was stamped later. Those are not false positives — they are the same
-///   permanent loss arriving by a different route, since nothing will reindex
-///   that source again — but they are findings to triage, not a regression
-///   signal, which is what puts this artefact in a scheduled lane.
+///   was stamped later. #4118 closed that as an ONGOING loss — the declined
+///   token is recorded in `block_links_unresolved` and the referrer is
+///   re-linked when the target is next reindexed — but the arm can still fire
+///   on a vault that carries such losses from BEFORE that landed (the
+///   unresolved index is populated by subsequent reindexes, not backfilled),
+///   and transiently in the window between the target becoming linkable and
+///   the referrer's repair draining. Those are findings to triage, not a
+///   regression signal, which is what keeps this artefact in a scheduled lane.
 /// * **EXTRA** (row, no token). Scoped to production's DELETE rule: the writer
 ///   deletes `old_targets - parsed_tokens`, with NO existence and NO space
 ///   predicate. So a row is EXTRA only when its source's `content` column

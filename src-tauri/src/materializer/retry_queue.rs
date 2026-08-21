@@ -101,6 +101,18 @@ pub(crate) const SEED_PAGE_LINK_REPAIR_LAST_ERROR: &str =
 pub(crate) const SEED_PAGE_LINK_FULL_REBUILD_LAST_ERROR: &str =
     "seed: page_link_cache full rebuild owed by an unexpected page_id move (#3842)";
 
+/// #4118: `last_error` marker for a `ReindexBlockLinks` row seeded on behalf
+/// of a REFERRER when the block it references has just become linkable.
+///
+/// Distinct text from [`SEED_PAGE_LINK_REPAIR_LAST_ERROR`] because the two
+/// seeds are keyed on different blocks for different reasons: that one repairs
+/// the roll-up key of the block whose own `page_id` moved, this one repairs an
+/// edge belonging to a DIFFERENT block that has not changed at all. A queue
+/// dump that could not tell them apart would attribute a pile of referrer rows
+/// to a `page_id` move that never happened.
+pub(crate) const SEED_UNRESOLVED_LINK_LAST_ERROR: &str =
+    "seed: block_links edge owed to a referrer whose target just became linkable (#4118)";
+
 /// Task kinds that may be persisted to the retry queue.
 ///
 /// Three families:

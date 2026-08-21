@@ -855,3 +855,703 @@ async fn rebuild_page_link_cache_task_populates_cache() {
 
     mat.shutdown();
 }
+
+// ====================================================================
+// #4118 — a target that becomes linkable AFTER the referrer's last reindex
+// ====================================================================
+
+/// Read the unresolved link tokens recorded for `source_id`.
+async fn unresolved_targets(pool: &SqlitePool, source_id: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT target_id FROM block_links_unresolved WHERE source_id = ? ORDER BY target_id",
+    )
+    .bind(source_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// Read every `block_links` edge.
+async fn all_edges(pool: &SqlitePool) -> Vec<(String, String)> {
+    sqlx::query_as("SELECT source_id, target_id FROM block_links ORDER BY 1, 2")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// #4118 — THE reported scenario. A reference written before its target
+/// exists must resolve when the target arrives, without the referrer ever
+/// being touched again.
+///
+/// `reindex_block_links_conn`'s INSERT drops a token whose target is not in
+/// `blocks` (its `WHERE EXISTS (… AND deleted_at IS NULL)` guard), and the
+/// reindexer has exactly ONE trigger: a change to the SOURCE's content. Only
+/// `CreateBlock` and `EditBlock` enqueue `ReindexBlockLinks`, both keyed on
+/// the source. There is no vault-wide `rebuild_block_links` behind it —
+/// `truncate_block_links`' only caller is agaric-sync's snapshot-restore wipe
+/// — and every downstream artefact (`page_link_cache`,
+/// `pages_cache.inbound_link_count`) folds `block_links` as ground truth, so
+/// the loss is self-consistent and invisible. The edge was gone permanently.
+///
+/// Out-of-order delivery makes "the referrer arrives before the referent"
+/// ordinary rather than exotic: a peer replaying a remote batch can deliver
+/// them in either order, and both orders take this same dispatch path
+/// (`invalidations_for_op` is shared by local and remote ops), so the target's
+/// `CreateBlock` enqueues exactly the `ReindexBlockLinks` this test drives.
+///
+/// Without the fix the final assertions are RED: `block_links` and
+/// `page_link_cache` stay empty forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_target_created_after_the_referrer_relinks_it_4118() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_p = "PP000000000000000000000000";
+    let source_s = "SS000000000000000000000000";
+    let page_t = "TT000000000000000000000000";
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'P', ?)")
+        .bind(page_p)
+        .bind(page_p)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // The referrer names a ULID that is not in `blocks` yet.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', ?, ?, ?, 1)",
+    )
+    .bind(source_s)
+    .bind(format!("link [[{page_t}]]"))
+    .bind(page_p)
+    .bind(page_p)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(source_s),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Entry state, not the assertion under test: the edge is correctly absent
+    // (the FK on `block_links.target_id` makes it unstorable), but the debt is
+    // now recorded against the target that owes it.
+    assert!(
+        all_edges(&pool).await.is_empty(),
+        "seed: a token to a non-existent target cannot become an edge"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, source_s).await,
+        vec![page_t.to_owned()],
+        "seed: the dropped token is recorded, keyed by the target that would resolve it"
+    );
+
+    // The target arrives. This is the ONLY event in the scenario — the
+    // referrer is never edited again.
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'T', ?)")
+        .bind(page_t)
+        .bind(page_t)
+        .execute(&pool)
+        .await
+        .unwrap();
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(page_t),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(source_s.to_owned(), page_t.to_owned())],
+        "#4118: reindexing the newly-linkable TARGET must re-link the referrers that \
+         named it — the referrer's content has not changed, so nothing else ever will"
+    );
+    assert!(
+        unresolved_targets(&pool, source_s).await.is_empty(),
+        "the recorded debt must be discharged once the edge exists"
+    );
+
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache ORDER BY 1, 2",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(page_p.to_owned(), page_t.to_owned(), 1)],
+        "the repair must run the referrer's WHOLE reindex, not just the base-table \
+         insert: `page_link_cache` is what the graph view and the page-links panel \
+         read, and its sole per-block writer is this same handler"
+    );
+
+    mat.shutdown();
+}
+
+/// #4118 case 2 — the target's `space_id` is stamped after the referrer's
+/// reindex.
+///
+/// This is the residual window #3903/#3894 left open. That pair fixed the
+/// cross-space filter's target-side subquery so it takes the owning-page
+/// fallback; it did not, and could not, change the fact that a target with
+/// neither its own `space_id` nor a `page_id` to inherit one through still
+/// resolves to NULL and is still dropped. `space_id` is stamped POST-COMMIT by
+/// `SetBlockPageId`, so a referrer reindexed inside that window loses the
+/// edge — and `SetBlockPageId` re-runs the reindex of the block it STAMPED,
+/// never of the blocks that reference it.
+///
+/// It is also the shape that appears when the referrer and the target arrive
+/// on different devices: the stamping task is enqueued by the target's own
+/// create and drains on its own schedule, long after the referrer's fan-out.
+///
+/// Without the fix the final assertions are RED.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_target_whose_space_is_stamped_later_relinks_the_referrer_4118() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let space = "ZZ000000000000000000000000";
+    let page_p = "PP000000000000000000000000";
+    let page_q = "QQ000000000000000000000000";
+    let source_s = "SS000000000000000000000000";
+    let target_t = "TT000000000000000000000000";
+
+    for (id, title) in [(space, "space"), (page_p, "P"), (page_q, "Q")] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+        .bind(space)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for id in [page_p, page_q] {
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+            .bind(space)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // The referrer: space stamped, so the cross-space filter is ARMED.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id, position) \
+         VALUES (?, 'content', ?, ?, ?, ?, 1)",
+    )
+    .bind(source_s)
+    .bind(format!("link [[{target_t}]]"))
+    .bind(page_p)
+    .bind(page_p)
+    .bind(space)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // The target: exists and live, but committed with `page_id` and
+    // `space_id` still NULL — the state between a create's commit and its
+    // deferred `SetBlockPageId`.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', 'target', ?, 1)",
+    )
+    .bind(target_t)
+    .bind(page_q)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(source_s),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert!(
+        all_edges(&pool).await.is_empty(),
+        "seed: the target's space resolves to NULL, `NULL = ?3` is falsy, the edge is \
+         dropped — a SAME-space link lost to the stamping window"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, source_s).await,
+        vec![target_t.to_owned()],
+        "seed: a drop by the space filter is recorded exactly like a drop by the \
+         existence guard"
+    );
+
+    // The deferred stamp — the only event. It sets the target's `page_id` and
+    // `space_id`, which is what makes the target linkable.
+    mat.enqueue_background(MaterializeTask::SetBlockPageId {
+        block_id: std::sync::Arc::from(target_t),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let stamped: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(target_t)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        stamped.as_deref(),
+        Some(space),
+        "seed: SetBlockPageId must have stamped the space it inherits from its parent"
+    );
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(source_s.to_owned(), target_t.to_owned())],
+        "#4118: stamping the target's space makes it linkable, and the referrer that \
+         was dropped for the unstamped space must be re-linked. SetBlockPageId already \
+         re-runs the reindex of the block it stamped; that repairs that block's own \
+         OUTBOUND edges and cannot touch the inbound ones this issue is about"
+    );
+    assert!(
+        unresolved_targets(&pool, source_s).await.is_empty(),
+        "the recorded debt must be discharged"
+    );
+
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache ORDER BY 1, 2",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(page_p.to_owned(), target_t.to_owned(), 1)],
+        "and the page-level roll-up the graph view reads must gain the edge too. The \
+         TARGET side of that roll-up is `bl.target_id` verbatim (page_links.rs — only \
+         the SOURCE side takes the `COALESCE(page_id, parent_id, id)` key), so a \
+         content-block target keys on itself rather than on its owning page `Q`"
+    );
+
+    mat.shutdown();
+}
+
+/// #4118 DURABILITY — the referrer repair must survive a failure of the
+/// reindex that performs it.
+///
+/// The `block_links_unresolved` row is durable, but the TRIGGER is not: it is
+/// "the target was just reindexed", a single moment. If the referrer's reindex
+/// fails inside that moment — or the process dies — nothing re-runs it, and
+/// the edge is lost for exactly as long as neither block is touched again,
+/// which in the reported scenario is forever. That is the #2831 / #3842 defect
+/// class, so it takes the #2831 shape: a durable, idempotent
+/// `ReindexBlockLinks` obligation seeded for each referrer BEFORE the inline
+/// repair is attempted, and cleared only once it succeeds.
+///
+/// The failure is injected for real, not simulated: a trigger aborts every
+/// INSERT into `block_links`. That fails the REFERRER's reindex (it has a
+/// token to insert) while leaving the TARGET's own reindex — which inserts
+/// nothing — succeeding, so the handler reaches the repair and the repair is
+/// the only thing that breaks.
+///
+/// Without the seeded obligation this test is RED at the retry-row assertion,
+/// and the sweep afterwards finds nothing to re-run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_referrer_relink_is_owed_durably_4118() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_p = "PP000000000000000000000000";
+    let source_s = "SS000000000000000000000000";
+    let page_t = "TT000000000000000000000000";
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'P', ?)")
+        .bind(page_p)
+        .bind(page_p)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', ?, ?, ?, 1)",
+    )
+    .bind(source_s)
+    .bind(format!("link [[{page_t}]]"))
+    .bind(page_p)
+    .bind(page_p)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(source_s),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        unresolved_targets(&pool, source_s).await,
+        vec![page_t.to_owned()],
+        "seed: the debt is recorded"
+    );
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'T', ?)")
+        .bind(page_t)
+        .bind(page_t)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // --- Inject the failure: every `block_links` INSERT aborts. ---
+    sqlx::query(
+        "CREATE TRIGGER block_links_offline_4118 BEFORE INSERT ON block_links \
+         BEGIN SELECT RAISE(ABORT, 'block_links offline (#4118 test)'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let task = MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(page_t),
+    };
+    crate::materializer::handlers::handle_background_task_metered(
+        &pool,
+        &task,
+        None,
+        None,
+        mat.metrics(),
+    )
+    .await
+    .expect(
+        "the TARGET's own task must still succeed — a referrer whose repair failed is \
+         owed by its own durable obligation, and failing this task instead would seed a \
+         retry for a block whose reindex worked",
+    );
+
+    assert!(
+        all_edges(&pool).await.is_empty(),
+        "seed: the repair really did fail"
+    );
+    let owed: Vec<(String, String)> = sqlx::query_as(
+        "SELECT block_id, last_error FROM materializer_retry_queue WHERE task_kind = ?",
+    )
+    .bind("ReindexBlockLinks")
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        owed,
+        vec![(
+            source_s.to_owned(),
+            crate::materializer::retry_queue::SEED_UNRESOLVED_LINK_LAST_ERROR.to_owned(),
+        )],
+        "#4118: the REFERRER — not the target — must carry a durable obligation. \
+         Without it the only durable trace of the repair is the unresolved row, which \
+         nothing re-triggers until one of the two blocks is touched again"
+    );
+
+    // --- The failure window closes; the sweeper runs. ---
+    sqlx::query("DROP TRIGGER block_links_offline_4118")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE materializer_retry_queue SET next_attempt_at = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let re_enqueued = crate::materializer::retry_queue::sweep_once(&pool, &pool, &mat)
+        .await
+        .unwrap();
+    assert!(
+        re_enqueued >= 1,
+        "the sweeper must re-enqueue the obligation left by the failed repair"
+    );
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(source_s.to_owned(), page_t.to_owned())],
+        "the repair must survive its own failure: after the sweep the edge exists"
+    );
+    assert!(
+        unresolved_targets(&pool, source_s).await.is_empty(),
+        "and the debt is discharged"
+    );
+    let still_owed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM materializer_retry_queue WHERE block_id = ?")
+            .bind(source_s)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        still_owed, 0,
+        "a completed repair leaves no obligation behind"
+    );
+
+    mat.shutdown();
+}
+
+/// #4118 — the referrer's inline repair must NOT discharge a retry-queue
+/// obligation it did not author.
+///
+/// `resolve_referrers_of` seeds a `ReindexBlockLinks` obligation per referrer
+/// before repairing it, the #2831/#3842 shape. But `seed_obligation_tx` is
+/// `ON CONFLICT DO NOTHING` and `clear_obligation`'s DELETE is unconditional,
+/// so a referrer that ALREADY owed a `ReindexBlockLinks` would have that row
+/// deleted by the repair too.
+///
+/// The two obligations are not the same work. A pre-existing row owes the
+/// WHOLE task — `reindex_one_block_links` PLUS `resolve_referrers_of` for the
+/// referrer's own id, the half that re-links whoever is waiting on the
+/// REFERRER as a target. The inline repair runs only the first half, because
+/// running the second would recurse. Clearing on the strength of half the work
+/// therefore reintroduces #4118's permanent loss exactly one hop away.
+///
+/// This is not a corner case on the import path: #3843 measured 74% of a
+/// 1 000-block import's background fan-out and 90% of a 5 000-block import's
+/// SHED into `materializer_retry_queue`, so during an import the referrer very
+/// often already carries an un-executed `ReindexBlockLinks` row — which is
+/// modelled here with the real `SHED_LAST_ERROR` marker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_referrers_preexisting_reindex_obligation_survives_the_inline_relink_4118() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_p = "PP000000000000000000000000";
+    let source_s = "SS000000000000000000000000";
+    let page_t = "TT000000000000000000000000";
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'P', ?)")
+        .bind(page_p)
+        .bind(page_p)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', ?, ?, ?, 1)",
+    )
+    .bind(source_s)
+    .bind(format!("link [[{page_t}]]"))
+    .bind(page_p)
+    .bind(page_p)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(source_s),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        unresolved_targets(&pool, source_s).await,
+        vec![page_t.to_owned()],
+        "seed: the debt is recorded"
+    );
+
+    // The referrer's OWN `ReindexBlockLinks` was shed at enqueue and never
+    // executed — the shape #3843 measured at 74–90% of a large import's
+    // fan-out. `attempts`/`next_attempt_at` are given non-default values so
+    // the assertion below can prove the row was not merely re-seeded.
+    sqlx::query(
+        "INSERT INTO materializer_retry_queue \
+             (block_id, task_kind, attempts, last_error, next_attempt_at) \
+         VALUES (?, 'ReindexBlockLinks', 3, ?, 4102444800000)",
+    )
+    .bind(source_s)
+    .bind(crate::materializer::retry_queue::SHED_LAST_ERROR)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The target arrives and is reindexed: the referrer gets repaired inline.
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'T', ?)")
+        .bind(page_t)
+        .bind(page_t)
+        .execute(&pool)
+        .await
+        .unwrap();
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(page_t),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(source_s.to_owned(), page_t.to_owned())],
+        "seed: the inline repair really did run and succeed"
+    );
+
+    let owed: Vec<(String, i64, String)> = sqlx::query_as(
+        "SELECT block_id, attempts, last_error FROM materializer_retry_queue \
+         WHERE task_kind = 'ReindexBlockLinks'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        owed,
+        vec![(
+            source_s.to_owned(),
+            3,
+            crate::materializer::retry_queue::SHED_LAST_ERROR.to_owned(),
+        )],
+        "#4118: the repair may clear only the obligation it seeded. The referrer's \
+         PRE-EXISTING row — here a shed task that never ran — owes the whole \
+         `ReindexBlockLinks`, including the `resolve_referrers_of` half the inline \
+         repair deliberately does not run; deleting it would strand every block \
+         waiting on THIS referrer as a target, which is the very loss #4118 closes"
+    );
+
+    mat.shutdown();
+}
+
+/// #4118 — `SetBlockPageId` stamps `space_id` unconditionally, so the referrer
+/// repair must not hang off the `page_id`-changed guard.
+///
+/// The arm's structure is: write `page_id` (reporting `changed`), then
+/// `set_block_space_id_from_parent` — which is NOT gated on `changed` — then,
+/// only `if write.changed`, the reindex. Becoming linkable on this task is a
+/// property of the SPACE stamp, so the guard and the effect are different
+/// conditions.
+///
+/// Reaching the gap needs `page_id` unchanged while `space_id` goes NULL →
+/// stamped, which the #3894 owning-page fallback normally forecloses (a target
+/// carrying a `page_id` resolves its space through that page and was never
+/// dropped). It survives here because the two values come down two DIFFERENT
+/// edges: `space_id` is inherited from `parent_id`, `page_id` from the
+/// parent's `page_id`. A parent that carries a space but no page therefore
+/// stamps the child's space while leaving its `page_id` NULL → NULL.
+///
+/// No production trace is claimed for that state — this pins the handler's
+/// contract, so the branch cannot rot into dead code and the asymmetry cannot
+/// be reintroduced by someone folding the repair back under `write.changed`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_block_page_id_space_stamp_relinks_referrers_without_a_page_id_change_4118() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let space = "ZZ000000000000000000000000";
+    let page_p = "PP000000000000000000000000";
+    let parent_x = "XX000000000000000000000000";
+    let source_s = "SS000000000000000000000000";
+    let target_t = "TT000000000000000000000000";
+
+    for id in [space, page_p] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'pg', ?)",
+        )
+        .bind(id)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+        .bind(space)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+        .bind(space)
+        .bind(page_p)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The referrer: space stamped, so the cross-space filter is ARMED.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id, position) \
+         VALUES (?, 'content', ?, ?, ?, ?, 1)",
+    )
+    .bind(source_s)
+    .bind(format!("link [[{target_t}]]"))
+    .bind(page_p)
+    .bind(page_p)
+    .bind(space)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The target's parent carries a SPACE but no PAGE — the state that makes
+    // `page_id` unchanged and `space_id` newly stampable on the same task.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, space_id, position) \
+         VALUES (?, 'content', 'x', ?, ?, 1)",
+    )
+    .bind(parent_x)
+    .bind(page_p)
+    .bind(space)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'content', 'target', ?, 1)",
+    )
+    .bind(target_t)
+    .bind(parent_x)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(source_s),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    assert!(
+        all_edges(&pool).await.is_empty(),
+        "seed: the target resolves no space (own NULL, no page to fall back through), \
+         so `NULL = ?3` is falsy and the edge is dropped"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, source_s).await,
+        vec![target_t.to_owned()],
+        "seed: the drop is recorded"
+    );
+
+    mat.enqueue_background(MaterializeTask::SetBlockPageId {
+        block_id: std::sync::Arc::from(target_t),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let (stamped_space, stamped_page): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT space_id, page_id FROM blocks WHERE id = ?")
+            .bind(target_t)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (stamped_space.as_deref(), stamped_page.as_deref()),
+        (Some(space), None),
+        "seed: the arm must have taken the shape under test — `space_id` stamped from \
+         the parent, `page_id` unchanged (so `write.changed` is false)"
+    );
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(source_s.to_owned(), target_t.to_owned())],
+        "#4118: the space stamp is what made the target linkable, and it happens \
+         whether or not `page_id` changed — so the referrer repair must not be gated \
+         on `write.changed`"
+    );
+    assert!(
+        unresolved_targets(&pool, source_s).await.is_empty(),
+        "and the recorded debt must be discharged"
+    );
+
+    mat.shutdown();
+}
