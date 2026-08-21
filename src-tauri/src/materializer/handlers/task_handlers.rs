@@ -1022,7 +1022,7 @@ async fn handle_background_task_inner(
                 // `seeded_full_rebuild` fallback above: the cost is one indexed
                 // seek on an arm that is already the rare one, and the failure
                 // mode it covers is the exact permanent loss this issue exists
-                // to end. `set_block_page_id_and_space_stamp_relinks_referrers_
+                // to end. `set_block_page_id_space_stamp_relinks_referrers_
                 // without_a_page_id_change_4118` pins it executably so it
                 // cannot rot into dead code unnoticed.
                 //

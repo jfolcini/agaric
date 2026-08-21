@@ -96,16 +96,23 @@ pub async fn unresolved_link_sources(
 /// therefore means every token in the current content is ALREADY linked, so
 /// the desired unresolved set is empty and the only work left is dropping
 /// stale rows — which is a single source-keyed DELETE, and only when there
-/// were rows to drop. That is the path a no-link block create takes, and it
-/// costs zero statements.
+/// were rows to drop. A block with no link tokens at all takes this path with
+/// `had_unresolved_rows` false and costs zero statements; an edit that leaves
+/// an already-fully-linked target set untouched takes it too and costs at
+/// most that one DELETE.
 ///
-/// Otherwise the recompute is pushed into SQL and reads `block_links` back,
-/// rather than being predicted in Rust from `to_insert`: the INSERT is
-/// `OR IGNORE` with an EXISTS guard and a cross-space subquery, so which of
-/// the offered targets actually landed is a fact about the database, not
-/// something the caller knows. Reading it back is one statement and cannot
-/// drift from the filter the way a transcribed prediction would (that drift is
-/// what #3903 was).
+/// Otherwise — `to_insert` non-empty, i.e. every create or edit that
+/// establishes at least one target not already in `block_links` — the
+/// recompute is pushed into SQL and reads `block_links` back, rather than
+/// being predicted in Rust from `to_insert`: the INSERT is `OR IGNORE` with an
+/// EXISTS guard and a cross-space subquery, so which of the offered targets
+/// actually landed is a fact about the database, not something the caller
+/// knows. Reading it back is one statement and cannot drift from the filter
+/// the way a transcribed prediction would (that drift is what #3903 was). The
+/// DELETE and that INSERT both run unconditionally on this path, so it costs
+/// two statements even in the all-resolved common case — a target linked for
+/// the first time and immediately resolvable — where both are no-ops against
+/// `block_links_unresolved`.
 async fn sync_unresolved_links(
     conn: &mut sqlx::SqliteConnection,
     source_id: &str,
