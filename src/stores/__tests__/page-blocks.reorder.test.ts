@@ -1396,32 +1396,38 @@ describe('PageBlockStore', () => {
     // cycle-guard branch itself ran, since both paths converge on "reload".
     it('rejects a cyclic move via the wouldCreateMoveCycle guard and logs a warning before falling back to reload', async () => {
       const warnSpy = vi.spyOn(logger, 'warn')
-      store.setState({
-        blocks: [
-          makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
-          makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
-        ],
-      })
+      try {
+        store.setState({
+          blocks: [
+            makeBlock({ id: 'A', position: 1, parent_id: 'PAGE_1', depth: 0 }),
+            makeBlock({ id: 'B', position: 2, parent_id: 'PAGE_1', depth: 0 }),
+          ],
+        })
 
-      // Requesting to move A under itself — the simplest cycle
-      // `wouldCreateMoveCycle` rejects (`orderedIds.includes(wantParent)`).
-      mockedInvoke.mockResolvedValueOnce(batchResp(['A'], 'A'))
-      mockedInvoke.mockResolvedValueOnce(
-        subtreeResp([
-          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 1 }),
-          makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 2 }),
-        ]),
-      )
+        // Requesting to move A under itself — the simplest cycle
+        // `wouldCreateMoveCycle` rejects (`orderedIds.includes(wantParent)`).
+        mockedInvoke.mockResolvedValueOnce(batchResp(['A'], 'A'))
+        mockedInvoke.mockResolvedValueOnce(
+          subtreeResp([
+            makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 1 }),
+            makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 2 }),
+          ]),
+        )
 
-      await store.getState().moveBlocks(['A'], 'A', 0)
+        await store.getState().moveBlocks(['A'], 'A', 0)
 
-      expect(reloaded()).toBe(true)
-      expect(warnSpy).toHaveBeenCalledWith(
-        'page-blocks-move',
-        'moveBlocks: rejected — newParentId would create a cycle',
-        { orderedIds: ['A'], wantParent: 'A' },
-      )
-      warnSpy.mockRestore()
+        expect(reloaded()).toBe(true)
+        expect(warnSpy).toHaveBeenCalledWith(
+          'page-blocks-move',
+          'moveBlocks: rejected — newParentId would create a cycle',
+          { orderedIds: ['A'], wantParent: 'A' },
+        )
+      } finally {
+        // Restore in `finally`: a failing assertion above would otherwise
+        // leave `logger.warn` stubbed for every later test in this file
+        // (nothing in vitest.config.ts configures `restoreMocks`/`clearMocks`).
+        warnSpy.mockRestore()
+      }
     })
 
     // #3759 — the presence check is the SOLE catch-all for a moved id that no

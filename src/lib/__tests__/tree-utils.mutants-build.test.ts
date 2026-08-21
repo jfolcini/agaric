@@ -162,11 +162,21 @@ describe('computeSelectionRoots', () => {
  * test.
  *
  * Every real caller reinforces the same conclusion independently of the
- * differential sweep below: `use-block-dnd.ts`, `use-block-tree-keyboard-
- * shortcuts.ts`, and `block-clipboard.ts` all pass `state.blocks` — the
- * FULL-PAGE flat array straight out of `buildFlatTree` — never a hand-built
- * or sliced subset, so a non-depth-0 first item is not just untested but
- * unreachable from any call site in this codebase.
+ * differential sweep below. `computeSelectionRoots` has two paths in:
+ * directly, from `src/components/block-tree/use-block-dnd.ts:171` (passes the
+ * full `blocks` tree); and indirectly via `src/lib/block-clipboard.ts`'s
+ * exported `serializeBlockSubtree(items, selectedIds)`
+ * (`src/lib/block-clipboard.ts:671`), which just forwards whatever `items` it
+ * is given — that guarantee then comes from ITS three current callers:
+ * `src/components/block-tree/use-block-slash-commands/useSlashCommandStructural.ts:76`,
+ * `src/components/block-tree/use-block-tree-keyboard-shortcuts.ts:314`, and
+ * `src/components/editor/BlockTree.tsx:790`, all of which pass `state.blocks`. So every current call path — direct or via
+ * `serializeBlockSubtree` — feeds `computeSelectionRoots` the FULL-PAGE flat
+ * array straight out of `buildFlatTree`, never a hand-built or sliced subset.
+ * But `serializeBlockSubtree` is an exported boundary, not a guarantee of its
+ * own signature — a future caller could pass a sliced subset through it whose
+ * first item has depth > 0. For every caller today, though, a non-depth-0
+ * first item is not just untested but unreachable.
  *
  * Re-confirmed for #3765 by differential execution (original vs mutant over
  * 885 205 generated inputs, including lists whose FIRST item has depth > 0 —

@@ -4,18 +4,24 @@
 |----------|-------|
 | **Date** | 2026-08-20 |
 | **Subagents** | orchestrator-only (this session re-verified a prior agent's diff; no new build subagents) |
-| **Items closed** | — (none closed by this session; see notes) |
+| **Items closed** | #3750, #3765 — not by this verification pass directly (it added no kills), but PR #4215 (which carries this session's commit) closes both via its `Closes` trailers |
 | **Items modified** | #3750, #3765, #3759 (comment posted, not closed) |
 | **Tests added** | +0 (frontend, net) — this session only corrected/retracted comments in a fourth pre-existing test file; the diff under review had already added the tests |
-| **Files touched** | 4 |
+| **Files touched** | see PR #4215's file list (`gh pr view 4215 --json files`) — drifts as the PR is amended, not tracked here as a static count |
 
 **Summary:** Adversarially re-verified a test-only diff (`block-tree-ops.test.ts`,
 `tree-utils.mutants-build.test.ts`, `page-blocks.reorder.test.ts`) that claimed 11
 mutation-survivor kills and various equivalence arguments across #3750/#3765/#3759,
 against production files it claimed were byte-identical to their originals. Confirmed
 the production-file claim, hand-reproduced RED/GREEN for every killable mutant the diff
-targets (14 distinct points, more than the 11 claimed), and audited every equivalence
-argument on the merits rather than trusting "green under mutation" as proof. Found one
+targets (14 distinct points, more than the 11 claimed) — though only 5 of those 14 are
+newly covered by tests this session's diff added; the other 9, all in
+`page-blocks-move.ts`'s `wouldCreateMoveCycle`/`reconcileBatchMove` cycle guard, were
+already killed by the pre-existing (but never Stryker-scoped) `page-blocks-move.test.ts`
+and only *looked* like fresh kills because that file had never been wired into
+`stryker.modules.mjs`'s `page-blocks-move` entry (fixed post-review; see that file) —
+and audited every equivalence argument on the merits rather than trusting "green under
+mutation" as proof. Found one
 genuine defect: two of eight `page-blocks-move` mutants deferred to a pre-existing
 ledger (`page-blocks.move-reparent.test.ts`) are NOT equivalent — the production file's
 own later doc comment already retracted that exact claim — and fixed the ledger (stale
@@ -39,7 +45,18 @@ implicit "resolved" framing stand.
    that each file was restored byte-for-byte.
 2. **Kills re-proved by hand** (mutate production source → run the targeted test →
    confirm RED → revert → confirm GREEN), 14 distinct mutation points, all genuinely
-   killed — more than the 11 originally reported:
+   killed — more than the 11 originally reported. **Correction (post-review):** this
+   "14" overstates what this diff newly proved. Most of the `page-blocks-move.ts`
+   points below (everything in `wouldCreateMoveCycle` plus the `reconcileBatchMove`
+   cycle-guard branch and its `logger.warn` args — 9 of the 14) were already killed
+   by the pre-existing `page-blocks-move.test.ts` (`wouldCreateMoveCycle (#3799)` /
+   `reconcileBatchMove — cycle guard (#3799)`, added for #3799 and never touched by
+   this diff); they only *read* as fresh kills here because that file had never been
+   wired into `stryker.modules.mjs`'s `page-blocks-move` scoping entry, so the
+   Stryker-scoped run couldn't see it and kept reporting them as survivors — the
+   same #3142 failure mode `tree-utils`'s entry documents. That wiring gap is now
+   fixed (`stryker.modules.mjs`), independently of this hand-verification. Only the
+   remaining ~5 points are kills newly covered by tests this diff itself added:
    - `block-tree-ops.ts:130:57` (UnaryOperator, `?? -1` → `?? +1`, ghost-reference
      indent fallback).
    - `page-blocks-move.ts`: `112:12` (BlockStatement), `113:7` EqualityOperator
@@ -136,5 +153,5 @@ implicit "resolved" framing stand.
   mutation instead of running the whole file; the direct `wouldCreateMoveCycle` unit
   tests added by the diff are exactly what made this fast and safe to isolate.
 
-**Commit plan:** single commit (`28c91be5b`, local to `claude/fe-mutation-tree-ops`),
-not pushed.
+**Commit plan:** this session's fix landed as `28c91be5b` on `claude/fe-mutation-tree-ops`;
+the branch is pushed and open as PR #4215.

@@ -62,19 +62,6 @@ describe('isNonEmptyBlock', () => {
   })
 })
 
-// EQUIVALENCE (#3750) — `serializeSingleBlock`'s `{ type: 'doc', content: [b]
-// }` wrapper's `type` field (Stryker StringLiteral mutant: `'doc'` -> `''`).
-// `serialize` (src/editor/markdown-serialize.ts) is two lines: `if
-// (!doc.content || doc.content.length === 0) return ''` then
-// `serializeBlockSequence(doc.content, onUnknownNode).join('\n')` — it never
-// reads `doc.type` anywhere in its own body or in anything it calls
-// (`serializeBlockSequence`/`serializeBlockNode` switch on each CHILD node's
-// own `.type` inside `doc.content`, never on the wrapper's). `type: 'doc'` is
-// a TypeScript-only literal (`DocNode.type: 'doc'`) with zero runtime
-// consumers, so no input can make this mutant produce different output — not
-// "the suite stayed green," but that the field is structurally unread by the
-// only function it is ever passed to. Killing it would require pinning
-// behavior against a field the callee provably never inspects.
 describe('planSplit', () => {
   it('returns noop for the empty string', () => {
     expect(planSplit('')).toEqual({ kind: 'noop' })
@@ -174,6 +161,22 @@ describe('planSplit', () => {
     expect(plan).toEqual({ kind: 'edit-only', content: '| \\--- |\n| --- |' })
   })
 
+  // EQUIVALENCE (#3750) — `serializeSingleBlock`'s `{ type: 'doc', content: [b]
+  // }` wrapper's `type` field (Stryker StringLiteral mutant: `'doc'` -> `''`).
+  // `serialize` (src/editor/markdown-serialize.ts) is two lines: `if
+  // (!doc.content || doc.content.length === 0) return ''` then
+  // `serializeBlockSequence(doc.content, onUnknownNode).join('\n')` — it never
+  // reads `doc.type` anywhere in its own body or in anything it calls
+  // (`serializeBlockSequence`/`serializeBlockNode` switch on each CHILD node's
+  // own `.type` inside `doc.content`, never on the wrapper's). `type: 'doc'` is
+  // a TypeScript-only literal (`DocNode.type: 'doc'`) with zero runtime
+  // consumers, so no input can make this mutant produce different output — not
+  // "the suite stayed green," but that the field is structurally unread by the
+  // only function it is ever passed to. Killing it would require pinning
+  // behavior against a field the callee provably never inspects. The test
+  // below is the closest this file comes to exercising `serializeSingleBlock`
+  // directly: it pins the case where `serializeSingleBlock` must NOT be
+  // called at all.
   it('does not synthesize a phantom block when parse() yields no content array', () => {
     // #3274 fixed the only real-input path that used to make `parse()`
     // return `{ type: 'doc' }` with `content` genuinely `undefined` (a lone
