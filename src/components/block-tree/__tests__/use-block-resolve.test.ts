@@ -2977,6 +2977,134 @@ describe('searchBlockRefs — icons', () => {
   })
 })
 
+// #4190 — the block-ref picker's residual of the #4153 blank-row bug.
+// #4153 fixed the `[[` page picker (a whitespace-only title now renders the
+// "Untitled" placeholder instead of a blank row) but deliberately left
+// `searchBlockRefs` on the exact-`null` test, since block content is a
+// different surface with its own truncation rules (first LINE only). Both
+// shapes below produce an unlabelled row via the OLD exact-`null` test:
+// whitespace-only content is not `=== null`, and content starting with a
+// newline makes `content.split('\n')[0]` empty even though later lines hold
+// real text.
+describe('searchBlockRefs — untitled placeholder for blank content (#4190)', () => {
+  const mkBlock = (id: string, content: string | null) => ({
+    id,
+    block_type: 'block' as const,
+    content,
+    parent_id: null,
+    position: 0,
+    deleted_at: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+    page_id: null,
+  })
+
+  it('renders the "Untitled" placeholder for whitespace-only block content, not a blank label', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [mkBlock('BR10', '   ')],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchBlockRefs>> = []
+    await act(async () => {
+      items = await result.current.searchBlockRefs('some block')
+    })
+
+    expect(items).toEqual([expect.objectContaining({ id: 'BR10', label: t('block.untitled') })])
+  })
+
+  it('renders the "Untitled" placeholder for newline-leading block content, not a blank label', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [mkBlock('BR11', '\nreal text')],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchBlockRefs>> = []
+    await act(async () => {
+      items = await result.current.searchBlockRefs('some block')
+    })
+
+    expect(items).toEqual([expect.objectContaining({ id: 'BR11', label: t('block.untitled') })])
+  })
+
+  // A genuinely-titled block must keep rendering its real title — a fix that
+  // shows the placeholder unconditionally is not a fix.
+  it('still renders the real first line for a genuinely-titled block', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [mkBlock('BR12', 'real title\nsecond line')],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchBlockRefs>> = []
+    await act(async () => {
+      items = await result.current.searchBlockRefs('some block')
+    })
+
+    expect(items).toEqual([expect.objectContaining({ id: 'BR12', label: 'real title' })])
+  })
+
+  // The resolve-store title seed (consumed by the block-ref chip / block
+  // link renderers, which read the FULL content) gets the same trimmed-empty
+  // test, via the sibling `blockContentOr` helper — not truncated to the
+  // first line the way the picker label is.
+  it('seeds the resolve store with the "Untitled" placeholder for whitespace-only content too', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [mkBlock('BR13', '  \n  ')],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchBlockRefs('some block')
+    })
+
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'BR13'))).toEqual({
+      title: t('block.untitled'),
+      deleted: false,
+    })
+  })
+
+  // A genuinely-titled block's FULL raw content is what gets stored (not
+  // truncated to the first line) — the resolve-store seed is a different
+  // call site from the picker label, with a different truncation rule.
+  it('seeds the resolve store with the full raw content for a genuinely-titled block', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [mkBlock('BR14', 'real title\nsecond line')],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchBlockRefs('some block')
+    })
+
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'BR14'))).toEqual({
+      title: 'real title\nsecond line',
+      deleted: false,
+    })
+  })
+})
+
 // ── Fuzzy matching ───────────────────────────────────────────────
 
 describe('searchTags — fuzzy matching', () => {

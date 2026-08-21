@@ -42,6 +42,7 @@ import {
   underline,
 } from '@/editor/__tests__/builders'
 import { parse, serialize } from '@/editor/markdown-serializer'
+import type { InlineNode } from '@/editor/types'
 
 const ULID = '01HZ00000000000000000BLOCK'
 
@@ -896,6 +897,70 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
   ])('a %i-space plain prefix before the italic is still defused', (n, expected) => {
     const md = serialize(doc(paragraph(text(' '.repeat(n)), italic(' y'))))
     expect(md).toBe(expected)
+    expect(serialize(parse(md))).toBe(md)
+    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+  })
+
+  /**
+   * …and a leading inline ATOM that serializes to nothing is just as
+   * invisible as a run of plain spaces — a whitespace-only `math_inline`
+   * emits `''` (see `serializeInlineChild`'s `math_inline` branch), so the
+   * vulnerable italic right after it is still at column 0 on the emitted
+   * line. Without stepping past it, `defuseLeadingItalicMarker` stopped at
+   * the math atom (not a `text` node, so `isVulnerableItalicOpen` rejected
+   * it outright) and left the italic undefused — the exact #4156 bullet-list
+   * collision, reachable again via a math atom instead of literal text
+   * (#4195).
+   */
+  it('a whitespace-only math_inline prefix before the italic is still defused', () => {
+    const d = doc(paragraph(mathInline('  '), italic(' y')))
+    const md = serialize(d)
+    expect(md).toBe(' *y*')
+    expect(serialize(parse(md))).toBe(md)
+    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+  })
+
+  /**
+   * A mix of plain-space text and empty math atoms in the prefix — the skip
+   * has to keep walking across both kinds, not just the first one it meets.
+   */
+  it('a mix of plain-space and empty-math-atom prefixes is defused too', () => {
+    const d = doc(paragraph(text('  '), mathInline(' '), text(' '), italic(' y')))
+    const md = serialize(d)
+    expect(serialize(parse(md))).toBe(md)
+    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+  })
+
+  /**
+   * A math atom that actually emits content is not "empty" — it already
+   * occupies column 0 with real bytes, so the italic after it was never
+   * vulnerable in the first place and the defuse correctly does not fire
+   * (the mark survives untouched either way).
+   */
+  it('a non-empty math_inline prefix is left alone — it already occupies column 0', () => {
+    const d = doc(paragraph(mathInline('x'), italic(' y')))
+    const md = serialize(d)
+    expect(parse(md)).toEqual(d)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  /**
+   * #4195's stated defect is general — "an inline ATOM that serializes to
+   * the empty string" — and `math_inline` is only the concrete case the
+   * issue names. A leading node of an unrecognized type is just as invisible
+   * at the line start: `serializeInlineChild`'s final branch drops it
+   * silently (see the `onUnknownNode callback` describe block in
+   * markdown-serializer.test.ts, which exercises this exact fallback with a
+   * `video_embed`-typed node — a real, tested inline shape, not a
+   * hypothetical one). A predicate hard-coded to `math_inline` leaves this
+   * path unrepaired: the same bullet-list collision, reachable via an
+   * unknown node instead of a math atom.
+   */
+  it('a leading unrecognized inline node type is defused too, same as an empty math atom', () => {
+    const unknown = { type: 'video_embed' } as unknown as InlineNode
+    const d = doc(paragraph(unknown, italic(' y')))
+    const md = serialize(d)
+    expect(md).toBe(' *y*')
     expect(serialize(parse(md))).toBe(md)
     expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
   })

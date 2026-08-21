@@ -103,8 +103,10 @@ function formatNamespacedLabel(title: string): {
  * cache-seed shape that helper is written against (#4150 review):
  *   - `searchBlockRefs` renders BLOCK content for the `((` picker, a
  *     different surface with its own truncation rules — not a page title.
- *     (#4153 still routes its two literals through `translate(...)` for
- *     i18n, just without the trimmed-empty test below.)
+ *     (#4153 routed its two literals through `translate(...)` for i18n; the
+ *     trimmed-empty test they were still missing landed in #4190 via the
+ *     sibling `blockContentOr` / `blockFirstLineOr` helpers below, kept
+ *     apart from `untitledOr` itself for the same reason.)
  */
 function makePagePickerItem(id: string, title: string): PickerItem {
   const { label, breadcrumb } = formatNamespacedLabel(untitledOr(title))
@@ -138,6 +140,35 @@ function makePagePickerItem(id: string, title: string): PickerItem {
  */
 function untitledOr(title: string | null): string {
   return title === null || title.trim() === '' ? translate('block.untitled') : title
+}
+
+/**
+ * #4190 — sibling of `untitledOr`, scoped to BLOCK content rather than a
+ * page title (kept a separate helper per #4150's review: block content is a
+ * different surface with its own truncation rules, not the `''`-cache-seed
+ * shape `untitledOr` is written against — see `makePagePickerItem`'s
+ * docblock above). Same trimmed-empty test on the RAW content, for the one
+ * call site that stores the FULL content rather than a truncated preview
+ * (the resolve-store title seed in `searchBlockRefs`).
+ */
+function blockContentOr(content: string | null): string {
+  return content === null || content.trim() === '' ? translate('block.untitled') : content
+}
+
+/**
+ * #4190 — like `blockContentOr`, but for the `((` picker ROW, which shows
+ * only the block's first LINE (see the length-based truncation at its call
+ * site below). The trimmed-empty test has to run against that first line,
+ * not the raw multi-line string: `content.split('\n')[0]` is `''` for
+ * content starting with a newline even when a later line holds real text,
+ * and is whitespace-only for a `'   '` block — both shapes rendered a
+ * blank, unlabelled picker row before this fix, the residual #4153 (the
+ * `[[` page picker's equivalent fix) left open on this surface.
+ */
+function blockFirstLineOr(content: string | null): string {
+  if (content === null) return translate('block.untitled')
+  const firstLine = content.split('\n')[0] as string
+  return firstLine.trim() === '' ? translate('block.untitled') : firstLine
 }
 
 /**
@@ -752,13 +783,13 @@ export function useBlockResolve(): UseBlockResolveReturn {
       const results: PickerItem[] = resp.items
         .filter((b) => b.deleted_at === null)
         .map((b) => {
-          // #4153 — i18n'd (was a hardcoded English literal). Left as an
-          // exact-`null` test, not `untitledOr`'s trimmed one: this maps
+          // #4153 i18n'd this (was a hardcoded English literal); #4190 gave
+          // it the trimmed-empty test `untitledOr` uses for page titles,
+          // scoped to the first LINE via `blockFirstLineOr` since this maps
           // BLOCK content for the `((` picker, a different surface with its
           // own truncation rules — not a page title (see `makePagePickerItem`'s
           // docblock).
-          const content = b.content ?? translate('block.untitled')
-          const firstLine = content.split('\n')[0] as string
+          const firstLine = blockFirstLineOr(b.content)
           const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine
           const parentTitle = b.parent_id
             ? cacheRef.current.get(keyFor(parentSpaceId, b.parent_id))?.title
@@ -773,7 +804,12 @@ export function useBlockResolve(): UseBlockResolveReturn {
             const block = resp.items.find((b) => b.id === r.id)
             return {
               id: r.id,
-              title: block?.content ?? translate('block.untitled'),
+              // #4190 — same trimmed-empty test as the label above, but on
+              // the raw content: this seeds the resolve store's FULL title
+              // (consumers like the block-ref chip read the whole content,
+              // not just the first line), so `blockContentOr` — not
+              // `blockFirstLineOr` — is the right sibling here.
+              title: blockContentOr(block?.content ?? null),
               deleted: false,
             }
           }),
