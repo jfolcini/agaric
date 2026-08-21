@@ -18,6 +18,7 @@ import type { PickerItem } from '@/editor/SuggestionList'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { TagCacheRow } from '@/lib/bindings'
+import { blockFirstLineOr, normalizeBlockRefTitle, untitledOr } from '@/lib/block-title'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { t as translate } from '@/lib/i18n'
@@ -98,75 +99,15 @@ function formatNamespacedLabel(title: string): {
  * placeholder still needs to be SHOWN, so it is applied here, once, at
  * display time, rather than at every seed site.
  *
- * One call SITE elsewhere in this file — two literals — is deliberately NOT
- * routed through `untitledOr` (below), because it doesn't receive the `''`
- * cache-seed shape that helper is written against (#4150 review):
- *   - `searchBlockRefs` renders BLOCK content for the `((` picker, a
- *     different surface with its own truncation rules — not a page title.
- *     (#4153 routed its two literals through `translate(...)` for i18n; the
- *     trimmed-empty test they were still missing landed in #4190 via the
- *     sibling `blockContentOr` / `blockFirstLineOr` helpers below, kept
- *     apart from `untitledOr` itself for the same reason.)
+ * `untitledOr` / `blockFirstLineOr` live in `@/lib/block-title` now (#4228)
+ * — shared with the resolve-store BLOCK title seed (`searchBlockRefs`
+ * below, plus the two other seed call sites in
+ * `use-block-link-resolve.ts` / `use-block-navigate-to-link.ts`), which is
+ * a different surface with its own truncation rules, not a page title.
  */
 function makePagePickerItem(id: string, title: string): PickerItem {
   const { label, breadcrumb } = formatNamespacedLabel(untitledOr(title))
   return { id, label, icon: FileText, breadcrumb }
-}
-
-/**
- * #4153 — shared "what does the user see for this title" normalisation,
- * used to DISPLAY a page title (`makePagePickerItem`, `mergeAliasPrefixMatches`).
- *
- * Deliberately NOT used as a search-match key: #4152 (whether a NULL-content
- * page should be findable by typing its displayed "Untitled" placeholder) is
- * an open product question, not a defect — see the issue and #4154, which
- * filed it without implementing it. Matching on the placeholder here would
- * decide that question as a side effect of this fix, which is out of scope.
- *
- * Two independent pre-existing gaps, fixed together because they live in
- * the same test:
- *   1. Trimmed, not exact-empty (`=== ''` / `?? ''`) — a whitespace-only
- *      title (`'   '`, `'\n'`) is not `=== ''`, so the old exact-empty test
- *      rendered it as a blank, unlabelled picker row instead of the
- *      placeholder. `BlockZoomBar` already applies the same TEST for the
- *      zoom label (`stripped.length > 0 ? stripped : t('block.untitled')`),
- *      though it goes on to render the STRIPPED value; a picker row keeps
- *      the raw title, so `'  foo  '` still shows its surrounding space.
- *   2. Routed through `translate(...)` (the module-scope i18n singleton,
- *      since these are free functions with no `useTranslation()` hook
- *      context) instead of the hardcoded English literal, matching every
- *      other 'Untitled' surface in the app (`TemplatePicker`, `DuePanel`,
- *      `BlockZoomBar`, `PageBrowser`'s filter editors).
- */
-function untitledOr(title: string | null): string {
-  return title === null || title.trim() === '' ? translate('block.untitled') : title
-}
-
-/**
- * #4190 — sibling of `untitledOr`, scoped to BLOCK content rather than a
- * page title (kept a separate helper per #4150's review: block content is a
- * different surface with its own truncation rules, not the `''`-cache-seed
- * shape `untitledOr` is written against — see `makePagePickerItem`'s
- * docblock above). Same trimmed-empty test on the RAW content, for the one
- * call site that stores the FULL content rather than a truncated preview
- * (the resolve-store title seed in `searchBlockRefs`).
- */
-function blockContentOr(content: string | null): string {
-  return untitledOr(content)
-}
-
-/**
- * #4190 — like `blockContentOr`, but for the `((` picker ROW, which shows
- * only the block's first LINE (see the length-based truncation at its call
- * site below). The trimmed-empty test has to run against that first line,
- * not the raw multi-line string: `content.split('\n')[0]` is `''` for
- * content starting with a newline even when a later line holds real text,
- * and is whitespace-only for a `'   '` block — both shapes rendered a
- * blank, unlabelled picker row before this fix, the residual #4153 (the
- * `[[` page picker's equivalent fix) left open on this surface.
- */
-function blockFirstLineOr(content: string | null): string {
-  return untitledOr(content?.split('\n')[0] ?? null)
 }
 
 /**
@@ -802,12 +743,13 @@ export function useBlockResolve(): UseBlockResolveReturn {
             const block = resp.items.find((b) => b.id === r.id)
             return {
               id: r.id,
-              // #4190 — same trimmed-empty test as the label above, but on
-              // the raw content: this seeds the resolve store's FULL title
-              // (consumers like the block-ref chip read the whole content,
-              // not just the first line), so `blockContentOr` — not
-              // `blockFirstLineOr` — is the right sibling here.
-              title: blockContentOr(block?.content ?? null),
+              // #4228 — the resolve-store title seed. `normalizeBlockRefTitle`
+              // is the SAME normalisation the other two seed call sites
+              // (`fetchAndCacheLinks` in use-block-link-resolve.ts,
+              // `handleNavigate` in use-block-navigate-to-link.ts) apply to
+              // their own content, so all three write byte-identical titles
+              // for the same block id — see `@/lib/block-title`'s docblock.
+              title: normalizeBlockRefTitle(block?.content ?? null),
               deleted: false,
             }
           }),

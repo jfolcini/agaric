@@ -1309,6 +1309,16 @@
   @apply inline-flex items-center rounded-md bg-block-ref text-block-ref-foreground font-semibold;
   font-size: 0.85em;
   padding: 0.15em 0.5em;
+  /* #4228 — the resolve-store title is capped to one line / 60 chars at the
+     seed (`normalizeBlockRefTitle`, `@/lib/block-title`), but without an
+     explicit bound here a long single line still wraps under the default
+     `white-space: normal` or grows the chip past its container. Bound the
+     rendered WIDTH regardless of what lands in the DOM — matches the
+     tooltip's own `max-w-xs` bound. */
+  max-width: 20rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .block-ref-chip:hover,
 .block-ref-chip:active {

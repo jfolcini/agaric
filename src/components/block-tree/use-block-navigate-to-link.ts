@@ -19,6 +19,7 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { normalizeBlockRefTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { toSpaceScope } from '@/lib/space-scope'
@@ -125,12 +126,17 @@ export function useBlockNavigateToLink({
           return
         }
 
-        // Populate cache with the fetched block info
+        // Populate cache with the fetched block info. #4228 —
+        // `normalizeBlockRefTitle` is the same normalisation `searchBlockRefs`
+        // (use-block-resolve.ts) and `fetchAndCacheLinks`
+        // (use-block-link-resolve.ts) apply to their own content, so all
+        // three seed call sites write byte-identical titles for the same
+        // block id (`@/lib/block-title`'s docblock).
         useResolveStore
           .getState()
           .set(
             targetId,
-            targetBlock.content?.slice(0, 60) || `[[${targetId.slice(0, 8)}...]]`,
+            normalizeBlockRefTitle(targetBlock.content),
             targetBlock.deleted_at !== null,
           )
 

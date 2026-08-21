@@ -1037,7 +1037,17 @@ describe('RichContentRenderer', () => {
     expect(results).toHaveNoViolations()
   })
 
-  it('block_ref long content is truncated in chip label', () => {
+  // #4228 — the first-line/60-char cap moved to the resolve-store SEED
+  // (`normalizeBlockRefTitle`, `@/lib/block-title`); `renderBlockRef` no
+  // longer re-derives or re-caps, it renders whatever `resolveBlockTitle`
+  // returns verbatim (production always calls it with an already-seeded,
+  // already-capped value — see `resolve-store-title-seed-parity.test.ts`
+  // and `blockRef.test.tsx` for that contract). This test's title used to
+  // simulate an un-normalised long value to prove the RENDERER capped it;
+  // it now proves the renderer does NOT re-cap, so a stubbed resolver that
+  // (unlike production) returns raw long content is not silently truncated
+  // a second time.
+  it('block_ref renders whatever resolveBlockTitle returns verbatim (no renderer-side truncation)', () => {
     mockedParse.mockReturnValueOnce({
       type: 'doc',
       content: [
@@ -1056,9 +1066,7 @@ describe('RichContentRenderer', () => {
       </TooltipProvider>,
     )
     const chip = screen.getByTestId('block-ref-chip')
-    // First-line truncated at 57 chars + ellipsis
-    expect(chip.textContent?.length).toBe(60)
-    expect(chip.textContent?.endsWith('...')).toBe(true)
+    expect(chip.textContent).toBe(longTitle)
   })
 
   it('block_ref falls back to id-slice when resolver returns undefined', () => {

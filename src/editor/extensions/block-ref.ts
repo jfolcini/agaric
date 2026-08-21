@@ -9,6 +9,14 @@
  *
  * Uses a NodeView (addNodeView) so we can attach a click handler for
  * navigation. renderHTML is kept for copy-paste / serialization.
+ *
+ * #4228 — `resolveContent` is wired (in `use-roving-editor.ts`) straight to
+ * the same resolve-store title `renderBlockRef`
+ * (`@/components/RichContentRenderer/marks/blockRef.tsx`) reads, which is
+ * already first-line/cap-normalised at the seed (`normalizeBlockRefTitle`,
+ * `@/lib/block-title`). `render` below assigns it to `dom.textContent`
+ * verbatim on purpose — no split/cap here, so this NodeView can't drift
+ * from what the other renderer shows for the same id.
  */
 
 import { mergeAttributes, Node } from '@tiptap/core'

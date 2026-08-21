@@ -38,11 +38,16 @@ export function renderBlockRef(
   ctx: RenderContext,
 ): React.ReactElement {
   const refId = node.attrs.id
-  const fullContent = ctx.resolveBlockTitle?.(refId) ?? `(( ${refId.slice(0, 8)}... ))`
+  // #4228 — the resolve store already holds the normalised, display-ready
+  // title (first line, capped, Untitled-substituted — see
+  // `normalizeBlockRefTitle` in `@/lib/block-title`), applied once at every
+  // seed call site. Render it verbatim: no per-renderer split/cap here to
+  // disagree with the seed or with the TipTap `BlockRef` NodeView
+  // (`@/editor/extensions/block-ref.ts`), which renders the same value the
+  // same way.
+  const title = ctx.resolveBlockTitle?.(refId) ?? `(( ${refId.slice(0, 8)}... ))`
   const status = ctx.resolveBlockStatus?.(refId) ?? 'active'
-  const firstLine = fullContent.split('\n')[0] ?? fullContent
-  const chipLabel = firstLine.length > 60 ? `${firstLine.slice(0, 57)}...` : firstLine
-  const deletedProps = status === 'deleted' ? { 'aria-label': `${chipLabel} (deleted)` } : {}
+  const deletedProps = status === 'deleted' ? { 'aria-label': `${title} (deleted)` } : {}
   // Unified chip interactivity policy (matches tagRef / blockLink):
   // - clickable (handler AND interactive) → full affordances: role=link,
   //   tabIndex=0, key/click handlers, cursor-pointer.
@@ -67,11 +72,11 @@ export function renderBlockRef(
           {...deletedProps}
           {...interactiveProps}
         >
-          {chipLabel}
+          {title}
         </span>
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-xs text-sm whitespace-pre-wrap">
-        {fullContent.length > 300 ? `${fullContent.slice(0, 297)}...` : fullContent}
+        {title}
       </TooltipContent>
     </Tooltip>
   )

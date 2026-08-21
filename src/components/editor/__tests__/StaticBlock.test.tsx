@@ -1440,7 +1440,14 @@ describe('StaticBlock', () => {
       expect(chip.classList.contains('cursor-pointer')).toBe(false)
     })
 
-    it('renders block_ref chip with truncated first line', () => {
+    // #4228 — the first-line/60-char cap moved to the resolve-store SEED
+    // (`normalizeBlockRefTitle`, `@/lib/block-title`); the chip renderer no
+    // longer re-derives or re-caps a first line itself, it renders whatever
+    // `resolveBlockTitle` returns verbatim (production always calls it with
+    // an already-seeded, already-capped value). A stubbed resolver that —
+    // unlike production — returns raw multi-line content is no longer
+    // truncated a second time at render.
+    it('renders block_ref chip verbatim, without re-deriving/re-capping a first line itself', () => {
       const longContent =
         'This is a very long block of content that exceeds the sixty character limit for the chip label display\nSecond line here'
       mockBlockRefDoc(REF_BLOCK)
@@ -1456,10 +1463,7 @@ describe('StaticBlock', () => {
       )
 
       const chip = screen.getByTestId('block-ref-chip')
-      // First line is >60 chars, so it should be truncated to 57 + '...'
-      const firstLine = longContent.split('\n')[0] as string
-      const expected = `${firstLine.slice(0, 57)}...`
-      expect(chip.textContent).toBe(expected)
+      expect(chip.textContent).toBe(longContent)
     })
 
     it('renders fallback when resolveBlockTitle returns undefined', () => {

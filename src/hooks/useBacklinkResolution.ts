@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { unwrap } from '@/lib/app-error'
 import type { BacklinkGroup, ResolvedBlock } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { normalizeBlockRefTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -50,15 +51,31 @@ function collectContentIds(groups: BacklinkGroup[]): Set<string> {
 }
 
 /**
- * Display title to persist in the shared store for a resolved row. A real
- * (non-empty) backend title is stored verbatim, matching the store's own
- * convention (preload writes raw page/tag titles). An empty/absent title falls
- * back to the tag/page placeholder so the row still carries a stable label AND
- * `has()` stays true for it — otherwise a name-less-but-real row would be
- * re-fetched on every pass.
+ * Display title to persist in the shared store for a resolved row.
+ *
+ * #4228 — this is the FOURTH writer of the shared resolve store's block
+ * title, for the same `[[ULID]]` / `#[ULID]` target class the three seeders
+ * in `@/lib/block-title`'s docblock feed, so it applies the same single
+ * owner: {@link normalizeBlockRefTitle} (first line, Untitled-substituted,
+ * capped). `r.title` is NOT pre-truncated by the backend — `batch_resolve`
+ * selects the raw `content` column — so storing it verbatim was survivable
+ * only while `renderBlockRef` re-derived its own first line and cap per
+ * render. Both renderers now render the stored value verbatim, so an
+ * un-normalised seed here would push full raw multi-line content into the
+ * chip's text node, its deleted `aria-label` and its hover tooltip (CSS
+ * `nowrap`/`ellipsis` masks the chip visually; the announced label and the
+ * tooltip are unmasked).
+ *
+ * An empty/absent title still falls back to the tag/page placeholder, and
+ * that fallback is deliberately NOT routed through the normaliser (which
+ * would turn it into "Untitled"): the row keeps a stable label AND `has()`
+ * stays true for it — otherwise a name-less-but-real row would be re-fetched
+ * on every pass — and `resolveBlockDisplay` (`@/lib/query-result-utils`)
+ * pattern-matches exactly this `[[id...]]` shape to detect a cache miss and
+ * fall back to the block's own content.
  */
 function storeTitle(r: ResolvedBlock): string {
-  if (r.title && r.title.length > 0) return r.title
+  if (r.title && r.title.length > 0) return normalizeBlockRefTitle(r.title)
   return r.block_type === 'tag' ? `#${r.id.slice(0, 8)}...` : `[[${r.id.slice(0, 8)}...]]`
 }
 
@@ -115,7 +132,8 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
       .then((resolved) => {
         if (cancelled) return
         const returnedIds = new Set(resolved.map((r) => r.id))
-        // Real resolutions → shared store (verbatim titles + real deleted flag).
+        // Real resolutions → shared store (normalised titles, see
+        // `storeTitle` above, + the real deleted flag).
         if (resolved.length > 0) {
           useResolveStore
             .getState()
