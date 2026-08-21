@@ -137,10 +137,17 @@
 //      is not invisible to a line-oriented scan — see `findCheckoutSteps`.
 //      Textual and narrow, like the rest of this guard, and the classes it
 //      still cannot see are enumerated at `RUN_STEP_CHECKOUT_PATTERNS`
-//      rather than left implied: a checkout behind a composite or
-//      third-party ACTION (it lives in another file), PR content pulled over
-//      the network (`curl … .patch | git am`, a tarball, an artifact), and
-//      shell-level indirection. #4183 tracks them.
+//      rather than left implied: PR content pulled over the network
+//      (`curl … .patch | git am`, a tarball, an artifact) and shell-level
+//      indirection. A THIRD class — a checkout hidden behind a composite or
+//      third-party ACTION — used to be enumerated there too; condition 6
+//      below closes it FOR THE ONE PLACE IT MATTERS MOST (a write-scoped
+//      job) — see condition 6's own paragraph and `RUN_STEP_CHECKOUT_PATTERNS`'s
+//      docstring for why a read-only job stays deliberately out of scope.
+//      #4183 is where all three were triaged, and is where the two still
+//      open are judged (not merely left) out of scope — see
+//      `RUN_STEP_CHECKOUT_PATTERNS`'s own docstring and this header's own
+//      "#4183" note after condition 6.
 //
 //      Two `actions/checkout` spellings of the same reach were found in the
 //      same adversarial pass and closed with it, because they are the same
@@ -150,8 +157,30 @@
 //      repo, which launders even a BASE-pinned `ref:` past condition 3 (see
 //      `FORK_REPOSITORY_PATTERNS`).
 //
-// (1 AND (2 OR 5)) is one failure mode; 3 and 4 are two more, independent of
-// it and of each other. Any of them firing is a violation.
+//   6. (#4183) Independent of the trigger, of `secrets` references, and of
+//      whether any `ref:` or `run:` line in THIS file reaches PR content:
+//      does a job holding a write permission scope `uses:` a step outside a
+//      short, pinned allowlist of actions this guard's author has actually
+//      read (`TRUSTED_WRITE_SCOPED_ACTIONS`)? #4148's adversarial review
+//      named the gap condition 3 and condition 5 share: both recognise a
+//      checkout only by its OWN shape (a `ref:`-bearing `actions/checkout`
+//      step, or one of `RUN_STEP_CHECKOUT_PATTERNS`'s `run:` shapes) — a
+//      checkout hidden inside a LOCAL composite action
+//      (`uses: ./.github/actions/<x>`) or an unreviewed third-party one
+//      (`uses: some/checkout-ish@v1`) is invisible to both, because the
+//      checkout logic lives in a DIFFERENT FILE this guard cannot read (it
+//      reads exactly `WORKFLOW_PATH`, by construction — see the header's
+//      "not a general-purpose linter" scoping). No single-file textual check
+//      can decide what an opaque `uses:` target does, so this does not try
+//      to decide it — it refuses to run unreviewed code in a write-scoped
+//      job at all, the same shape `pr-overlap.yml` uses no local action and
+//      no action outside the allowlist today, so this check starts GREEN on
+//      the real file (see `findWriteScopedUntrustedActions`'s own docstring
+//      and its self-test fixture, which is the falsifiable half of that
+//      claim).
+//
+// (1 AND (2 OR 5)) is one failure mode; 3, 4 and 6 are three more, each
+// independent of it and of each other. Any of them firing is a violation.
 //
 // Usage:
 //   node scripts/check-pr-overlap-trust-boundary.mjs
@@ -245,35 +274,77 @@ const BASE_REF_PATTERNS = [/pull_request\.base\.(?:sha|ref)/]
 // Textual and narrow, matching how the rest of this guard is built (see the
 // header's "not a general-purpose pull_request_target linter" scoping). What
 // it does NOT catch, stated rather than assumed — an adversarial pass
-// enumerated each of these and confirmed the guard stays green on it, so
-// none of them should be read as covered:
+// enumerated each of these and confirmed the guard stayed green on it. #4183
+// triaged all three; the first is now closed a different way (condition 6,
+// `findWriteScopedUntrustedActions`, below — not by widening THIS pattern
+// list, which cannot see into another file no matter how it is written) and
+// the other two are JUDGED out of scope, not merely unimplemented — #4183's
+// own body makes that call explicitly, so it is repeated here rather than
+// left to be re-litigated by the next reader:
 //
 //   - A checkout behind an ACTION rather than a `run:` step: `uses:
 //     ./.github/actions/<x>` (a composite action whose own steps do the
 //     checkout) or a third-party `uses: some/checkout-ish@v1`. The checkout
 //     lives in a DIFFERENT FILE, and this guard reads exactly one file by
 //     construction (`WORKFLOW_PATH`) — no single-file textual check can see
-//     it.
+//     it. CLOSED for the one place it matters most (a write-scoped job) by
+//     condition 6: rather than following `uses:` targets into files this
+//     guard cannot read, a write-scoped job is restricted to a short,
+//     human-reviewed allowlist of actions instead — "is this action safe" is
+//     answered once, by a person, at allowlist-edit time, not re-derived
+//     textually on every run.
 //   - PR content fetched over the NETWORK rather than over git: `curl …
 //     /pull/N.patch | git am`, `curl … /archive/$HEAD_SHA.tar.gz | tar xz`,
 //     or `actions/download-artifact` pulling an artifact an untrusted job
 //     produced. Deciding whether an arbitrary URL or artifact name resolves
-//     to fork-authored content is not a textual question. (The artifact case
-//     is the same residual condition 4's own docstring names for its DATA
-//     half, and is not closed here either.)
+//     to fork-authored content is not a textual question — it depends on
+//     what is AT that URL or in that artifact, which no read of this file
+//     can answer. (The artifact case is the same residual condition 4's own
+//     docstring names for its DATA half, and is not closed here either.)
+//     #4183 judges this out of scope for this guard: not a missing pattern,
+//     a class this guard's whole approach (read one file, decide textually)
+//     cannot decide.
 //   - Shell-level indirection: a command assembled from string
 //     concatenation, dispatched through a `$VAR`, or base64-decoded, and a
 //     wrapper script that shells out to `git` under a different name.
-//     Closing these needs shell-semantics tracking this guard does not
-//     attempt.
+//     Closing this needs shell-semantics tracking this guard does not
+//     attempt — again a class, not a missing regex alternative; adding one
+//     would create the false confidence #4183 warns against ("pretending
+//     otherwise by adding a pattern would be worse than saying so") without
+//     closing the class, since the next obfuscation is a fresh pattern away.
 //
-// zizmor's `pull_request_target` linter is the broader net for the shapes
-// this narrow guard cannot see; #4183 tracks the classes above.
+// Both residual classes are deliberate-evasion shapes, not a one-line edit a
+// maintainer types by accident (#4183's own "why this is lower priority than
+// it looks" — the threat model this guard states in its header is the
+// accidental #3967 shape, not an adversarial insider already willing to
+// obfuscate a command). zizmor's `pull_request_target` linter, run over every
+// workflow via the `zizmor` prek hook, is the broader net for exactly these
+// shapes; this guard stays the narrow, `pr-overlap.yml`-specific insurance it
+// was built as.
 const RUN_STEP_CHECKOUT_PATTERNS = [
   /\bgh\b[^\n]*\bpr\s+(?:checkout|diff)\b/,
   /\bgit\b[^\n]*\b(?:checkout|switch|restore|reset|merge|rebase|cherry-pick|worktree|pull|am|apply)\b[^\n]*\bFETCH_HEAD\b/,
   /\bgit\s+fetch\b[^\n]*refs\/pull\//,
 ]
+
+// #4183 condition 6 — the actions a job holding a write permission scope may
+// `uses:` at all. Deliberately an ALLOWLIST of exact `owner/repo` action
+// identifiers (the part of a `uses:` value before the `@`), not a denylist
+// or a heuristic: the whole point of condition 6 is that this guard cannot
+// read what an arbitrary action does (see the header's condition-6 section),
+// so the only textually-honest rule is "known-safe, reviewed once by a
+// person" rather than "doesn't LOOK like a checkout".
+//
+// This is exactly the set `pr-overlap.yml`'s own write-scoped job (`post`)
+// uses TODAY: `actions/checkout` (with a `ref:` condition 3 already pins to
+// the PR base — this allowlist is a SEPARATE, independent gate, not a
+// replacement for that check) and `actions/download-artifact` (pulling the
+// `compute` job's own upload, never external input — see `post`'s own
+// comment on why that artifact is data, not code, and lands under
+// `artifact/`, never `scripts/`). Adding a THIRD action here is a conscious,
+// reviewed edit to this list — which is the point: an allowlist that grows
+// itself silently is not an allowlist.
+const TRUSTED_WRITE_SCOPED_ACTIONS = new Set(['actions/checkout', 'actions/download-artifact'])
 
 // Any reference to the `secrets` context BY ACCESSOR: `secrets.GITHUB_TOKEN`,
 // `secrets.A_PAT`, or the index form `secrets['A_PAT']`. Condition 4 (below)
@@ -828,6 +899,85 @@ export function findWriteScopedUnsafeCheckouts(src, jobs = splitJobs(src)) {
 }
 
 /**
+ * Condition 6 (#4183) — see the header's own "condition 6" section and
+ * `TRUSTED_WRITE_SCOPED_ACTIONS`'s docstring for the policy this enforces
+ * and why it is an allowlist rather than an attempt to inspect what an
+ * arbitrary action does.
+ *
+ * Every `uses:` step inside a job holding a write permission scope (the
+ * SAME write-scope computation `findWriteScopedUnsafeCheckouts` uses — "the
+ * write-scoped job" must mean the identical set of jobs in both, exactly the
+ * reasoning `checkTrustBoundary` gives for splitting jobs once and handing
+ * every condition the same map) whose action identifier (the `uses:` value
+ * up to the first `@`) is not a member of `TRUSTED_WRITE_SCOPED_ACTIONS`.
+ * That covers a LOCAL composite action (`uses: ./.github/actions/<x>`, whose
+ * "identifier" is the literal `./…` path — never a member of the allowlist,
+ * by construction, since every allowlist entry is an `owner/repo` form) and
+ * an unreviewed third-party action alike; both are the same "this guard
+ * cannot see what runs here" shape.
+ *
+ * A `uses:` line with NO `@` at all (an unpinned action, `uses: owner/repo`)
+ * gets no special "always flag" treatment — it is resolved the SAME way as
+ * any other: its identifier IS the whole value in that case (there is no
+ * `@` to split off), and `TRUSTED_WRITE_SCOPED_ACTIONS`'s own entries are
+ * bare identifiers with no version, so an unpinned use of an ALLOWLISTED
+ * action still resolves to a member and is NOT flagged by this function —
+ * only an unpinned use of something NOT on the allowlist is. Pinning itself
+ * is a separate concern this guard does not police (`pr-overlap.yml`'s own
+ * steps pin every `uses:` to a full commit SHA, but that is a repo
+ * convention, not a rule this narrow guard enforces).
+ *
+ * Residual, stated rather than assumed: this scans EVERY line of the job
+ * body for the `uses:` pattern, not just genuine YAML `uses:` keys —
+ * including the text of a `run:` block scalar. A write-scoped job whose
+ * script ever ECHOES a line that happens to contain `uses: something` (a log
+ * message, a heredoc, a printed diff) matches the same regex and gets
+ * flagged as if it were a real step. This fails CLOSED, not open: the worst
+ * case is a spurious red on a write-scoped job that used no untrusted action
+ * at all, never a miss of one that did.
+ *
+ * @param {string} src
+ * @param {ReturnType<typeof splitJobs>} [jobs]  as in
+ *   `findWriteScopedUnsafeCheckouts`; the default throws on a file with no
+ *   `jobs:` block — a wiring failure, not a violation.
+ */
+export function findWriteScopedUntrustedActions(src, jobs = splitJobs(src)) {
+  const lines = src.split('\n')
+  // Duplicated from `findWriteScopedUnsafeCheckouts` rather than factored
+  // out: both computations are small, and condition 6 must be provably
+  // independent of condition 3's implementation — a shared helper that later
+  // grows a condition-3-specific assumption would silently start feeding it
+  // to condition 6 too.
+  const workflowPermissions = (() => {
+    const idx = lines.findIndex((l) => l.startsWith('permissions:'))
+    if (idx === -1) return false
+    const inline = /^permissions:\s*(\S.*)$/.exec(stripComment(lines[idx]))
+    if (inline) return /write/.test(inline[1])
+    for (let i = idx + 1; i < lines.length; i++) {
+      if (/^\S/.test(lines[i])) break
+      if (declaresWrite(lines[i])) return true
+    }
+    return false
+  })()
+
+  const hits = []
+  for (const [jobName, { body, headerLine }] of Object.entries(jobs)) {
+    const own = jobDeclaresWriteScope(body)
+    const writeScoped = own === null ? workflowPermissions : own
+    if (!writeScoped) continue
+    body.forEach((line, offset) => {
+      if (isCommentLine(line)) return
+      const m = /(?:^|\s)uses:\s*(\S+)/.exec(stripComment(line))
+      if (!m) return
+      const identifier = m[1].split('@')[0]
+      if (TRUSTED_WRITE_SCOPED_ACTIONS.has(identifier)) return
+      hits.push({ job: jobName, line: headerLine + offset + 1, target: m[1] })
+    })
+  }
+  return hits
+}
+
+/**
  * Whether a checkout `ref:` value (as `findCheckoutSteps` returns it, `null`
  * for a step with no `ref:` of its own) pins the checkout to the PR's BASE —
  * a commit in this repo's own history, never a fork's. `null` is NOT base
@@ -948,16 +1098,20 @@ export function checkTrustBoundary(src) {
   const runStepCheckouts = dangerous ? findRunStepCheckouts(jobs) : []
   const unsafeWriteCheckouts = findWriteScopedUnsafeCheckouts(src, jobs)
   const secretsInUntrustedJobs = findSecretsInUntrustedJobs(src, jobs)
+  // #4183 condition 6 — see `findWriteScopedUntrustedActions`.
+  const untrustedActionsInWriteScopedJobs = findWriteScopedUntrustedActions(src, jobs)
   return {
     dangerous,
     headRefs,
     runStepCheckouts,
     unsafeWriteCheckouts,
     secretsInUntrustedJobs,
+    untrustedActionsInWriteScopedJobs,
     violation:
       (dangerous && (headRefs.length > 0 || runStepCheckouts.length > 0)) ||
       unsafeWriteCheckouts.length > 0 ||
-      secretsInUntrustedJobs.length > 0,
+      secretsInUntrustedJobs.length > 0 ||
+      untrustedActionsInWriteScopedJobs.length > 0,
   }
 }
 
@@ -1056,6 +1210,22 @@ export function renderVerdict(result) {
       '\nMove whatever needs the secret into a job that does NOT check out PR content (pin that',
       "job's checkout to `github.event.pull_request.base.sha`) and pass results between the two",
       'as an artifact — see the `compute`/`post` split this file uses today.',
+    )
+  }
+  if (result.untrustedActionsInWriteScopedJobs.length > 0) {
+    lines.push(
+      'ERROR: a job declaring a write permission scope `uses:` an action outside the',
+      'reviewed allowlist (#4183) — a checkout hidden behind a LOCAL composite action or an',
+      'unreviewed third-party action is invisible to every other condition in this guard, which',
+      'reads exactly this one file and cannot see what runs inside another. Offending job / step:',
+    )
+    for (const hit of result.untrustedActionsInWriteScopedJobs) {
+      lines.push(`  job \`${hit.job}\`, line ${hit.line}: uses: ${hit.target}`)
+    }
+    lines.push(
+      '\nEither drop the write permission from that job, or replace the step with one of the',
+      'allowlisted actions (see `TRUSTED_WRITE_SCOPED_ACTIONS`) — extending the allowlist itself',
+      'is a deliberate, reviewed edit to this file, not something to route around.',
     )
   }
   return { lines, exitCode: 1 }
@@ -2039,6 +2209,113 @@ jobs:
           echo "base tip: $(git rev-parse FETCH_HEAD)"
 `
 
+// #4183 condition 6 — THE FALSIFICATION: a write-scoped job whose checkout
+// is hidden behind a LOCAL COMPOSITE ACTION. No \`ref:\` line, no \`run:\` text
+// matching \`RUN_STEP_CHECKOUT_PATTERNS\` — every OTHER condition in this file
+// is structurally blind to it (condition 3 never even recognises the step as
+// a checkout: \`findCheckoutSteps\` requires \`uses: actions/checkout@\` or one
+// of the \`run:\` shapes, and this step is neither), which is exactly class 1
+// from #4183's own body. The composite action itself is not written here —
+// by design, per the header's "no single-file textual check can see it".
+const WRITE_SCOPED_JOB_LOCAL_COMPOSITE_ACTION = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Prepare the PR content (composite action)
+        uses: ./.github/actions/prepare-pr-content
+`
+
+// The sibling shape: an UNREVIEWED THIRD-PARTY action, same reasoning —
+// this guard cannot read \`some-org/checkout-ish\`'s own source to know
+// whether it checks out fork content.
+const WRITE_SCOPED_JOB_THIRD_PARTY_ACTION = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Fetch PR content via a third-party action
+        uses: some-org/checkout-ish@v1
+`
+
+// NEGATIVE CONTROL 1: the SAME write-scoped job, using ONLY the allowlisted
+// actions \`pr-overlap.yml\` itself relies on today — must stay green, or
+// condition 6 flags every legitimate use of the split it is meant to protect.
+const WRITE_SCOPED_JOB_ONLY_ALLOWLISTED_ACTIONS = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout the TRUSTED script source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: \${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Download the divergence result
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pr-overlap-diverged-\${{ github.event.pull_request.number }}
+          path: artifact/
+`
+
+// NEGATIVE CONTROL 2: the IDENTICAL local composite action step, in a job
+// with NO write scope. Condition 6 is deliberately scoped to write-scoped
+// jobs only (see the header's condition-6 section) — a read-only job using
+// an unreviewed action is a different, already-accepted risk this guard does
+// not attempt to police, and this fixture proves condition 6 does not
+// over-broaden into flagging every \`uses:\` in the file.
+const READ_ONLY_JOB_LOCAL_COMPOSITE_ACTION_IS_FINE = `name: Open-PR file overlap (informational)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Prepare the PR content (composite action)
+        uses: ./.github/actions/prepare-pr-content
+`
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -2696,6 +2973,71 @@ function runSelfTest() {
       '`repository: ${{ github.repository }}` (this repo) with a base-pinned ref is NOT flagged',
       ownRepository.violation === false,
       JSON.stringify(ownRepository),
+    )
+  }
+
+  // 22. #4183 CONDITION 6 IS NOT VACUOUS: a write-scoped job whose only
+  //     checkout is hidden behind a LOCAL COMPOSITE ACTION — class 1 from
+  //     #4183's own body, invisible to conditions 1-5 by construction (see
+  //     the fixture's own comment). THE FALSIFICATION: every condition
+  //     BEFORE condition 6 existed would have printed OK on this file.
+  {
+    const local = checkTrustBoundary(WRITE_SCOPED_JOB_LOCAL_COMPOSITE_ACTION)
+    expect(
+      'a write-scoped job `uses:`-ing a LOCAL composite action is flagged by condition 6',
+      local.violation === true && local.untrustedActionsInWriteScopedJobs.length === 1,
+      JSON.stringify(local),
+    )
+    expect(
+      'no OTHER condition sees it — condition 6 alone is what fires',
+      local.headRefs.length === 0 &&
+        local.runStepCheckouts.length === 0 &&
+        local.unsafeWriteCheckouts.length === 0 &&
+        local.secretsInUntrustedJobs.length === 0,
+      JSON.stringify(local),
+    )
+    expect(
+      'the offending job and the local action path are both named',
+      local.untrustedActionsInWriteScopedJobs[0]?.job === 'post' &&
+        local.untrustedActionsInWriteScopedJobs[0]?.target ===
+          './.github/actions/prepare-pr-content',
+      JSON.stringify(local.untrustedActionsInWriteScopedJobs),
+    )
+    const rendered = renderVerdict(local)
+    expect(
+      'main()-style output names the local action path',
+      rendered.exitCode === 1 &&
+        rendered.lines.some((l) => l.includes('./.github/actions/prepare-pr-content')),
+      JSON.stringify(rendered),
+    )
+
+    // The sibling shape: an unreviewed THIRD-PARTY action.
+    const thirdParty = checkTrustBoundary(WRITE_SCOPED_JOB_THIRD_PARTY_ACTION)
+    expect(
+      'a write-scoped job `uses:`-ing an unreviewed third-party action is flagged',
+      thirdParty.violation === true &&
+        thirdParty.untrustedActionsInWriteScopedJobs.length === 1 &&
+        thirdParty.untrustedActionsInWriteScopedJobs[0]?.target === 'some-org/checkout-ish@v1',
+      JSON.stringify(thirdParty),
+    )
+
+    // NEGATIVE CONTROL 1: the real allowlist, in the real shape — must NOT
+    // be flagged, or condition 6 breaks the split it exists to protect.
+    const allowlisted = checkTrustBoundary(WRITE_SCOPED_JOB_ONLY_ALLOWLISTED_ACTIONS)
+    expect(
+      'a write-scoped job using ONLY the allowlisted actions is NOT flagged',
+      allowlisted.violation === false && allowlisted.untrustedActionsInWriteScopedJobs.length === 0,
+      JSON.stringify(allowlisted),
+    )
+
+    // NEGATIVE CONTROL 2: the IDENTICAL local-action step, in a job with NO
+    // write scope. Proves condition 6 is scoped to write-scoped jobs, not
+    // every `uses:` in the file.
+    const readOnly = checkTrustBoundary(READ_ONLY_JOB_LOCAL_COMPOSITE_ACTION_IS_FINE)
+    expect(
+      'the SAME local composite action in a job with NO write scope is NOT flagged by condition 6',
+      readOnly.violation === false && readOnly.untrustedActionsInWriteScopedJobs.length === 0,
+      JSON.stringify(readOnly),
     )
   }
 

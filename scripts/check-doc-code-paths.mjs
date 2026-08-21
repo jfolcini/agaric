@@ -366,19 +366,12 @@ function extractCandidates(text) {
 //
 // WHAT THIS STILL DOES NOT SEE, stated rather than implied — #4135's framing
 // is "a code citation with a line number must be repo-rooted", and this
-// pattern only enforces the BARE end of that:
+// pattern only enforces the BARE end of that. (The middle shape — a
+// PARTIALLY-ROOTED citation with a slash but no known root, e.g.
+// `pagination/mod.rs:658-668` — used to fall between this gate and
+// `isLocalPathCandidate`'s `PATH_PREFIX_RE` gate; #4184 closed it with
+// `PARTIALLY_ROOTED_CODE_CITATION_RE`, below.)
 //
-//   - A PARTIALLY-ROOTED citation — `pagination/mod.rs:658-668`,
-//     `agaric-store/src/query/engine.rs:229`, `ui/sidebar.tsx:865` — has a
-//     slash, so `BARE_CODE_CITATION_RE` (which forbids one, by anchoring on
-//     a single filename) skips it; and its first segment is not one of
-//     `PATH_PREFIX_RE`'s roots, so `isLocalPathCandidate` skips it too. It
-//     falls between the two gates and is invisible to exactly the same
-//     drift the bare form is — arguably more so, since a crate-relative
-//     prefix reads as authoritative while naming no crate. 58 (file, ref)
-//     pairs across 17 files carry this shape today; #4184 tracks closing it,
-//     which needs its own baseline and is a strictly larger content sweep
-//     than the one #4135 already defers.
 //   - A citation inside a FENCED CODE BLOCK. Like `extractCandidates` above,
 //     this scans the whole judged text, fences included, so a doc that
 //     DEMONSTRATES a bad citation inside a ``` block would be flagged for
@@ -412,6 +405,62 @@ function extractBareCitations(text) {
   for (const match of text.matchAll(/`([^`\n]{2,200})`/g)) {
     const raw = (match[1] ?? '').trim()
     if (BARE_CODE_CITATION_RE.test(raw)) found.add(raw)
+  }
+  return found
+}
+
+// #4184 — the PARTIALLY-ROOTED middle shape `BARE_CODE_CITATION_RE`'s own
+// comment names: a citation like `pagination/mod.rs:658-668`,
+// `agaric-store/src/query/engine.rs:229`, `ui/sidebar.tsx:865`,
+// `fts/search/fetch.rs:292` or `sync_protocol/types.rs:37` HAS a slash (so
+// the bare-form pattern, which forbids one by anchoring on a single
+// filename with no `/`, does not match it) but its leading segment is not
+// one of `PATH_PREFIX_RE`'s known roots (`src`, `src-tauri`, `scripts`,
+// `e2e`, `docs`, `.github`, `.cargo`), so `isLocalPathCandidate` treats it
+// as prose and skips it too. It fell between both gates and was invisible
+// to exactly the drift the bare form is — arguably more so, because a
+// crate-relative prefix READS as authoritative while naming no crate, so a
+// reader trusts it more and a reviewer questions it less.
+//
+// Same rule as #4135: the FORM is the violation, not a resolution attempt —
+// "cite a repo-rooted path" is what a reader actually wants, and resolving
+// a multi-segment suffix against the tracked tree (option 2 in #4184) was
+// considered and left for a future issue; this ships the option consistent
+// with what #4135 already shipped (option 1), so the two intakes share one
+// mechanism.
+//
+// Scoped identically to `BARE_CODE_CITATION_RE`: requires a trailing
+// line-number suffix (the same `(?:,\d+(?:-\d+)?)*` comma-list grammar),
+// matched in inline code spans only (see `extractBareCitations`'s own
+// rationale — a partially-rooted path is not a valid relative link target
+// either, so this shape does not occur in `](…)` targets), and the SAME
+// `^…$` anchoring keeps a log line, a URL, and a `file:LINE:COL` coordinate
+// green for the identical reason the bare form's own fixtures establish:
+// none of the three is the ENTIRE content of the code span.
+//
+// A candidate that IS already repo-rooted (starts with a known
+// `PATH_PREFIX_RE` root) is explicitly excluded here — that shape is a
+// normal candidate, judged for existence by `isLocalPathCandidate` /
+// `extractCandidates` instead, not a form violation.
+const PARTIALLY_ROOTED_CODE_CITATION_RE =
+  /^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.-]*)+\.(?:rs|tsx?|mjs|cjs|jsx?|py|sh|sql|toml):\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*$/
+
+/**
+ * Every inline-code-span citation in `text` matching the partially-rooted
+ * shape `PARTIALLY_ROOTED_CODE_CITATION_RE` describes AND not already
+ * repo-rooted under a known `PATH_PREFIX_RE` prefix. Like
+ * `extractBareCitations`, the raw citation text itself is the violation —
+ * there is nothing to resolve.
+ *
+ * @param {string} text
+ */
+function extractPartiallyRootedCitations(text) {
+  const found = new Set()
+  for (const match of text.matchAll(/`([^`\n]{2,200})`/g)) {
+    const raw = (match[1] ?? '').trim()
+    if (!PARTIALLY_ROOTED_CODE_CITATION_RE.test(raw)) continue
+    if (PATH_PREFIX_RE.test(raw)) continue
+    found.add(raw)
   }
   return found
 }
@@ -546,6 +595,18 @@ function computeMisses() {
         kind: 'bare-form',
       })
     }
+    // #4184 — the partially-rooted middle shape; see
+    // `extractPartiallyRootedCitations`.
+    for (const raw of extractPartiallyRootedCitations(text)) {
+      misses.push({
+        doc: citingFile,
+        ref: raw,
+        resolved: null,
+        onDisk: null,
+        tracked: false,
+        kind: 'partial-root',
+      })
+    }
   }
   for (const doc of docs) {
     // `=== undefined`, never a truthiness test: a zero-byte doc reads as
@@ -615,6 +676,12 @@ function check() {
       if (m.kind === 'bare-form') {
         process.stderr.write(
           `  - ${m.doc} → \`${m.ref}\`  (bare filename with a line number — cite a repo-rooted path instead, #4135)\n`,
+        )
+        continue
+      }
+      if (m.kind === 'partial-root') {
+        process.stderr.write(
+          `  - ${m.doc} → \`${m.ref}\`  (partially-rooted citation — cite a repo-rooted path instead, #4184)\n`,
         )
         continue
       }
@@ -692,7 +759,9 @@ function updateBaseline() {
       reasonByKey.get(baselineKey(m.doc, m.ref)) ??
       (m.kind === 'bare-form'
         ? 'Pre-existing at the #4135 bare-filename-citation widening; not yet fixed.'
-        : 'Pre-existing at the #4126 .ts/.tsx comment-scan widening; not yet fixed.'),
+        : m.kind === 'partial-root'
+          ? 'Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed.'
+          : 'Pre-existing at the #4126 .ts/.tsx comment-scan widening; not yet fixed.'),
   }))
   writeBaseline(entries)
   console.log(`OK: wrote ${entries.length} baselined citation(s) to ${BASELINE_FILE}`)
@@ -1000,6 +1069,153 @@ function bareCitationScenarios(root) {
 }
 
 /**
+ * #4184 — the PARTIALLY-ROOTED middle shape: a citation with a slash but no
+ * known `PATH_PREFIX_RE` root, which used to fall between the bare-form gate
+ * (forbids a slash) and `isLocalPathCandidate`'s root gate (requires one).
+ * Mirrors `bareCitationScenarios` structurally: the OLD guard (this fixture
+ * run through a checkout predating the widening would need no baseline entry
+ * at all and pass green) vs the NEW guard, proved via the SAME repo-rooted
+ * fixture the issue itself names (`pagination/mod.rs:658-668`).
+ */
+function partiallyRootedCitationScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+    const dir = join(root, 'partial-root-citation')
+    const env = scrubbedGitEnv(root)
+    const git = initScratchRepo(dir, env)
+    const run = (flags) => {
+      const r = spawnSync(process.execPath, [import.meta.filename, ...flags], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      })
+      return { status: r.status, stderr: r.stderr ?? '' }
+    }
+    mkdirSync(join(dir, 'src', 'pagination'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'pagination', 'mod.rs'), 'fn f() {}\n')
+
+    // THE ACTUAL #4184 DEFECT SHAPE, the issue's own example: a citation with
+    // a slash but no known root, naming a file that DOES exist in the tree
+    // under a DIFFERENT (repo-rooted) path — this is exactly what made the
+    // form invisible to both gates: it isn't bare (has a slash) and isn't
+    // repo-rooted (doesn't start with `src/`), so the old guard (equivalent
+    // to this same fixture with `PARTIALLY_ROOTED_CODE_CITATION_RE` deleted)
+    // passed it silently.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The cursor pagination logic lives in `pagination/mod.rs:658-668`.\n',
+    )
+    git('add', '-A')
+    const partialBad = run(['--worktree'])
+    record(
+      'a partially-rooted `<dir>/<file>.rs:<range>` citation (no known root) is red',
+      partialBad.status === 1 &&
+        /pagination\/mod\.rs:658-668/.test(partialBad.stderr) &&
+        /partially-rooted/.test(partialBad.stderr) &&
+        /#4184/.test(partialBad.stderr),
+      `expected 1 naming pagination/mod.rs:658-668 as a partial-root miss, got ${partialBad.status}: ${partialBad.stderr}`,
+    )
+
+    // Retargeting at the real, repo-rooted path clears it — the fix the
+    // error message itself recommends, and proof this is a FORM rule (same
+    // file, same line range, only the leading root added).
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The cursor pagination logic lives in `src/pagination/mod.rs:658-668`.\n',
+    )
+    git('add', '-A')
+    const partialFixed = run(['--worktree'])
+    record(
+      'rewriting the SAME citation as a repo-rooted path clears it',
+      partialFixed.status === 0,
+      `expected 0, got ${partialFixed.status}: ${partialFixed.stderr}`,
+    )
+
+    // ACCEPTANCE: a LEGITIMATE citation must still pass — no false positive
+    // on an ordinary repo-rooted citation just because this rule was added.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The cursor pagination logic lives in `src/pagination/mod.rs:658-668`, unchanged from before.\n',
+    )
+    git('add', '-A')
+    const legitimate = run(['--worktree'])
+    record(
+      'an ordinary repo-rooted citation is unaffected by the new rule (no false positive)',
+      legitimate.status === 0,
+      `expected 0, got ${legitimate.status}: ${legitimate.stderr}`,
+    )
+
+    // ACCEPTANCE: the FORM requires a line-number suffix, exactly like the
+    // bare-form rule — a partially-rooted mention with no line number is
+    // ambiguous prose, not a precise citation.
+    writeFileSync(join(dir, 'README.md'), 'See `pagination/mod.rs` for the cursor logic.\n')
+    git('add', '-A')
+    const noLineNumber = run(['--worktree'])
+    record(
+      'a partially-rooted filename with NO line number is not flagged',
+      noLineNumber.status === 0,
+      `expected 0, got ${noLineNumber.status}: ${noLineNumber.stderr}`,
+    )
+
+    // ACCEPTANCE — #4135's own negative controls, re-run against a
+    // partially-rooted (not bare) form: a log line, a URL, and a
+    // `file:LINE:COL` diagnostic coordinate inside a code span must all stay
+    // green, for the identical `^…$`-anchoring reason the bare-form fixture
+    // establishes.
+    writeFileSync(
+      join(dir, 'README.md'),
+      [
+        'A log line: `panicked at src/pagination/mod.rs:658, thread main`.',
+        '',
+        'A URL: `https://github.com/o/r/blob/main/pagination/mod.rs:658`.',
+        '',
+        'A rustc coordinate: `pagination/mod.rs:658:16`.',
+        '',
+      ].join('\n'),
+    )
+    git('add', '-A')
+    const notCitations = run(['--worktree'])
+    record(
+      'a log line, a URL and a `file:LINE:COL` coordinate inside a code span are NOT partial-root citations',
+      notCitations.status === 0,
+      `expected 0, got ${notCitations.status}: ${notCitations.stderr}`,
+    )
+
+    // THE SAME SHRINK-ONLY BASELINE MECHANISM the `missing` and `bare-form`
+    // kinds use also grandfathers a `partial-root` miss.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The cursor pagination logic lives in `pagination/mod.rs:658-668`.\n',
+    )
+    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    const baselinePath = join(dir, 'scripts', 'doc-code-paths-baseline.json')
+    const writeFixtureBaseline = (entries) =>
+      writeFileSync(baselinePath, `${JSON.stringify(entries, null, 2)}\n`)
+    writeFixtureBaseline([
+      { file: 'README.md', ref: 'pagination/mod.rs:658-668', reason: 'self-test fixture' },
+    ])
+    git('add', '-A')
+    const grandfathered = run(['--worktree'])
+    record(
+      'a partial-root miss LISTED in the baseline is grandfathered (green)',
+      grandfathered.status === 0,
+      `expected 0, got ${grandfathered.status}: ${grandfathered.stderr}`,
+    )
+
+    writeFixtureBaseline([])
+    git('add', '-A')
+    const unbaselined = run(['--worktree'])
+    record(
+      'the SAME partial-root miss, once removed from the baseline, is red again',
+      unbaselined.status === 1 && /pagination\/mod\.rs:658-668/.test(unbaselined.stderr),
+      `expected 1 naming pagination/mod.rs:658-668, got ${unbaselined.status}: ${unbaselined.stderr}`,
+    )
+    return results
+  })
+}
+
+/**
  * #4126 — the shrink-only baseline. Three assertions, each proving one
  * direction the mechanism must hold:
  *   1. a miss LISTED in the baseline is grandfathered (green);
@@ -1177,6 +1393,7 @@ function selfTest() {
     results.push(...linkTargetScenarios(root))
     results.push(...tsCommentScenarios(root))
     results.push(...bareCitationScenarios(root))
+    results.push(...partiallyRootedCitationScenarios(root))
     results.push(...baselineScenarios(root))
     results.push(...corruptBaselineScenarios(root))
     let failures = 0
