@@ -466,9 +466,31 @@ function serializeInlineText(child: TextNode, activeMarks: Set<string>): string 
 function defuseLeadingItalicMarker(content: readonly InlineNode[]): InlineNode[] {
   const isPlainSpaces = (n: InlineNode | undefined): n is TextNode =>
     n?.type === 'text' && (n.marks ?? []).length === 0 && /^ *$/.test(n.text)
+  // An inline ATOM that serializes to the empty string is just as invisible
+  // at the line start as a run of plain spaces — a whitespace-only
+  // `math_inline` node is the concrete case #4195 names
+  // (`serializeInlineChild`'s `math_inline` branch emits `''` when
+  // `sanitizeInlineMathLatex` reduces it to nothing), but it is not the only
+  // one: an unrecognized node type reaching `serializeInlineChild`'s final
+  // `onUnknownNode` fallback is dropped just as silently (see the "unknown
+  // node" tests in markdown-serializer.test.ts — `video_embed` et al. are a
+  // real, tested inline shape, not a hypothetical one). Rather than special-
+  // casing `math_inline` and leaving the fallback branch unresolved (same
+  // bullet-list collision, reachable via an unknown leading node instead of a
+  // math atom), ask the real serializer what it would emit for the node in
+  // isolation. `activeMarks` is always empty here — no node this walk can
+  // have already skipped could have opened one: only `TextNode` carries
+  // `marks`, and `isPlainSpaces` only admits mark-free text — so a fresh
+  // empty set reproduces exactly what the real pass would emit at this
+  // position, and any future empty-serializing atom type is covered without
+  // another bespoke predicate. `onUnknownNode` is deliberately omitted so
+  // this probe doesn't double-report the node; the real serialize pass over
+  // the (unmodified) returned content still fires it once.
+  const isEmptyAtom = (n: InlineNode | undefined): boolean =>
+    n !== undefined && n.type !== 'text' && serializeInlineChild(n, new Set()) === ''
 
   let i = 0
-  while (i < content.length && isPlainSpaces(content[i])) i++
+  while (i < content.length && (isPlainSpaces(content[i]) || isEmptyAtom(content[i]))) i++
   if (!isVulnerableItalicOpen(content[i])) return content as InlineNode[]
 
   // The maximal contiguous run that keeps italic continuously active from `i`
