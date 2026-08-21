@@ -185,7 +185,7 @@ describe('computeSelectionRoots', () => {
  * `selected.has(...)`, so it can change the result only if the caller selects
  * Stryker's own placeholder string.
  *
- * UNREPRODUCED (#4223): the 885,205-input figure above is from an ad-hoc
+ * UNREPRODUCED (#4223): the 885 205-input figure above is from an ad-hoc
  * local run with no committed harness or artifact — unlike
  * `page-blocks-move.ts:217:35`'s sweep (`scripts/mutation-harnesses/`), a
  * future reader cannot re-derive this exact count. The equivalence verdict

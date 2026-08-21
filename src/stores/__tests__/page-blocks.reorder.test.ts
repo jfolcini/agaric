@@ -1248,6 +1248,13 @@ describe('PageBlockStore', () => {
     //     claim hold under re-run — re-run it yourself with `npx vitest run
     //     --config scripts/mutation-harnesses/vitest.config.ts
     //     scripts/mutation-harnesses/page-blocks-move-reconcile-batch.harness.ts`.
+    //     Read that as: the harness pins the VERDICT, not these counts. Its
+    //     assertions are directional (`diffSentinel` is 0 when restricted,
+    //     > 0 when not); the exact totals come from a `console.log` and hold
+    //     only while the seed, generator and shape enumeration are untouched.
+    //     A future edit to any of those changes the printed numbers with the
+    //     test still green — so a mismatch on re-run means the sweep moved,
+    //     not that the equivalence broke.
 
     // #3759 — the OTHER half of the backend-echo guard. The parent-echo loop
     // above only inspects the responses that came back; a SHORT response means

@@ -7,7 +7,7 @@
 | **Items closed** | `#4223` |
 | **Items modified** | — |
 | **Tests added** | −4 (net); no production change |
-| **Files touched** | see PR #4234's file list |
+| **Files touched** | see PR #4236's file list |
 
 **Summary:** #4215 found that `stryker.modules.mjs`'s `page-blocks-move` entry never listed
 `page-blocks-move.test.ts`, so the scoped mutation run could not see it and kept re-filing
@@ -68,4 +68,4 @@ the numbers' status changed.
 **Verification:** 907 tests passed across the touched files; `stryker.modules.mjs` parses;
 scoped mutation run reproduced by the reviewer independently.
 
-**Commit plan:** single commit on `claude/fe-mutation-test-dedup`, shipped as PR #4234.
+**Commit plan:** single commit on `claude/fe-mutation-test-dedup`, shipped as PR #4236.
