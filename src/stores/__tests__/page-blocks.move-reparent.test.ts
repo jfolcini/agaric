@@ -1043,6 +1043,14 @@ describe('PageBlockStore', () => {
     // merely unobserved — the same canary run recorded 24 hits on
     // `provIndex === 0` and 2 on `!cur`, so it does reach the boundaries.
     //
+    // UNREPRODUCED (#4223): every count in this ledger (122/96/74/24/2 above,
+    // and every "N of M" figure below) is from that one ad-hoc canary run —
+    // never committed, no re-runnable harness — so none of it can be
+    // re-derived by a future reader. The structural arguments each entry
+    // makes stand on their own regardless (see each entry's own reasoning);
+    // treat the counts as corroboration that was never re-run, not as
+    // standing proof.
+    //
     // Line citations below were re-verified against the CURRENT
     // `page-blocks-move.ts` (grepped literal expressions) — every one had
     // drifted since this ledger was written (applyProvisionalMove +47,

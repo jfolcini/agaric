@@ -9,7 +9,6 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { logger } from '@/lib/logger'
 import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
-import { wouldCreateMoveCycle } from '@/stores/page-blocks-move'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -1175,6 +1174,12 @@ describe('PageBlockStore', () => {
     // was "a canary compiled into the source and then reverted" — never
     // committed, so it could not be re-run (#3804).
     //
+    // UNREPRODUCED (#4223): the 3,068/722 figures above are from that
+    // uncommitted sweep — a future reader cannot re-derive them. Superseded
+    // below by the committed, re-runnable harness for the one claim that is
+    // still live code; treat this paragraph's numbers as historical color,
+    // not standing evidence.
+    //
     // #3804 — #3799 (same PR as this comment's own line-number correction,
     // #3887) deleted THREE of the four equivalence entries this ledger used
     // to carry outright: the `byId.has` pre-check and the vacated-source
@@ -1231,13 +1236,18 @@ describe('PageBlockStore', () => {
     //     is allowed to use `rootParentId: null`, 0 when restricted to the
     //     shapes the factory can actually produce. Killing it would require a
     //     test that observes Stryker's own placeholder, which is not a
-    //     contract worth pinning.
+    //     contract worth pinning. UNREPRODUCED (#4223): the 526/0 pair above
+    //     is from the same uncommitted sweep as this ledger's other original
+    //     figures — superseded by the re-measurement immediately below, which
+    //     IS reproducible.
     //     #3804 re-measurement (different generator — a small random-forest
     //     sweep, not the original hand-built one — so the raw counts differ;
     //     the verdict does not): 0 / 21,120 differing when restricted to
     //     `rootParentId: 'PAGE_1'`, 9,581 / 42,240 differing when
     //     `rootParentId: null` is allowed in. Both directions of the original
-    //     claim hold under re-run.
+    //     claim hold under re-run — re-run it yourself with `npx vitest run
+    //     --config scripts/mutation-harnesses/vitest.config.ts
+    //     scripts/mutation-harnesses/page-blocks-move-reconcile-batch.harness.ts`.
 
     // #3759 — the OTHER half of the backend-echo guard. The parent-echo loop
     // above only inspects the responses that came back; a SHORT response means
@@ -1630,49 +1640,12 @@ describe('PageBlockStore', () => {
   })
 })
 
-// #3759 — direct unit coverage for `wouldCreateMoveCycle`, per its own doc
-// comment ("Exported for direct unit coverage"): pin the pure predicate's
-// branches here instead of reaching them only indirectly through `moveBlocks`
-// three call-frames away, where a broken check surfaces as a silent tree
-// scramble rather than a failing assertion at the source.
-describe('wouldCreateMoveCycle', () => {
-  it('is not a cycle when the requested parent is root (null)', () => {
-    const a = makeBlock({ id: 'A', parent_id: null, depth: 0 })
-    expect(wouldCreateMoveCycle([a], ['A'], null)).toBe(false)
-  })
-
-  it('is not a cycle when the requested parent is unrelated to the moved roots', () => {
-    const a = makeBlock({ id: 'A', parent_id: null, depth: 0 })
-    const x = makeBlock({ id: 'X', parent_id: null, depth: 0 })
-    expect(wouldCreateMoveCycle([a, x], ['A'], 'X')).toBe(false)
-  })
-
-  it('is a cycle when the requested parent IS one of the moved roots (self-parent)', () => {
-    const a = makeBlock({ id: 'A', parent_id: null, depth: 0 })
-    expect(wouldCreateMoveCycle([a], ['A'], 'A')).toBe(true)
-  })
-
-  // Also distinguishes `.some` from `.every` (only A's subtree contains D)
-  // and the per-id lambda from a constant-`undefined` stand-in (only a real
-  // per-id `.has(wantParent)` check can find D under A but not under B).
-  it('is a cycle when the requested parent is a DESCENDANT of only ONE of several moved roots', () => {
-    const a = makeBlock({ id: 'A', parent_id: null, depth: 0 })
-    const d = makeBlock({ id: 'D', parent_id: 'A', depth: 1 })
-    const b = makeBlock({ id: 'B', parent_id: null, depth: 0 })
-    expect(wouldCreateMoveCycle([a, d, b], ['A', 'B'], 'D')).toBe(true)
-  })
-
-  // EQUIVALENCE — the `if (wantParent == null) return false` guard skipped
-  // outright (Stryker's `if (false)` ConditionalExpression mutant at this
-  // line): `orderedIds` is always `readonly string[]` and every `FlatBlock.id`
-  // is always a `string`, so for `wantParent === null`, both
-  // `orderedIds.includes(null)` and `getDragDescendants(...).has(null)` are
-  // ALWAYS false regardless of `blocks`/`orderedIds` content (no string ever
-  // `===` `null`) — the fall-through path converges on the exact same `false`
-  // the early return would have produced. Killing this would require an id
-  // that is literally `null` at runtime, contradicting the `string[]`
-  // contract every real caller (and this suite) respects. Confirmed by
-  // applying the mutation by hand and running this file plus
-  // `page-blocks.move-reparent.test.ts`: unchanged green (not the proof
-  // itself — the argument above is — just consistent with it).
-})
+// #4223 — the direct `wouldCreateMoveCycle` unit coverage that used to live
+// here (four cases: null parent, unrelated parent, self-parent, multi-root
+// descendant) duplicated `src/stores/__tests__/page-blocks-move.test.ts`'s
+// `wouldCreateMoveCycle (#3799)` describe once #4215 wired that file into
+// `stryker.modules.mjs`'s `page-blocks-move` scoping entry — the scoped
+// mutation run can see both files now, so the second copy bought no
+// additional kills. Removed; its one non-duplicate artifact (the
+// `wantParent == null` equivalence note) moved to sit beside the matching
+// case in `page-blocks-move.test.ts`.
