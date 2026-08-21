@@ -2118,14 +2118,37 @@ STUB
   # the rest of the file free to reintroduce it — and it already had: the
   # "Install npm dependencies" step one step upstream carried the identical
   # unguarded pipe before its own `::error::`/`exit 1`, found while reviewing
-  # the #4178 fix. So the real invariant is file-wide, not step-wide: every
-  # tee to $GITHUB_STEP_SUMMARY anywhere in this workflow must be guarded,
-  # because every one of them precedes an annotation that has to survive.
+  # the #4178 fix. So the real invariant is file-wide: every `tee` to
+  # $GITHUB_STEP_SUMMARY that precedes an annotation in this workflow must be
+  # guarded with `|| true` (the ONE exception is the plain `cat … >>
+  # "$GITHUB_STEP_SUMMARY"` at the end of the "Post the overlap summary"
+  # step — a write, not a tee, and the last command of its step with no
+  # annotation behind it to swallow, so it is out of scope for this
+  # assertion on purpose, not an oversight).
+  #
+  # Both counts below are pinned to the literal '6' (verified by hand against
+  # this file), NOT compared against each other. Comparing count-of-total
+  # against count-of-guarded — the original shape here — passes vacuously
+  # when a future rename (say, `tee -a "${GITHUB_STEP_SUMMARY}"`, braced, or
+  # `tee -a $GITHUB_STEP_SUMMARY`, unquoted) drops every occurrence out of
+  # BOTH patterns at once: 0 == 0 is still "every tee is guarded", asserting
+  # nothing while looking like an invariant. A literal total means a spelling
+  # that stops matching fails LOUDLY (6 != however-many-now-match) instead of
+  # the assertion quietly going dark — the exact "guard scoped to where the
+  # bug was found" failure this whole PR is about, one level up in this
+  # self-test's own assertion (caught in review of #4225).
+  #
+  # The patterns themselves are loosened to match on `GITHUB_STEP_SUMMARY`
+  # rather than the one exact `"\$GITHUB_STEP_SUMMARY"` spelling, for the
+  # same reason: a `tee -a $GITHUB_STEP_SUMMARY` (unquoted) or `tee -a
+  # "${GITHUB_STEP_SUMMARY}"` (braced) rewrite is still counted, not
+  # invisible to this check.
   local wf_no_comments
   wf_no_comments="$(grep -v '^ *#' "$wf")"
-  st_expect 'file-wide: every tee to $GITHUB_STEP_SUMMARY is guarded with `|| true`' \
-    "$(printf '%s\n' "$wf_no_comments" | grep -c 'tee -a "\$GITHUB_STEP_SUMMARY"' || true)" \
-    "$(printf '%s\n' "$wf_no_comments" | grep -c 'tee -a "\$GITHUB_STEP_SUMMARY" || true' || true)"
+  st_expect 'file-wide: exactly 6 tees to GITHUB_STEP_SUMMARY (any spelling)' \
+    '6' "$(printf '%s\n' "$wf_no_comments" | grep -c 'tee -a .*GITHUB_STEP_SUMMARY' || true)"
+  st_expect 'and every one of those 6 is guarded with `|| true`' \
+    '6' "$(printf '%s\n' "$wf_no_comments" | grep -c 'tee -a .*GITHUB_STEP_SUMMARY.*|| true' || true)"
 
   # #4177: #4169 follow-up 4 skips `run_typecheck` once `missing` or
   # `failures` is already set, so the workflow's final `else` branch (exit

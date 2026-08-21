@@ -141,8 +141,11 @@
 //      (`curl … .patch | git am`, a tarball, an artifact) and shell-level
 //      indirection. A THIRD class — a checkout hidden behind a composite or
 //      third-party ACTION — used to be enumerated there too; condition 6
-//      below closes it. #4183 is where all three were triaged, and is where
-//      the two still open are judged (not merely left) out of scope — see
+//      below closes it FOR THE ONE PLACE IT MATTERS MOST (a write-scoped
+//      job) — see condition 6's own paragraph and `RUN_STEP_CHECKOUT_PATTERNS`'s
+//      docstring for why a read-only job stays deliberately out of scope.
+//      #4183 is where all three were triaged, and is where the two still
+//      open are judged (not merely left) out of scope — see
 //      `RUN_STEP_CHECKOUT_PATTERNS`'s own docstring and this header's own
 //      "#4183" note after condition 6.
 //
@@ -914,13 +917,24 @@ export function findWriteScopedUnsafeCheckouts(src, jobs = splitJobs(src)) {
  * cannot see what runs here" shape.
  *
  * A `uses:` line with NO `@` at all (an unpinned action, `uses: owner/repo`)
- * is also flagged — its identifier IS the whole value in that case, and
- * `TRUSTED_WRITE_SCOPED_ACTIONS`'s own entries are bare identifiers with no
- * version, so an unpinned use of an allowlisted action still resolves to a
- * member and is NOT flagged by this function; pinning itself is a separate
- * concern this guard does not police (`pr-overlap.yml`'s own steps pin every
- * `uses:` to a full commit SHA, but that is a repo convention, not a rule
- * this narrow guard enforces).
+ * gets no special "always flag" treatment — it is resolved the SAME way as
+ * any other: its identifier IS the whole value in that case (there is no
+ * `@` to split off), and `TRUSTED_WRITE_SCOPED_ACTIONS`'s own entries are
+ * bare identifiers with no version, so an unpinned use of an ALLOWLISTED
+ * action still resolves to a member and is NOT flagged by this function —
+ * only an unpinned use of something NOT on the allowlist is. Pinning itself
+ * is a separate concern this guard does not police (`pr-overlap.yml`'s own
+ * steps pin every `uses:` to a full commit SHA, but that is a repo
+ * convention, not a rule this narrow guard enforces).
+ *
+ * Residual, stated rather than assumed: this scans EVERY line of the job
+ * body for the `uses:` pattern, not just genuine YAML `uses:` keys —
+ * including the text of a `run:` block scalar. A write-scoped job whose
+ * script ever ECHOES a line that happens to contain `uses: something` (a log
+ * message, a heredoc, a printed diff) matches the same regex and gets
+ * flagged as if it were a real step. This fails CLOSED, not open: the worst
+ * case is a spurious red on a write-scoped job that used no untrusted action
+ * at all, never a miss of one that did.
  *
  * @param {string} src
  * @param {ReturnType<typeof splitJobs>} [jobs]  as in
