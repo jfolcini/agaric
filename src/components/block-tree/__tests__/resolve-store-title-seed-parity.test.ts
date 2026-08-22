@@ -125,21 +125,29 @@ async function seedViaSearchBlockRefs(id: string, content: string | null): Promi
 }
 
 /** Seed via path 2 — `fetchAndCacheLinks`. */
-async function seedViaFetchAndCacheLinks(id: string, content: string | null): Promise<void> {
+async function seedViaFetchAndCacheLinks(
+  id: string,
+  content: string | null,
+  blockType: 'content' | 'page' | 'tag' = 'content',
+): Promise<void> {
   mockedBatchResolve.mockResolvedValueOnce([
-    { id, title: content, block_type: 'content', deleted: false },
+    { id, title: content, block_type: blockType, deleted: false },
   ])
   await fetchAndCacheLinks(new Set([id]), TEST_SPACE_ID, () => false)
 }
 
 /** Seed via path 3 — `useBlockNavigateToLink`'s `handleNavigate`. */
-async function seedViaHandleNavigate(id: string, content: string | null): Promise<void> {
+async function seedViaHandleNavigate(
+  id: string,
+  content: string | null,
+  blockType: 'content' | 'page' | 'tag' = 'content',
+): Promise<void> {
   mockedGetBlock.mockResolvedValueOnce(
-    makeBlockRow({ id, block_type: 'content', content, parent_id: null }),
+    makeBlockRow({ id, block_type: blockType, content, parent_id: null }),
   )
   // The space-scope check: report the target as belonging to the active space.
   mockedBatchResolve.mockResolvedValueOnce([
-    { id, title: content, block_type: 'content', deleted: false },
+    { id, title: content, block_type: blockType, deleted: false },
   ])
   const { result } = renderHook(() => useNavigateHarness())
   await act(async () => {
@@ -241,5 +249,50 @@ describe('resolve-store block-title seed parity (#4228)', () => {
     expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'SAME_ID'))?.title).toBe(
       titleAfterFirstSeed,
     )
+  })
+})
+
+describe('resolve-store title parity — PAGE and TAG targets (#4228 review)', () => {
+  // The original parity suite only ever passed `block_type: 'content'`, which
+  // is exactly why a page-capping regression in `handleNavigate` shipped green
+  // past it. `batch_resolve` and `get_block` both return `content` for EVERY
+  // type, so all three seeders see page and tag rows too — and capping one
+  // breaks `getPageDisplayName(title, 'leaf')` in `renderBlockLink` while
+  // disagreeing with `preload`, which writes `p.content` verbatim.
+  const LONG_PATH = `Engineering/Platform/Observability/${'z'.repeat(40)}`
+
+  it('both id-fetching seeders write a long PAGE path verbatim, byte-identically', async () => {
+    expect(LONG_PATH.length).toBeGreaterThan(60)
+
+    await seedViaFetchAndCacheLinks('PAGE_B', LONG_PATH, 'page')
+    const viaFetch = useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_B'))?.title
+
+    await seedViaHandleNavigate('PAGE_C', LONG_PATH, 'page')
+    const viaNavigate = await waitFor(() => {
+      const title = useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_C'))?.title
+      expect(title).toBeDefined()
+      return title
+    })
+
+    expect(viaFetch).toBe(LONG_PATH)
+    expect(viaNavigate).toBe(LONG_PATH)
+    expect(viaNavigate).toBe(viaFetch)
+  })
+
+  it('and a long TAG name verbatim too', async () => {
+    const longTag = `area/${'t'.repeat(80)}`
+
+    await seedViaFetchAndCacheLinks('TAG_B', longTag, 'tag')
+    const viaFetch = useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'TAG_B'))?.title
+
+    await seedViaHandleNavigate('TAG_C', longTag, 'tag')
+    const viaNavigate = await waitFor(() => {
+      const title = useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'TAG_C'))?.title
+      expect(title).toBeDefined()
+      return title
+    })
+
+    expect(viaFetch).toBe(longTag)
+    expect(viaNavigate).toBe(viaFetch)
   })
 })

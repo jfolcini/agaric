@@ -19,7 +19,7 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
-import { normalizeBlockRefTitle } from '@/lib/block-title'
+import { normalizeBlockRefTitle, untitledOr } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { toSpaceScope } from '@/lib/space-scope'
@@ -131,12 +131,22 @@ export function useBlockNavigateToLink({
         // (use-block-resolve.ts) and `fetchAndCacheLinks`
         // (use-block-link-resolve.ts) apply to their own content, so all
         // three seed call sites write byte-identical titles for the same
-        // block id (`@/lib/block-title`'s docblock).
+        // CONTENT block id (`@/lib/block-title`'s docblock).
+        //
+        // Gated on `block_type` like both siblings: a page target reaches
+        // this line — the `block_type === 'page'` branch immediately below
+        // is proof — and capping a namespaced path breaks
+        // `getPageDisplayName(title, 'leaf')` in `renderBlockLink` and
+        // disagrees with `preload`, which writes `p.content` verbatim under
+        // this same key. `untitledOr` gives page and tag the trimmed-empty
+        // test WITHOUT the first-line split or the cap.
         useResolveStore
           .getState()
           .set(
             targetId,
-            normalizeBlockRefTitle(targetBlock.content),
+            targetBlock.block_type === 'content'
+              ? normalizeBlockRefTitle(targetBlock.content)
+              : untitledOr(targetBlock.content),
             targetBlock.deleted_at !== null,
           )
 
