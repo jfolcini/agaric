@@ -13,6 +13,10 @@ name: Validate (prek-equivalent)
 #   - detect-changes — classifies the diff into docs_only/frontend/backend/ci.
 #   - verify-version-agreement — always-on 5-way version mutual-agreement
 #                        check (#2975); no path gating, no docs-only skip.
+#   - verify-lockfiles — asserts BOTH Cargo.lock files (src-tauri/ and
+#                        src-tauri/fuzz/) are a faithful resolution of their
+#                        manifests (#4142); no build, ~30s. Gated on backend
+#                        changes.
 #   - lint            — the full prek hook suite (clippy, cargo-deny,
 #                        cargo-audit, zizmor, sqlx-prepare, …); skipped on a
 #                        provably docs-only diff.
@@ -316,6 +320,156 @@ jobs:
             echo "::error::Version drift — tauri.conf.json=$CONF, Cargo.toml=$CARGO, Cargo.lock=$CARGO_LOCK, package.json=$PKG, package-lock.json=$PKG_LOCK. Bump all of them in lockstep."
             exit 1
           fi
+
+  # ---------------------------------------------------------------------------
+  # verify-lockfiles (#4142) — assert BOTH Cargo.lock files are a faithful
+  # resolution of their manifests. Nothing else in the pipeline did: no job
+  # builds with `--locked`, so cargo's default on a lock that disagrees with
+  # the dependency graph is to silently re-resolve and rewrite it. In a runner
+  # that rewrite is discarded with the workspace, the build goes green, and
+  # `main` keeps the bad lock. #4139 hand-applied a lock stanza and leaned on
+  # a LOCAL `cargo metadata --locked` as the only thing that would have caught
+  # a wrong `dependencies` array; this job is that check made repeatable.
+  #
+  # It covers `src-tauri/Cargo.lock` AND `src-tauri/fuzz/Cargo.lock` — fuzz is
+  # its own workspace with its own lock, and #4139 established it sits outside
+  # the advisory lane entirely, so a check that stopped at the first lock would
+  # leave exactly the half-covered pair this job exists to avoid.
+  #
+  # NOT about checksums: cargo verifies the sha256 on download and fails hard,
+  # so a bad checksum cannot reach `main` green. This is the GRAPH half —
+  # package versions, `dependencies` arrays, and the resolution they imply.
+  #
+  # TWO steps, because `--locked` alone is NOT sufficient (measured, cargo
+  # 1.95.0): a `dependencies` entry naming a package with no `[[package]]`
+  # stanza is silently DROPPED when cargo reads the lock, so
+  # `cargo metadata --locked` exits 0 with no warning on it — and so do
+  # `cargo tree/fetch/update --locked` and a full `cargo build --locked`
+  # (all re-measured on 1.95.0). The second half re-runs cargo WITHOUT
+  # `--locked` (and `--offline`, see the step body) and diffs the lock it
+  # actually writes against a snapshot, which catches that residue.
+  #
+  # NO false positive from a stale-but-valid lock: cargo's resolver is
+  # conservative, so an older locked version that still satisfies every
+  # requirement is kept rather than bumped, and an existing lockfile
+  # `version =` is preserved rather than migrated. Step (2) only ever
+  # rewrites a lock cargo genuinely disagrees with. (Both verified on 1.95.0.)
+  #
+  # No build, no system deps (cargo metadata never runs build scripts), and
+  # deliberately NO rust-cache: the whole job is ~30-60 s wall / 1.5 GB of
+  # registry downloads from a cold CARGO_HOME (measured locally; the spread is
+  # download bandwidth), and any action that invokes cargo before the step
+  # could re-resolve and rewrite the lock ahead of the snapshot, masking the
+  # very drift being looked for. 10-min ceiling sized for slow-mirror/runner
+  # variance over that minute, per the file's convention.
+  # ---------------------------------------------------------------------------
+  verify-lockfiles:
+    needs: detect-changes
+    # Gated on the `backend` category, which is exactly right and needs no new
+    # classifier bucket: both lockfiles and all eight Cargo.toml manifests live
+    # under `src-tauri/`, which `backend_re` matches at the root anchor. The
+    # classifier is also fail-closed, so an unrecognized path (e.g. a
+    # `rust-toolchain.toml` bump, which CAN change resolution through the
+    # MSRV-aware resolver) pins backend=true and runs this too.
+    if: needs.detect-changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          # #640: exact toolchain pin — keep in lockstep with
+          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
+          # It matters more here than elsewhere: the resolver is
+          # version-sensitive (MSRV-aware resolution), so a floating
+          # toolchain could disagree with the committed lock for reasons
+          # that have nothing to do with the diff.
+          toolchain: 1.95.0
+
+      - name: Verify both Cargo.lock files resolve their manifests
+        working-directory: src-tauri
+        run: |
+          set -euo pipefail
+
+          snapshots="$(mktemp -d)"
+          fail=0
+
+          for lock in Cargo.lock fuzz/Cargo.lock; do
+            manifest="$(dirname "$lock")/Cargo.toml"
+            label="src-tauri/$lock"
+            snap="$snapshots/${lock//\//_}"
+            cp "$lock" "$snap"
+            echo "::group::$label"
+
+            # (1) The lock must be a VALID resolution of the manifests as
+            # written. `--locked` forbids the silent re-resolve, so a stanza
+            # whose version no dependent can satisfy is a hard error here
+            # instead of a green build against a lock that was never the one
+            # in the repo.
+            if ! cargo metadata --locked --format-version 1 \
+                  --manifest-path "$manifest" >/dev/null; then
+              echo "::error file=$label::cargo could not resolve $label with --locked. See the cargo error above: normally the lock disagrees with the manifests (regenerate and commit it), but a crates.io index/download failure surfaces here too."
+              fail=1
+              echo "::endgroup::"
+              continue
+            fi
+
+            # (2) `--locked` is necessary but NOT sufficient. Cargo silently
+            # DROPS a `dependencies` entry naming a package that has no
+            # `[[package]]` stanza, so a hand-applied or badly-merged edit can
+            # leave a phantom edge that step (1) accepts (measured against
+            # cargo 1.95.0: exit 0, no warning). Re-run WITHOUT `--locked` so
+            # cargo writes the lock it would actually generate, then diff
+            # against the snapshot taken above. Any output is drift the
+            # committed lock is carrying.
+            #
+            # `--offline`, not a second networked resolve. Step (1) passing
+            # means cargo needs no resolution change, so the only rewrite left
+            # for step (2) is dropping residue the lock already carries — that
+            # can never pull a package step (1) did not already download, and
+            # step (1) downloads the whole graph. Verified from an EMPTY
+            # CARGO_HOME: step (1) warms exactly what step (2) needs, and the
+            # phantom-edge diff still appears. This halves the job's crates.io
+            # exposure, so a registry hiccup can only ever red the annotated
+            # step (1) and never this one.
+            #
+            # NOT guard-free: an unguarded failure here would abort the whole
+            # step under `set -e`, leaving `::group::` unterminated (the rest
+            # of the log collapses into it), emitting no annotation, and never
+            # checking the SECOND lockfile.
+            if ! cargo metadata --offline --format-version 1 \
+                  --manifest-path "$manifest" >/dev/null; then
+              echo "::error file=$label::cargo failed to re-resolve $label offline after --locked accepted it — see the cargo error above."
+              fail=1
+              cp "$snap" "$lock"
+              echo "::endgroup::"
+              continue
+            fi
+            if ! diff -u "$snap" "$lock" \
+                  --label "$label (committed)" --label "$label (what cargo resolves)"; then
+              echo "::error file=$label::$label is not what cargo resolves — the diff above is what cargo rewrote. Regenerate and commit the lockfile."
+              fail=1
+            fi
+            # Step (2) rewrites the lock IN PLACE. Put the committed bytes
+            # back before the next iteration: it keeps the checkout clean for
+            # anything that runs after this step, makes the loop order
+            # irrelevant (no iteration can ever snapshot a lock a previous one
+            # rewrote), and — the reason it is not merely tidy — this block is
+            # meant to be run verbatim locally to reproduce a red, which
+            # without the restore silently edits the developer's Cargo.lock.
+            cp "$snap" "$lock"
+            echo "::endgroup::"
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Cargo.lock verification FAILED (see above)."
+            exit 1
+          fi
+          echo "Both Cargo.lock files are graph-consistent with their manifests."
 
   # ---------------------------------------------------------------------------
   # lint — prek hook suite (excluding vitest/cargo-test/no-commit-to-branch),
@@ -1964,7 +2118,7 @@ jobs:
   # flips frontend). Full truth table in the PR body.
   # ---------------------------------------------------------------------------
   validate-all:
-    needs: [detect-changes, verify-version-agreement, lint, docs-lint, vitest, vitest-node22, playwright, cargo-tests, cargo-coverage, mcp-tests]
+    needs: [detect-changes, verify-version-agreement, verify-lockfiles, lint, docs-lint, vitest, vitest-node22, playwright, cargo-tests, cargo-coverage, mcp-tests]
     if: always()
     runs-on: ubuntu-24.04
     # PEND-41 R1 — trivial jq/bash assertion (~2s observed); 5-min floor.
@@ -2053,6 +2207,10 @@ jobs:
           check_job cargo-tests "$be_skip_ok"
           check_job cargo-coverage "$be_skip_ok"
           check_job mcp-tests "$be_skip_ok"
+          # #4142: the Cargo.lock graph check is gated on the same `backend`
+          # category (both lockfiles and every Cargo.toml live under
+          # src-tauri/), so it takes the same skip rule.
+          check_job verify-lockfiles "$be_skip_ok"
 
           # ---- docs-lint: the complement (runs on docs-only PRs) ------------
           # success → OK only under docs_only (it should have run)
