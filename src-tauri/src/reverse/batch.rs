@@ -887,14 +887,31 @@ fn build_reverse_delete_property(
     }))
 }
 
+/// Batch twin of [`attachment_ops::reverse_delete_attachment`]. Keep the two
+/// byte-identical — `compute_reverse_batch_matches_per_op_loop` in
+/// `super::tests` is the oracle: its fixture seeds each `delete_attachment`
+/// with a DIFFERENT `fs_path` from the matching `add_attachment` (#3706
+/// review), so a twin that fails to adopt the delete-time path — or adopts
+/// the wrong one — makes `batched` disagree with `legacy` there. An absolute
+/// pin on the batched `fs_path` in that same test additionally catches a
+/// regression shared by both twins (e.g. in the `adopt_delete_time_fs_path`
+/// helper they both call), which the parity comparison alone cannot see.
+///
+/// `record` is the `delete_attachment` being reversed; its payload carries the
+/// `fs_path` the row held at delete time, which
+/// [`attachment_ops::adopt_delete_time_fs_path`] prefers over the original
+/// `add_attachment`'s (#3706 review — see that function for why).
 fn build_reverse_delete_attachment(
-    _record: &OpRecord,
+    record: &OpRecord,
     prior_payload: Option<&str>,
 ) -> Result<OpPayload, AppError> {
     let p_json = prior_payload.ok_or(AppError::NonReversible {
         op_type: "delete_attachment".into(),
     })?;
-    let add_payload: agaric_store::op::AddAttachmentPayload = serde_json::from_str(p_json)?;
+    let mut add_payload: agaric_store::op::AddAttachmentPayload = serde_json::from_str(p_json)?;
+    let delete_payload: agaric_store::op::DeleteAttachmentPayload =
+        serde_json::from_str(&record.payload)?;
+    attachment_ops::adopt_delete_time_fs_path(&delete_payload.fs_path, &mut add_payload);
     Ok(OpPayload::AddAttachment(add_payload))
 }
 

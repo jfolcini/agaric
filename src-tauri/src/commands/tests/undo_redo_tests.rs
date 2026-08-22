@@ -4246,6 +4246,7 @@ async fn apply_reverse_remove_tag_on_nonexistent_is_idempotent() {
         DEV,
         &payload,
         crate::db::now_ms(),
+        None,
     )
     .await;
 
@@ -4272,6 +4273,7 @@ async fn apply_reverse_delete_property_on_nonexistent_is_idempotent() {
         DEV,
         &payload,
         crate::db::now_ms(),
+        None,
     )
     .await;
 
@@ -4301,6 +4303,7 @@ async fn apply_reverse_delete_attachment_on_nonexistent_is_idempotent() {
         DEV,
         &payload,
         crate::db::now_ms(),
+        None,
     )
     .await;
 
@@ -4382,6 +4385,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
             value_bool: None,
         }),
         crate::db::now_ms(),
+        None,
     )
     .await
     .expect("reverse SetProperty(todo_state) must not hit the 0088 CHECK");
@@ -4401,6 +4405,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
             value_bool: None,
         }),
         crate::db::now_ms(),
+        None,
     )
     .await
     .expect("reverse SetProperty(due_date) must not hit the 0088 CHECK");
@@ -4417,6 +4422,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
             key: "scheduled_date".into(),
         }),
         crate::db::now_ms(),
+        None,
     )
     .await
     .unwrap();
@@ -4436,6 +4442,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
             value_bool: None,
         }),
         crate::db::now_ms(),
+        None,
     )
     .await
     .expect("reverse SetProperty(space) must not hit the 0088 CHECK");
@@ -4488,6 +4495,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
             key: "space".into(),
         }),
         crate::db::now_ms(),
+        None,
     )
     .await
     .unwrap();
@@ -4980,6 +4988,7 @@ async fn apply_reverse_move_block_refreshes_space_id_657() {
         DEV,
         &payload,
         crate::db::now_ms(),
+        None,
     )
     .await
     .unwrap();
@@ -5032,6 +5041,7 @@ async fn apply_reverse_restore_block_refreshes_space_id_657() {
         DEV,
         &payload,
         crate::db::now_ms(),
+        None,
     )
     .await
     .unwrap();
