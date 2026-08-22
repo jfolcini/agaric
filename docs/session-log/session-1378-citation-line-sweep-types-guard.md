@@ -6,8 +6,8 @@
 | **Subagents** | one builder (with read-only verification subagents), one adversarial reviewer |
 | **Items closed** | `#4244`, `#4245` |
 | **Items modified** | — |
-| **Tests added** | +9 guard self-test scenarios |
-| **Files touched** | 8 — see the PR's file list |
+| **Tests added** | +10 guard self-test assertions (4 in types-erasure, 6 scenarios in doc-code-paths) |
+| **Files touched** | 10 — see the PR's file list |
 
 **Summary:** two leftovers from the guard work earlier in this series.
 
@@ -59,8 +59,8 @@ runs**, so the exclusion holds for every export form rather than just `const`. B
 pinned, including a mixed file where a file-scope runtime export still fails while an ambient one
 passes.
 
-**Verification:** both guards and their self-tests green (21 assertions in types-erasure, 3 of them
-new (#4245); 6 new scenarios in doc-code-paths); `tsc -b` clean; the touched tauri-mock suites 782
+**Verification:** both guards and their self-tests green (22 assertions in types-erasure, 4 of them
+new — 3 for #4245 plus the bodyless-shorthand fixture; 6 new scenarios in doc-code-paths); `tsc -b` clean; the touched tauri-mock suites 782
 passing. One bug
 was caught during the work — an early-return path in `computeMisses()` did not carry the new
 `warnings` key and crashed `check()` — fixed before it went green.
