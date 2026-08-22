@@ -2378,12 +2378,28 @@ async fn compute_reverse_batch_matches_per_op_loop() {
         });
         att_ids.push(att_id);
     }
+    // #3706 review (B-3 parity): the delete's `fs_path` deliberately DIFFERS
+    // from the matching add's (`/tmp/blob_{att_id}.png` vs `/tmp/{att_id}.png`)
+    // — simulating a repoint onto a shared blob between the add and the
+    // delete, same as the three production repointers. An identical path on
+    // both ops would make the twins agree whether or not either one adopts
+    // the delete-time path, so the parity comparison below could not tell a
+    // correct adoption from a same-payload no-op.
+    //
+    // The index of the first `delete_attachment` is captured from `op_refs`
+    // itself rather than hand-counted from the groups ahead of it: the
+    // absolute-answer assertion at the bottom indexes `batched` by it, and a
+    // literal offset silently RETARGETS onto a different op-type the moment
+    // anyone inserts an op earlier in the batch — surfacing as a bogus
+    // "expected AddAttachment" panic that reads like an attachment-reverse
+    // regression rather than a stale index (#3706 review).
+    let delete_att_base = op_refs.len();
     for att_id in &att_ids {
         let rec = append_op(
             &pool,
             OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
                 attachment_id: BlockId::test_id(att_id),
-                fs_path: format!("/tmp/{att_id}.png"),
+                fs_path: format!("/tmp/blob_{att_id}.png"),
             }),
             next_ts(&mut ts),
         )
@@ -2578,6 +2594,30 @@ async fn compute_reverse_batch_matches_per_op_loop() {
              replicated audit row"
         ),
         other => panic!("expected EditBlock for the peer-origin op, got {other:?}"),
+    }
+
+    // #3706 review: pin the ABSOLUTE answer for the attachment reverses too —
+    // not just batch/per-op agreement. The `delete_attachment` reverses
+    // occupy `delete_att_base .. delete_att_base + att_ids.len()`, an offset
+    // DERIVED from `op_refs.len()` at the point that group was appended (see
+    // there) rather than hand-counted from the preceding groups. A regression
+    // shared by both kernels — e.g. gutting the body of the
+    // `adopt_delete_time_fs_path` helper they both call, rather than just one
+    // call site — would still satisfy the parity comparison above, since it
+    // would move both `batched` and `legacy` the same wrong way.
+    for (i, att_id) in att_ids.iter().enumerate() {
+        let idx = delete_att_base + i;
+        match &batched[idx] {
+            OpPayload::AddAttachment(p) => assert_eq!(
+                p.fs_path,
+                format!("/tmp/blob_{att_id}.png"),
+                "#3706 review: the restored row must name the path the row \
+                 held at DELETE time, not the one it was created with"
+            ),
+            other => panic!(
+                "expected AddAttachment for the delete_attachment reverse at idx {idx}, got {other:?}"
+            ),
+        }
     }
 }
 
