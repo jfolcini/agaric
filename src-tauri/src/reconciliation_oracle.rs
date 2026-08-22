@@ -1727,14 +1727,48 @@ pub async fn reconcile_block_links_unresolved(
     let mut out = Vec::new();
 
     // --- MISSING: an edge is owed, and nothing records the debt -------------
+    //
+    // #4241 — the target's presence/liveness is folded into `expected` so a
+    // triager does not have to re-derive it by hand. `by_id` is already built
+    // above from the SAME `dump_blocks` this arm's `expected`/`stored` diff
+    // uses, so this costs no extra query — just a map lookup per divergence.
+    //
+    // A LIVE target names a debt that is actively repairable right now (the
+    // #4118 case-2 timing/cross-space shape, or a genuinely lost repair): the
+    // target could be reindexed today and nothing would happen, because
+    // nothing points a `ReindexBlockLinks` at THIS source. An ABSENT target
+    // is the one case this arm cannot narrow further — a target that was
+    // purged (the irreducible window this doc's MISSING section already
+    // enumerates) and a target that has simply never been created yet are
+    // indistinguishable from `blocks` alone, so both render the same way
+    // rather than one masquerading as the other.
     for (source_id, target_id) in expected.difference(&stored) {
+        let target_state = match by_id.get(target_id.as_str()) {
+            None => {
+                "the target does NOT exist in blocks right now — either it has never been \
+                 created (the ongoing #4118 case-1 debt this table exists for) or it WAS a \
+                 live block that a PurgeBlock hard-deleted, taking its block_links edge with \
+                 it via ON DELETE CASCADE (the irreducible purge window, permanent residue \
+                 rather than a defect); the two are indistinguishable from state alone"
+            }
+            Some(t) if t.deleted_at.is_some() => {
+                "the target exists in blocks but is SOFT-deleted, so this debt is dormant \
+                 unless the target is restored"
+            }
+            Some(_) => {
+                "the target exists in blocks and is LIVE right now — this debt is actively \
+                 repairable the moment something reindexes the source, and nothing currently \
+                 does"
+            }
+        };
         out.push(Divergence {
             artefact: "block_links_unresolved.row",
             key: format!("{source_id} -> {target_id}"),
-            expected: "a block_links_unresolved row: the live source's content names this \
-                       token and no block_links row carries the edge, so the edge is OWED \
-                       and this row is the only record of it"
-                .to_owned(),
+            expected: format!(
+                "a block_links_unresolved row: the live source's content names this \
+                 token and no block_links row carries the edge, so the edge is OWED \
+                 and this row is the only record of it — {target_state}"
+            ),
             actual: "no row in block_links_unresolved — the repair that would re-link this \
                      edge when the target becomes linkable can no longer be found"
                 .to_owned(),

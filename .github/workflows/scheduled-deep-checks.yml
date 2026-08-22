@@ -782,11 +782,12 @@ jobs:
         # no-op this rule exists to prevent.) Every remaining `#[ignore]`d test
         # in the workspace is a perf gate, a measurement harness, or a manual
         # codegen task, and all of them are expected to PASS in this sweep.
-        # `--workspace` (#3212): bare form is package-scoped to `agaric` only. No
-        # #[ignore]d test currently lives outside that package (verified via
-        # `cargo nextest list --workspace`), so this is a no-op today, but it
-        # keeps a future ignored perf gate added to agaric-engine/store/etc.
-        # from being silently skipped by this sweep.
+        # `--workspace` (#3212): bare form is package-scoped to `agaric` only,
+        # and since #4242 it is no longer a no-op — the three
+        # `..._residency_at_*_blocks_4242` measurement tests live in
+        # `agaric-store` (`cache::tests`) and are reachable ONLY through
+        # `--workspace`. Dropping the flag would silently skip them, which is
+        # exactly the failure mode #3212 added it to prevent.
         run: >-
           cargo nextest run --workspace --run-ignored=only --no-fail-fast
 

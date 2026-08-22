@@ -1,3 +1,4 @@
+use futures_util::TryStreamExt;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 
@@ -287,19 +288,39 @@ pub async fn rebuild_block_links_unresolved_conn(
     // or `((` — so it can only skip rows the regex would have found nothing in.
     // (`[` and `(` carry no special meaning in SQLite's LIKE; only `%` and `_`
     // do.)
-    let rows = sqlx::query!(
-        "SELECT id, content FROM blocks \
-         WHERE deleted_at IS NULL AND content IS NOT NULL \
-           AND (content LIKE '%[[%' OR content LIKE '%((%')",
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-
+    // Streamed rather than `fetch_all` (#4242): the decoded `SnapshotData` this
+    // is called from restore is still alive for the caller's whole transaction,
+    // so buffering every matched row's `content` into a `Vec` up front would
+    // roughly double peak content residency at the one moment the vault is
+    // largest. Each row is reduced to its `(source, target)` pairs and then
+    // dropped, so peak residency here is O(pairs) rather than O(matched
+    // content) — measured to matter (#4242): on a 100k-block synthetic vault
+    // the buffered `Vec` accounted for ~14% of the transaction's
+    // peak-over-baseline RSS, and the ABSOLUTE gap grows with block count
+    // (below the measurement's noise floor at 20k, ~8 MB at 50k, ~16 MB at
+    // 100k) because it is content bytes while the rest of the transaction is
+    // closer to fixed per-row overhead.
+    //
+    // Those numbers are not a one-off diagnostic that was thrown away: they
+    // come from the `#[ignore]`d `..._residency_at_{20k,50k,100k}_blocks_4242`
+    // tests in this crate's `cache::tests`, which re-run the comparison —
+    // this streamed fold against a faithful copy of the pre-#4242 buffered
+    // one — in the weekly deep-checks lane and print the current figures.
+    // They also pin the property this rewrite had to preserve: both folds
+    // must derive byte-identical obligations from the same vault.
     let mut pairs: Vec<(String, String)> = Vec::new();
-    for row in rows {
-        let content = row.content.unwrap_or_default();
-        for cap in super::ulid_link_re().captures_iter(&content) {
-            pairs.push((row.id.clone(), cap[1].to_owned()));
+    {
+        let mut rows = sqlx::query!(
+            "SELECT id, content FROM blocks \
+             WHERE deleted_at IS NULL AND content IS NOT NULL \
+               AND (content LIKE '%[[%' OR content LIKE '%((%')",
+        )
+        .fetch(&mut *conn);
+        while let Some(row) = rows.try_next().await? {
+            let content = row.content.unwrap_or_default();
+            for cap in super::ulid_link_re().captures_iter(&content) {
+                pairs.push((row.id.clone(), cap[1].to_owned()));
+            }
         }
     }
     // One block naming the same target twice is one obligation. Deduplicating
