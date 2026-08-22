@@ -27,7 +27,7 @@
  *
  *  - `search_blocks_partitioned` returned INSERTION order where both partitions
  *    are `ORDER BY fts.rank, b.id` (`fts/search/fetch.rs:292`, routed through
- *    `fts_fetch_rows` by `partitioned.rs:165-212`);
+ *    `fts_fetch_rows` by `src-tauri/agaric-store/src/fts/search/partitioned.rs:165-212`);
  *  - `decodeSearchCursor` ran on the two PAGING arms only, where
  *    `PageRequest::new` decodes before `search_with_toggles` dispatches
  *    (`src-tauri/src/commands/queries.rs:228`) — so the refusal is the
@@ -40,7 +40,7 @@
  *    here;
  *  - `limit` is validated, not clamped: `PageRequest::new` takes `1..=200`
  *    (`pagination/mod.rs:855-866`) and `search_blocks_inner` then rejects
- *    anything above `MAX_SEARCH_RESULTS` (`queries.rs:239-245`).
+ *    anything above `MAX_SEARCH_RESULTS` (`src-tauri/src/commands/queries.rs:239-245`).
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -304,7 +304,7 @@ describe('search_blocks — the FTS arms match the stripped text (#3938)', () =>
     // `**gad**` is in `blocks.content` and absent from `fts_blocks.stripped`.
     expect(ids(search({ query: '**gad**' }))).toEqual([])
     // But regex mode DOES see them — `regex_mode_query` runs against the raw
-    // column by contract (`toggle_filter.rs:716-741`), which is what makes the
+    // column by contract (`src-tauri/agaric-store/src/fts/toggle_filter.rs:716-741`), which is what makes the
     // assertion above a statement about the FTS arm rather than about the
     // fixture.
     expect(ids(search({ query: '\\*\\*gad\\*\\*', filter: FILTER_REGEX }))).toEqual([MARKUP])
@@ -312,12 +312,12 @@ describe('search_blocks — the FTS arms match the stripped text (#3938)', () =>
 
   /**
    * The #3938 falsifier for `search_with_toggles`' `!toggles.any()` fast path
-   * (`toggle_filter.rs:206-222`).
+   * (`src-tauri/agaric-store/src/fts/toggle_filter.rs:206-222`).
    *
    * With no toggle on, `compose_literal_pattern` composes `(?i)<escaped
    * query>` — which every FTS candidate satisfies, EXCEPT one whose term
    * survives only in the stripped text: `post_filter_row`
-   * (`toggle_filter.rs:618-642`) matches that pattern against the RAW
+   * (`src-tauri/agaric-store/src/fts/toggle_filter.rs:618-642`) matches that pattern against the RAW
    * `content` column. So the fast path and the post-filter fallthrough
    * disagree on exactly this row and nothing else, which is why the branch was
    * un-falsifiable while the mock folded over raw content.
@@ -385,9 +385,9 @@ describe('search_blocks_partitioned — same stripped haystack as search_blocks 
  * #4030 item 1 — BOTH partitions are rank-ordered.
  *
  * `search_fts_partitioned` runs its two scans through `fts_fetch_rows`
- * (`partitioned.rs:165-212`), whose SQL ends `ORDER BY fts.rank, b.id`
- * (`fetch.rs:292`) — the SAME clause the single-partition `search_fts` arm
- * pages on. `partitioned.rs:55-60` documents both partitions as "in rank
+ * (`src-tauri/agaric-store/src/fts/search/partitioned.rs:165-212`), whose SQL ends `ORDER BY fts.rank, b.id`
+ * (`src-tauri/agaric-store/src/fts/search/fetch.rs:292`) — the SAME clause the single-partition `search_fts` arm
+ * pages on. `src-tauri/agaric-store/src/fts/search/partitioned.rs:55-60` documents both partitions as "in rank
  * order". #4026 moved this handler's HAYSTACK onto `stripForFts` and left its
  * SEQUENCE at `blocks` Map insertion order, so the two sibling commands agreed
  * on which blocks match and disagreed on their order.
@@ -464,7 +464,7 @@ describe('search_blocks_partitioned — both partitions are (rank, id)-ordered (
 
   it('mints no cursor on either partition', () => {
     // `search_blocks_partitioned_inner` hardcodes `next_cursor: None`
-    // (`queries.rs:783-796`) — the palette does not paginate. Ordering the
+    // (`src-tauri/src/commands/queries.rs:783-796`) — the palette does not paginate. Ordering the
     // partitions through the `search_fts` seam must not start emitting one.
     const res = partitioned({ pageLimit: 2, blockLimit: 2 })
     expect(res.pages.next_cursor).toBeNull()
@@ -472,8 +472,8 @@ describe('search_blocks_partitioned — both partitions are (rank, id)-ordered (
   })
 
   it('answers a zero limit with an empty partition and no has_more', () => {
-    // `partitioned.rs:237-238` — `page_limit_usize > 0 && …`. Zero is a legal
-    // ask HERE (the command's own range is `[0, 100]`, `queries.rs:735-741`),
+    // `src-tauri/agaric-store/src/fts/search/partitioned.rs:237-238` — `page_limit_usize > 0 && …`. Zero is a legal
+    // ask HERE (the command's own range is `[0, 100]`, `src-tauri/src/commands/queries.rs:735-741`),
     // unlike `search_blocks`'s `PageRequest::new`, which refuses it.
     const res = partitioned({ pageLimit: 0, blockLimit: 0 })
     expect(res.pages.items).toEqual([])
@@ -710,7 +710,7 @@ describe('search_blocks — the FTS arm mints a resumable (rank, id) cursor (#39
   })
 
   // #4030 item 2 — the OTHER two arms. `search_blocks_inner` decodes the cursor
-  // in `PageRequest::new` (`queries.rs:228`) BEFORE `search_with_toggles` picks
+  // in `PageRequest::new` (`src-tauri/src/commands/queries.rs:228`) BEFORE `search_with_toggles` picks
   // an arm, so the refusal belongs to the command; an arm that happens to
   // ignore the decoded value still cannot be reached with a cursor that does
   // not decode. Both of these return before the mock's paging helpers ever run,
@@ -925,7 +925,7 @@ describe('search_blocks — the FTS arm mints a resumable (rank, id) cursor (#39
  * The rank ORDER itself, and the OTHER arm of the keyset predicate.
  *
  * The identical-content fixture above exercises the tie arm of
- * `fetch.rs:199-201`'s OR — `|rank - cursor_rank| <= eps AND id > cursor_id` —
+ * `src-tauri/agaric-store/src/fts/search/fetch.rs:199-201`'s OR — `|rank - cursor_rank| <= eps AND id > cursor_id` —
  * because every row ranks the same and `id` alone separates them. This fixture
  * ranks every row DIFFERENTLY, so it exercises the strict arm
  * (`rank > cursor_rank + eps`) instead. Pinning one and leaving the other open
@@ -995,7 +995,7 @@ describe('search_blocks — the FTS arm orders by (rank, id), not insertion (#39
  *     refuses the request. The backend cannot get there at all —
  *     `rows[limit_usize - 1]` would underflow.
  *  2. `search_blocks_inner` then rejects `limit > MAX_SEARCH_RESULTS`
- *     (`queries.rs:239-245`) rather than letting `search_fts`'s `min` silently
+ *     (`src-tauri/src/commands/queries.rs:239-245`) rather than letting `search_fts`'s `min` silently
  *     shrink the ask, so `101..=200` is a refusal too — with a DIFFERENT
  *     message, since it is a different guard in a different function.
  *
@@ -1117,7 +1117,7 @@ describe('search_blocks — the limit range is a refusal, not a clamp (#4030)', 
 
   it('decodes the cursor before rejecting an over-cap limit', () => {
     // …and the FTS ceiling is checked AFTER `PageRequest::new` returns
-    // (`queries.rs:230-246`), so a 150-limit request with a broken cursor
+    // (`src-tauri/src/commands/queries.rs:230-246`), so a 150-limit request with a broken cursor
     // reports the CURSOR. Same two malformed inputs as the case above, opposite
     // answer — which is what pins the sequence rather than the set.
     expect(() => search({ query: 'gizmo', limit: 150, cursor: 'not base64!!' })).toThrow(

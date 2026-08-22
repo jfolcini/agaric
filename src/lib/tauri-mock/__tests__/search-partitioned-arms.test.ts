@@ -7,22 +7,22 @@
  * (`src-tauri/agaric-store/src/fts/toggle_filter.rs:309-543`) and the command
  * wrapper above it (`src-tauri/src/commands/queries.rs:713-790`).
  *
- *  1. **Blank query + a structural filter.** `toggle_filter.rs:330-360`
+ *  1. **Blank query + a structural filter.** `src-tauri/agaric-store/src/fts/toggle_filter.rs:330-360`
  *     returns the structurally-filtered partitions RECENCY-ordered via
  *     `fts_fetch_filter_only_partitioned` (`:1233-1288`), and two EMPTY
  *     partitions only when `has_filters` is false. The mock returned empty
  *     unconditionally. `block_type_filter` is not a parameter of the
  *     partitioned function, so — unlike `search_with_toggles`' disjunction at
  *     `:154-161` — it is not one of its `has_filters` disjuncts.
- *  2. **`'   '` is blank.** Both `toggle_filter.rs:330` and
- *     `partitioned.rs:127` test `query.trim().is_empty()`; the mock tested
+ *  2. **`'   '` is blank.** Both `src-tauri/agaric-store/src/fts/toggle_filter.rs:330` and
+ *     `src-tauri/agaric-store/src/fts/search/partitioned.rs:127` test `query.trim().is_empty()`; the mock tested
  *     `!query`, so a whitespace query reached the FTS path and matched on a
  *     space substring.
- *  3. **The limit guard's boundaries.** `queries.rs:735-741` rejects outside
+ *  3. **The limit guard's boundaries.** `src-tauri/src/commands/queries.rs:735-741` rejects outside
  *     `[0, MAX_SEARCH_RESULTS]` inclusive; only `101`, `150` and `0` were
  *     exercised, so nothing failed if `<=` became `<`.
  *  4. **Kind, for the two values the backend never turns into an `AppError`.**
- *     `page_limit` / `block_limit` are `u32` (`queries.rs:715-716`), so `-1`
+ *     `page_limit` / `block_limit` are `u32` (`src-tauri/src/commands/queries.rs:715-716`), so `-1`
  *     and `50.5` die in serde at the IPC boundary. The assertions below pin
  *     only THAT the mock refuses, never a kind — the documented exception
  *     `search_blocks` already carries.

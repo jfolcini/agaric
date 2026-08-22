@@ -491,11 +491,11 @@ describe('run_advanced_query — cursor payload shape (#3863)', () => {
     // DESC tiebreak (mirrors `resolve_sort` always terminating in `b.id`).
     expect(values).toHaveLength(2)
     // Position ASC's first row is MID (position 5) — its cursor value is
-    // TAGGED as an Int (`CursorKind::Position`, `engine.rs:232`), not folded
+    // TAGGED as an Int (`CursorKind::Position`, `src-tauri/agaric-store/src/query/engine.rs:232`), not folded
     // into an untyped `{ id }` object.
     expect(values[0]).toEqual({ t: 'Int', v: 5 })
     // The trailing tiebreak term carries the id, TAGGED as Text
-    // (`CursorKind::Id`, `engine.rs:220`).
+    // (`CursorKind::Id`, `src-tauri/agaric-store/src/query/engine.rs:220`).
     expect(values[1]).toEqual({ t: 'Text', v: MID })
   })
 
@@ -645,7 +645,7 @@ describe('run_advanced_query — malformed cursor is rejected, not silently rest
  *
  * The grouped arm decodes through {@link decodeGroupCursor} (NOT the flat
  * path's `decodeCursor`) — the backend's `run_grouped` decodes its own
- * `GroupCursor` (`engine.rs:1255-1270,1321-1324`), a DIFFERENT shape
+ * `GroupCursor` (`src-tauri/agaric-store/src/query/engine.rs:1255-1270,1321-1324`), a DIFFERENT shape
  * (`{version,count,key}`) from the flat `QueryCursor`'s
  * (`{version,values}`). The three base64/UTF-8/JSON cases below don't depend
  * on which shape is expected, but the version and well-formed cases do, so
@@ -731,7 +731,7 @@ describe('run_advanced_query — groupBy cursor is rejected the same way the fla
   // `decodeGroupCursor`'s own doc claims it mirrors serde's "deserialize the
   // whole struct — every field, typed — and only then compare versions"
   // ordering. `version` is declared FIRST in the real `GroupCursor`
-  // (`engine.rs:1241-1247`), so a cursor missing it entirely fails
+  // (`src-tauri/agaric-store/src/query/engine.rs:1241-1247`), so a cursor missing it entirely fails
   // deserialization ("missing field `version`"), never reaching the version
   // COMPARISON at all — that comparison can only ever see a `version` serde
   // already parsed as a number. A cursor with no `version` field, or one of
@@ -767,7 +767,7 @@ describe('run_advanced_query — groupBy cursor is rejected the same way the fla
  * The cursor payload carries USER TEXT: the `Title` term is the raw page
  * title (`SORT_COLUMN_GETTERS.title` → `row.content`) and `Priority` is a
  * user-configurable label. The engine encodes
- * `URL_SAFE_NO_PAD.encode(json.as_bytes())` (`engine.rs:176`) — i.e. the
+ * `URL_SAFE_NO_PAD.encode(json.as_bytes())` (`src-tauri/agaric-store/src/query/engine.rs:176`) — i.e. the
  * UTF-8 bytes of the JSON. `btoa` cannot do that: it throws
  * `InvalidCharacterError` above U+00FF and silently encodes the LATIN-1 byte
  * for U+0080–U+00FF, so the two failure modes are DIFFERENT and both are
@@ -887,7 +887,7 @@ describe('run_advanced_query — cursor byte fidelity for non-ASCII values (#386
   })
 
   /**
-   * #3863 note 1 — `EngineRow::cursor_value` (`engine.rs:322`) reads the
+   * #3863 note 1 — `EngineRow::cursor_value` (`src-tauri/agaric-store/src/query/engine.rs:322`) reads the
    * COALESCE'd `last_edited: i64` and can only ever emit `CursorValue::Int`;
    * `CursorValue::Null` is UNREACHABLE for that column. The mock's
    * "no op-log activity" sentinel must therefore encode as the engine's
@@ -1031,7 +1031,7 @@ describe('run_advanced_query — LastEdited filter reads the op-log, not the see
  *    rejects outright rather than one that merely differs. The engine's own
  *    answer for "this row has no rank" is `Null`
  *    (`EngineRow::cursor_value`'s `self.rank.map_or(CursorValue::Null,
- *    CursorValue::Real)`, `engine.rs:322`), so that is what the guard emits.
+ *    CursorValue::Real)`, `src-tauri/agaric-store/src/query/engine.rs:322`), so that is what the guard emits.
  *    Unreachable through `run_advanced_query` — the MATCH narrowing
  *    (`matchesFtsIndex`) and the ranker fold the SAME `stripForFts` text with
  *    the SAME function, so a surviving row always has ≥1 occurrence — which is
@@ -1552,7 +1552,7 @@ describe('cursorValueFor — every CursorKind round-trips to a value the resume 
  * is an opaque string it is free to persist, mangle or replay.
  *
  * The fixture set below is keyed off the engine's `CursorValue`
- * (`#[serde(tag = "t", content = "v")]`, `engine.rs:143`): serde accepts
+ * (`#[serde(tag = "t", content = "v")]`, `src-tauri/agaric-store/src/query/engine.rs:143`): serde accepts
  * exactly `Text(String)` / `Int(i64)` / `Real(f64)` / `Null` and rejects every
  * other tag/payload pairing at deserialization.
  */

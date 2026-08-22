@@ -233,7 +233,7 @@ describe('list_unlinked_references — matches fts_blocks.stripped (#4022)', () 
  * then each trimmed alias, and joins the surviving terms as
  * `(t1) OR (t2) …`. The mock matched on the title alone, so an alias mention
  * was a false negative — and not hypothetically: `pageAliases` is a modelled,
- * SEEDED store (`seed.ts:653`).
+ * SEEDED store (`src/lib/tauri-mock/seed.ts:653`).
  */
 describe('list_unlinked_references — matches page aliases too (#4036)', () => {
   const HOST = id('AHOST')

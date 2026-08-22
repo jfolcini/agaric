@@ -156,7 +156,7 @@ export function pushOpAt(
  *
  * `edit_block` (rather than `create_block`) is deliberate, and so is
  * `from_text === to_text === the page's current title`: the reverse of an
- * `edit_block` op is `content = from_text` (`revert.ts:105`,
+ * `edit_block` op is `content = from_text` (`src/lib/tauri-mock/revert.ts:105`,
  * `historyHandlers.undo_page_op`), so if a spec ever undoes or reverts deep
  * enough to reach a seeded row the effect is a content no-op, not a
  * cascading cohort delete (which `create_block`'s reverse would be).

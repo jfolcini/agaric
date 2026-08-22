@@ -33,7 +33,7 @@ import { fakeId, pairingPeerReveal, peerRefs } from '@/lib/tauri-mock/seed'
 // ASSUMPTION this count depends on (#3499 review): the counter is mutated
 // on READ, so `3` silently encodes "the pairing dialog is the only caller
 // of `list_peer_refs` during the wait". True today — `DeviceManagement`'s
-// load is mount/close-driven and `useSyncTrigger.ts:246` / `App.tsx:344`
+// load is mount/close-driven and `src/hooks/useSyncTrigger.ts:246` / `src/App.tsx:344`
 // are event-driven — but any added interval refresh of the device list
 // consumes a read, shifting the reveal one tick earlier and turning the
 // E2E spec's "waiting state persists" assertion into an instant success.

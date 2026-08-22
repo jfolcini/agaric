@@ -200,7 +200,7 @@ describe('platform', () => {
   // Dedup guard (#742, LOW): `isMobilePlatform` must live in ONE place.
   // The three former-duplicate sites must import it from `lib/platform`
   // and must NOT re-declare a local copy or carry the stale
-  // `tauri.ts:1871` doc anchor.
+  // `src/lib/tauri.ts:1871` doc anchor.
   describe('isMobilePlatform dedup — single export, three import sites', () => {
     const sites = [
       {

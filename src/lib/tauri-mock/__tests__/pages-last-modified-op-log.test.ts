@@ -14,7 +14,7 @@
  * epoch-sentinel rule to that value for COMPARISON only:
  *
  *  - the `RecentlyModified` keyset — `COALESCE(<that subquery>, ?{S})` with
- *    `LAST_MOD_NULL_SENTINEL = 0` (`metadata.rs:220,349-351`), so op-log-free
+ *    `LAST_MOD_NULL_SENTINEL = 0` (`src-tauri/src/commands/pages/metadata.rs:220,349-351`), so op-log-free
  *    rows tie at the bottom and fall to the id tiebreak;
  *  - `compile_last_edited` (`agaric-store/src/filters/primitive.rs`) — the
  *    same COALESCE, giving the documented "no op-log ⇒ epoch" rule (Rolling
@@ -209,7 +209,7 @@ describe('seed — every fixture page carries real op_log activity', () => {
 
   it('a page whose op_log rows are removed reports lastModifiedAt: null', () => {
     // The engine's answer for "never edited" is a NULL `last_modified_at`
-    // column (`metadata.rs:778` is not COALESCE'd — only the keyset and the
+    // column (`src-tauri/src/commands/pages/metadata.rs:778` is not COALESCE'd — only the keyset and the
     // filter coalesce, downstream). Any surviving fallback would report the
     // seeded stamp here instead.
     stripOpLogFor(SEED_IDS.PAGE_GETTING_STARTED)

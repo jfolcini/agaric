@@ -11,14 +11,14 @@
  *     ignored — the partitioning IS the block-type split
  *     (`src-tauri/src/commands/queries.rs:657-663`);
  *  2. `page_limit` / `block_limit` were not bounds-checked at all.
- *     `search_blocks_partitioned_inner` (`queries.rs:735-741`) rejects
+ *     `search_blocks_partitioned_inner` (`src-tauri/src/commands/queries.rs:735-741`) rejects
  *     anything outside `[0, MAX_SEARCH_RESULTS]` (100) BEFORE dispatch — a
  *     DIFFERENT guard from `search_blocks`'s `[1, 200]` `PageRequest::new`
  *     range, because zero is a legal partitioned ask
- *     (`partitioned.rs:237-238`'s `page_limit_usize > 0 && …`);
+ *     (`src-tauri/agaric-store/src/fts/search/partitioned.rs:237-238`'s `page_limit_usize > 0 && …`);
  *  3. the blank-query short circuit answered `{ items: [], next_cursor: null,
  *     has_more: false }` — missing `total_count`, which every other path on
- *     this command (and the inner `PageResponse`, `queries.rs:783-796`) sets
+ *     this command (and the inner `PageResponse`, `src-tauri/src/commands/queries.rs:783-796`) sets
  *     to `null`;
  *  4. `stripForFts` ran two or three times per candidate per request (once in
  *     the match-narrowing filter, once per partition it lands in) — a

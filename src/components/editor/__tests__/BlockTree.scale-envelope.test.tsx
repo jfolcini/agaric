@@ -437,7 +437,7 @@ describe('BlockTree scale envelope (#2467 Measure)', () => {
    *   3n       `child.id`, three times per row in the DFS: `visited.has`,
    *            `visited.add`, and the recursive `dfs(child.id, depth + 1)`.
    *    n       `child.depth`, in the identity-preserving test at
-   *            `tree-utils.ts:101`.
+   *            `src/lib/tree-utils.ts:101`.
    *
    * What is NOT in that list is the `{...child, depth}` spread on that same
    * line: it never runs on this fixture. `makeBlock` defaults `depth: 0` and

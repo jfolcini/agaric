@@ -10,7 +10,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  * zero e2e coverage before this spec.
  *
  * No seed page mentions another page's title as plain (unlinked) text
- * (checked `src/lib/tauri-mock/seed.ts` — `seed.ts:457-465` explicitly
+ * (checked `src/lib/tauri-mock/seed.ts` — `src/lib/tauri-mock/seed.ts:567-575` explicitly
  * warns "Quick Notes is a SHARED fixture" other specs depend on, so it is
  * not edited here). Per the established e2e convention (`addBlock` in
  * `e2e/error-scenarios.spec.ts`, `focusBlock`/`saveBlock` in
@@ -21,13 +21,13 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  * Attribute-only production hook added for this spec:
  * `src/components/backlinks/UnlinkedReferences.tsx` gained
  * `data-testid="unlinked-references"` on its root `<section>`, matching the
- * sibling `LinkedReferences.tsx:301` convention (`linked-references`) —
+ * sibling `src/components/backlinks/LinkedReferences.tsx:304` convention (`linked-references`) —
  * the unlinked panel previously had no stable root selector at all.
  *
  * Structural limitation (documented, not tested around): `handleLinkIt`
- * (`UnlinkedReferences.tsx:187-262`) calls `edit_block` and then patches
+ * (`src/components/backlinks/UnlinkedReferences.tsx:223-332`) calls `edit_block` and then patches
  * ONLY its own TanStack query cache optimistically — the comment at
- * `UnlinkedReferences.tsx:229-231` states `edit_block` "emits no
+ * `src/components/backlinks/UnlinkedReferences.tsx:270-271` states `edit_block` "emits no
  * `block:properties-changed`, so nothing else refetches". `LinkedReferences`
  * shares the same `queryClient` (`src/lib/query-client.ts`,
  * `staleTime: Infinity` / `gcTime: Infinity`, invalidated only by that

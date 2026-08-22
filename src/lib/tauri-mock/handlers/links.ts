@@ -80,7 +80,7 @@ export const linksHandlers = {
         // One query-SIDE divergence is left standing, and is named rather than
         // modelled: the backend early-returns an EMPTY result set when
         // `query.trim().is_empty()` or the query sanitizes to empty
-        // (`filters.rs:382-388` / `:955-962`), where `matchesFtsIndex` admits
+        // (`src-tauri/agaric-store/src/backlink/filters.rs:382-388` / `:955-962`), where `matchesFtsIndex` admits
         // every candidate for an empty needle. Note the backend TRIMS, so this
         // covers two shapes — `''` (which `matchesFtsIndex` short-circuits to
         // "match all") and whitespace-only such as `'   '` (which it runs as a
@@ -216,7 +216,7 @@ export const linksHandlers = {
     // getting-started for setup" is an unlinked reference to the
     // `getting-started`-aliased page on the backend; here it was a false
     // negative, and not hypothetically — `pageAliases` is a seeded store
-    // (`seed.ts:653`).
+    // (`src/lib/tauri-mock/seed.ts:653`).
     //
     // The `trim()` on each term is the backend's own (`alias.trim()`,
     // grouped.rs:614) plus, for the title, the `sanitize_fts_query` empty

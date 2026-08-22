@@ -861,7 +861,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // The two `activeBlockId` / `originalMarkdown` getters read from refs, so
   // they remain live regardless of memo freshness — consumers that need
   // up-to-date values either read them via the getters or capture the
-  // handle in a ref (e.g. `EditableBlock.tsx:129`, `BlockTree.tsx:201`).
+  // handle in a ref (e.g. `src/components/editor/EditableBlock.tsx:273`, `src/components/editor/BlockTree.tsx:504`).
   //
   // Without this, every parent re-render produced a fresh handle object
   // that propagated to `SortableBlockWrapper` and defeated its `React.memo`

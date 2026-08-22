@@ -16,7 +16,7 @@ import { expect, test, waitForBoot } from './helpers'
  *
  * The Settings → Keyboard editor is a typed `<Input>` behind a Pencil
  * button (`aria-label="Edit shortcut for {action}"`), NOT a keystroke-
- * capture control — `KeyboardTab.tsx:141-165` confirms `onChange` on a
+ * capture control — `src/components/settings/KeyboardTab.tsx:141-165` confirms `onChange` on a
  * plain text field, saved via Enter or the Save button.
  */
 
@@ -31,7 +31,7 @@ async function openKeyboardSettings(page: import('@playwright/test').Page) {
 /**
  * Locate a shortcut's row by its (translated) description text.
  *
- * `KeyboardTab.tsx:132-137` renders one row `<div>` per catalog entry whose
+ * `src/components/settings/KeyboardTab.tsx:151-156` renders one row `<div>` per catalog entry whose
  * DIRECT children are the keys/description/actions columns — only the row
  * div itself has `[data-testid="kbd-keys-column"]` as a direct child (every
  * ancestor — ScrollArea/Card/CardContent/etc — only contains it as a deep
