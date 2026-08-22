@@ -3,11 +3,11 @@
 | Metadata | Value |
 |----------|-------|
 | **Date** | 2026-08-22 |
-| **Subagents** | one builder, one adversarial reviewer, one fix pass (no self-review) |
+| **Subagents** | one builder, one adversarial reviewer, one fix pass, one review-response pass (no self-review) |
 | **Items closed** | `#4228` |
 | **Items modified** | — |
-| **Tests added** | +26 (frontend) |
-| **Files touched** | 13 modified, 5 new — see the PR's file list |
+| **Tests added** | +32 (frontend) |
+| **Files touched** | see the PR's file list |
 
 **Summary:** #4222 fixed the `((` picker *row* for whitespace-only and newline-leading block
 content, but the seam underneath it was untouched: nothing owned what the resolve-store
@@ -34,16 +34,35 @@ completely unfixed, which is why the issue specified the seed.
    documented: a cut through a combining mark or ZWJ sequence still degrades the glyph, but
    produces valid text.
 
-2. **There was a fourth writer.** `useBacklinkResolution`'s `storeTitle` wrote `r.title`
-   verbatim, and the backend does not truncate it — `batch_resolve_inner` selects
-   `b.content AS title` raw (its "(truncated)" doc comment is stale; filed as **#4237**).
-   Pre-existing, and contained until now precisely *because* `renderBlockRef` re-derived a
-   cap. Removing that cap turned it into a regression, so it is fixed here rather than
-   filed: a regression this change introduces is this change's to fix. The resolved-content
-   branch now normalises; the branch **condition** is untouched, so the deliberate
-   `#id…` / `[[id…]]` fallbacks for blank rows survive — they keep `has()` true so a
-   name-less row is not re-fetched every pass, and `resolveBlockDisplay` pattern-matches
-   that exact shape to detect a cache miss.
+2. **There was a fourth writer — and the first argument for touching it was wrong.**
+   `useBacklinkResolution`'s `storeTitle` wrote `r.title` verbatim, and the backend does not
+   truncate it — `batch_resolve` selects `b.content AS title` raw (its "(truncated)" doc
+   comment is stale; filed as **#4237**). The first pass routed the whole branch through
+   `normalizeBlockRefTitle`, reasoning "removing `renderBlockRef`'s cap makes an
+   unbounded backlink-seeded id a regression I introduced." **That reasoning does not
+   hold**: `collectContentIds` matches only `[[ULID]]` and `#[ULID]`, never `((ULID))`, so
+   this hook never seeds a block-ref chip *by that route*.
+
+   Review then produced the argument that does hold, and it is a different one. The resolve
+   store keys on `${spaceId}::${ulid}` with **no mark class in the key**, so one content
+   block reached by `[[id]]` here and by `((id))` through `fetchAndCacheLinks` is **one
+   cache entry** — a raw write here is read by `renderBlockRef` regardless of which token
+   put it there. The bound is warranted; the *route* is the key space, not this hook's own
+   tokens.
+
+   That distinction changes the fix. `batch_resolve` returns `b.content` for **every** block
+   type, so an unconditional cap also hit `page` and `tag` rows, where it was pure damage:
+   `renderBlockLink` splits the stored title on `/`, so a capped 62-char path yields a
+   mangled leaf — or, if the cut lands before the last `/`, a **namespace segment** shown as
+   the page name — and the `title=` attribute that exists to keep the full path available
+   carried a truncated one. It also re-opened the very divergence this PR closes:
+   `useResolveStore.preload` writes `p.content` / `t.name` raw under that same key, so the
+   two writers disagreed on every >60-char title and `batchSet`'s value-diff flipped the
+   entry (and bumped `version`) on every pass. So `storeTitle` now gates on `r.block_type` —
+   normalise `content`, store `page` / `tag` **verbatim**. The blank-row branch is untouched:
+   the deliberate `#id…` / `[[id…]]` fallbacks keep `has()` true so a name-less row is not
+   re-fetched every pass, and `resolveBlockDisplay` pattern-matches that exact shape to
+   detect a cache miss.
 
 3. **The consumer count was 5; it is 14.** The builder's conclusion (none needs untruncated
    content) held, but was reached from an incomplete list. Two of the missing ones were
@@ -62,23 +81,45 @@ correctness improvement: `[[id…]]` means *unresolved*, so a resolved-but-blank
 reading "Untitled" is more accurate, and the genuinely-unresolved arm still writes
 `[[id…]]`.
 
-**The tooltip narrowed, deliberately.** It previously showed up to 300 raw characters — but
+**The tooltip is gone, not narrowed.** It previously showed up to 300 raw characters — but
 only when `searchBlockRefs` happened to win the seed race, so it was a race outcome rather
-than a feature and nothing could depend on it. It still reveals the tail the chip's
-`max-width` + ellipsis clips. Restoring full text would put raw multi-line content back in
-the store and immediately re-diverge the two renderers.
+than a feature and nothing could depend on it. Narrowing it to the stored title left it
+rendering the chip's own string back at it: a Radix portal plus a hover/focus state machine
+per chip, per block, for zero additional information. The job that remains — reveal what
+`max-width` clipped — is a native `title=`, exactly how the sibling `renderBlockLink` does
+it, so both chip renderers now set one and the `<Tooltip>` wrapper is deleted. (The
+NodeView's old B-67 contract, "a `title=` means deleted", was already dead — `resolveStatus`
+has been a documented no-op since Phase 4 — so its test flips from *absent* to *present and
+status-independent*.)
 
-**On the CSS test.** It reads `index.css` as text, and happy-dom does no layout, so it pins
-the stylesheet's **spelling**, not behaviour. Review noted the rule already uses `@apply`,
-and Tailwind's `truncate` *is* the nowrap/overflow/ellipsis trio — so the idiomatic tidy-up
-would have reddened three assertions for zero behaviour change. It now accepts `@apply
-truncate` and a `var()` max-width, and its docblock says plainly what it can and cannot
-prove. The real bound belongs in an e2e check in a browser that lays out.
+**The `text-overflow: ellipsis` was inert, and the CSS test could not see it.** That test
+reads `index.css` as text — happy-dom does no layout — so it pins the stylesheet's
+**spelling**. The declaration was spelled correctly on `.block-ref-chip`, computed to
+`ellipsis`, and did nothing: the rule is `inline-flex`, `text-overflow` applies only to a
+**block container**, and a flex container's bare text child is an *anonymous* flex item that
+no selector can reach and that takes `text-overflow`'s initial `clip`. So the chip
+hard-clipped mid-glyph with no `…` while three assertions stayed green. Both renderers now
+put the title in a real `.block-ref-chip-label` child (a flex item, hence blockified, plus
+the `min-width: 0` a flex item needs before it will shrink below its content width at all),
+and the CSS test asserts each half against the rule that actually carries it. The renderers'
+own half — *is the title in an addressable child?* — is pinned by DOM tests in both
+renderers, which is the part the spelling test structurally cannot check.
 
-**Verification:** `tsc -b` clean; `vitest run` → 781 files, **17759 passed**, 1 expected
+Verified in a browser that lays out rather than by re-reading the rule: the two structures
+rendered side by side in Chromium at the real `max-width: 20rem`, `overflow: hidden`
+declarations. Before: hard clip through the middle of a glyph, right padding swallowed, no
+marker (`clientWidth` 334 vs `scrollWidth` 441 — overflowing, unmarked). After: `Distribut…`
+inside an intact pill (`labelClientWidth` 320 vs `labelScrollWidth` 427). A standing e2e
+check in a laying-out browser is still the right home for the on-screen criterion.
+
+**Verification:** `tsc -b` clean; `vitest run` → 781 files, **17765 passed**, 1 expected
 fail. Every acceptance criterion falsified: reverting each production change reddens its
 test, including the symmetric arm where the *wrong* fix (normalising unconditionally, so
-the fallbacks vanish) is shown to break cache-miss detection.
+the fallbacks vanish) is shown to break cache-miss detection. The `block_type` gate is
+falsified the same way — reinstating the unconditional cap reddens three tests, the
+load-bearing one being a 62-char `Engineering/Platform/Observability/Distributed Tracing
+Rollout` page whose chip drops from `Distributed Tracing Rollout` to `Distributed Tracing
+Ro...`.
 
 **Residual, recorded not hidden:** the four writers now agree on all **non-blank** content
 and deliberately disagree on blank — `fetchAndCacheLinks` writes "Untitled" while

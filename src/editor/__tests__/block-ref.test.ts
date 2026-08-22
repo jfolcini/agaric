@@ -210,6 +210,43 @@ describe('BlockRef NodeView — mounted Editor, resolve-store title contract (#4
     expect(chip?.getAttribute('contenteditable')).toBe('false')
   })
 
+  /**
+   * Structural parity with `renderBlockRef`
+   * (`@/components/RichContentRenderer/marks/blockRef.tsx`): `.block-ref-chip`
+   * is `inline-flex`, and `text-overflow` applies only to a block container,
+   * so a title assigned straight to `dom.textContent` becomes an anonymous
+   * flex item that no selector can reach — `max-width` then hard-clips it with
+   * no `…`. The title has to live in a real `.block-ref-chip-label` child, and
+   * the native `title=` is what reveals the clipped tail.
+   */
+  it('puts the title in a .block-ref-chip-label child and mirrors it into title=', () => {
+    editor = createEditor({
+      resolveContent: () => 'a title long enough that max-width would clip it on screen',
+      content: docWithRef('LABEL0001'),
+    })
+
+    const chip = editor.view.dom.querySelector('[data-type="block-ref"]')
+    const label = chip?.querySelector('.block-ref-chip-label')
+    expect(label).not.toBeNull()
+    expect(label?.textContent).toBe('a title long enough that max-width would clip it on screen')
+    expect(chip?.getAttribute('title')).toBe(
+      'a title long enough that max-width would clip it on screen',
+    )
+  })
+
+  it('re-fills the single label child on update instead of appending another', () => {
+    editor = createEditor({
+      resolveContent: (id) => `Title for ${id}`,
+      content: docWithRef('UPD0001'),
+    })
+
+    editor.commands.setContent(docWithRef('UPD0002'))
+
+    const chip = editor.view.dom.querySelector('[data-type="block-ref"]')
+    expect(chip?.querySelectorAll('.block-ref-chip-label').length).toBe(1)
+    expect(chip?.textContent).toBe('Title for UPD0002')
+  })
+
   it('calls onNavigate with the block id on click', () => {
     const onNavigate = vi.fn()
     editor = createEditor({ onNavigate, content: docWithRef('CLICK0001') })

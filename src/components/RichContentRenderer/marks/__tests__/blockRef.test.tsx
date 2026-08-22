@@ -75,20 +75,49 @@ describe('renderBlockRef — chip label reflects the stored title verbatim', () 
     expect(screen.getByTestId('block-ref-chip').textContent).toBe(alreadyNormalised)
   })
 
-  it('renders the same value in the chip and the hover tooltip (single source of truth)', async () => {
+  /**
+   * #4228 dropped the Radix `<Tooltip>` that used to wrap this chip. It
+   * earned its place only while it showed something the chip did NOT — up to
+   * 300 chars of raw, multi-line content against a 60-char first line. Once
+   * the store holds one normalised title that both renderers render verbatim,
+   * the floating tooltip would render the chip's own string back at it: a
+   * portal plus a hover/focus state machine per chip, per block, for no extra
+   * information. The remaining job — reveal what `max-width` clipped — is a
+   * native `title=`, exactly as the sibling `renderBlockLink` does it.
+   */
+  it('exposes the title as a native title= attribute and no floating tooltip', async () => {
     const user = userEvent.setup()
     const title = 'shared title'
     render(<>{renderBlockRef(node('BR4'), 'k', baseCtx({ resolveBlockTitle: () => title }))}</>)
     const chip = screen.getByTestId('block-ref-chip')
     expect(chip.textContent).toBe(title)
+    expect(chip.getAttribute('title')).toBe(title)
 
+    // No duplicated floating copy of the string the chip already shows.
     await user.hover(chip)
-    const tooltip = await screen.findByRole('tooltip')
-    // EXACT, not `toHaveTextContent` (a substring match): #4228 narrowed the
-    // tooltip from "up to 300 raw multi-line chars" to the same stored title
-    // the chip shows, so the assertion has to be able to fail if the tooltip
-    // ever renders the stored title PLUS anything else.
-    expect(tooltip.textContent).toBe(title)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+  })
+
+  /**
+   * The chip's `…` marker is a CSS concern (`.block-ref-chip-label` in
+   * `src/index.css`), and happy-dom lays nothing out — but the half this
+   * renderer OWNS is testable: the title has to sit in a real, addressable
+   * child. `.block-ref-chip` is `inline-flex`, so a bare text child would be
+   * an anonymous flex item that no selector can reach and `text-overflow`
+   * cannot ellipsise. Putting the text back directly on the chip is exactly
+   * the regression that made the ellipsis inert, and the CSS spelling test
+   * (`@/lib/__tests__/block-ref-chip-css.test.ts`) cannot see it.
+   */
+  it('puts the title in a .block-ref-chip-label child, the box the ellipsis applies to', () => {
+    const title = 'a title long enough that max-width would clip it on screen'
+    render(<>{renderBlockRef(node('BRL'), 'k', baseCtx({ resolveBlockTitle: () => title }))}</>)
+
+    const chip = screen.getByTestId('block-ref-chip')
+    const label = chip.querySelector('.block-ref-chip-label')
+    expect(label).not.toBeNull()
+    expect(label?.textContent).toBe(title)
+    // The chip carries no text of its own outside the label.
+    expect(chip.textContent).toBe(title)
   })
 })
 

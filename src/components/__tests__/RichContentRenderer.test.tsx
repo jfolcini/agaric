@@ -342,7 +342,11 @@ describe('RichContentRenderer', () => {
 
   // -- Inline tokens: block_ref -----------------------------------------------
 
-  it('renders block_ref as chip with tooltip', () => {
+  // #4228 removed the Radix tooltip that used to wrap this chip (it renders
+  // the same string the chip does now — see `renderBlockRef`); the reveal for
+  // a `max-width`-clipped title is a native `title=`, asserted in
+  // `@/components/RichContentRenderer/marks/__tests__/blockRef.test.tsx`.
+  it('renders block_ref as a chip carrying the resolved title', () => {
     mockedParse.mockReturnValueOnce({
       type: 'doc',
       content: [

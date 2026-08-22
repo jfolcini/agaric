@@ -1311,11 +1311,25 @@
   padding: 0.15em 0.5em;
   /* #4228 — the resolve-store title is capped to one line / 60 chars at the
      seed (`normalizeBlockRefTitle`, `@/lib/block-title`), but without an
-     explicit bound here a long single line still wraps under the default
-     `white-space: normal` or grows the chip past its container. Bound the
-     rendered WIDTH regardless of what lands in the DOM — matches the
-     tooltip's own `max-w-xs` bound. */
+     explicit bound here a long single line still grows the chip past its
+     container: 60 chars at 0.85em need roughly 25rem, so the bound below
+     genuinely clips a full-length title rather than being a rare edge case.
+     Bound the rendered WIDTH regardless of what lands in the DOM. */
   max-width: 20rem;
+  overflow: hidden;
+}
+/* The `…` marker for a clipped title.
+   It CANNOT live on `.block-ref-chip` itself: that rule is `inline-flex`, and
+   `text-overflow` applies only to a BLOCK container. A bare text child of a
+   flex container is wrapped in an ANONYMOUS flex item, which no selector can
+   reach, so it takes `text-overflow`'s initial `clip` — the chip hard-clips
+   mid-glyph with no marker, however the ellipsis is spelled on the parent.
+   Hence a real, addressable child: as a flex item this span is blockified, so
+   `text-overflow` applies to it. `min-width: 0` overrides the flex-item
+   default `min-width: auto`, without which the item refuses to shrink below
+   its own content width and there is no overflow left to ellipsise. */
+.block-ref-chip-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

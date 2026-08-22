@@ -1,7 +1,26 @@
 import type { BlockRow } from '@/lib/bindings'
 import { truncateContent } from '@/lib/text-utils'
 
-/** Detects the `[[ULID...]]` cache-miss fallback emitted by useBlockResolve. */
+/**
+ * Detects the `[[ULID...]]` cache-miss fallback a `resolveBlockTitle` can
+ * hand back for an id it has no real title for.
+ *
+ * It reaches this function two ways, and both have to keep producing this
+ * exact shape or the content fallback below silently stops firing:
+ *
+ *   - RETURNED by the resolver on a miss — `useBlockResolve`'s
+ *     `resolveBlockTitle` (`@/components/block-tree/use-block-resolve.ts`),
+ *     `useResolveStore.resolveTitle` (`@/stores/resolve.ts`), and
+ *     `useBacklinkResolution.resolveBlockTitle` (`@/hooks/...`) each fall
+ *     back to it when the composite key is absent from the cache.
+ *   - STORED in the cache as a placeholder, so the resolver "hits" and
+ *     returns it: `fetchAndCacheLinks`' unreturned-target branch
+ *     (`@/components/block-tree/use-block-link-resolve.ts`) writes it for a
+ *     foreign-space / unknown id, and `useBacklinkResolution`'s `storeTitle`
+ *     writes it for a resolved-but-blank non-tag row — deliberately NOT
+ *     routed through `normalizeBlockRefTitle`, which would turn it into
+ *     "Untitled" and make a nameless row look resolved here.
+ */
 const CACHE_MISS_FALLBACK_PATTERN = /^\[\[[0-9A-Z]{1,12}\.{3}\]\]$/
 
 /**

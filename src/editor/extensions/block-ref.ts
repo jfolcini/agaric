@@ -14,9 +14,9 @@
  * the same resolve-store title `renderBlockRef`
  * (`@/components/RichContentRenderer/marks/blockRef.tsx`) reads, which is
  * already first-line/cap-normalised at the seed (`normalizeBlockRefTitle`,
- * `@/lib/block-title`). `render` below assigns it to `dom.textContent`
- * verbatim on purpose — no split/cap here, so this NodeView can't drift
- * from what the other renderer shows for the same id.
+ * `@/lib/block-title`). `render` below assigns it verbatim on purpose — no
+ * split/cap here, so this NodeView can't drift from what the other renderer
+ * shows for the same id.
  */
 
 import { mergeAttributes, Node } from '@tiptap/core'
@@ -74,8 +74,15 @@ export const BlockRef = Node.create<BlockRefOptions>({
         class: 'block-ref-chip',
         'data-testid': 'block-ref-chip',
         contenteditable: 'false',
+        title: content,
       }),
-      content,
+      // The title goes in an addressable child, not straight into the chip:
+      // `.block-ref-chip` is `inline-flex`, so a bare text child becomes an
+      // anonymous flex item that no selector can reach and `text-overflow`
+      // cannot ellipsise. `.block-ref-chip-label` (`src/index.css`) carries
+      // the truncation. Mirrors `renderBlockRef`
+      // (`@/components/RichContentRenderer/marks/blockRef.tsx`).
+      ['span', { class: 'block-ref-chip-label' }, content],
     ]
   },
 
@@ -83,18 +90,28 @@ export const BlockRef = Node.create<BlockRefOptions>({
     const { options } = this
     return ({ node }) => {
       const dom = document.createElement('span')
+      // See `renderHTML` above: `.block-ref-chip` is `inline-flex`, so the
+      // title has to sit in a real child for `text-overflow: ellipsis` to
+      // apply to it. Created once and re-filled by `render` so `update()`
+      // cannot accumulate children.
+      const label = document.createElement('span')
+      label.className = 'block-ref-chip-label'
+      dom.append(label)
       let currentId = node.attrs['id'] as string
 
       function render(blockId: string) {
         currentId = blockId
         const content = options.resolveContent(blockId)
 
-        dom.textContent = content
+        label.textContent = content
         dom.className = 'block-ref-chip cursor-pointer'
         dom.setAttribute('data-type', 'block-ref')
         dom.setAttribute('data-id', blockId)
         dom.setAttribute('data-testid', 'block-ref-chip')
         dom.setAttribute('contenteditable', 'false')
+        // The reveal for a chip clipped by `.block-ref-chip`'s `max-width`,
+        // matching what `renderBlockRef` puts on the read-only chip.
+        dom.setAttribute('title', content)
       }
 
       render(currentId)

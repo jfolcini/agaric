@@ -1,7 +1,6 @@
 import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { BlockRefNode } from '@/editor/types'
 import { cn } from '@/lib/utils'
 
@@ -60,24 +59,34 @@ export function renderBlockRef(
     ? blockRefProps(refId, ctx.onNavigate as (id: string) => void)
     : inertProps
   return (
-    <Tooltip key={key}>
-      <TooltipTrigger asChild>
-        <span
-          className={cn(
-            'block-ref-chip',
-            clickable && 'cursor-pointer',
-            status === 'deleted' && 'block-ref-deleted',
-          )}
-          data-testid="block-ref-chip"
-          {...deletedProps}
-          {...interactiveProps}
-        >
-          {title}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="max-w-xs text-sm whitespace-pre-wrap">
-        {title}
-      </TooltipContent>
-    </Tooltip>
+    <span
+      key={key}
+      className={cn(
+        'block-ref-chip',
+        clickable && 'cursor-pointer',
+        status === 'deleted' && 'block-ref-deleted',
+      )}
+      data-testid="block-ref-chip"
+      // The reveal for a chip clipped by `.block-ref-chip`'s `max-width`.
+      //
+      // #4228 replaced a Radix `<Tooltip>` here. That tooltip earned its place
+      // while it showed something the chip did NOT: up to 300 chars of the raw,
+      // multi-line block content, against a chip showing only a 60-char first
+      // line. Now that the store holds one normalised title and both renderers
+      // render it verbatim, a floating tooltip would have rendered the chip's
+      // own string back at it — a portal, a hover/focus state machine and an
+      // extra subtree per chip, on every block-ref in every rendered block, for
+      // zero additional information. What is still needed is the plain
+      // "show me the part max-width cut off", which is exactly what the sibling
+      // chips (`renderBlockLink`) already do with a native `title=`.
+      title={title}
+      {...deletedProps}
+      {...interactiveProps}
+    >
+      {/* The `…` marker lives on this child, not the chip — the chip is
+          `inline-flex` and `text-overflow` only applies to a block container
+          (see `.block-ref-chip-label` in `src/index.css`). */}
+      <span className="block-ref-chip-label">{title}</span>
+    </span>
   )
 }

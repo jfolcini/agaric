@@ -53,18 +53,37 @@ function collectContentIds(groups: BacklinkGroup[]): Set<string> {
 /**
  * Display title to persist in the shared store for a resolved row.
  *
- * #4228 — this is the FOURTH writer of the shared resolve store's block
- * title, for the same `[[ULID]]` / `#[ULID]` target class the three seeders
- * in `@/lib/block-title`'s docblock feed, so it applies the same single
- * owner: {@link normalizeBlockRefTitle} (first line, Untitled-substituted,
- * capped). `r.title` is NOT pre-truncated by the backend — `batch_resolve`
- * selects the raw `content` column — so storing it verbatim was survivable
- * only while `renderBlockRef` re-derived its own first line and cap per
- * render. Both renderers now render the stored value verbatim, so an
- * un-normalised seed here would push full raw multi-line content into the
- * chip's text node, its deleted `aria-label` and its hover tooltip (CSS
- * `nowrap`/`ellipsis` masks the chip visually; the announced label and the
- * tooltip are unmasked).
+ * `batch_resolve` (`src-tauri/src/commands/blocks/queries.rs`) selects
+ * `b.content AS title` for EVERY block type, so `r.title` is a page's
+ * namespaced path for a `[[ULID]]` page target, a tag's name for `#[ULID]`,
+ * and raw block content only for a `[[ULID]]` whose target is a content
+ * block. The three values need different handling, so gate on
+ * `r.block_type` (a closed domain — the `check_block_type_insert` trigger
+ * in migration `0005_block_type_check.sql` restricts it to
+ * `content | tag | page`):
+ *
+ *   - `content` → {@link normalizeBlockRefTitle}, the single owner of what
+ *     a stored BLOCK title is (first line, Untitled-substituted, capped).
+ *     `r.title` is not pre-truncated by the backend, and this hook's ids
+ *     share the resolve store's `${spaceId}::${ulid}` key space with the
+ *     `((ULID))` block-ref seeders (`@/lib/block-title`'s docblock) — the
+ *     key carries no mark class, so the same content block reached by both
+ *     `[[id]]` here and `((id))` there is ONE cache entry. Writing raw
+ *     content here would push full multi-line content into the block-ref
+ *     chip and its deleted `aria-label`, and would flip that entry back and
+ *     forth (bumping `version`) against the normalising seeders.
+ *
+ *   - `page` / `tag` → stored VERBATIM, matching `useResolveStore.preload`
+ *     (`@/stores/resolve`), which writes `p.content` / `t.name` raw under
+ *     the very same key. Normalising them would (a) desync this writer from
+ *     preload on every >60-char title, so each pass flips the entry and
+ *     re-renders every version-subscribed consumer, and (b) corrupt the
+ *     path: `renderBlockLink` splits the stored title on `/` via
+ *     `getPageDisplayName(title, 'leaf')`, so a capped
+ *     `Eng/Platform/Observability/Distributed Tracing Ro...` yields the
+ *     wrong leaf — or, if the cap lands before the last `/`, a NAMESPACE
+ *     segment as the page name — and the `title=` attribute that exists to
+ *     keep the full path available would carry a truncated one.
  *
  * An empty/absent title still falls back to the tag/page placeholder, and
  * that fallback is deliberately NOT routed through the normaliser (which
@@ -75,7 +94,9 @@ function collectContentIds(groups: BacklinkGroup[]): Set<string> {
  * fall back to the block's own content.
  */
 function storeTitle(r: ResolvedBlock): string {
-  if (r.title && r.title.length > 0) return normalizeBlockRefTitle(r.title)
+  if (r.title && r.title.length > 0) {
+    return r.block_type === 'content' ? normalizeBlockRefTitle(r.title) : r.title
+  }
   return r.block_type === 'tag' ? `#${r.id.slice(0, 8)}...` : `[[${r.id.slice(0, 8)}...]]`
 }
 
@@ -132,7 +153,7 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
       .then((resolved) => {
         if (cancelled) return
         const returnedIds = new Set(resolved.map((r) => r.id))
-        // Real resolutions → shared store (normalised titles, see
+        // Real resolutions → shared store (per-block-type titles, see
         // `storeTitle` above, + the real deleted flag).
         if (resolved.length > 0) {
           useResolveStore

@@ -1,11 +1,32 @@
 /**
- * Regression guard for #4228 — the `.block-ref-chip` rule must bound its
- * own rendered WIDTH, independent of what string lands in the DOM.
+ * Regression guard for #4228 — the block-ref chip must bound its own
+ * rendered WIDTH, independent of what string lands in the DOM.
  *
  * The resolve-store title is capped to one line / 60 chars at the seed
  * (`normalizeBlockRefTitle`, `@/lib/block-title`), but without an explicit
  * `white-space` + `max-width` bound a long single line still wraps under
  * the default `white-space: normal`, or grows the chip past its container.
+ *
+ * ## Which rule carries which half of the bound
+ *
+ * The WIDTH bound (`max-width`, plus `overflow: hidden` so nothing spills
+ * past the chip's rounded box) belongs to `.block-ref-chip`.
+ *
+ * The single-line + ellipsis half CANNOT live there. `.block-ref-chip` is
+ * `inline-flex`, and `text-overflow` applies only to a BLOCK container: a
+ * bare text child of a flex container is wrapped in an ANONYMOUS flex item,
+ * which no selector can reach, so `text-overflow` on the parent has no
+ * effect on it and the chip hard-clips mid-glyph with no `…` marker. (That
+ * is exactly how the declaration shipped inert while an earlier version of
+ * this file asserted its spelling on `.block-ref-chip` and stayed green.)
+ * Both chip renderers — `renderBlockRef`
+ * (`@/components/RichContentRenderer/marks/blockRef.tsx`) and the TipTap
+ * `BlockRef` NodeView (`@/editor/extensions/block-ref.ts`) — therefore put
+ * the title in a real `.block-ref-chip-label` child, and that rule carries
+ * `white-space` / `overflow` / `text-overflow` plus the `min-width: 0` a
+ * flex item needs before it will shrink below its content width at all.
+ *
+ * So this file asserts each half against the rule that actually carries it.
  *
  * ## What this test can and cannot prove
  *
@@ -55,42 +76,86 @@ function appliedUtilities(rule: string): string[] {
 }
 
 describe('.block-ref-chip bounded width (#4228)', () => {
-  const rule = ruleFor('.block-ref-chip')
-  const applied = appliedUtilities(rule)
-  // Tailwind `truncate` expands to exactly the overflow/ellipsis/nowrap trio,
-  // so applying it satisfies all three of those assertions on its own.
-  const truncateApplied = applied.includes('truncate')
+  const chipRule = ruleFor('.block-ref-chip')
+  const labelRule = ruleFor('.block-ref-chip-label')
+  const chipApplied = appliedUtilities(chipRule)
+  const labelApplied = appliedUtilities(labelRule)
 
   /**
    * The rule must express the bound either by spelling `pattern` out or by
-   * `@apply truncate`. Always asserts (never vacuous) and prints the rule
-   * text on failure, since which declarations are present IS the subject.
+   * `@apply truncate` (Tailwind's `truncate` expands to exactly the
+   * overflow/ellipsis/nowrap trio, so it satisfies all three of those
+   * assertions on its own). Always asserts (never vacuous) and prints the
+   * rule text on failure, since which declarations are present IS the
+   * subject.
    */
-  function expectBoundedBy(pattern: RegExp, what: string): void {
+  function expectBoundedBy(
+    selector: string,
+    rule: string,
+    applied: string[],
+    pattern: RegExp,
+    what: string,
+  ): void {
     expect(
-      truncateApplied || pattern.test(rule),
-      `.block-ref-chip must set ${what} — spelled out, or via \`@apply truncate\`. Rule text:\n${rule}`,
+      applied.includes('truncate') || pattern.test(rule),
+      `${selector} must set ${what} — spelled out, or via \`@apply truncate\`. Rule text:\n${rule}`,
     ).toBe(true)
   }
 
-  it('sets white-space: nowrap so a long single line cannot wrap the chip onto multiple lines', () => {
-    expectBoundedBy(/white-space:\s*nowrap/, 'white-space: nowrap')
+  it('sets white-space: nowrap on the label so a long single line cannot wrap the chip onto multiple lines', () => {
+    expectBoundedBy(
+      '.block-ref-chip-label',
+      labelRule,
+      labelApplied,
+      /white-space:\s*nowrap/,
+      'white-space: nowrap',
+    )
   })
 
-  it('sets overflow: hidden so content past max-width does not spill out of the chip', () => {
-    expectBoundedBy(/overflow:\s*hidden/, 'overflow: hidden')
+  it('sets overflow: hidden on the chip so content past max-width does not spill out of its box', () => {
+    expectBoundedBy(
+      '.block-ref-chip',
+      chipRule,
+      chipApplied,
+      /overflow:\s*hidden/,
+      'overflow: hidden',
+    )
   })
 
-  it('sets text-overflow: ellipsis so truncated overflow is visually marked', () => {
-    expectBoundedBy(/text-overflow:\s*ellipsis/, 'text-overflow: ellipsis')
+  /**
+   * The one that shipped inert. `text-overflow` needs a BLOCK container, so
+   * asserting it on the `inline-flex` `.block-ref-chip` proved nothing about
+   * whether an `…` ever renders. It has to sit on the label — and the label
+   * has to be able to overflow in the first place, which a flex item only
+   * does once `min-width: auto` is overridden.
+   */
+  it('sets text-overflow: ellipsis on the label, the block-level box it can actually apply to', () => {
+    expectBoundedBy(
+      '.block-ref-chip-label',
+      labelRule,
+      labelApplied,
+      /text-overflow:\s*ellipsis/,
+      'text-overflow: ellipsis',
+    )
+    expectBoundedBy(
+      '.block-ref-chip-label',
+      labelRule,
+      labelApplied,
+      /overflow:\s*hidden/,
+      'overflow: hidden (text-overflow is inert without it)',
+    )
+    expect(
+      /min-width:\s*0/.test(labelRule) || labelApplied.includes('min-w-0'),
+      `.block-ref-chip-label must set \`min-width: 0\` — a flex item defaults to \`min-width: auto\` and will not shrink below its content width, so nothing ever overflows and the ellipsis never renders. Rule text:\n${labelRule}`,
+    ).toBe(true)
   })
 
-  it('sets an explicit max-width so the chip cannot grow past a fixed bound', () => {
+  it('sets an explicit max-width on the chip so it cannot grow past a fixed bound', () => {
     // `truncate` does NOT carry a width bound, so this arm never accepts it.
     const literalOrToken = /max-width:\s*(?:[\d.]+(?:rem|px|em|ch|%)|var\(\s*--[\w-]+)/
     expect(
-      literalOrToken.test(rule) || applied.some((u) => u.startsWith('max-w-')),
-      `.block-ref-chip must set a max-width — a literal length, a \`var(--token)\`, or an \`@apply\`ed \`max-w-*\` utility. Rule text:\n${rule}`,
+      literalOrToken.test(chipRule) || chipApplied.some((u) => u.startsWith('max-w-')),
+      `.block-ref-chip must set a max-width — a literal length, a \`var(--token)\`, or an \`@apply\`ed \`max-w-*\` utility. Rule text:\n${chipRule}`,
     ).toBe(true)
   })
 })
