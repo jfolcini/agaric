@@ -387,7 +387,16 @@ impl SyncOrchestrator {
     /// session completes exactly as before; only the write onto the other
     /// device's row is skipped — which is the same answer the bind already
     /// gives that joiner.
-    pub fn with_unverified_claim_guard(mut self, endpoint_id: String) -> Self {
+    ///
+    /// `pub(crate)`, not `pub`: it is safe to arm only on a **responder**
+    /// session admitted during a pairing window, per the branch documented
+    /// above. Armed from outside the crate on an **initiator** session (or
+    /// any bound peer), it would deny bookkeeping for peers whose row is
+    /// legitimately bound to their own key, silently dropping their
+    /// `synced_at` / `last_hash` progress. The one in-crate caller,
+    /// [`crate::sync_daemon::server`], already respects that branch; the
+    /// visibility just stops a future caller from getting it wrong.
+    pub(crate) fn with_unverified_claim_guard(mut self, endpoint_id: String) -> Self {
         self.unverified_claim_endpoint_id = Some(endpoint_id);
         self
     }
@@ -405,6 +414,20 @@ impl SyncOrchestrator {
     /// documents: the evidence that the row is free is exactly what a failed
     /// read does not have, and the cost of being wrong is one skipped
     /// bookkeeping write that the next session redoes.
+    ///
+    /// # Residual: a refusal is keyed on the session, not the write
+    ///
+    /// [`Self::resolve_remote_peer_id`] resolves one `peer_id` for the whole
+    /// session, and every bookkeeping call site — [`Self::record_pull_in_tx`],
+    /// [`Self::record_stream_in_tx`], and `persist_peer_loro_vvs` — asks this
+    /// guard with that same id. So a #2481 joiner whose lowest-sorting
+    /// advertised head happens to belong to a peer already bound to another
+    /// key gets refused on *every* call site, not just one: its session
+    /// writes no bookkeeping at all for itself — neither `synced_at` /
+    /// `last_hash` nor the `loro_vv_bytes` export floor. This is not a
+    /// regression (the post-session bind already refused the same joiner the
+    /// same way); it is the practical shape of the residual behind #4251 and
+    /// #4252, stated here so it does not live only in those issues.
     async fn may_key_bookkeeping_on(&self, peer_id: &str) -> bool {
         let Some(endpoint_id) = self.unverified_claim_endpoint_id.as_deref() else {
             return true;
@@ -1815,5 +1838,64 @@ impl SyncOrchestrator {
     /// harness without `with_expected_remote_id`).
     pub fn expected_remote_id(&self) -> Option<&str> {
         self.expected_remote_id.as_deref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! #4230 finding B: `peer_is_bound_to_another_key`'s own unit tests
+    //! (`sync_daemon::server`) cover its `Err` arm, but only by handing it an
+    //! injected `Result::Err` directly — that pins the predicate, not the wiring
+    //! at THIS call site. [`SyncOrchestrator::may_key_bookkeeping_on`] hands the
+    //! predicate the outcome of a real `list_peer_refs(&self.pool).await`, with
+    //! no `?` / `ok()` / `unwrap_or_default()` in between; nothing asserted that
+    //! a real failed read actually reaches the same deny. A future refactor that
+    //! inserted `.unwrap_or_default()` here would fail OPEN — permit the write —
+    //! with every existing test (including the predicate's own) still green.
+
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::apply_host::test_support::RecordingApplyHost;
+
+    /// Build an armed orchestrator: an unverified claim on `endpoint_id`, over
+    /// `pool`. The `ApplyHost` is a recording double — this test never runs a
+    /// session, it only calls the private guard directly.
+    fn orchestrator_with_claim(pool: &SqlitePool, endpoint_id: &str) -> SyncOrchestrator {
+        let host: Arc<dyn ApplyHost> = Arc::new(RecordingApplyHost::new());
+        SyncOrchestrator::new(pool.clone(), "device-under-test".to_owned(), host)
+            .with_unverified_claim_guard(endpoint_id.to_owned())
+    }
+
+    /// #4230 / finding B: a `list_peer_refs` read that fails for real — not an
+    /// injected `Result::Err` — must still deny.
+    ///
+    /// The peer_refs table starts empty, so a SUCCESSFUL read finds nothing
+    /// bound to another key and permits (asserted first, as a control — without
+    /// it a guard that always denied would pass the second assertion for the
+    /// wrong reason). Then the pool is closed, the same way
+    /// `loro_sync::tests::a_probe_that_cannot_run_is_counted_rather_than_read_as_a_present_parent`
+    /// forces a real read failure elsewhere in this crate, and the same call
+    /// must flip to deny.
+    #[tokio::test]
+    async fn a_real_failed_peer_ref_read_denies_bookkeeping() {
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        let orch = orchestrator_with_claim(&pool, "claimed-endpoint-key");
+
+        assert!(
+            orch.may_key_bookkeeping_on("PEER-A").await,
+            "control: an empty peer_refs table has nothing to conflict with, so a \
+             successful read must permit"
+        );
+
+        pool.close().await;
+
+        assert!(
+            !orch.may_key_bookkeeping_on("PEER-A").await,
+            "a list_peer_refs read that fails for real must deny bookkeeping, the \
+             same as peer_is_bound_to_another_key's own tests pin for an injected \
+             Err — a closed pool is this crate's established way to force a real \
+             read failure"
+        );
     }
 }
