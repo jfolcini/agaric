@@ -3891,3 +3891,373 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_ONLY'])
   })
 })
+
+// ── In-flight fill vs. mid-flight invalidation (#4055) ──────────────────
+//
+// The #732 guard above only compares the ACTIVE SPACE before persisting a
+// lazy fill — it has no way to notice a name-change-bus event landing in the
+// SAME space while the IPC is in flight. #4042 made that routine:
+// `invalidateNameCaches()` now fires on every `sync:complete` /
+// `blocks:changed` (`reloadChangedPageStores` in `useSyncEvents.ts`), on
+// every restore, and on a large batch trash — so the window is now opened by
+// ordinary background sync, not just a user action.
+//
+// Every case below constructs the interleaving explicitly: start the fill,
+// fire the bus event, THEN resolve the deferred IPC promise. Resolving
+// before the event proves nothing (that ordering already worked) — the
+// deferred-promise pattern here mirrors the #732 mid-flight-space-switch
+// test above, but races the name-change bus instead of a space switch.
+
+describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
+  function pageRow(id: string, content: string) {
+    return {
+      id,
+      content,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+    }
+  }
+
+  function tagRow(id: string, name: string) {
+    return { tag_id: id, name, usage_count: 1, updated_at: '2024-01-01' }
+  }
+
+  afterEach(() => {
+    mockedListAllPagesInSpace.mockReset()
+    mockedListAllTagsInSpace.mockReset()
+  })
+
+  it('pagesListRef: does not persist a lazy fill that resolves AFTER an invalidation lands mid-flight', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Start the short-query fill — the cache is empty, so this dispatches
+    // `listAllPagesInSpace` and leaves it in flight.
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchPages('')
+    })
+
+    // `sync:complete` lands WHILE the fetch is in flight (the real call
+    // site is `reloadChangedPageStores`) — the bus subscriber clears the ref.
+    act(() => {
+      invalidateNameCaches()
+    })
+
+    // …THEN the pre-sync response resolves. It must not resurrect the
+    // just-cleared cache — that is exactly the stale list #4007 removed.
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      resolveFetch([pageRow('P_STALE', 'Stale Page')])
+      items = (await inFlight) as typeof items
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([])
+
+    // REVIEW (#4055) — the generation guard only gated the
+    // `pagesListRef.current` WRITE. `searchPagesViaCache`'s local `source`
+    // was never reset to reflect the rejection, so the stale row still came
+    // back out of THIS call's return value — and, via
+    // `populatePageResolveCache`'s ungated-by-generation `batchSet`, still
+    // got written into the SHARED resolve store (read by every chip in the
+    // app, not just this picker). Both are the same class of bug the
+    // generation counter exists to close, just one call wide instead of
+    // forever.
+    expect(useResolveStore.getState().cache.has(keyFor('SPACE_TEST', 'P_STALE'))).toBe(false)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).not.toContain('P_STALE')
+  })
+
+  it('tagsListRef: does not persist a lazy fill that resolves AFTER an invalidation lands mid-flight', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    mockedListAllTagsInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchTags('')
+    })
+
+    act(() => {
+      invalidateNameCaches()
+    })
+
+    let racedItems: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      resolveFetch([tagRow('T_STALE', 'stale-tag')])
+      racedItems = (await inFlight) as typeof racedItems
+    })
+
+    // REVIEW (#4055) — the generation guard gates the `tagsListRef.current`
+    // WRITE; it must also keep THIS racing call from returning the stale
+    // tag it just refused to cache (mirrors the `pagesListRef` case above).
+    expect(racedItems.filter((i) => !i.isCreate).map((i) => i.id)).not.toContain('T_STALE')
+
+    // `tagsListRef` isn't exposed on the hook's return value, so prove it
+    // was discarded (not persisted) indirectly: a poisoned cache would
+    // answer the next read WITHOUT another IPC round trip. Assert the
+    // opposite — a second read must re-fetch, and must not surface the
+    // stale entry the discarded fill would have served.
+    mockedListAllTagsInSpace.mockResolvedValueOnce([tagRow('T_FRESH', 'fresh-tag')])
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+    const ids = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(ids).toContain('T_FRESH')
+    expect(ids).not.toContain('T_STALE')
+  })
+
+  // The `renamed`/`removed` variant has the same shape as `invalidated`
+  // above, but through `applyPageNameChange`/`applyTagNameChange`: since the
+  // ref is still empty when the event lands (the fill hasn't resolved yet),
+  // the patch itself is a no-op — `list.some(...)` is false on `[]` — so the
+  // event must ALSO invalidate the pending fetch, not just patch an
+  // already-populated list. Otherwise the in-flight response (computed
+  // before the rename/removal) gets written wholesale over the ref and the
+  // mutation is undone the instant it lands.
+  it('pagesListRef: a rename landing mid-flight is undone by the stale snapshot it raced', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchPages('')
+    })
+
+    // The rename fans out via `@/stores/page-rename`, same as the #4007
+    // tests above.
+    act(() => {
+      renamePage('P_REN', 'New Name')
+    })
+
+    // The IPC resolves with the PRE-RENAME snapshot — after the rename,
+    // not before.
+    await act(async () => {
+      resolveFetch([pageRow('P_REN', 'Old Name')])
+      await inFlight
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([])
+
+    // Self-heals on the very next read: re-fetches instead of serving the
+    // old title trapped in the discarded snapshot.
+    mockedListAllPagesInSpace.mockResolvedValueOnce([pageRow('P_REN', 'New Name')])
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
+    const labels = items.filter((i) => !i.isCreate).map((i) => i.label)
+    expect(labels).toContain('New Name')
+    expect(labels).not.toContain('Old Name')
+  })
+
+  it('tagsListRef: a removal landing mid-flight is undone by the stale snapshot it raced', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    mockedListAllTagsInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchTags('')
+    })
+
+    act(() => {
+      notifyTagRemoved('T_DOOMED')
+    })
+
+    // The IPC resolves with a snapshot from BEFORE the removal — the
+    // now-deleted tag is still in it.
+    await act(async () => {
+      resolveFetch([tagRow('T_DOOMED', 'doomed-tag')])
+      await inFlight
+    })
+
+    // A poisoned cache would answer the next read without another IPC AND
+    // would still offer the deleted tag. Assert both must not happen.
+    mockedListAllTagsInSpace.mockResolvedValueOnce([])
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).not.toContain('T_DOOMED')
+  })
+
+  // REVIEW — a space switch that RETURNS to the space the fetch was issued
+  // for. The generation counter is never bumped by the space-switch
+  // subscriber (only the name-change bus bumps it), so if this in-flight
+  // fetch survives to resolve after A→B→A, it is the #732 space check
+  // ALONE that decides whether to persist it — the generation check is a
+  // no-op here (unchanged since the fetch started). Documenting the actual
+  // behaviour: this is not a hole, because nothing about being in A, then
+  // B, then A again makes a page-list response fetched FOR A stale — any
+  // genuine A-side mutation in that window (rename/remove/sync/restore)
+  // still goes through the bus and bumps the generation regardless of
+  // which space was active when it fired.
+  it('pagesListRef: a fetch survives a space switch that returns to the original space', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchPages('')
+    })
+
+    // SPACE_TEST → SPACE_B → SPACE_TEST, all before the fetch resolves.
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
+    })
+
+    await act(async () => {
+      resolveFetch([pageRow('P_A', 'Page A')])
+      await inFlight
+    })
+
+    // Both guards pass (space matches; generation never moved), so the
+    // fetch IS persisted. This is correct: it is exactly what a fresh fill
+    // issued right now, in SPACE_TEST, would have returned, since nothing
+    // A-side changed during the B interlude.
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P_A', title: 'Page A' }])
+  })
+
+  // REVIEW — same round trip, but a rename lands on SPACE_TEST WHILE the
+  // hook is parked on SPACE_B. This is the case the note above claims is
+  // still covered: the bus is global (not space-scoped), so the generation
+  // bump happens regardless of which space is active, and the returning
+  // fetch must still be rejected.
+  it('pagesListRef: a rename landing while parked on another space still rejects the survivor fetch', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchPages('')
+    })
+
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+    // A rename fires while SPACE_B is active — the listener doesn't care.
+    act(() => {
+      renamePage('P_ELSEWHERE', 'Renamed While Away')
+    })
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
+    })
+
+    await act(async () => {
+      resolveFetch([pageRow('P_A', 'Page A')])
+      await inFlight
+    })
+
+    // The space check alone would have passed (back on SPACE_TEST); the
+    // generation check must be what rejects it.
+    expect(result.current.pagesListRef.current).toEqual([])
+  })
+
+  // REVIEW — two overlapping fills with NO invalidation between them: both
+  // capture the SAME generation (nothing bumped it), so neither guard can
+  // distinguish "older" from "newer" — the mechanism is last-RESOLVED-wins,
+  // not last-REQUESTED-wins. Constructing this to document the actual
+  // behaviour, not to assert it is wrong: it is a real characteristic of
+  // the generation-counter design, distinct from the invalidation hole
+  // #4055 closes.
+  it('pagesListRef: two concurrent fills — the later-resolving one wins regardless of start order', async () => {
+    let resolveFirst: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    let resolveSecond: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve
+          }),
+      )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Both `[[` keystrokes land while the cache is still empty — e.g. a
+    // fast retype before the first fill has resolved — so BOTH take the
+    // lazy-fill branch and dispatch their own `listAllPagesInSpace` call.
+    let inFlight1: Promise<unknown> = Promise.resolve()
+    let inFlight2: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight1 = result.current.searchPages('')
+    })
+    act(() => {
+      inFlight2 = result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
+
+    // The SECOND (later-started) request resolves FIRST, with the FRESHER
+    // data — then the FIRST (earlier-started) request resolves LAST, with
+    // OLDER data, and no bus event ever fired to distinguish them.
+    await act(async () => {
+      resolveSecond([pageRow('P_NEWER', 'Newer Page')])
+      await inFlight2
+    })
+    await act(async () => {
+      resolveFirst([pageRow('P_OLDER', 'Older Page')])
+      await inFlight1
+    })
+
+    // The later-RESOLVING response (the first one, resolved last) wins and
+    // clobbers the fresher data the second request had already written —
+    // last-resolved-wins, not last-requested-wins or freshest-wins.
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P_OLDER', title: 'Older Page' }])
+  })
+})

@@ -1164,4 +1164,122 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
     expect(serialize(parse(md))).toBe(md)
     expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
   })
+
+  /**
+   * #4221: `isVulnerableItalicOpen` checked a SINGLE node for both halves of
+   * the trigger (carries only italic, AND starts with a space). A zero-length
+   * TextNode carrying `[italic]` satisfies neither `isPlainSpaces` (it has a
+   * mark) nor `isEmptyAtom` (it IS a `text` node) — but `emitMarkTransition`
+   * still opens the `*` delimiter on it, a real byte, while the leading-space
+   * trigger sits on the NEXT node. RED against the single-node predicate:
+   * `paragraph(it_(''), italic(' y'))` serialized to `'* y*'`, which reparses
+   * as a `bulletList` — the #4156 collision, reachable through an empty
+   * TEXT node instead of the empty ATOM #4195 already covers.
+   */
+  it('#4221: an empty italic TextNode followed by a space-leading italic node is still defused', () => {
+    const d = doc(paragraph(it_(''), italic(' y')))
+    const md = serialize(d)
+    expect(md).toBe(' *y*')
+    expect(parse(md)).toEqual(doc(paragraph(text(' '), it_('y'))))
+    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  /**
+   * More than one empty italic-only TextNode can lead the run — the forward
+   * scan has to keep walking past every zero-length one, not just a single
+   * lookahead step, before it reaches the node that actually carries the
+   * leading-space trigger.
+   */
+  it('#4221: multiple leading empty italic TextNodes are all stepped past', () => {
+    const d = doc(paragraph(it_(''), it_(''), it_(''), italic(' y')))
+    const md = serialize(d)
+    expect(md).toBe(' *y*')
+    expect(parse(md)).toEqual(doc(paragraph(text(' '), it_('y'))))
+    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  /**
+   * A NON-italic empty node breaking the run must NOT be treated as part of
+   * the vulnerable open — it is a mark-set change (italic closes, then
+   * reopens on the later node), which always inserts a second `*` right after
+   * the first (`**`, never `* `), so there is no bullet-list collision to
+   * defuse in the first place. Pins that the forward scan stops there instead
+   * of skipping through it the way it skips genuine empty italic nodes.
+   *
+   * `parse('*** y*')` itself is a pre-existing, unrelated quirk of the odd
+   * triple-star run (`scanBold`/`scanItalic`'s greedy toggling, nothing to do
+   * with the italic-open defuse) that only converges on the SECOND pass —
+   * same family as the `#4071/#4076` two-pass cases elsewhere in this file.
+   * What this test actually pins is that it never becomes a `bulletList` on
+   * either pass, and that the second pass is a stable fixed point.
+   */
+  it('#4221: a non-italic empty node between two italic nodes does not falsely trigger the defuse', () => {
+    const d = doc(paragraph(it_(''), text(''), italic(' y')))
+    const md = serialize(d)
+    expect(md).toBe('*** y*')
+    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+    const md2 = serialize(parse(md))
+    expect((parse(md2).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+    expect(serialize(parse(md2))).toBe(md2)
+  })
+
+  /**
+   * A zero-length node whose mark set is a SUPERSET of italic (adds bold) is
+   * a mark-set change too — `emitMarkTransition` keeps italic open across it
+   * (only `**` opens for the added bold), but the walk still has to stop
+   * there rather than skip through it: the resulting delimiter run is `*****`
+   * (open italic, open bold, close bold), never a lone `*` before the space.
+   * Same two-pass-convergence family as the sibling test below and
+   * `#4071/#4076` — what matters is that neither pass becomes a `bulletList`.
+   */
+  it('#4221: a superset (italic+bold) zero-length node between two italic-only nodes is not vulnerable', () => {
+    const d = doc(
+      paragraph(it_(''), text('', [{ type: 'italic' }, { type: 'bold' }]), italic(' y')),
+    )
+    const md = serialize(d)
+    expect(md).toBe('***** y*')
+    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+    const md2 = serialize(parse(md))
+    expect((parse(md2).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+    expect(serialize(parse(md2))).toBe(md2)
+  })
+
+  /**
+   * A zero-length node whose mark set is DISJOINT from italic (bold only, no
+   * italic) is the shape most likely to defeat a walk that stops on "first
+   * node that emits nothing" rather than "first node that isn't an
+   * italic-only continuation": it emits no bytes of its own, but the mark
+   * transitions around it (close italic, open bold, close bold, open italic)
+   * still guarantee more than one star lands before the space.
+   */
+  it('#4221: a disjoint (bold only) zero-length node between two italic-only nodes is not vulnerable', () => {
+    const d = doc(paragraph(it_(''), text('', [{ type: 'bold' }]), italic(' y')))
+    const md = serialize(d)
+    expect(md).toBe('******* y*')
+    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+    const md2 = serialize(parse(md))
+    expect((parse(md2).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+    expect(serialize(parse(md2))).toBe(md2)
+  })
+
+  /**
+   * An interposed node of a different TYPE that itself serializes to nothing
+   * (an empty atom, #4189/#4195's own case) sitting BETWEEN two italic-only
+   * nodes rather than leading the paragraph: the prefix-skip loop in
+   * `defuseLeadingItalicMarker` never reaches it (the paragraph opens on the
+   * italic node, not the atom), and `isVulnerableItalicOpen`'s walk correctly
+   * stops at it (wrong node type) rather than skipping through — matching the
+   * same `**`-never-`* ` guarantee as the other mark-set changes above.
+   */
+  it('#4221: an empty non-text atom between two italic-only nodes is not vulnerable', () => {
+    const d = doc(paragraph(it_(''), mathInline(''), italic(' y')))
+    const md = serialize(d)
+    expect(md).toBe('*** y*')
+    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+    const md2 = serialize(parse(md))
+    expect((parse(md2).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+    expect(serialize(parse(md2))).toBe(md2)
+  })
 })

@@ -80,6 +80,13 @@ interface PageRow {
 type PagesListRef = React.RefObject<PageRow[]>
 
 /**
+ * Ref to the generation counter bumped by the name-change-bus subscriber on
+ * EVERY event (any kind, any entity) — see `nameChangeGenerationRef` in
+ * `useBlockResolve` and #4055 below.
+ */
+type GenerationRef = React.RefObject<number>
+
+/**
  * Splits a `parent/child/leaf` title into `{ label: leaf, breadcrumb: 'parent / child' }`.
  *
  * Bug 1: delegates to the shared `getPageDisplayName` formatter so
@@ -132,7 +139,11 @@ function makePagePickerItem(id: string, title: string): PickerItem {
  * document continue to resolve via the shared resolve cache, they just
  * don't appear as new suggestions.
  */
-async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promise<PageRow[]> {
+async function searchPagesViaCache(
+  q: string,
+  pagesListRef: PagesListRef,
+  generationRef: GenerationRef,
+): Promise<PageRow[]> {
   let source = pagesListRef.current
   if (source.length === 0) {
     // limit-clamp-followup — replaced the silently-clamped
@@ -144,6 +155,16 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
     // backend).
     const spaceId = useSpaceStore.getState().currentSpaceId
     if (spaceId == null) return []
+    // #4055 — capture the name-change-bus generation BEFORE the IPC. The
+    // #732 space check below only catches a space switch mid-flight; it says
+    // nothing about an invalidation/rename/removal landing on THIS space
+    // while the fetch is in flight, which #4042 made a routine background
+    // event (`sync:complete` / `blocks:changed`, a restore, a large batch
+    // trash). The bus subscriber bumps this counter synchronously on every
+    // event, so a mismatch here means a fresher event landed than the one
+    // this fetch started under — persisting `source` over it would
+    // resurrect exactly the stale entries #4007 exists to remove.
+    const requestGeneration = generationRef.current
     const pages = unwrap(await commands.listAllPagesInSpace(requireActiveScope(spaceId), null))
     // #4138 — seed the RAW title (`''` for NULL content), matching the
     // backend's `COALESCE(b.content, '')` `ORDER BY`. The `'Untitled'`
@@ -155,8 +176,24 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
     // otherwise re-seed the just-invalidated cache with the OLD space's
     // pages (the hook-level subscriber clears the ref on switch, but it
     // cannot see this in-flight promise).
-    if ((useSpaceStore.getState().currentSpaceId ?? '') === spaceId) {
+    // #4055 — AND only while no name-change-bus event has landed since. See
+    // the comment above `requestGeneration`.
+    if (
+      (useSpaceStore.getState().currentSpaceId ?? '') === spaceId &&
+      generationRef.current === requestGeneration
+    ) {
       pagesListRef.current = source
+    } else {
+      // The guard rejected this fetch — a space switch or a name-change-bus
+      // event landed while it was in flight, and `pagesListRef.current`
+      // already reflects that (cleared or patched by whichever raced us).
+      // Serve THIS call's result from there instead of the discarded
+      // `source`: the caller (`searchPages`, and via
+      // `populatePageResolveCache`, the shared resolve store) would
+      // otherwise still receive the exact stale/deleted/renamed row the
+      // guard exists to keep out of the cache — just for one call instead
+      // of forever, which is still the bug #4055 exists to close.
+      source = pagesListRef.current
     }
   }
   const filtered = q ? matchSorter(source, q, { keys: ['title'] }) : source
@@ -498,6 +535,14 @@ export function useBlockResolve(): UseBlockResolveReturn {
   // invalidated by the same space-switch subscriber below (#732 pattern).
   const tagsListRef = useRef<TagCacheRow[]>([])
 
+  // #4055 — bumped by the name-change-bus subscriber below on EVERY event
+  // (any kind, any entity). Both lazy-fill sites (`searchPagesViaCache` and
+  // `searchTags`'s inline fill) capture this before their IPC and refuse to
+  // persist a stale response once it no longer matches — closing the
+  // in-flight window the #732 space-only guard couldn't see: a bus event
+  // landing between the IPC dispatch and its resolution.
+  const nameChangeGenerationRef = useRef(0)
+
   // #732 — the cache holds space-scoped data in a space-agnostic
   // container, and the hook instance SURVIVES page-editor→page-editor
   // space switches (ViewDispatcher renders PageEditor without a key and
@@ -532,6 +577,13 @@ export function useBlockResolve(): UseBlockResolveReturn {
   useEffect(
     () =>
       subscribeToNameChanges((change) => {
+        // #4055 — bump on every event, unconditionally, BEFORE applying it.
+        // An in-flight fill's `requestGeneration` capture and this bump can
+        // never interleave any other way: JS is single-threaded and nothing
+        // awaits between them, so a fill either captured the generation
+        // before this listener runs (and must now lose the race) or after
+        // (and reads the bumped value already).
+        nameChangeGenerationRef.current += 1
         if (change.kind === 'invalidated' || change.entity === 'page') {
           pagesListRef.current = applyPageNameChange(pagesListRef.current, change)
         }
@@ -604,6 +656,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
       if (requestSpaceId == null) return []
       let tags = tagsListRef.current
       if (tags.length === 0) {
+        // #4055 — capture the generation BEFORE the IPC, same guard as
+        // `searchPagesViaCache`'s `requestGeneration` (see its comment): the
+        // #853 space check alone doesn't notice a rename/removal/invalidation
+        // landing on THIS space while the fetch is in flight.
+        const requestGeneration = nameChangeGenerationRef.current
         const fetched = unwrap(
           await commands.listAllTagsInSpace(requireActiveScope(requestSpaceId)),
         )
@@ -611,7 +668,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
         // #853 — gate behind the captured-space guard: a stale response
         // from a since-abandoned space must not seed the new space's
         // cache (neither the resolve store nor `tagsListRef`).
-        if (isRequestSpaceStillActive(requestSpaceId)) {
+        // #4055 — AND behind the captured-generation guard above.
+        if (
+          isRequestSpaceStillActive(requestSpaceId) &&
+          nameChangeGenerationRef.current === requestGeneration
+        ) {
           tagsListRef.current = fetched
           // Populate the resolve cache so tag_ref nodes can resolve the
           // name after the block is saved (serialized as #[ULID]) and
@@ -631,6 +692,15 @@ export function useBlockResolve(): UseBlockResolveReturn {
               })),
             )
           }
+        } else {
+          // The guard rejected this fetch — a space switch or a
+          // name-change-bus event landed while it was in flight, and
+          // `tagsListRef.current` already reflects that. Serve this call's
+          // result from there instead of the discarded `fetched`: otherwise
+          // this one call still returns the exact stale/deleted/renamed tag
+          // the guard exists to keep out of the cache. Mirrors the
+          // `searchPagesViaCache` fix above.
+          tags = tagsListRef.current
         }
       }
       const sorted = q ? matchSorter(tags, q, { keys: ['name'] }) : tags
@@ -695,7 +765,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // relevance-ranked results.
       const rows =
         q.length <= 2
-          ? await searchPagesViaCache(q, pagesListRef)
+          ? await searchPagesViaCache(q, pagesListRef, nameChangeGenerationRef)
           : await searchPagesViaFts(q, pagesListRef)
 
       // #4239 — seed from the ROWS (raw, un-split titles) and render the
