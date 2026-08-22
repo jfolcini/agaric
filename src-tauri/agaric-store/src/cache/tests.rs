@@ -5553,8 +5553,11 @@ where
 
 /// The measurement itself, shared by the three block-count points.
 ///
-/// Arm 1 is production (`rebuild_block_links_unresolved`, streamed since
+/// Arm 1 is production (`rebuild_block_links_unresolved_conn`, streamed since
 /// #4242), end to end — including the chunked INSERT of the obligation rows.
+/// The `_conn` form is the one measured, not the pool wrapper: the wrapper
+/// returns `Result<(), AppError>` through `rebuild_with_timing` and so cannot
+/// return the `inserted` count the assertion below uses.
 /// Arm 2 replicates the pre-#4242 READ AND FOLD only, not the write that
 /// followed it: `fetch_all` the matched rows into a `Vec` and fold that, with
 /// the row buffer still alive while the pair vector is built — the

@@ -2236,7 +2236,7 @@ async fn block_links_unresolved_oracle_distinguishes_all_three_target_states_424
 ///
 /// | scale | reconcile, clean | wall, clean | reconcile, O(n²) | wall, O(n²) |
 /// |---|---|---|---|---|
-/// | 20 x 100 (2,042 rows, the scale this shipped at) | 27ms | 1.7s | 20.1s | 21.6s |
+/// | 20 x 100 (2,043 rows, the scale this shipped at) | 27ms | 1.7s | 20.1s | 21.6s |
 /// | 50 x 100 (5,103 rows, current) | 66ms | 4.1s | 138.3s | 142.3s |
 ///
 /// At the original 20x100 the defective fold finished in 21.6s — comfortably

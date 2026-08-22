@@ -18,7 +18,7 @@ the scale it shipped with**.
 
 That is the finding worth recording. A behaviour-preserving O(n²) defect (re-running the
 unfiltered `dump_blocks` scan once per source block instead of folding the loaded slice)
-was injected at the committed 2,042-row scale: reconcile went 27ms → **20.1s**, wall 21.6s,
+was injected at the committed 2,043-row scale: reconcile went 27ms → **20.1s**, wall 21.6s,
 against a kill at 60s. Comfortably green. A **740× reconcile regression would have shipped
 silently** through the guard written to stop exactly that.
 
@@ -30,7 +30,7 @@ Retuned by measurement rather than extrapolation:
 
 | scale | reconcile clean | wall clean | reconcile O(n²) | wall O(n²) |
 |---|---|---|---|---|
-| 20×100 = 2,042 (old) | 27ms | 1.7s | 20.1s | 21.6s |
+| 20×100 = 2,043 (old) | 27ms | 1.7s | 20.1s | 21.6s |
 | 40×100 = 4,082 | — | — | 102.0s | 113.9s |
 | **50×100 = 5,103 (chosen)** | **66ms** | **4.1s** | **138.3s** | **142.3s** |
 

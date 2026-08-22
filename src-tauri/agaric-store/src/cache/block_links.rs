@@ -294,12 +294,16 @@ pub async fn rebuild_block_links_unresolved_conn(
     // roughly double peak content residency at the one moment the vault is
     // largest. Each row is reduced to its `(source, target)` pairs and then
     // dropped, so peak residency here is O(pairs) rather than O(matched
-    // content) — measured to matter (#4242): on a 100k-block synthetic vault
-    // the buffered `Vec` accounted for ~14% of the transaction's
-    // peak-over-baseline RSS, and the ABSOLUTE gap grows with block count
-    // (below the measurement's noise floor at 20k, ~8 MB at 50k, ~16 MB at
-    // 100k) because it is content bytes while the rest of the transaction is
-    // closer to fixed per-row overhead.
+    // content) — measured to matter (#4242): the ABSOLUTE gap grows with block
+    // count (below the measurement's noise floor at 20k, ~8 MB at 50k, ~16 MB
+    // at 100k) because it is content bytes while the rest of the transaction
+    // is closer to fixed per-row overhead.
+    //
+    // Read the absolute figures, not a percentage. The ~14% quoted in the
+    // measurement is a share of the REBUILD's own peak: that arm runs in a
+    // transaction of its own, with no decoded `SnapshotData` alive. On the
+    // restore path the denominator is larger, so the same megabytes are a
+    // smaller fraction — the absolute saving transfers, the ratio does not.
     //
     // Those numbers are not a one-off diagnostic that was thrown away: they
     // come from the `#[ignore]`d `..._residency_at_{20k,50k,100k}_blocks_4242`
