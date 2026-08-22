@@ -67,6 +67,29 @@ function isSyntheticTitle(resolved: string): boolean {
  * current page — query results often include blocks from other pages that
  * are never populated, so the cache miss is the normal case for cross-page
  * query results.
+ *
+ * # The 80-char budget applies to the FALLBACK, not to a cache hit
+ *
+ * `truncateContent(…, 80)` bounds the fallback. A cache HIT is rendered
+ * verbatim, and since #4228 a stored title is already capped at 60 (57 +
+ * ellipsis, first line only) — so a resolved content block renders at most
+ * 60 here, not 80. That is a real narrowing for rows whose target happened
+ * to be seeded: before #4228 `useBacklinkResolution` stored raw content, so
+ * such a row rendered the full 80.
+ *
+ * It is the cost of the store having ONE title rather than one per surface,
+ * which is what #4228 bought. A row that wants more than the stored title
+ * would have to re-read the block — a different design, tracked with the
+ * rest of the title-ownership question in #4238. Stated here because the
+ * budget in the line below is otherwise read as the row's, and it is not.
+ *
+ * # A null-content page or tag renders the empty marker HERE only
+ *
+ * `preload` stores such a row as "Untitled", which `isSyntheticTitle` now
+ * classes synthetic, so it takes the fallback and `truncateContent(null, 80)`
+ * yields the empty marker — while every other surface shows the placeholder.
+ * Pinned by test, so it is a decision rather than a surprise; it agrees with
+ * the UNCACHED blank row, which already rendered the marker.
  */
 export function resolveBlockDisplay(
   block: BlockRow,

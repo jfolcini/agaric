@@ -102,9 +102,13 @@ function collectContentIds(groups: BacklinkGroup[]): Set<string> {
  * (`@/lib/query-result-utils`) pattern-matches exactly this `[[id...]]`
  * shape to detect "nothing real is cached" and fall back to the block's own
  * content. Routing it through the gate would make a nameless row look
- * resolved on both surfaces. So the divergence is real, it is exactly one
- * cell wide, the matrix in `resolve-store-title-seed-parity.test.ts` asserts
- * it explicitly rather than skipping it, and #4238 tracks unifying it.
+ * resolved on both surfaces. So the divergence is real, it is TWO cells wide
+ * — this writer keeps `[[id...]]` on a blank non-tag row and `#<id>...` on a
+ * blank tag row, where its siblings write "Untitled" for both — the matrix in
+ * `resolve-store-title-seed-parity.test.ts` asserts each explicitly rather
+ * than skipping them, and #4238 tracks unifying them. (`@/lib/block-title`'s
+ * docblock enumerates the same two cells; an earlier version of BOTH said
+ * "one cell" and undercounted the tag arm.)
  */
 function storeTitle(r: ResolvedBlock): string {
   if (r.title !== null && r.title.length > 0) return resolveStoreTitle(r.block_type, r.title)

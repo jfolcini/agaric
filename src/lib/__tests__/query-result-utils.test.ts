@@ -63,7 +63,24 @@ describe('resolveBlockDisplay — the "Untitled" synthetic arm (#4228)', () => {
 
     const result = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
 
-    expect(result.title).not.toBe(untitledOr(null))
+    // Pinned by VALUE, not merely "not the placeholder": this is the marker
+    // the UNCACHED blank row already rendered, so the two agree — and if the
+    // marker changes, the disagreement with every other surface (which shows
+    // the placeholder) should be re-decided rather than drift.
+    expect(result.title).toBe('(empty)')
+  })
+
+  it('a null-content PAGE row takes the same fallback — the marker, not the placeholder', () => {
+    // `preload` stores a null-content page as "Untitled", which the widened
+    // synthetic test now catches, so a query row shows the marker while every
+    // other surface shows the placeholder. Recorded as a decision.
+    const block = makeBlock({ id: 'b4', parent_id: 'p1', page_id: 'p1', content: null })
+    const pageTitles = new Map([['p1', 'My Page']])
+    const resolveBlockTitle = vi.fn().mockReturnValue(untitledOr(null))
+
+    const result = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
+
+    expect(result.title).toBe('(empty)')
   })
 })
 
