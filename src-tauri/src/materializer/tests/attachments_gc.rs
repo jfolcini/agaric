@@ -1057,3 +1057,331 @@ async fn a_trailing_dot_spelling_keeps_its_bytes_through_a_gc_pass_3370() {
          row carried a trailing-dot spelling (#3370 review)"
     );
 }
+
+// ============================================================================
+// #3706 — the GC pass and the undo stack, together
+// ============================================================================
+//
+// Since #1993/#3259 a `delete_attachment` removes only the ROW: the file and
+// the `attachment_blobs` mapping are left to `cleanup_orphaned_attachments`,
+// which is the sole reclaimer of attachment bytes. So the ordinary lifetime of
+// a deleted attachment is: row gone → sweep runs → bytes gone. If the user
+// then hits undo, `reverse_delete_attachment` reconstructs the original
+// `AddAttachment` payload from the op log and the reverse-apply re-inserts the
+// row with that payload's `fs_path` — a live reference over bytes that no
+// longer exist, with no blob row left that could repoint it. That is not a
+// race; it is what happens every time once the sweep has run.
+//
+// The tests below pin both arms of the fix: after a sweep the undo must refuse
+// rather than commit such a row, and WITHOUT a sweep it must still hand the
+// user their file back exactly as before.
+
+/// Bytes the fixture attaches. Distinct content so the no-GC arm can prove the
+/// undo restored a readable file and not merely a row.
+const UNDO_GC_BYTES: &[u8] = b"the attachment the user took back";
+
+/// Vault state shared by the #3706 tests: one block, one attachment ingested
+/// through the real command path (so the file, the `attachments` row, the
+/// `attachment_blobs` mapping and the `add_attachment` op all exist), plus the
+/// `op_log` ref of whichever op the test will reverse.
+struct UndoGcFixture {
+    pool: SqlitePool,
+    _dir: TempDir,
+    mat: Materializer,
+    app_data_dir: PathBuf,
+    attachment_id: String,
+    /// Absolute path of the attachment's bytes.
+    full_path: PathBuf,
+}
+
+impl UndoGcFixture {
+    async fn new() -> Self {
+        let (pool, dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let app_data_dir = dir.path().to_path_buf();
+        // Attachment paths are app-data-relative; wiring the dir onto the
+        // Materializer is what keeps every file this test touches inside the
+        // TempDir rather than a real vault.
+        mat.set_app_data_dir(app_data_dir.clone());
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content) VALUES ('ATTUNDOBLK', 'content', 'holder')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let row = crate::commands::add_attachment_with_bytes_inner(
+            &pool,
+            DEV,
+            &mat,
+            &app_data_dir,
+            BlockId::from_trusted("ATTUNDOBLK"),
+            "photo.png".into(),
+            "image/png".into(),
+            UNDO_GC_BYTES.to_vec(),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let full_path = app_data_dir.join(&row.fs_path);
+        Self {
+            pool,
+            _dir: dir,
+            mat,
+            app_data_dir,
+            attachment_id: row.id.as_str().to_owned(),
+            full_path,
+        }
+    }
+
+    /// Delete the attachment through the production command and return the
+    /// `op_log` ref of the `delete_attachment` op it appended — the op the
+    /// user's undo will target.
+    async fn delete_attachment(&self) -> agaric_store::op::OpRef {
+        crate::commands::delete_attachment_inner(
+            &self.pool,
+            DEV,
+            &self.mat,
+            &self.app_data_dir,
+            BlockId::from_trusted(&self.attachment_id),
+        )
+        .await
+        .unwrap();
+        self.mat.flush_background().await.unwrap();
+        self.latest_op_ref("delete_attachment").await
+    }
+
+    async fn latest_op_ref(&self, op_type: &str) -> agaric_store::op::OpRef {
+        let (device_id, seq): (String, i64) = sqlx::query_as(
+            "SELECT device_id, seq FROM op_log WHERE op_type = ? ORDER BY created_at DESC, seq DESC LIMIT 1",
+        )
+        .bind(op_type)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap();
+        agaric_store::op::OpRef { device_id, seq }
+    }
+
+    /// Run the ordinary sweep — the same function boot, the 24 h tick and the
+    /// post-purge enqueue all call — and confirm it reclaimed the bytes. By
+    /// every measure available to the GC the file IS an orphan at this point,
+    /// so this is the correct outcome, not the bug.
+    async fn run_gc(&self) {
+        super::super::handlers::cleanup_orphaned_attachments(&self.pool, None, &self.app_data_dir)
+            .await
+            .unwrap();
+        assert!(
+            !self.full_path.exists(),
+            "the GC pass must reclaim a deleted attachment's unreferenced bytes; \
+             without that the #3706 sequence is not set up at all"
+        );
+    }
+
+    /// The `fs_path` of the live `attachments` row for this attachment, if any.
+    async fn live_row_fs_path(&self) -> Option<String> {
+        sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = ?")
+            .bind(&self.attachment_id)
+            .fetch_optional(&self.pool)
+            .await
+            .unwrap()
+    }
+
+    async fn op_log_len(&self) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+}
+
+/// The central sequence: add → delete → GC → undo.
+///
+/// The invariant under test is that a restored row never points at bytes that
+/// do not exist. Since nothing can bring the bytes back, honouring it here
+/// means the undo refuses — and refuses cleanly: the transaction rolls back,
+/// so no reverse op is appended and the delete stays undoable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_delete_attachment_after_gc_refuses_rather_than_restoring_a_dangling_row_3706() {
+    let f = UndoGcFixture::new().await;
+    let delete_ref = f.delete_attachment().await;
+    f.run_gc().await;
+
+    let ops_before = f.op_log_len().await;
+
+    let err = crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, delete_ref)
+        .await
+        .expect_err(
+            "undoing a delete_attachment whose bytes the GC has reclaimed must not \
+             succeed — the row it would restore has nothing to point at (#3706)",
+        );
+    assert!(
+        matches!(err, AppError::NonReversible { .. }),
+        "the refusal must be classified as non-reversible (so a point-in-time \
+         restore can skip the op rather than fail whole); got {err:?}"
+    );
+
+    assert_eq!(
+        f.live_row_fs_path().await,
+        None,
+        "undo re-inserted an attachments row over bytes the GC destroyed — on a \
+         single-device vault that attachment is unrecoverable (#3706)"
+    );
+    assert_eq!(
+        f.op_log_len().await,
+        ops_before,
+        "the refused undo must roll its whole transaction back — an appended \
+         reverse op with no applied effect would leave the delete looking undone"
+    );
+
+    f.mat.shutdown();
+}
+
+/// The symmetric arm: add → delete → undo, with no sweep in between.
+///
+/// The bytes are still on disk, so the undo must behave exactly as it always
+/// did — the row comes back AND the file is readable through it. This is where
+/// a heavy-handed fix (refusing every attachment undo, or making the GC the
+/// only thing that may touch these bytes) would show up as a regression.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_delete_attachment_without_a_gc_pass_still_restores_the_attachment_3706() {
+    let f = UndoGcFixture::new().await;
+    let delete_ref = f.delete_attachment().await;
+
+    let result = crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, delete_ref)
+        .await
+        .expect("undo of a delete_attachment whose bytes are still on disk must succeed");
+    assert_eq!(
+        result.new_op_type, "add_attachment",
+        "reversing delete_attachment must produce an add_attachment reverse op"
+    );
+    f.mat.flush_background().await.unwrap();
+
+    let bytes = crate::commands::read_attachment_inner(
+        &f.pool,
+        &f.app_data_dir,
+        BlockId::from_trusted(&f.attachment_id),
+    )
+    .await
+    .expect("the restored row must resolve to a file that can actually be read");
+    assert_eq!(
+        bytes, UNDO_GC_BYTES,
+        "an ordinary undo must give the user back the exact file they deleted"
+    );
+
+    f.mat.shutdown();
+}
+
+/// The false-refusal the guard is most likely to produce in a real vault, and
+/// the reason it stats the FILE rather than consulting `attachment_blobs`.
+///
+/// #1993's content-addressed dedup points many `attachments` rows at ONE
+/// on-disk file. Deleting one of them leaves the file alive — a sibling row
+/// still references it, so the GC's membership test keeps it through every
+/// sweep. Undoing that delete must therefore still succeed: the bytes never
+/// went anywhere.
+///
+/// A guard keyed on "does an `attachment_blobs` row / a live row for THIS
+/// attachment still exist?" would refuse here and destroy an undo that has
+/// always worked. Nothing else in the suite pins that distinction.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_delete_attachment_succeeds_while_a_deduped_sibling_holds_the_bytes_3706() {
+    let f = UndoGcFixture::new().await;
+
+    // Same bytes → `persist_attachment` reuses the existing blob and points
+    // the sibling row at the SAME `fs_path`.
+    let sibling = crate::commands::add_attachment_with_bytes_inner(
+        &f.pool,
+        DEV,
+        &f.mat,
+        &f.app_data_dir,
+        BlockId::from_trusted("ATTUNDOBLK"),
+        "copy.png".into(),
+        "image/png".into(),
+        UNDO_GC_BYTES.to_vec(),
+    )
+    .await
+    .unwrap();
+    f.mat.flush_background().await.unwrap();
+    assert_eq!(
+        f.app_data_dir.join(&sibling.fs_path),
+        f.full_path,
+        "the fixture depends on #1993 dedup pointing both rows at one file; \
+         without that this test is not exercising the shared-blob case at all"
+    );
+
+    let delete_ref = f.delete_attachment().await;
+
+    // The sweep must KEEP the bytes — the sibling row still names them.
+    super::super::handlers::cleanup_orphaned_attachments(&f.pool, None, &f.app_data_dir)
+        .await
+        .unwrap();
+    assert!(
+        f.full_path.exists(),
+        "the GC must not reclaim a file a live sibling row still references"
+    );
+
+    crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, delete_ref)
+        .await
+        .expect(
+            "undoing a delete_attachment whose bytes a deduped sibling kept alive must \
+             still succeed — the #3706 guard checks the file, not the attachment's own \
+             blob bookkeeping",
+        );
+    f.mat.flush_background().await.unwrap();
+
+    let bytes = crate::commands::read_attachment_inner(
+        &f.pool,
+        &f.app_data_dir,
+        BlockId::from_trusted(&f.attachment_id),
+    )
+    .await
+    .expect("the restored row must resolve to a readable file");
+    assert_eq!(bytes, UNDO_GC_BYTES);
+
+    f.mat.shutdown();
+}
+
+/// The same hazard reached from the other direction, and through the other
+/// guard: add → undo (the row is hard-deleted, bytes deferred to the GC) →
+/// GC → redo. `redo_page_op_inner` does not go through `revert_ops_in_tx`'s
+/// preflight, so this is the path the check inside `apply_reverse_in_tx`
+/// exists for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn redo_of_an_undone_add_attachment_after_a_gc_pass_refuses_3706() {
+    let f = UndoGcFixture::new().await;
+    let add_ref = f.latest_op_ref("add_attachment").await;
+
+    // Undo the add: the reverse hard-deletes the row and, like every other
+    // delete since #3259, leaves the bytes for the sweep.
+    let undo = crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, add_ref)
+        .await
+        .expect("undo of add_attachment must succeed");
+    f.mat.flush_background().await.unwrap();
+    f.run_gc().await;
+
+    let err = crate::commands::redo_page_op_inner(
+        &f.pool,
+        DEV,
+        &f.mat,
+        undo.new_op_ref.device_id.clone(),
+        undo.new_op_ref.seq,
+    )
+    .await
+    .expect_err(
+        "redoing an undone add_attachment after the sweep must not resurrect the \
+         row either — the bytes are just as gone (#3706)",
+    );
+    assert!(
+        matches!(err, AppError::NonReversible { .. }),
+        "expected a non-reversible classification; got {err:?}"
+    );
+    assert_eq!(
+        f.live_row_fs_path().await,
+        None,
+        "redo re-inserted an attachments row over bytes the GC destroyed (#3706)"
+    );
+
+    f.mat.shutdown();
+}

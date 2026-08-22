@@ -399,6 +399,140 @@ fn drive_reverse_engine(
     Ok(())
 }
 
+/// The `attachments.fs_path` a reverse [`OpPayload::AddAttachment`] would
+/// store, computed exactly once so the byte-existence guard below and the
+/// `INSERT` in [`apply_reverse_in_tx`] can never disagree about which file
+/// the restored row names.
+///
+/// #3370 — the payload is reconstructed from an op-log record that may be a
+/// *peer's* op, so it gets the same coercion the apply path runs.
+fn reverse_add_attachment_fs_path(
+    p: &agaric_store::op::AddAttachmentPayload,
+) -> agaric_core::attachment_path::AttachmentFsPath {
+    agaric_core::attachment_path::AttachmentFsPath::coerce_from_peer(
+        &p.fs_path,
+        p.attachment_id.as_str(),
+    )
+}
+
+/// #3706 — refuse to restore an `attachments` row whose bytes are gone.
+///
+/// Undoing a `delete_attachment` restores the ROW but nothing restores the
+/// BYTES, and by the time the undo arrives they are ordinarily already
+/// destroyed:
+///
+/// 1. `delete_attachment_inner` hard-deletes the row and — deliberately,
+///    since #1993/#3259 — leaves the file and the `attachment_blobs` row
+///    alone; the GC is the sole reclaimer of attachment bytes.
+/// 2. `cleanup_orphaned_attachments` runs (boot, the 24 h tick, or the
+///    post-purge enqueue). Nothing references the path any more, so the bulk
+///    prune drops the `content_hash → on_disk_path` mapping and the walk
+///    reclaims the file. Both decisions are correct: by every measure
+///    available to the GC this file *is* an orphan.
+/// 3. The undo reconstructs the original `AddAttachment` payload from the op
+///    log and re-inserts the row with that payload's `fs_path`.
+///
+/// That is not a race — it is the ordinary outcome once the sweep has run —
+/// and it leaves a live row over bytes that do not exist, with no
+/// `attachment_blobs` row left that could repoint it. On a synced vault
+/// `find_missing_attachments` classifies the row and the next sync re-requests
+/// the bytes from a peer; on a single-device vault there is no peer and the
+/// attachment is a broken image and a failing `read_attachment_inner`
+/// forever, for a delete the user explicitly took back.
+///
+/// So the reverse is treated as **non-reversible against today's vault**,
+/// exactly like a reverse move whose prior parent is gone
+/// ([`reverse_move_preflight`]): the undo aborts with `NonReversible` and the
+/// transaction rolls back — no row, no reverse op, the delete stays undoable.
+/// The user is told the undo could not be honoured instead of silently
+/// getting a broken attachment back.
+///
+/// # What the `skip_non_reversible` half of the contract does here: nothing
+///
+/// `AppError::NonReversible` is classified skippable
+/// ([`reverse::is_skippable_non_reversible`]), so on paper the one
+/// `skip_non_reversible = true` caller — [`restore_page_to_op_inner`] — would
+/// skip-and-count this op rather than fail the whole restore. In practice it
+/// never sees one: the ONLY op whose reverse is an `AddAttachment` is
+/// `delete_attachment` — both producers, `reverse::attachment_ops`'s
+/// single-op arm and `reverse::batch`'s `build_reverse_delete_attachment`,
+/// emit it from nothing else — and a restore filters `delete_attachment` out of its
+/// candidate set STATICALLY — `reverse::is_statically_non_reversible`, whose
+/// `STATIC_NON_REVERSIBLE_OP_TYPES` list has held it since #2020 —
+/// before [`revert_ops_in_tx`] is called at all. Such ops are already counted
+/// into `non_reversible_skipped` there.
+///
+/// So today this guard only ever fires with `skip_non_reversible = false`
+/// (`revert_ops`, `undo_ops`/`undo_op`, `undo_page_group`, `redo_page_op`),
+/// where aborting the transaction is the whole behaviour and the pre-append
+/// preflight in [`revert_ops_in_tx`] and the in-arm check in
+/// [`apply_reverse_in_tx`] are indistinguishable. The preflight is kept
+/// anyway so that the day `delete_attachment` leaves the static list, a
+/// restore skips this op instead of failing whole — but that is future-proofing,
+/// not a behaviour anything exercises now.
+///
+/// Keeping the bytes alive *instead* — a GC grace period, or having the GC
+/// consult the undo horizon — would preserve the user's expectation, but the
+/// undo horizon here is the op log itself (undo is bounded by op-log
+/// retention, not by a clock), so honouring it would mean never reclaiming a
+/// deleted attachment's bytes until snapshot compaction. Choosing any shorter
+/// window is a product decision about how long undo must survive, and is
+/// deliberately NOT invented here. This guard changes nothing about what the
+/// GC reclaims or when.
+///
+/// `app_data_dir` is `None` only when the `Materializer` was built without
+/// one. Production has exactly one `Materializer` — `lib.rs`'s
+/// `build_materializer` constructs it and calls `set_app_data_dir` in the same
+/// function, before `app.manage(materializer)` makes it reachable from any
+/// command — so in production it is always `Some`. Without a vault root there
+/// is no path to stat and no attachment can be read at all, so the check is
+/// skipped rather than failing every undo in that configuration.
+///
+/// That is a convention, not a type-level guarantee: `Materializer::new` and
+/// `with_read_pool` are `pub` and leave the `OnceLock` empty, so a future
+/// production caller could reintroduce a rootless `Materializer` and this
+/// guard would silently do nothing there. The skip therefore logs at WARN —
+/// noise-free in production (where it never fires) and loud enough to find in
+/// the field if that ever changes.
+async fn require_reverse_attachment_bytes(
+    app_data_dir: Option<&std::path::Path>,
+    p: &agaric_store::op::AddAttachmentPayload,
+) -> Result<(), AppError> {
+    let Some(root) = app_data_dir else {
+        tracing::warn!(
+            attachment_id = p.attachment_id.as_str(),
+            "skipping the #3706 attachment-bytes check: this Materializer has no app_data_dir \
+             (expected only in tests; production wires one in lib.rs::build_materializer)"
+        );
+        return Ok(());
+    };
+    let fs_path = reverse_add_attachment_fs_path(p);
+    let full = root.join(fs_path.as_str());
+    match tokio::fs::try_exists(&full).await {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(e) => {
+            // Cannot prove the bytes are there. Be conservative in the
+            // direction that upholds the invariant: a restored row must
+            // never point at bytes that do not exist.
+            tracing::warn!(
+                attachment_id = p.attachment_id.as_str(),
+                path = %full.display(),
+                error = %e,
+                "could not stat attachment bytes while reversing a delete_attachment; treating them as absent (#3706)"
+            );
+        }
+    }
+    tracing::warn!(
+        attachment_id = p.attachment_id.as_str(),
+        path = %full.display(),
+        "refusing to undo a delete_attachment whose bytes the orphan GC has already reclaimed — restoring the row would leave a live reference over missing bytes (#3706)"
+    );
+    Err(AppError::NonReversible {
+        op_type: "delete_attachment".into(),
+    })
+}
+
 /// Apply the materialized effect of a reverse [`OpPayload`] to the blocks/tags/properties
 /// tables inside an existing transaction.
 ///
@@ -444,12 +578,19 @@ fn drive_reverse_engine(
 /// later reconstructs `RestoreBlock { deleted_at_ref: record.created_at }`, so
 /// a second independent clock read here would make redo-of-that-undo match
 /// ZERO rows and silently no-op.
+///
+/// `app_data_dir` is the vault root the `AddAttachment` arm resolves the
+/// payload's `fs_path` against before it commits a row naming that file
+/// (#3706 — see [`require_reverse_attachment_bytes`]). Pass
+/// `materializer.app_data_dir().as_deref()`; `None` skips the check, which is
+/// only reachable in a `Materializer` built without a vault root.
 pub async fn apply_reverse_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     reverse_payload: &OpPayload,
     op_created_at: i64,
+    app_data_dir: Option<&std::path::Path>,
 ) -> Result<(), AppError> {
     match reverse_payload {
         // Idempotency policy:
@@ -837,6 +978,31 @@ pub async fn apply_reverse_in_tx(
             // case. `created_at` is regenerated via `now_ms()` then. A row
             // may survive only via idempotency (e.g. double-undo replay), in
             // which case we preserve its existing `created_at`.
+            // #3706: the bytes this row will name must still be on disk. The
+            // orphan GC reclaims a deleted attachment's file as a matter of
+            // course (see `require_reverse_attachment_bytes`), and committing
+            // the row anyway is what turns a taken-back delete into permanent
+            // data loss on a vault with no peer to re-request from. Checked
+            // BEFORE the INSERT so the failure rolls the whole reverse back.
+            //
+            // `revert_ops_in_tx` runs the same check as a pre-append
+            // preflight; this one covers the paths that do not go through it —
+            // `undo_page_op_inner` (which cannot in fact reach this arm, see
+            // below) and, the reachable one, `redo_page_op_inner` redoing an
+            // undone `add_attachment` after a sweep.
+            //
+            // `undo_page_op_inner` is unreachable here for a reason worth
+            // recording rather than relying on: its target-selection query
+            // admits a `delete_attachment` op only via
+            // `EXISTS (SELECT 1 FROM attachments a WHERE a.id = ...)`, and
+            // `DeleteAttachmentPayload` carries no `block_id`
+            // (`OpPayload::block_id` returns `None` for it), so the
+            // `ol.block_id IN (page_blocks)` disjunct never matches either. The
+            // delete hard-deleted that row, so the `EXISTS` is always false and
+            // positional Ctrl-Z skips past the op entirely. That is its own
+            // bug — not this one — and the guard here does not depend on it.
+            require_reverse_attachment_bytes(app_data_dir, p).await?;
+
             let attachment_id_str = p.attachment_id.as_str();
             let original_created_at: Option<i64> = sqlx::query_scalar!(
                 "SELECT created_at FROM attachments WHERE id = ?",
@@ -853,10 +1019,11 @@ pub async fn apply_reverse_in_tx(
             // op-log record of the op being undone, which may be a *peer's*
             // op — so the same coercion the apply path runs must run here, or
             // undo re-introduces the value apply just refused to store.
-            let fs_path = agaric_core::attachment_path::AttachmentFsPath::coerce_from_peer(
-                &p.fs_path,
-                attachment_id_str,
-            );
+            //
+            // Shared with the #3706 byte-existence guard above via
+            // `reverse_add_attachment_fs_path`, so the path that is checked
+            // and the path that is stored cannot drift apart.
+            let fs_path = reverse_add_attachment_fs_path(p);
             let fs_path_str = fs_path.as_str();
             if fs_path_str != p.fs_path {
                 tracing::warn!(
@@ -954,6 +1121,7 @@ pub async fn revert_ops_inner(
     // Interactive batch undo preserves the historical contract: a single
     // non-reversible op aborts the whole revert (skip_non_reversible =
     // false). The discarded skip count is irrelevant on this path.
+    let app_data_dir = materializer.app_data_dir();
     let (results, _skipped) = revert_ops_in_tx(
         &mut tx,
         pool,
@@ -961,6 +1129,7 @@ pub async fn revert_ops_inner(
         device_id,
         ops,
         false,
+        app_data_dir.as_deref(),
     )
     .await?;
 
@@ -997,6 +1166,7 @@ async fn revert_ops_in_tx(
     device_id: &str,
     ops: Vec<OpRef>,
     skip_non_reversible: bool,
+    app_data_dir: Option<&std::path::Path>,
 ) -> Result<(Vec<UndoResult>, u64), AppError> {
     use crate::reverse;
 
@@ -1190,9 +1360,30 @@ async fn revert_ops_in_tx(
         // point-in-time restore path SKIPS the op (#2020); the interactive
         // paths (`skip_non_reversible = false`) abort the whole batch with the
         // same classified error — the tx rolls back, nothing is applied.
-        if let OpPayload::MoveBlock(p) = reverse_payload
-            && let Err(e) = reverse_move_preflight(tx, p).await
-        {
+        //
+        // #3706 joins the same gate with a second state-dependent reverse: an
+        // `AddAttachment` reverse (the undo of a `delete_attachment`) whose
+        // bytes the orphan GC has already reclaimed cannot be honoured
+        // against today's vault either, and restoring the row anyway commits
+        // a live reference over a file that is gone.
+        //
+        // Unlike the MoveBlock arm, this one changes nothing TODAY by being
+        // here rather than only inside `apply_reverse_in_tx`: the only op
+        // whose reverse is an `AddAttachment` is `delete_attachment`, and the
+        // sole `skip_non_reversible = true` caller
+        // (`restore_page_to_op_inner`) already drops `delete_attachment` from
+        // its candidate set via `reverse::is_statically_non_reversible`, so
+        // this branch is only ever reached with `skip_non_reversible = false`
+        // — where preflight and in-arm check both roll the same tx back. It
+        // is a pre-append gate so that a future restore which DOES sweep
+        // `delete_attachment` in skips-and-counts it instead of failing
+        // whole. See `require_reverse_attachment_bytes` for the full note.
+        let preflight = match reverse_payload {
+            OpPayload::MoveBlock(p) => reverse_move_preflight(tx, p).await,
+            OpPayload::AddAttachment(p) => require_reverse_attachment_bytes(app_data_dir, p).await,
+            _ => Ok(()),
+        };
+        if let Err(e) = preflight {
             if skip_non_reversible && reverse::is_skippable_non_reversible(&e) {
                 non_reversible_skipped += 1;
                 continue;
@@ -1244,7 +1435,11 @@ async fn revert_ops_in_tx(
                 .collect();
             reverse_move_block(tx, state, device_id, p, &cross_frame_exclude).await?;
         } else {
-            apply_reverse_in_tx(tx, state, device_id, reverse_payload, op_ts).await?;
+            // The #3706 byte-existence guard already ran as this loop's
+            // preflight, so the `AddAttachment` arm's own check is a no-op
+            // here; the argument is threaded rather than passed `None` so the
+            // two can never disagree if the preflight is ever narrowed.
+            apply_reverse_in_tx(tx, state, device_id, reverse_payload, op_ts, app_data_dir).await?;
         }
 
         results_tagged.push((
@@ -1466,6 +1661,7 @@ pub async fn restore_page_to_op_inner(
         tx.rollback().await?;
         (vec![], 0)
     } else {
+        let app_data_dir = materializer.app_data_dir();
         let (results, skipped) = revert_ops_in_tx(
             &mut tx,
             pool,
@@ -1473,6 +1669,7 @@ pub async fn restore_page_to_op_inner(
             device_id,
             candidate_ops,
             true,
+            app_data_dir.as_deref(),
         )
         .await?;
         if results.is_empty() {
@@ -1623,12 +1820,14 @@ pub async fn undo_page_op_inner(
     )
     .await?;
 
+    let app_data_dir = materializer.app_data_dir();
     apply_reverse_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
         &reverse_payload,
         op_ts,
+        app_data_dir.as_deref(),
     )
     .await?;
 
@@ -1743,12 +1942,18 @@ pub async fn redo_page_op_inner(
     )
     .await?;
 
+    // #3706: redoing an undone `add_attachment` is the one production path
+    // into the row-restoring reverse arm that does NOT go through
+    // `revert_ops_in_tx`'s preflight, so the guard inside
+    // `apply_reverse_in_tx` is what covers it.
+    let app_data_dir = materializer.app_data_dir();
     apply_reverse_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
         &reverse_payload,
         op_ts,
+        app_data_dir.as_deref(),
     )
     .await?;
 
@@ -2068,6 +2273,7 @@ pub async fn undo_page_group_inner(
     // IMMEDIATE transaction back — no partial undo. `revert_ops_in_tx` sorts
     // the ops newest-first and applies the reverses in that order; the
     // discarded skip count is always 0 on this path.
+    let app_data_dir = materializer.app_data_dir();
     let (results, _skipped) = revert_ops_in_tx(
         &mut tx,
         pool,
@@ -2075,6 +2281,7 @@ pub async fn undo_page_group_inner(
         device_id,
         ops,
         false,
+        app_data_dir.as_deref(),
     )
     .await?;
 
@@ -2166,6 +2373,7 @@ pub async fn undo_ops_inner(
     // Interactive contract: `skip_non_reversible = false` — one
     // non-reversible op aborts the whole batch (the tx rolls back, nothing
     // is applied). The discarded skip count is always 0 on this path.
+    let app_data_dir = materializer.app_data_dir();
     let (results, _skipped) = revert_ops_in_tx(
         &mut tx,
         pool,
@@ -2173,6 +2381,7 @@ pub async fn undo_ops_inner(
         device_id,
         ops,
         false,
+        app_data_dir.as_deref(),
     )
     .await?;
 
