@@ -491,7 +491,7 @@ function defuseLeadingItalicMarker(content: readonly InlineNode[]): InlineNode[]
 
   let i = 0
   while (i < content.length && (isPlainSpaces(content[i]) || isEmptyAtom(content[i]))) i++
-  if (!isVulnerableItalicOpen(content[i])) return content as InlineNode[]
+  if (!isVulnerableItalicOpen(content, i)) return content as InlineNode[]
 
   // The maximal contiguous run that keeps italic continuously active from `i`
   // (an atom or a mark change ends it — same boundary `emitMarkTransition`
@@ -539,17 +539,35 @@ function defuseLeadingItalicMarker(content: readonly InlineNode[]): InlineNode[]
 }
 
 /**
- * Whether `node` is an inline node that would make `emitMarkTransition` open a
- * bare `*` immediately followed by a space — the exact `[-*] ` bullet marker.
- * See {@link defuseLeadingItalicMarker} for why `code` and `link` are rejected
- * even though `markSetFromMarks` cannot see them.
+ * Whether the italic-only run starting at `content[i]` would make
+ * `emitMarkTransition` open a bare `*` immediately followed by a space — the
+ * exact `[-*] ` bullet marker.
+ *
+ * The trigger is NOT necessarily on a single node (#4221). `content[i]` is
+ * where the delimiter opens — the first node whose only emphasis mark is
+ * italic (`code`/`link` rejected even though `markSetFromMarks` cannot see
+ * them; see {@link defuseLeadingItalicMarker}) — but a zero-length TextNode
+ * there contributes no character: `emitMarkTransition` still emits the `*`
+ * for it (a real byte), so the leading-space trigger can sit on a LATER node
+ * that keeps italic continuously active. Walk forward through every such
+ * empty node; the first one with actual text decides it. A node that is not
+ * itself italic-only text (wrong type, a different/extra mark, `code`/`link`)
+ * ends the walk with "not vulnerable" — it is a mark-set change, which always
+ * closes the delimiter and reopens it (`**`, never `* `), so nothing past
+ * that point can complete the trigger either.
  */
-function isVulnerableItalicOpen(node: InlineNode | undefined): node is TextNode {
-  if (!node || node.type !== 'text' || !node.text.startsWith(' ')) return false
-  const marks = node.marks ?? []
-  if (marks.some((m) => m.type === 'code' || m.type === 'link')) return false
-  const emphasis = markSetFromMarks(marks)
-  return emphasis.size === 1 && emphasis.has('italic')
+function isVulnerableItalicOpen(content: readonly InlineNode[], i: number): boolean {
+  for (let j = i; j < content.length; j++) {
+    const node = content[j]
+    if (node?.type !== 'text') return false
+    const marks = node.marks ?? []
+    if (marks.some((m) => m.type === 'code' || m.type === 'link')) return false
+    const emphasis = markSetFromMarks(marks)
+    if (emphasis.size !== 1 || !emphasis.has('italic')) return false
+    if (node.text === '') continue // opens the delimiter, contributes no char
+    return node.text.startsWith(' ')
+  }
+  return false
 }
 
 /** Pull the bold/italic/strike/highlight/underline subset out of a mark list. */
