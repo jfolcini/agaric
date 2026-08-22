@@ -74,6 +74,70 @@ pub fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> 
 ///   calls `reject_replicated_targets` first, and every other undo/redo
 ///   target query filters `is_replicated = 0` (#2481/#2549).
 ///
+/// # Residual: a LEGACY pre-C-3 delete of a repointed row false-refuses
+///
+/// "All that was ever recorded for them" is accurate but incomplete: for a
+/// legacy delete it is also a REFUSAL CASE, structurally identical to the
+/// redo residual below, and it deserves saying out loud rather than being
+/// left as a fallback footnote.
+///
+/// A `delete_attachment` op written before C-3 carries no `fs_path` at all,
+/// so this function has nothing to adopt and the reverse is reconstructed
+/// from the ORIGINAL `add_attachment` payload — the pre-#3706-review
+/// behaviour, for exactly the ops that predate the fix. If one of the three
+/// repointers moved that row onto a shared blob at any time before the
+/// delete, the original path is the one the ordinary sweep reclaimed, and
+/// the #3706 byte-existence guard now refuses the undo — over bytes that are
+/// alive and readable under the blob path the row actually held.
+///
+/// Same false refusal as the redo residual, same shape, different entry
+/// point, and equally not closable from inside this function: the
+/// information was never written. Closing it would mean reading the live row
+/// — but for a legacy delete the row is already gone by undo time, so there
+/// is nothing to read; the only real fix is the delete-time capture that C-3
+/// added, which by definition cannot apply retroactively. The exposure
+/// therefore shrinks on its own as pre-C-3 ops age out of op-log retention.
+/// Strictly better than pre-#3706 either way (which would have committed a
+/// row over the reclaimed path instead of refusing), but a false refusal, not
+/// a fixed path.
+///
+/// # Residual: `filename` is still the CREATION-time name
+///
+/// The same staleness class this function fixes for `fs_path` remains
+/// unfixed for `filename`, and for the same structural reason — every field
+/// of the reconstructed `AddAttachmentPayload` is the field the row was
+/// *born* with.
+///
+/// `rename_attachment` is a first-class op with its own forward apply and its
+/// own reverse ([`reverse_rename_attachment`]), so `add → rename → delete →
+/// undo` restores the PRE-rename filename: the user gets their attachment
+/// back under a name they had already changed. The redo of the delete then
+/// renames nothing back, because the rename op is not part of this undo at
+/// all — it sits earlier in the stack, untouched.
+///
+/// The payload-adoption trick does not apply here:
+/// [`agaric_store::op::DeleteAttachmentPayload`] carries `attachment_id` and
+/// `fs_path` and nothing else, so unlike `fs_path` there is no delete-time
+/// `filename` in the op log to adopt. Fixing it means either widening that
+/// payload (a schema-adjacent change with its own `#[serde(default)]`
+/// migration story, exactly like C-3's) or having the reverse read the live
+/// row inside the delete's transaction — both deliberately out of scope for
+/// the #3706 review, which is why this is documented rather than fixed.
+///
+/// Consequences are strictly cosmetic-plus: a wrong display name and a wrong
+/// download name. Unlike a stale `fs_path` it cannot dangle the row or trip
+/// the byte-existence guard, since `filename` is metadata and nothing
+/// resolves bytes through it.
+///
+/// # Not stale: the other reconstructed fields
+///
+/// For completeness, the remaining `AddAttachmentPayload` fields are
+/// creation-time values that are *supposed* to be creation-time values —
+/// `mime_type` and `size_bytes` describe the bytes, which are immutable
+/// under content addressing, and `attachment_id` / `block_id` are identity.
+/// Only `fs_path` (fixed here) and `filename` (above) have first-class ops
+/// that can change them behind the reverse's back.
+///
 /// # Residual: redo after undo-of-add can still false-refuse
 ///
 /// A `delete_attachment` minted by [`reverse_add_attachment`] (the reverse of

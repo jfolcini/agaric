@@ -2385,6 +2385,15 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     // both ops would make the twins agree whether or not either one adopts
     // the delete-time path, so the parity comparison below could not tell a
     // correct adoption from a same-payload no-op.
+    //
+    // The index of the first `delete_attachment` is captured from `op_refs`
+    // itself rather than hand-counted from the groups ahead of it: the
+    // absolute-answer assertion at the bottom indexes `batched` by it, and a
+    // literal offset silently RETARGETS onto a different op-type the moment
+    // anyone inserts an op earlier in the batch — surfacing as a bogus
+    // "expected AddAttachment" panic that reads like an attachment-reverse
+    // regression rather than a stale index (#3706 review).
+    let delete_att_base = op_refs.len();
     for att_id in &att_ids {
         let rec = append_op(
             &pool,
@@ -2588,15 +2597,17 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     }
 
     // #3706 review: pin the ABSOLUTE answer for the attachment reverses too —
-    // not just batch/per-op agreement. The 4 `add_attachment` ops sit at
-    // idx 12..16 (4 edits, 4 moves, 4 set-properties ahead of them) and their
-    // matching `delete_attachment` reverses at idx 16..20. A regression
+    // not just batch/per-op agreement. The `delete_attachment` reverses
+    // occupy `delete_att_base .. delete_att_base + att_ids.len()`, an offset
+    // DERIVED from `op_refs.len()` at the point that group was appended (see
+    // there) rather than hand-counted from the preceding groups. A regression
     // shared by both kernels — e.g. gutting the body of the
     // `adopt_delete_time_fs_path` helper they both call, rather than just one
     // call site — would still satisfy the parity comparison above, since it
     // would move both `batched` and `legacy` the same wrong way.
     for (i, att_id) in att_ids.iter().enumerate() {
-        match &batched[16 + i] {
+        let idx = delete_att_base + i;
+        match &batched[idx] {
             OpPayload::AddAttachment(p) => assert_eq!(
                 p.fs_path,
                 format!("/tmp/blob_{att_id}.png"),
@@ -2604,8 +2615,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                  held at DELETE time, not the one it was created with"
             ),
             other => panic!(
-                "expected AddAttachment for the delete_attachment reverse at idx {}, got {other:?}",
-                16 + i
+                "expected AddAttachment for the delete_attachment reverse at idx {idx}, got {other:?}"
             ),
         }
     }

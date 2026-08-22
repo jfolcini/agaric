@@ -490,6 +490,12 @@ fn reverse_add_attachment_fs_path(
 /// restore skips this op instead of failing whole — but that is future-proofing,
 /// not a behaviour anything exercises now.
 ///
+/// That future-proofing is also why not every refusal below is
+/// `NonReversible`: a skippable class is a licence to DROP the op, so only
+/// the refusals that are true statements about today's vault (the bytes are
+/// gone, or the path is not a file) get it. A stat that merely FAILED gets
+/// [`AppError::Io`] instead — see "A transient I/O fault is NOT the GC" below.
+///
 /// Keeping the bytes alive *instead* — a GC grace period, or having the GC
 /// consult the undo horizon — would preserve the user's expectation, but the
 /// undo horizon here is the op log itself (undo is bounded by op-log
@@ -514,6 +520,62 @@ fn reverse_add_attachment_fs_path(
 /// rootless `Materializer` and this guard would silently do nothing there.
 /// The skip therefore logs at WARN — noise-free in production (where it never
 /// fires) and loud enough to find in the field if that ever changes.
+///
+/// # What counts as "the bytes are there": a REGULAR FILE, nothing else
+///
+/// The check is `metadata(..).is_file()`, not "does the path exist". The
+/// distinction is load-bearing rather than pedantic, because
+/// [`agaric_core::attachment_path::AttachmentFsPath`] accepts MULTI-COMPONENT
+/// paths (`attachments/sub/photo.png` is a pinned-valid spelling), so
+/// `attachments/sub` is itself a spellable `fs_path` — and a directory is
+/// exactly the thing an existence test says yes to and a reader says no to.
+/// `read_attachment_inner` reads through `std::fs::read`, which fails
+/// `EISDIR` on a directory, so admitting one commits the very state this
+/// guard exists to prevent — a live row over bytes that cannot be read —
+/// reached by a different route than the GC (#3706 review).
+///
+/// The other non-regular shapes fall out of the same test, and each is
+/// classified the way it deserves:
+///
+/// * **Broken symlink** — `metadata` FOLLOWS links, so a link whose target is
+///   gone surfaces as `NotFound`: refused, correctly. It is the GC case
+///   wearing a different hat (the bytes are not there), not a readable file.
+/// * **Symlink to a live file** — followed, `is_file()` is true, accepted.
+///   A vault that keeps its blobs behind links still undoes normally.
+/// * **Directory / fifo / socket / device** — `is_file()` is false: refused.
+///   Nothing here can serve `read_attachment_file`.
+/// * **Zero-byte regular file** — ACCEPTED, deliberately. `std::fs::read`
+///   returns `Ok(vec![])` for it, so the restored row resolves to a readable
+///   attachment; an empty file is a legitimate attachment, not a torn write
+///   (`write_attachment_streaming`/#2918 land bytes via a sibling temp file
+///   plus rename, so a half-written attachment is never visible at the final
+///   path). Refusing it would be this guard inventing a content policy it has
+///   no business having.
+///
+/// # A transient I/O fault is NOT the GC (#3706 review)
+///
+/// `try_exists` collapsed "the file is gone" and "I could not tell" into one
+/// skippable `NonReversible`. They are not the same claim: an `EACCES` on a
+/// vault whose permissions slipped, an `EMFILE` under fd pressure, or an
+/// `EIO`/`ENOTCONN` from a network vault that briefly unmounted are all
+/// TRANSIENT — the bytes may well be sitting right there, and the same stat a
+/// second later succeeds.
+///
+/// That distinction is invisible today (every reaching caller has
+/// `skip_non_reversible = false`, so both classes abort the same
+/// transaction), but the preflight in [`revert_ops_in_tx`] exists precisely
+/// as future-proofing for the day `delete_attachment` leaves
+/// `STATIC_NON_REVERSIBLE_OP_TYPES` — and on that day a skippable
+/// classification means a one-off `EIO` makes a point-in-time restore
+/// SKIP-AND-COUNT the op and silently drop it from the restore. A dropped op
+/// is unrecoverable; a failed restore is retryable.
+///
+/// So only `io::ErrorKind::NotFound` — the kind the GC actually produces —
+/// keeps the skippable [`AppError::NonReversible`] classification. Every
+/// other kind returns [`AppError::Io`], which
+/// [`reverse::is_skippable_non_reversible`] classifies as fatal: the restore
+/// fails whole and the user can retry once the vault is reachable again,
+/// instead of quietly losing the op.
 async fn require_reverse_attachment_bytes(
     app_data_dir: Option<&std::path::Path>,
     p: &agaric_store::op::AddAttachmentPayload,
@@ -532,23 +594,49 @@ async fn require_reverse_attachment_bytes(
     // stat error is NOT evidence the GC reclaimed anything — the refusal is
     // the same, the reason is not, and a log line that asserts a cause it
     // cannot know sends the next reader after the wrong subsystem.
-    match tokio::fs::try_exists(&full).await {
-        Ok(true) => return Ok(()),
-        Ok(false) => tracing::warn!(
+    //
+    // `metadata` (not `try_exists`) and `is_file()` (not "it exists"):
+    // `try_exists` answers YES for a directory, and `AttachmentFsPath` admits
+    // multi-component paths, so a directory `fs_path` walked straight through
+    // the guard into a row `read_attachment_inner` can only fail `EISDIR` on.
+    // `metadata` also follows symlinks, so a link to nowhere lands in the
+    // `NotFound` arm rather than being mistaken for a live file. See the doc
+    // above for the full shape-by-shape classification.
+    match tokio::fs::metadata(&full).await {
+        Ok(meta) if meta.is_file() => return Ok(()),
+        Ok(meta) => tracing::warn!(
+            attachment_id = p.attachment_id.as_str(),
+            path = %full.display(),
+            is_dir = meta.is_dir(),
+            "refusing to undo a delete_attachment whose fs_path names something that is not a regular file (a directory or other non-file cannot be read back through read_attachment_inner) — restoring the row would leave a live reference over unreadable bytes (#3706 review)"
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => tracing::warn!(
             attachment_id = p.attachment_id.as_str(),
             path = %full.display(),
             "refusing to undo a delete_attachment whose bytes are no longer on disk (the orphan GC reclaims them as a matter of course once nothing references them) — restoring the row would leave a live reference over missing bytes (#3706)"
         ),
         Err(e) => {
-            // Cannot prove the bytes are there. Be conservative in the
-            // direction that upholds the invariant: a restored row must
-            // never point at bytes that do not exist.
+            // Cannot prove the bytes are there, and cannot claim they are
+            // gone either. Refuse — the invariant that a restored row never
+            // points at bytes that do not exist still holds — but refuse
+            // with a FATAL class, not the skippable `NonReversible` the GC
+            // case gets: a transient EACCES/EMFILE/EIO must never let a
+            // future point-in-time restore skip-and-count this op away
+            // (#3706 review; see the doc above).
             tracing::warn!(
                 attachment_id = p.attachment_id.as_str(),
                 path = %full.display(),
                 error = %e,
-                "refusing to undo a delete_attachment whose bytes could not be stat'd; treating them as absent (#3706)"
+                kind = ?e.kind(),
+                "refusing to undo a delete_attachment whose bytes could not be stat'd; this is a transient I/O fault, not GC reclamation, so it is NOT skippable — retry once the vault is reachable (#3706 review)"
             );
+            return Err(AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "stat'ing attachment bytes at {} for an undo of delete_attachment: {e}",
+                    full.display()
+                ),
+            )));
         }
     }
     Err(AppError::NonReversible {

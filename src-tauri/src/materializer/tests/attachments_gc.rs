@@ -1572,3 +1572,259 @@ async fn undo_of_delete_attachment_restores_the_path_the_row_held_at_delete_time
 
     f.mat.shutdown();
 }
+
+// ----------------------------------------------------------------------------
+// #3706 review — what the byte-existence guard is allowed to say YES to
+// ----------------------------------------------------------------------------
+//
+// The guard used `tokio::fs::try_exists`, which answers YES for anything that
+// exists — including a DIRECTORY. `AttachmentFsPath` accepts multi-component
+// paths (`attachments/sub/photo.png` is a pinned-valid spelling), so a
+// directory is a spellable `fs_path`, and `read_attachment_inner` reads
+// through `std::fs::read`, which fails `EISDIR` on one. An existence test
+// therefore admitted exactly the state the guard exists to prevent — a live
+// row over bytes that cannot be read — reached via a different route than the
+// GC.
+//
+// The tests below pin the whole classification: directory and broken symlink
+// refuse, a zero-byte regular file is still restorable, and a stat failure
+// that is NOT `NotFound` refuses with a NON-skippable class.
+
+impl UndoGcFixture {
+    /// Repoint the LIVE row at `rel` — the same
+    /// `UPDATE attachments SET fs_path = ? WHERE id = ?` the three production
+    /// repointers issue. `delete_attachment_inner` captures its payload
+    /// `fs_path` from the live row, so this is what the undo's guard will
+    /// stat.
+    async fn repoint(&self, rel: &str) {
+        sqlx::query("UPDATE attachments SET fs_path = ? WHERE id = ?")
+            .bind(rel)
+            .bind(&self.attachment_id)
+            .execute(&self.pool)
+            .await
+            .unwrap();
+    }
+}
+
+/// The hole the review found: an `fs_path` that resolves to a DIRECTORY.
+///
+/// `try_exists` says `Ok(true)` for it, so the guard passed and the reverse
+/// committed a live `attachments` row over a path `read_attachment_inner` can
+/// only fail `EISDIR` on — the same "live row over bytes that are not there"
+/// state #3706 exists to prevent, reached without the GC being involved at
+/// all. `metadata(..).is_file()` is what closes it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_delete_attachment_whose_fs_path_names_a_directory_refuses_3706() {
+    let f = UndoGcFixture::new().await;
+
+    // A directory at a perfectly valid two-component attachment path.
+    const DIR_PATH: &str = "attachments/notafile";
+    let dir_full = f.app_data_dir.join(DIR_PATH);
+    tokio::fs::create_dir_all(&dir_full).await.unwrap();
+    assert!(
+        dir_full.is_dir(),
+        "the fixture depends on this path being a directory; without that the \
+         test is not exercising the try_exists hole at all"
+    );
+    f.repoint(DIR_PATH).await;
+
+    let delete_ref = f.delete_attachment().await;
+    let ops_before = f.op_log_len().await;
+
+    let err = crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, delete_ref)
+        .await
+        .expect_err(
+            "undoing a delete_attachment whose fs_path names a directory must not \
+             succeed — try_exists answers YES for a directory and read_attachment_inner \
+             answers EISDIR, so the restored row is unreadable (#3706 review)",
+        );
+    assert!(
+        matches!(err, AppError::NonReversible { .. }),
+        "a non-regular file is a persistent property of today's vault, not a \
+         transient fault, so it keeps the skippable non-reversible class; got {err:?}"
+    );
+    assert_eq!(
+        f.live_row_fs_path().await,
+        None,
+        "undo re-inserted an attachments row over a DIRECTORY — the guard admitted \
+         the exact state it exists to prevent (#3706 review)"
+    );
+    assert_eq!(
+        f.op_log_len().await,
+        ops_before,
+        "the refused undo must roll its whole transaction back"
+    );
+
+    f.mat.shutdown();
+}
+
+/// A symlink whose target is gone is the GC case wearing a different hat: the
+/// bytes are not there, and nothing can read through it.
+///
+/// `metadata` FOLLOWS links, so this lands in the `NotFound` arm — the same
+/// skippable refusal a reclaimed file gets, which is the right answer.
+/// (`symlink_metadata` would have said "yes, a symlink exists" and admitted
+/// it, which is why the guard must not use it.)
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_delete_attachment_whose_fs_path_is_a_broken_symlink_refuses_3706() {
+    let f = UndoGcFixture::new().await;
+
+    const LINK_PATH: &str = "attachments/dangling.png";
+    let link_full = f.app_data_dir.join(LINK_PATH);
+    std::os::unix::fs::symlink(
+        f.app_data_dir.join("attachments/gone-forever.png"),
+        &link_full,
+    )
+    .unwrap();
+    assert!(
+        link_full.symlink_metadata().is_ok() && !link_full.exists(),
+        "the fixture depends on a symlink that exists as a link but resolves to \
+         nothing; without that this is not the broken-link case"
+    );
+    f.repoint(LINK_PATH).await;
+
+    let delete_ref = f.delete_attachment().await;
+
+    let err = crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, delete_ref)
+        .await
+        .expect_err(
+            "undoing a delete_attachment whose fs_path is a symlink to nothing must \
+             not succeed — there are no bytes to restore a row over (#3706 review)",
+        );
+    assert!(
+        matches!(err, AppError::NonReversible { .. }),
+        "a broken symlink is the bytes-are-gone case, so it keeps the skippable \
+         non-reversible class; got {err:?}"
+    );
+    assert_eq!(
+        f.live_row_fs_path().await,
+        None,
+        "undo re-inserted an attachments row over a symlink to nothing"
+    );
+
+    f.mat.shutdown();
+}
+
+/// The other half of the shape classification: a ZERO-BYTE regular file is
+/// still a restorable attachment, and the guard must not invent a
+/// content-length policy.
+///
+/// `std::fs::read` returns `Ok(vec![])` for it, so the restored row resolves
+/// to something genuinely readable. A "must be non-empty" tightening would
+/// look defensible and would break this undo for no invariant's benefit —
+/// which is why the accept is pinned rather than left implicit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_delete_attachment_whose_bytes_are_an_empty_file_still_succeeds_3706() {
+    let f = UndoGcFixture::new().await;
+
+    const EMPTY_PATH: &str = "attachments/empty.bin";
+    let empty_full = f.app_data_dir.join(EMPTY_PATH);
+    tokio::fs::write(&empty_full, b"").await.unwrap();
+    assert_eq!(
+        tokio::fs::metadata(&empty_full).await.unwrap().len(),
+        0,
+        "the fixture depends on a zero-length regular file"
+    );
+    f.repoint(EMPTY_PATH).await;
+
+    let delete_ref = f.delete_attachment().await;
+
+    crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, delete_ref)
+        .await
+        .expect(
+            "an empty attachment is a legitimate attachment — the byte-existence \
+             guard checks that the path names a readable regular file, not that the \
+             file has content (#3706 review)",
+        );
+    f.mat.flush_background().await.unwrap();
+
+    let bytes = crate::commands::read_attachment_inner(
+        &f.pool,
+        &f.app_data_dir,
+        BlockId::from_trusted(&f.attachment_id),
+    )
+    .await
+    .expect("the restored row must resolve to a file that can actually be read");
+    assert!(
+        bytes.is_empty(),
+        "the restored attachment must be the empty file the row named"
+    );
+
+    f.mat.shutdown();
+}
+
+/// A stat failure that is NOT `NotFound` must refuse with a class a future
+/// point-in-time restore CANNOT skip (#3706 review).
+///
+/// `try_exists` collapsed "the GC reclaimed it" and "I could not tell" into
+/// one skippable `NonReversible`. The distinction is invisible today (every
+/// reaching caller has `skip_non_reversible = false`), but the preflight in
+/// `revert_ops_in_tx` exists as future-proofing for the day
+/// `delete_attachment` leaves `STATIC_NON_REVERSIBLE_OP_TYPES` — and on that
+/// day a skippable classification means a one-off `EACCES`/`EMFILE`/`EIO`
+/// makes a restore skip-and-count the op and silently DROP it. A dropped op is
+/// unrecoverable; a failed restore is retryable.
+///
+/// The fault is induced with `ENOTDIR` — a path whose parent component is a
+/// regular file — because it is the one non-`NotFound` stat error reproducible
+/// without root, a permissions dance, or fd exhaustion. What the test pins is
+/// the CLASSIFICATION of "an error kind that is not `NotFound`", which is
+/// identical for every transient kind.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_delete_attachment_with_a_non_notfound_stat_error_is_not_skippable_3706() {
+    let f = UndoGcFixture::new().await;
+
+    // `attachments/afile` is a regular FILE, so stat'ing a path *below* it
+    // fails ENOTDIR rather than NotFound.
+    let blocker = f.app_data_dir.join("attachments/afile");
+    tokio::fs::write(&blocker, b"not a directory")
+        .await
+        .unwrap();
+    const UNDER_FILE: &str = "attachments/afile/inner.bin";
+    let stat_err = tokio::fs::metadata(f.app_data_dir.join(UNDER_FILE))
+        .await
+        .expect_err("stat'ing a path below a regular file must fail");
+    assert_ne!(
+        stat_err.kind(),
+        std::io::ErrorKind::NotFound,
+        "the fixture depends on this being a non-NotFound stat failure; without \
+         that it is just the ordinary bytes-are-gone case"
+    );
+    f.repoint(UNDER_FILE).await;
+
+    let delete_ref = f.delete_attachment().await;
+    let ops_before = f.op_log_len().await;
+
+    let err = crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, delete_ref)
+        .await
+        .expect_err(
+            "an undo whose attachment bytes could not be stat'd must still refuse — \
+             the invariant that a restored row never points at bytes that do not \
+             exist holds regardless of why we could not tell",
+        );
+    assert!(
+        matches!(err, AppError::Io(_)),
+        "a transient I/O fault must NOT be reported as NonReversible — that class \
+         is what a future point-in-time restore skips and counts, which would \
+         silently drop this op (#3706 review); got {err:?}"
+    );
+    assert!(
+        !crate::reverse::is_skippable_non_reversible(&err),
+        "the whole point of the distinction: this refusal must be fatal to a \
+         batch/restore, not skippable"
+    );
+    assert_eq!(
+        f.live_row_fs_path().await,
+        None,
+        "the refused undo must not have restored the row"
+    );
+    assert_eq!(
+        f.op_log_len().await,
+        ops_before,
+        "the refused undo must roll its whole transaction back"
+    );
+
+    f.mat.shutdown();
+}

@@ -158,3 +158,102 @@ the moment the delete-time path is not adopted.
 op (the positional query can never reach a `delete_attachment`); `#4248` the reverse-apply
 arms store peer filenames unsanitized, the same asymmetry #3370 closed for `fs_path`;
 `#4249` a refused undo does not tell the user *why*; `#4250` the GC grace window.
+
+## Review round 2 — the guard admitted a directory
+
+The byte-existence guard was `try_exists`, which **answers YES for a directory**. And
+`AttachmentFsPath` accepts multi-component paths (`attachments/sub/photo.png` is a
+pinned-valid spelling), so `attachments/sub` is itself a spellable `fs_path`. A directory
+therefore walked straight through the guard into a committed row that
+`read_attachment_inner` can only fail `EISDIR` on — *a live row over bytes that are not
+there*, the exact state #3706 exists to prevent, reached by a different route than the GC.
+
+Verbatim RED with the guard reverted, new test only:
+
+```
+undoing a delete_attachment whose fs_path names a directory must not succeed — try_exists
+answers YES for a directory and read_attachment_inner answers EISDIR, so the restored row
+is unreadable (#3706 review): UndoResult { reversed_op_type: "delete_attachment",
+new_op_type: "add_attachment", is_redo: false }
+```
+
+Note the failure mode: the undo **succeeded** and minted a reverse `add_attachment` over a
+directory.
+
+Now `metadata(..).is_file()`. Each non-regular shape is classified deliberately rather
+than by accident, and the two non-obvious calls are pinned by tests so a plausible-looking
+tightening breaks a test instead of an undo:
+
+- **Broken symlink → refused.** `metadata` *follows* links, so a link to a missing target
+  surfaces as `NotFound` — the same skippable refusal a GC-reclaimed file gets, which is
+  the honest classification. Deliberately not `symlink_metadata`, which would have
+  answered "a symlink exists" and admitted it.
+- **Zero-byte regular file → accepted.** `std::fs::read` returns `Ok(vec![])`, so the row
+  resolves to something genuinely readable. It is also not a torn write:
+  `write_attachment_streaming` (#2918) lands bytes via sibling-temp + rename, so a
+  half-written attachment is never visible at the final path. Refusing it would be the
+  guard inventing a content-length policy it has no business having.
+- Symlink-to-live-file accepted; fifo/socket/device refused by the same test.
+
+## Review round 2 — a transient fault is not the GC
+
+`try_exists` also collapsed "the file is gone" into "I could not tell". Only
+`NotFound` now keeps the skippable `AppError::NonReversible`; **every other kind returns
+`AppError::Io`**, preserving the original kind and adding path context. No new error type
+was needed — `is_skippable_non_reversible` matches only `NonReversible`, so `Io` is
+already the fatal class.
+
+This is invisible today (every reaching caller has `skip_non_reversible = false`), but the
+preflight exists as future-proofing for the day `delete_attachment` leaves
+`STATIC_NON_REVERSIBLE_OP_TYPES` — and on that day a skippable classification means a
+one-off `EIO` makes a point-in-time restore **skip-and-count the op and silently drop
+it**. A dropped op is unrecoverable; a failed restore is retryable.
+
+Falsified with the `Io` return removed so the arm falls through:
+
+```
+a transient I/O fault must NOT be reported as NonReversible — that class is what a future
+point-in-time restore skips and counts, which would silently drop this op (#3706 review);
+got NonReversible { op_type: "delete_attachment" }
+```
+
+The test induces the fault with `ENOTDIR` (an `fs_path` below a regular file) — the one
+non-`NotFound` stat error reproducible without root, a permissions dance, or fd
+exhaustion. What it pins is the classification of "kind != NotFound", identical for
+`EACCES`/`EMFILE`/`EIO`.
+
+## Two residuals documented rather than fixed
+
+Both on `adopt_delete_time_fs_path`, given the same treatment as the existing redo
+residual — because a fallback footnote is not the same as saying the refusal case out
+loud:
+
+1. **A legacy pre-C-3 delete of a repointed row false-refuses.** Such an op carries no
+   `fs_path` to adopt, so the reverse is reconstructed from the original `add_attachment`
+   payload. If a repointer moved that row onto a shared blob before the delete, the
+   original path is the one the sweep reclaimed, and this guard now refuses an undo over
+   bytes that are alive under the path the row actually held. Not closable from inside the
+   function: the information was never written, and the row is already gone by undo time,
+   so there is nothing to read. The exposure shrinks on its own as pre-C-3 ops age out of
+   op-log retention. Strictly better than pre-#3706 either way (which committed a row over
+   the reclaimed path instead of refusing) — but a false refusal, not a fixed path.
+2. **`filename` is still the creation-time name** — filed as #4262. Same staleness class
+   this change fixes for `fs_path`, unfixed for `filename`, because
+   `DeleteAttachmentPayload` carries no delete-time `filename` to adopt. Consequences are
+   strictly cosmetic-plus (a wrong display name, a wrong download name); unlike a stale
+   `fs_path` it cannot dangle the row or trip this guard, since nothing resolves bytes
+   through `filename`.
+
+A `# Not stale: the other reconstructed fields` note records *why* those two are the
+complete list rather than the two we happened to notice: `mime_type`/`size_bytes` are
+immutable under content addressing and `attachment_id`/`block_id` are identity, so no op
+can change them behind the reverse's back.
+
+Also replaced a positionally brittle `batched[16 + i]` in `reverse/tests.rs` with an
+offset derived from `op_refs.len()` captured before the append loop.
+
+**Verification:** `clippy --all-targets -D warnings` clean, `fmt --check` clean,
+`cargo check --all-targets` clean, and `cargo nextest run --workspace -E 'test(3706) or
+test(attachment) or test(undo) or test(redo) or test(revert) or test(reverse) or
+test(history)'` → 444 passed, 5575 skipped. The `#3706` tests specifically: 10 passed
+(6 pre-existing + 4 new).
