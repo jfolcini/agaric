@@ -59,7 +59,11 @@ export function untitledOr(title: string | null): string {
  * shows one line, and there's no non-blank candidate on that line.
  */
 export function blockFirstLineOr(content: string | null): string {
-  return untitledOr(content?.split('\n')[0] ?? null)
+  // Split on \n and strip a trailing \r: CRLF content would otherwise leave
+  // the carriage return on the stored title, and since #4228 that title is
+  // PERSISTED and read by every consumer — including the aria-label a screen
+  // reader announces — rather than feeding one picker label.
+  return untitledOr(content?.split('\n')[0]?.replace(/\r$/, '') ?? null)
 }
 
 /**

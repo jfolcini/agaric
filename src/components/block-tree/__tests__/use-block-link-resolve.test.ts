@@ -357,6 +357,39 @@ describe('fetchAndCacheLinks — single-batchSet writeback (#1072)', () => {
   // (`.slice(0, 60)`); the shared seed normalisation caps at 60 chars
   // WITH a trailing `...` (57 chars of content + `...`), matching what
   // `searchBlockRefs` and `handleNavigate` write for the same-length input.
+  it('writes a long PAGE title verbatim — capping it would break the leaf-name split', async () => {
+    // `batch_resolve` returns `b.content` for EVERY block type, so a page's
+    // namespaced path arrives here too. `renderBlockLink` splits the stored
+    // title via `getPageDisplayName(title, 'leaf')`; a cap that lands before
+    // the last `/` yields a namespace segment as the page name, and one that
+    // lands after it truncates the leaf. `preload` also writes `p.content`
+    // verbatim under this same key, so capping here re-opens the divergence
+    // #4228 exists to close.
+    const longPath = `Engineering/Platform/Observability/${'z'.repeat(40)}`
+    expect(longPath.length).toBeGreaterThan(60)
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: ULID_A, title: longPath, block_type: 'page', deleted: false },
+    ])
+
+    await fetchAndCacheLinks(new Set([ULID_A]), TEST_SPACE_ID, () => false)
+
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, ULID_A))).toEqual({
+      title: longPath,
+      deleted: false,
+    })
+  })
+
+  it('writes a long TAG name verbatim too — same reason, same gate', async () => {
+    const longTag = `area/${'t'.repeat(80)}`
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: ULID_A, title: longTag, block_type: 'tag', deleted: false },
+    ])
+
+    await fetchAndCacheLinks(new Set([ULID_A]), TEST_SPACE_ID, () => false)
+
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, ULID_A))?.title).toBe(longTag)
+  })
+
   it('caps resolved titles to 60 chars (57 + ellipsis) like the shared seed normalisation', async () => {
     const longTitle = 'x'.repeat(120)
     mockedBatchResolve.mockResolvedValueOnce([

@@ -132,3 +132,20 @@ describe('normalizeBlockRefTitle — the resolve-store seed normalisation', () =
     expect(normalizeBlockRefTitle(content)).toBe(`${'a'.repeat(57)}...`)
   })
 })
+
+describe('normalizeBlockRefTitle — CRLF (#4228 review)', () => {
+  it('strips the carriage return a CRLF first line would otherwise persist', () => {
+    // Pre-#4228 the split fed a picker label and a stray \r was invisible.
+    // The title is now PERSISTED and read by every consumer, including the
+    // aria-label a screen reader announces, so the \r has to go.
+    expect(normalizeBlockRefTitle('first line\r\nsecond line')).toBe('first line')
+  })
+
+  it('leaves a lone \\r inside the line alone — only a TRAILING one is a line ending', () => {
+    expect(normalizeBlockRefTitle('a\rb\r\nnext')).toBe('a\rb')
+  })
+
+  it('still substitutes the placeholder for a CRLF-only first line', () => {
+    expect(normalizeBlockRefTitle('  \r\nreal text')).toBe(t('block.untitled'))
+  })
+})
