@@ -220,7 +220,12 @@ export function analyzeSource(rawSrc) {
           continue
         }
         const specs = splitTopLevelCommas(src.slice(next.start + 1, closeIdx))
-        const untyped = specs.filter((s) => !/^type\b/.test(s))
+        // `/^type\b/` alone is a hole: a specifier whose ENTIRE text is
+        // `type` is TS's *value* export of a binding named `type`
+        // (`const type = {…}; export { type }`), not a type-only export —
+        // and that is precisely the leak this guard exists to stop. Require
+        // something to follow the modifier.
+        const untyped = specs.filter((s) => !/^type\s+\S/.test(s.trim()))
         if (untyped.length > 0) {
           hits.push({
             line: lineOf(tok.start),
@@ -321,9 +326,15 @@ export function analyze({ root, typesDir }) {
 // ─── CLI ────────────────────────────────────────────────────────────
 
 function requireLayout() {
-  if (!fs.existsSync(SRC_DIR)) {
-    console.error(`ERROR: expected directory not found (repo layout changed?): ${SRC_DIR}`)
-    process.exit(2)
+  // TYPES_DIR is checked as well as SRC_DIR, or the ratchet is vacuous: if
+  // the directory is renamed, `listSourceFiles` early-returns [] and the
+  // guard prints `OK: 0 file(s)` and exits 0 — green for a directory it
+  // never found, instead of the exit-2 layout-changed path documented above.
+  for (const dir of [SRC_DIR, TYPES_DIR]) {
+    if (!fs.existsSync(dir)) {
+      console.error(`ERROR: expected directory not found (repo layout changed?): ${dir}`)
+      process.exit(2)
+    }
   }
 }
 
