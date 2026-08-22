@@ -7,7 +7,7 @@
 | **Items closed** | `#4241`, `#4242` |
 | **Items modified** | — |
 | **Tests added** | +5 (backend: 1 scale sweep, 1 oracle-branch test, 3 residency measurements) |
-| **Files touched** | 5 — see the PR's file list |
+| **Files touched** | see the PR's file list |
 
 **Summary:** two follow-ups on the `block_links_unresolved` machinery from #4243.
 
@@ -32,7 +32,7 @@ Retuned by measurement rather than extrapolation:
 |---|---|---|---|---|
 | 20×100 = 2,042 (old) | 27ms | 1.7s | 20.1s | 21.6s |
 | 40×100 = 4,082 | — | — | 102.0s | 113.9s |
-| **50×100 = 5,102 (chosen)** | **66ms** | **4.1s** | **138.3s** | **142.3s** |
+| **50×100 = 5,103 (chosen)** | **66ms** | **4.1s** | **138.3s** | **142.3s** |
 
 50 pages gives **2.4×** over the kill; 40 was only ~1.9×, inside machine variance. Confirmed
 end-to-end under nextest: `1 test run: 0 passed, 1 timed out`, terminated on the first try

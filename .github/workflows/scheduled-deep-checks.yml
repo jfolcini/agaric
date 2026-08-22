@@ -787,7 +787,10 @@ jobs:
         # `..._residency_at_*_blocks_4242` measurement tests live in
         # `agaric-store` (`cache::tests`) and are reachable ONLY through
         # `--workspace`. Dropping the flag would silently skip them, which is
-        # exactly the failure mode #3212 added it to prevent.
+        # exactly the failure mode #3212 added it to prevent. Those three read
+        # `/proc/self/status` and are `#[cfg(target_os = "linux")]`, so they
+        # also vanish entirely if this lane ever leaves `ubuntu-*` — the same
+        # silent-coverage-hole shape, reached by a different route.
         run: >-
           cargo nextest run --workspace --run-ignored=only --no-fail-fast
 

@@ -5416,10 +5416,12 @@ const RSS_CONTENT_BYTES: usize = 425;
 #[cfg(target_os = "linux")]
 const RSS_LINK_BEARING_PERCENT: usize = 70;
 
-/// Rows per seeding INSERT. `2 * chunk` bind parameters per statement, so
-/// this stays well under SQLite's `SQLITE_MAX_VARIABLE_NUMBER`; and the
-/// seeder's own live buffer (`chunk * RSS_CONTENT_BYTES` bytes, ~100 kB) stays
-/// three orders of magnitude below anything the arms measure.
+/// Rows per seeding INSERT. `flush_rss_seed` binds three values per row (id,
+/// block_type, content), so a chunk of 250 is 750 bind parameters per
+/// statement — comfortably under SQLite's `SQLITE_MAX_VARIABLE_NUMBER`, but
+/// note the rate when raising it: the older 999 limit is crossed at 334 rows,
+/// not 500. The seeder's own live buffer (`chunk * RSS_CONTENT_BYTES` bytes,
+/// ~100 kB) stays three orders of magnitude below anything the arms measure.
 #[cfg(target_os = "linux")]
 const RSS_SEED_CHUNK: usize = 250;
 

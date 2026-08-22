@@ -2237,7 +2237,7 @@ async fn block_links_unresolved_oracle_distinguishes_all_three_target_states_424
 /// | scale | reconcile, clean | wall, clean | reconcile, O(n²) | wall, O(n²) |
 /// |---|---|---|---|---|
 /// | 20 x 100 (2,042 rows, the scale this shipped at) | 27ms | 1.7s | 20.1s | 21.6s |
-/// | 50 x 100 (5,102 rows, current) | 66ms | 4.1s | 138.3s | 142.3s |
+/// | 50 x 100 (5,103 rows, current) | 66ms | 4.1s | 138.3s | 142.3s |
 ///
 /// At the original 20x100 the defective fold finished in 21.6s — comfortably
 /// GREEN against a 60s kill, so a 740x reconcile regression would have
@@ -2279,7 +2279,7 @@ async fn block_links_unresolved_oracle_distinguishes_all_three_target_states_424
 #[tokio::test]
 #[ignore = "deep-checks lane: seeds a 5000-block vault to measure the obligation-index re-derivation"]
 async fn block_links_unresolved_oracle_scale_sweep_4241() {
-    // 50 x 100 = 5,000 seeded blocks (5,102 rows including the fixture's
+    // 50 x 100 = 5,000 seeded blocks (5,103 rows including the fixture's
     // pages and cross-space targets). Chosen by measurement, not taste — see
     // the "# Scale" section of this test's doc comment.
     const PAGES: usize = 50;
@@ -2357,7 +2357,7 @@ async fn block_links_unresolved_oracle_scale_sweep_4241() {
     println!(
         "block_links_unresolved oracle scale sweep: {} blocks, {} obligations, \
          reconcile_block_links_unresolved took {:?} ({coverage:?})",
-        ids.len() + cross_ids.len() + PAGES + 2,
+        ids.len() + cross_ids.len() + PAGES + 3,
         coverage.owed_by_content,
         elapsed,
     );
