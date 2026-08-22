@@ -16,7 +16,7 @@ import { expect, test, waitForBoot } from './helpers'
  *
  * The Settings → Keyboard editor is a typed `<Input>` behind a Pencil
  * button (`aria-label="Edit shortcut for {action}"`), NOT a keystroke-
- * capture control — `src/components/settings/KeyboardTab.tsx:141-165` confirms `onChange` on a
+ * capture control — `src/components/settings/KeyboardTab.tsx:141-193` confirms `onChange` on a
  * plain text field, saved via Enter or the Save button.
  */
 

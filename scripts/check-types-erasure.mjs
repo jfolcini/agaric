@@ -66,6 +66,20 @@
 // cannot emit runtime code no matter what it contains, so there is
 // nothing here for this guard to check.
 //
+// The same "no runtime code" logic applies to a `declare module '…' { … }`
+// or `declare global { … }` BODY inside an ordinary `.ts`/`.tsx` file — the
+// standard TS module-augmentation pattern for typing an untyped third-party
+// module. The outer `declare` makes the whole block ambient; `tsc --strict`
+// rejects any real initializer there (TS1254/TS1183) exactly as it would in
+// a `.d.ts`. Before #4245 this guard did not know that: it is a flat token
+// walk with no block-nesting awareness, so `export const bar: number`
+// *inside* such a block was flagged as if it were a file-scope leak. The
+// fix tracks these two block shapes specifically (declare-then-{module,
+// global}, at statement position — not a property name after `.`/`?.`) and
+// treats every export inside the brace-matched body as ambient, regardless
+// of export shape. A file-scope `export const` outside any such block is
+// still flagged exactly as before.
+//
 // ─── Detection ──────────────────────────────────────────────────────
 //
 // Uses the shared lexical scanner (`scripts/lib/js-scanner.mjs`) — the
@@ -170,6 +184,54 @@ const RUNTIME_LEAD = new Set([
   'async',
 ])
 
+/** Identifier keywords that, as the token right after a statement-position `declare`, open an ambient block whose body cannot emit runtime code (#4245). */
+const AMBIENT_BLOCK_LEAD = new Set(['module', 'global'])
+
+/**
+ * Compute the `[start, end)` source-offset ranges of every `declare
+ * module '…' { … }` / `declare global { … }` BODY in `tokens`. An
+ * `export` inside one of these ranges is ambient — the outer `declare`
+ * makes the whole block a type-only augmentation, and `tsc --strict`
+ * rejects any real initializer there (TS1254/TS1183) — so it must not be
+ * flagged as a leak, regardless of what export shape it uses (#4245).
+ *
+ * Deliberately narrow, per the issue's "declare at statement position":
+ * only `declare` immediately followed by the `module`/`global` keyword,
+ * and not itself a PROPERTY NAME (`x.declare`), counts. A brace-matched
+ * body is required — a bodyless module reference (`declare module 'x'`
+ * with no `{`, just an ambient re-export of an existing module) stops at
+ * the first `;` and contributes no range, so it is scanned normally
+ * (there is nothing to scan inside it anyway).
+ *
+ * @param {{kind: string, value?: string, start: number, propertyName?: boolean}[]} tokens
+ * @param {string} src
+ */
+function findAmbientRanges(tokens, src) {
+  const ranges = []
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]
+    if (tok.kind !== 'ident' || tok.value !== 'declare' || tok.propertyName === true) continue
+    const next = tokens[i + 1]
+    if (!next || next.kind !== 'ident' || !AMBIENT_BLOCK_LEAD.has(next.value)) continue
+
+    let openTok = null
+    for (let j = i + 2; j < tokens.length; j++) {
+      const t = tokens[j]
+      if (t.kind === 'punct' && t.value === '{') {
+        openTok = t
+        break
+      }
+      if (t.kind === 'punct' && t.value === ';') break
+    }
+    if (!openTok) continue
+
+    const closeIdx = findMatchingBracket(src, openTok.start)
+    if (closeIdx === -1) continue
+    ranges.push([openTok.start, closeIdx])
+  }
+  return ranges
+}
+
 /**
  * Scan one file's source for `export` statements that are not provably
  * type-only. Returns `{ hits, scanError }` where `hits` is
@@ -192,12 +254,20 @@ export function analyzeSource(rawSrc) {
     const search = blankStringsAndTemplates(src)
     const tokens = [...tokenize(search)].filter((t) => t.kind !== 'ws')
     const hits = []
+    // `declare module '…' { … }` / `declare global { … }` bodies (#4245):
+    // an export inside one of these ranges is ambient, so it is skipped
+    // BEFORE any export-shape classification runs — it would otherwise be
+    // flagged as a runtime leak by the very rules that exist to catch a
+    // real one at file scope.
+    const ambientRanges = findAmbientRanges(tokens, src)
+    const isAmbient = (offset) => ambientRanges.some(([s, e]) => offset > s && offset < e)
 
     const lineOf = (offset) => src.slice(0, offset).split('\n').length
 
     for (let i = 0; i < tokens.length; i++) {
       const tok = tokens[i]
       if (tok.kind !== 'ident' || tok.value !== 'export' || tok.propertyName === true) continue
+      if (isAmbient(tok.start)) continue
 
       const next = tokens[i + 1]
       const next2 = tokens[i + 2]
@@ -444,6 +514,26 @@ function runSelfTest() {
       path.join(typesDir, 'commentedOut.ts'),
       '// export const notReal = { a: 1 }\nconst s = "export const alsoNotReal = 1"\nexport type T = typeof s\n',
     )
+    // LEGAL (#4245): `declare module` ambient augmentation — the export
+    // inside the block is erased, `tsc --strict` would reject a real
+    // initializer here (TS1254/TS1183).
+    fs.writeFileSync(
+      path.join(typesDir, 'declareModuleAmbient.ts'),
+      "declare module 'some-untyped-lib' {\n  export const bar: number\n}\n",
+    )
+    // LEGAL (#4245): `declare global` has the same ambient property.
+    fs.writeFileSync(
+      path.join(typesDir, 'declareGlobalAmbient.ts'),
+      'declare global {\n  export const globalThing: number\n}\n',
+    )
+    // BOTH ARMS IN ONE FILE (#4245): an ambient export inside the block
+    // must pass, and a REAL runtime export at file scope in the SAME file
+    // must still be caught — proves the fix narrows the guard rather than
+    // widening it into a blanket pass for any file containing `declare`.
+    fs.writeFileSync(
+      path.join(typesDir, 'declareModuleMixed.ts'),
+      "declare module 'some-untyped-lib' {\n  export const bar: number\n}\nexport const leaked = { a: 1 }\n",
+    )
     // Test file with a runtime export — out of scope, ignored entirely.
     fs.writeFileSync(path.join(testDir, 'fixture.test.ts'), 'export const testOnly = { a: 1 }\n')
     // `.d.ts` file with an initializer-shaped export — ignored (cannot
@@ -472,6 +562,39 @@ function runSelfTest() {
       ok('self-contained runtime const object is flagged (the realistic leak, no imports at all)')
     } else {
       fail('runtime const object flagged', JSON.stringify(offenders))
+    }
+
+    if (!offenders.includes(rel('declareModuleAmbient.ts'))) {
+      ok("'declare module' ambient export passes (#4245)")
+    } else {
+      fail(
+        "'declare module' ambient export passes",
+        JSON.stringify(details.get(rel('declareModuleAmbient.ts'))),
+      )
+    }
+
+    if (!offenders.includes(rel('declareGlobalAmbient.ts'))) {
+      ok("'declare global' ambient export passes (#4245)")
+    } else {
+      fail(
+        "'declare global' ambient export passes",
+        JSON.stringify(details.get(rel('declareGlobalAmbient.ts'))),
+      )
+    }
+
+    if (
+      offenders.includes(rel('declareModuleMixed.ts')) &&
+      details.get(rel('declareModuleMixed.ts')).length === 1 &&
+      details.get(rel('declareModuleMixed.ts'))[0].startsWith('line 4:')
+    ) {
+      ok(
+        'a file-scope runtime export is still caught even in a file that also has an ambient declare-module block (narrows, does not weaken)',
+      )
+    } else {
+      fail(
+        'file-scope export still caught alongside an ambient block',
+        JSON.stringify(details.get(rel('declareModuleMixed.ts'))),
+      )
     }
 
     if (offenders.includes(rel('runtimeEnum.ts'))) ok('runtime enum is flagged')

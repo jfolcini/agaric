@@ -330,6 +330,77 @@ function extractCandidates(text) {
   return found
 }
 
+// #4244 part (b) — an OPPORTUNISTIC WARNING (never a failure) when a cited
+// line number exceeds the target file's current length. This guard strips
+// `:N` before checking anything (see the header) — it verifies the file
+// EXISTS, never that the line is right — so a citation can be "path-valid"
+// and still point at a section that moved or was deleted long ago. Checking
+// the number against the file's actual length is cheap and catches the most
+// egregious drift (a citation dozens or hundreds of lines past EOF) without
+// pretending to verify the PROSE matches the line, which no mechanical
+// check can do.
+//
+// Deliberately a WARNING, not a red: a citation can legitimately name a
+// line number past the file's CURRENT length on purpose — the tree already
+// has one, `tauri.ts:1871` in `src/lib/__tests__/platform.test.ts`, a
+// historical anchor a test asserts the ABSENCE of (`src/lib/tauri.ts` is
+// 106 lines; the comment calls the anchor "stale" in so many words). A hard
+// check would redden the build on that citation, which is correct as
+// written. So this only ever prints — `check()` never folds it into
+// `failed`.
+//
+// `extractCandidates` above already discards the `:N` suffix (that is the
+// whole reason #4244 part (a), the sweep, has to happen by hand instead of
+// mechanically) and DEDUPES by the stripped path — a file cited twice in
+// the same text at two different line numbers would collapse to one Set
+// entry, silently losing whichever line number did not win the dedupe. So
+// this is a separate extraction, keyed on the FULL raw citation (path +
+// suffix) instead, over the same two surfaces (inline code spans, markdown
+// link targets) `extractCandidates` scans.
+//
+// @param {string} text
+// @returns {{cleaned: string, lineNumbers: number[]}[]}
+function extractLineCitations(text) {
+  const found = new Map()
+  const consider = (raw) => {
+    const trimmed = (raw ?? '').trim()
+    const cleaned = isLocalPathCandidate(trimmed)
+    if (!cleaned) return
+    const suffixMatch = trimmed
+      .split('#')[0]
+      .split('?')[0]
+      .match(/:(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)$/)
+    if (!suffixMatch) return // no line-number suffix — nothing to bound-check
+    const key = `${cleaned} ${suffixMatch[1]}`
+    if (found.has(key)) return
+    const lineNumbers = suffixMatch[1]
+      .split(',')
+      .flatMap((seg) => seg.split('-'))
+      .map((n) => Number.parseInt(n, 10))
+    found.set(key, { cleaned, lineNumbers })
+  }
+  for (const match of text.matchAll(/`([^`\n]{2,200})`/g)) consider(match[1])
+  for (const match of text.matchAll(/\]\(([^)\s]+)\)/g)) consider(match[1])
+  return [...found.values()]
+}
+
+/**
+ * Count a file's lines the way `wc -l` does: the number of `\n` bytes, plus
+ * one more if the content does not itself end in a newline (an unterminated
+ * final line still counts as a line). A trailing newline is the common case
+ * and must NOT add a phantom empty final line — `body.split('\n').length`
+ * alone over-counts by exactly one for any newline-terminated file, which
+ * would make every citation of the file's true last line look one short of
+ * a warning.
+ *
+ * @param {string} body
+ */
+function countFileLines(body) {
+  if (body.length === 0) return 0
+  const newlines = (body.match(/\n/g) ?? []).length
+  return body.endsWith('\n') ? newlines : newlines + 1
+}
+
 // #4135 — a code citation written as a BARE FILENAME with a line number,
 // e.g. `` `session_supervisor.rs:708-716` ``, carries no repo-rooted prefix
 // at all, so `isLocalPathCandidate`'s `PATH_PREFIX_RE` gate above treats it
@@ -534,7 +605,7 @@ function computeMisses() {
   const docs = listMarkdownFiles(entries.paths)
   const tsFiles = listTsFiles(entries.paths)
   if (docs.length === 0 && tsFiles.length === 0) {
-    return { misses: [], scanErrors: [], chosen }
+    return { misses: [], scanErrors: [], warnings: [], chosen }
   }
   let bodies
   let tsBodies
@@ -557,6 +628,18 @@ function computeMisses() {
   }
   const misses = []
   const scanErrors = []
+  // #4244 part (b) — every line-number citation whose PATH resolves (a
+  // citation that does not resolve is already a `missing` miss above; there
+  // is no file to bound-check a line number against). Collected across every
+  // judged text and batch-read once, after both loops below, rather than
+  // read per-citation: the same target Rust file is commonly cited dozens of
+  // times across `search.ts` alone, and `readContents` already exists to do
+  // exactly this kind of batched, SOURCE-consistent read (`--cached` reads
+  // the blob about to be committed, `--worktree` reads disk — the warning
+  // must judge the same copy the rest of the guard just judged, or it could
+  // warn — or fail to warn — about a line count that is not actually what is
+  // being committed).
+  const lineCitations = []
   const judge = (citingFile, text) => {
     for (const ref of extractCandidates(text)) {
       const resolved = resolveAgainstDoc(citingFile, ref)
@@ -578,6 +661,12 @@ function computeMisses() {
       if (!isTracked || onDisk === false) {
         misses.push({ doc: citingFile, ref, resolved, onDisk, tracked: isTracked, kind: 'missing' })
       }
+    }
+    for (const { cleaned, lineNumbers } of extractLineCitations(text)) {
+      const resolved = resolveAgainstDoc(citingFile, cleaned)
+      const isTracked = tracked.has(resolved) || trackedDirs.has(resolved)
+      if (!isTracked) continue // already a `missing` miss above — nothing to bound-check
+      lineCitations.push({ doc: citingFile, resolved, lineNumbers })
     }
     // #4135 — a citation whose FORM is the violation, independent of whether
     // anything resolves: see `extractBareCitations`. `resolved`/`onDisk`/
@@ -633,13 +722,45 @@ function computeMisses() {
     }
     judge(file, commentText)
   }
-  return { misses, scanErrors, chosen }
+  // #4244 part (b) — batch-read every distinct target a line-numbered
+  // citation resolved to, ONCE, through the same source-aware reader used
+  // for docs/tsFiles above (see `lineCitations`'s own comment for why).
+  // Best-effort: a read failure here must never fail the guard — the
+  // warning is opportunistic, not a claim this guard fully re-verified
+  // every target's content, so a target that could not be read for
+  // whatever reason is silently skipped rather than surfaced as a
+  // scanError (which WOULD fail the build, exactly what this feature must
+  // not do).
+  const warnings = []
+  if (lineCitations.length > 0) {
+    let targetBodies
+    try {
+      targetBodies = readContents([...new Set(lineCitations.map((c) => c.resolved))], {
+        repoRoot: REPO_ROOT,
+        source: chosen.source,
+        entries,
+        env: GIT_ENV,
+      })
+    } catch {
+      targetBodies = new Map()
+    }
+    for (const { doc, resolved, lineNumbers } of lineCitations) {
+      const body = targetBodies.get(resolved)
+      if (body === undefined) continue
+      const fileLineCount = countFileLines(body)
+      const maxCited = Math.max(...lineNumbers)
+      if (maxCited > fileLineCount) {
+        warnings.push({ doc, ref: resolved, maxCited, fileLineCount })
+      }
+    }
+  }
+  return { misses, scanErrors, warnings, chosen }
 }
 
 function check() {
   const result = computeMisses()
   if (result.exitCode !== undefined) return result.exitCode
-  const { misses, scanErrors, chosen } = result
+  const { misses, scanErrors, warnings, chosen } = result
 
   let baseline
   try {
@@ -652,15 +773,21 @@ function check() {
   const missKeys = new Set(misses.map((m) => baselineKey(m.doc, m.ref)))
   const newMisses = misses.filter((m) => !baselineSet.has(baselineKey(m.doc, m.ref)))
   const staleEntries = baseline.filter((e) => !missKeys.has(baselineKey(e.file, e.ref)))
+  // #4244 part (b) — `warnings` never joins this: it decides whether the
+  // run PRINTS, not whether it FAILS. A run with warnings and nothing else
+  // wrong must still exit 0 — see `extractLineCitations`'s header for why
+  // (the `tauri.ts:1871` historical citation must stay green).
+  const failed = newMisses.length > 0 || staleEntries.length > 0 || scanErrors.length > 0
 
-  if (newMisses.length === 0 && staleEntries.length === 0 && scanErrors.length === 0) {
+  if (!failed && warnings.length === 0) {
     return 0
   }
-  // Name the source with the verdict — on ANY failure, not just a new
-  // miss: a run failing purely on stale baseline entries still needs this,
-  // or it reports no source at all, which is exactly the "a red the author
-  // cannot reproduce by opening the file is otherwise indistinguishable
-  // from a broken guard" case this line exists to prevent.
+  // Name the source with the verdict — on ANY failure OR warning, not just
+  // a new miss: a run failing purely on stale baseline entries (or only
+  // printing a warning) still needs this, or it reports no source at all,
+  // which is exactly the "a red the author cannot reproduce by opening the
+  // file is otherwise indistinguishable from a broken guard" case this line
+  // exists to prevent.
   process.stderr.write(`  (judged the ${describeSource(chosen.source)} — ${chosen.why})\n`)
   if (newMisses.length > 0) {
     const shown = newMisses.slice(0, 50)
@@ -712,7 +839,26 @@ function check() {
       process.stderr.write(`  - ${e.file}: ${e.message}\n`)
     }
   }
-  return 1
+  if (warnings.length > 0) {
+    // #4244 part (b) — printed, never counted toward `failed`. A cited line
+    // number past the target's current length is USUALLY drift (the file
+    // shrank, or the section moved), but not always — see the
+    // `tauri.ts:1871` historical citation above — so this can only ever be
+    // a nudge to go look, not a gate.
+    process.stderr.write(
+      'WARNING: citation(s) name a line number beyond the target file’s current length —\n',
+    )
+    process.stderr.write(
+      'the cited line may be stale (or deliberately historical). Not a build failure:\n',
+    )
+    for (const w of warnings) {
+      process.stderr.write(
+        `  - ${w.doc} → \`${w.ref}\`  cites line ${w.maxCited}, but the file is only ${w.fileLineCount} line(s) long\n`,
+      )
+    }
+    process.stderr.write('\n')
+  }
+  return failed ? 1 : 0
 }
 
 /**
@@ -1216,6 +1362,129 @@ function partiallyRootedCitationScenarios(root) {
 }
 
 /**
+ * #4244 part (b) — the opportunistic line-bounds WARNING. Every assertion
+ * here proves the same two things together: the warning fires/does-not-fire
+ * on the right shape, AND (the part that actually matters) it never once
+ * moves the exit code away from what the miss/baseline machinery alone
+ * would have produced — a run with only a warning is still green, and a run
+ * that is failing for a real reason still fails with the warning printed
+ * alongside it rather than swallowed.
+ */
+function lineBoundsWarningScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+    const dir = join(root, 'line-bounds-warning')
+    const env = scrubbedGitEnv(root)
+    const git = initScratchRepo(dir, env)
+    const run = (flags) => {
+      const r = spawnSync(process.execPath, [import.meta.filename, ...flags], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      })
+      return { status: r.status, stderr: r.stderr ?? '' }
+    }
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    // A short, known-length target: exactly 5 lines.
+    writeFileSync(
+      join(dir, 'src', 'short.ts'),
+      'export const A = 1\nexport const B = 2\nexport const C = 3\nexport const D = 4\nexport const E = 5\n',
+    )
+
+    // IN-BOUNDS: cites line 3 of a 5-line file — no warning at all.
+    writeFileSync(join(dir, 'README.md'), 'See `src/short.ts:3` for the constant.\n')
+    git('add', '-A')
+    const inBounds = run(['--worktree'])
+    record(
+      'a citation whose line number is within the target file is not warned about',
+      inBounds.status === 0 && !/WARNING/.test(inBounds.stderr),
+      `expected 0 with no WARNING, got ${inBounds.status}: ${inBounds.stderr}`,
+    )
+
+    // EXACTLY the file's last line: the boundary itself must not warn (only
+    // a number STRICTLY GREATER than the length is out of bounds).
+    writeFileSync(join(dir, 'README.md'), 'See `src/short.ts:5` for the constant.\n')
+    git('add', '-A')
+    const atBoundary = run(['--worktree'])
+    record(
+      'a citation of the file’s EXACT last line is not warned about (off-by-one boundary)',
+      atBoundary.status === 0 && !/WARNING/.test(atBoundary.stderr),
+      `expected 0 with no WARNING, got ${atBoundary.status}: ${atBoundary.stderr}`,
+    )
+
+    // OUT-OF-BOUNDS: cites line 40 of a 5-line file — warns, but the exit
+    // code STAYS 0. This is the central claim of #4244 part (b): a
+    // deliberately historical citation (the real `tauri.ts:1871` case) must
+    // never be reddened by this feature.
+    writeFileSync(join(dir, 'README.md'), 'See `src/short.ts:40` for the constant.\n')
+    git('add', '-A')
+    const outOfBounds = run(['--worktree'])
+    record(
+      'a citation past the target’s length WARNS but still exits 0 (never a failure)',
+      outOfBounds.status === 0 &&
+        /WARNING/.test(outOfBounds.stderr) &&
+        /short\.ts/.test(outOfBounds.stderr) &&
+        /cites line 40/.test(outOfBounds.stderr) &&
+        /only 5 line/.test(outOfBounds.stderr),
+      `expected 0 with a WARNING naming short.ts/line 40/5 lines, got ${outOfBounds.status}: ${outOfBounds.stderr}`,
+    )
+
+    // A RANGE citation is bound-checked on its END (the larger number): the
+    // start can be in-bounds while the end drifts past EOF.
+    writeFileSync(join(dir, 'README.md'), 'See `src/short.ts:2-40` for the constant.\n')
+    git('add', '-A')
+    const rangeOutOfBounds = run(['--worktree'])
+    record(
+      'a RANGE citation whose END exceeds the file length still warns',
+      rangeOutOfBounds.status === 0 && /WARNING/.test(rangeOutOfBounds.stderr),
+      `expected 0 with a WARNING, got ${rangeOutOfBounds.status}: ${rangeOutOfBounds.stderr}`,
+    )
+
+    // THE WARNING NEVER MASKS A REAL FAILURE, and never gets masked BY one:
+    // one doc citing a MISSING path (a real failure) and, separately, an
+    // out-of-bounds line citation of a file that DOES exist — both must be
+    // visible, and the exit code must still be 1 (from the real miss).
+    writeFileSync(
+      join(dir, 'README.md'),
+      'Gone: `src/nowhere/deleted.ts`. Also see `src/short.ts:40` for the constant.\n',
+    )
+    git('add', '-A')
+    const both = run(['--worktree'])
+    record(
+      'a real miss (exit 1) and an out-of-bounds warning coexist — the warning does not swallow the failure',
+      both.status === 1 && /deleted\.ts/.test(both.stderr) && /WARNING/.test(both.stderr),
+      `expected 1 naming deleted.ts AND a WARNING, got ${both.status}: ${both.stderr}`,
+    )
+
+    // THE REAL #4244 SHAPE: a test asserting the ABSENCE of a deliberately
+    // stale doc anchor, past the target file's current length — mirrors
+    // `tauri.ts:1871` in `src/lib/__tests__/platform.test.ts` (106 lines) —
+    // must warn but stay green, from a `.ts` COMMENT (not a markdown doc),
+    // proving the historical citation in the real tree is unaffected by
+    // this change. `README.md` is reset first — the previous scenario left
+    // it citing a genuinely missing path, and this one must isolate the
+    // warning-only case.
+    writeFileSync(join(dir, 'README.md'), 'Nothing notable here.\n')
+    writeFileSync(join(dir, 'src', 'tauri.ts'), 'export const TAURI = 1\n')
+    writeFileSync(
+      join(dir, 'src', 'historical.test.ts'),
+      '// must NOT carry the stale `src/tauri.ts:1871` doc anchor.\nexport const OK = 1\n',
+    )
+    git('add', '-A')
+    const historical = run(['--worktree'])
+    record(
+      'the real #4244 historical shape (a stale anchor named for its ABSENCE) warns but stays green',
+      historical.status === 0 &&
+        /WARNING/.test(historical.stderr) &&
+        /tauri\.ts/.test(historical.stderr),
+      `expected 0 with a WARNING naming tauri.ts, got ${historical.status}: ${historical.stderr}`,
+    )
+    return results
+  })
+}
+
+/**
  * #4126 — the shrink-only baseline. Three assertions, each proving one
  * direction the mechanism must hold:
  *   1. a miss LISTED in the baseline is grandfathered (green);
@@ -1394,6 +1663,7 @@ function selfTest() {
     results.push(...tsCommentScenarios(root))
     results.push(...bareCitationScenarios(root))
     results.push(...partiallyRootedCitationScenarios(root))
+    results.push(...lineBoundsWarningScenarios(root))
     results.push(...baselineScenarios(root))
     results.push(...corruptBaselineScenarios(root))
     let failures = 0

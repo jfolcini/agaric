@@ -565,7 +565,7 @@ export function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorV
   // value, so it needs its own check ahead of the general `raw === null`.
   //
   // The sentinel encodes as the engine's `Int(0)`, NOT `Null`:
-  // `EngineRow::cursor_value` (`src-tauri/agaric-store/src/query/engine.rs:322`) reads the COALESCE'd
+  // `EngineRow::cursor_value` (`src-tauri/agaric-store/src/query/engine.rs:313`) reads the COALESCE'd
   // `last_edited: i64` and can only ever emit `CursorValue::Int` for this
   // column — `Null` is UNREACHABLE there, and `COALESCE(…, 0)` makes `0` the
   // exact value an op-log-free row carries. Emitting a tag the engine cannot
@@ -2450,9 +2450,9 @@ export const searchHandlers = {
     // {@link searchStructuralCandidates} with `search_blocks` for `parentId` /
     // `tagIds` / `scope` (→ `space_id`) — the fields
     // `search_blocks_partitioned_inner` also threads into `fts_fetch_rows` on
-    // both partitions (`src-tauri/src/commands/queries.rs:663-678`, `src-tauri/agaric-store/src/fts/search/partitioned.rs:165-212`) —
+    // both partitions (`src-tauri/src/commands/queries.rs:760-774`, `src-tauri/agaric-store/src/fts/search/partitioned.rs:165-212`) —
     // called with `honourBlockType: false`, because `filter.block_type_filter`
-    // is DOCUMENTED as ignored on this command (`src-tauri/src/commands/queries.rs:657-663`: "the
+    // is DOCUMENTED as ignored on this command (`src-tauri/src/commands/queries.rs:797-798`: "the
     // partitioning IS the block-type split"). Page-name globs and the
     // `MetadataPredicates` bundle stay unmodelled here too, for the same
     // reason `search_blocks`'s docstring gives for leaving them out there.
