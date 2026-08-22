@@ -1135,6 +1135,15 @@ struct ReplayDiagnostics {
     /// post-mortem reader that a perfectly healthy op_log was corrupt — on the
     /// one path where the op_log is the only forensic artefact left.
     constraint_rejected_creates: Vec<String>,
+    /// #4187: ids of blocks a replayed `move_block` parked LIVE under a
+    /// TOMBSTONED ancestor and which this pass swept into that ancestor's
+    /// trash cohort — the recovery-side mirror of the materializer's
+    /// `sweep_move_under_tombstoned_ancestor` (#4112). One entry per swept
+    /// move op, not per block: a block can appear twice only if something
+    /// made it LIVE again between the two moves (a `restore_block` op
+    /// carrying its cohort token), because the sweep's own live-subject
+    /// guard suppresses it on a block a previous sweep already tombstoned.
+    move_swept_under_tombstone: Vec<String>,
 }
 
 impl ReplayDiagnostics {
@@ -1202,6 +1211,24 @@ impl ReplayDiagnostics {
                  `block_type`, a page whose `page_id` is not itself, a STRICT type mismatch). \
                  The surrounding ops still replayed.",
                 self.constraint_rejected_creates.len()
+            );
+        }
+
+        // #4187: a cross-device reconciliation, not a user action — the same
+        // reason the materializer's sweep (#4112) and R9's snapshot-import
+        // sweep both warn. Reported here rather than logged at the site so the
+        // twice-run replay (#3269 R5) cannot double-report it.
+        if !self.move_swept_under_tombstone.is_empty() {
+            tracing::warn!(
+                swept = self.move_swept_under_tombstone.len(),
+                block_ids = %self.move_swept_under_tombstone.join(","),
+                "{} replayed move_block op(s) landed a LIVE block under a TOMBSTONED ancestor \
+                 (the concurrent delete-vs-move merge) and were swept into that ancestor's \
+                 deletion cohort (#4187), which is what the live materializer's \
+                 `sweep_move_under_tombstoned_ancestor` (#4112) produces for the same op set. \
+                 Leaving them live would have rebuilt an invisible orphan: absent from the tree \
+                 (its ancestor is trashed) and absent from the trash (it is not).",
+                self.move_swept_under_tombstone.len()
             );
         }
     }
@@ -1516,6 +1543,152 @@ async fn recover_blocks_from_op_log(
                     .bind(block_id)
                     .execute(&mut *executor)
                     .await?;
+
+                // #4187: the UPDATE above may have parked a LIVE block under a
+                // TOMBSTONED ancestor — the ordinary concurrent
+                // `{Delete(P), Move(B → P)}` pair, replayed delete-first
+                // because this loop orders by `created_at`. That rebuilds an
+                // invisible orphan: `B` is absent from the tree (its ancestor
+                // is trashed) and absent from the trash (it is not). The live
+                // materializer's two arms stopped producing that state in
+                // #4112; this is the third interpreter of the same op (#2894)
+                // and it must agree with them, or the rebuild diverges from the
+                // table it is supposed to reconstruct. Nothing downstream heals
+                // it either: `reproject_block_deleted_at_from_engine`'s R9
+                // sweep resolves the same merge, but only over a sync import's
+                // changed set, so a block nobody touches again stays orphaned.
+                //
+                // The rule (cascade-soft-delete the moved subtree at the
+                // nearest tombstoned ancestor's `deleted_at`) is R9's and
+                // #4112's; what differs is the REACH of the two walks it is
+                // built from, which is recovery's pre-existing convention and
+                // is argued at the cascade below — see
+                // `sweep_move_under_tombstoned_ancestor`'s doc comment for why
+                // sweeping is the only candidate behaviour that CONVERGES with
+                // the move-first replay order, and why a move whose SUBJECT is
+                // already tombstoned must be applied unswept (that is the
+                // ordinary trash shape, and both orders already agree on it).
+                //
+                // That helper cannot be CALLED from here, for three independent
+                // reasons, so this arm hand-rolls the same rule the way the
+                // `delete_block` arm below hand-rolls the same cascade (#2043):
+                //
+                //  1. It is `pub(crate)` to `agaric-engine`; the app crate's
+                //     `materializer::handlers::sql_only` re-export cannot see
+                //     it. Widening it is a change to the shared item, not a
+                //     reuse of it.
+                //  2. It is i64-only end to end — `nearest_tombstoned_ancestor`
+                //     decodes `deleted_at` as `i64` and
+                //     `project_delete_block_to_sql` BINDS an `i64`. This pass
+                //     runs before `sqlx::migrate!`, at whatever era
+                //     `max_applied_migration` names, and pre-0080 `deleted_at`
+                //     is rfc3339 TEXT (#618) — the decode would fail outright
+                //     and the stamp would be the wrong era. The two statements
+                //     below never move `deleted_at` through Rust at all (the
+                //     probe only tests `IS NOT NULL`; the cascade copies the
+                //     ancestor's stored value with a subquery), so they are
+                //     era-agnostic by construction — strictly better than the
+                //     delete arm's era switch, since the cohort is stamped with
+                //     the ancestor's OWN bytes.
+                //  3. Its tail runs `tag_inheritance::remove_subtree_inherited`
+                //     against a head-shaped `block_tags`. Recovery does no tag
+                //     maintenance at all — the `delete_block` arm's cascade
+                //     does not either — because the tables it would touch are
+                //     at pre-migration era here and the derived pass rebuilds
+                //     that cache later.
+                //
+                // Runs on every move, including a same-parent reorder: like the
+                // materializer's sweep, it doubles as a repair pass for a
+                // subtree that was ALREADY an orphan in the log's own history.
+                //
+                // dynamic-sql: a recursive ancestor CTE. `query_scalar!` would
+                // check it against HEAD's `blocks`, which is exactly the
+                // assumption this pre-migration pass must not make (see the
+                // `pragma_table_info` probe above); the columns it reads
+                // (`id` / `parent_id` / `deleted_at`) exist in every era, but
+                // their TYPES do not, which is the whole point of reason 2.
+                // The seed's `deleted_at IS NULL` IS the live-subject guard: a
+                // move whose subject is already tombstoned yields no seed row,
+                // hence no sweep. depth<100: DESCENDANT_DEPTH_CAP, mirroring
+                // the `delete_block` arm's bound (a corrupt `parent_id` cycle
+                // terminates at the cap rather than re-anchoring past it the
+                // way `nearest_tombstoned_ancestor` does).
+                let tombstoned_ancestor: Option<String> = sqlx::query_scalar::<_, String>(
+                    "WITH RECURSIVE ancestors(id, depth) AS ( \
+                         SELECT parent_id, 1 FROM blocks \
+                          WHERE id = ?1 AND deleted_at IS NULL AND parent_id IS NOT NULL \
+                         UNION ALL \
+                         SELECT b.parent_id, a.depth + 1 FROM blocks b \
+                           JOIN ancestors a ON b.id = a.id \
+                          WHERE b.parent_id IS NOT NULL AND a.depth < 100 \
+                     ) \
+                     SELECT a.id FROM ancestors a JOIN blocks b ON b.id = a.id \
+                      WHERE b.deleted_at IS NOT NULL \
+                      ORDER BY a.depth LIMIT 1",
+                )
+                .bind(block_id)
+                .fetch_optional(&mut *executor)
+                .await?;
+
+                if let Some(ancestor_id) = tombstoned_ancestor {
+                    // The `delete_block` arm's cascade shape, keyed on the
+                    // ancestor's own stored `deleted_at` (era-agnostic, and
+                    // byte-identical to the cohort a delete-last replay would
+                    // have produced, which is what makes the result restorable
+                    // as one unit — `RestoreBlock` groups on the shared
+                    // timestamp). The `deleted_at IS NULL` guard preserves an
+                    // already-trashed descendant's original cohort, exactly as
+                    // it does there.
+                    //
+                    // REACH — and why it is the `delete_block` ARM's reach,
+                    // not the engine sweep's. #4112 cascades through
+                    // `project_delete_block_to_sql`, whose walk is
+                    // `DescendantWalkFilter::Active` (it STOPS at an
+                    // already-tombstoned child) and depth-UNBOUNDED (R27
+                    // re-anchoring). This walk is the standard one (it
+                    // descends THROUGH a tombstoned child) and stops at the
+                    // depth-100 cap. So on a subtree holding a LIVE block
+                    // beneath an already-tombstoned child of the moved block
+                    // — reachable, it is the shape
+                    // `recover_move_of_an_already_tombstoned_block_keeps_its_original_cohort`
+                    // builds — this stamps rows #4112 would leave live. That
+                    // is deliberate: recovery's own `delete_block` arm walks
+                    // the standard tree with the same cap, so adopting the
+                    // engine's reach here would make recovery disagree with
+                    // ITSELF — `{Move(B → P), Delete(P)}` (caught by the
+                    // delete arm's standard walk) and `{Delete(P),
+                    // Move(B → P)}` (caught by this sweep) would stamp
+                    // different row sets for the same op pair, which is
+                    // exactly the replay-order divergence #4187 exists to
+                    // remove. The residual recovery-vs-engine reach gap is
+                    // the delete cascade's, i.e. the #4188 / #4204 lane, and
+                    // closing it means changing BOTH arms together.
+                    // dynamic-sql: recursive descendant CTE, same
+                    // pre-migration-era reason as the probe above.
+                    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+                    sqlx::query(
+                        "UPDATE blocks \
+                            SET deleted_at = (SELECT deleted_at FROM blocks WHERE id = ?1) \
+                          WHERE deleted_at IS NULL \
+                            AND id IN ( \
+                                WITH RECURSIVE descendants(id, depth) AS ( \
+                                    SELECT id, 0 FROM blocks WHERE id = ?2 \
+                                    UNION ALL \
+                                    SELECT b.id, d.depth + 1 FROM blocks b \
+                                      JOIN descendants d ON b.parent_id = d.id \
+                                     WHERE d.depth < 100 \
+                                ) \
+                                SELECT id FROM descendants \
+                            )",
+                    )
+                    .bind(&ancestor_id)
+                    .bind(block_id)
+                    .execute(&mut *executor)
+                    .await?;
+                    diagnostics
+                        .move_swept_under_tombstone
+                        .push(block_id.to_owned());
+                }
             }
             "delete_block" => {
                 let block_id = payload["block_id"].as_str().unwrap_or("");
@@ -2796,6 +2969,466 @@ mod tests {
         assert!(
             ccc < bbb,
             "create-index order must be preserved (ccc@idx0 before bbb@idx1), got {order:?}"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // #4187: the `move_block` arm's live-block-under-a-tombstone sweep.
+    // ---------------------------------------------------------------------
+
+    /// Seed one `op_log` row. `created_at` is doing two jobs at once and both
+    /// matter to these tests: it is the replay key
+    /// (`ORDER BY created_at, device_id, seq`), so the order the test writes IS
+    /// the order recovery replays, and for a `delete_block` it is also the
+    /// cohort timestamp the delete arm stamps into `deleted_at` (#429).
+    async fn seed_replay_op(
+        pool: &SqlitePool,
+        seq: i64,
+        op_type: &str,
+        payload: &serde_json::Value,
+        created_at: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES ('dev', ?, NULL, ?, ?, ?, ?)",
+        )
+        .bind(seq)
+        .bind(format!("h{seq}"))
+        .bind(op_type)
+        .bind(payload.to_string())
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_create_op(
+        pool: &SqlitePool,
+        seq: i64,
+        id: &str,
+        parent: Option<&str>,
+        created_at: i64,
+    ) {
+        seed_replay_op(
+            pool,
+            seq,
+            "create_block",
+            &serde_json::json!({
+                "block_id": id,
+                "block_type": "content",
+                "parent_id": parent,
+                "index": 0,
+                "content": id,
+            }),
+            created_at,
+        )
+        .await;
+    }
+
+    async fn seed_move_op(
+        pool: &SqlitePool,
+        seq: i64,
+        id: &str,
+        new_parent: &str,
+        created_at: i64,
+    ) {
+        seed_replay_op(
+            pool,
+            seq,
+            "move_block",
+            &serde_json::json!({
+                "block_id": id,
+                "new_parent_id": new_parent,
+                "new_index": 0,
+            }),
+            created_at,
+        )
+        .await;
+    }
+
+    async fn seed_delete_op(pool: &SqlitePool, seq: i64, id: &str, created_at: i64) {
+        seed_replay_op(
+            pool,
+            seq,
+            "delete_block",
+            &serde_json::json!({ "block_id": id }),
+            created_at,
+        )
+        .await;
+    }
+
+    /// Panics when the row is absent, so every caller's `Some`/`None` is about
+    /// `deleted_at` and never about a missing block.
+    async fn deleted_at_ms(pool: &SqlitePool, id: &str) -> Option<i64> {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn parent_of(pool: &SqlitePool, id: &str) -> Option<String> {
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// #4187 (the issue's acceptance case). `{Delete(P), Move(B → P)}` with the
+    /// delete's `created_at` first — the ordinary concurrent delete-vs-move
+    /// pair. Recovery replays the delete, tombstoning `P`, then the move, which
+    /// reparents the still-LIVE `B` under it. Pre-fix the rebuilt table held an
+    /// invisible orphan: `B` absent from the tree (its ancestor is trashed) and
+    /// absent from the trash (it is not) — the exact state #4112 closed on the
+    /// materializer's two arms, silently reintroduced by the third interpreter
+    /// of the same op.
+    ///
+    /// The moved block joins `P`'s cohort at `P`'s own `deleted_at`, and so
+    /// does its subtree (`C`) — the same cascade the delete-last replay order
+    /// would have produced, which is what makes the two orders converge.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_under_a_tombstoned_ancestor_joins_its_deletion_cohort() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+
+        seed_create_op(&pool, 1, "P", None, T0 + 1).await;
+        seed_create_op(&pool, 2, "B", None, T0 + 2).await;
+        seed_create_op(&pool, 3, "C", Some("B"), T0 + 3).await;
+        seed_delete_op(&pool, 4, "P", T0 + 4).await;
+        seed_move_op(&pool, 5, "B", "P", T0 + 5).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // The cohort anchor, produced by the delete arm (#429) — the value the
+        // sweep has to reproduce, not a value this test wrote.
+        let cohort = deleted_at_ms(&pool, "P").await;
+        assert_eq!(
+            cohort,
+            Some(T0 + 4),
+            "the delete arm stamps the op's own created_at as the cohort timestamp"
+        );
+
+        assert_eq!(
+            parent_of(&pool, "B").await.as_deref(),
+            Some("P"),
+            "the move must still be APPLIED — sweeping the block is not the same as \
+             dropping a peer's op, which would diverge from the move-first replay order"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "B").await,
+            cohort,
+            "#4187: a live block moved under a tombstoned ancestor must join that \
+             ancestor's deletion cohort, not stay live under it"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "C").await,
+            cohort,
+            "#4187: the sweep is a subtree cascade, like the delete arm's — a descendant \
+             of the moved block is stamped with the same cohort timestamp"
+        );
+        assert_eq!(
+            diagnostics.move_swept_under_tombstone,
+            vec!["B".to_string()],
+            "the reconciliation must be reported through ReplayDiagnostics (#3269 R5: the \
+             replay may run twice, so it reports rather than logs)"
+        );
+    }
+
+    /// The negative half of the same property: the sweep must not fire on the
+    /// overwhelmingly common shape. `Move(B → P)` with `P` LIVE leaves `B`
+    /// (and its subtree) live. Reddens on an over-broad sweep — e.g. one that
+    /// keyed on "the move happened" rather than on an actually-tombstoned
+    /// ancestor, or whose ancestor probe treated a NULL `deleted_at` as a hit.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_under_a_live_parent_stays_live() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+
+        seed_create_op(&pool, 1, "P", None, T0 + 1).await;
+        seed_create_op(&pool, 2, "B", None, T0 + 2).await;
+        seed_create_op(&pool, 3, "C", Some("B"), T0 + 3).await;
+        seed_move_op(&pool, 4, "B", "P", T0 + 4).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(parent_of(&pool, "B").await.as_deref(), Some("P"));
+        for id in ["P", "B", "C"] {
+            assert_eq!(
+                deleted_at_ms(&pool, id).await,
+                None,
+                "an ordinary move under a LIVE parent must tombstone nothing ({id})"
+            );
+        }
+        assert!(
+            diagnostics.move_swept_under_tombstone.is_empty(),
+            "no reconciliation happened, so nothing may be reported: {:?}",
+            diagnostics.move_swept_under_tombstone
+        );
+    }
+
+    /// AGENTS.md invariant #9, on the one CTE this arm introduces: the
+    /// ancestor probe's `depth < 100` bound sits in the RECURSIVE member, so a
+    /// corrupted `parent_id` CYCLE terminates at the cap instead of recursing
+    /// until the process dies.
+    ///
+    /// The cycle is not hypothetical here. This replay deliberately carries no
+    /// cycle probe (#2894 — unlike `apply_move_block_sql_only`, which runs the
+    /// shared `move_would_cycle`), so a corrupt op_log CAN close a loop:
+    /// `Move(A → B)` where `B` is already a child of `A` gives `A → B → A`.
+    /// The probe for the NEXT move then climbs it. Nothing in the loop is
+    /// tombstoned, so the only correct answer is "no tombstoned ancestor" —
+    /// and the replay must simply finish, which is the assertion that a bound
+    /// hoisted into the seed (or dropped) would not survive.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_sweep_terminates_on_a_corrupt_parent_cycle() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+
+        seed_create_op(&pool, 1, "A", None, T0 + 1).await;
+        seed_create_op(&pool, 2, "B", Some("A"), T0 + 2).await;
+        seed_create_op(&pool, 3, "C", None, T0 + 3).await;
+        // Closes the loop: A's parent becomes its own child B.
+        seed_move_op(&pool, 4, "A", "B", T0 + 4).await;
+        // A live block moved INTO the loop, so its probe has to climb it.
+        seed_move_op(&pool, 5, "C", "A", T0 + 5).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(parent_of(&pool, "A").await.as_deref(), Some("B"));
+        assert_eq!(parent_of(&pool, "C").await.as_deref(), Some("A"));
+        for id in ["A", "B", "C"] {
+            assert_eq!(
+                deleted_at_ms(&pool, id).await,
+                None,
+                "no member of a LIVE cycle is a tombstoned ancestor, so nothing \
+                 may be swept ({id})"
+            );
+        }
+        assert!(
+            diagnostics.move_swept_under_tombstone.is_empty(),
+            "nothing was swept: {:?}",
+            diagnostics.move_swept_under_tombstone
+        );
+    }
+
+    /// The half of the local command path's guard that must NOT be mirrored
+    /// here, pinned so a later "make recovery match `validate_move_in_tx`"
+    /// change reddens: a move whose SUBJECT is already tombstoned is applied
+    /// unchanged and keeps its ORIGINAL cohort.
+    ///
+    /// `{Delete(B), Delete(P), Move(B → P)}`: `B` is trashed at its own
+    /// timestamp before the move, so the move is the ordinary trash shape, not
+    /// an invisible orphan — and re-stamping it into `P`'s cohort would make
+    /// `RestoreBlock` on `B`'s own cohort token miss it. Two guards carry that,
+    /// and this test takes both:
+    ///
+    /// * the ancestor probe's seed `deleted_at IS NULL` (a tombstoned subject
+    ///   yields no seed row, hence no sweep) — observable through `C`, which
+    ///   the op log creates UNDER `B` *after* `B`'s delete (a peer adding a
+    ///   child to a block another device concurrently deleted), so it is live
+    ///   under a tombstone before the move ever runs. It stays untouched: this
+    ///   arm mirrors the materializer sweep's `Some(Some(_))` early return, and
+    ///   that pre-existing orphan is #4188/#4204 residue, not this arm's to
+    ///   repair;
+    /// * the cascade's own `deleted_at IS NULL`, which preserves `B`'s original
+    ///   cohort exactly as the delete arm's cascade does.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_of_an_already_tombstoned_block_keeps_its_original_cohort() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+
+        seed_create_op(&pool, 1, "P", None, T0 + 1).await;
+        seed_create_op(&pool, 2, "B", None, T0 + 2).await;
+        seed_delete_op(&pool, 3, "B", T0 + 3).await;
+        // Created AFTER B's delete, so the cascade never saw it: live child of
+        // a tombstoned parent.
+        seed_create_op(&pool, 4, "C", Some("B"), T0 + 4).await;
+        seed_delete_op(&pool, 5, "P", T0 + 5).await;
+        seed_move_op(&pool, 6, "B", "P", T0 + 6).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            parent_of(&pool, "B").await.as_deref(),
+            Some("P"),
+            "the move is applied even though both endpoints are trashed"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "B").await,
+            Some(T0 + 3),
+            "an already-tombstoned subject keeps ITS cohort token — re-stamping it into \
+             the new ancestor's cohort would strand it on a RestoreBlock of its own cohort"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "C").await,
+            None,
+            "the sweep does not fire at all on a tombstoned subject (the ancestor probe's \
+             seed guard), so a pre-existing orphan under it is left exactly as it was"
+        );
+        assert!(
+            diagnostics.move_swept_under_tombstone.is_empty(),
+            "nothing was swept: {:?}",
+            diagnostics.move_swept_under_tombstone
+        );
+    }
+
+    /// #618 / #4187: the pre-0080 (TEXT) era. `deleted_at` is rfc3339 TEXT
+    /// there, and the sweep has to stay era-correct — which is the concrete
+    /// reason it cannot delegate to the materializer's
+    /// `sweep_move_under_tombstoned_ancestor`, whose ancestor probe DECODES
+    /// `deleted_at` as `i64` and whose cohort write BINDS an `i64`.
+    ///
+    /// This drives the identical op set as the acceptance test against the
+    /// TEXT-era table shape and reads the result back as `String`: an epoch-ms
+    /// stamp would either mismatch `P`'s rfc3339 or fail to decode outright.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_text_era_move_sweep_stamps_the_ancestors_rfc3339_cohort() {
+        let (pool, _dir) = test_pool().await;
+
+        // Replace the migrated (INTEGER-era) table with the pre-0080 shape, as
+        // `recover_text_era_restore_block_cohort_julianday_branch` does.
+        sqlx::query("DROP TABLE IF EXISTS blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE blocks (
+                 id             TEXT NOT NULL PRIMARY KEY,
+                 block_type     TEXT NOT NULL DEFAULT 'content',
+                 content        TEXT,
+                 parent_id      TEXT,
+                 position       INTEGER,
+                 deleted_at     TEXT,
+                 todo_state     TEXT,
+                 priority       TEXT,
+                 due_date       TEXT,
+                 scheduled_date TEXT,
+                 page_id        TEXT
+             )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        const T0: i64 = 1_767_225_600_000;
+        seed_create_op(&pool, 1, "P", None, T0 + 1).await;
+        seed_create_op(&pool, 2, "B", None, T0 + 2).await;
+        seed_delete_op(&pool, 3, "P", T0 + 3).await;
+        seed_move_op(&pool, 4, "B", "P", T0 + 4).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ false)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let deleted_at_text = |id: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT deleted_at FROM blocks WHERE id = ?",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+
+        let cohort = deleted_at_text("P").await;
+        let cohort_text = cohort
+            .clone()
+            .expect("the TEXT-era delete arm must tombstone P");
+        assert!(
+            cohort_text.contains('T'),
+            "pre-0080 the cohort stamp is rfc3339 TEXT, got {cohort_text:?}"
+        );
+        assert_eq!(
+            deleted_at_text("B").await,
+            cohort,
+            "#4187: the swept block must carry the ancestor's own era-correct stamp, \
+             byte for byte — an epoch-ms value here would wedge the 0080 backfill"
+        );
+    }
+
+    /// The payoff of stamping the ancestor's OWN timestamp rather than merely
+    /// "some tombstone": the swept block is restorable as part of the cohort it
+    /// joined, and only as part of THAT cohort. Replays
+    /// `{Create(P), Create(B), Delete(P), Move(B → P), Restore(P)}` twice — once
+    /// with the restore carrying the delete's cohort token, once with a
+    /// non-matching one — since the restore arm keys its cascade on
+    /// `deleted_at = deleted_at_ref` (#613).
+    ///
+    /// The non-matching replay is the falsifying half: pre-fix `B` was never
+    /// stamped, so it read live there too.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_swept_move_joins_a_cohort_the_restore_arm_keys_on() {
+        const T0: i64 = 1_767_225_600_000;
+        const COHORT: i64 = T0 + 3;
+
+        async fn replay_with_restore_ref(restore_ref: i64) -> (Option<i64>, Option<i64>) {
+            let (pool, _dir) = test_pool().await;
+            seed_create_op(&pool, 1, "P", None, T0 + 1).await;
+            seed_create_op(&pool, 2, "B", None, T0 + 2).await;
+            seed_delete_op(&pool, 3, "P", COHORT).await;
+            seed_move_op(&pool, 4, "B", "P", T0 + 4).await;
+            seed_replay_op(
+                &pool,
+                5,
+                "restore_block",
+                &serde_json::json!({ "block_id": "P", "deleted_at_ref": restore_ref }),
+                T0 + 5,
+            )
+            .await;
+
+            let mut conn = pool.acquire().await.unwrap();
+            recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+                .await
+                .unwrap();
+            drop(conn);
+            (
+                deleted_at_ms(&pool, "P").await,
+                deleted_at_ms(&pool, "B").await,
+            )
+        }
+
+        let (p, b) = replay_with_restore_ref(COHORT).await;
+        assert_eq!(p, None, "the restore's token matches P's cohort");
+        assert_eq!(
+            b, None,
+            "the swept block rides the same cohort token back out — it is restorable as \
+             one unit with the ancestor whose trash it joined"
+        );
+
+        let (p, b) = replay_with_restore_ref(COHORT + 42).await;
+        assert_eq!(
+            p,
+            Some(COHORT),
+            "a restore carrying a different cohort token un-deletes nothing"
+        );
+        assert_eq!(
+            b,
+            Some(COHORT),
+            "#4187: and the swept block stays in the cohort it joined, rather than being \
+             left live as it was before the sweep existed"
         );
     }
 
