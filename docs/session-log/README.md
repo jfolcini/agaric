@@ -21,7 +21,15 @@ For a specific session, the slug helps disambiguate: `session-846-cache-rebuilds
 
 ## Adding a new session
 
-Append a new file at the next session number — the **numeric** max plus one, computed with `ls docs/session-log | grep -oP 'session-\K[0-9]+' | sort -n | tail -1`, never with plain `ls | tail` (lexicographic order lies past 999: `session-1000` < `session-996`; the fifteen `session-1000-*` files are that mistake, preserved as history). The `session-log-numbering` pre-commit hook enforces this. Never rename or edit existing files (reviewer corrections go in the PR / issue comments, not in the log). See the `batch-issues` skill (`.claude/skills/batch-issues/SKILL.md`) § "Session log entry template" for the entry shape.
+Append a new file at the next session number. Compute the **numeric** max with `ls docs/session-log | grep -oP 'session-\K[0-9]+' | sort -n | tail -1`, never with plain `ls | tail` (lexicographic order lies past 999: `session-1000` < `session-996`; the fifteen `session-1000-*` files are that mistake, preserved as history). To see the max the guard will actually measure against, read it from the merge target too:
+
+```sh
+git ls-tree -r --name-only origin/main -- docs/session-log | grep -oP 'session-\K[0-9]+' | sort -n | tail -1
+```
+
+`max + 1` is the number to take when nothing else is in flight, but the `session-log-numbering` pre-commit hook does **not** require it. Since #3929 it accepts any unused number in the window `(max, max + 10]`, so several parallel PRs can each hold a distinct valid number instead of every one of them renumbering the moment a sibling merges. What actually prevents a collision is a separate check — the number must not already be taken on your branch, in `origin/main`, or by another file in the same commit — so a gap in the sequence is fine and a reused number is not. A number outside the window still fails, because that means a stale understanding of the max or a typo rather than parallelism. The max the guard measures against spans your branch **and** `origin/main`, so if a window failure surprises you, the usual cause is a stale base — fetch and rebase before renumbering.
+
+Never rename or edit existing files (reviewer corrections go in the PR / issue comments, not in the log). See the `batch-issues` skill (`.claude/skills/batch-issues/SKILL.md`) § "Session log entry template" for the entry shape.
 
 ## Why per-session files
 
