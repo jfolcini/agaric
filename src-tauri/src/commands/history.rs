@@ -415,6 +415,42 @@ fn reverse_add_attachment_fs_path(
     )
 }
 
+/// #4248 (SECURITY): the reverse-apply analogue of the #3029
+/// `sanitize_attachment_filename` call every FORWARD writer of
+/// `attachments.filename` already makes —
+/// `agaric_engine::apply::attachments::apply_add_attachment_tx`,
+/// `…::apply_rename_attachment_tx`, `db::recovery`'s rename replay, and
+/// `agaric_sync::snapshot::restore`. Three writers sanitized and a fourth
+/// binding the payload value raw is exactly the shape that eventually gets
+/// one of them wrong, and it is the same asymmetry #3370 closed for
+/// `fs_path` in this very arm (see [`reverse_add_attachment_fs_path`]).
+///
+/// The reverse payload is rebuilt from an op-log record, so its `filename`
+/// is whatever some earlier writer put in that payload — a value that has
+/// never been through the sanitizer, only through the stricter *command*
+/// validator (`commands::attachments::validate_attachment_filename`,
+/// #2989), which did not exist for ops written before it landed. So the
+/// reverse arm must run the coercion itself rather than trusting the
+/// provenance of a row it merely reads.
+///
+/// Sanitize, never reject — identical policy to the forward apply: a
+/// reject would wedge an undo on one bad historical row, and the stored
+/// value must match byte-for-byte what the forward apply of the same
+/// payload would have written, or undo/redo of the same op diverge.
+fn reverse_attachment_filename(raw: &str, attachment_id: &str, arm: &'static str) -> String {
+    let sanitized = agaric_core::attachment_filename::sanitize_attachment_filename(raw);
+    if sanitized != raw {
+        tracing::warn!(
+            attachment_id,
+            arm,
+            original = %raw,
+            sanitized = %sanitized,
+            "sanitized traversal-unsafe attachment filename on reverse apply"
+        );
+    }
+    sanitized
+}
+
 /// #3706 — refuse to restore an `attachments` row whose bytes are gone.
 ///
 /// Undoing a `delete_attachment` restores the ROW but nothing restores the
@@ -482,7 +518,9 @@ fn reverse_add_attachment_fs_path(
 /// into `non_reversible_skipped` there.
 ///
 /// So today this guard only ever fires with `skip_non_reversible = false`
-/// (`revert_ops`, `undo_ops`/`undo_op`, `undo_page_group`, `redo_page_op`),
+/// (`revert_ops`, `undo_ops`/`undo_op`, `undo_page_op` (since #4247 made the
+/// positional path able to select a `delete_attachment` at all),
+/// `undo_page_group`, `redo_page_op`),
 /// where aborting the transaction is the whole behaviour and the pre-append
 /// preflight in [`revert_ops_in_tx`] and the in-arm check in
 /// [`apply_reverse_in_tx`] are indistinguishable. The preflight is kept
@@ -1075,9 +1113,18 @@ pub async fn apply_reverse_in_tx(
             // forward materializer, which also writes `p.new_filename`). Reading
             // `old_filename` here would re-apply the current name — a no-op undo.
             let attachment_id_str = p.attachment_id.as_str();
+            // #4248 (SECURITY): same coercion `apply_rename_attachment_tx`
+            // runs on the forward path — see `reverse_attachment_filename`.
+            // Undoing a rename must land the byte-identical value the
+            // forward apply of that payload would have stored.
+            let new_filename = reverse_attachment_filename(
+                &p.new_filename,
+                attachment_id_str,
+                "rename_attachment",
+            );
             sqlx::query!(
                 "UPDATE attachments SET filename = ? WHERE id = ?",
-                p.new_filename,
+                new_filename,
                 attachment_id_str
             )
             .execute(&mut **tx)
@@ -1098,20 +1145,20 @@ pub async fn apply_reverse_in_tx(
             //
             // `revert_ops_in_tx` runs the same check as a pre-append
             // preflight; this one covers the paths that do not go through it —
-            // `undo_page_op_inner` (which cannot in fact reach this arm, see
-            // below) and, the reachable one, `redo_page_op_inner` redoing an
-            // undone `add_attachment` after a sweep.
+            // `undo_page_op_inner` and `redo_page_op_inner` redoing an undone
+            // `add_attachment` after a sweep.
             //
-            // `undo_page_op_inner` is unreachable here for a reason worth
-            // recording rather than relying on: its target-selection query
-            // admits a `delete_attachment` op only via
-            // `EXISTS (SELECT 1 FROM attachments a WHERE a.id = ...)`, and
-            // `DeleteAttachmentPayload` carries no `block_id`
-            // (`OpPayload::block_id` returns `None` for it), so the
-            // `ol.block_id IN (page_blocks)` disjunct never matches either. The
-            // delete hard-deleted that row, so the `EXISTS` is always false and
-            // positional Ctrl-Z skips past the op entirely. That is its own
-            // bug — not this one — and the guard here does not depend on it.
+            // #4247 update: `undo_page_op_inner` used to be UNREACHABLE here,
+            // and the note that stood in this spot recorded why — its
+            // target-selection query admitted a `delete_attachment` only via
+            // `EXISTS (SELECT 1 FROM attachments a WHERE a.id = ...)`, which
+            // the delete's own hard-DELETE had already falsified, while
+            // `ol.block_id IN (page_blocks)` never matched because
+            // `DeleteAttachmentPayload` carries no `block_id`. That was the
+            // #4247 bug (positional Ctrl-Z silently reversed the PREVIOUS op),
+            // and closing it makes this arm reachable from the positional path
+            // too. The intended consequence: a Ctrl-Z after the sweep now hits
+            // the refusal below instead of quietly undoing something else.
             require_reverse_attachment_bytes(app_data_dir, p).await?;
 
             let attachment_id_str = p.attachment_id.as_str();
@@ -1134,6 +1181,13 @@ pub async fn apply_reverse_in_tx(
             // Shared with the #3706 byte-existence guard above via
             // `reverse_add_attachment_fs_path`, so the path that is checked
             // and the path that is stored cannot drift apart.
+            // #4248 (SECURITY): the display `filename` is the OTHER
+            // payload-carried writer into this row, and `apply_add_attachment_tx`
+            // sanitizes it on the forward path (#3029) exactly as it coerces
+            // `fs_path` (#3370). Both halves of the pair now run here too;
+            // see `reverse_attachment_filename`.
+            let filename =
+                reverse_attachment_filename(&p.filename, attachment_id_str, "add_attachment");
             let fs_path = reverse_add_attachment_fs_path(p);
             let fs_path_str = fs_path.as_str();
             if fs_path_str != p.fs_path {
@@ -1151,7 +1205,7 @@ pub async fn apply_reverse_in_tx(
                 attachment_id_str,
                 block_id_str,
                 p.mime_type,
-                p.filename,
+                filename,
                 p.size_bytes,
                 fs_path_str,
                 created_at,
@@ -1855,6 +1909,69 @@ pub async fn undo_page_op_inner(
     // `reverse::compute_reverse` directly and never routes through
     // `revert_ops_in_tx`'s `reject_replicated_targets` guard, so the filter
     // here is the sole line of defense against selecting an audit-only row.
+    //
+    // #4247: the attachment disjunct needs its SECOND `EXISTS` — the one
+    // that resolves the owning block from the paired `add_attachment`
+    // op-log row — or a `delete_attachment` can never be selected at all:
+    //
+    //   * `ol.block_id IN (page_blocks)` never matches, because
+    //     `DeleteAttachmentPayload` carries no `block_id`
+    //     (`OpPayload::block_id()` returns `None` for it) and the indexed
+    //     `op_log.block_id` column is therefore NULL on these rows;
+    //   * the live-`attachments` `EXISTS` is false from the instant the op
+    //     is appended, because `delete_attachment_inner` hard-DELETEs that
+    //     row inside the very transaction that writes the op.
+    //
+    // Both disjuncts false ⇒ the positional undo skipped straight past the
+    // delete and reversed the PREVIOUS op — the user pressed Ctrl-Z to get
+    // an attachment back and silently lost an unrelated edit instead. The
+    // `add_attachment` probe does not depend on the row the delete removed
+    // and reads the indexed `op_log.attachment_id` column (migration 0064;
+    // `idx_op_log_attachment_id` is EQP-confirmed to serve the correlated
+    // subquery as `SEARCH src_add USING INDEX … (attachment_id=?)`).
+    //
+    // It is the SAME source `reverse::attachment_ops::reverse_delete_attachment`
+    // reads, with the same `is_replicated = 0` filter — but the admitted set
+    // and the rebuildable set are NOT equal, and neither containment holds.
+    // Two deliberate residuals, both narrower than the bug being closed:
+    //
+    //   * ADMITTED BUT NOT REBUILDABLE. This probe has no "strictly before
+    //     `(created_at, seq, device_id)`" bound; `reverse_delete_attachment`
+    //     does. So a delete whose only surviving `add_attachment` sits AFTER
+    //     it — compaction (`snapshot::compact_op_log` → `op_log::prune`)
+    //     reclaimed the original add while a later undo-produced add
+    //     survived — is selected here and then refused by `compute_reverse`
+    //     with `NonReversible`. That is the outcome this fix wants (a
+    //     visible refusal, transaction rolled back, nothing reversed) and is
+    //     why the bound is NOT added: adding it would put those deletes back
+    //     in the blind spot and restore the silent wrong undo. Pinned by
+    //     `undo_page_op_refuses_delete_attachment_whose_only_add_is_later_4247`.
+    //     Note the amplification on `undo_page_group_inner`
+    //     (`skip_non_reversible = false`): the refusal aborts the WHOLE
+    //     coalesced group, including reversible siblings.
+    //
+    //   * REBUILDABLE BUT NOT ADMITTED — the residual #4247 blind spot. If
+    //     NO `add_attachment` row for the attachment survives at all (same
+    //     compaction, nothing left to pair with), both disjuncts are false
+    //     again and the positional undo walks past the delete exactly as it
+    //     did before this fix. Unclosable from this query: the owning page
+    //     is only recoverable from the paired add, and
+    //     `DeleteAttachmentPayload` carries no `block_id` to fall back on
+    //     (closing it for real means the issue's option 1 — put the owning
+    //     block on the delete's op-log row). `compute_reverse` would refuse
+    //     these deletes anyway, so nothing reversible is lost; what is lost
+    //     is the refusal being visible. Pinned by
+    //     `undo_page_op_skips_delete_attachment_with_no_surviving_add_4247`.
+    //
+    // Deliberate consequence (#3706): now that the op is reachable, a
+    // Ctrl-Z issued after the orphan GC has reclaimed the bytes surfaces
+    // the `NonReversible` refusal from `require_reverse_attachment_bytes`
+    // instead of silently reversing the wrong op. That is the correct
+    // outcome — a visible refusal beats a silent wrong undo.
+    //
+    // `find_undo_group_inner` and `undo_page_group_inner` carry the
+    // IDENTICAL predicate; all three MUST share one row-numbering universe
+    // (see the #2549 note in `find_undo_group_inner`).
     let target = sqlx::query_as!(
         HistoryEntry,
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
@@ -1870,10 +1987,19 @@ pub async fn undo_page_op_inner(
              ol.block_id IN (SELECT id FROM page_blocks) \
              OR ( \
                  ol.op_type IN ('delete_attachment', 'rename_attachment') \
-                 AND EXISTS ( \
-                     SELECT 1 FROM attachments a \
-                     WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
-                     AND a.block_id IN (SELECT id FROM page_blocks) \
+                 AND ( \
+                     EXISTS ( \
+                         SELECT 1 FROM attachments a \
+                         WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                         AND a.block_id IN (SELECT id FROM page_blocks) \
+                     ) \
+                     OR EXISTS ( \
+                         SELECT 1 FROM op_log src_add \
+                         WHERE src_add.op_type = 'add_attachment' \
+                         AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                         AND src_add.is_replicated = 0 \
+                         AND src_add.block_id IN (SELECT id FROM page_blocks) \
+                     ) \
                  ) \
              ) \
          ) \
@@ -2168,6 +2294,17 @@ pub async fn find_undo_group_inner(
     let seed_rn: i64 = depth + 1; // depth=0 → rn=1 (newest)
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     //
+    // #4247: `ordered_ops` carries the same two-branch attachment disjunct
+    // as `undo_page_op_inner` — the live-`attachments` probe PLUS the
+    // paired-`add_attachment` probe. Without the second branch a
+    // `delete_attachment` was invisible to `ordered_ops` (no `block_id` on
+    // the row, and the delete hard-deleted the `attachments` row the first
+    // probe looks for), so the group MISCOUNTED: the delete neither seeded
+    // nor extended a group, and two ops it sat between stayed rn-adjacent
+    // as if it had never happened. Sizing here must enumerate exactly what
+    // `undo_page_op_inner` selects and `undo_page_group_inner` reverts, or
+    // the FE's depth addressing skews.
+    //
     // #2481 phase 2: `is_replicated = 0` in `ordered_ops` — undo groups are
     // built over locally-authored ops only, matching `undo_page_op_inner`'s
     // target filter. A replicated foreign audit row (migration 0099) must
@@ -2190,10 +2327,19 @@ pub async fn find_undo_group_inner(
                  ol.block_id IN (SELECT id FROM page_blocks) \
                  OR ( \
                      ol.op_type IN ('delete_attachment', 'rename_attachment') \
-                     AND EXISTS ( \
-                         SELECT 1 FROM attachments a \
-                         WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
-                         AND a.block_id IN (SELECT id FROM page_blocks) \
+                     AND ( \
+                         EXISTS ( \
+                             SELECT 1 FROM attachments a \
+                             WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                             AND a.block_id IN (SELECT id FROM page_blocks) \
+                         ) \
+                         OR EXISTS ( \
+                             SELECT 1 FROM op_log src_add \
+                             WHERE src_add.op_type = 'add_attachment' \
+                             AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                             AND src_add.is_replicated = 0 \
+                             AND src_add.block_id IN (SELECT id FROM page_blocks) \
+                         ) \
                      ) \
                  ) \
              ) \
@@ -2312,6 +2458,11 @@ pub async fn undo_page_group_inner(
     // `reject_replicated_targets` guard aborts the WHOLE group; excluding it
     // here keeps group undo usable and the rn universe identical to
     // `find_undo_group_inner` / `undo_page_op_inner`.
+    // also #4247: the attachment disjunct's second `EXISTS` (owning block
+    // resolved from the paired `add_attachment` op) is part of that same
+    // shared rn universe — see the note on `undo_page_op_inner`'s target
+    // query. Without it a `delete_attachment` was enumerated by none of the
+    // three, so a group undo silently skipped the delete.
     let seed_rn: i64 = depth + 1;
     let rows = sqlx::query!(
         r#"WITH RECURSIVE page_blocks(id, depth) AS (
@@ -2329,10 +2480,19 @@ pub async fn undo_page_group_inner(
                  ol.block_id IN (SELECT id FROM page_blocks)
                  OR (
                      ol.op_type IN ('delete_attachment', 'rename_attachment')
-                     AND EXISTS (
-                         SELECT 1 FROM attachments a
-                         WHERE a.id = json_extract(ol.payload, '$.attachment_id')
-                         AND a.block_id IN (SELECT id FROM page_blocks)
+                     AND (
+                         EXISTS (
+                             SELECT 1 FROM attachments a
+                             WHERE a.id = json_extract(ol.payload, '$.attachment_id')
+                             AND a.block_id IN (SELECT id FROM page_blocks)
+                         )
+                         OR EXISTS (
+                             SELECT 1 FROM op_log src_add
+                             WHERE src_add.op_type = 'add_attachment'
+                             AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id')
+                             AND src_add.is_replicated = 0
+                             AND src_add.block_id IN (SELECT id FROM page_blocks)
+                         )
                      )
                  )
              )
@@ -3288,6 +3448,7 @@ mod tests {
         let del = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
             attachment_id: att_id.clone(),
             fs_path: "attachments/p_f.png".into(),
+            filename: "p_f.png".into(),
         });
         append_local_op_at(&pool, DEV, del, FIXED_TS + 1)
             .await
@@ -3471,5 +3632,778 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reverse_rows, 1, "exactly one reverse op seeded");
+    }
+
+    // -----------------------------------------------------------------
+    // #4247 — a `delete_attachment` op must be REACHABLE from the
+    // positional undo paths.
+    //
+    // The op-log row for a `delete_attachment` carries a NULL `block_id`
+    // (`OpPayload::block_id()` returns `None` for it), and
+    // `delete_attachment_inner` hard-DELETEs the `attachments` row in the
+    // same transaction that appends the op — so neither of the two
+    // disjuncts the target query used to have could ever match it. The
+    // fix resolves the owning block from the paired `add_attachment`
+    // op-log row instead; these tests pin that, and the deliberate #3706
+    // consequence of reaching the arm at all.
+    // -----------------------------------------------------------------
+
+    /// Seed a page → child block, a live `attachments` row on the child, and
+    /// the two op-log rows that precede every real delete: the
+    /// `create_block` that made the block (it anchors the later edit's
+    /// prior-text lookup) and the `add_attachment` that made the
+    /// attachment (it is what the #4247 probe resolves the owning block
+    /// through).
+    ///
+    /// Timestamps: `create_block` at `FIXED_TS`, `add_attachment` at
+    /// `FIXED_TS + 1` — a 1 ms gap, then a 999 ms gap before whatever
+    /// [`append_edit_then_delete_attachment`] adds, so a 10 ms grouping
+    /// window separates the two pairs.
+    async fn seed_page_with_attachment(pool: &SqlitePool) -> (BlockId, BlockId, BlockId) {
+        use agaric_store::op::AddAttachmentPayload;
+
+        let page_id = BlockId::test_id("PAGE1");
+        let child_id = BlockId::test_id("CHILD1");
+        let att_id = BlockId::test_id("ATT1");
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'P', 0)",
+        )
+        .bind(page_id.as_str())
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, parent_id, block_type, content, position) \
+             VALUES (?, ?, 'content', 'v1', 0)",
+        )
+        .bind(child_id.as_str())
+        .bind(page_id.as_str())
+        .execute(pool)
+        .await
+        .unwrap();
+        insert_attachment_row(pool, &att_id, &child_id, "f.png").await;
+
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: child_id.clone(),
+            block_type: "content".into(),
+            parent_id: Some(page_id.clone()),
+            position: None,
+            index: Some(0),
+            content: "v1".into(),
+        });
+        append_local_op_at(pool, DEV, create, FIXED_TS)
+            .await
+            .unwrap();
+
+        let add = OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: att_id.clone(),
+            block_id: child_id.clone(),
+            mime_type: "image/png".into(),
+            filename: "f.png".into(),
+            size_bytes: 1,
+            fs_path: "attachments/p_f.png".into(),
+        });
+        append_local_op_at(pool, DEV, add, FIXED_TS + 1)
+            .await
+            .unwrap();
+
+        (page_id, child_id, att_id)
+    }
+
+    /// Insert one raw `attachments` row (module-local helper — test helper
+    /// duplication is deliberate, see `tests/AGENTS.md`).
+    async fn insert_attachment_row(
+        pool: &SqlitePool,
+        att_id: &BlockId,
+        block_id: &BlockId,
+        filename: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO attachments \
+             (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, 'image/png', ?, 1, 'attachments/p_f.png', ?)",
+        )
+        .bind(att_id.as_str())
+        .bind(block_id.as_str())
+        .bind(filename)
+        .bind(FIXED_TS)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn filename_of(pool: &SqlitePool, att_id: &BlockId) -> String {
+        sqlx::query_scalar("SELECT filename FROM attachments WHERE id = ?")
+            .bind(att_id.as_str())
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// Edit the child (`v1` → `v2`) at `FIXED_TS + 1000`, then delete the
+    /// attachment at `FIXED_TS + 1001`, hard-deleting the `attachments`
+    /// row exactly as `delete_attachment_inner` does inside its own
+    /// transaction (#1993 defers only the BYTES to the GC, never the row).
+    ///
+    /// The 999 ms gap from the seeded pair means a 10 ms grouping window
+    /// contains these two ops and nothing else.
+    async fn append_edit_then_delete_attachment(
+        pool: &SqlitePool,
+        child_id: &BlockId,
+        att_id: &BlockId,
+    ) {
+        use agaric_store::op::{DeleteAttachmentPayload, EditBlockPayload};
+
+        let edit = OpPayload::EditBlock(EditBlockPayload {
+            block_id: child_id.clone(),
+            to_text: "v2".into(),
+            prev_edit: None,
+        });
+        append_local_op_at(pool, DEV, edit, FIXED_TS + 1000)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET content = 'v2' WHERE id = ?")
+            .bind(child_id.as_str())
+            .execute(pool)
+            .await
+            .unwrap();
+
+        let del = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+            attachment_id: att_id.clone(),
+            fs_path: "attachments/p_f.png".into(),
+            filename: "f.png".into(),
+        });
+        append_local_op_at(pool, DEV, del, FIXED_TS + 1001)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM attachments WHERE id = ?")
+            .bind(att_id.as_str())
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// #4247 ACCEPTANCE: with `[… , edit X, delete_attachment A]`, the
+    /// positional undo at depth 0 must reverse the **delete_attachment**.
+    ///
+    /// Before the fix it reversed the `edit_block` underneath: the user
+    /// pressed Ctrl-Z to get their attachment back and silently lost an
+    /// unrelated edit instead, with no error and nothing to indicate the
+    /// wrong thing had happened.
+    ///
+    /// No `set_app_data_dir`, so the #3706 byte-existence guard is skipped
+    /// — this test is about WHICH op is selected. The byte-gone path is
+    /// pinned by `undo_page_op_refuses_delete_attachment_when_bytes_gone_4247`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_targets_delete_attachment_not_prior_edit_4247() {
+        let (pool, _dir) = test_pool().await;
+        let (page_id, child_id, att_id) = seed_page_with_attachment(&pool).await;
+        append_edit_then_delete_attachment(&pool, &child_id, &att_id).await;
+
+        let mat = Materializer::new(pool.clone());
+        let res = undo_page_op_inner(&pool, DEV, &mat, page_id.to_string(), 0)
+            .await
+            .expect("positional undo at depth 0 must succeed");
+
+        assert_eq!(
+            res.reversed_op_type, "delete_attachment",
+            "#4247: the newest undoable op on the page is the delete_attachment, \
+             so a positional Ctrl-Z must reverse IT, not the edit underneath"
+        );
+        assert_eq!(
+            res.new_op_type, "add_attachment",
+            "the reverse of a delete_attachment is an add_attachment"
+        );
+
+        // The delete really was taken back …
+        let restored: Option<String> =
+            sqlx::query_scalar("SELECT block_id FROM attachments WHERE id = ?")
+                .bind(att_id.as_str())
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            restored.as_deref(),
+            Some(child_id.as_str()),
+            "undoing the delete_attachment must put the row back on its block"
+        );
+
+        // … and the edit under it was left alone. This is the user-visible
+        // harm #4247 describes: pre-fix the content went back to 'v1' while
+        // the attachment stayed deleted.
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(child_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            content, "v2",
+            "#4247: the edit beneath the delete_attachment must NOT be reversed"
+        );
+
+        mat.shutdown();
+    }
+
+    /// #4247 error path, and the deliberate interaction with #3706: once the
+    /// `delete_attachment` is reachable, a Ctrl-Z issued after the orphan GC
+    /// has reclaimed its bytes surfaces the `NonReversible` refusal.
+    ///
+    /// That is the POINT of the fix — a visible refusal beats silently
+    /// reversing a different op — so it is pinned, not suppressed. The
+    /// transaction must roll back whole: no restored row, no reverse op,
+    /// and the edit underneath still untouched.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_refuses_delete_attachment_when_bytes_gone_4247() {
+        let (pool, dir) = test_pool().await;
+        let (page_id, child_id, att_id) = seed_page_with_attachment(&pool).await;
+        append_edit_then_delete_attachment(&pool, &child_id, &att_id).await;
+
+        // A vault root with no `attachments/p_f.png` under it — the state
+        // `cleanup_orphaned_attachments` leaves behind as a matter of course.
+        let mat = Materializer::new(pool.clone());
+        mat.set_app_data_dir(dir.path().to_path_buf());
+
+        let err = undo_page_op_inner(&pool, DEV, &mat, page_id.to_string(), 0)
+            .await
+            .expect_err("undo of a delete_attachment whose bytes are gone must refuse");
+        assert!(
+            matches!(&err, AppError::NonReversible { op_type } if op_type == "delete_attachment"),
+            "#4247 × #3706: reaching the delete_attachment must surface the \
+             NonReversible refusal, not silently reverse something else; got {err:?}"
+        );
+
+        let restored: Option<String> =
+            sqlx::query_scalar("SELECT block_id FROM attachments WHERE id = ?")
+                .bind(att_id.as_str())
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            restored, None,
+            "a refused undo must not commit an attachments row over missing bytes"
+        );
+        let reverse_ops: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE is_undo = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            reverse_ops, 0,
+            "a refused undo must not append a reverse op"
+        );
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(child_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            content, "v2",
+            "a refused undo must not fall through to reversing the edit underneath"
+        );
+
+        mat.shutdown();
+    }
+
+    /// #4247: `find_undo_group_inner` (`find_undo_group`, the FE's group
+    /// sizer) inherits the same blind spot and MISCOUNTS.
+    ///
+    /// Ops: `create_block` @TS, `add_attachment` @TS+1, `edit_block`
+    /// @TS+1000, `delete_attachment` @TS+1001, all one device. With a 10 ms
+    /// window the group seeded at depth 0 is exactly the newest pair —
+    /// `[delete_attachment, edit_block]`, size 2. Before the fix the
+    /// `delete_attachment` was absent from `ordered_ops` entirely, so the
+    /// seed landed on the `edit_block`, which has no within-window
+    /// predecessor (999 ms back) and the group collapsed to 1.
+    ///
+    /// The distinction matters beyond the number: `find_undo_group_inner`,
+    /// `undo_page_op_inner` and `undo_page_group_inner` must share ONE
+    /// row-numbering universe, or the FE sizes a group over one op set and
+    /// then addresses ops by depth in another.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn find_undo_group_counts_delete_attachment_after_its_row_is_gone_4247() {
+        let (pool, _dir) = test_pool().await;
+        let (page_id, child_id, att_id) = seed_page_with_attachment(&pool).await;
+        append_edit_then_delete_attachment(&pool, &child_id, &att_id).await;
+
+        let group = find_undo_group_inner(&pool, page_id.as_str(), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            group, 2,
+            "#4247: the group seeded at the delete_attachment must extend to the \
+             edit 1 ms below it; got {group}"
+        );
+
+        // Guard against a false pass: the four ops really are in the log, and
+        // the `attachments` row really is gone (so the pre-fix EXISTS branch
+        // could not have carried the delete).
+        let ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(ops, 4, "expected exactly four seeded ops; got {ops}");
+        let live_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
+            .bind(att_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            live_rows, 0,
+            "the delete hard-deleted the attachments row; the live-row EXISTS \
+             branch cannot be what admits the op"
+        );
+    }
+
+    /// #4247: `undo_page_group_inner` (the fused batch undo) enumerates the
+    /// group with the SAME `ordered_ops` CTE, so it skipped the
+    /// `delete_attachment` too — a grouped Ctrl-Z reverted the edit and left
+    /// the attachment deleted.
+    ///
+    /// Same seed as the sizer test, so the group is the newest pair; the
+    /// results must be newest-first `[delete_attachment, edit_block]`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_group_reverts_delete_attachment_after_its_row_is_gone_4247() {
+        let (pool, _dir) = test_pool().await;
+        let (page_id, child_id, att_id) = seed_page_with_attachment(&pool).await;
+        append_edit_then_delete_attachment(&pool, &child_id, &att_id).await;
+
+        // No app_data_dir → the #3706 byte guard is skipped; this test pins
+        // enumeration, not byte reclamation.
+        let mat = Materializer::new(pool.clone());
+        let results = undo_page_group_inner(&pool, DEV, &mat, page_id.to_string(), 0, 10)
+            .await
+            .expect("group undo must succeed");
+
+        let reversed: Vec<&str> = results
+            .iter()
+            .map(|r| r.reversed_op_type.as_str())
+            .collect();
+        assert_eq!(
+            reversed,
+            vec!["delete_attachment", "edit_block"],
+            "#4247: the group undo must revert the delete_attachment AND the edit, \
+             newest-first"
+        );
+
+        let restored: Option<String> =
+            sqlx::query_scalar("SELECT block_id FROM attachments WHERE id = ?")
+                .bind(att_id.as_str())
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            restored.as_deref(),
+            Some(child_id.as_str()),
+            "the grouped undo must put the attachment row back"
+        );
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(child_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            content, "v1",
+            "the grouped undo must also reverse the edit it spans"
+        );
+
+        mat.shutdown();
+    }
+
+    /// #4247 BOUNDARY (admitted but not rebuildable): the paired-`add`
+    /// probe carries no "strictly before `(created_at, seq, device_id)`"
+    /// bound, while `reverse::attachment_ops::reverse_delete_attachment`
+    /// does. A delete whose only surviving `add_attachment` sits AFTER it
+    /// — `op_log::prune` reclaimed the original add, a later undo-produced
+    /// add survived — is therefore SELECTED and then refused.
+    ///
+    /// Pinned deliberately: the refusal is the outcome the fix wants. The
+    /// alternative (adding the bound, making the two predicates match
+    /// exactly) would push these deletes back into the blind spot and
+    /// restore the silent wrong undo #4247 is about.
+    ///
+    /// Ops: `create_block` @TS, `delete_attachment` @TS+1000,
+    /// `add_attachment` @TS+2000 — so the delete sits at depth 1 and the
+    /// only add for its `attachment_id` is strictly after it. No live
+    /// `attachments` row, so the first `EXISTS` cannot be what admits it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_refuses_delete_attachment_whose_only_add_is_later_4247() {
+        use agaric_store::op::{AddAttachmentPayload, DeleteAttachmentPayload};
+
+        let (pool, _dir) = test_pool().await;
+        let page_id = BlockId::test_id("PAGE1");
+        let child_id = BlockId::test_id("CHILD1");
+        let att_id = BlockId::test_id("ATT1");
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'P', 0)",
+        )
+        .bind(page_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, parent_id, block_type, content, position) \
+             VALUES (?, ?, 'content', 'v1', 0)",
+        )
+        .bind(child_id.as_str())
+        .bind(page_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: child_id.clone(),
+            block_type: "content".into(),
+            parent_id: Some(page_id.clone()),
+            position: None,
+            index: Some(0),
+            content: "v1".into(),
+        });
+        append_local_op_at(&pool, DEV, create, FIXED_TS)
+            .await
+            .unwrap();
+        let del = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+            attachment_id: att_id.clone(),
+            fs_path: "attachments/p_f.png".into(),
+            filename: "f.png".into(),
+        });
+        append_local_op_at(&pool, DEV, del, FIXED_TS + 1000)
+            .await
+            .unwrap();
+        let add = OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: att_id.clone(),
+            block_id: child_id.clone(),
+            mime_type: "image/png".into(),
+            filename: "f.png".into(),
+            size_bytes: 1,
+            fs_path: "attachments/p_f.png".into(),
+        });
+        append_local_op_at(&pool, DEV, add, FIXED_TS + 2000)
+            .await
+            .unwrap();
+
+        // Guard the premise: no live row, so the live-`attachments` probe
+        // cannot be what admits the delete.
+        let live_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
+            .bind(att_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(live_rows, 0, "premise: the attachments row must be absent");
+
+        // depth 1 — newest-first the ops are [add_attachment,
+        // delete_attachment, create_block].
+        let mat = Materializer::new(pool.clone());
+        let err = undo_page_op_inner(&pool, DEV, &mat, page_id.to_string(), 1)
+            .await
+            .expect_err("a delete whose only add is LATER must refuse, not resolve");
+        assert!(
+            matches!(&err, AppError::NonReversible { op_type } if op_type == "delete_attachment"),
+            "#4247 boundary: the op is admitted by the paired-add probe and then \
+             refused by compute_reverse's strictly-before lookup; got {err:?}"
+        );
+
+        let reverse_ops: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE is_undo = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            reverse_ops, 0,
+            "a refused undo must not append a reverse op"
+        );
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(child_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            content, "v1",
+            "a refused undo must not fall through to reversing a different op"
+        );
+
+        mat.shutdown();
+    }
+
+    /// #4247 RESIDUAL (rebuildable-set empty ⇒ not admitted): when NO
+    /// `add_attachment` row for the attachment survives — `op_log::prune`
+    /// took it — both disjuncts are false again and the positional undo
+    /// walks straight past the `delete_attachment`, exactly as it did
+    /// before this fix.
+    ///
+    /// This is the acknowledged, unclosable half of #4247: the owning page
+    /// is only recoverable through the paired add, and
+    /// `DeleteAttachmentPayload` carries no `block_id`. Nothing REVERSIBLE
+    /// is lost (`compute_reverse` refuses these deletes too) — what is lost
+    /// is the refusal being visible. Pinned so the boundary is explicit and
+    /// so a future fix that closes it fails loudly here instead of silently
+    /// changing which op Ctrl-Z targets.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_skips_delete_attachment_with_no_surviving_add_4247() {
+        let (pool, _dir) = test_pool().await;
+        let page_id = BlockId::test_id("PAGE1");
+        let child_id = BlockId::test_id("CHILD1");
+        let att_id = BlockId::test_id("ATT1");
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'P', 0)",
+        )
+        .bind(page_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, parent_id, block_type, content, position) \
+             VALUES (?, ?, 'content', 'v1', 0)",
+        )
+        .bind(child_id.as_str())
+        .bind(page_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: child_id.clone(),
+            block_type: "content".into(),
+            parent_id: Some(page_id.clone()),
+            position: None,
+            index: Some(0),
+            content: "v1".into(),
+        });
+        append_local_op_at(&pool, DEV, create, FIXED_TS)
+            .await
+            .unwrap();
+
+        // `edit_block` @TS+1000, `delete_attachment` @TS+1001 — and NO
+        // `add_attachment` op anywhere in the log.
+        append_edit_then_delete_attachment(&pool, &child_id, &att_id).await;
+        let adds: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE op_type = 'add_attachment'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(adds, 0, "premise: no add_attachment op survives");
+
+        let mat = Materializer::new(pool.clone());
+        let res = undo_page_op_inner(&pool, DEV, &mat, page_id.to_string(), 0)
+            .await
+            .expect("undo at depth 0 resolves — to the edit, not the delete");
+        assert_eq!(
+            res.reversed_op_type, "edit_block",
+            "#4247 residual: with its paired add gone the delete_attachment is \
+             invisible to the page-membership predicate again, so depth 0 lands \
+             on the edit underneath"
+        );
+
+        mat.shutdown();
+    }
+
+    // -----------------------------------------------------------------
+    // #4248 — the reverse-apply arms must sanitize `attachments.filename`
+    // exactly as the forward apply does (#3029), the way #3370 already
+    // closed this asymmetry for `fs_path` in the same arm.
+    //
+    // Both tests compare the REVERSE arm's stored value against the
+    // FORWARD arm's stored value for the identical payload, so they pin
+    // the property the issue names ("sanitized identically to what the
+    // forward apply would store") rather than re-deriving the sanitizer.
+    // -----------------------------------------------------------------
+
+    /// #4248 ACCEPTANCE (add arm): a hostile POSIX-traversal filename
+    /// reaching `apply_reverse_in_tx`'s `AddAttachment` arm must land in the
+    /// row byte-identical to what `apply_add_attachment_tx` would have
+    /// stored.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reverse_add_attachment_sanitizes_filename_like_forward_apply_4248() {
+        use agaric_store::op::AddAttachmentPayload;
+
+        const HOSTILE: &str = "../../evil.sh";
+
+        let (pool, _dir) = test_pool().await;
+        let (_page_id, child_id, _att_id) = seed_page_with_attachment(&pool).await;
+
+        let forward_att = BlockId::test_id("ATTFWD");
+        let reverse_att = BlockId::test_id("ATTREV");
+        let payload_for = |id: &BlockId| AddAttachmentPayload {
+            attachment_id: id.clone(),
+            block_id: child_id.clone(),
+            mime_type: "text/plain".into(),
+            filename: HOSTILE.into(),
+            size_bytes: 4,
+            fs_path: format!("attachments/{}", id.as_str()),
+        };
+
+        // FORWARD apply — the reference behaviour (#3029).
+        let mut conn = pool.acquire().await.unwrap();
+        agaric_engine::apply::attachments::apply_add_attachment_tx(
+            &mut conn,
+            payload_for(&forward_att),
+            FIXED_TS,
+        )
+        .await
+        .expect("forward apply sanitizes, never rejects");
+        drop(conn);
+
+        // REVERSE apply. `app_data_dir = None` skips the #3706 byte-existence
+        // guard, which is orthogonal to the filename coercion under test.
+        let state = agaric_engine::loro::shared::LoroState::new();
+        let mut tx = pool.begin().await.unwrap();
+        apply_reverse_in_tx(
+            &mut tx,
+            &state,
+            DEV,
+            &OpPayload::AddAttachment(payload_for(&reverse_att)),
+            FIXED_TS,
+            None,
+        )
+        .await
+        .expect("reverse apply must sanitize, never reject (a reject would wedge undo)");
+        tx.commit().await.unwrap();
+
+        let stored_reverse = filename_of(&pool, &reverse_att).await;
+        let stored_forward = filename_of(&pool, &forward_att).await;
+        assert_eq!(
+            stored_reverse, stored_forward,
+            "#4248: the reverse AddAttachment arm must store exactly what the \
+             forward apply of the same payload stores"
+        );
+        assert_ne!(
+            stored_reverse, HOSTILE,
+            "the traversal-shaped filename must not survive into the row"
+        );
+        assert!(
+            !stored_reverse.contains('/') && !stored_reverse.contains('\\'),
+            "stored filename {stored_reverse:?} must contain no path separator"
+        );
+    }
+
+    /// #4248 ACCEPTANCE (rename arm): the symmetric half — a hostile
+    /// Windows-traversal filename reaching `apply_reverse_in_tx`'s
+    /// `RenameAttachment` arm.
+    ///
+    /// The reverse payload is already swapped by
+    /// `reverse::attachment_ops::reverse_rename_attachment`, so the name the
+    /// arm writes rides in `new_filename` — the field this test poisons.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reverse_rename_attachment_sanitizes_filename_like_forward_apply_4248() {
+        use agaric_store::op::RenameAttachmentPayload;
+
+        const HOSTILE: &str = "..\\..\\evil.sh";
+
+        let (pool, _dir) = test_pool().await;
+        let (_page_id, child_id, att_id) = seed_page_with_attachment(&pool).await;
+
+        // A second row so both arms run against identical input.
+        let forward_att = BlockId::test_id("ATTFWD");
+        insert_attachment_row(&pool, &forward_att, &child_id, "f.png").await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        agaric_engine::apply::attachments::apply_rename_attachment_tx(
+            &mut conn,
+            RenameAttachmentPayload {
+                attachment_id: forward_att.clone(),
+                old_filename: "f.png".into(),
+                new_filename: HOSTILE.into(),
+            },
+        )
+        .await
+        .expect("forward apply sanitizes, never rejects");
+        drop(conn);
+
+        let state = agaric_engine::loro::shared::LoroState::new();
+        let mut tx = pool.begin().await.unwrap();
+        apply_reverse_in_tx(
+            &mut tx,
+            &state,
+            DEV,
+            &OpPayload::RenameAttachment(RenameAttachmentPayload {
+                attachment_id: att_id.clone(),
+                old_filename: "f.png".into(),
+                new_filename: HOSTILE.into(),
+            }),
+            FIXED_TS,
+            None,
+        )
+        .await
+        .expect("reverse apply must sanitize, never reject");
+        tx.commit().await.unwrap();
+
+        let stored_reverse = filename_of(&pool, &att_id).await;
+        let stored_forward = filename_of(&pool, &forward_att).await;
+        assert_eq!(
+            stored_reverse, stored_forward,
+            "#4248: the reverse RenameAttachment arm must store exactly what the \
+             forward apply of the same payload stores"
+        );
+        assert_ne!(
+            stored_reverse, HOSTILE,
+            "the traversal-shaped filename must not survive into the row"
+        );
+        assert!(
+            !stored_reverse.contains('/') && !stored_reverse.contains('\\'),
+            "stored filename {stored_reverse:?} must contain no path separator"
+        );
+    }
+
+    /// #4248 negative case: the coercion is a sanitizer, not a rewriter — an
+    /// ordinary filename must reach the row untouched on BOTH reverse arms.
+    ///
+    /// Without this, a fix that stored a constant would pass the two tests
+    /// above.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reverse_attachment_arms_leave_safe_filenames_unchanged_4248() {
+        use agaric_store::op::{AddAttachmentPayload, RenameAttachmentPayload};
+
+        const SAFE_ADD: &str = "holiday photo (2).png";
+        const SAFE_RENAME: &str = "réunion-2026.pdf";
+
+        let (pool, _dir) = test_pool().await;
+        let (_page_id, child_id, att_id) = seed_page_with_attachment(&pool).await;
+
+        let added_att = BlockId::test_id("ATTADD");
+        let state = agaric_engine::loro::shared::LoroState::new();
+
+        let mut tx = pool.begin().await.unwrap();
+        apply_reverse_in_tx(
+            &mut tx,
+            &state,
+            DEV,
+            &OpPayload::AddAttachment(AddAttachmentPayload {
+                attachment_id: added_att.clone(),
+                block_id: child_id.clone(),
+                mime_type: "image/png".into(),
+                filename: SAFE_ADD.into(),
+                size_bytes: 4,
+                fs_path: format!("attachments/{}", added_att.as_str()),
+            }),
+            FIXED_TS,
+            None,
+        )
+        .await
+        .unwrap();
+        apply_reverse_in_tx(
+            &mut tx,
+            &state,
+            DEV,
+            &OpPayload::RenameAttachment(RenameAttachmentPayload {
+                attachment_id: att_id.clone(),
+                old_filename: "f.png".into(),
+                new_filename: SAFE_RENAME.into(),
+            }),
+            FIXED_TS,
+            None,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(
+            filename_of(&pool, &added_att).await,
+            SAFE_ADD,
+            "a safe filename must survive the AddAttachment reverse arm verbatim"
+        );
+        assert_eq!(
+            filename_of(&pool, &att_id).await,
+            SAFE_RENAME,
+            "a safe filename must survive the RenameAttachment reverse arm verbatim"
+        );
     }
 }

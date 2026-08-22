@@ -471,6 +471,7 @@ async fn append_populates_attachment_id_column_for_attachment_ops_3452() {
         OpPayload::DeleteAttachment(DeleteAttachmentPayload {
             attachment_id: BlockId::test_id("ATT-DEL"),
             fs_path: "attachments/readme.txt".into(),
+            filename: "readme.txt".into(),
         }),
         FIXED_TS,
     )

@@ -561,7 +561,9 @@ pub async fn read_attachment_inner(
 /// Delete an attachment by its ID.
 ///
 /// Validates the attachment exists, appends a `DeleteAttachment` op (carrying
-/// the captured `fs_path`), deletes from the `attachments` table, and commits.
+/// the `fs_path` and `filename` captured from the LIVE row inside this
+/// transaction — see #3706 review / #4262), deletes from the `attachments`
+/// table, and commits.
 ///
 /// # Byte reclamation is deferred to GC (#1993)
 ///
@@ -594,13 +596,22 @@ pub async fn delete_attachment_inner(
     // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "delete_attachment").await?;
 
-    // Validate attachment exists AND fetch its fs_path in one query.
+    // Validate attachment exists AND fetch its delete-time state in one query.
     // The fs_path goes into the op-log payload (so remote peers / future
     // GC passes can reconcile). Byte reclamation is NOT done here — see the
     // post-commit comment below.
+    //
+    // #4262: `filename` is captured here for the same reason, and it MUST be
+    // read from the live row inside this IMMEDIATE transaction rather than
+    // from the original `add_attachment` op. `rename_attachment` is a
+    // first-class op, so the add payload's name is the name the row was BORN
+    // with; only the row itself knows the name it is being deleted under.
+    // `reverse::attachment_ops::adopt_delete_time_state` reads both fields
+    // back so an undo restores the row exactly as it stood the instant before
+    // the delete.
     let attachment_id_str = attachment_id.as_str();
     let row = sqlx::query!(
-        r#"SELECT fs_path FROM attachments WHERE id = ?"#,
+        r#"SELECT fs_path, filename FROM attachments WHERE id = ?"#,
         attachment_id_str
     )
     .fetch_optional(&mut **tx)
@@ -609,10 +620,12 @@ pub async fn delete_attachment_inner(
         return Err(AppError::NotFound(format!("attachment '{attachment_id}'")));
     };
     let fs_path = row.fs_path;
+    let filename = row.filename;
 
     let payload = OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
         attachment_id: attachment_id.clone(),
         fs_path: fs_path.clone(),
+        filename,
     });
 
     // Append to op_log within transaction

@@ -524,6 +524,7 @@ async fn dispatch_op_delete_attachment() {
         OpPayload::DeleteAttachment(DeleteAttachmentPayload {
             attachment_id: BlockId::test_id("ATT-2"),
             fs_path: "attachments/f.txt".into(),
+            filename: "f.txt".into(),
         }),
     )
     .await;

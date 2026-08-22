@@ -173,6 +173,7 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
             OpPayload::DeleteAttachment(DeleteAttachmentPayload {
                 attachment_id: BlockId::test_id("ATT01"),
                 fs_path: "/tmp/readme.txt".into(),
+                filename: "readme.txt".into(),
             }),
         ),
         // #652: keep RenameAttachment exercised through the append /

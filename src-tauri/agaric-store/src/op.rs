@@ -291,6 +291,16 @@ pub struct AddAttachmentPayload {
 /// C-3 (which had no `fs_path`) still deserialize — they yield `fs_path
 /// = ""` and will be reconciled by the C-3c GC pass.
 ///
+/// `filename` carries the display name the row held at the time of deletion,
+/// for the same reason `fs_path` does: `rename_attachment` is a first-class op,
+/// so the name on the original `add_attachment` is the name the row was *born*
+/// with, not the one it was deleted under. Reconstructing the undo from the add
+/// payload alone therefore resurrects a pre-rename name (#4262). Marked
+/// `#[serde(default)]` so op-log entries written before #4262 still deserialize
+/// — they yield `filename = ""`, which
+/// `reverse::attachment_ops::adopt_delete_time_state` treats as "nothing was
+/// recorded" and falls back to the `add_attachment` name.
+///
 /// `attachment_id` is an [`AttachmentId`] (alias of [`BlockId`]) for the
 /// same uppercase-normalization contract as [`AddAttachmentPayload`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,6 +308,8 @@ pub struct DeleteAttachmentPayload {
     pub attachment_id: AttachmentId,
     #[serde(default)]
     pub fs_path: String,
+    #[serde(default)]
+    pub filename: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -721,6 +733,7 @@ mod tests {
             OpPayload::DeleteAttachment(DeleteAttachmentPayload {
                 attachment_id: BlockId::test_id("A1"),
                 fs_path: "/tmp/photo.png".into(),
+                filename: "photo.png".into(),
             }),
             OpPayload::RenameAttachment(RenameAttachmentPayload {
                 attachment_id: BlockId::test_id("A1"),
@@ -977,6 +990,42 @@ mod tests {
             OpPayload::DeleteAttachment(inner) => {
                 assert_eq!(inner.attachment_id, "ATT-LEGACY-2");
                 assert_eq!(inner.fs_path, "");
+            }
+            other => panic!("expected DeleteAttachment, got {other:?}"),
+        }
+    }
+
+    /// #4262 backwards-compat, the same shape as the C-3a `fs_path` test
+    /// above: op-log rows for `delete_attachment` written before #4262 carry
+    /// no `filename`. Those entries must keep deserializing, with `filename`
+    /// defaulting to the empty string — the sentinel
+    /// `reverse::attachment_ops::adopt_delete_time_state` reads as "no
+    /// delete-time name was ever recorded", so the reverse falls back to the
+    /// original `add_attachment`'s name (the pre-#4262 behaviour, for exactly
+    /// the ops that predate the fix).
+    #[test]
+    fn delete_attachment_payload_legacy_json_deserializes_without_filename() {
+        // The pre-#4262 shape: `fs_path` present (C-3 added it), `filename`
+        // absent. This is the JSON actually sitting in op logs today.
+        let legacy = r#"{"attachment_id":"ATT-LEGACY-3","fs_path":"attachments/photo.png"}"#;
+        let parsed: DeleteAttachmentPayload = serde_json::from_str(legacy)
+            .expect("legacy DeleteAttachmentPayload JSON without filename must still deserialize");
+        assert_eq!(parsed.attachment_id, "ATT-LEGACY-3");
+        assert_eq!(parsed.fs_path, "attachments/photo.png");
+        assert_eq!(
+            parsed.filename, "",
+            "missing filename in legacy JSON must default to empty string"
+        );
+
+        // And the on-wire `OpPayload`-tagged form the op_log actually stores.
+        let legacy_tagged = r#"{"op_type":"delete_attachment","attachment_id":"ATT-LEGACY-4","fs_path":"attachments/photo.png"}"#;
+        let parsed: OpPayload = serde_json::from_str(legacy_tagged)
+            .expect("legacy tagged OpPayload JSON without filename must still deserialize");
+        match parsed {
+            OpPayload::DeleteAttachment(inner) => {
+                assert_eq!(inner.attachment_id, "ATT-LEGACY-4");
+                assert_eq!(inner.fs_path, "attachments/photo.png");
+                assert_eq!(inner.filename, "");
             }
             other => panic!("expected DeleteAttachment, got {other:?}"),
         }

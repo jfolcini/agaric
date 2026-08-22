@@ -647,6 +647,19 @@ async fn reverse_delete_property_produces_set_property_with_prior() {
         _ => panic!("expected SetProperty"),
     }
 }
+/// `reverse_add_attachment` mints a SYNTHETIC `delete_attachment` — the only
+/// producer of a `DeleteAttachmentPayload` that is not
+/// `commands::attachments::delete_attachment_inner`.
+///
+/// Every field it carries is asserted, not just the variant and the id. Both
+/// of the other two are forwarded from the add payload so the minted op is a
+/// complete `DeleteAttachmentPayload` rather than a defaulted one:
+/// `fs_path` (#3706 review) so the reverse can unlink the file the add
+/// created, and `filename` (#4262) because an EMPTY `filename` is the legacy
+/// "nothing was recorded" sentinel `adopt_delete_time_state` reads — minting
+/// one would make a brand-new op indistinguishable from a pre-#4262 record.
+/// Neither carry had an assertion before: dropping either line left the whole
+/// suite green.
 #[tokio::test]
 async fn reverse_add_attachment_produces_delete_attachment() {
     let (pool, _dir) = test_pool().await;
@@ -664,7 +677,23 @@ async fn reverse_add_attachment_produces_delete_attachment() {
     )
     .await;
     let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
-    assert!(matches!(reverse, OpPayload::DeleteAttachment(ref p) if p.attachment_id == "ATT1"));
+    match reverse {
+        OpPayload::DeleteAttachment(p) => {
+            assert_eq!(p.attachment_id, "ATT1");
+            assert_eq!(
+                p.fs_path, "/tmp/photo.png",
+                "#3706 review: the minted delete must name the file the add \
+                 created, so the reverse can unlink it"
+            );
+            assert_eq!(
+                p.filename, "photo.png",
+                "#4262: the minted delete must carry the add's name — an empty \
+                 one is the legacy sentinel, which would make this fresh op \
+                 look like a pre-#4262 record to `adopt_delete_time_state`"
+            );
+        }
+        other => panic!("expected DeleteAttachment, got {other:?}"),
+    }
 }
 #[tokio::test]
 async fn reverse_purge_block_returns_non_reversible_error() {
@@ -690,6 +719,7 @@ async fn reverse_delete_attachment_returns_non_reversible_error() {
         OpPayload::DeleteAttachment(DeleteAttachmentPayload {
             attachment_id: BlockId::test_id("ATT2"),
             fs_path: "/tmp/att2.bin".into(),
+            filename: "att2.bin".into(),
         }),
         FIXED_TS,
     )
@@ -1230,6 +1260,7 @@ async fn reverse_delete_attachment_returns_add_attachment_with_metadata() {
         OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::test_id("ATT_001"),
             fs_path: "attachments/att_001.bin".into(),
+            filename: "att_001.bin".into(),
         }),
         1_736_942_460_000,
     )
@@ -1242,6 +1273,151 @@ async fn reverse_delete_attachment_returns_add_attachment_with_metadata() {
         other => panic!("Expected AddAttachment, got {other:?}"),
     }
 }
+/// #4262: `add ("photo.png") → rename ("receipt-2024.png") → delete → undo`
+/// must restore the POST-rename name.
+///
+/// `reverse_delete_attachment` rebuilds the reverse from the original
+/// `add_attachment` payload, so before #4262 every field it restored was the
+/// field the row was *born* with. `rename_attachment` is a first-class op with
+/// its own forward apply and its own reverse, so the name on the add payload is
+/// stale the moment a rename lands — and the undo resurrected the row under a
+/// name the user had already changed away from.
+///
+/// This pins the SINGLE-OP kernel directly (the batch twin is pinned by
+/// `compute_reverse_batch_matches_per_op_loop`): #4253's review found the
+/// kernel's `fs_path` adoption was untested and "deleting that one line would
+/// leave the suite green".
+#[tokio::test]
+async fn reverse_delete_attachment_restores_the_post_rename_filename_4262() {
+    let (pool, _dir) = test_pool().await;
+    append_op(
+        &pool,
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
+            attachment_id: BlockId::test_id("ATT_4262"),
+            block_id: BlockId::test_id("BLK_4262"),
+            mime_type: "image/png".into(),
+            filename: "photo.png".into(),
+            size_bytes: 2048,
+            fs_path: "attachments/photo.png".into(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+    // The rename the user actually performed. It does not feed the reverse
+    // lookup (which finds the `add_attachment`); it is here because it is what
+    // makes the live row's name diverge from the add payload's in production,
+    // and the delete below carries the result.
+    append_op(
+        &pool,
+        OpPayload::RenameAttachment(agaric_store::op::RenameAttachmentPayload {
+            attachment_id: BlockId::test_id("ATT_4262"),
+            old_filename: "photo.png".into(),
+            new_filename: "receipt-2024.png".into(),
+        }),
+        FIXED_TS + 60_000,
+    )
+    .await;
+    // What `delete_attachment_inner` writes: `filename` read from the LIVE row
+    // inside the delete's own transaction, hence post-rename. `fs_path` is
+    // deliberately UNCHANGED from the add's — a rename does not move the file
+    // — so this fixture isolates the `filename` adoption from the #3706
+    // `fs_path` one instead of letting either cover for the other.
+    let del = append_op(
+        &pool,
+        OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
+            attachment_id: BlockId::test_id("ATT_4262"),
+            fs_path: "attachments/photo.png".into(),
+            filename: "receipt-2024.png".into(),
+        }),
+        FIXED_TS + 120_000,
+    )
+    .await;
+    match compute_reverse(&pool, TEST_DEVICE, del.seq).await.unwrap() {
+        OpPayload::AddAttachment(p) => {
+            assert_eq!(
+                p.filename, "receipt-2024.png",
+                "#4262: undoing the delete must bring the attachment back under the \
+                 name it was deleted with, not the name it was created with"
+            );
+            // The untouched fields must stay untouched — an adoption that
+            // overwrote more than it should would still satisfy the assert above.
+            assert_eq!(p.fs_path, "attachments/photo.png");
+            assert_eq!(p.mime_type, "image/png");
+            assert_eq!(p.size_bytes, 2048);
+            assert_eq!(p.block_id, "BLK_4262");
+        }
+        other => panic!("Expected AddAttachment, got {other:?}"),
+    }
+}
+
+/// #4262, the other half: a LEGACY `delete_attachment` op — one written before
+/// the payload had a `filename` field at all — must still fall back to the
+/// original `add_attachment`'s name rather than restoring an empty one.
+///
+/// `filename` is `#[serde(default)]`, so such a record deserializes with
+/// `filename == ""`. That empty string is the sentinel `adopt_delete_time_state`
+/// reads as "nothing was recorded"; adopting it unconditionally would blank the
+/// name of every attachment restored from a pre-#4262 op.
+///
+/// The delete row is INSERTed with the genuine pre-#4262 JSON rather than
+/// built from a `DeleteAttachmentPayload { filename: String::new(), .. }`, so
+/// this exercises the serde default itself and not just the guard behind it.
+/// (`op_log` is append-only — migration 0036's trigger rejects `UPDATE` — so
+/// the legacy shape has to be written at INSERT time.)
+#[tokio::test]
+async fn reverse_delete_attachment_legacy_payload_without_filename_falls_back_to_the_add_name_4262()
+{
+    let (pool, _dir) = test_pool().await;
+    let add = append_op(
+        &pool,
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
+            attachment_id: BlockId::test_id("ATT_4262L"),
+            block_id: BlockId::test_id("BLK_4262L"),
+            mime_type: "image/png".into(),
+            filename: "photo.png".into(),
+            size_bytes: 2048,
+            fs_path: "attachments/photo.png".into(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+
+    // The pre-#4262 wire shape: `fs_path` present (C-3 added it), `filename`
+    // absent entirely. This is the JSON sitting in every op log written
+    // before this fix.
+    let att_id = BlockId::test_id("ATT_4262L").as_str().to_owned();
+    let legacy_seq = add.seq + 1;
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, attachment_id) \
+         VALUES (?, ?, NULL, ?, 'delete_attachment', ?, ?, ?)",
+    )
+    .bind(TEST_DEVICE)
+    .bind(legacy_seq)
+    .bind("hash-legacy-4262")
+    .bind(format!(
+        r#"{{"attachment_id":"{att_id}","fs_path":"attachments/photo.png"}}"#
+    ))
+    .bind(FIXED_TS + 60_000)
+    .bind(&att_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    match compute_reverse(&pool, TEST_DEVICE, legacy_seq)
+        .await
+        .unwrap()
+    {
+        OpPayload::AddAttachment(p) => assert_eq!(
+            p.filename, "photo.png",
+            "#4262: a pre-field delete op records no delete-time name, so the \
+             reverse must keep the original add_attachment's — restoring an \
+             empty filename would be worse than the stale one this fixes"
+        ),
+        other => panic!("Expected AddAttachment, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn reverse_delete_attachment_no_add_op_returns_non_reversible() {
     let (pool, _dir) = test_pool().await;
@@ -1250,6 +1426,7 @@ async fn reverse_delete_attachment_no_add_op_returns_non_reversible() {
         OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::test_id("ATT_ORPHAN"),
             fs_path: "attachments/orphan.bin".into(),
+            filename: "orphan.bin".into(),
         }),
         FIXED_TS,
     )
@@ -2386,6 +2563,14 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     // the delete-time path, so the parity comparison below could not tell a
     // correct adoption from a same-payload no-op.
     //
+    // #4262: the delete's `filename` VARIES from the add's for exactly the
+    // same reason (`renamed_{att_id}.png` vs `{att_id}.png`) — simulating a
+    // `rename_attachment` between the add and the delete. Seeding the two
+    // ops with an identical name is the defect #4253's review caught for
+    // `fs_path`: a same-value fixture cannot distinguish a correct adoption
+    // from a no-op, so a twin that silently dropped the field would still
+    // look green.
+    //
     // The index of the first `delete_attachment` is captured from `op_refs`
     // itself rather than hand-counted from the groups ahead of it: the
     // absolute-answer assertion at the bottom indexes `batched` by it, and a
@@ -2400,6 +2585,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
                 attachment_id: BlockId::test_id(att_id),
                 fs_path: format!("/tmp/blob_{att_id}.png"),
+                filename: format!("renamed_{att_id}.png"),
             }),
             next_ts(&mut ts),
         )
@@ -2608,12 +2794,25 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     for (i, att_id) in att_ids.iter().enumerate() {
         let idx = delete_att_base + i;
         match &batched[idx] {
-            OpPayload::AddAttachment(p) => assert_eq!(
-                p.fs_path,
-                format!("/tmp/blob_{att_id}.png"),
-                "#3706 review: the restored row must name the path the row \
-                 held at DELETE time, not the one it was created with"
-            ),
+            OpPayload::AddAttachment(p) => {
+                assert_eq!(
+                    p.fs_path,
+                    format!("/tmp/blob_{att_id}.png"),
+                    "#3706 review: the restored row must name the path the row \
+                     held at DELETE time, not the one it was created with"
+                );
+                // #4262: the BATCH twin specifically. `build_reverse_delete_attachment`
+                // is a separate function from the single-op kernel, and #4253's
+                // review found the kernel's own adoption untested — "deleting
+                // that one line would leave the suite green". This pin is what
+                // makes deleting the batch twin's adoption call red.
+                assert_eq!(
+                    p.filename,
+                    format!("renamed_{att_id}.png"),
+                    "#4262: the restored row must carry the name the row held at \
+                     DELETE time (post-rename), not the one it was created with"
+                );
+            }
             other => panic!(
                 "expected AddAttachment for the delete_attachment reverse at idx {idx}, got {other:?}"
             ),
@@ -3692,8 +3891,42 @@ async fn reverse_set_property_tie_breaks_on_device_id_3646() {
 /// does not mint; it is the minimal way to put two candidates in front of a
 /// scan whose predicate is `attachment_id` + the strictly-before bound, which
 /// is exactly what the tie-break exists to arbitrate.
+/// # #4262: which prior add wins vs. what is restored from it
+///
+/// The delete-time adoption and the tie-break answer two DIFFERENT questions,
+/// and this fixture is built so that mixing them up is visible:
+///
+/// * The tie-break decides **WHICH** `add_attachment` row the reverse is
+///   reconstructed from. Adoption must not influence that — it runs on the
+///   already-selected payload, and the selection SQL never reads the delete's
+///   `filename`/`fs_path` at all.
+/// * Adoption decides **WHAT** the reconstructed payload says about the two
+///   fields a first-class op can change after creation.
+///
+/// So the two candidates are discriminated by `size_bytes`, a field NOTHING
+/// adopts, and the delete carries a realistic post-rename `filename` that
+/// differs from both candidates'. Both properties are then asserted at once:
+/// `size_bytes` shows the #382 tie-break still picks `TIE_WINNER`, and
+/// `filename` shows #4262's adoption still applied on top of it. Either one
+/// applied at the wrong point reddens this test.
+///
+/// (Discriminating on `filename` — as this test did before #4262 — silently
+/// stops measuring the tie-break the moment a non-empty delete-time name is
+/// adopted over BOTH candidates' names: it then fails identically whichever
+/// candidate won. That is a defective oracle, not a defective tie-break.)
 #[tokio::test]
 async fn reverse_delete_attachment_tie_breaks_on_device_id_3646() {
+    /// Per-device `size_bytes` marker — the tie-break discriminator, chosen
+    /// because no reverse path rewrites it (`adopt_delete_time_state`'s "Not
+    /// stale" note: only `fs_path` and `filename` have ops that can).
+    fn size_marker(dev: &str) -> i64 {
+        1024 + i64::from(dev.as_bytes()[dev.len() - 1])
+    }
+    // The name the row was renamed to before it was deleted — differs from
+    // BOTH candidates' creation-time names, so an adoption that failed to run
+    // is as visible as one that ran against the wrong candidate.
+    const TIE_RENAMED: &str = "renamed-before-delete.png";
+
     for write_order in TIE_ORDERS {
         let (pool, _dir) = test_pool().await;
         for dev in write_order {
@@ -3705,7 +3938,7 @@ async fn reverse_delete_attachment_tie_breaks_on_device_id_3646() {
                     block_id: BlockId::test_id("TIEABLK"),
                     mime_type: "image/png".into(),
                     filename: format!("from-{dev}.png"),
-                    size_bytes: 1024,
+                    size_bytes: size_marker(dev),
                     fs_path: format!("/tmp/from-{dev}.png"),
                 }),
                 FIXED_TS,
@@ -3719,6 +3952,7 @@ async fn reverse_delete_attachment_tie_breaks_on_device_id_3646() {
             OpPayload::DeleteAttachment(DeleteAttachmentPayload {
                 attachment_id: BlockId::test_id("TIEATT"),
                 fs_path: "/tmp/anchor.png".into(),
+                filename: TIE_RENAMED.into(),
             }),
             FIXED_TS,
         )
@@ -3726,12 +3960,28 @@ async fn reverse_delete_attachment_tie_breaks_on_device_id_3646() {
         .unwrap();
 
         match reverse_anchor_both_kernels(&pool).await {
-            OpPayload::AddAttachment(p) => assert_eq!(
-                p.filename,
-                format!("from-{TIE_WINNER}.png"),
-                "#382: the prior-add scan must tie-break on device_id DESC \
-                 (write order {write_order:?})"
-            ),
+            OpPayload::AddAttachment(p) => {
+                assert_eq!(
+                    p.size_bytes,
+                    size_marker(TIE_WINNER),
+                    "#382: the prior-add scan must tie-break on device_id DESC \
+                     (write order {write_order:?}). Asserted on `size_bytes` \
+                     because it is the identity of the SELECTED candidate — no \
+                     reverse path rewrites it, so this cannot be masked by the \
+                     #4262 delete-time adoption"
+                );
+                assert_eq!(
+                    p.filename, TIE_RENAMED,
+                    "#4262: the delete-time name must be adopted ON TOP of \
+                     whichever candidate the tie-break selected — adoption \
+                     decides WHAT is restored, never WHICH add it is restored \
+                     from (write order {write_order:?})"
+                );
+                assert_eq!(
+                    p.fs_path, "/tmp/anchor.png",
+                    "#3706 review: same for the delete-time path"
+                );
+            }
             other => panic!("expected AddAttachment, got {other:?}"),
         }
     }

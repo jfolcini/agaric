@@ -2191,6 +2191,7 @@ async fn perf26_delete_attachment_stores_null_block_id() {
         OpPayload::DeleteAttachment(DeleteAttachmentPayload {
             attachment_id: BlockId::test_id("ATT-1"),
             fs_path: "/tmp/x.txt".into(),
+            filename: "x.txt".into(),
         }),
     )
     .await

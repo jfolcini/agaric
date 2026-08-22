@@ -1188,6 +1188,16 @@ impl UndoGcFixture {
             .unwrap()
     }
 
+    /// The `filename` of the live `attachments` row for this attachment, if
+    /// any (#4262).
+    async fn live_row_filename(&self) -> Option<String> {
+        sqlx::query_scalar("SELECT filename FROM attachments WHERE id = ?")
+            .bind(&self.attachment_id)
+            .fetch_optional(&self.pool)
+            .await
+            .unwrap()
+    }
+
     async fn op_log_len(&self) -> i64 {
         sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
             .fetch_one(&self.pool)
@@ -1569,6 +1579,89 @@ async fn undo_of_delete_attachment_restores_the_path_the_row_held_at_delete_time
         bytes, UNDO_GC_BYTES,
         "the restored attachment must be the user's file, byte for byte"
     );
+
+    f.mat.shutdown();
+}
+
+/// #4262, end to end through the production commands: `add → rename → delete
+/// → undo` must give the user their attachment back under the name they
+/// renamed it TO, not the name they renamed it FROM.
+///
+/// The sibling staleness of the `fs_path` bug the test above pins, and the
+/// last one: per `adopt_delete_time_state`'s "Not stale" note, `fs_path` and
+/// `filename` are the only two reconstructed fields a first-class op can
+/// change behind the reverse's back.
+///
+/// Driven through `add_attachment_with_bytes_inner` /
+/// `rename_attachment_inner` / `delete_attachment_inner` / `undo_op_inner`
+/// rather than hand-appended ops, because the capture side is half the fix:
+/// `delete_attachment_inner` must read `filename` from the LIVE row inside its
+/// own IMMEDIATE transaction. A fixture that hand-wrote the delete payload
+/// would assert the adoption while assuming the capture.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_delete_attachment_restores_the_name_the_row_held_at_delete_time_4262() {
+    let f = UndoGcFixture::new().await;
+
+    // The user renames the attachment. `UndoGcFixture` created it as
+    // "photo.png" — the name the original `add_attachment` op records, and the
+    // name a pre-#4262 undo resurrected.
+    const RENAMED: &str = "receipt-2024.png";
+    crate::commands::rename_attachment_inner(
+        &f.pool,
+        DEV,
+        &f.mat,
+        BlockId::from_trusted(&f.attachment_id),
+        RENAMED.into(),
+    )
+    .await
+    .unwrap();
+    f.mat.flush_background().await.unwrap();
+    assert_eq!(
+        f.live_row_filename().await.as_deref(),
+        Some(RENAMED),
+        "the rename must land on the live row; without that this test is not \
+         exercising the post-rename case at all"
+    );
+
+    // No GC pass here: the bytes stay put, so the #3706 guard is satisfied and
+    // the undo is expected to SUCCEED. This test is about what the undo
+    // restores, not about whether it is allowed to.
+    let delete_ref = f.delete_attachment().await;
+
+    crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, delete_ref)
+        .await
+        .expect("undoing a delete_attachment whose bytes are present must succeed");
+    f.mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        f.live_row_filename().await.as_deref(),
+        Some(RENAMED),
+        "#4262: the restored row must carry the name the row held at DELETE \
+         time. Restoring the creation-time name hands the user back an \
+         attachment called 'photo.png' after they renamed it — and the \
+         rename op is not part of this undo, so nothing renames it back"
+    );
+    // The rename never moved the file, so the path must be the one it always
+    // had — a `filename` adoption that leaked into `fs_path` would be caught here.
+    assert_eq!(
+        f.live_row_fs_path().await,
+        Some(
+            f.full_path
+                .strip_prefix(&f.app_data_dir)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        ),
+        "a rename must not move the bytes, so the restored row must keep its path"
+    );
+    let bytes = crate::commands::read_attachment_inner(
+        &f.pool,
+        &f.app_data_dir,
+        BlockId::from_trusted(&f.attachment_id),
+    )
+    .await
+    .expect("the restored row must resolve to a file that can actually be read");
+    assert_eq!(bytes, UNDO_GC_BYTES);
 
     f.mat.shutdown();
 }
