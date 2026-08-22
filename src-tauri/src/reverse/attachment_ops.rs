@@ -17,6 +17,83 @@ pub fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> 
     ))
 }
 
+/// Point a reconstructed `add_attachment` reverse at the `fs_path` the row
+/// actually held **when it was deleted**, rather than the one it was created
+/// with (#3706 review).
+///
+/// The reverse of a `delete_attachment` is rebuilt from the original
+/// `add_attachment` op, so every field it restores is the field the row was
+/// *born* with. For `fs_path` that is wrong whenever something repointed the
+/// live row in between, and three production paths do exactly that — all of
+/// them moving a row onto a shared content-addressed blob:
+///
+/// * `recovery::attachment_blob_backfill` — repoints every row in a
+///   content-hash group at the group's canonical blob file.
+/// * `agaric_sync::sync_files::maybe_link_local_blob` — a row whose bytes are
+///   missing is linked to a local blob that already holds them instead of
+///   being re-requested.
+/// * `agaric_sync::sync_files`' `FileOffer` skip path — an offered file whose
+///   hash we already hold repoints the row at the blob we have.
+///
+/// After such a repoint the ORIGINAL path is referenced by nothing, so the
+/// orphan GC reclaims it as a matter of course while the bytes stay perfectly
+/// alive under the blob path. Reconstructing the reverse from the original
+/// payload would then name a file that is gone: before #3706 that committed a
+/// dangling row, and with the #3706 byte-existence guard it *refuses an undo
+/// whose bytes are right there*. Both are wrong, and they are wrong for the
+/// same reason — the reverse is naming the wrong file.
+///
+/// `DeleteAttachmentPayload::fs_path` is captured by
+/// `delete_attachment_inner` from the LIVE row inside the delete's own
+/// transaction, so it is the post-repoint value by construction. Adopting it
+/// makes the undo restore the row exactly as it stood the instant before the
+/// delete, which is what an undo is supposed to mean, and it keeps the
+/// op-log's reverse op and the restored row naming the same file (the reverse
+/// op is what replicates, so a divergence there would ship peers a path this
+/// device never used).
+///
+/// It is applied in the *payload*, not at the guard, deliberately: the #3706
+/// guard stats the payload's `fs_path` and the reverse `INSERT` stores the
+/// payload's `fs_path` through one shared helper
+/// (`commands::history::reverse_add_attachment_fs_path`), so correcting the
+/// payload keeps checked-path and stored-path identical instead of
+/// reintroducing the drift that helper exists to prevent.
+///
+/// # When the delete-time path is not usable
+///
+/// Empty only. `fs_path` is `#[serde(default)]` on
+/// [`agaric_store::op::DeleteAttachmentPayload`] for op-log rows written
+/// before C-3, which deserialize to `""`; those keep the original payload's
+/// path, which is all that was ever recorded for them.
+///
+/// Two other "is it stale too?" cases both resolve to *no worse than the
+/// original*:
+///
+/// * A `delete_attachment` minted by [`reverse_add_attachment`] (the undo of
+///   an add) copies the ADD payload's path forward rather than reading the
+///   live row, so its `fs_path` is byte-identical to the fallback. The redo
+///   path that reverses it therefore behaves exactly as before.
+/// * A *peer's* delete op would carry that peer's device-local path, which is
+///   meaningless here — but no reverse path can reach one: `revert_ops_in_tx`
+///   calls `reject_replicated_targets` first, and every other undo/redo
+///   target query filters `is_replicated = 0` (#2481/#2549).
+pub(super) fn adopt_delete_time_fs_path(
+    delete_fs_path: &str,
+    add_payload: &mut agaric_store::op::AddAttachmentPayload,
+) {
+    if delete_fs_path.is_empty() || delete_fs_path == add_payload.fs_path {
+        return;
+    }
+    tracing::debug!(
+        attachment_id = add_payload.attachment_id.as_str(),
+        original = %add_payload.fs_path,
+        at_delete = %delete_fs_path,
+        "restoring a deleted attachment at the path it held when it was deleted, \
+         not the one it was created with (#3706 review)"
+    );
+    add_payload.fs_path = delete_fs_path.to_owned();
+}
+
 /// Reverse a `delete_attachment` op by reconstructing the `add_attachment`
 /// payload that originally created the row.
 ///
@@ -73,8 +150,11 @@ pub async fn reverse_delete_attachment(
     .await?;
     match original {
         Some(row) => {
-            let add_payload: agaric_store::op::AddAttachmentPayload =
+            let mut add_payload: agaric_store::op::AddAttachmentPayload =
                 serde_json::from_str(&row.payload)?;
+            // #3706 review: restore the row at the path it held AT DELETE
+            // TIME, not at creation — see `adopt_delete_time_fs_path`.
+            adopt_delete_time_fs_path(&payload.fs_path, &mut add_payload);
             Ok(OpPayload::AddAttachment(add_payload))
         }
         None => Err(AppError::NonReversible {

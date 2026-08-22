@@ -1361,6 +1361,8 @@ async fn redo_of_an_undone_add_attachment_after_a_gc_pass_refuses_3706() {
     f.mat.flush_background().await.unwrap();
     f.run_gc().await;
 
+    let ops_before = f.op_log_len().await;
+
     let err = crate::commands::redo_page_op_inner(
         &f.pool,
         DEV,
@@ -1381,6 +1383,191 @@ async fn redo_of_an_undone_add_attachment_after_a_gc_pass_refuses_3706() {
         f.live_row_fs_path().await,
         None,
         "redo re-inserted an attachments row over bytes the GC destroyed (#3706)"
+    );
+    // Op-log rollback is MORE load-bearing here than on the undo path:
+    // `redo_page_op_inner` appends the redo op BEFORE calling
+    // `apply_reverse_in_tx`, so between those two statements the log already
+    // holds an `add_attachment` op whose effect was never applied. Only the
+    // transaction rollback removes it. Were it to survive, the redo stack
+    // would read as "the add is back" while no row exists — and a later
+    // undo of that phantom op would try to delete a row that was never
+    // restored. Falsified: with the error path made to commit instead of
+    // roll back, this is the assertion that fails.
+    assert_eq!(
+        f.op_log_len().await,
+        ops_before,
+        "the refused redo appended its reverse op BEFORE applying it, so the \
+         rollback is what keeps a never-applied add_attachment out of the log"
+    );
+
+    f.mat.shutdown();
+}
+
+/// Batch blast radius (#3706 review): one byte-less `delete_attachment` in an
+/// `undo_ops` / `undo_page_group` / `revert_ops` batch aborts the WHOLE batch,
+/// and the reverses already applied ahead of it are rolled back with it.
+///
+/// That is the historical interactive contract (`skip_non_reversible = false`)
+/// and matches the `MoveBlock` precedent, but every other #3706 test drives a
+/// single op, so nothing pinned what a batch does. The UX of the all-or-nothing
+/// choice is #4249; this test pins the mechanics.
+///
+/// The batch is ordered so the refusal is NOT the first op processed —
+/// `revert_ops_in_tx` applies reverses newest-first, so the newer op's reverse
+/// is appended and applied before the older `delete_attachment` is even
+/// preflighted. A rollback that did not reach it would leave exactly the
+/// partial application this asserts against.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batch_undo_containing_a_byte_less_delete_attachment_aborts_the_whole_batch_3706() {
+    let f = UndoGcFixture::new().await;
+    let delete_ref = f.delete_attachment().await;
+    f.run_gc().await;
+
+    // A LATER op whose reverse is perfectly applicable: a second attachment
+    // with different bytes, so it owns its own file and shares nothing with
+    // the reclaimed one.
+    let sibling = crate::commands::add_attachment_with_bytes_inner(
+        &f.pool,
+        DEV,
+        &f.mat,
+        &f.app_data_dir,
+        BlockId::from_trusted("ATTUNDOBLK"),
+        "notes.txt".into(),
+        "text/plain".into(),
+        b"a second attachment, untouched by any of this".to_vec(),
+    )
+    .await
+    .unwrap();
+    f.mat.flush_background().await.unwrap();
+    let sibling_add_ref = f.latest_op_ref("add_attachment").await;
+    let sibling_file = f.app_data_dir.join(&sibling.fs_path);
+
+    let ops_before = f.op_log_len().await;
+
+    let err =
+        crate::commands::undo_ops_inner(&f.pool, DEV, &f.mat, vec![sibling_add_ref, delete_ref])
+            .await
+            .expect_err(
+                "a batch containing a delete_attachment whose bytes are gone must fail \
+         the whole batch, not silently drop that one op (#3706)",
+            );
+    assert!(
+        matches!(err, AppError::NonReversible { .. }),
+        "the whole-batch failure must carry the same non-reversible \
+         classification the single-op path does; got {err:?}"
+    );
+
+    // Nothing applied: the sibling's reverse ran first inside the transaction
+    // and must have been rolled back with it.
+    let sibling_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
+        .bind(sibling.id.as_str())
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        sibling_rows, 1,
+        "the aborted batch left the sibling attachment undone — a partial batch \
+         undo is exactly what the all-or-nothing contract forbids"
+    );
+    assert!(
+        sibling_file.exists(),
+        "the aborted batch must not have disturbed the sibling's bytes either"
+    );
+    assert_eq!(
+        f.live_row_fs_path().await,
+        None,
+        "the refused delete_attachment must not have restored its row"
+    );
+    // Nothing appended: `revert_ops_in_tx` appends each reverse op as it goes,
+    // so the sibling's reverse was already in the log when the refusal hit.
+    assert_eq!(
+        f.op_log_len().await,
+        ops_before,
+        "the aborted batch must leave the op log untouched — a surviving reverse \
+         op would make the sibling look undone in the history feed"
+    );
+
+    f.mat.shutdown();
+}
+
+/// The false refusal that a guard keyed on the ORIGINAL `add_attachment`
+/// payload produces, and the reason the reverse now adopts the path the row
+/// held **at delete time** (#3706 review).
+///
+/// Three production paths repoint a live `attachments` row onto a shared
+/// content-addressed blob — `recovery::attachment_blob_backfill`,
+/// `sync_files::maybe_link_local_blob`, and the `FileOffer` skip path — after
+/// which the row's ORIGINAL path is referenced by nothing and the ordinary
+/// sweep reclaims it, while the bytes stay alive under the blob. Reconstructing
+/// the undo from the original payload then names a file that is gone: it would
+/// refuse an undo whose bytes are right there (and, before the guard existed,
+/// restore a row pointing at the reclaimed path instead of the live one).
+///
+/// `DeleteAttachmentPayload::fs_path` is captured from the LIVE row inside the
+/// delete's own transaction, so it is the post-repoint value by construction.
+/// Both halves matter and are asserted here: the undo must SUCCEED, and the
+/// restored row must NAME the blob — checking one path while storing the other
+/// would pass a guard and still commit a dangling row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_delete_attachment_restores_the_path_the_row_held_at_delete_time_3706() {
+    let f = UndoGcFixture::new().await;
+
+    // Repoint the live row onto a shared blob file — the same
+    // `UPDATE attachments SET fs_path = ? WHERE id = ?` all three production
+    // repointers issue.
+    const BLOB_PATH: &str = "attachments/SHAREDBLOB.png";
+    let blob_full = f.app_data_dir.join(BLOB_PATH);
+    tokio::fs::write(&blob_full, UNDO_GC_BYTES).await.unwrap();
+    sqlx::query("UPDATE attachments SET fs_path = ? WHERE id = ?")
+        .bind(BLOB_PATH)
+        .bind(&f.attachment_id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+
+    // Nothing references the original path any more, so the ordinary sweep
+    // reclaims it. This is the GC behaving correctly — the file IS an orphan.
+    super::super::handlers::cleanup_orphaned_attachments(&f.pool, None, &f.app_data_dir)
+        .await
+        .unwrap();
+    assert!(
+        !f.full_path.exists(),
+        "the sweep must reclaim the path the repoint orphaned; without that this \
+         test is not exercising the stale-original-path case at all"
+    );
+    assert!(
+        blob_full.exists(),
+        "the sweep must keep the blob the live row now references"
+    );
+
+    let delete_ref = f.delete_attachment().await;
+
+    crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, delete_ref)
+        .await
+        .expect(
+            "undoing a delete_attachment whose bytes are present at the path the row \
+             held when it was deleted must succeed — refusing here is a false refusal \
+             over a file that never went anywhere (#3706 review)",
+        );
+    f.mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        f.live_row_fs_path().await.as_deref(),
+        Some(BLOB_PATH),
+        "the restored row must name the path the row held at DELETE time, not the \
+         one it was created with — otherwise the guard passes on bytes that exist \
+         while the row is written pointing at the reclaimed path"
+    );
+    let bytes = crate::commands::read_attachment_inner(
+        &f.pool,
+        &f.app_data_dir,
+        BlockId::from_trusted(&f.attachment_id),
+    )
+    .await
+    .expect("the restored row must resolve to a file that can actually be read");
+    assert_eq!(
+        bytes, UNDO_GC_BYTES,
+        "the restored attachment must be the user's file, byte for byte"
     );
 
     f.mat.shutdown();

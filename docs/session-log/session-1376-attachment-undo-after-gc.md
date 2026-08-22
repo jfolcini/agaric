@@ -3,11 +3,11 @@
 | Metadata | Value |
 |----------|-------|
 | **Date** | 2026-08-22 |
-| **Subagents** | one builder, one adversarial reviewer (no self-review) |
+| **Subagents** | one builder, one adversarial reviewer (no self-review), then a second review pass on the PR |
 | **Items closed** | `#3706` |
 | **Items modified** | — |
-| **Tests added** | +4 (backend) |
-| **Files touched** | 3 + this log — see the PR's file list |
+| **Tests added** | +6 (backend) |
+| **Files touched** | 6 + this log — see the PR's file list |
 
 **Summary:** undoing a `DeleteAttachment` restored the ROW but could not restore the BYTES,
 and a GC pass between the delete and the undo destroys them. Not a race — the ordinary
@@ -71,18 +71,79 @@ deduped pair must still be undoable — the sibling keeps the bytes alive throug
 Nothing pinned that, and it is the most plausible false refusal a future "check
 `attachment_blobs` too" change would introduce.
 
-**The trade-off, for the maintainer.** On a synced vault the old behaviour restored a row
-that `find_missing_attachments` could re-request from a peer; that self-heal is refused too.
-Review's own view, going further than the builder: the heal needs a peer that is *behind* on
-the delete op, which the undo cannot check — and a failed heal is not inert, since
-`find_missing_attachments` re-requests those bytes on **every** sync cycle forever. Detection
-cannot be built accurately today because `AddAttachmentPayload` carries no `content_hash`.
-Refusing is correct; the long-term answer is the grace window, deferred.
+**The trade-off, for the maintainer — corrected in the second review pass.** On a synced
+vault the old behaviour restored a row that `find_missing_attachments` could re-request from
+a peer; that self-heal is refused too. The first framing said the heal needed a peer *behind*
+on the delete op, and peers sweep on the same schedule, so the heal was mostly theatre. That
+holds for a **caught-up** peer and only for one. An **offline** peer has not processed the
+delete at all — it still holds the row and the bytes — and the old behaviour's reverse
+`add_attachment` op **replicates**, so when that peer reconnected the bytes genuinely could
+come back. Refusing closes a recovery path that worked in that case, so the residual
+multi-device loss is wider than the PR description first claimed.
 
-**Verification:** `cargo nextest run --workspace` → 6006 passed, 7 skipped; `cargo check
---all-targets` clean; `cargo fmt --check` clean. Falsification reproduced: with the guard
-stubbed, both GC arms fail with the real `UndoResult` in the panic, and the no-GC arm **stays
-green** — so it pins symmetric behaviour rather than the fix.
+Refusing is still the right default and this is not a reason to revert it: the alternative
+commits a live row over missing bytes on **every** vault — a broken image, a failing
+`read_attachment_inner`, and `find_missing_attachments` re-requesting those bytes on every
+sync cycle forever — in exchange for a recovery that requires a peer which has not synced
+since before the delete to later reconnect. A visible error beats silent corruption. Accurate
+detection is also not buildable today: `AddAttachmentPayload` carries no `content_hash`. The
+long-term answer remains the grace window (`#4250`).
+
+## Second review pass — the false refusal, and four smaller notes
+
+**A stale `fs_path` refused undos whose bytes were present.** The guard stats the ORIGINAL
+`add_attachment` payload's `fs_path`, but three production paths repoint a LIVE row away from
+that value, all of them moving it onto a shared content-addressed blob:
+`recovery::attachment_blob_backfill`, `sync_files::maybe_link_local_blob`, and `sync_files`'
+`FileOffer` skip path. After a repoint nothing references the original path, so the ordinary
+sweep reclaims it while the bytes stay alive under the blob — and the undo then refused over a
+file that never went anywhere. Before this PR the same staleness restored a row pointing at
+the reclaimed path instead of the live one, so it was a bug in both directions.
+
+Fixed where it originates rather than at the guard: `reverse_delete_attachment` (and its batch
+twin, kept byte-identical) now adopt `DeleteAttachmentPayload::fs_path` — captured by
+`delete_attachment_inner` from the LIVE row inside the delete's own transaction, hence
+post-repoint by construction. Correcting the *payload* keeps the checked path and the stored
+path identical, instead of the trap of checking the delete-time path while still storing the
+original — which would pass the guard on bytes that exist and commit a row pointing elsewhere.
+It also keeps the replicated reverse op and the local row naming the same file.
+
+Three "is the delete-time path stale too?" cases were checked. Legacy pre-C-3 delete ops
+deserialize `fs_path = ""` (it is `#[serde(default)]`) and fall back to the original — all
+that was ever recorded for them. A `delete_attachment` minted by `reverse_add_attachment`
+copies the ADD payload's path forward, so it is byte-identical to the fallback: no change. A
+*peer's* delete op would carry a meaningless device-local path, but no reverse path can reach
+one — `revert_ops_in_tx` calls `reject_replicated_targets` first and every other undo/redo
+target query filters `is_replicated = 0`.
+
+**Four smaller corrections.**
+
+* The refusal logged "the orphan GC has already reclaimed" unconditionally, including when the
+  branch was entered from a stat `Err` — two warnings for one event, the second asserting a
+  cause it cannot know. Now one warning per refusal, each naming what it actually observed.
+* `lib.rs` still said `CleanupOrphanedAttachments` "is not yet enqueued from any production
+  path" and was "dormant until a scheduler hooks it". It is enqueued from three live sites
+  (boot, the 24 h tick, post-compaction) — and this PR's whole premise is that the sweep runs
+  routinely, so the comment was actively misleading.
+* The rootless-`Materializer` note listed `new` / `with_read_pool`. `with_read_pool_and_lifecycle`
+  — the constructor `build_materializer` actually calls — is `pub` too and also leaves the
+  `OnceLock` empty. Added.
+* Two test gaps. A batch containing one byte-less `delete_attachment` aborts the WHOLE batch,
+  and all four existing tests were single-op; the new batch test orders the refusal *second*
+  so a reverse is already appended and applied when it hits — falsified by committing instead
+  of rolling back (`left: 0, right: 1` on the sibling row). And `redo_page_op_inner` appends
+  the redo op BEFORE `apply_reverse_in_tx`, so op-log rollback is load-bearing on that path
+  specifically; the redo test asserted only the absent row. The added `op_log_len` assertion
+  was falsified the same way (`left: 3, right: 2`). Worth recording: `undo_page_op_inner`
+  appends before applying too.
+
+**Verification:** `cargo nextest run --workspace` → 6008 passed, 7 skipped; `cargo check
+--all-targets` clean; `cargo clippy --all-targets -p agaric` clean; `cargo fmt --check` clean.
+Falsification reproduced: with the guard stubbed, both GC arms fail with the real `UndoResult`
+in the panic, and the no-GC arm **stays green** — so it pins symmetric behaviour rather than
+the fix. The second pass falsified each of its three new/changed assertions the same way (see
+above); the stale-`fs_path` test goes red with `NonReversible { op_type: "delete_attachment" }`
+the moment the delete-time path is not adopted.
 
 **Filed, not fixed:** `#4247` Ctrl-Z after deleting an attachment silently undoes the *wrong*
 op (the positional query can never reach a `delete_attachment`); `#4248` the reverse-apply

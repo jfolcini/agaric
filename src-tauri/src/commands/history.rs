@@ -447,6 +447,25 @@ fn reverse_add_attachment_fs_path(
 /// The user is told the undo could not be honoured instead of silently
 /// getting a broken attachment back.
 ///
+/// # What refusing gives up on a synced vault
+///
+/// Stated exactly, because it is wider than "the peer GC'd it too". A peer
+/// that is CAUGHT UP has applied the same `delete_attachment` and sweeps on
+/// the same schedule, so its copy is gone as well and the old behaviour's
+/// re-request could never have been answered. But a peer that is OFFLINE has
+/// not processed the delete at all: it still holds both the row and the bytes.
+/// The old behaviour appended a reverse `add_attachment` op, which
+/// **replicates**, so when that peer reconnected the bytes could genuinely
+/// come back — through the same `find_missing_attachments` re-request that is
+/// futile against a caught-up peer. Refusing closes that recovery path.
+///
+/// Refusing is still the better default: the alternative commits a live row
+/// over missing bytes on EVERY vault — a broken attachment and a failing
+/// `read_attachment_inner` — on the chance that a peer which has not synced
+/// since before the delete later reconnects. A visible error beats silent
+/// corruption. But the residual loss is not confined to single-device vaults,
+/// and #4250 (the GC grace window) is what would close it properly.
+///
 /// # What the `skip_non_reversible` half of the contract does here: nothing
 ///
 /// `AppError::NonReversible` is classified skippable
@@ -488,9 +507,11 @@ fn reverse_add_attachment_fs_path(
 /// is no path to stat and no attachment can be read at all, so the check is
 /// skipped rather than failing every undo in that configuration.
 ///
-/// That is a convention, not a type-level guarantee: `Materializer::new` and
-/// `with_read_pool` are `pub` and leave the `OnceLock` empty, so a future
-/// production caller could reintroduce a rootless `Materializer` and this
+/// That is a convention, not a type-level guarantee: `Materializer::new`,
+/// `with_read_pool` and `with_read_pool_and_lifecycle` — the last of which is
+/// the one `build_materializer` itself calls — are all `pub` and all leave the
+/// `OnceLock` empty, so a future production caller could reintroduce a
+/// rootless `Materializer` and this
 /// guard would silently do nothing there. The skip therefore logs at WARN —
 /// noise-free in production (where it never fires) and loud enough to find in
 /// the field if that ever changes.
@@ -508,9 +529,17 @@ async fn require_reverse_attachment_bytes(
     };
     let fs_path = reverse_add_attachment_fs_path(p);
     let full = root.join(fs_path.as_str());
+    // One warning per refusal, each naming the cause it actually observed. A
+    // stat error is NOT evidence the GC reclaimed anything — the refusal is
+    // the same, the reason is not, and a log line that asserts a cause it
+    // cannot know sends the next reader after the wrong subsystem.
     match tokio::fs::try_exists(&full).await {
         Ok(true) => return Ok(()),
-        Ok(false) => {}
+        Ok(false) => tracing::warn!(
+            attachment_id = p.attachment_id.as_str(),
+            path = %full.display(),
+            "refusing to undo a delete_attachment whose bytes are no longer on disk (the orphan GC reclaims them as a matter of course once nothing references them) — restoring the row would leave a live reference over missing bytes (#3706)"
+        ),
         Err(e) => {
             // Cannot prove the bytes are there. Be conservative in the
             // direction that upholds the invariant: a restored row must
@@ -519,15 +548,10 @@ async fn require_reverse_attachment_bytes(
                 attachment_id = p.attachment_id.as_str(),
                 path = %full.display(),
                 error = %e,
-                "could not stat attachment bytes while reversing a delete_attachment; treating them as absent (#3706)"
+                "refusing to undo a delete_attachment whose bytes could not be stat'd; treating them as absent (#3706)"
             );
         }
     }
-    tracing::warn!(
-        attachment_id = p.attachment_id.as_str(),
-        path = %full.display(),
-        "refusing to undo a delete_attachment whose bytes the orphan GC has already reclaimed — restoring the row would leave a live reference over missing bytes (#3706)"
-    );
     Err(AppError::NonReversible {
         op_type: "delete_attachment".into(),
     })

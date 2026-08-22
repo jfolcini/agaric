@@ -1078,12 +1078,17 @@ fn build_materializer(
     // `CleanupOrphanedAttachments` background task can locate
     // the `attachments/` subtree.
     //
-    // Schedule `cleanup_orphaned_attachments` at
-    // boot and/or after compaction. Currently the only entry
-    // point is `MaterializeTask::CleanupOrphanedAttachments`,
-    // which is not yet enqueued from any production path; the
-    // GC function is implemented but dormant until a scheduler
-    // hooks it.
+    // `MaterializeTask::CleanupOrphanedAttachments` is the only entry point,
+    // and it is enqueued from three live production sites — so without this
+    // dir the sweep is what silently stops running, not merely a dormant
+    // function:
+    //   * boot (`try_enqueue_background` in the setup path below),
+    //   * the 24 h `cleanup_orphaned_attachments_tick` maintenance job,
+    //   * after any `compact_op_log_cmd` that actually purged ops
+    //     (`commands::compaction`).
+    // The routine sweep is also what makes #3706 an ordinary outcome rather
+    // than a race: a deleted attachment's bytes are normally already
+    // reclaimed by the time an undo arrives.
     materializer.set_app_data_dir(app_data_dir.to_path_buf());
 
     (lifecycle, materializer, loro_state)

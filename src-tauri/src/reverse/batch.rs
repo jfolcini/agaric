@@ -887,14 +887,24 @@ fn build_reverse_delete_property(
     }))
 }
 
+/// Batch twin of [`attachment_ops::reverse_delete_attachment`]. Keep the two
+/// byte-identical — the parity test in `super::tests` is the oracle.
+///
+/// `record` is the `delete_attachment` being reversed; its payload carries the
+/// `fs_path` the row held at delete time, which
+/// [`attachment_ops::adopt_delete_time_fs_path`] prefers over the original
+/// `add_attachment`'s (#3706 review — see that function for why).
 fn build_reverse_delete_attachment(
-    _record: &OpRecord,
+    record: &OpRecord,
     prior_payload: Option<&str>,
 ) -> Result<OpPayload, AppError> {
     let p_json = prior_payload.ok_or(AppError::NonReversible {
         op_type: "delete_attachment".into(),
     })?;
-    let add_payload: agaric_store::op::AddAttachmentPayload = serde_json::from_str(p_json)?;
+    let mut add_payload: agaric_store::op::AddAttachmentPayload = serde_json::from_str(p_json)?;
+    let delete_payload: agaric_store::op::DeleteAttachmentPayload =
+        serde_json::from_str(&record.payload)?;
+    attachment_ops::adopt_delete_time_fs_path(&delete_payload.fs_path, &mut add_payload);
     Ok(OpPayload::AddAttachment(add_payload))
 }
 
