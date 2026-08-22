@@ -377,6 +377,16 @@ async fn reject(
 /// So a device admitted on the pairing proof could otherwise take over an already-bound
 /// peer's row by naming it. `true` here means "do not re-bind".
 ///
+/// # Two callers (#4230)
+///
+/// The bind below is one. The other is
+/// [`SyncOrchestrator::with_unverified_claim_guard`](crate::sync_protocol::SyncOrchestrator::with_unverified_claim_guard),
+/// which asks the same question of the same claimed id *during* the session, before
+/// the `streamed_at` / `loro_vv_bytes` writes. The two used to disagree by one
+/// session: the bind refused the take-over while the bookkeeping had already been
+/// stamped on the victim's row. One predicate, asked at both moments, is what makes
+/// them agree.
+///
 /// # Why a read failure denies
 ///
 /// This took `list_peer_refs(…).unwrap_or_default()`, which makes the guarantee fail
@@ -392,7 +402,7 @@ async fn reject(
 /// session test — every earlier step in the session needs the same pool — and an
 /// untestable branch on an authorization path is how this one came to be written the
 /// wrong way round.
-fn peer_is_bound_to_another_key(
+pub(crate) fn peer_is_bound_to_another_key(
     peers: Result<Vec<peer_refs::PeerRef>, AppError>,
     settled_remote_id: &str,
     endpoint_id: &str,
@@ -670,6 +680,16 @@ async fn handle_incoming_sync_inner(
         .with_event_sink(event_sink_box);
     if !pairing_pending && !remote_id.is_empty() {
         orch = orch.with_expected_remote_id(remote_id.clone());
+    } else if pairing_pending {
+        // #4230: and because it is deliberately unset here, the id this session
+        // ends up keyed on is whatever the peer advertised. That is fine for
+        // *naming* the session — the bind below is what decides whether the name
+        // sticks — but the session also writes `streamed_at` and
+        // `loro_vv_bytes` under it, and those writes run BEFORE the bind check.
+        // Arming the guard with the authenticated key makes
+        // `peer_is_bound_to_another_key` cover them too, so a passphrase-holder
+        // cannot poison an already-bound peer's export floor on the way past.
+        orch = orch.with_unverified_claim_guard(endpoint_id_str.clone());
     }
 
     // ── The session ───────────────────────────────────────────────────────────

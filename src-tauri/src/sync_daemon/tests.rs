@@ -10913,3 +10913,465 @@ async fn the_rejecting_device_surfaces_its_own_rejection_3491() {
         out.host_events
     );
 }
+
+// ── #4230: bookkeeping keyed on an UNVERIFIED claimed device id ─────────────
+//
+// The responder has two branches. On the bound one, `handle_incoming_sync`
+// resolves the peer through `get_peer_ref_by_endpoint_id` on the key the QUIC
+// handshake authenticated and passes it as `expected_remote_id`, which the FSM
+// takes verbatim. On the pairing one — no row for that key, and the caller
+// proved the #855 passphrase — `expected_remote_id` is deliberately left unset,
+// and the session is keyed on the first non-self **advertised head**: a claim.
+//
+// The session writes two things under that id: `streamed_at`, and
+// `loro_vv_bytes`, the export floor the NEXT session computes its incremental
+// update from. The post-session bind already refuses to let a claim take over an
+// already-bound peer's row (`peer_is_bound_to_another_key`); these tests are
+// about the writes that run *before* that check.
+//
+// # Why the joiner's claim is seeded as a real op rather than a fabricated frame
+//
+// `make_local_edit_602` takes the authoring device id, so seeding the joiner's
+// op_log with an op authored by the victim makes `get_local_heads` advertise the
+// victim's head through the production initiator — no hand-built `HeadExchange`,
+// no test-only wire path. That is also exactly the shape #2481 says is
+// LEGITIMATE (a peer advertises the frontier of every device whose ops it
+// holds), which is the reason the guard must skip the write rather than fail the
+// session.
+
+const HOST_DEV_4230: &str = "HOST4230";
+const JOINER_DEV_4230: &str = "JOIN4230";
+const VICTIM_DEV_4230: &str = "VICT4230";
+const BOUND_DEV_4230: &str = "BOUND4230";
+const HOST_BLOCK_4230: &str = "01HZ4230HBLKXXXXXXXXXXXXXX";
+const JOINER_BLOCK_4230: &str = "01HZ4230JBLKXXXXXXXXXXXXXX";
+const SPACE_4230: &str = "01HZ4230SPACEXXXXXXXXXXXXX";
+const HOST_CONTENT_4230: &str = "seeded on the host (#4230)";
+
+/// The victim's persisted export floor before the run.
+///
+/// Opaque bytes on purpose: `peer_refs.loro_vv_bytes` is a blob the store layer
+/// takes no view of, and what matters here is byte-identity across the session,
+/// not what it decodes to. A distinctive value beats "was NULL, still NULL"
+/// because it also fails if the row is rewritten with something that merely
+/// looks empty.
+const VICTIM_FLOOR_4230: &[u8] = b"the real VICT4230's frontier (#4230)";
+
+/// What one run left on the host, sampled either side of the session.
+struct PairingClaimRun4230 {
+    victim_before: Option<PeerRef>,
+    victim_after: Option<PeerRef>,
+    victim_vv_before: Option<Vec<u8>>,
+    victim_vv_after: Option<Vec<u8>>,
+    /// The host's row for the id the run is expected to key bookkeeping on, and
+    /// its frontier. `None` when the host never wrote one.
+    expected_after: Option<PeerRef>,
+    expected_vv_after: Option<Vec<u8>>,
+    host_events: Vec<SyncEvent>,
+    joiner_events: Vec<SyncEvent>,
+    /// The host's seeded block as projected into the joiner's `blocks` table —
+    /// the settled reprojection, so "the session completed" is not asserted from
+    /// a counter.
+    host_block_on_joiner: Option<String>,
+    host_still_pending: bool,
+    joiner_key: String,
+}
+
+/// Drive one responder session against a host that already holds a **bound**
+/// victim peer, and report what the host wrote.
+///
+/// * `joiner_head_device` — the device id the joiner's one seeded op is authored
+///   by, i.e. the id its `HeadExchange` advertises and the responder's
+///   `claimed_id` therefore resolves to.
+/// * `prebind_joiner_as` — `Some(id)` binds the joiner's key to that peer row on
+///   the host *before* the session, which puts the responder on the BOUND branch
+///   (and leaves the host's pairing window closed, since nothing needs it).
+///   `None` is the pairing branch: a window is armed and no row names the key.
+/// * `expected_peer` — the id whose row the run is expected to key bookkeeping
+///   on; its post-run row and frontier are returned for the caller to judge.
+async fn drive_pairing_claim_4230(
+    joiner_head_device: &str,
+    prebind_joiner_as: Option<&str>,
+    expected_peer: &str,
+) -> PairingClaimRun4230 {
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_4230);
+
+    // ── The host: one already-paired peer, and content worth streaming ──
+    let (host_pool, _host_dir) = test_pool().await;
+    let host_mat = Materializer::new(host_pool.clone());
+    let host_state = std::sync::Arc::clone(host_mat.loro_state());
+    let host_sched = Arc::new(SyncScheduler::new());
+    let host_sink = Arc::new(RecordingEventSink::new());
+
+    // The victim is a settled peer: bound to ITS OWN key, with a stream stamp
+    // and an export floor from an earlier session. Its key is a well-formed
+    // endpoint id that belongs to nothing in this test, which is the point —
+    // the attacker's key must not be it.
+    let victim_key = mdns::test_endpoint_id(VICTIM_DEV_4230).to_string();
+    peer_refs::upsert_peer_ref(&host_pool, VICTIM_DEV_4230)
+        .await
+        .unwrap();
+    peer_refs::bind_endpoint_id(&host_pool, VICTIM_DEV_4230, &victim_key)
+        .await
+        .unwrap();
+    {
+        let mut tx = host_pool.begin().await.unwrap();
+        peer_refs::update_on_stream_in_tx(&mut tx, VICTIM_DEV_4230)
+            .await
+            .unwrap();
+        peer_refs::update_loro_vv_bytes_in_tx(&mut tx, VICTIM_DEV_4230, VICTIM_FLOOR_4230)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    make_local_edit_602(
+        &host_pool,
+        &host_mat,
+        &host_state,
+        HOST_DEV_4230,
+        &space,
+        HOST_BLOCK_4230,
+        HOST_CONTENT_4230,
+        1_736_942_400_000,
+    )
+    .await;
+
+    // ── The joiner: one op, authored by whoever it is going to claim ────
+    let (joiner_pool, _joiner_dir) = test_pool().await;
+    let joiner_mat = Materializer::new(joiner_pool.clone());
+    let joiner_state = std::sync::Arc::clone(joiner_mat.loro_state());
+    let joiner_sched = Arc::new(SyncScheduler::new());
+    let joiner_sink = Arc::new(RecordingEventSink::new());
+
+    make_local_edit_602(
+        &joiner_pool,
+        &joiner_mat,
+        &joiner_state,
+        joiner_head_device,
+        &space,
+        JOINER_BLOCK_4230,
+        "seeded on the joiner (#4230)",
+        1_736_942_400_100,
+    )
+    .await;
+
+    // The proof the initiator will offer is read from the joiner's OWN marker by
+    // `session_state_machine::start`, so both sides arm the same passphrase.
+    let proof = agaric_sync::pairing::pairing_proof("the pairing passphrase 4230");
+    peer_refs::set_pending_pairing(&joiner_pool, &proof)
+        .await
+        .unwrap();
+
+    // ── Two real endpoints: the host serves, the joiner dials ───────────
+    let harness = ServiceHarness::new().await;
+    let joiner_key = client_key(&harness);
+    assert_ne!(
+        joiner_key, victim_key,
+        "the fixture must hand the joiner a key that is not the victim's, or the \
+         whole question — may a claim be keyed on another device's row — cannot arise"
+    );
+
+    if let Some(peer_id) = prebind_joiner_as {
+        bind_client_as(&host_pool, peer_id, &harness).await;
+    } else {
+        peer_refs::set_pending_pairing(&host_pool, &proof)
+            .await
+            .unwrap();
+        assert!(
+            peer_refs::get_peer_ref_by_endpoint_id(&host_pool, &joiner_key)
+                .await
+                .unwrap()
+                .is_none(),
+            "precondition: the pairing branch is the one where NO row names the \
+             dialling key"
+        );
+    }
+
+    let victim_before = peer_refs::get_peer_ref(&host_pool, VICTIM_DEV_4230)
+        .await
+        .unwrap();
+    let victim_vv_before = peer_refs::get_loro_vv_bytes(&host_pool, VICTIM_DEV_4230)
+        .await
+        .unwrap();
+    assert!(
+        victim_before
+            .as_ref()
+            .is_some_and(|r| r.streamed_at.is_some()),
+        "precondition: the victim must carry a stream stamp to be robbed of"
+    );
+
+    // ── The responder: production `handle_incoming_sync` on the host ────
+    let host_sink_dyn: Arc<dyn SyncEventSink> = host_sink.clone();
+    let host_task = spawn_responder(
+        &harness,
+        host_pool.clone(),
+        HOST_DEV_4230,
+        host_mat.clone(),
+        host_sched.clone(),
+        host_sink_dyn,
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    // ── The initiator: production `try_sync_with_peer` on the joiner ────
+    let joiner_sink_dyn: Arc<dyn SyncEventSink> = joiner_sink.clone();
+    let joiner_apply: Arc<dyn agaric_sync::apply_host::ApplyHost> =
+        std::sync::Arc::new(joiner_mat.clone());
+    let joiner_cancel = AtomicBool::new(false);
+    let ctx = SyncSessionContext {
+        pool: &joiner_pool,
+        device_id: JOINER_DEV_4230,
+        materializer: &joiner_apply,
+        scheduler: &joiner_sched,
+        event_sink: &joiner_sink_dyn,
+        cancel: &joiner_cancel,
+        endpoint: &harness.client_endpoint,
+    };
+    let peer = discovered_service_peer(HOST_DEV_4230, &harness);
+    let was_cancelled = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(&ctx, &peer, &[]),
+    )
+    .await
+    .expect("try_sync_with_peer must finish inside its own connect budget");
+    assert!(!was_cancelled, "no cancel is issued in this test");
+
+    let host_result = tokio::time::timeout(std::time::Duration::from_secs(40), host_task)
+        .await
+        .expect("the responder must resolve once the initiator's session ends")
+        .expect("the responder task must not panic");
+    assert!(
+        host_result.is_ok(),
+        "handle_incoming_sync must return Ok, got {host_result:?}"
+    );
+
+    let out = PairingClaimRun4230 {
+        victim_before,
+        victim_after: peer_refs::get_peer_ref(&host_pool, VICTIM_DEV_4230)
+            .await
+            .unwrap(),
+        victim_vv_before,
+        victim_vv_after: peer_refs::get_loro_vv_bytes(&host_pool, VICTIM_DEV_4230)
+            .await
+            .unwrap(),
+        expected_after: peer_refs::get_peer_ref(&host_pool, expected_peer)
+            .await
+            .unwrap(),
+        expected_vv_after: peer_refs::get_loro_vv_bytes(&host_pool, expected_peer)
+            .await
+            .unwrap(),
+        host_events: host_sink.events(),
+        joiner_events: joiner_sink.events(),
+        host_block_on_joiner: sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(HOST_BLOCK_4230)
+            .fetch_optional(&joiner_pool)
+            .await
+            .unwrap(),
+        host_still_pending: peer_refs::is_pending_pairing(&host_pool).await.unwrap(),
+        joiner_key,
+    };
+
+    host_mat.shutdown();
+    joiner_mat.shutdown();
+    out
+}
+
+/// Assert the run left the victim's row byte-for-byte as it found it.
+///
+/// The three columns are collected rather than asserted one at a time so a
+/// failure reports the WHOLE of the damage. The issue names two writes and
+/// ranks them the other way round from the order a reader meets them —
+/// `loro_vv_bytes` is the export floor, so poisoning it is a data-correctness
+/// problem, where `streamed_at` costs a few suppressed toasts — and a
+/// short-circuiting `assert_eq!` chain would show only the first.
+fn assert_victim_untouched_4230(out: &PairingClaimRun4230) {
+    let before = out
+        .victim_before
+        .as_ref()
+        .expect("fixture: the victim row exists before the session");
+    let after = out
+        .victim_after
+        .as_ref()
+        .expect("the victim row must survive the session");
+
+    let mut damage: Vec<String> = Vec::new();
+    if out.victim_vv_after.as_deref() != out.victim_vv_before.as_deref() {
+        damage.push(format!(
+            "`loro_vv_bytes` was rewritten ({:?} -> {:?}): it is the export floor the \
+             NEXT session computes its incremental update from, so another device's \
+             floor replaced by a frontier that device never held makes the next sync \
+             ship a delta from a baseline the peer does not have",
+            out.victim_vv_before, out.victim_vv_after
+        ));
+    }
+    if after.streamed_at != before.streamed_at {
+        damage.push(format!(
+            "`streamed_at` was re-stamped ({:?} -> {:?}): #4203's refusal-suppression \
+             gate reads this column as evidence that the device holding the PINNED key \
+             streamed to us",
+            before.streamed_at, after.streamed_at
+        ));
+    }
+    if after.endpoint_id != before.endpoint_id {
+        damage.push(format!(
+            "the binding moved ({:?} -> {:?}), which #800's post-session check is \
+             supposed to refuse outright",
+            before.endpoint_id, after.endpoint_id
+        ));
+    }
+    assert!(
+        damage.is_empty(),
+        "#4230: a session keyed on a CLAIMED device id must write nothing to the row \
+         that id names. Damage:\n  - {}",
+        damage.join("\n  - ")
+    );
+}
+
+/// #4230 (the acceptance test): a device that proves the pairing passphrase and
+/// advertises an ALREADY-PAIRED peer's device id as its head must not have the
+/// session's bookkeeping stamped on that peer's row.
+///
+/// # What makes this reachable
+///
+/// Only the pairing branch. A bound peer is resolved through the authenticated
+/// key and passed as `expected_remote_id`, which the FSM prefers over the heads;
+/// during a pairing window there is no row to resolve, so the daemon leaves it
+/// unset and the claim is all there is. The passphrase and the 5-minute window
+/// are the price of entry — this is a narrow hole, not an open one, and it is
+/// inside a window the user deliberately opened.
+///
+/// # Why the session is still required to complete
+///
+/// Because "nothing was written" is trivially true of a session that failed, and
+/// that would be a fix worse than the bug — #2481 makes advertising another
+/// device's frontier a legitimate thing for a joiner to do. The completion
+/// assertions are what stop this test from passing for the wrong reason, and the
+/// legitimate-pairing test below is what stops the guard from being a blanket
+/// refusal.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pairing_claim_on_a_bound_peers_id_writes_no_bookkeeping_4230() {
+    let out = drive_pairing_claim_4230(VICTIM_DEV_4230, None, VICTIM_DEV_4230).await;
+
+    // The session really ran: the host streamed, the joiner applied, both saw a
+    // terminal Complete. Without this the assertions below could be satisfied by
+    // a responder that refused the connection outright.
+    assert!(
+        saw_complete_3507(&out.host_events),
+        "the host must still complete the session — the guard skips a write, it does \
+         not fail a peer that advertised a frontier it legitimately holds. Got {:?}",
+        out.host_events
+    );
+    assert!(
+        saw_complete_3507(&out.joiner_events),
+        "the joiner must still complete the session, got {:?}",
+        out.joiner_events
+    );
+    assert_eq!(
+        out.host_block_on_joiner.as_deref(),
+        Some(HOST_CONTENT_4230),
+        "the host's block must have reached the joiner — the session moved state, \
+         so the bookkeeping site really was reached"
+    );
+
+    assert_victim_untouched_4230(&out);
+
+    // The binding was already protected (#800's `peer_is_bound_to_another_key`);
+    // this pins that the fix did not have to relax it to skip the writes.
+    assert_ne!(
+        out.victim_after
+            .as_ref()
+            .and_then(|r| r.endpoint_id.clone())
+            .as_deref(),
+        Some(out.joiner_key.as_str()),
+        "the claimant must never end up bound as the victim"
+    );
+    assert!(
+        out.host_still_pending,
+        "a session that bound nothing does not consume the pairing window — the \
+         real device the user is pairing must still be able to arrive"
+    );
+}
+
+/// The symmetric arm, and the one a blanket refusal would fail: a LEGITIMATE
+/// joiner — same pairing window, same passphrase, advertising its OWN device id
+/// — still completes the pair and still records its own bookkeeping.
+///
+/// A fix that protected the victim by declining to write anything during a
+/// pairing window would leave the first post-pair session with no `streamed_at`
+/// and no export floor, so every subsequent session re-ships full snapshots
+/// (#2502's churn, restored) and the device list reads "never synced" for a
+/// device that just paired (#4084/#4103). This is where that hides.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_legitimate_pairing_still_records_its_own_bookkeeping_4230() {
+    let out = drive_pairing_claim_4230(JOINER_DEV_4230, None, JOINER_DEV_4230).await;
+
+    let row = out
+        .expected_after
+        .as_ref()
+        .expect("the host must end with a peer_refs row for the joiner it just paired with");
+    assert_eq!(
+        row.endpoint_id.as_deref(),
+        Some(out.joiner_key.as_str()),
+        "…pinned to the key the joiner's QUIC handshake authenticated"
+    );
+    assert!(
+        row.streamed_at.is_some(),
+        "#4084/#4103: the host streamed to the joiner this session, so the joiner's \
+         row must carry the stamp — a paired device that reads 'never synced' is \
+         the bug that column exists to close"
+    );
+    assert!(
+        out.expected_vv_after.is_some(),
+        "#2502: the joiner's advertised frontier must be persisted as the export \
+         floor, or the next session re-ships a full snapshot per space"
+    );
+    assert!(
+        !out.host_still_pending,
+        "#1519: a completed pair closes the window behind it"
+    );
+    assert_eq!(
+        out.host_block_on_joiner.as_deref(),
+        Some(HOST_CONTENT_4230),
+        "and the pair converged"
+    );
+
+    // The victim is a bystander to a legitimate pairing, and stays one.
+    assert_victim_untouched_4230(&out);
+}
+
+/// The bound-peer branch, which this change must not disturb.
+///
+/// The joiner's key is already bound as `BOUND4230`, so `handle_incoming_sync`
+/// resolves the row through the AUTHENTICATED key and passes it as
+/// `expected_remote_id` — and the FSM takes that verbatim in preference to the
+/// heads. The joiner nonetheless advertises the victim's head, so this run also
+/// says what the bound branch does with a claim: nothing. The identity that
+/// counts is the one the handshake proved, the bookkeeping lands on `BOUND4230`,
+/// and the guard is inert here (it is never armed on this branch).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_bound_branch_keys_bookkeeping_on_the_authenticated_row_4230() {
+    let out = drive_pairing_claim_4230(VICTIM_DEV_4230, Some(BOUND_DEV_4230), BOUND_DEV_4230).await;
+
+    let row = out
+        .expected_after
+        .as_ref()
+        .expect("the bound peer's row must survive its own session");
+    assert!(
+        row.streamed_at.is_some(),
+        "the bound branch must still stamp the row the authenticated key resolves \
+         to — this is the path #4203's suppression gate reads, and it is sound \
+         precisely because it is keyed on the handshake, not on a claim"
+    );
+    assert!(
+        out.expected_vv_after.is_some(),
+        "…and must still persist the peer's advertised export floor"
+    );
+    assert!(
+        saw_complete_3507(&out.host_events),
+        "the bound session must complete, got {:?}",
+        out.host_events
+    );
+
+    // The head it advertised named the victim; `expected_remote_id` outranked it.
+    assert_victim_untouched_4230(&out);
+}

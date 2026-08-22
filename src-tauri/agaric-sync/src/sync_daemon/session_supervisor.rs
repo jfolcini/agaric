@@ -1300,21 +1300,35 @@ const IDENTITY_MISMATCH_MESSAGE: &str =
 ///   none, and cannot refresh it — with one exception, stated below rather than
 ///   left for a reader to discover, because this bullet is what licenses
 ///   suppressing a security-relevant refusal at all.
-/// * **The exception: an open pairing window.** `server::handle_incoming_sync`
-///   admits a key it has no binding for when the caller proves knowledge of the
-///   pairing passphrase (#855/#1519), and on that branch alone it deliberately
-///   does *not* set `expected_remote_id` — so the FSM falls back to the device
-///   id the peer advertised, which is a claim. A proof-bearing device can
-///   therefore claim a paired peer's id and have `record_stream_in_tx` stamp
-///   that peer's `streamed_at`. It cannot take the *binding* (post-session
-///   `peer_is_bound_to_another_key` refuses to re-point a bound peer), and the
-///   window is bounded by `PENDING_PAIRING_TTL_MS` (5 min) and by the user
-///   having started a pairing, so the reachable effect is at most a few
-///   suppressed refusals inside a window the user opened for a device they hold
-///   the passphrase for. It is not "never"; it is "not without the passphrase,
-///   and not for longer than the pairing window". The claimed-id stamp on that
-///   branch is a pre-existing hole in the responder, not something this gate
-///   introduces — but the gate now depends on it, so it is named here.
+/// * **The exception that used to sit here, and why it is closed (#4230).**
+///   `server::handle_incoming_sync` admits a key it has no binding for when the
+///   caller proves knowledge of the pairing passphrase (#855/#1519), and on
+///   that branch alone it deliberately does *not* set `expected_remote_id` — so
+///   the FSM falls back to the device id the peer advertised, which is a claim.
+///   A proof-bearing device could therefore claim a paired peer's id and have
+///   `record_stream_in_tx` stamp that peer's `streamed_at` (and, worse for
+///   reasons that have nothing to do with toasts, its `loro_vv_bytes`). It
+///   could never take the *binding* — post-session `peer_is_bound_to_another_key`
+///   refuses to re-point a bound peer — and #4230 arms that same predicate on
+///   the bookkeeping writes, via
+///   [`SyncOrchestrator::with_unverified_claim_guard`](crate::sync_protocol::SyncOrchestrator::with_unverified_claim_guard),
+///   so the claimed-id stamp is now skipped for exactly the rows the bind would
+///   have protected. That covers every peer this refusal can fire about: it
+///   fires only when an *announced* key disagrees with a **pinned** one, so the
+///   victim row is by construction already bound, which is the case the guard
+///   refuses. What remains unguarded is a row with no `endpoint_id` at all.
+///   *This* refusal cannot fire about such a row — it needs a pinned key to
+///   mismatch — but the other failures routed through this function can, and
+///   the residual is worth stating rather than leaving a bullet's scope to be
+///   read as the whole function's: a proof-bearing device that claims an
+///   **unbound** id still freshens that id's `streamed_at`, and so can withhold
+///   its *repeat* connect/session-failure reports. Bounded twice over — the
+///   first report of any text always lands (the gate is `already_reported &&
+///   still_serving`), and the freshness window goes false two intervals after
+///   the last stamp. #4230 leaves that half open deliberately: deferring the
+///   writes until after the bind — the alternative the issue suggested — closes
+///   none of it, since `peer_is_bound_to_another_key` permits an unbound row
+///   and the bind would then hand the row itself to the claimant.
 /// * The memory resets on a successful pull and on a pairing act (#3547),
 ///   which is precisely "the user re-paired, so tell them again if it is still
 ///   wrong".
