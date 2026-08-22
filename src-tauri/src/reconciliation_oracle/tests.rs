@@ -2259,6 +2259,22 @@ async fn block_links_unresolved_oracle_distinguishes_all_three_target_states_424
 /// fixture is ~2.4s of extra WEEKLY wall-clock (1.7s -> 4.1s); it is not on
 /// the per-PR path.
 ///
+/// **Read every number above as a dev-box number, not a CI margin.** All of
+/// them were measured unloaded, in debug, on one machine. This sweep issues
+/// ~15,000 individual statements (insert + set_content + reindex per block),
+/// 2.5x the sibling `..._3955` sweep's ~6,000, and `bench-slo` runs
+/// `--no-fail-fast` at full core parallelism on a shared runner. A 4-7x
+/// I/O-bound slowdown would put the CLEAN side near the 30s SLOW flag while
+/// leaving the defective side comfortably over the kill — so "15x under" is
+/// headroom on this box, not headroom on CI.
+///
+/// If the lane starts flagging SLOW, the fix is a `[[profile.default.overrides]]`
+/// leash in `.config/nextest.toml` alongside the four already there — NOT
+/// shrinking the scale back, which is the one change that would stop the
+/// guard biting at all (see the 40x100 row above: only ~1.9x over the kill,
+/// inside the range where a loaded runner drags a real regression back under
+/// the line).
+///
 /// The two clean and two defective numbers are recorded above so the next
 /// person can re-derive the choice instead of re-guessing it: re-inject the
 /// same one-scan-per-source-block defect and the ratios should hold.

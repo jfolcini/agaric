@@ -5364,14 +5364,26 @@ async fn rebuild_block_links_unresolved_on_an_empty_vault_writes_nothing_4218() 
 // peak reached DURING that arm rather than over the process's whole life,
 // which the 100k-row seeding would otherwise dominate.
 //
-// The two arms still share one heap, and the STREAMING arm runs first. Its
-// peak is therefore measured against a cold-ish arena, while the BUFFERED arm
-// runs second and can satisfy part of its demand from what the first arm just
-// freed. That biases the measured gap DOWNWARD — the buffered arm's true
-// footprint is at least what is printed, never less — which is the
-// conservative direction for a claim of the form "buffering costs memory".
-// Running them in the other order would flatter the change and is deliberately
-// not what happens here.
+// There are TWO known biases, and both point the same way — DOWNWARD, so the
+// buffered arm's true footprint is at least what is printed, never less. That
+// is the conservative direction for a claim of the form "buffering costs
+// memory", which is why the arrangement is left as it is.
+//
+// 1. ARENA WARMTH. The two arms share one heap and the STREAMING arm runs
+//    first, so its peak is measured against a cold-ish arena while the
+//    BUFFERED arm runs second and can satisfy part of its demand from what
+//    the first arm just freed. Running them in the other order would flatter
+//    the change and is deliberately not what happens here.
+//
+// 2. ARM ASYMMETRY. Arm 1 is the whole production function, INCLUDING the
+//    chunked INSERT of the obligation rows; arm 2 replicates only the
+//    pre-#4242 read and fold, not the write that followed it. So the streamed
+//    arm's peak carries write-path residency the buffered arm never pays,
+//    which shrinks the measured gap by however much that write costs. This is
+//    a bias in the measurement, not a flaw in the comparison — the read+fold
+//    is the part #4242 changed — but it is a second reason the printed gap
+//    understates the difference, and the doc would be misleading if it named
+//    only the first.
 //
 // Linux-only: the whole apparatus reads `/proc/self`. `bench-slo` runs on
 // `ubuntu-24.04`, and on any other host these tests simply do not exist.
@@ -5542,10 +5554,16 @@ where
 /// The measurement itself, shared by the three block-count points.
 ///
 /// Arm 1 is production (`rebuild_block_links_unresolved`, streamed since
-/// #4242). Arm 2 is a faithful copy of what the function did BEFORE #4242:
-/// `fetch_all` the matched rows into a `Vec` and fold that, with the row
-/// buffer still alive while the pair vector is built — the simultaneity that
-/// was the whole cost.
+/// #4242), end to end — including the chunked INSERT of the obligation rows.
+/// Arm 2 replicates the pre-#4242 READ AND FOLD only, not the write that
+/// followed it: `fetch_all` the matched rows into a `Vec` and fold that, with
+/// the row buffer still alive while the pair vector is built — the
+/// simultaneity that was the whole cost.
+///
+/// The arms are therefore not symmetric, and deliberately so: the read+fold is
+/// the part #4242 changed. But it means arm 1 pays a write-path peak arm 2
+/// never does, which is the second of the two downward biases described in the
+/// module comment above. Do not read arm 2 as "the whole pre-#4242 function".
 #[cfg(target_os = "linux")]
 #[allow(clippy::cast_precision_loss)]
 async fn measure_unresolved_rebuild_residency(blocks: usize) {
