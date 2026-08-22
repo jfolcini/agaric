@@ -3,11 +3,11 @@
 | Metadata | Value |
 |----------|-------|
 | **Date** | 2026-08-22 |
-| **Subagents** | none — single-file doc correction |
+| **Subagents** | none — documentation correction |
 | **Items closed** | `#4198` |
 | **Items modified** | — |
 | **Tests added** | none (documentation only; the behaviour it now describes is already pinned by `scripts/check-session-log-numbering.sh --self-test`) |
-| **Files touched** | 2 — see the PR's file list |
+| **Files touched** | see the PR's file list |
 
 **Summary:** `docs/session-log/README.md` still instructed that a session number must be "the
 **numeric** max plus one". #3929 superseded that with a bounded window, and the drift was
@@ -35,3 +35,32 @@ the same drift one step further out:
    since that is what a surprising window failure almost always is.
 
 No behaviour changed; nothing about the guard was touched.
+
+## Two additions after review
+
+The reviewer found the drift had survived in the half of the pair that agents
+actually consult. `SKILL.md` § 6 LOG points at
+`.claude/skills/batch-issues/references/session-log.md` for the entry shape, and
+that file still carried the retired rule verbatim — "NUMERIC max of existing
+entries + 1" — with only the branch-local command and no mention of the window or
+the merge target. Fixing the README alone would have left the more-consulted copy
+saying the thing #4198 exists to retire. It now describes the window, names the
+uniqueness check as the thing that actually prevents a collision, and computes the
+max over the union of the branch and the merge target.
+
+Three smaller corrections from the same review: the README now names `GAP_BOUND`
+alongside the literal `10` and says plainly that nothing checks the two still agree
+(no guard compares doc text to a constant, so a future change to `GAP_BOUND`
+silently re-creates exactly this drift); it says "union" explicitly where it
+previously gave two commands and left the reader to combine them, since taking only
+the merge-target output under-counts when the branch already holds a higher number;
+and its pointer to a `SKILL.md` § "Session log entry template" now points at
+`references/session-log.md`, where the template actually lives — the same class of
+stale pointer this entry is about.
+
+## Also in this PR
+
+`.gitignore` gained `.claude/scratch/`, the per-session agent scratchpad directory
+that a bare `git add -A` was sweeping into commits — the #3731 shape. Nothing is
+tracked under that path, so the ignore drops nothing from the index. Unrelated to
+#4198 and recorded here because the log, not the diff, is the durable record.

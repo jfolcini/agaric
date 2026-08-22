@@ -1,17 +1,35 @@
 # Session log — template & conventions
 
-Create one file per session at `docs/session-log/session-NNN-<slug>.md`. `NNN` is the
-next session number — **NUMERIC max of existing entries + 1**, no zero-padding. Compute
-it with:
+Create one file per session at `docs/session-log/session-NNN-<slug>.md`. `NNN` is an
+unused number in the window **`(max, max + GAP_BOUND]`**, no zero-padding, where
+`GAP_BOUND` is 10 (`scripts/check-session-log-numbering.sh`). `max + 1` is the number
+to take when nothing else is in flight; the window exists so several parallel PRs can
+each hold a distinct valid number instead of every one renumbering the moment a sibling
+merges.
+
+The max the guard measures spans **your branch and the merge target**, so compute it
+over the union:
 
 ```sh
 ls docs/session-log | grep -oP 'session-\K[0-9]+' | sort -n | tail -1
+git ls-tree -r --name-only origin/main -- docs/session-log | grep -oP 'session-\K[0-9]+' | sort -n | tail -1
 ```
+
+Take the larger of the two. Reading only the merge target under-counts when your branch
+already holds a higher number.
 
 **Never derive it from plain `ls | tail`** — past session-999 that sorts
 lexicographically (`session-1000` < `session-996`) and reports a stale max; fifteen
-sessions collided on `session-1000` this way. A pre-commit guard
-(`session-log-numbering` in `prek.toml`) rejects wrong numbers at commit time.
+sessions collided on `session-1000` this way.
+
+What prevents a collision is not the window but a **separate uniqueness check**: the
+number must not already be taken on your branch, in `origin/main`, or by a sibling file
+in the same commit. So a gap in the sequence is fine and a reuse is not. A number
+outside the window still fails, because that means a stale max or a typo rather than
+parallelism — if a window failure surprises you, fetch and rebase before renumbering.
+The `session-log-numbering` pre-commit guard (`prek.toml`) enforces both checks at
+commit time.
+
 `<slug>` is a short kebab-case derivation of the title. **One file per session, never
 appended to.** See `docs/session-log/README.md` for naming + discovery conventions.
 
