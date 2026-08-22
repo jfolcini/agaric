@@ -349,6 +349,16 @@ function extractCandidates(text) {
 // written. So this only ever prints — `check()` never folds it into
 // `failed`.
 //
+// Known floor: that same `tauri.ts:1871` anchor is permanent by
+// construction (the test it lives in exists to assert the anchor stays
+// gone), so this warning channel opens at a floor of ONE known-intentional
+// citation, not zero — a clean tree still prints one warning line. This is
+// the only entry in that floor as of #4258; if the floor grows beyond
+// deliberately-historical anchors like this one, the fix is an
+// acknowledgment list (baseline it the way `newMisses` is baselined above),
+// NOT deleting the warning — a permanent non-zero floor left undocumented
+// is how a warning channel gets tuned out and ignored.
+//
 // `extractCandidates` above already discards the `:N` suffix (that is the
 // whole reason #4244 part (a), the sweep, has to happen by hand instead of
 // mechanically) and DEDUPES by the stripped path — a file cited twice in
@@ -358,6 +368,17 @@ function extractCandidates(text) {
 // suffix) instead, over the same two surfaces (inline code spans, markdown
 // link targets) `extractCandidates` scans.
 //
+// The one known-intentional entry in this channel's floor (see the header
+// above) — the historical `tauri.ts:1871` anchor. Named here, as a plain
+// literal rather than a baseline file, purely so the warning OUTPUT can
+// say "known-intentional" vs "new" instead of a bare undifferentiated
+// list; this is not a suppression/acknowledgment mechanism (there isn't
+// one — see the header) and nothing here changes `check()`'s exit code.
+const KNOWN_INTENTIONAL_WARNINGS = new Set([
+  'src/lib/__tests__/platform.test.ts src/lib/tauri.ts 1871',
+])
+const warningKey = (w) => `${w.doc} ${w.ref} ${w.maxCited}`
+
 // @param {string} text
 // @returns {{cleaned: string, lineNumbers: number[]}[]}
 function extractLineCitations(text) {
@@ -845,16 +866,26 @@ function check() {
     // shrank, or the section moved), but not always — see the
     // `tauri.ts:1871` historical citation above — so this can only ever be
     // a nudge to go look, not a gate.
+    const newWarnings = warnings.filter((w) => !KNOWN_INTENTIONAL_WARNINGS.has(warningKey(w)))
+    const knownCount = warnings.length - newWarnings.length
     process.stderr.write(
-      'WARNING: citation(s) name a line number beyond the target file’s current length —\n',
+      `WARNING: citation(s) name a line number beyond the target file’s current length (${knownCount} known-intentional, ${newWarnings.length} new) —\n`,
     )
     process.stderr.write(
       'the cited line may be stale (or deliberately historical). Not a build failure:\n',
     )
-    for (const w of warnings) {
+    // Same cap-and-tail shape as `newMisses` above: a refactor that shrinks
+    // a heavily-cited file (or a mechanical rename sweep) could otherwise
+    // dump an unbounded block here.
+    const shownWarnings = warnings.slice(0, 50)
+    for (const w of shownWarnings) {
+      const tag = KNOWN_INTENTIONAL_WARNINGS.has(warningKey(w)) ? 'known-intentional' : 'NEW'
       process.stderr.write(
-        `  - ${w.doc} → \`${w.ref}\`  cites line ${w.maxCited}, but the file is only ${w.fileLineCount} line(s) long\n`,
+        `  - ${w.doc} → \`${w.ref}\`  cites line ${w.maxCited}, but the file is only ${w.fileLineCount} line(s) long  (${tag})\n`,
       )
+    }
+    if (warnings.length > shownWarnings.length) {
+      process.stderr.write(`  ...and ${warnings.length - shownWarnings.length} more\n`)
     }
     process.stderr.write('\n')
   }

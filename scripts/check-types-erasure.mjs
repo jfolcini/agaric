@@ -198,10 +198,21 @@ const AMBIENT_BLOCK_LEAD = new Set(['module', 'global'])
  * Deliberately narrow, per the issue's "declare at statement position":
  * only `declare` immediately followed by the `module`/`global` keyword,
  * and not itself a PROPERTY NAME (`x.declare`), counts. A brace-matched
- * body is required — a bodyless module reference (`declare module 'x'`
- * with no `{`, just an ambient re-export of an existing module) stops at
- * the first `;` and contributes no range, so it is scanned normally
- * (there is nothing to scan inside it anyway).
+ * body is required — a bodyless SHORTHAND module declaration
+ * (`declare module 'x'`, a valid ambient stub with no `{`) contributes no
+ * range, so it is scanned normally (there is nothing to scan inside it
+ * anyway).
+ *
+ * The `{` lookup is bounded to the declaration's own head — the token
+ * immediately after `global`, or after `module`'s string specifier — NOT
+ * a forward scan for the next `{`/`;` anywhere in the token stream. A
+ * scan that keeps going looks for a `;` to stop a bodyless form at, but
+ * this repo is semicolon-free, so a bodyless `declare module 'x'` written
+ * naturally has none — the scan would run past it and latch onto the
+ * next unrelated `{` in the file (e.g. a later `namespace` block),
+ * marking it ambient and hiding a real runtime export nested inside
+ * (#4258). Bounding to the head is fail-closed: anything other than an
+ * immediately-adjacent `{` means "no body", not "keep looking".
  *
  * @param {{kind: string, value?: string, start: number, propertyName?: boolean}[]} tokens
  * @param {string} src
@@ -214,16 +225,13 @@ function findAmbientRanges(tokens, src) {
     const next = tokens[i + 1]
     if (!next || next.kind !== 'ident' || !AMBIENT_BLOCK_LEAD.has(next.value)) continue
 
-    let openTok = null
-    for (let j = i + 2; j < tokens.length; j++) {
-      const t = tokens[j]
-      if (t.kind === 'punct' && t.value === '{') {
-        openTok = t
-        break
-      }
-      if (t.kind === 'punct' && t.value === ';') break
-    }
-    if (!openTok) continue
+    // `declare global` opens its body directly; `declare module` takes a
+    // string specifier first (`declare module '…'`) — skip over exactly
+    // that one token, nothing else, before looking for `{`.
+    let j = i + 2
+    if (next.value === 'module' && tokens[j] && tokens[j].kind === 'string') j++
+    const openTok = tokens[j]
+    if (!openTok || openTok.kind !== 'punct' || openTok.value !== '{') continue
 
     const closeIdx = findMatchingBracket(src, openTok.start)
     if (closeIdx === -1) continue
@@ -534,6 +542,21 @@ function runSelfTest() {
       path.join(typesDir, 'declareModuleMixed.ts'),
       "declare module 'some-untyped-lib' {\n  export const bar: number\n}\nexport const leaked = { a: 1 }\n",
     )
+    // FALSIFYING FIXTURE (#4258): a bodyless SHORTHAND ambient module
+    // declaration (`declare module 'x'` with no `{`, no `;` — this repo is
+    // semicolon-free, so this is how it is written naturally) followed by
+    // an unrelated braced construct that contains a genuine runtime
+    // export. An unbounded forward scan for `{` has nothing to stop it at
+    // the bodyless declaration's own statement end, so it latches onto the
+    // NEXT `{` anywhere in the file — here, an unrelated `namespace` block
+    // — marks it ambient, and hides the real runtime export nested inside
+    // (a namespace-nested `export` compiles to a real runtime property
+    // assignment; it is not ambient). `findAmbientRanges` must bound its
+    // scan to the declaration's own head, not search the rest of the file.
+    fs.writeFileSync(
+      path.join(typesDir, 'declareModuleBodyless.ts'),
+      "declare module 'legacy-thing'\n\nnamespace Wrapper {\n  export const leak = 1\n}\n",
+    )
     // Test file with a runtime export — out of scope, ignored entirely.
     fs.writeFileSync(path.join(testDir, 'fixture.test.ts'), 'export const testOnly = { a: 1 }\n')
     // `.d.ts` file with an initializer-shaped export — ignored (cannot
@@ -627,6 +650,17 @@ function runSelfTest() {
       fail(
         'export-shaped text inside a comment/string not flagged',
         JSON.stringify(details.get(rel('commentedOut.ts'))),
+      )
+    }
+
+    if (offenders.includes(rel('declareModuleBodyless.ts'))) {
+      ok(
+        'bodyless shorthand `declare module` does not swallow a later unrelated runtime export (#4258)',
+      )
+    } else {
+      fail(
+        'bodyless shorthand declare module swallows a later runtime export',
+        JSON.stringify(details.get(rel('declareModuleBodyless.ts'))),
       )
     }
 
