@@ -146,6 +146,15 @@ pub struct SyncOrchestrator {
     /// When set, the orchestrator validates that the remote device_id
     /// received in HeadExchange matches this expected peer identity.
     expected_remote_id: Option<String>,
+    /// #4230: the handshake-authenticated endpoint id of a peer whose device
+    /// id this session could only take from its **advertised heads** — i.e. a
+    /// responder session admitted on the #855 pairing proof, where the daemon
+    /// deliberately leaves [`Self::expected_remote_id`] unset because no
+    /// `peer_refs` row binds the caller yet.
+    ///
+    /// `None` on every other session, and the guard it arms is then inert.
+    /// See [`Self::with_unverified_claim_guard`] for the property it buys.
+    unverified_claim_endpoint_id: Option<String>,
     /// #610: `true` once we have streamed our own state to the peer this
     /// session (set in [`Self::head_exchange_outgoing_loro`], the
     /// responder-only path). Gates the post-session `synced_at`
@@ -236,6 +245,7 @@ impl SyncOrchestrator {
             pending_loro_messages: VecDeque::new(),
             remote_device_id: None,
             expected_remote_id: None,
+            unverified_claim_endpoint_id: None,
             streamed_to_peer: false,
             peer_advertised_loro_vvs: Vec::new(),
             peer_op_log_replication: false,
@@ -327,6 +337,117 @@ impl SyncOrchestrator {
         self.remote_device_id = Some(peer_id.clone());
         self.expected_remote_id = Some(peer_id);
         self
+    }
+
+    /// #4230: mark this session's peer identity as an **unverified claim**, and
+    /// arm the post-session bookkeeping guard that follows from that.
+    ///
+    /// Set by [`crate::sync_daemon::server`] on exactly one branch: a responder
+    /// session admitted during a pairing window on the #855 passphrase proof.
+    /// There, `get_peer_ref_by_endpoint_id` found no row for the
+    /// handshake-authenticated key, so the daemon has nothing authoritative to
+    /// pass to [`Self::with_expected_remote_id`] and deliberately leaves it
+    /// unset — and [`Self::resolve_remote_peer_id`] therefore keys the session
+    /// on the first non-self **advertised head**, which the peer chose.
+    ///
+    /// # What the guard is for
+    ///
+    /// The bookkeeping this session writes — `peer_refs.streamed_at` and,
+    /// materially, `peer_refs.loro_vv_bytes`, the export floor consulted by the
+    /// *next* session — would otherwise land on whatever row that claimed id
+    /// names. A device holding the passphrase could therefore name an already
+    /// paired peer and poison that peer's row: a bogus frontier makes the next
+    /// sync ship an incremental update computed from a baseline the peer never
+    /// held.
+    ///
+    /// The post-session *bind* has always refused exactly this — see
+    /// `server::peer_is_bound_to_another_key`, which will not re-point a peer
+    /// whose row already names a different key — but the writes happen *during*
+    /// the session, before that check runs. Arming this makes the same
+    /// predicate cover the writes, so the guarantee and the guard now have the
+    /// same edges rather than the guard trailing the guarantee by one session.
+    ///
+    /// "Same edges" is exact only while the claimed row's binding holds still
+    /// between the two askings, which is all a second read of a mutable table
+    /// can promise. A concurrent session that binds the claimed id *after* this
+    /// check and *before* the bind leaves the writes on a row that was genuinely
+    /// free when they landed; the deferred-until-bind alternative races the same
+    /// window from the other side, writing onto a row that was bound for the
+    /// whole session and freed at the end. That is a property of asking a
+    /// question about a shared table twice, not a weakness of asking it early —
+    /// and both readings are strictly better than the one this replaces, which
+    /// asked at neither moment.
+    ///
+    /// # What it deliberately does not do
+    ///
+    /// It does not fail the session and it does not reject the claim. #2481:
+    /// a peer advertises the frontier of *every* device it holds, so a
+    /// legitimate joiner that replicated a paired peer's ops advertises that
+    /// peer's head first and reaches this branch with no ill intent. Its
+    /// session completes exactly as before; only the write onto the other
+    /// device's row is skipped — which is the same answer the bind already
+    /// gives that joiner.
+    ///
+    /// `pub(crate)`, not `pub`: it is safe to arm only on a **responder**
+    /// session admitted during a pairing window, per the branch documented
+    /// above. Armed from outside the crate on an **initiator** session (or
+    /// any bound peer), it would deny bookkeeping for peers whose row is
+    /// legitimately bound to their own key, silently dropping their
+    /// `synced_at` / `last_hash` progress. The one in-crate caller,
+    /// [`crate::sync_daemon::server`], already respects that branch; the
+    /// visibility just stops a future caller from getting it wrong.
+    pub(crate) fn with_unverified_claim_guard(mut self, endpoint_id: String) -> Self {
+        self.unverified_claim_endpoint_id = Some(endpoint_id);
+        self
+    }
+
+    /// #4230: may this session key `peer_refs` bookkeeping on `peer_id`?
+    ///
+    /// `true` for every session whose identity the daemon vouched for
+    /// (`unverified_claim_endpoint_id` unset — the guard is inert there, and
+    /// costs not even a query). On a pairing-window session it is the
+    /// [`crate::sync_daemon::server::peer_is_bound_to_another_key`] decision,
+    /// asked with this session's authenticated key: a claimed id whose row is
+    /// already bound to some *other* key is refused, everything else proceeds.
+    ///
+    /// A failed `list_peer_refs` denies, for the reason that function
+    /// documents: the evidence that the row is free is exactly what a failed
+    /// read does not have, and the cost of being wrong is one skipped
+    /// bookkeeping write that the next session redoes.
+    ///
+    /// # Residual: a refusal is keyed on the session, not the write
+    ///
+    /// [`Self::resolve_remote_peer_id`] resolves one `peer_id` for the whole
+    /// session, and every bookkeeping call site — [`Self::record_pull_in_tx`],
+    /// [`Self::record_stream_in_tx`], and `persist_peer_loro_vvs` — asks this
+    /// guard with that same id. So a #2481 joiner whose lowest-sorting
+    /// advertised head happens to belong to a peer already bound to another
+    /// key gets refused on *every* call site, not just one: its session
+    /// writes no bookkeeping at all for itself — neither `synced_at` /
+    /// `last_hash` nor the `loro_vv_bytes` export floor. This is not a
+    /// regression (the post-session bind already refused the same joiner the
+    /// same way); it is the practical shape of the residual behind #4251 and
+    /// #4252, stated here so it does not live only in those issues.
+    async fn may_key_bookkeeping_on(&self, peer_id: &str) -> bool {
+        let Some(endpoint_id) = self.unverified_claim_endpoint_id.as_deref() else {
+            return true;
+        };
+        let refused = crate::sync_daemon::server::peer_is_bound_to_another_key(
+            peer_refs::list_peer_refs(&self.pool).await,
+            peer_id,
+            endpoint_id,
+        );
+        if refused {
+            tracing::warn!(
+                device_id = %self.device_id,
+                peer_id,
+                endpoint_id,
+                "refusing to key peer_refs bookkeeping on a device id claimed during a \
+                 pairing window whose row is already bound to another key; the id came \
+                 from the peer's advertised heads, which is a claim (#4230)"
+            );
+        }
+        !refused
     }
 
     /// Emit a [`SyncEvent`](crate::sync_events::SyncEvent) if a sink is
@@ -1080,6 +1201,18 @@ impl SyncOrchestrator {
     /// orchestrator runs serially per peer, so lock contention is bounded;
     /// the tx exists for crash atomicity, not concurrency.
     async fn record_pull_in_tx(&self, peer_id: &str, last_hash: &str) -> Result<(), AppError> {
+        // #4230: inert unless this session's identity is an unverified claim.
+        //
+        // Today only a *responder* session can carry such a claim and only the
+        // *puller* reaches here, so this particular pairing is currently
+        // unreachable — it is guarded anyway because the property worth having
+        // is "no `peer_refs` writer in this file keys a row on a refused claim",
+        // which must not depend on today's role/message mapping staying put. The
+        // check is one call, and it is free (`None` → `true`) on every session
+        // whose identity the daemon vouched for.
+        if !self.may_key_bookkeeping_on(peer_id).await {
+            return Ok(());
+        }
         // #490 M1: no per-peer sent-hash delta is tracked under the loro-vv
         // send path, and the empty string is the sentinel
         // `peer_refs::update_on_sync` documents for exactly that ("we sent
@@ -1121,6 +1254,10 @@ impl SyncOrchestrator {
     /// empty-stream short-circuit fired (#4096) — the second is not gated on
     /// `streamed_to_peer`, which that path never sets.
     async fn record_stream_in_tx(&self, peer_id: &str) -> Result<(), AppError> {
+        // #4230: inert unless this session's identity is an unverified claim.
+        if !self.may_key_bookkeeping_on(peer_id).await {
+            return Ok(());
+        }
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         peer_refs::upsert_peer_ref_in_tx(&mut tx, peer_id).await?;
         peer_refs::update_on_stream_in_tx(&mut tx, peer_id).await?;
@@ -1138,6 +1275,13 @@ impl SyncOrchestrator {
     /// single `BEGIN IMMEDIATE` tx so the frontier commits atomically.
     async fn persist_peer_loro_vvs(&self, peer_id: &str) -> Result<(), AppError> {
         if self.peer_advertised_loro_vvs.is_empty() {
+            return Ok(());
+        }
+        // #4230: inert unless this session's identity is an unverified claim.
+        // This is the write the guard exists for — `loro_vv_bytes` is the next
+        // session's export floor, so a poisoned one is a data-correctness
+        // problem, not a stale timestamp.
+        if !self.may_key_bookkeeping_on(peer_id).await {
             return Ok(());
         }
         let bytes =
@@ -1694,5 +1838,64 @@ impl SyncOrchestrator {
     /// harness without `with_expected_remote_id`).
     pub fn expected_remote_id(&self) -> Option<&str> {
         self.expected_remote_id.as_deref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! #4230 finding B: `peer_is_bound_to_another_key`'s own unit tests
+    //! (`sync_daemon::server`) cover its `Err` arm, but only by handing it an
+    //! injected `Result::Err` directly — that pins the predicate, not the wiring
+    //! at THIS call site. [`SyncOrchestrator::may_key_bookkeeping_on`] hands the
+    //! predicate the outcome of a real `list_peer_refs(&self.pool).await`, with
+    //! no `?` / `ok()` / `unwrap_or_default()` in between; nothing asserted that
+    //! a real failed read actually reaches the same deny. A future refactor that
+    //! inserted `.unwrap_or_default()` here would fail OPEN — permit the write —
+    //! with every existing test (including the predicate's own) still green.
+
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::apply_host::test_support::RecordingApplyHost;
+
+    /// Build an armed orchestrator: an unverified claim on `endpoint_id`, over
+    /// `pool`. The `ApplyHost` is a recording double — this test never runs a
+    /// session, it only calls the private guard directly.
+    fn orchestrator_with_claim(pool: &SqlitePool, endpoint_id: &str) -> SyncOrchestrator {
+        let host: Arc<dyn ApplyHost> = Arc::new(RecordingApplyHost::new());
+        SyncOrchestrator::new(pool.clone(), "device-under-test".to_owned(), host)
+            .with_unverified_claim_guard(endpoint_id.to_owned())
+    }
+
+    /// #4230 / finding B: a `list_peer_refs` read that fails for real — not an
+    /// injected `Result::Err` — must still deny.
+    ///
+    /// The peer_refs table starts empty, so a SUCCESSFUL read finds nothing
+    /// bound to another key and permits (asserted first, as a control — without
+    /// it a guard that always denied would pass the second assertion for the
+    /// wrong reason). Then the pool is closed, the same way
+    /// `loro_sync::tests::a_probe_that_cannot_run_is_counted_rather_than_read_as_a_present_parent`
+    /// forces a real read failure elsewhere in this crate, and the same call
+    /// must flip to deny.
+    #[tokio::test]
+    async fn a_real_failed_peer_ref_read_denies_bookkeeping() {
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        let orch = orchestrator_with_claim(&pool, "claimed-endpoint-key");
+
+        assert!(
+            orch.may_key_bookkeeping_on("PEER-A").await,
+            "control: an empty peer_refs table has nothing to conflict with, so a \
+             successful read must permit"
+        );
+
+        pool.close().await;
+
+        assert!(
+            !orch.may_key_bookkeeping_on("PEER-A").await,
+            "a list_peer_refs read that fails for real must deny bookkeeping, the \
+             same as peer_is_bound_to_another_key's own tests pin for an injected \
+             Err — a closed pool is this crate's established way to force a real \
+             read failure"
+        );
     }
 }
