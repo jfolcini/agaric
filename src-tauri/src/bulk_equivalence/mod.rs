@@ -77,9 +77,16 @@
 //!
 //! The comparison surface is the SQL projection plus the durable op log:
 //! `blocks`, `block_properties`, `block_tags`, `block_tag_inherited`,
-//! `block_links`, `op_log` — plus whatever the arm closures return (rendered
-//! to strings), which is how the read-only `compute_reverse_batch` scenario
-//! gets a surface at all.
+//! `block_links`, `block_links_unresolved`, `op_log` — plus whatever the arm
+//! closures return (rendered to strings), which is how the read-only
+//! `compute_reverse_batch` scenario gets a surface at all.
+//!
+//! `block_links_unresolved` (#4217) was NOT in that list when the table
+//! shipped, and its absence was worse than an ordinary missing-table gap: the
+//! table exists to make a lost link edge RECOVERABLE, so leaving it outside the
+//! oracle made the thing that exists to make a loss detectable itself
+//! undetectable. See [`capture`] for why comparing it needs no normalisation
+//! despite the set being recomputed per source on every reindex.
 //!
 //! Every normalisation is opt-in, named, and justified below, because an
 //! over-broad normalisation silently disables the oracle:
@@ -455,8 +462,62 @@ pub async fn capture(pool: &SqlitePool, norm: &Normalisation) -> DbSnapshot {
     )
     .await;
 
+    // #4217 — the OBLIGATION index (`block_links_unresolved`, migration 0112).
+    //
+    // Without this the oracle reproduced the blind spot #4118 exists to close,
+    // one level up: a bulk path that writes `block_links` correctly but
+    // under-populates the record of what that edge set is MISSING compared
+    // EQUAL to the fold. That failure is asymmetric in the dangerous
+    // direction — the edges it fails to owe are already absent from
+    // `block_links`, which is the state the user sees either way, so nothing
+    // visible breaks. What breaks is the future repair, silently, and only on
+    // the arm that took the bulk path.
+    //
+    // # The ordering question, and why no normalisation is needed
+    //
+    // #4217 flagged a real hazard before adding this: the set is RECOMPUTED
+    // per source on every reindex rather than accumulated, so two arms that
+    // reindex in different orders could hold the same set with different row
+    // identities — and a comparison keyed on identity would then report a
+    // divergence that is not one.
+    //
+    // It does not apply, for a reason specific to this table rather than to
+    // this reader. `diff_tables` compares a `BTreeMap` keyed on the KEY
+    // COLUMNS, not two ordered `Vec`s: the `ORDER BY` below is for readable
+    // failure output, and shuffling it cannot change the comparison. And the
+    // key columns here are the WHOLE row — `PRIMARY KEY (source_id,
+    // target_id)` with no other column and no exposed rowid — so "row
+    // identity" and "set membership" are the same thing. There is nothing an
+    // insertion order could vary that this reader can see, so normalising to a
+    // set is what it already does.
+    //
+    // What CAN legitimately differ is the SET, and only when the two arms did
+    // different work: production's writers recompute a source's whole owed set
+    // from its current content and its post-diff `block_links` rows, so after
+    // both arms settle, identical content + identical edges imply an identical
+    // owed set. A difference is therefore a difference in which reindexes
+    // ran — which is exactly the divergence class this oracle exists to catch,
+    // not noise to absorb.
+    let unresolved_links = read_table(
+        pool,
+        "block_links_unresolved",
+        "SELECT source_id, target_id FROM block_links_unresolved \
+         ORDER BY source_id, target_id",
+        &["source_id", "target_id"],
+        &[],
+    )
+    .await;
+
     DbSnapshot {
-        tables: vec![blocks, properties, tags, inherited, links, op_log],
+        tables: vec![
+            blocks,
+            properties,
+            tags,
+            inherited,
+            links,
+            unresolved_links,
+            op_log,
+        ],
     }
 }
 
@@ -946,6 +1007,114 @@ mod harness_self_tests {
                 &run("fold", &["1"], vec![t()])
             )
             .is_empty()
+        );
+    }
+
+    /// A source naming a target that does not exist, and the target itself
+    /// absent — the #4118 shape.
+    const U_SRC: &str = "01UNRESOLVEDSRC0000000000A";
+    const U_TGT: &str = "01UNRESOLVEDTGT0000000000B";
+
+    /// Seed one arm's pool: a live source whose content names a target that is
+    /// not in `blocks`. Raw inserts, because the point is to control precisely
+    /// which arm's maintainers ran.
+    async fn seed_unresolved_source(pool: &SqlitePool) {
+        // dynamic-sql: test-only oracle fixture (not a production query path)
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', ?, 1)",
+        )
+        .bind(U_SRC)
+        .bind(format!("see [[{U_TGT}]]"))
+        .execute(pool)
+        .await
+        .expect("seed source block");
+    }
+
+    async fn arm_run(name: &'static str, pool: &SqlitePool) -> ArmRun {
+        ArmRun {
+            name,
+            output: Vec::new(),
+            snapshot: capture(pool, &Normalisation::default()).await,
+            fallback_delta: 0,
+        }
+    }
+
+    /// **The acceptance criterion of #4217.** Two arms that agree on
+    /// `block_links` and disagree ONLY on `block_links_unresolved` must be
+    /// reported.
+    ///
+    /// The divergence is built out of production writers rather than planted:
+    /// one arm runs `reindex_block_links` for the source, the other does not —
+    /// which is exactly what a bulk path that skipped a `ReindexBlockLinks`
+    /// enqueue for one of its items leaves behind. `block_links` is EMPTY on
+    /// both arms (the target does not exist, so the edge is unstorable either
+    /// way), so this divergence is invisible in every other table the snapshot
+    /// reads: it is the record of the OWED edge, and nothing else.
+    ///
+    /// Against the pre-#4217 six-table snapshot this test reports ZERO
+    /// divergences — the oracle passes and the divergence ships.
+    #[tokio::test]
+    async fn diff_reports_a_divergence_only_in_the_unresolved_link_index_4217() {
+        let batch_dir = TempDir::new().expect("tempdir");
+        let batch_pool = init_pool(&batch_dir.path().join("batch.db"))
+            .await
+            .expect("init_pool");
+        let fold_dir = TempDir::new().expect("tempdir");
+        let fold_pool = init_pool(&fold_dir.path().join("fold.db"))
+            .await
+            .expect("init_pool");
+
+        seed_unresolved_source(&batch_pool).await;
+        seed_unresolved_source(&fold_pool).await;
+
+        // Only ONE arm's link maintainer runs.
+        agaric_store::cache::reindex_block_links(&batch_pool, U_SRC)
+            .await
+            .expect("reindex_block_links");
+
+        let batch = arm_run("batch", &batch_pool).await;
+        let fold = arm_run("fold", &fold_pool).await;
+
+        // The precondition, asserted rather than assumed: the arms really do
+        // agree on the edge table, so nothing but the obligation index can be
+        // what the divergence below names.
+        for run in [&batch, &fold] {
+            let links = run
+                .snapshot
+                .tables
+                .iter()
+                .find(|t| t.name == "block_links")
+                .expect("block_links must be in the snapshot");
+            assert!(
+                links.rows.is_empty(),
+                "the {} arm must hold no edge — the target does not exist, so the FK on \
+                 block_links.target_id makes the edge unstorable on either arm",
+                run.name,
+            );
+        }
+
+        let divergences = diff(&batch, &fold);
+        assert_eq!(
+            divergences.len(),
+            1,
+            "exactly the obligation must diverge, got: {divergences:#?}"
+        );
+        assert_eq!(divergences[0].table, "block_links_unresolved");
+        assert_eq!(divergences[0].row, format!("{U_SRC}/{U_TGT}"));
+        assert_eq!(divergences[0].column, "<row presence>");
+        assert_eq!(divergences[0].fold, MISSING);
+
+        // The other half of the pair: once the fold arm runs the same
+        // maintainer the arms converge, so the new table cannot make the
+        // oracle permanently red.
+        agaric_store::cache::reindex_block_links(&fold_pool, U_SRC)
+            .await
+            .expect("reindex_block_links");
+        let fold = arm_run("fold", &fold_pool).await;
+        assert!(
+            diff(&batch, &fold).is_empty(),
+            "two arms that ran the same maintainers must compare equal, got: {:#?}",
+            diff(&batch, &fold)
         );
     }
 }

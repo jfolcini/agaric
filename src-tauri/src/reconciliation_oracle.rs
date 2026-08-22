@@ -53,6 +53,7 @@
 //! | `pages_cache.{inbound_link_count,child_block_count}` | `blocks`, `block_links` | `maintain_pages_cache_counts_after_op` (sync arms) / `rebuild_pages_cache_counts` (deferred cohort arm) |
 //! | `page_link_cache` (the page-level `block_links` roll-up) | `blocks`, `block_links` | `reindex_page_link_cache_for_block` (the `ReindexBlockLinks` task — the SOLE per-block writer) / `rebuild_page_link_cache` (the `RebuildPageLinkCache` task) |
 //! | `block_links` ITSELF (#3955) | `blocks` — **`blocks.content`**, not `block_links` | `reindex_block_links_conn` / `reindex_block_links_split` (the ONLY writers; there is no vault-wide rebuild) — audited by [`reconcile_block_links`], NOT by [`reconcile`] |
+//! | `block_links_unresolved` (#4229) | `blocks.content` **and** `block_links` | `sync_unresolved_links` (inside both reindex writers) / `rebuild_block_links_unresolved_conn` (the snapshot-RESET arm, #4218) — audited by [`reconcile_block_links_unresolved`], NOT by [`reconcile`] |
 //!
 //! Deliberately **not** covered here — see the follow-up issues: the agenda
 //! cache, the projected-agenda cache, `block_tag_refs`,
@@ -1490,6 +1491,344 @@ pub async fn assert_block_links_reconciled(pool: &SqlitePool, context: &str) {
     if let Some(report) = block_links_reconciliation_failure(pool, context).await {
         panic!("{report}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Artefact 7 — `block_links_unresolved`, the OBLIGATIONS index (#4229)
+// ---------------------------------------------------------------------------
+
+/// Every `(source, target)` row of `block_links_unresolved`.
+async fn dump_block_links_unresolved(pool: &SqlitePool) -> Result<Vec<(String, String)>, AppError> {
+    const SQL: &str = "SELECT source_id, target_id FROM block_links_unresolved";
+    // dynamic-sql: static SQL, test-only oracle base-table dump.
+    let rows = sqlx::query_as::<_, (String, String)>(SQL)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
+}
+
+/// Recompute the whole OBLIGATION set: every `(source, target)` an edge is
+/// owed for, from `blocks.content` and the `block_links` rows that exist.
+///
+/// The rule is `sync_unresolved_links`' rule, transcribed: a live source owes
+/// a target when its `content` names the token and no `block_links` row
+/// carries the edge. Production reaches that answer by reading `block_links`
+/// BACK after its INSERT rather than predicting which offered targets landed
+/// — so `block_links` is a BASE table to this artefact, exactly as it is to
+/// the two roll-ups, and that is deliberate here:
+///
+/// * it is what the writer actually implements. Deriving the expected side
+///   from a from-CONTENT rebuild of `block_links` instead would report an
+///   obligation as WRONG whenever the edge is one #3903/#4118 lost — i.e. it
+///   would fire on the very state the table exists to record;
+/// * it keeps the two link artefacts orthogonal, so a single defect is
+///   reported once. [`reconcile_block_links`] owns "is the EDGE set right?";
+///   this one owns "given that edge set, is the OWED set right?". A vault
+///   missing an edge that content demands gets one MISSING from the former and
+///   a correctly-recorded obligation here — which together are the accurate
+///   description of a vault mid-repair.
+///
+/// # The one departure, and the one thing it is NOT
+///
+/// Live-scoped on the SOURCE, like production's read (`SELECT content FROM
+/// blocks WHERE id = ? AND deleted_at IS NULL`), because a reindex of a
+/// tombstoned source clears its rows. That is the expected side only: the
+/// EXTRA arm below is deliberately NOT liveness-scoped, because no delete arm
+/// enqueues `ReindexBlockLinks`, so a tombstoned source's rows survive by
+/// design — the same asymmetry, and for the same reason, as
+/// [`fold_content_link_targets`].
+pub async fn rebuild_block_links_unresolved_from_content(
+    pool: &SqlitePool,
+) -> Result<BTreeSet<(String, String)>, AppError> {
+    let blocks = dump_blocks(pool).await?;
+    let links: BTreeSet<(String, String)> = dump_block_links(pool).await?.into_iter().collect();
+    Ok(fold_block_links_unresolved(&blocks, &links))
+}
+
+fn fold_block_links_unresolved(
+    blocks: &[BaseBlock],
+    links: &BTreeSet<(String, String)>,
+) -> BTreeSet<(String, String)> {
+    let mut out = BTreeSet::new();
+    for source in blocks {
+        if source.deleted_at.is_some() {
+            continue;
+        }
+        for target_id in fold_content_link_targets(source.content.as_deref()) {
+            let pair = (source.id.clone(), target_id);
+            if !links.contains(&pair) {
+                out.insert(pair);
+            }
+        }
+    }
+    out
+}
+
+/// How much of the obligation artefact's subject matter EXISTS in a given
+/// database — the "a green oracle must not be a green vacuum" discipline
+/// [`OracleCoverage`] and [`BlockLinksCoverage`] enforce, applied to this one.
+///
+/// Kept as its OWN struct rather than as extra fields on [`BlockLinksCoverage`]
+/// because the two artefacts are non-vacuous for different reasons: an edge
+/// fixture is interesting when the cross-space filter is armed, an obligation
+/// fixture is interesting when something is actually owed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockLinksUnresolvedCoverage {
+    /// Rows in `block_links_unresolved` — what the writers produced.
+    pub unresolved_rows: i64,
+    /// Obligations the fold says MUST exist — the expected side. Zero means
+    /// every token in the vault is already an edge and the whole artefact
+    /// compared `{} == {}`.
+    pub owed_by_content: i64,
+    /// Obligations whose target EXISTS in `blocks` and is live.
+    ///
+    /// The sharp counter. An obligation to an ABSENT target is the easy shape
+    /// (#4118 case 1) and any fold that parsed tokens at all would produce it.
+    /// One whose target is present and live is owed for a subtler reason — the
+    /// cross-space/space-stamp window (#4118 case 2), or an edge some writer
+    /// dropped — and it is the shape a fold that quietly required "target not
+    /// in `blocks`" would MISS. A fixture with zero of these cannot tell those
+    /// two folds apart.
+    pub owed_with_a_live_target: i64,
+}
+
+/// Count what the obligation artefact is actually auditing.
+///
+/// # Errors
+/// Returns [`AppError`] if either dump fails.
+pub async fn block_links_unresolved_coverage(
+    pool: &SqlitePool,
+) -> Result<BlockLinksUnresolvedCoverage, AppError> {
+    let blocks = dump_blocks(pool).await?;
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+    let links: BTreeSet<(String, String)> = dump_block_links(pool).await?.into_iter().collect();
+
+    // Folded from the SAME function the artefact uses, never counted in SQL:
+    // "the fixture covers this" and "the oracle audited this" must come from
+    // one computation so they cannot drift apart.
+    let owed = fold_block_links_unresolved(&blocks, &links);
+    let owed_with_a_live_target = owed
+        .iter()
+        .filter(|(_, target_id)| {
+            by_id
+                .get(target_id.as_str())
+                .is_some_and(|t| t.deleted_at.is_none())
+        })
+        .count();
+
+    Ok(BlockLinksUnresolvedCoverage {
+        unresolved_rows: i64::try_from(dump_block_links_unresolved(pool).await?.len())
+            .unwrap_or(i64::MAX),
+        owed_by_content: i64::try_from(owed.len()).unwrap_or(i64::MAX),
+        owed_with_a_live_target: i64::try_from(owed_with_a_live_target).unwrap_or(i64::MAX),
+    })
+}
+
+/// The maintenance sites that own every `block_links_unresolved` divergence.
+const BLOCK_LINKS_UNRESOLVED_OWNER: &str = "sync_unresolved_links (agaric-store's cache::block_links), called at the \
+     tail of BOTH reindex writers — reindex_block_links_conn and \
+     reindex_block_links_split — so a source's whole owed set is recomputed \
+     from its current content and its post-diff block_links rows on every \
+     reindex of it; plus rebuild_block_links_unresolved_conn, the vault-wide \
+     arm agaric-sync's snapshot RESET runs in-transaction after wiping the \
+     table (#4218). One level up: the arm of \
+     materializer::dispatch::invalidations_for_op that enqueues \
+     ReindexBlockLinks at all (only CreateBlock and EditBlock do). A row lost \
+     from here is a repair that silently never happens — the target's \
+     ReindexBlockLinks asks this table who was waiting and acts only on what \
+     it returns, and every other link artefact folds block_links, which does \
+     NOT contain the owed edge. That invisibility is why the table needs an \
+     auditor more than its sibling does, not less";
+
+/// Diff `block_links_unresolved` against a re-derivation from block content
+/// (#4229).
+///
+/// # Why the satellite needs its own auditor
+///
+/// `block_links` at least fails VISIBLY: a dropped edge is a backlink a user
+/// can see is missing, and since #3955 [`reconcile_block_links`] re-derives it.
+/// Its satellite fails invisibly by construction. The rows exist so that a
+/// repair can find them later; a row lost from it is a repair that never
+/// happens, on a vault whose visible state — an edge missing from
+/// `block_links` — is indistinguishable from the state the user already had.
+/// Nothing else in the system reads the table, so nothing else can notice.
+///
+/// # Lane, and its relationship to [`reconcile_block_links`]
+///
+/// **Scheduled/directed lane, NOT [`reconcile`]** — inherited from its sibling
+/// for the same three reasons (the re-parse cost per op of every generated
+/// chain; `reconcile`'s own fixtures writing link rows directly; MISSING being
+/// triage rather than a gate on a vault carrying pre-#4118 losses).
+///
+/// It is also a SEPARATE entry point from
+/// [`block_links_reconciliation_failure`] rather than an extra arm inside it.
+/// The two artefacts answer different questions and can legitimately disagree
+/// with the world in opposite directions at the same moment — a vault mid-
+/// repair has a MISSING edge and a correct obligation — so folding them into
+/// one report would make each one's fixtures noise for the other.
+///
+/// # The two arms
+///
+/// * **MISSING** (content owes the edge, no row). Sound for the shape it
+///   exists to catch: a writer that dropped a token without recording it, the
+///   #4118 defect itself, and the restore path #4218 was. It CAN also fire on
+///   a vault whose losses predate #4118 (the index is populated by the
+///   reindexes that run after it landed, and — outside a snapshot restore —
+///   is not backfilled), and transiently between a content edit landing and
+///   its `ReindexBlockLinks` draining. Triage, not a regression signal.
+///
+///   One window is this artefact's ALONE and is irreducible, so it is
+///   enumerated rather than discovered during a triage: a `PurgeBlock` of a
+///   linked TARGET hard-deletes the row, the `ON DELETE CASCADE` on
+///   `block_links.target_id` takes the edge with it, and no delete/purge arm
+///   reindexes the referrer (`lifecycle_rebuild_tasks` fans out cache
+///   REBUILDS, none of which is a `ReindexBlockLinks`). The referrer's content
+///   still names the token, so the debt becomes real with nothing recording
+///   it, on a vault where every writer behaved exactly as designed.
+///   [`reconcile_block_links`] does NOT share this window — its expected side
+///   requires the target to EXIST in `blocks`, so a purged target simply drops
+///   out of it — and this one cannot borrow that escape: an obligation whose
+///   target is absent is #4118 case 1, the primary shape the table exists for,
+///   and `owed_with_a_live_target` exists precisely to catch a fold that
+///   quietly required the target to be missing. A purged target and a
+///   never-yet-created one are indistinguishable from state alone, so the
+///   choice is which of the two to serve, and the table's whole purpose picks
+///   the second.
+/// * **EXTRA** (row, nothing owes it). Scoped to production's DELETE rule
+///   exactly — `sync_unresolved_links` deletes a source's row when the current
+///   content no longer names the target OR when `block_links` now carries the
+///   edge — so both of those, and only those, are reported. A row is NOT
+///   reported merely because its source is now tombstoned: no delete arm
+///   enqueues `ReindexBlockLinks`, so those rows survive by design, and an arm
+///   that fired on them would redden on every ordinary block deletion and get
+///   muted.
+///
+/// A row whose source has been PURGED cannot exist (`source_id REFERENCES
+/// blocks(id) ON DELETE CASCADE`) and is skipped rather than reported, for the
+/// same reason the sibling skips an absent source.
+///
+/// Divergences come back MISSING-first, each arm sorted by `(source, target)`,
+/// so `first` is deterministic.
+///
+/// # Errors
+/// Returns [`AppError`] if any dump fails.
+pub async fn reconcile_block_links_unresolved(
+    pool: &SqlitePool,
+) -> Result<Vec<Divergence>, AppError> {
+    let blocks = dump_blocks(pool).await?;
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+    let links: BTreeSet<(String, String)> = dump_block_links(pool).await?.into_iter().collect();
+    let expected = fold_block_links_unresolved(&blocks, &links);
+    let stored: BTreeSet<(String, String)> = dump_block_links_unresolved(pool)
+        .await?
+        .into_iter()
+        .collect();
+
+    let mut out = Vec::new();
+
+    // --- MISSING: an edge is owed, and nothing records the debt -------------
+    for (source_id, target_id) in expected.difference(&stored) {
+        out.push(Divergence {
+            artefact: "block_links_unresolved.row",
+            key: format!("{source_id} -> {target_id}"),
+            expected: "a block_links_unresolved row: the live source's content names this \
+                       token and no block_links row carries the edge, so the edge is OWED \
+                       and this row is the only record of it"
+                .to_owned(),
+            actual: "no row in block_links_unresolved — the repair that would re-link this \
+                     edge when the target becomes linkable can no longer be found"
+                .to_owned(),
+            owner: BLOCK_LINKS_UNRESOLVED_OWNER,
+        });
+    }
+
+    // --- EXTRA: a debt nothing owes ----------------------------------------
+    for (source_id, target_id) in &stored {
+        let Some(source) = by_id.get(source_id.as_str()) else {
+            // Unstorable: `source_id REFERENCES blocks(id) ON DELETE CASCADE`
+            // (migration 0112), so a purge takes the row with it.
+            continue;
+        };
+        // Deliberately UNSCOPED by liveness — see the doc above. A tombstoned
+        // source keeps both its edges and its obligations because nothing
+        // reindexes it on delete.
+        let named = fold_content_link_targets(source.content.as_deref()).contains(target_id);
+        let linked = links.contains(&(source_id.clone(), target_id.clone()));
+        if named && !linked {
+            continue;
+        }
+        let reason = if linked {
+            "block_links now carries the edge, so the DELETE arm's \
+             `target_id IN (SELECT target_id FROM block_links WHERE source_id = ?1)` \
+             clause must have removed it — leaving it re-drives a repair that is done"
+        } else {
+            "the source block's content column names no such [[ULID]] / ((ULID)) token, \
+             so the DELETE arm's `target_id NOT IN (parsed tokens)` clause must have \
+             removed it — leaving it re-links an edge the source has since deleted"
+        };
+        out.push(Divergence {
+            artefact: "block_links_unresolved.row",
+            key: format!("{source_id} -> {target_id}"),
+            expected: format!("no block_links_unresolved row ({reason})"),
+            actual: "a row in block_links_unresolved".to_owned(),
+            owner: BLOCK_LINKS_UNRESOLVED_OWNER,
+        });
+    }
+
+    Ok(out)
+}
+
+/// The formatted first `block_links_unresolved` divergence, or `None` when the
+/// table agrees with a re-derivation from content.
+///
+/// Reports under its OWN banner (see [`reconcile_block_links_unresolved`] for
+/// why it is not merged into the sibling's): this one names an OBLIGATION
+/// index, and its divergences are repairs that will or will not happen rather
+/// than edges that are or are not there.
+pub async fn block_links_unresolved_reconciliation_failure(
+    pool: &SqlitePool,
+    context: &str,
+) -> Option<String> {
+    let divergences = match reconcile_block_links_unresolved(pool).await {
+        Ok(d) => d,
+        Err(e) => {
+            return Some(format!(
+                "block_links_unresolved oracle could not read the database at [{context}]: {e}"
+            ));
+        }
+    };
+    let first = divergences.first()?;
+    Some(format!(
+        "BLOCK_LINKS_UNRESOLVED RECONCILIATION FAILED at [{context}]\n  \
+         block_links_unresolved disagrees with a re-derivation from block content in {} \
+         place(s); first:\n    {first}",
+        divergences.len(),
+    ))
+}
+
+/// Panic with the first `block_links_unresolved` divergence unless the table
+/// equals its re-derivation.
+pub async fn assert_block_links_unresolved_reconciled(pool: &SqlitePool, context: &str) {
+    if let Some(report) = block_links_unresolved_reconciliation_failure(pool, context).await {
+        panic!("{report}");
+    }
+}
+
+/// Bring `block_links_unresolved` in line with PRODUCTION's vault-wide arm —
+/// the same `rebuild_block_links_unresolved` the snapshot RESET runs (#4218).
+///
+/// The settle for a fixture that wrote `blocks.content` (and possibly
+/// `block_links`) directly, with no op behind it, so no `ReindexBlockLinks`
+/// was ever enqueued. Mirrors [`settle_page_link_cache_rebuild`], and is the
+/// ONE place the artefact and the production rebuild touch: the fold above is
+/// an independent transcription, so a test that settles with this and then
+/// asserts with [`assert_block_links_unresolved_reconciled`] is pinning the two
+/// derivations against each other rather than asking one of them twice.
+///
+/// # Errors
+/// Returns [`AppError`] if the rebuild fails.
+pub async fn settle_block_links_unresolved(pool: &SqlitePool) -> Result<(), AppError> {
+    agaric_store::cache::rebuild_block_links_unresolved(pool).await
 }
 
 // ---------------------------------------------------------------------------

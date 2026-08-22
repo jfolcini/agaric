@@ -5204,3 +5204,121 @@ async fn block_links_records_a_target_whose_space_is_not_stamped_yet_4118() {
         "and the record must clear"
     );
 }
+
+// ====================================================================
+// rebuild_block_links_unresolved (#4218)
+// ====================================================================
+
+/// Every `(source, target)` obligation in the vault, sorted.
+async fn all_unresolved(pool: &SqlitePool) -> Vec<(String, String)> {
+    let mut rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT source_id, target_id FROM block_links_unresolved")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    rows.sort();
+    rows
+}
+
+/// Plant an obligation row the writers would never have produced.
+async fn plant_unresolved(pool: &SqlitePool, source: &str, target: &str) {
+    sqlx::query("INSERT INTO block_links_unresolved (source_id, target_id) VALUES (?, ?)")
+        .bind(source)
+        .bind(target)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// #4218 — the vault-wide recompute, which the snapshot RESET runs in its own
+/// transaction after wiping the table.
+///
+/// It must reproduce, for every source at once, exactly what
+/// `sync_unresolved_links` produces for one: a live source owes a target when
+/// its content names the token and no `block_links` row carries the edge.
+///
+/// The fixture puts one block in each equivalence class the rule distinguishes,
+/// so an implementation that dropped any single clause changes the answer:
+///
+/// * a token whose target does not exist — OWED (the #4118 case);
+/// * a token that IS an edge — NOT owed (the `NOT EXISTS block_links` clause);
+/// * a token under a TOMBSTONED source — NOT owed (a reindex of a tombstone
+///   clears its rows, so a rebuild must not resurrect them);
+/// * a stale row naming a token nobody writes any more — WIPED, which is what
+///   makes this a recompute rather than a top-up.
+#[tokio::test]
+async fn rebuild_block_links_unresolved_recomputes_the_whole_vault_4218() {
+    let (pool, _dir) = test_pool().await;
+
+    let owing = "01HZ00000000000000000OWING";
+    let linked = "01HZ0000000000000000LINKED";
+    let dead = "01HZ00000000000000000DEAD1";
+    let absent = "01HZ0000000000000000ABSENT";
+    let present = "01HZ000000000000000PRESENT";
+
+    insert_block(&pool, present, "content", "the target").await;
+    insert_block(&pool, owing, "content", &format!("see [[{absent}]]")).await;
+    insert_block(&pool, linked, "content", &format!("see (({present}))")).await;
+    insert_block(&pool, dead, "content", &format!("see [[{absent}]]")).await;
+    soft_delete_block(&pool, dead).await;
+
+    // The edge for `linked` really exists — the discharged case has to be a
+    // real discharge, not an absent token.
+    reindex_block_links(&pool, linked).await.unwrap();
+    assert_eq!(
+        count_rows(&pool, "block_links").await,
+        1,
+        "seed: the resolvable token must have become an edge"
+    );
+
+    // A row from the PREVIOUS vault, which is the state a snapshot RESET is
+    // recovering from: the wipe empties the table, and anything that survived
+    // would describe content this vault does not have.
+    plant_unresolved(&pool, present, absent).await;
+
+    rebuild_block_links_unresolved(&pool).await.unwrap();
+
+    assert_eq!(
+        all_unresolved(&pool).await,
+        vec![(owing.to_owned(), absent.to_owned())],
+        "#4218: exactly the live source whose token is not an edge owes anything — the \
+         discharged token must not be re-owed, the tombstone must not be resurrected, \
+         and the stale row must be gone"
+    );
+
+    // Idempotent: the rebuild is a recompute, so running it again on the state
+    // it just produced must be a fixed point.
+    rebuild_block_links_unresolved(&pool).await.unwrap();
+    assert_eq!(
+        all_unresolved(&pool).await,
+        vec![(owing.to_owned(), absent.to_owned())],
+        "a second rebuild must neither duplicate nor drop the obligation"
+    );
+}
+
+/// #4218 — the degenerate vault. A rebuild with nothing to derive from must
+/// write nothing and, in particular, must not fail: the snapshot RESET calls
+/// it inside the restore transaction, so an error here would abort an
+/// otherwise-valid restore, and an empty snapshot is a legal one.
+#[tokio::test]
+async fn rebuild_block_links_unresolved_on_an_empty_vault_writes_nothing_4218() {
+    let (pool, _dir) = test_pool().await;
+
+    rebuild_block_links_unresolved(&pool).await.unwrap();
+    assert_eq!(
+        count_rows(&pool, "block_links_unresolved").await,
+        0,
+        "a vault with no blocks owes nothing"
+    );
+
+    // A vault with blocks but no link syntax at all takes the same path
+    // through the content pre-filter and must also come out empty.
+    insert_block(&pool, "01HZ00000000000000000PLAIN", "content", "no links").await;
+    insert_block_null_content(&pool, "01HZ0000000000000000000NUL", "content").await;
+    rebuild_block_links_unresolved(&pool).await.unwrap();
+    assert_eq!(
+        count_rows(&pool, "block_links_unresolved").await,
+        0,
+        "content with no tokens — and NULL content — owe nothing"
+    );
+}
