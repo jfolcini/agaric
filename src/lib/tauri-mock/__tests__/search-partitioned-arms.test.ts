@@ -22,7 +22,7 @@
  *     `[0, MAX_SEARCH_RESULTS]` inclusive; only `101`, `150` and `0` were
  *     exercised, so nothing failed if `<=` became `<`.
  *  4. **Kind, for the two values the backend never turns into an `AppError`.**
- *     `page_limit` / `block_limit` are `u32` (`src-tauri/src/commands/queries.rs:715-716`), so `-1`
+ *     `page_limit` / `block_limit` are `u32` (`src-tauri/src/commands/queries.rs:716-717`), so `-1`
  *     and `50.5` die in serde at the IPC boundary. The assertions below pin
  *     only THAT the mock refuses, never a kind — the documented exception
  *     `search_blocks` already carries.

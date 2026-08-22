@@ -767,7 +767,7 @@ describe('run_advanced_query — groupBy cursor is rejected the same way the fla
  * The cursor payload carries USER TEXT: the `Title` term is the raw page
  * title (`SORT_COLUMN_GETTERS.title` → `row.content`) and `Priority` is a
  * user-configurable label. The engine encodes
- * `URL_SAFE_NO_PAD.encode(json.as_bytes())` (`src-tauri/agaric-store/src/query/engine.rs:176`) — i.e. the
+ * `URL_SAFE_NO_PAD.encode(json.as_bytes())` (`src-tauri/agaric-store/src/query/engine.rs:177`) — i.e. the
  * UTF-8 bytes of the JSON. `btoa` cannot do that: it throws
  * `InvalidCharacterError` above U+00FF and silently encodes the LATIN-1 byte
  * for U+0080–U+00FF, so the two failure modes are DIFFERENT and both are
@@ -887,7 +887,7 @@ describe('run_advanced_query — cursor byte fidelity for non-ASCII values (#386
   })
 
   /**
-   * #3863 note 1 — `EngineRow::cursor_value` (`src-tauri/agaric-store/src/query/engine.rs:322`) reads the
+   * #3863 note 1 — `EngineRow::cursor_value` (`src-tauri/agaric-store/src/query/engine.rs:313`) reads the
    * COALESCE'd `last_edited: i64` and can only ever emit `CursorValue::Int`;
    * `CursorValue::Null` is UNREACHABLE for that column. The mock's
    * "no op-log activity" sentinel must therefore encode as the engine's
@@ -1031,7 +1031,7 @@ describe('run_advanced_query — LastEdited filter reads the op-log, not the see
  *    rejects outright rather than one that merely differs. The engine's own
  *    answer for "this row has no rank" is `Null`
  *    (`EngineRow::cursor_value`'s `self.rank.map_or(CursorValue::Null,
- *    CursorValue::Real)`, `src-tauri/agaric-store/src/query/engine.rs:322`), so that is what the guard emits.
+ *    CursorValue::Real)`, `src-tauri/agaric-store/src/query/engine.rs:330`), so that is what the guard emits.
  *    Unreachable through `run_advanced_query` — the MATCH narrowing
  *    (`matchesFtsIndex`) and the ranker fold the SAME `stripForFts` text with
  *    the SAME function, so a surviving row always has ≥1 occurrence — which is

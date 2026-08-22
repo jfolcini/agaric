@@ -424,6 +424,12 @@ pass_filenames = false
 # scanned source still re-validates it.
 files = '\.(md|ts|tsx)$|^scripts/doc-code-paths-baseline\.json$'
 stages = ["pre-commit"]
+# `verbose = true` is load-bearing, same as `commit-sentinel` below: prek
+# swallows a PASSING hook's output, and the line-bounds check (#4258) exits
+# 0 by design (see the #4244 part (b) comment in check-doc-code-paths.mjs's
+# `check()`) — without this, its WARNING never reaches the terminal on the
+# green runs where it actually fires.
+verbose = true
 
 # …and its #3962/#4017 source suite. This guard carries TWO working-tree
 # reads, not one: the doc body, and the cited target's existence
