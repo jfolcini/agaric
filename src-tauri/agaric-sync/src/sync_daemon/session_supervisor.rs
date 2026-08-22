@@ -1146,13 +1146,63 @@ async fn peer_rejection_during_pairing_window(
 }
 
 // ---------------------------------------------------------------------------
-// record_pull_failure — book the failure, report it once per streak (#4120)
+// The suppressible failure texts of the initiator path (#4201)
+// ---------------------------------------------------------------------------
+//
+// Four texts across the five sites of `try_sync_with_peer` that reach
+// `record_initiator_failure` — `connect_failure_message` serves two of them
+// (the dial and the stream open on top of it). The one user-facing text the
+// initiator emits that is NOT here is `Sync cancelled: …`, which bypasses the
+// gate on purpose: a user cancel is not a peer failure and books nothing.
+//
+// Named rather than inlined at their sites because the text *is* the
+// suppression key: `record_initiator_failure` withholds a repeat only when the
+// incoming bytes equal a text already reported for this peer this streak. That
+// makes the mechanism's real-world effectiveness a property of these four
+// texts and of the `Display` impls two of them interpolate — and a property
+// with no name is a property no test can pin. `the_*_failure_text_*` tests in
+// this module's `tests` are that pin.
+
+/// The dial that ran out of budget. Fully deterministic: no error is
+/// interpolated, only the [`CONNECT_TIMEOUT`] constant.
+fn connect_timeout_message() -> String {
+    format!(
+        "Connection failed: peer did not answer within {}s",
+        CONNECT_TIMEOUT.as_secs()
+    )
+}
+
+/// The dial, or the stream open on top of it, that failed outright.
+///
+/// Interpolates an error the sync layer does not own (iroh's), so the
+/// suppression key is only as stable as that `Display`. Pinned by
+/// `a_real_iroh_connect_error_formats_identically_on_two_independent_dials_4201`,
+/// which drives two real failing dials from two independently bound endpoints
+/// and requires the two texts to be byte-equal — so an iroh upgrade that starts
+/// embedding a varying detail fails a test rather than silently un-suppressing
+/// the toast.
+fn connect_failure_message(e: &impl std::fmt::Display) -> String {
+    format!("Connection failed: {e}")
+}
+
+/// A session that was established and then died.
+fn session_failure_message(e: &impl std::fmt::Display) -> String {
+    format!("Sync failed: {e}")
+}
+
+/// The refusal to sync at all because a different key is announcing this peer's
+/// name (#4203). A constant, so it is exactly stable as a suppression key.
+const IDENTITY_MISMATCH_MESSAGE: &str =
+    "peer identity does not match the one paired with this device";
+
+// ---------------------------------------------------------------------------
+// record_initiator_failure — book the failure, report it once per streak (#4120)
 // ---------------------------------------------------------------------------
 
-/// Book an initiator-side pull failure: **always** the backoff, **always** the
-/// log, but the generic `Sync failed: …` / `Connection failed: …` event only
-/// once per *distinct failure text* per streak, and then only while the peer is
-/// demonstrably still pulling from us.
+/// Book an initiator-side failure: **always** the backoff, **always** the
+/// log, but the user-facing `Sync failed: …` / `Connection failed: …` /
+/// identity-mismatch event only once per *distinct failure text* per streak,
+/// and then only while the peer is demonstrably still pulling from us.
 ///
 /// # The shape this exists for (#4084 → #4103 → #4120)
 ///
@@ -1201,8 +1251,7 @@ async fn peer_rejection_during_pairing_window(
 ///
 /// A repeat is the *same failure text* against the *same peer*. Keying on the
 /// peer's failure count alone would swallow a failure whose cause changed
-/// mid-streak — see the inline comment in the body for why that is two bugs,
-/// not one.
+/// mid-streak — see the inline comment in the body.
 ///
 /// The memory resets exactly where the situation changes, because it rides on
 /// the scheduler's per-peer backoff entry: [`SyncScheduler::record_success`]
@@ -1210,59 +1259,114 @@ async fn peer_rejection_during_pairing_window(
 /// [`SyncScheduler::clear_backoff`] drops every entry on a pairing act (#3547).
 /// The next failure after either is reported again, in full.
 ///
+/// # Alternating causes (#4201)
+///
+/// The memory is a bounded *set* of the streak's reported texts, not the single
+/// slot #4120 shipped. A peer failing `A, B, A, B, …` matched the slot on
+/// neither cycle, so suppression never engaged and #4084's forever-toast came
+/// back at half the rate. See [`SyncScheduler::record_failure_and_take_report`]
+/// and `MAX_REMEMBERED_REPORTS` for the bound and for what evicting the oldest
+/// text degrades to.
+///
+/// # Why the identity refusal routes through here too (#4203)
+///
+/// It used to be the one initiator-side failure that emitted its own event
+/// unconditionally, on the argument that "a different device is answering to a
+/// paired peer's name" is security-relevant, not transient, and asks for an
+/// action the user genuinely has to take. All of that is true of the *first*
+/// report and none of it is true of the hundredth: a red toast once a minute
+/// forever is the #4084 shape with a different string, and it teaches the user
+/// to dismiss toasts unread — including the ones that are new.
+///
+/// Routing it here is a narrower change than it looks, because the gate is
+/// `already_reported && still_serving`, not repetition alone:
+///
+/// * Its text is [`IDENTITY_MISMATCH_MESSAGE`], a **constant** — so the
+///   suppression key for this one site is exactly stable, with no `Display`
+///   dependency at all.
+/// * It is withheld only while the *real* peer is still pulling from us inside
+///   the freshness window. If the impostor announcement is the only thing on
+///   the wire, our `streamed_at` goes stale within two resync intervals and the
+///   refusal is reported every cycle again — the case where a user who has lost
+///   their peer to something announcing its name most needs to hear it.
+/// * That gate is not fooled by the impostor, and this is what makes routing a
+///   *security-relevant* refusal through it safe at all. `streamed_at` is
+///   stamped by `session_state_machine`'s responder path, and the responder
+///   resolves an inbound session through `get_peer_ref_by_endpoint_id` on the
+///   key the QUIC handshake **authenticated** — not on any name the peer
+///   claims. So a fresh `streamed_at` on this peer's row is evidence that the
+///   device holding the *pinned* key streamed to us inside the window. The
+///   device announcing the mismatched key resolves to a different row, or to
+///   none, and cannot refresh it — with one exception, stated below rather than
+///   left for a reader to discover, because this bullet is what licenses
+///   suppressing a security-relevant refusal at all.
+/// * **The exception: an open pairing window.** `server::handle_incoming_sync`
+///   admits a key it has no binding for when the caller proves knowledge of the
+///   pairing passphrase (#855/#1519), and on that branch alone it deliberately
+///   does *not* set `expected_remote_id` — so the FSM falls back to the device
+///   id the peer advertised, which is a claim. A proof-bearing device can
+///   therefore claim a paired peer's id and have `record_stream_in_tx` stamp
+///   that peer's `streamed_at`. It cannot take the *binding* (post-session
+///   `peer_is_bound_to_another_key` refuses to re-point a bound peer), and the
+///   window is bounded by `PENDING_PAIRING_TTL_MS` (5 min) and by the user
+///   having started a pairing, so the reachable effect is at most a few
+///   suppressed refusals inside a window the user opened for a device they hold
+///   the passphrase for. It is not "never"; it is "not without the passphrase,
+///   and not for longer than the pairing window". The claimed-id stamp on that
+///   branch is a pre-existing hole in the responder, not something this gate
+///   introduces — but the gate now depends on it, so it is named here.
+/// * The memory resets on a successful pull and on a pairing act (#3547),
+///   which is precisely "the user re-paired, so tell them again if it is still
+///   wrong".
+/// * Nothing else about the refusal changes: it still refuses the session, it
+///   still books the backoff, and its `tracing::warn!` still fires every cycle.
+///
 /// # What this deliberately does not do
 ///
-/// It does not touch the backoff (the retry pacing is right), it does not touch
-/// `peers_due_for_resync` (see above), and it does not suppress the *identity
-/// mismatch* refusal above — that one is not a pull that failed, it is a
-/// different device answering to a paired peer's name, and it stays loud.
-fn record_pull_failure(
+/// It does not touch the backoff (the retry pacing is right) and it does not
+/// touch `peers_due_for_resync` (see above).
+fn record_initiator_failure(
     scheduler: &SyncScheduler,
     event_sink: &Arc<dyn SyncEventSink>,
     peer_refs: &[PeerRef],
     peer_id: &str,
     message: String,
 ) {
-    // "Already reported" is per `(peer, message)`, NOT per peer. Read before
-    // recording, though nothing here writes it — the streak count would be a
-    // wrong key twice over:
-    //
-    //   * A failure whose *cause changes* mid-streak is news. The user was told
-    //     "Connection failed: peer did not answer within 10s"; the peer now
-    //     answers and the session dies with "Sync failed: …". A per-peer streak
-    //     calls that a repeat and swallows it.
-    //   * The streak is incremented by routes that do not report through here
-    //     at all — the pinned-identity refusal below books a failure and emits
-    //     its own event. Keyed on the count, the *first* pull failure after one
-    //     of those would be suppressed as a "repeat" of something it has no
-    //     relation to.
+    // Computed before the scheduler call because it reads `peer_refs` and the
+    // clock, not the scheduler's map — keeping it outside means the one
+    // acquisition below covers exactly the check-and-record and nothing else.
+    let still_serving_this_peer = peer_pulled_from_us_recently(scheduler, peer_refs, peer_id);
+
+    // ONE acquisition books the failure and decides the report together
+    // (#4202). "Already reported" is per `(peer, message)`, NOT per peer: a
+    // failure whose *cause changes* mid-streak is news the user has not been
+    // told, and a streak count cannot express that. The count is also the wrong
+    // key for any route that books a failure without reporting through here —
+    // `SyncScheduler::record_failure` is still public, and #4203 removed the
+    // last in-tree caller of it (the pinned-identity refusal, which now routes
+    // here) rather than making the count safe to key on.
     //
     // The failure mode of the message key is bounded in the safe direction: a
     // failure text that churns (an error string carrying a varying detail)
     // degrades to reporting every cycle — i.e. back to the pre-#4120 behaviour,
     // never quieter than it.
-    let already_reported = scheduler.last_reported_failure(peer_id).as_deref() == Some(&*message);
-    let still_serving_this_peer = peer_pulled_from_us_recently(scheduler, peer_refs, peer_id);
+    let booking =
+        scheduler.record_failure_and_take_report(peer_id, &message, still_serving_this_peer);
 
-    scheduler.record_failure(peer_id);
-
-    if already_reported && still_serving_this_peer {
+    if !booking.report {
         // `reason`, not `message`: `message` is tracing's own implicit field
         // for the format string, and a second one would be dropped silently —
         // taking the only surviving copy of the failure text with it.
         tracing::info!(
             peer_id,
             reason = %message,
-            failures = scheduler.failure_count(peer_id),
-            "pull failed again against a peer that is still pulling from us; backoff \
-             recorded, repeat report suppressed (#4084/#4120)"
+            failures = booking.consecutive_failures,
+            "sync failed again against a peer that is still pulling from us; backoff \
+             recorded, repeat report suppressed (#4084/#4120/#4203)"
         );
         return;
     }
 
-    // Recorded only when the user is actually told, so the stored text always
-    // answers "what has this user been shown about this peer?".
-    scheduler.set_last_reported_failure(peer_id, &message);
     event_sink.on_sync_event(SyncEvent::Error {
         message,
         remote_device_id: peer_id.to_string(),
@@ -1504,11 +1608,18 @@ pub async fn try_sync_with_peer(
             "refusing to sync: the announced endpoint id does not match the one bound \
              to this peer"
         );
-        ctx.scheduler.record_failure(peer_id);
-        ctx.event_sink.on_sync_event(SyncEvent::Error {
-            message: "peer identity does not match the one paired with this device".into(),
-            remote_device_id: peer_id.clone(),
-        });
+        // #4203: books the backoff unconditionally and refuses the session
+        // either way; only the *repeat* toast is withheld, and only while the
+        // real peer is still pulling from us. See `record_initiator_failure`
+        // for why a security-relevant condition can still stop shouting once
+        // the user has been told and the pair is visibly working.
+        record_initiator_failure(
+            ctx.scheduler,
+            ctx.event_sink,
+            peer_refs,
+            peer_id,
+            IDENTITY_MISMATCH_MESSAGE.to_string(),
+        );
         return false;
     }
 
@@ -1552,15 +1663,12 @@ pub async fn try_sync_with_peer(
                 timeout_s = CONNECT_TIMEOUT.as_secs(),
                 "peer did not answer the dial within the connect budget"
             );
-            record_pull_failure(
+            record_initiator_failure(
                 ctx.scheduler,
                 ctx.event_sink,
                 peer_refs,
                 peer_id,
-                format!(
-                    "Connection failed: peer did not answer within {}s",
-                    CONNECT_TIMEOUT.as_secs()
-                ),
+                connect_timeout_message(),
             );
             return false;
         }
@@ -1572,12 +1680,12 @@ pub async fn try_sync_with_peer(
                 error = %e,
                 "failed to connect to peer"
             );
-            record_pull_failure(
+            record_initiator_failure(
                 ctx.scheduler,
                 ctx.event_sink,
                 peer_refs,
                 peer_id,
-                format!("Connection failed: {e}"),
+                connect_failure_message(&e),
             );
             // Connection never established, no real session ran.
             // #637: guard.owns is still false → don't clear a sibling's cancel; this
@@ -1594,12 +1702,12 @@ pub async fn try_sync_with_peer(
         Ok(halves) => halves,
         Err(e) => {
             tracing::warn!(peer_id, error = %e, "failed to open a sync stream to peer");
-            record_pull_failure(
+            record_initiator_failure(
                 ctx.scheduler,
                 ctx.event_sink,
                 peer_refs,
                 peer_id,
-                format!("Connection failed: {e}"),
+                connect_failure_message(&e),
             );
             return false;
         }
@@ -1758,13 +1866,13 @@ pub async fn try_sync_with_peer(
             } else {
                 // #4120: books the backoff unconditionally; emits the generic
                 // wrapper only on the first failure of a streak while the peer
-                // is still pulling from us. See `record_pull_failure`.
-                record_pull_failure(
+                // is still pulling from us. See `record_initiator_failure`.
+                record_initiator_failure(
                     ctx.scheduler,
                     ctx.event_sink,
                     peer_refs,
                     peer_id,
-                    format!("Sync failed: {e}"),
+                    session_failure_message(&e),
                 );
                 tracing::warn!(peer_id, error = %e, "sync session failed");
             }
@@ -2580,7 +2688,7 @@ mod tests {
         let scheduler = SyncScheduler::new();
         let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
 
-        record_pull_failure(
+        record_initiator_failure(
             &scheduler,
             &sink,
             &refs,
@@ -2596,7 +2704,7 @@ mod tests {
         );
 
         for _ in 0..5 {
-            record_pull_failure(
+            record_initiator_failure(
                 &scheduler,
                 &sink,
                 &refs,
@@ -2644,7 +2752,7 @@ mod tests {
         // export anything to.
         let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
 
-        record_pull_failure(
+        record_initiator_failure(
             &scheduler,
             &sink,
             &refs,
@@ -2685,7 +2793,7 @@ mod tests {
             let refs = vec![responder_only_ref(streamed_at)];
 
             for _ in 0..3 {
-                record_pull_failure(
+                record_initiator_failure(
                     &scheduler,
                     &sink,
                     &refs,
@@ -2719,7 +2827,7 @@ mod tests {
         other.peer_id = "some-other-peer".into();
 
         for _ in 0..3 {
-            record_pull_failure(
+            record_initiator_failure(
                 &scheduler,
                 &sink,
                 &[other.clone()],
@@ -2746,7 +2854,7 @@ mod tests {
         let scheduler = SyncScheduler::new();
         let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
         let fail = |sched: &SyncScheduler, sink: &Arc<dyn SyncEventSink>| {
-            record_pull_failure(
+            record_initiator_failure(
                 sched,
                 sink,
                 &refs,
@@ -2796,7 +2904,7 @@ mod tests {
         );
 
         for _ in 0..3 {
-            record_pull_failure(
+            record_initiator_failure(
                 &scheduler,
                 &sink,
                 &refs,
@@ -2842,7 +2950,7 @@ mod tests {
         let scheduler = SyncScheduler::new();
         let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
         let fail = |msg: &str| {
-            record_pull_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg.into());
+            record_initiator_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg.into());
         };
 
         fail("Connection failed: peer did not answer within 10s"); // reported
@@ -2869,10 +2977,17 @@ mod tests {
         );
     }
 
-    /// The pinned-identity refusal books a failure and emits its own, different
-    /// event without going through this helper. A streak-count key would read
-    /// that bump as "already reported" and swallow the *first* real pull failure
-    /// after it — a report the user has never seen, about an unrelated fault.
+    /// A bare [`SyncScheduler::record_failure`] bumps the peer's streak without
+    /// telling this helper anything. A streak-count key would read that bump as
+    /// "already reported" and swallow the *first* real pull failure after it —
+    /// a report the user has never seen, about an unrelated fault.
+    ///
+    /// The pinned-identity refusal used to be exactly such a route; #4203 moved
+    /// it into this helper, so no production caller books a failure this way
+    /// any more. The pin stays because `record_failure` is still public and the
+    /// text key is what makes the helper safe against the next one — reverting
+    /// the key to the streak count would redden this test rather than shipping
+    /// a swallowed report.
     #[test]
     fn a_pull_failure_after_an_unrelated_failure_booking_is_still_reported_4120() {
         let typed = Arc::new(RecordingEventSink::new());
@@ -2880,11 +2995,11 @@ mod tests {
         let scheduler = SyncScheduler::new();
         let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
 
-        // What the identity-mismatch arm does: books the backoff, reports via its
-        // own event, and never touches this helper's memory.
+        // A failure booked outside this helper: the backoff moves, the report
+        // memory does not.
         scheduler.record_failure(RESPONDER_ONLY_PEER);
 
-        record_pull_failure(
+        record_initiator_failure(
             &scheduler,
             &sink,
             &refs,
@@ -2925,7 +3040,7 @@ mod tests {
             ))];
 
             for _ in 0..3 {
-                record_pull_failure(
+                record_initiator_failure(
                     &scheduler,
                     &sink,
                     &refs,
@@ -2959,7 +3074,7 @@ mod tests {
         ))];
 
         for _ in 0..4 {
-            record_pull_failure(
+            record_initiator_failure(
                 &scheduler,
                 &sink,
                 &refs,
@@ -3014,12 +3129,362 @@ mod tests {
             SyncScheduler::with_intervals(std::time::Duration::from_millis(50), RESYNC_TICK);
         let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
 
-        record_pull_failure(
+        record_initiator_failure(
             &scheduler,
             &sink,
             &refs,
             RESPONDER_ONLY_PEER,
             "Sync failed: connection lost".into(),
+        );
+    }
+
+    // ======================================================================
+    // #4201 — alternating causes, and the Display stability the key rests on
+    // ======================================================================
+
+    /// The shape the single slot #4120 shipped provably failed on.
+    ///
+    /// A peer that fails `A, B, A, B, …` — a dial timeout one cycle, a
+    /// mid-session error the next — never matched the one-slot memory on either
+    /// cycle, so suppression never engaged and #4084's forever-toast came back
+    /// at half the rate. The streak now remembers both texts, so each is news
+    /// exactly once.
+    #[test]
+    fn alternating_failure_causes_are_each_reported_once_4201() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+        const TIMEOUT: &str = "Connection failed: peer did not answer within 10s";
+        const SESSION: &str = "Sync failed: connection lost";
+
+        for _ in 0..6 {
+            for msg in [TIMEOUT, SESSION] {
+                record_initiator_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg.into());
+            }
+        }
+
+        assert_eq!(
+            error_messages(&typed),
+            vec![TIMEOUT.to_string(), SESSION.to_string()],
+            "#4201: twelve cycles alternating between two unchanged causes must raise \
+             two toasts, not twelve. Got {:?}",
+            typed.events()
+        );
+        assert_eq!(
+            scheduler.failure_count(RESPONDER_ONLY_PEER),
+            12,
+            "…and every one of them is still booked as a failure"
+        );
+    }
+
+    /// The other arm of the same property, and the one that guards the
+    /// direction that actually hurts: widening the memory from one slot to a
+    /// set must not make it swallow a cause the user has never been shown.
+    ///
+    /// Symmetric to the test above on purpose — that one pins that a repeat IS
+    /// suppressed, this one pins that a genuinely new failure is NOT, after the
+    /// memory has been filled by an alternation.
+    #[test]
+    fn a_genuinely_new_cause_still_surfaces_after_an_alternation_4201() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+        let fail = |msg: &str| {
+            record_initiator_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg.into());
+        };
+
+        for _ in 0..4 {
+            fail("Connection failed: peer did not answer within 10s");
+            fail("Sync failed: connection lost");
+        }
+        assert_eq!(
+            error_messages(&typed).len(),
+            2,
+            "precondition: the alternation itself is reported twice"
+        );
+
+        // A third cause, arriving with both of the others still remembered.
+        fail("Sync failed: snapshot offer exceeded the size cap");
+        fail("Sync failed: snapshot offer exceeded the size cap");
+
+        assert_eq!(
+            error_messages(&typed),
+            vec![
+                "Connection failed: peer did not answer within 10s".to_string(),
+                "Sync failed: connection lost".to_string(),
+                "Sync failed: snapshot offer exceeded the size cap".to_string(),
+            ],
+            "#4201: a cause the user has never been shown is news however full the \
+             streak's memory is — and its own repeat is then suppressed in turn. \
+             Got {:?}",
+            typed.events()
+        );
+    }
+
+    /// The dial-timeout text is the one initiator failure text with nothing
+    /// foreign interpolated into it, and pinning it is what makes the
+    /// suppression key for that arm provably stable.
+    ///
+    /// The literal moves with [`CONNECT_TIMEOUT`] — that is fine and is the
+    /// point: it moves *consistently*, so two cycles of the same timeout still
+    /// produce the same bytes. What this catches is the format string being
+    /// rewritten to carry something that is not a constant (an elapsed
+    /// duration, a candidate count, an address), which would turn every cycle
+    /// into a fresh key and un-suppress #4084's toast.
+    #[test]
+    fn the_connect_timeout_failure_text_is_built_only_from_constants_4201() {
+        assert_eq!(
+            connect_timeout_message(),
+            "Connection failed: peer did not answer within 10s",
+            "the dial-timeout arm's text is the suppression key for that arm; if \
+             CONNECT_TIMEOUT moved, update this literal — if something non-constant \
+             was interpolated, do not"
+        );
+        assert_eq!(
+            CONNECT_TIMEOUT.as_secs(),
+            10,
+            "…and the literal above is only readable next to the constant it is \
+             built from"
+        );
+    }
+
+    /// #4201's stated deliverable: pin the `Display` stability the suppression
+    /// depends on for the two arms that interpolate an error the sync layer
+    /// does not own.
+    ///
+    /// Two **independently bound** endpoints make the same failing dial against
+    /// the same target. In production those two calls are two resync cycles a
+    /// minute apart; here they differ in local socket, which is the classic
+    /// varying detail an error text embeds. If the two texts differ by a byte,
+    /// `record_initiator_failure`'s key churns and the forever-toast is back —
+    /// so an iroh upgrade that reformats this error fails here rather than
+    /// silently.
+    ///
+    /// The error itself is produced offline: an `EndpointAddr` carrying only a
+    /// key, dialled from a LAN-only endpoint with no address lookup, has
+    /// nowhere to go and iroh says so immediately. No network, no timeout.
+    ///
+    /// "No network" is asserted, not assumed. The endpoint is given the
+    /// [`RecordingResolver`](crate::transport::endpoint::RecordingResolver)
+    /// every other endpoint-building test in this tree uses — it answers
+    /// nothing and records what was asked — so a future iroh that resolves a
+    /// name on this path makes the test *hang and then fail* here rather than
+    /// quietly issuing DNS queries from CI. The system resolver
+    /// (`DnsResolver::new()`) would have made that leak invisible.
+    #[tokio::test]
+    async fn a_real_iroh_connect_error_formats_identically_on_two_independent_dials_4201() {
+        use crate::transport::endpoint::RecordingResolver;
+
+        async fn failing_dial_text(target: iroh::EndpointId) -> (String, RecordingResolver) {
+            let resolver = RecordingResolver::new();
+            let endpoint = crate::transport::endpoint::lan_only(
+                "127.0.0.1:0".parse().unwrap(),
+                32,
+                iroh::dns::DnsResolver::custom(resolver.clone()),
+            )
+            .expect("a loopback /32 is a legal LAN-only bind")
+            .bind()
+            .await
+            .expect("binding an ephemeral loopback port must succeed");
+            let error = endpoint
+                .connect(iroh::EndpointAddr::new(target), SYNC_ALPN)
+                .await
+                .expect_err("an endpoint address carrying no path cannot be dialled");
+            (connect_failure_message(&error), resolver)
+        }
+
+        let target = crate::mdns::test_endpoint_id("PEER_4201_DISPLAY");
+        let (first, first_resolver) = failing_dial_text(target).await;
+        let (second, second_resolver) = failing_dial_text(target).await;
+
+        // Both dials, not just the first: a leak that only affected the second
+        // endpoint would otherwise pass quietly, which is the exact failure
+        // mode switching off the real system resolver was meant to remove.
+        for (which, resolver) in [("first", &first_resolver), ("second", &second_resolver)] {
+            assert_eq!(
+                resolver.queries(),
+                Vec::<String>::new(),
+                "this test must stay offline: the {which} failing dial resolved a \
+                 hostname, so it is no longer the hermetic, immediate error it is \
+                 documented to be"
+            );
+        }
+
+        assert_eq!(
+            first, second,
+            "#4201: the repeat-report suppression keys on this exact text, so two \
+             cycles of the SAME fault must produce the same bytes. A difference here \
+             means an iroh error now carries a varying detail and the #4084 toast is \
+             un-suppressed"
+        );
+        assert!(
+            first.starts_with("Connection failed: "),
+            "the dial-failure arms wrap the error in their own prefix; got {first:?}"
+        );
+        assert!(
+            first.len() > "Connection failed: ".len(),
+            "…and the wrapped error must actually contribute words, or this test \
+             would be green because iroh's Display is empty rather than because it \
+             is stable; got {first:?}"
+        );
+    }
+
+    // ======================================================================
+    // #4203 — the pinned-identity refusal
+    // ======================================================================
+
+    /// #4203: the refusal used to emit its event unconditionally, every resync
+    /// cycle, forever — the #4084 shape with a different string.
+    ///
+    /// It now routes through the same gate as every other initiator failure, so
+    /// the first refusal is news and the repeats are withheld **while the real
+    /// peer is still pulling from us**. The condition being security-relevant
+    /// is an argument about the first report, not about the hundredth.
+    #[test]
+    fn the_pinned_identity_refusal_is_reported_once_per_streak_4203() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+
+        for _ in 0..6 {
+            record_initiator_failure(
+                &scheduler,
+                &sink,
+                &refs,
+                RESPONDER_ONLY_PEER,
+                IDENTITY_MISMATCH_MESSAGE.to_string(),
+            );
+        }
+
+        assert_eq!(
+            error_messages(&typed),
+            vec![IDENTITY_MISMATCH_MESSAGE.to_string()],
+            "#4203: six cycles of the same refusal, against a peer whose own inbound \
+             sessions show the pair is working, must raise one toast. Got {:?}",
+            typed.events()
+        );
+        assert_eq!(
+            scheduler.failure_count(RESPONDER_ONLY_PEER),
+            6,
+            "…and the refusal still books the backoff on every cycle — only the \
+             repeat toast is withheld, never the refusal itself"
+        );
+    }
+
+    /// The half of #4203 that keeps the refusal loud where it matters, pinned
+    /// against the same two shapes the pull-failure arm uses.
+    ///
+    /// If a different key answering to a paired peer's name is the ONLY thing
+    /// on the wire, our `streamed_at` for that peer goes stale and nothing is
+    /// suppressed. That is the case a user who has lost their peer to an
+    /// impostor most needs to see, and it is the argument the refusal's old
+    /// doc comment made — preserved here rather than discarded.
+    #[test]
+    fn the_pinned_identity_refusal_keeps_shouting_while_the_peer_is_dark_4203() {
+        for (label, streamed_at) in [
+            ("never streamed to us at all", None),
+            (
+                "streamed to us an hour ago, then went dark",
+                Some(agaric_store::db::now_ms() - 3_600_000),
+            ),
+        ] {
+            let typed = Arc::new(RecordingEventSink::new());
+            let sink: Arc<dyn SyncEventSink> = typed.clone();
+            let scheduler = SyncScheduler::new();
+            let refs = vec![responder_only_ref(streamed_at)];
+
+            for _ in 0..4 {
+                record_initiator_failure(
+                    &scheduler,
+                    &sink,
+                    &refs,
+                    RESPONDER_ONLY_PEER,
+                    IDENTITY_MISMATCH_MESSAGE.to_string(),
+                );
+            }
+
+            assert_eq!(
+                error_messages(&typed).len(),
+                4,
+                "#4203 ({label}): with nothing pulling from us either, the refusal is \
+                 the whole story of a peer we have lost — it must keep saying so. \
+                 Got {:?}",
+                typed.events()
+            );
+        }
+    }
+
+    /// A pairing act is the user answering the refusal, so the refusal is news
+    /// again if it is still true (#3547 / #4203).
+    ///
+    /// This is the reset #4203 named explicitly ("reset the memory where
+    /// `clear_backoff` already resets it"), and it falls out of riding on the
+    /// backoff entry rather than needing its own bookkeeping.
+    #[test]
+    fn a_pairing_act_makes_the_identity_refusal_news_again_4203() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+        let refuse = || {
+            record_initiator_failure(
+                &scheduler,
+                &sink,
+                &refs,
+                RESPONDER_ONLY_PEER,
+                IDENTITY_MISMATCH_MESSAGE.to_string(),
+            );
+        };
+
+        refuse(); // reported
+        refuse(); // suppressed
+        scheduler.clear_backoff(); // the user re-paired (#3547)
+        refuse(); // reported again
+
+        assert_eq!(
+            error_messages(&typed).len(),
+            2,
+            "#4203: after a pairing act the user is owed the answer to what they just \
+             did — if the announced key still does not match, say so. Got {:?}",
+            typed.events()
+        );
+    }
+
+    /// The two suppression memories do not bleed into each other: the refusal
+    /// and a pull failure are different texts, so neither can be swallowed as a
+    /// "repeat" of the other.
+    ///
+    /// This is what #4197's review worried about when it kept the refusal
+    /// outside the helper, and it is why the key is the text rather than the
+    /// peer's streak count. With a *set* rather than a single slot, both are
+    /// remembered at once, so the alternation between them is also quiet after
+    /// each has been reported.
+    #[test]
+    fn the_identity_refusal_and_a_pull_failure_are_separate_reports_4203() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+        let fail = |msg: &str| {
+            record_initiator_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg.into());
+        };
+
+        fail(IDENTITY_MISMATCH_MESSAGE);
+        fail("Sync failed: connection lost");
+        fail(IDENTITY_MISMATCH_MESSAGE);
+        fail("Sync failed: connection lost");
+
+        assert_eq!(
+            error_messages(&typed),
+            vec![
+                IDENTITY_MISMATCH_MESSAGE.to_string(),
+                "Sync failed: connection lost".to_string(),
+            ],
+            "each is news once, and neither suppresses the other. Got {:?}",
+            typed.events()
         );
     }
 }
