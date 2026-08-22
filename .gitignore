@@ -90,6 +90,7 @@ agaric-release.apk.idsig
 .claude/review*.json
 .claude/verify_results.json
 .claude/wf-*.js
+.claude/scratch/
 # Added by code-review-graph
 .code-review-graph/
 
