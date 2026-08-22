@@ -3,6 +3,8 @@ use std::collections::HashSet;
 
 use agaric_core::error::AppError;
 
+use crate::db::MAX_SQL_PARAMS;
+
 // ---------------------------------------------------------------------------
 // truncate_block_links (#2895 slice 4)
 // ---------------------------------------------------------------------------
@@ -38,6 +40,15 @@ use agaric_core::error::AppError;
 /// have failed one. What the explicit DELETE buys is that the table is empty at
 /// the point the restore starts inserting, rather than depending on a cascade
 /// several statements away staying where it is.
+///
+/// # The other half of the RESET (#4218)
+///
+/// `block_links` is refilled from the snapshot's own rows. The satellite is
+/// not — the snapshot format carries none, because it is derived — so this
+/// wipe shipped with nothing behind it and a restored vault inherited the
+/// sender's edge set with no record of what it was missing.
+/// [`rebuild_block_links_unresolved_conn`] is that other half, called from the
+/// same restore transaction; keep the two together.
 ///
 /// # Errors
 /// Returns [`AppError`] if either DELETE fails.
@@ -161,6 +172,183 @@ async fn sync_unresolved_links(
     .await?;
 
     Ok(())
+}
+
+/// Pairs per chunked INSERT in [`rebuild_block_links_unresolved_conn`].
+///
+/// The statement binds ONE parameter (a JSON array of `[source, target]`
+/// pairs), so `MAX_SQL_PARAMS` does not bind it the way it binds
+/// `page_link_cache`'s multi-row VALUES rebuild. What is bounded here is the
+/// size of the JSON text handed to `json_each` in a single statement; the
+/// divisor mirrors the two-column shape so the constant stays legible next to
+/// its sibling rather than being an unexplained round number.
+const UNRESOLVED_REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
+
+/// Recompute the WHOLE `block_links_unresolved` table from `blocks.content`
+/// and the `block_links` rows that exist right now (#4218).
+///
+/// Connection-scoped and transaction-less, exactly like
+/// [`truncate_block_links`]: the caller owns the boundary. That is what lets
+/// `agaric-sync`'s snapshot RESET call it INSIDE the restore transaction, so
+/// the wipe and the reconstruction cannot be separated — see "Why the restore
+/// calls this in-transaction" below.
+///
+/// # The rule, stated once
+///
+/// A source OWES a target when the source is live, its `content` names the
+/// target as a `[[ULID]]` / `((ULID))` token, and no `block_links` row carries
+/// that `(source, target)` edge. That is [`sync_unresolved_links`]'s rule
+/// verbatim — it too subtracts the post-INSERT `block_links` rows from the
+/// parsed token set — evaluated for every source at once instead of for the
+/// one source a reindex just touched.
+///
+/// Deriving against the STORED edges rather than against a from-content
+/// rebuild of `block_links` is deliberate and is what keeps this function
+/// inside #4210's approved lifecycle. It records what is owed; it never
+/// creates an edge. A vault-wide `rebuild_block_links` was rejected by #4118 /
+/// #4210 as the primary mechanism and this is not a re-litigation of that: a
+/// token whose target IS linkable but whose edge the snapshot did not carry
+/// (the sender's own pre-#4118 loss) comes back as an OBLIGATION, and the
+/// existing `ReindexBlockLinks` push half discharges it the next time that
+/// target is reindexed. The repair stays where #4210 put it.
+///
+/// # Where the authority for a vault-wide arm comes from
+///
+/// Worth stating explicitly, because "no schema change" answers only half of
+/// it. #4118's approval comment scopes itself to the table as shipped and adds
+/// that it "does not pre-approve widening its schema or its LIFECYCLE; that is
+/// a fresh decision" — and a vault-wide recompute is, on its face, a new
+/// lifecycle event for a table whose growth bound was stated as "recomputed
+/// per source on every reindex".
+///
+/// The fresh decision exists and is #4218's own text: *"Rejecting it as the
+/// trigger for 'a target became linkable' does not rule it out as a
+/// restore-time reconstruction, where a lifecycle trigger is exactly the right
+/// shape… Option 1 looks right."* #4229 then asks for the re-derivation to be
+/// shared rather than written twice. So the widening is the thing that was
+/// asked for, not a side effect of answering it.
+///
+/// The bound survives the widening, which is why the two are compatible: this
+/// function's output is the UNION of what `sync_unresolved_links` would
+/// produce for each source over the same content and the same edges — same
+/// rule, same wipe-then-recompute shape, evaluated for every source instead of
+/// one — so it cannot put a row in the table that a reindex of that source
+/// would not. What it changes is WHEN, not HOW MUCH.
+///
+/// The lifecycle stays as narrow as the issues asked for: the connection form
+/// has exactly one production caller (the snapshot RESET), and the pool form
+/// below has none — it exists for the #4229 oracle's settle. No new task kind,
+/// no new queue, no periodic trigger.
+///
+/// # Why the restore calls this in-transaction
+///
+/// `truncate_block_links` empties this table as part of the RESET wipe, and
+/// before #4218 nothing refilled it: the snapshot format carries no rows for
+/// it, and `restore.rs`'s `CACHE_TABLES` / `enqueue_post_snapshot_rebuilds`
+/// pairing — the mechanism that repopulates every OTHER wiped cache — never
+/// listed it. A restored vault therefore inherited the sender's `block_links`
+/// with no record of what that edge set was missing, which is #4118's
+/// permanent loss reintroduced on the restore path.
+///
+/// A post-commit rebuild task would have closed it, and is what the sibling
+/// caches use. This runs in the restore's own transaction instead, for two
+/// reasons that do not apply to those siblings:
+///
+/// * the enqueue half is best-effort by design — every post-snapshot enqueue
+///   failure is logged and swallowed so a shutdown-in-progress cannot fault an
+///   already-durable restore — so a task would leave the index permanently
+///   empty on exactly the path that is hardest to notice;
+/// * the paired-edit hazard `restore.rs` documents ("a new cache table still
+///   requires paired edits, now in two files instead of one") is the very
+///   thing that went wrong here. The wipe and the rebuild now sit in one
+///   crate, in one transaction, three lines apart in the caller.
+///
+/// The added cost is one pass of the link regex over the restored content
+/// inside a transaction that is already inserting every one of those rows, and
+/// the parsed pairs are a strict subset of what the decoded `SnapshotData` is
+/// already holding in memory at that moment.
+///
+/// Returns the number of obligation rows written.
+///
+/// # Errors
+/// Returns [`AppError`] if the wipe, the content scan, or any chunked INSERT
+/// fails.
+pub async fn rebuild_block_links_unresolved_conn(
+    conn: &mut sqlx::SqliteConnection,
+) -> Result<u64, AppError> {
+    sqlx::query!("DELETE FROM block_links_unresolved")
+        .execute(&mut *conn)
+        .await?;
+
+    // Live sources only: `reindex_block_links_conn` reads content `WHERE
+    // deleted_at IS NULL` and a reindex of a tombstoned source clears its rows,
+    // so a tombstone owes nothing. The `LIKE` pre-filter is a strict superset
+    // of the grammar — EVERY token `ulid_link_re` can match begins with `[[`
+    // or `((` — so it can only skip rows the regex would have found nothing in.
+    // (`[` and `(` carry no special meaning in SQLite's LIKE; only `%` and `_`
+    // do.)
+    let rows = sqlx::query!(
+        "SELECT id, content FROM blocks \
+         WHERE deleted_at IS NULL AND content IS NOT NULL \
+           AND (content LIKE '%[[%' OR content LIKE '%((%')",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for row in rows {
+        let content = row.content.unwrap_or_default();
+        for cap in super::ulid_link_re().captures_iter(&content) {
+            pairs.push((row.id.clone(), cap[1].to_owned()));
+        }
+    }
+    // One block naming the same target twice is one obligation. Deduplicating
+    // in Rust keeps the chunk boundaries from being the thing that decides
+    // whether `INSERT OR IGNORE` absorbs the duplicate.
+    pairs.sort_unstable();
+    pairs.dedup();
+
+    let mut inserted: u64 = 0;
+    for chunk in pairs.chunks(UNRESOLVED_REBUILD_CHUNK) {
+        let pairs_json = serde_json::to_string(&chunk)?;
+        let res = sqlx::query!(
+            "INSERT OR IGNORE INTO block_links_unresolved (source_id, target_id) \
+             SELECT json_extract(je.value, '$[0]'), json_extract(je.value, '$[1]') \
+               FROM json_each(?1) je \
+              WHERE NOT EXISTS ( \
+                  SELECT 1 FROM block_links bl \
+                   WHERE bl.source_id = json_extract(je.value, '$[0]') \
+                     AND bl.target_id = json_extract(je.value, '$[1]'))",
+            pairs_json,
+        )
+        .execute(&mut *conn)
+        .await?;
+        inserted += res.rows_affected();
+    }
+
+    Ok(inserted)
+}
+
+/// Pool-scoped [`rebuild_block_links_unresolved_conn`]: opens its own
+/// `BEGIN IMMEDIATE` transaction so the wipe and the refill are one atomic
+/// step, and reports through the standard rebuild instrumentation.
+///
+/// The write lock is held across the content scan deliberately. The set this
+/// table holds is a function of `blocks.content` AND `block_links`, so a
+/// concurrent reindex landing between a lock-free read and the refill would be
+/// overwritten by a snapshot of the world from before it ran.
+///
+/// # Errors
+/// Returns [`AppError`] if the transaction, the rebuild, or the commit fails.
+pub async fn rebuild_block_links_unresolved(pool: &SqlitePool) -> Result<(), AppError> {
+    super::rebuild_with_timing("block_links_unresolved", || async {
+        let mut tx =
+            crate::db::begin_immediate_logged(pool, "cache_block_links_unresolved_rebuild").await?;
+        let inserted = rebuild_block_links_unresolved_conn(&mut tx).await?;
+        tx.commit().await?;
+        Ok(inserted)
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------

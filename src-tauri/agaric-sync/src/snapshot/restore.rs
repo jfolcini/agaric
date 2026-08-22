@@ -26,6 +26,18 @@ use agaric_store::db::MAX_SQL_PARAMS;
 /// sequencing artifact; FK ordering does not matter because
 /// `PRAGMA defer_foreign_keys = ON` is set at the top of the transaction).
 ///
+/// `block_links` and its `block_links_unresolved` satellite are absent for a
+/// different reason, and #4218 is what that difference cost: they are wiped by
+/// the owner crate's `truncate_block_links` (#2895 slice 4) rather than by this
+/// loop, so neither the wipe nor the rebuild could be found by reading this
+/// inventory. `block_links` is refilled from the snapshot's own rows;
+/// `block_links_unresolved` — which the snapshot does not carry, because it is
+/// derived — is rebuilt by `rebuild_block_links_unresolved_conn`, called in
+/// `apply_snapshot`'s transaction after the row inserts. Both halves of that
+/// table's RESET now live in ONE crate and ONE transaction, which is the point:
+/// the paired edit this doc warns about below is precisely the one that was
+/// missed for it.
+///
 /// `page_link_cache` (#617/#794, migration 0065): both of its columns carry
 /// `REFERENCES blocks(id) ON DELETE CASCADE`, so the `DELETE FROM blocks` below
 /// wiped it IMPLICITLY — listing it here makes the wipe explicit (idempotent
@@ -695,6 +707,32 @@ pub async fn apply_snapshot<R: std::io::Read>(
         columns: ["page_id", "alias"],
         rows: repaired_page_aliases,
         bind: |q, pa| { q.bind(&pa.page_id).bind(&pa.alias) },
+    );
+
+    // #4218: rebuild the unresolved-link index that `truncate_block_links`
+    // emptied at the top of this transaction.
+    //
+    // The wipe is correct — the previous vault's pending link repairs describe
+    // the previous vault's content — but nothing refilled it. The snapshot
+    // format carries no rows for this table, and the `CACHE_TABLES` /
+    // `enqueue_post_snapshot_rebuilds` pairing that repopulates every other
+    // wiped cache never listed it (the table is wiped by the owner-crate
+    // helper instead, and the paired edit was missed). A restored vault
+    // therefore came up holding the sender's `block_links` and NO record of
+    // the edges that set is missing — #4118's permanent loss, reintroduced on
+    // the restore path, on every restore rather than as a pre-upgrade residue.
+    //
+    // Runs HERE, after every `blocks` and `block_links` row is in place and
+    // still inside the tx, rather than as a post-commit task: the enqueue half
+    // is best-effort by design (a channel-closed enqueue is logged and
+    // swallowed so a shutdown cannot fault an already-durable restore), so a
+    // task would leave the index empty exactly where nothing would notice.
+    // Owner-crate call, so the wipe and the refill stay one crate and one
+    // transaction apart — see `rebuild_block_links_unresolved_conn`.
+    let owed = agaric_store::cache::rebuild_block_links_unresolved_conn(&mut tx).await?;
+    tracing::debug!(
+        rows = owed,
+        "apply_snapshot: rebuilt block_links_unresolved from the restored content (#4218)"
     );
 
     // #1567: final safety net. After the targeted repairs above, run

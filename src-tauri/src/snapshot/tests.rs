@@ -6974,3 +6974,181 @@ async fn compaction_never_raises_the_apply_cursor_3310() {
          never raising it over the two unmaterialised ops"
     );
 }
+
+// =====================================================================
+// #4218 — the RESET must rebuild `block_links_unresolved`
+// =====================================================================
+
+/// Token-shaped ids: the unresolved index is derived by parsing `[[ULID]]`
+/// tokens out of `blocks.content`, so a fixture whose ids are not 26-character
+/// Crockford base-32 would derive nothing and pass vacuously.
+const U4218_SRC: &str = "01SRC4218000000000000000AA";
+const U4218_PRESENT: &str = "01TGT4218PRESENT00000000BB";
+const U4218_ABSENT: &str = "01TGT4218ABSENT000000000CC";
+const U4218_STALE_SRC: &str = "01STALE4218SOURCE0000000DD";
+const U4218_STALE_TGT: &str = "01STALE4218TARGET0000000EE";
+
+/// **The acceptance criterion of #4218.** A snapshot restore wipes
+/// `block_links_unresolved` (`truncate_block_links` deletes from BOTH link
+/// tables) and, before this, refilled nothing.
+///
+/// The wipe is correct: the previous vault's pending link repairs describe the
+/// previous vault's content. What was missing is the other half. The snapshot
+/// format carries no rows for this table, `CACHE_TABLES` does not list it, and
+/// `enqueue_post_snapshot_rebuilds` had no rebuild for it — so a restored
+/// vault came up holding the sender's `block_links` and NO record of the edges
+/// that set is missing. A target that became linkable afterwards would not
+/// repair them: that is #4118's permanent loss, reintroduced on the restore
+/// path, on every restore rather than as a pre-upgrade residue.
+///
+/// The snapshot below is exactly that shape — a source naming two targets, one
+/// of which the sender's `block_links` carries and one of which does not exist
+/// yet (the ordinary out-of-order-replay case: a peer delivers the referrer
+/// before the referent).
+///
+/// **Deleting the `rebuild_block_links_unresolved_conn` call from
+/// `apply_snapshot` reddens this at the first assertion**, with the restored
+/// vault owing nothing at all.
+#[tokio::test]
+async fn apply_snapshot_rebuilds_the_unresolved_link_index_4218() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // The PREVIOUS vault: a block and an obligation of its own. Both must be
+    // gone afterwards — the rebuild has to be a recompute of the restored
+    // content, not a top-up that inherits the old vault's debts.
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', ?)")
+        .bind(U4218_STALE_SRC)
+        .bind(format!("old vault [[{U4218_STALE_TGT}]]"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_links_unresolved (source_id, target_id) VALUES (?, ?)")
+        .bind(U4218_STALE_SRC)
+        .bind(U4218_STALE_TGT)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-4218".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "h".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![
+                BlockSnapshot {
+                    id: BlockId::test_id(U4218_SRC),
+                    block_type: "content".to_string(),
+                    // Two tokens: one the sender's edge set carries, one whose
+                    // target is not in the snapshot at all.
+                    content: Some(format!("see [[{U4218_PRESENT}]] and (({U4218_ABSENT}))")),
+                    parent_id: None,
+                    position: Some(1),
+                    deleted_at: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
+                    scheduled_date: None,
+                    space_id: None,
+                },
+                BlockSnapshot {
+                    id: BlockId::test_id(U4218_PRESENT),
+                    block_type: "content".to_string(),
+                    content: Some("the target that came along".to_string()),
+                    parent_id: None,
+                    position: Some(2),
+                    deleted_at: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
+                    scheduled_date: None,
+                    space_id: None,
+                },
+            ],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![BlockLinkSnapshot {
+                source_id: BlockId::test_id(U4218_SRC),
+                target_id: BlockId::test_id(U4218_PRESENT),
+            }],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    let encoded = encode_snapshot(&data).unwrap();
+    apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
+
+    // THE ACCEPTANCE. The restored vault knows what its edge set is missing.
+    let owed: Vec<(String, String)> =
+        sqlx::query_as("SELECT source_id, target_id FROM block_links_unresolved")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        owed,
+        vec![(U4218_SRC.to_string(), U4218_ABSENT.to_string())],
+        "#4218: the restore must rebuild the unresolved index from the restored content \
+         — owing the token whose target the snapshot did not carry, NOT the one the \
+         sender's block_links already links, and NOT the previous vault's obligation"
+    );
+
+    // And the record is USABLE, not merely present: this is the exact reverse
+    // lookup `resolve_referrers_of` performs when a target is reindexed, so
+    // this is the answer that decides whether the edge is ever repaired.
+    assert_eq!(
+        agaric_store::cache::unresolved_link_sources(&pool, U4218_ABSENT)
+            .await
+            .unwrap(),
+        vec![U4218_SRC.to_string()],
+        "the restored index must answer \"who was waiting for this target?\" — that \
+         query is the whole repair mechanism"
+    );
+
+    // The other half of the pair: the sender's already-linked token must NOT
+    // be owed, or every restore would re-drive a repair for every edge it has.
+    assert!(
+        agaric_store::cache::unresolved_link_sources(&pool, U4218_PRESENT)
+            .await
+            .unwrap()
+            .is_empty(),
+        "an edge the snapshot carried is not owed"
+    );
+
+    // End to end: the target arrives, the referrer is re-linked, and the debt
+    // clears — the loss #4118 closed, now closed on the restore path too.
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'late')")
+        .bind(U4218_ABSENT)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for source in agaric_store::cache::unresolved_link_sources(&pool, U4218_ABSENT)
+        .await
+        .unwrap()
+    {
+        agaric_store::cache::reindex_block_links(&pool, &source)
+            .await
+            .unwrap();
+    }
+    let edges: Vec<String> =
+        sqlx::query_scalar("SELECT target_id FROM block_links WHERE source_id = ? ORDER BY 1")
+            .bind(U4218_SRC)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        edges,
+        vec![U4218_ABSENT.to_string(), U4218_PRESENT.to_string()],
+        "the late target must become an edge, driven by the rebuilt index"
+    );
+    let still_owed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_links_unresolved")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        still_owed, 0,
+        "a discharged obligation must stop being owed"
+    );
+}

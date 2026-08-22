@@ -1699,3 +1699,283 @@ async fn block_links_oracle_scale_sweep_3955() {
         divergences.first()
     );
 }
+
+// ===========================================================================
+// `block_links_unresolved` — the OBLIGATIONS artefact (#4229)
+// ===========================================================================
+
+/// Read the obligation index, so a test can assert on the TABLE and not only
+/// on the oracle's opinion of it.
+async fn blu_stored(pool: &sqlx::SqlitePool) -> Vec<(String, String)> {
+    // dynamic-sql: static SQL, test-only read-back.
+    let mut rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT source_id, target_id FROM block_links_unresolved")
+            .fetch_all(pool)
+            .await
+            .expect("read block_links_unresolved");
+    rows.sort();
+    rows
+}
+
+/// Plant an obligation row directly — a debt the writers would never have
+/// recorded.
+async fn blu_insert(pool: &sqlx::SqlitePool, source: &str, target: &str) {
+    // dynamic-sql: test-only fault injection (not a production query path).
+    sqlx::query("INSERT INTO block_links_unresolved (source_id, target_id) VALUES (?, ?)")
+        .bind(source)
+        .bind(target)
+        .execute(pool)
+        .await
+        .expect("plant block_links_unresolved row");
+}
+
+/// Erase an obligation row directly — the loss the artefact exists to see.
+async fn blu_delete(pool: &sqlx::SqlitePool, source: &str, target: &str) {
+    // dynamic-sql: test-only fault injection (not a production query path).
+    sqlx::query("DELETE FROM block_links_unresolved WHERE source_id = ? AND target_id = ?")
+        .bind(source)
+        .bind(target)
+        .execute(pool)
+        .await
+        .expect("erase block_links_unresolved row");
+}
+
+/// **The acceptance criterion of #4229.** `block_links_unresolved` was shipped
+/// (#4210, for #4118) as derived state with NO auditor: nothing re-derived it,
+/// nothing compared it against what block content implies, and nothing would
+/// have noticed if it silently went wrong.
+///
+/// The failure mode is what makes this worth an artefact of its own. A drifted
+/// `block_links` is a backlink a user can see is missing. A drifted obligation
+/// index is a repair that silently never happens, on a vault whose visible
+/// state is identical to the state it already had — and nothing else in the
+/// system reads the table, so nothing else can notice.
+///
+/// Everything this pins:
+///
+/// * the MISSING arm fires on content that owes edges no row records;
+/// * production's OWN writer settles it — `reindex_block_links` and the fold
+///   agree on a vault holding a resolvable target, a page-fallback target and
+///   a cross-space target, so the artefact can be trusted to report a bug
+///   rather than hold a different opinion;
+/// * an obligation erased AFTER the writer recorded it — the #4229 loss, and
+///   the exact shape #4218 found on the restore path — is reported by name;
+/// * production's vault-wide arm (`rebuild_block_links_unresolved`, the
+///   snapshot-RESET rebuild) puts it back, which is the ONE place the
+///   independently-transcribed fold and the production derivation are pinned
+///   against each other;
+/// * the coverage counters make the fixture's relevance an ASSERTION:
+///   `owed_with_a_live_target` is what distinguishes a fold that understands
+///   the space window from one that only handles absent targets.
+#[tokio::test]
+async fn block_links_unresolved_oracle_audits_the_obligation_index_4229() {
+    let (pool, _dir) = bl_fixture().await;
+
+    // NON-VACUITY, by value. Nothing has been reindexed: three tokens are
+    // named, none is an edge, so all three are owed — and every one of them
+    // has a LIVE target, which is the shape a fold that quietly assumed
+    // "unresolved means the target is absent" would get wrong.
+    assert_eq!(
+        block_links_unresolved_coverage(&pool)
+            .await
+            .expect("coverage"),
+        BlockLinksUnresolvedCoverage {
+            unresolved_rows: 0,
+            owed_by_content: 3,
+            owed_with_a_live_target: 3,
+        },
+        "the fixture must owe every one of its tokens before any writer runs"
+    );
+
+    // NON-VACUITY by VALUE, not just by count: a fold that owed the wrong
+    // three pairs would satisfy the counters above.
+    assert_eq!(
+        rebuild_block_links_unresolved_from_content(&pool)
+            .await
+            .expect("re-derivation from content"),
+        [
+            (BL_SRC.to_owned(), BL_OTHER_BLOCK.to_owned()),
+            (BL_SRC.to_owned(), BL_TGT_PENDING.to_owned()),
+            (BL_SRC.to_owned(), BL_TGT_STAMPED.to_owned()),
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>(),
+        "every token the source names is owed while no edge carries it — including the \
+         cross-space one, which is owed precisely because it will never be an edge \
+         until something about the TARGET changes"
+    );
+
+    // Direction 1 — MISSING. The debts are implied by the content; no
+    // maintainer ran.
+    let missing = block_links_unresolved_reconciliation_failure(&pool, "no reindex ran")
+        .await
+        .expect("oracle must report the unrecorded obligations");
+    assert!(
+        missing.contains("block_links_unresolved.row") && missing.contains("in 3 place(s)"),
+        "every owed edge must be reported, got:\n{missing}"
+    );
+    assert!(
+        missing.contains("no row in block_links_unresolved"),
+        "expected a missing-row divergence, got:\n{missing}"
+    );
+
+    // Production's writer settles it. This is the whole claim: an
+    // independently-transcribed re-derivation and `sync_unresolved_links`
+    // agree.
+    agaric_store::cache::reindex_block_links(&pool, BL_SRC)
+        .await
+        .expect("reindex_block_links");
+    assert_block_links_unresolved_reconciled(&pool, "after production's own reindex").await;
+
+    // Corroboration, read straight off the table: two tokens became edges, so
+    // exactly the CROSS-SPACE one is still owed. A green oracle here cannot be
+    // a bug in the oracle agreeing with a bug in the writer.
+    assert_eq!(
+        blu_stored(&pool).await,
+        vec![(BL_SRC.to_owned(), BL_OTHER_BLOCK.to_owned())],
+        "the token the cross-space filter declined is the one still owed — and the two \
+         that became edges must have stopped being owed"
+    );
+    assert_eq!(
+        block_links_unresolved_coverage(&pool)
+            .await
+            .expect("coverage"),
+        BlockLinksUnresolvedCoverage {
+            unresolved_rows: 1,
+            owed_by_content: 1,
+            owed_with_a_live_target: 1,
+        },
+        "the surviving obligation's target is present and LIVE — it is owed because of \
+         the space filter, not because the target is missing"
+    );
+
+    // Direction 2 — the loss the artefact exists for. A row that IS owed and
+    // WAS recorded is gone: a repair that will now silently never happen. The
+    // vault's visible state — an edge absent from `block_links` — is unchanged,
+    // which is exactly why nothing else can see this.
+    blu_delete(&pool, BL_SRC, BL_OTHER_BLOCK).await;
+    let lost = block_links_unresolved_reconciliation_failure(&pool, "obligation erased")
+        .await
+        .expect("oracle must report the erased obligation");
+    assert!(
+        lost.contains(&format!("{BL_SRC} -> {BL_OTHER_BLOCK}")) && lost.contains("in 1 place(s)"),
+        "the erased obligation must be named, and nothing else, got:\n{lost}"
+    );
+
+    // And PRODUCTION's vault-wide arm puts it back — the same
+    // `rebuild_block_links_unresolved` the snapshot RESET runs (#4218). This
+    // is the pin between the two derivations: the fold above is a
+    // transcription, not a call, so a rebuild that disagreed with it would
+    // redden here rather than agree with itself.
+    settle_block_links_unresolved(&pool)
+        .await
+        .expect("vault-wide unresolved rebuild");
+    assert_block_links_unresolved_reconciled(&pool, "after the vault-wide rebuild").await;
+    assert_eq!(
+        blu_stored(&pool).await,
+        vec![(BL_SRC.to_owned(), BL_OTHER_BLOCK.to_owned())],
+        "the rebuild must restore exactly the obligation the incremental writer had, \
+         with no extra rows for the two tokens that are already edges"
+    );
+}
+
+/// **The EXTRA arm, both of its clauses.** A row nothing owes.
+///
+/// `sync_unresolved_links`' DELETE removes a source's row for two distinct
+/// reasons — the content no longer names the target, or `block_links` now
+/// carries the edge — and the arm is scoped to exactly those two. Covering
+/// only one would leave the other's divergence invisible, which is the same
+/// half-covered-symmetric-pair mistake the artefact exists to prevent.
+#[tokio::test]
+async fn block_links_unresolved_oracle_reports_a_debt_nothing_owes_4229() {
+    let (pool, _dir) = bl_fixture().await;
+    agaric_store::cache::reindex_block_links(&pool, BL_SRC)
+        .await
+        .expect("reindex_block_links");
+    assert_block_links_unresolved_reconciled(&pool, "settled fixture").await;
+
+    // Clause 1 — the content names no such token. (`BL_TGT_PAGE` is a real
+    // block, so this is not merely "an id nobody has heard of".)
+    blu_insert(&pool, BL_SRC, BL_TGT_PAGE).await;
+    let unnamed = block_links_unresolved_reconciliation_failure(&pool, "token never named")
+        .await
+        .expect("oracle must report the un-named debt");
+    assert!(
+        unnamed.contains(&format!("{BL_SRC} -> {BL_TGT_PAGE}"))
+            && unnamed.contains("names no such")
+            && unnamed.contains("in 1 place(s)"),
+        "expected the NOT-IN-tokens clause to be named, got:\n{unnamed}"
+    );
+
+    // Clause 2 — the edge EXISTS. This is the dangerous one: the obligation is
+    // discharged, and a row left behind re-drives a repair on every future
+    // reindex of a target that needs none.
+    blu_insert(&pool, BL_SRC, BL_TGT_STAMPED).await;
+    let already = block_links_unresolved_reconciliation_failure(&pool, "edge already exists")
+        .await
+        .expect("oracle must report the discharged debt");
+    assert!(
+        already.contains("in 2 place(s)"),
+        "both planted rows must be reported, got:\n{already}"
+    );
+    let divergences = reconcile_block_links_unresolved(&pool)
+        .await
+        .expect("reconcile_block_links_unresolved");
+    assert!(
+        divergences
+            .iter()
+            .any(|d| d.key == format!("{BL_SRC} -> {BL_TGT_STAMPED}")
+                && d.expected.contains("block_links now carries the edge")),
+        "the ALREADY-LINKED clause must be reported with its own reason rather than \
+         collapsing into the not-named one, got:\n{divergences:#?}"
+    );
+
+    // Production's own DELETE arm clears both, and the artefact goes clean —
+    // the other half of the pair. An artefact that only ever fires is as
+    // useless as one that never does.
+    agaric_store::cache::reindex_block_links(&pool, BL_SRC)
+        .await
+        .expect("reindex_block_links");
+    assert_block_links_unresolved_reconciled(&pool, "after the reindex dropped both rows").await;
+    assert_eq!(
+        blu_stored(&pool).await,
+        vec![(BL_SRC.to_owned(), BL_OTHER_BLOCK.to_owned())],
+        "the reindex must delete exactly the two planted rows and keep the real debt"
+    );
+}
+
+/// **The window this artefact deliberately leaves open**, pinned so it is a
+/// decision rather than an accident.
+///
+/// No delete arm enqueues `ReindexBlockLinks`, so a soft-deleted source keeps
+/// both its edges and its obligations — nothing will ever remove them. Those
+/// rows are the SETTLED state, so an EXTRA arm that reported them would fire on
+/// every ordinary block deletion and be muted within a week.
+///
+/// Falsifiable by the SPECIFIC mistake it exists to prevent: liveness-scoping
+/// the EXTRA arm's token read — i.e. "faithfully" transcribing production's
+/// `SELECT content … WHERE deleted_at IS NULL`, which is the obvious refactor —
+/// makes a tombstoned source derive zero tokens and reddens this with its whole
+/// outstanding debt.
+#[tokio::test]
+async fn block_links_unresolved_oracle_leaves_a_tombstoned_source_alone_4229() {
+    let (pool, _dir) = bl_fixture().await;
+    agaric_store::cache::reindex_block_links(&pool, BL_SRC)
+        .await
+        .expect("reindex_block_links");
+    assert_block_links_unresolved_reconciled(&pool, "settled fixture").await;
+
+    soft_delete_block(&pool, BL_SRC).await;
+
+    let coverage = block_links_unresolved_coverage(&pool)
+        .await
+        .expect("coverage");
+    assert_eq!(
+        (coverage.unresolved_rows, coverage.owed_by_content),
+        (1, 0),
+        "a tombstoned source owes nothing, so its surviving row is exactly what a \
+         liveness-scoped EXTRA arm would (wrongly) report, got {coverage:?}"
+    );
+    assert_block_links_unresolved_reconciled(&pool, "source soft-deleted, obligation retained")
+        .await;
+}
