@@ -101,16 +101,19 @@
 // needs the phrase to name a real deadline or be reported malformed, same
 // as before.
 //
-// Fence detection (`MD_FENCE_RE`): a line consisting of leading whitespace
-// (capped at 0–3, CommonMark's own per-container fence-indent allowance),
+// Fence detection (`MD_FENCE_RE`): a line consisting of leading SPACES
+// (capped at 0–3, CommonMark's own per-container fence-indent allowance —
+// spaces only, never a tab, which CommonMark expands to the next 4-column
+// tab stop and is therefore already indented code, not a fence),
 // then 3-or-more backticks or tildes OPENS a fence, recording its delimiter
 // CHARACTER, LENGTH, and blockquote NESTING DEPTH; the fence delimiter line
 // itself, and every line while a fence is open, are skipped before either
 // marker regex runs.
 //
 // Widened for #4174, in PART: the 0–3-space allowance may now be preceded
-// by one or more `>` blockquote markers (each optionally preceded by its
-// own whitespace, `MD_FENCE_RE`'s `(?:[ \t]*>)*`), so a fence written
+// by one or more `>` blockquote markers (each optionally preceded by 0–3
+// spaces of its own, `MD_FENCE_RE`'s `(?: {0,3}>)*` — CommonMark's cap on
+// the indent before a block-quote marker), so a fence written
 // inside a blockquote — `> ` followed by the delimiter — is recognized.
 // Before this, that shape never matched at all: the "fence" never opened,
 // and a `REMOVE AFTER` marker written inside one as inert documentation
@@ -299,8 +302,9 @@ const MARKER_PHRASE_RE = /REMOVE AFTER/
 const MARKER_STRICT_RE = /REMOVE AFTER\s+`?(\d+)\.(\d+)\.(\d+)(?![\d-]|\.\d)`?/
 
 // A markdown fenced code block delimiter: zero or more `>` blockquote
-// markers (each optionally preceded by its own whitespace, captured in
-// group 1 so the caller can compute nesting DEPTH), then 0–3 more spaces —
+// markers (each optionally preceded by 0–3 SPACES of its own, CommonMark's
+// cap on the indent before a block-quote marker; captured in group 1 so the
+// caller can compute nesting DEPTH), then 0–3 more spaces —
 // CommonMark's own per-container fence-indent cap, deliberately NOT widened
 // past that (see below) — then 3-or-more backticks or tildes (group 2, so
 // the caller can read back which character and how many). Checked only for
@@ -317,13 +321,30 @@ const MARKER_STRICT_RE = /REMOVE AFTER\s+`?(\d+)\.(\d+)\.(\d+)(?![\d-]|\.\d)`?/
 // trailing content past the run (an info string, e.g. an inner ` ``` `
 // shown as literal text) is fenced CONTENT, not a delimiter, while a fence
 // is already open.
-const MD_FENCE_RE = /^((?:[ \t]*>)*)[ \t]{0,3}(`{3,}|~{3,})/
+//
+// Every whitespace allowance here is SPACES ONLY — no `\t` — in both
+// positions, and both are capped at 3. A tab is not a space of indent:
+// CommonMark expands one to the next 4-column tab stop, so a SINGLE
+// leading tab is already 4 columns, i.e. indented code, whose content is
+// literal text and never a fence. Admitting `\t` into either class
+// (`[ \t]{0,3}`) makes one tab satisfy the cap and phantom-opens a fence
+// on tab-indented code; an unbounded ` *` before the `>` marker does the
+// same for a `>` sitting at 4+ columns, which CommonMark also reads as
+// indented code. Both are the identical fail-open the list-nested
+// widening was rejected for (see the header), and both are pinned red-
+// before/green-after by `plainIndentedCodeIsNotAFenceScenarios`. Note
+// that MD010 is NOT a backstop for the tab shape: `.markdownlint-cli2
+// .jsonc` ignores every `AGENTS.md`, `PROMPT.md`, `REVIEW-LATER.md`,
+// `FEATURE-MAP.md` and `SESSION-LOG.md`, while `EXCLUDE_PATH_RE` here
+// excludes only `^docs/session-log/` — so those files are scanned by this
+// guard with hard tabs entirely unlinted.
+const MD_FENCE_RE = /^((?: {0,3}>)*) {0,3}(`{3,}|~{3,})/
 
 // The stricter shape a CLOSING fence must have: the same blockquote-prefix/
 // whitespace allowance, the delimiter run, and then NOTHING but trailing
 // whitespace — no info string. An opening fence may carry one
 // (`` ```rust ``); a closing one, per CommonMark, may not.
-const MD_FENCE_BARE_RE = /^((?:[ \t]*>)*)[ \t]{0,3}(`{3,}|~{3,})\s*$/
+const MD_FENCE_BARE_RE = /^((?: {0,3}>)*) {0,3}(`{3,}|~{3,})\s*$/
 
 function scanTargets(tracked) {
   return tracked.filter((f) => {
@@ -1157,19 +1178,59 @@ function blockContainerFenceScenarios(root) {
  * rejected widening shipped instead: red under the unbounded regex
  * (swallowed, exit 0 — wrongly GREEN, an unreported expired marker), red
  * (correctly, exit 1) under the shipped 0–3 cap.
+ *
+ * The other two cases pin the same property against the two OTHER ways the
+ * cap can be widened past CommonMark, both of which shipped briefly on this
+ * branch and were caught on review — each was genuinely red-before (exit 0,
+ * marker swallowed) and green-after here:
+ *   - a TAB-indented block. Admitting `\t` into the leading-indent class
+ *     (`[ \t]{0,3}`) lets ONE tab satisfy the 0–3 cap, but CommonMark
+ *     expands a tab to the next 4-column tab stop, so one tab is already
+ *     4 columns of indented code.
+ *   - a `>` marker at 4 leading spaces. An unbounded whitespace star before
+ *     each marker (`(?:[ \t]*>)*`) opens a depth-1 fence there; CommonMark
+ *     caps the pre-marker indent at 3 spaces, so at 4 the line is indented
+ *     code and the `>` is literal text.
  */
 function plainIndentedCodeIsNotAFenceScenarios(root) {
   return withScrubbedProcessEnv(root, () => {
     const results = []
     const record = (name, ok, detail = '') => results.push({ name, ok, detail })
 
-    const dir = join(root, 'plain-indented-code-phantom-fence')
-    const env = scrubbedGitEnv(root)
-    const git = initScratchRepo(dir, env)
-    mkdirSync(join(dir, 'src-tauri'), { recursive: true })
-    writeFileSync(join(dir, 'src-tauri', 'tauri.conf.json'), tauriConf('0.9.8'))
-    writeFileSync(
-      join(dir, 'CONTRIBUTING.md'),
+    // Each case: a document whose indented-code block holds a fence-SHAPED
+    // line that must NOT open a fence, followed by a genuinely expired
+    // marker in ordinary prose. If the shaped line phantom-opens, the
+    // fence never closes (nothing below is a matching bare closer) and the
+    // marker is silently swallowed — exit 0 instead of 1.
+    const phantom = (slug, name, docLines) => {
+      const dir = join(root, slug)
+      const env = scrubbedGitEnv(root)
+      const git = initScratchRepo(dir, env)
+      mkdirSync(join(dir, 'src-tauri'), { recursive: true })
+      writeFileSync(join(dir, 'src-tauri', 'tauri.conf.json'), tauriConf('0.9.8'))
+      writeFileSync(
+        join(dir, 'CONTRIBUTING.md'),
+        [
+          ...docLines,
+          '',
+          'Back to normal prose. Here is a REAL expired marker:',
+          '',
+          'REMOVE AFTER 0.1.0',
+          '',
+        ].join('\n'),
+      )
+      git('add', '-A')
+      const result = run(dir, env, ['--worktree'])
+      record(
+        name,
+        result.status === 1 && /0\.1\.0/.test(result.stderr),
+        `expected 1 naming 0.1.0, got ${result.status}: ${result.stderr}`,
+      )
+    }
+
+    phantom(
+      'plain-indented-code-phantom-fence',
+      'a fence-shaped line inside a plain 4-space indented code block does not phantom-open a fence — a real marker later in the document is still caught',
       [
         'Some doc text.',
         '',
@@ -1178,19 +1239,43 @@ function plainIndentedCodeIsNotAFenceScenarios(root) {
         '    that looks like a fence opener:',
         '    ```',
         '    that indented line above is CommonMark literal text, not a fence',
-        '',
-        'Back to normal prose. Here is a REAL expired marker:',
-        '',
-        'REMOVE AFTER 0.1.0',
-        '',
-      ].join('\n'),
+      ],
     )
-    git('add', '-A')
-    const result = run(dir, env, ['--worktree'])
-    record(
-      'a fence-shaped line inside a plain 4-space indented code block does not phantom-open a fence — a real marker later in the document is still caught',
-      result.status === 1 && /0\.1\.0/.test(result.stderr),
-      `expected 1 naming 0.1.0, got ${result.status}: ${result.stderr}`,
+
+    // Same shape, indented with a TAB. CommonMark expands a tab to the
+    // next 4-column tab stop, so ONE leading tab is already 4 columns —
+    // indented code, never a fence. A leading-indent class that admits
+    // `\t` alongside the space lets a single tab satisfy the 0–3
+    // repetition cap and phantom-opens here.
+    phantom(
+      'tab-indented-code-phantom-fence',
+      'a fence-shaped line inside a TAB-indented code block does not phantom-open a fence — one tab is 4 columns, past the 0–3 cap',
+      [
+        'Some doc text.',
+        '',
+        '\tThis is a TAB-indented code block — one tab expands to the next',
+        '\t4-column tab stop, so this is indented code, not a fence:',
+        '\t```',
+        '\tthat tab-indented line above is CommonMark literal text',
+      ],
+    )
+
+    // A `>` marker preceded by FOUR spaces. CommonMark allows 0–3 spaces
+    // before a block-quote marker; at 4 the line is plain indented code
+    // and the `>` is literal text. A blockquote-prefix group with an
+    // UNBOUNDED whitespace star before each marker opens a depth-1 fence
+    // here instead.
+    phantom(
+      'overindented-blockquote-phantom-fence',
+      'a fence-shaped line whose `>` marker carries FOUR leading spaces does not phantom-open a blockquoted fence — 4 spaces before the marker is indented code',
+      [
+        'Some doc text.',
+        '',
+        '    This is a PLAIN 4-space indented code block whose content',
+        '    happens to start with a blockquote-shaped fence line:',
+        '    > ```',
+        '    that line above is CommonMark literal text, not a blockquote',
+      ],
     )
 
     return results
@@ -1338,7 +1423,7 @@ function sourceScenarios(root) {
  * which is all this needs.
  *
  * The termination check matches an actual job-key SHAPE
- * (`^ {2}[A-Za-z_][\w-]*:\s*$`), not merely "the first 2-space-indented,
+ * (`^ {2}[A-Za-z_][\w-]*:(?:\s|$)`), not merely "the first 2-space-indented,
  * non-space line" (#4175 finding 2). `_validate.yml` happens to put a
  * `# ---` comment banner at 2-space indent between jobs, which the old,
  * looser check also matched — but only by COINCIDENCE: any real job key
@@ -1351,6 +1436,19 @@ function sourceScenarios(root) {
  * job-key shape instead means only a real job key ends the block, whatever
  * comments do or don't appear at 2-space indent along the way. See
  * `extractJobBlockScenarios` below for the falsifying fixture.
+ *
+ * The key shape deliberately tolerates TRAILING CONTENT after the colon
+ * (`(?:\s|$)`, not `\s*$`). Anchoring at end-of-line narrows the match set
+ * to a strict subset of the old check's, which fixes stopping too EARLY but
+ * introduces the opposite failure the old check could not have: a next-job
+ * key written with a trailing comment (`  vitest: # docs-only PRs skip it`)
+ * or a YAML anchor (`  vitest: &vitest`) is a real job key that `\s*$`
+ * refuses, so the slice runs ON into the following jobs. `docsLintWiring
+ * Scenario` would then be searching a body containing OTHER jobs' steps and
+ * could match one of THEIR `prek run --all-files` lines — passing the #4147
+ * wiring assertion vacuously, against a run line that has nothing to do with
+ * `docs-lint`. A comment cannot be mistaken for a key either way: `#` is not
+ * in `[A-Za-z_]`.
  */
 function extractJobBlock(text, jobName) {
   const lines = text.split('\n')
@@ -1359,7 +1457,7 @@ function extractJobBlock(text, jobName) {
   if (start === -1) return null
   let end = lines.length
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^ {2}[A-Za-z_][\w-]*:\s*$/.test(lines[i])) {
+    if (/^ {2}[A-Za-z_][\w-]*:(?:\s|$)/.test(lines[i])) {
       end = i
       break
     }
@@ -1481,15 +1579,26 @@ function docsLintRunLineOrderScenario() {
 
 /**
  * #4175 finding 2 — falsification of `extractJobBlock`'s termination
- * condition. The divergence between the old and new checks only shows up in
- * ONE direction: every real job-key line already satisfies the old "any
- * 2-space-indented non-space line" condition too, so the old code can only
- * go wrong by stopping TOO EARLY, on a 2-space-indented line that is not a
- * job key — never too late. The genuinely falsifying fixture is therefore a
- * stray 2-space-indented comment INSIDE a job body (not a banner between
- * jobs): the old code truncates the block right there, losing the rest of
- * the job — in the real file, that would mean losing the
- * `remove-after-markers` run line itself.
+ * condition, in BOTH directions.
+ *
+ * Too EARLY: every real job-key line already satisfies the ORIGINAL "any
+ * 2-space-indented non-space line" condition, so that check could only go
+ * wrong by stopping too early, on a 2-space-indented line that is not a job
+ * key. The falsifying fixture is a stray 2-space-indented comment INSIDE a
+ * job body (not a banner between jobs): the original code truncates the
+ * block right there, losing the rest of the job — in the real file, that
+ * would mean losing the `remove-after-markers` run line itself.
+ *
+ * Too LATE: tightening to a job-key shape ANCHORED at end of line
+ * (`:\s*$`) fixes that but opens the opposite hole, which the original
+ * check could not have had — its match set was a strict superset. A real
+ * job key carrying a trailing comment or a YAML anchor no longer
+ * terminates, so the slice runs on into following jobs and
+ * `findDocsLintRunLine` can match one of THEIR run lines, passing the
+ * #4147 wiring assertion vacuously. The last two fixtures below pin that:
+ * the first shows the leak directly, the second shows the vacuous pass it
+ * causes. Both are red under `:\s*$` and green under the shipped
+ * `:(?:\s|$)`.
  *
  * The issue's OTHER named case — the `# ---` banner between jobs simply
  * REMOVED, next job's key following directly — is kept here too, but does
@@ -1503,7 +1612,7 @@ function extractJobBlockScenarios() {
   const results = []
   const record = (name, ok, detail = '') => results.push({ name, ok, detail })
 
-  const makeFixture = (middleLines) =>
+  const makeFixture = (middleLines, nextJobKey = '  vitest:') =>
     [
       '  docs-lint:',
       '    needs: detect-changes',
@@ -1513,7 +1622,7 @@ function extractJobBlockScenarios() {
       '        run: prek run --all-files markdownlint remove-after-markers',
       '      - name: lychee',
       '        run: prek run --all-files --hook-stage pre-push lychee',
-      '  vitest:',
+      nextJobKey,
       '    needs: detect-changes',
     ].join('\n')
 
@@ -1532,6 +1641,45 @@ function extractJobBlockScenarios() {
     'a 2-space-indented comment INSIDE the job body does not truncate the block early',
     !!interiorBody && /remove-after-markers/.test(interiorBody) && !/vitest/.test(interiorBody),
     `got: ${JSON.stringify(interiorBody)}`,
+  )
+
+  // Red-before/green-after for the OTHER direction — stopping too LATE.
+  // The next job's key carries a trailing comment, which an end-anchored
+  // key shape (`:\s*$`) refuses, so the slice runs on into that job.
+  const trailingCommentBody = extractJobBlock(
+    makeFixture([], '  vitest: # docs-only PRs skip this one'),
+    'docs-lint',
+  )
+  record(
+    'a next-job key with a TRAILING COMMENT still terminates the block — the slice does not run on into the following job',
+    !!trailingCommentBody &&
+      /remove-after-markers/.test(trailingCommentBody) &&
+      !/vitest/.test(trailingCommentBody),
+    `got: ${JSON.stringify(trailingCommentBody)}`,
+  )
+
+  // The consequence that makes stopping too late a real defect, not a
+  // cosmetic one: a docs-lint job with NO doc-hooks `prek run --all-files`
+  // step of its own (exactly the #4147 bug) must FAIL the wiring check. If
+  // the block runs on past a trailing-comment job key, `findDocsLintRunLine`
+  // finds the NEXT job's run line instead and the assertion passes
+  // VACUOUSLY, against a line that has nothing to do with docs-lint.
+  const vacuousFixture = [
+    '  docs-lint:',
+    '    needs: detect-changes',
+    '    steps:',
+    '      - name: lychee',
+    '        run: prek run --all-files --hook-stage pre-push lychee',
+    '  other-lint: # a job key with a trailing comment',
+    '    steps:',
+    '      - name: doc hooks',
+    '        run: prek run --all-files markdownlint remove-after-markers',
+  ].join('\n')
+  const vacuousRunLine = findDocsLintRunLine(extractJobBlock(vacuousFixture, 'docs-lint') ?? '')
+  record(
+    "a docs-lint job missing its own doc-hooks run line does not borrow a LATER job's — the #4147 wiring check cannot pass vacuously",
+    vacuousRunLine === undefined,
+    `expected no run line, got: ${JSON.stringify(vacuousRunLine)}`,
   )
 
   return results

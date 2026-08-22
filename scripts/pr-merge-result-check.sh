@@ -707,8 +707,8 @@ lockfiles_agree() {
   # cmp trouble here is an anomaly, not a deletion — collapse it into 1
   # ("differs"), the pre-existing generic fallback that re-installs and
   # type-checks for real, rather than a `2` that would misroute into the
-  # #4176 "the merge deletes package-lock.json" message for a file that is
-  # not, in fact, deleted.
+  # #4176 "the merge result has no package-lock.json" message for a file
+  # that is, in fact, present.
   local cmp_rc=0
   cmp -s "$a" "$b" || cmp_rc=$?
   [ "$cmp_rc" -le 1 ] && return "$cmp_rc"
@@ -784,12 +784,24 @@ process.exit(p.scripts && p.scripts.typecheck ? 0 : 1)
     # mismatch. That is the merge's own change, i.e. the PR's — not a
     # runner or script gap — so this points at the PR, unlike the generic
     # `npm ci` failure message the "differs" branch falls into below.
-    echo "pr-merge-result-check: the merge deletes package-lock.json — it exists at" >&2
-    echo "  $base_tip and/or $head_sha but not in the merged tree, so there is no" >&2
-    echo "  lockfile in the merged tree for \`npm ci\` to install from. That is the" >&2
-    echo "  merge's own change, not a script or runner problem. NOTHING was" >&2
-    echo "  type-checked — fix the PR (restore or regenerate package-lock.json)," >&2
-    echo "  not this script." >&2
+    #
+    # The wording stays AGNOSTIC about intent. This branch fires on any
+    # merge whose result lacks a lockfile a parent had, and that includes a
+    # PR that drops `package-lock.json` ON PURPOSE — a package-manager
+    # migration, say. "Restore or regenerate it" is simply the wrong
+    # instruction there, so the message states the consequence (this lane
+    # cannot type-check the merge) and leaves the remedy to the author,
+    # which covers both the accidental deletion and the deliberate one. The
+    # exit code is 3 either way: not a verdict on the merge, and never a
+    # silent pass.
+    echo "pr-merge-result-check: the merge result has no package-lock.json — one" >&2
+    echo "  exists at $base_tip and/or $head_sha but not in the merged tree, so" >&2
+    echo "  there is nothing for \`npm ci\` to install from. That is the merge's own" >&2
+    echo "  change, not a script or runner problem. NOTHING was type-checked." >&2
+    echo "  If the deletion was unintended, restore or regenerate the lockfile. If" >&2
+    echo "  the PR drops it deliberately (a package-manager migration, say), this" >&2
+    echo "  lane cannot judge the merge as written and needs teaching about the new" >&2
+    echo "  lockfile — either way the fix is in the PR, not in this script." >&2
     return 3
   else
     # The borrowed install is for a DIFFERENT lockfile. Do not type-check
@@ -2607,10 +2619,17 @@ STUB
   ( cd "$lockdel" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/lockdel.err"; rc2=$?
   st_expect 'a merge that DELETES package-lock.json is never a silent pass — exit 3, not 0' \
     '3' "$rc2"
-  st_expect 'and the cause is named as the merge deleting the lockfile' \
-    '1' "$(grep -c 'the merge deletes package-lock.json' "$tmp/lockdel.err" || true)"
+  st_expect 'and the cause is named as the merged tree having no lockfile' \
+    '1' "$(grep -c 'the merge result has no package-lock.json' "$tmp/lockdel.err" || true)"
   st_expect 'and it points at the PR, not the script or runner' \
-    '1' "$(grep -c 'fix the PR' "$tmp/lockdel.err" || true)"
+    '1' "$(grep -c 'the fix is in the PR, not in this script' "$tmp/lockdel.err" || true)"
+  # The wording must not ASSUME the deletion was accidental: `lockfiles_agree`
+  # returns 2 for a deliberate drop (a package-manager migration) exactly as
+  # it does for an accidental one, so an unconditional "restore or regenerate
+  # package-lock.json" would be the wrong instruction for half the cases that
+  # reach here. The message has to name the deliberate case too.
+  st_expect 'and it does not assume the deletion was accidental' \
+    '1' "$(grep -c 'deliberately' "$tmp/lockdel.err" || true)"
   st_expect 'and it is NOT reported as the two lockfiles disagreeing in content' \
     '0' "$(grep -c "package-lock.json differs from" "$tmp/lockdel.err" || true)"
   st_expect 'and `npm ci` is never invoked to fail on a lockfile that is not there' \

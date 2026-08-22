@@ -236,11 +236,25 @@ function findAmbientRanges(tokens, src) {
     const next = tokens[i + 1]
     if (!next || next.kind !== 'ident' || !AMBIENT_BLOCK_LEAD.has(next.value)) continue
 
-    // `declare global` opens its body directly. `declare module '…'` takes
-    // a STRING specifier — skip over exactly that one token. `declare
-    // namespace Foo` and the legacy `declare module Foo` (no quotes) take a
-    // possibly-dotted IDENTIFIER name instead (`Foo`, `Foo.Bar.Baz`) — skip
-    // over the whole dotted chain, nothing else, before looking for `{`.
+    // `declare module '…'` takes a STRING specifier — skip over exactly
+    // that one token. `declare namespace Foo` and the legacy `declare
+    // module Foo` (no quotes) take a possibly-dotted IDENTIFIER name
+    // instead (`Foo`, `Foo.Bar.Baz`) — skip over the whole dotted chain,
+    // nothing else, before looking for `{`.
+    //
+    // `declare global` takes NO name and opens its body directly, so
+    // neither skip should apply to it — but note that the identifier arm
+    // below is written on the token, not on `next.value`, so it is REACHED
+    // for `global` as well. It is a no-op there in any well-formed input
+    // (the token after `global` is `{`, a punct, not an ident), and the
+    // head bound keeps a malformed input fail-CLOSED rather than fail-open:
+    // if some shape did put an identifier there, the skip would move `j`
+    // off the `{`, `openTok` would not be one, and the declaration would
+    // contribute NO ambient range — the body then gets scanned normally,
+    // which is the conservative direction (#4258). Narrowing the arm to
+    // `next.value !== 'global'` was considered and left alone: it would
+    // add a branch whose only reachable effect is to turn one unreachable
+    // no-op into a different unreachable no-op.
     let j = i + 2
     if (next.value === 'module' && tokens[j] && tokens[j].kind === 'string') {
       j++

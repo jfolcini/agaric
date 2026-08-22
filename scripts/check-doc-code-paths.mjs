@@ -110,7 +110,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, isAbsolute, join, normalize } from 'node:path'
+import { dirname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 
 import {
   initScratchRepo,
@@ -408,13 +408,36 @@ const KNOWN_INTENTIONAL_WARNINGS = [
 const warningKey = (w) => `${w.doc} ${w.ref} ${w.maxCited}`
 
 // The path this guard occupies in its OWN repository — the marker that says
-// "the acknowledgment list above describes THIS tree". Spelled from
-// `import.meta.filename` rather than hardcoded so renaming the file cannot
-// silently switch the whole mechanism off. `scripts/` is not a guess:
-// `prek.toml` invokes this as `node scripts/check-doc-code-paths.mjs`, and
-// the sibling `BASELINE_FILE` is anchored under `<REPO_ROOT>/scripts/` on
-// exactly the same premise.
-const GUARD_SELF_PATH = `scripts/${basename(import.meta.filename)}`
+// "the acknowledgment list above describes THIS tree". Derived WHOLLY from
+// `import.meta.filename`, DIRECTORY included, by walking up from the
+// script's own location to the repository that contains it and taking the
+// path relative to that root. A hardcoded `scripts/` prefix would have made
+// renaming the file safe (the basename came from `import.meta.filename`
+// already) but MOVING it a silent no-op: the `tracked.has()` lookup below
+// would simply miss, `acknowledged` would resolve empty, and the whole
+// acknowledgment mechanism would go inert with nothing said about it.
+// Deriving both halves means neither operation can defang it quietly.
+//
+// SCRIPT-anchored on purpose, unlike `REPO_ROOT` (cwd-derived — see its
+// comment): the question here is "where does this guard live in its own
+// repo", which is a property of the script, not of the tree under judgement.
+// Under `--self-test` those differ — the script runs against scratch
+// fixtures elsewhere — and the fixture reproduces this exact path to declare
+// itself the guard's home repo.
+//
+// `null` when no containing repository can be found (an unpacked tarball,
+// say). That is reported out loud at the single use site rather than
+// degrading into the same silent inertness the derivation exists to prevent.
+function deriveGuardSelfPath(filename) {
+  let dir = dirname(filename)
+  for (;;) {
+    if (existsSync(join(dir, '.git'))) return relative(dir, filename).split(sep).join('/')
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+}
+const GUARD_SELF_PATH = deriveGuardSelfPath(import.meta.filename)
 
 // @param {string} text
 // @returns {{cleaned: string, lineNumbers: number[]}[]}
@@ -657,7 +680,18 @@ function computeMisses() {
   // rather than handed to `check()` as a flag for it to branch on again:
   // "which acknowledgments describe the tree under judgement" is a question
   // about the tree, and this is the function that knows the tree.
-  const acknowledged = tracked.has(GUARD_SELF_PATH) ? KNOWN_INTENTIONAL_WARNINGS : []
+  // `GUARD_SELF_PATH === null` means the derivation could not find the
+  // repository containing this script at all, so the gate cannot be asked
+  // honestly. Say so instead of resolving empty in silence, which is
+  // indistinguishable from "this simply is not the guard's home tree".
+  if (GUARD_SELF_PATH === null) {
+    process.stderr.write(
+      'check-doc-code-paths: WARNING: no repository found above ' +
+        `${import.meta.filename}; KNOWN_INTENTIONAL_WARNINGS is inert this run.\n`,
+    )
+  }
+  const acknowledged =
+    GUARD_SELF_PATH !== null && tracked.has(GUARD_SELF_PATH) ? KNOWN_INTENTIONAL_WARNINGS : []
   // Every ANCESTOR DIRECTORY of every tracked path, built ONCE from
   // `entries.paths` — not per candidate. A directory-shaped citation (a
   // citing text that names a directory, not a file) resolves by asking
@@ -679,7 +713,17 @@ function computeMisses() {
   const docs = listMarkdownFiles(entries.paths)
   const tsFiles = listTsFiles(entries.paths)
   if (docs.length === 0 && tsFiles.length === 0) {
-    return { misses: [], scanErrors: [], warnings: [], chosen, acknowledged }
+    // A VACUOUS scan — nothing scannable in the tree at all — hands back NO
+    // acknowledgments, whatever the self-path gate said. Staleness is
+    // measured against this run's LIVE warnings, and a run that examined
+    // zero files produces zero warnings for reasons that have nothing to do
+    // with the acknowledgment list. Passing `acknowledged` through here
+    // would turn every entry stale at once and report a tree that tracks
+    // this guard but holds no `.md`/`.ts`/`.tsx` as a rotted list, instead
+    // of the clean no-op it is. Degenerate for the real repository (which
+    // always has both); reachable for a fixture, and for a `--cached` run
+    // over a commit that happens to stage neither.
+    return { misses: [], scanErrors: [], warnings: [], chosen, acknowledged: [] }
   }
   let bodies
   let tsBodies
@@ -805,7 +849,21 @@ function computeMisses() {
   // whatever reason is silently skipped rather than surfaced as a
   // scanError (which WOULD fail the build, exactly what this feature must
   // not do).
+  //
+  // #4264 made that promise conditional and it has to be paid for here.
+  // `staleKnownWarnings` in `check()` judges each acknowledgment against
+  // this run's LIVE `warnings`; if the batch read below throws, every
+  // warning disappears and the acknowledged entry looks rotted, so the
+  // guard would fail after all — telling the maintainer to prune a list
+  // that is perfectly current, and naming a rotted acknowledgment when the
+  // real cause is I/O. Deliberate resolution: keep the read failure
+  // NON-FATAL as the comment above promises, but (a) say out loud that it
+  // happened, naming the actual cause, and (b) withhold the
+  // acknowledgments for this run, because staleness is not measurable from
+  // a warning set that could not be computed. Absence of evidence is not
+  // evidence of rot.
   const warnings = []
+  let targetReadFailed = false
   if (lineCitations.length > 0) {
     let targetBodies
     try {
@@ -815,8 +873,15 @@ function computeMisses() {
         entries,
         env: GIT_ENV,
       })
-    } catch {
+    } catch (err) {
+      targetReadFailed = true
       targetBodies = new Map()
+      process.stderr.write(
+        'check-doc-code-paths: WARNING: could not read the targets of line-numbered ' +
+          `citations (${err.message}); line-bound warnings are skipped this run, and ` +
+          'KNOWN_INTENTIONAL_WARNINGS is not staleness-checked against an uncomputable ' +
+          'warning set.\n',
+      )
     }
     // #4264 — `countFileLines` per UNIQUE target, not per citation: the
     // reads above are already batched this way (one `readContents` call per
@@ -849,7 +914,13 @@ function computeMisses() {
       }
     }
   }
-  return { misses, scanErrors, warnings, chosen, acknowledged }
+  return {
+    misses,
+    scanErrors,
+    warnings,
+    chosen,
+    acknowledged: targetReadFailed ? [] : acknowledged,
+  }
 }
 
 function check() {
@@ -1713,14 +1784,46 @@ function knownIntentionalWarningScenarios(root) {
       `expected 0 with no KNOWN_INTENTIONAL_WARNINGS output at all, got ${notHome.status}: ${notHome.stderr}`,
     )
 
+    // ── 0b. THE VACUOUS SCAN ─────────────────────────────────────────────
+    // The gate's other side: a tree that DOES track this guard, so the
+    // acknowledgment list applies to it, but holds nothing scannable at all
+    // (`docs.length === 0 && tsFiles.length === 0`). Zero warnings there is
+    // a consequence of scanning zero files, not of an acknowledgment
+    // rotting, so the run must be the clean no-op it was before #4264 — not
+    // a staleness failure. Its own scratch repo, so scenario 1's mutations
+    // cannot reach it.
+    const emptyDir = join(root, 'known-intentional-vacuous-scan')
+    const emptyEnv = scrubbedGitEnv(root)
+    const emptyGit = initScratchRepo(emptyDir, emptyEnv)
+    mkdirSync(join(emptyDir, dirname(GUARD_SELF_PATH)), { recursive: true })
+    writeFileSync(
+      join(emptyDir, GUARD_SELF_PATH),
+      '// self-test marker: this fixture stands in for the repo this guard ships in.\n',
+    )
+    emptyGit('add', '-A')
+    const vacuous = spawnSync(process.execPath, [import.meta.filename, '--worktree'], {
+      cwd: emptyDir,
+      env: emptyEnv,
+      encoding: 'utf8',
+    })
+    record(
+      'a tree that tracks this guard but holds NO scannable file is a clean no-op, not a stale-acknowledgment failure',
+      vacuous.status === 0 && !/KNOWN_INTENTIONAL_WARNINGS/.test(vacuous.stderr ?? ''),
+      `expected 0 with no KNOWN_INTENTIONAL_WARNINGS output, got ${vacuous.status}: ${vacuous.stderr}`,
+    )
+
     // ── 1. STALENESS ─────────────────────────────────────────────────────
     // From here the fixture IS the guard's home repository. Tracking the
     // guard's own path is the whole declaration — the content is never read
     // (this guard scans `.md`/`.ts`/`.tsx` only), so a marker says it as
-    // honestly as a copy would and cannot drift from the real file.
-    mkdirSync(join(dir, 'scripts'), { recursive: true })
+    // honestly as a copy would and cannot drift from the real file. The path
+    // comes from `GUARD_SELF_PATH` itself, not a re-spelling of it, so
+    // MOVING the guard moves the fixture's marker with it — a hand-written
+    // `scripts/<basename>` here would keep passing scenario 0 and start
+    // failing everything after it.
+    mkdirSync(join(dir, dirname(GUARD_SELF_PATH)), { recursive: true })
     writeFileSync(
-      join(dir, 'scripts', basename(import.meta.filename)),
+      join(dir, GUARD_SELF_PATH),
       '// self-test marker: this fixture stands in for the repo this guard ships in.\n',
     )
     const citingDoc = join(dir, 'src', 'lib', '__tests__', 'platform.test.ts')

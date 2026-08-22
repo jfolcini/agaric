@@ -102,6 +102,15 @@ strict subset and the old code can only ever stop too early, never too late.
 Verified independently. The fixture was kept as a labelled regression guard
 rather than presented as a falsification it is not.
 
+Round-two review read the corollary the argument had left unstated: a strict
+subset fixes stopping too early and opens stopping too **late**. The end-
+anchored key shape (`:\s*$`) refuses a real job key carrying a trailing
+comment or a YAML anchor, so the slice runs on into following jobs and
+`findDocsLintRunLine` can match one of *their* run lines — passing the #4147
+wiring assertion vacuously. The shape now tolerates trailing content
+(`:(?:\s|$)`), pinned by two fixtures that are genuinely red under the
+anchored form: the leak itself, and the vacuous pass it causes.
+
 ## #4174 — partial, and deliberately so
 
 The blockquote half landed: fences prefixed by `>` are now recognised, and
@@ -124,3 +133,48 @@ issue itself calls "not a correctness emergency". Both rejections are pinned by
 self-test scenarios, and the list-nested fixture now asserts "still flagged"
 rather than silently no-op'ing. Re-scoped on the issue; closing it properly
 needs a real block-container model.
+
+## Round-two review — the fence cap had to be re-tightened
+
+The blockquote widening above shipped with a leading-indent class of
+`[ \t]{0,3}` and a blockquote prefix of `(?:[ \t]*>)*`, in both `MD_FENCE_RE`
+and `MD_FENCE_BARE_RE`. Both fail **open**, and both against the very
+invariant the file header and the constant's own comment state.
+
+CommonMark expands a tab to the next 4-column tab stop, so one leading tab is
+already 4 columns — indented code, never a fence. Admitting `\t` let a single
+tab satisfy the 0–3 cap. Separately, the unbounded whitespace star before each
+`>` opened a depth-1 fence for a marker sitting at 4+ columns, which CommonMark
+also reads as indented code. Either shape phantom-opens a fence that nothing
+closes, and the fence then swallows every following line — including a live
+`REMOVE AFTER` marker. That is exactly the silent false negative the
+list-nested half was rejected to avoid, reintroduced by the half that landed.
+
+Latent rather than live: no tracked `.md` carries such a line today. But MD010
+is not a backstop for the tab shape — `.markdownlint-cli2.jsonc` ignores every
+`AGENTS.md`, plus `PROMPT.md`, `REVIEW-LATER.md`, `FEATURE-MAP.md` and
+`SESSION-LOG.md`, while this guard's `EXCLUDE_PATH_RE` excludes only
+`^docs/session-log/`. Both classes are capped back to spaces, and
+`plainIndentedCodeIsNotAFenceScenarios` gained a tab-indented and a
+4-space-before-`>` fixture, each red before the fix and green after.
+
+Four non-blocking notes closed alongside it. `GUARD_SELF_PATH` no longer
+hardcodes `scripts/`: it walks up from `import.meta.filename` to the repo
+containing the script, so *moving* the guard can no longer switch the whole
+acknowledgment mechanism off in silence, and the fixture builds its marker from
+the same derived path. A target read failure no longer reddens the build by way
+of staleness — the promise that the warning channel is opportunistic is kept,
+but the run now says out loud what failed and withholds the acknowledgments,
+because staleness is not measurable from a warning set that could not be
+computed. The vacuous-scan early return hands back no acknowledgments, so a
+tree with nothing scannable is the clean no-op it used to be (fixtured, red
+before). The `declare global` comment in the erasure guard now matches the
+code it describes — the identifier-skip arm is reached for `global` too, is a
+no-op there, and stays fail-closed if it ever were not.
+
+The #4176 diagnostic stopped assuming intent. `lockfiles_agree` returns 2 for a
+merge that drops `package-lock.json` **on purpose** — a package-manager
+migration — as readily as for an accidental deletion, so "restore or regenerate
+package-lock.json" was the wrong instruction half the time. The message now
+states the consequence and names both cases; exit code unchanged at 3, and the
+self-test asserts the deliberate case is acknowledged.
