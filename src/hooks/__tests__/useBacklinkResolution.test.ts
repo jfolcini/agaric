@@ -11,7 +11,7 @@
  *  - Tag fallback format; space-scoped resolution (#2543); error handling.
  */
 
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #2927 phase 5 — the hook now calls the generated `commands.batchResolve`, so
@@ -32,8 +32,12 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
   }
 })
 
+import { renderBlockLink } from '@/components/RichContentRenderer/marks/blockLink'
+import { renderBlockRef } from '@/components/RichContentRenderer/marks/blockRef'
+import { renderTagRef } from '@/components/RichContentRenderer/marks/tagRef'
 import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
-import type { BacklinkGroup } from '@/lib/bindings'
+import type { BacklinkGroup, BlockRow } from '@/lib/bindings'
+import { resolveBlockDisplay } from '@/lib/query-result-utils'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -41,6 +45,7 @@ import { useSpaceStore } from '@/stores/space'
 const ULID_A = '01HAAAAA0000000000000000AA'
 const ULID_B = '01HBBBBB0000000000000000BB'
 const ULID_TAG = '01HTTTTT0000000000000000TT'
+const ULID_PAGE = '01HPPPPP0000000000000000PP'
 
 function makeGroup(blocks: Array<{ id: string; content: string | null }>): BacklinkGroup {
   return {
@@ -442,6 +447,278 @@ describe('useBacklinkResolution', () => {
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
     })
+  })
+})
+
+/**
+ * #4228 — this hook is the FOURTH writer of the shared resolve store's block
+ * title (`storeTitle` → `batchSet`), alongside the three seeders covered by
+ * `@/components/block-tree/__tests__/resolve-store-title-seed-parity.test.ts`.
+ *
+ * `batch_resolve` returns the RAW `content` column as `title` for EVERY block
+ * type, so what a bound is worth depends entirely on `r.block_type`:
+ *
+ *   - `content` — normalise. NOT because this hook seeds a `((ULID))` chip
+ *     itself (it does not: `collectContentIds` matches only `[[ULID]]` and
+ *     `#[ULID]`), but because the resolve store's key is
+ *     `${spaceId}::${ulid}` with NO mark class in it. One content block
+ *     reached by `[[id]]` here and by `((id))` through `fetchAndCacheLinks`
+ *     is ONE cache entry, so a raw write here IS read by `renderBlockRef` —
+ *     which since #4228 renders the stored value verbatim into the chip's
+ *     text node and its deleted `aria-label` (CSS `nowrap`/`ellipsis` masks
+ *     the chip visually; the announced label is unmasked).
+ *
+ *   - `page` / `tag` — VERBATIM. These share that same key with
+ *     `useResolveStore.preload`, which writes `p.content` / `t.name` raw;
+ *     normalising them desyncs the two writers on every >60-char title
+ *     (each pass flips the entry and bumps `version`) and corrupts the
+ *     value: `renderBlockLink` splits the stored title on `/`, so a capped
+ *     path yields the wrong leaf — or a namespace segment as the page name.
+ *
+ * The blank arm matters just as much: a resolved-but-BLANK row must keep
+ * the `[[id...]]` placeholder rather than being normalised into "Untitled",
+ * because `resolveBlockDisplay` (`@/lib/query-result-utils`) pattern-matches
+ * exactly that shape to detect a cache miss and fall back to the block's own
+ * content.
+ */
+describe('useBacklinkResolution — stored title is normalised at the seed (#4228)', () => {
+  /** A chip rendered through the real renderer, wired to the hook's resolvers. */
+  function renderChip(resolution: {
+    resolveBlockTitle: (id: string) => string
+    resolveBlockStatus: (id: string) => 'active' | 'deleted'
+  }): HTMLElement {
+    render(
+      renderBlockRef({ type: 'block_ref', attrs: { id: ULID_A } }, 'k', {
+        interactive: true,
+        resolveBlockTitle: resolution.resolveBlockTitle,
+        resolveBlockStatus: resolution.resolveBlockStatus,
+      }),
+    )
+    return screen.getByTestId('block-ref-chip')
+  }
+
+  function makeBlockRow(overrides: Partial<BlockRow>): BlockRow {
+    return {
+      id: ULID_A,
+      block_type: 'content',
+      content: '',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+      ...overrides,
+    } as BlockRow
+  }
+
+  it('renders a bounded, single-line chip AND aria-label for multi-line backend content', async () => {
+    // What `batch_resolve` actually hands back: `b.content AS title`, raw.
+    const rawContent = `${'A'.repeat(80)}\nsecond line of the block\nthird line`
+    // What the shared normaliser stores for it: first line, capped 57 + '...'.
+    const expectedTitle = `${'A'.repeat(57)}...`
+
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: rawContent, block_type: 'content', deleted: true },
+    ])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(useResolveStore.getState().has(ULID_A)).toBe(true)
+    })
+
+    const chip = renderChip(result.current)
+
+    // The chip's TEXT NODE (what a copy/paste or a screen reader walking the
+    // text picks up), not just what CSS happens to clip. Asserted BEFORE the
+    // store so a regression's failure output shows the rendered damage.
+    const chipText = chip.textContent ?? ''
+    expect(chipText).not.toContain('\n')
+    expect(chipText.length).toBeLessThanOrEqual(60)
+    expect(chipText).toBe(expectedTitle)
+
+    // The deleted `aria-label` is announced in full — CSS truncation does not
+    // touch it, so its bound has to come from the stored title.
+    const ariaLabel = chip.getAttribute('aria-label') ?? ''
+    expect(ariaLabel).not.toContain('\n')
+    expect(ariaLabel.length).toBeLessThanOrEqual(60 + ' (deleted)'.length)
+    expect(ariaLabel).toBe(`${expectedTitle} (deleted)`)
+
+    // And the seed itself — the raw multi-line content never reaches the store.
+    expect(useResolveStore.getState().cache.get(keyFor(null, ULID_A))?.title).toBe(expectedTitle)
+  })
+
+  it('keeps the [[id...]] placeholder for a resolved-but-blank block so cache-miss detection still fires', async () => {
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: '', block_type: 'content', deleted: false },
+    ])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(useResolveStore.getState().has(ULID_A)).toBe(true)
+    })
+
+    // The load-bearing consequence, asserted through the real consumer rather
+    // than a copy of its private regex: `resolveBlockDisplay` must still see a
+    // cache miss and fall back to the block's own content. Normalising the
+    // blank row into "Untitled" would make it look resolved and swallow the
+    // content fallback — so this is asserted FIRST, ahead of the shape pins.
+    const row = makeBlockRow({ content: 'the row own content' })
+    expect(resolveBlockDisplay(row, new Map(), result.current.resolveBlockTitle).title).toBe(
+      'the row own content',
+    )
+
+    const fallback = `[[${ULID_A.slice(0, 8)}...]]`
+    expect(result.current.resolveBlockTitle(ULID_A)).toBe(fallback)
+    expect(useResolveStore.getState().cache.get(keyFor(null, ULID_A))?.title).toBe(fallback)
+  })
+
+  it('keeps the #id... placeholder for a resolved-but-blank tag', async () => {
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_TAG, title: null, block_type: 'tag', deleted: false },
+    ])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `#[${ULID_TAG}]` }])]
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(useResolveStore.getState().has(ULID_TAG)).toBe(true)
+    })
+    expect(result.current.resolveTagName(ULID_TAG)).toBe(`#${ULID_TAG.slice(0, 8)}...`)
+  })
+
+  it('leaves a short single-line title byte-identical (no gratuitous rewrite)', async () => {
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: 'a real short title', block_type: 'content', deleted: false },
+    ])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(result.current.resolveBlockTitle(ULID_A)).toBe('a real short title')
+    })
+  })
+
+  /**
+   * The block-content normaliser must NOT reach a `page` row. `batch_resolve`
+   * hands back `b.content AS title` for every block type, so for a `[[ULID]]`
+   * pointing at a PAGE that string is the namespaced PATH — and
+   * `renderBlockLink` splits it on `/` (`getPageDisplayName(title, 'leaf')`).
+   * A 62-char path capped to 57 + '...' cuts inside the last segment, so the
+   * chip shows a mangled leaf; cut a little earlier and the leaf disappears
+   * entirely and a NAMESPACE segment becomes the page name.
+   */
+  const NAMESPACED_PAGE_TITLE = 'Engineering/Platform/Observability/Distributed Tracing Rollout' // 62 chars
+  const PAGE_LEAF = 'Distributed Tracing Rollout'
+
+  it('stores a >60-char namespaced PAGE title verbatim so the link chip keeps its real leaf', async () => {
+    expect(NAMESPACED_PAGE_TITLE.length).toBeGreaterThan(60)
+
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_PAGE, title: NAMESPACED_PAGE_TITLE, block_type: 'page', deleted: false },
+    ])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_PAGE}]]` }])]
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(useResolveStore.getState().has(ULID_PAGE)).toBe(true)
+    })
+
+    // Asserted through the real renderer first, so a regression's failure
+    // output shows the user-visible damage rather than a store-shape diff.
+    render(
+      renderBlockLink({ type: 'block_link', attrs: { id: ULID_PAGE } }, 'k', {
+        interactive: true,
+        resolveBlockTitle: result.current.resolveBlockTitle,
+        resolveBlockStatus: result.current.resolveBlockStatus,
+      }),
+    )
+    const chip = screen.getByTestId('block-link-chip')
+
+    // The chip renders the LEAF — not a leaf mangled by a cap applied before
+    // the split (`Distributed Tracing Ro...`), and not a namespace segment.
+    expect(chip.textContent).toBe(PAGE_LEAF)
+    // ...and the `title=` attribute, whose whole job is to keep the full path
+    // discoverable while the chip shows only the leaf, carries the FULL path.
+    expect(chip.getAttribute('title')).toBe(NAMESPACED_PAGE_TITLE)
+    expect(chip.getAttribute('title')).not.toContain('...')
+
+    // The seed itself: byte-identical to what `useResolveStore.preload` writes
+    // for the same page under the same `${spaceId}::${ulid}` key (`p.content`,
+    // raw). Any divergence makes the two writers flip the entry — and bump
+    // `version` — on every pass.
+    expect(useResolveStore.getState().cache.get(keyFor(null, ULID_PAGE))?.title).toBe(
+      NAMESPACED_PAGE_TITLE,
+    )
+  })
+
+  it('stores a >60-char TAG name verbatim so the tag chip is not cut', async () => {
+    const longTagName = `area/${'deep-nested-tag-segment/'.repeat(3)}leaf` // > 60 chars
+    expect(longTagName.length).toBeGreaterThan(60)
+
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_TAG, title: longTagName, block_type: 'tag', deleted: false },
+    ])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `#[${ULID_TAG}]` }])]
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(useResolveStore.getState().has(ULID_TAG)).toBe(true)
+    })
+
+    render(
+      renderTagRef({ type: 'tag_ref', attrs: { id: ULID_TAG } }, 'k', {
+        interactive: true,
+        resolveTagName: result.current.resolveTagName,
+      }),
+    )
+    expect(screen.getByTestId('tag-ref-chip').textContent).toBe(longTagName)
+    // `useResolveStore.preload` writes `t.name` raw under this same key.
+    expect(useResolveStore.getState().cache.get(keyFor(null, ULID_TAG))?.title).toBe(longTagName)
+  })
+
+  it('does not flip a page entry preload already seeded (no version churn)', async () => {
+    // Exactly what `preload` writes for this page: `p.content`, raw.
+    useResolveStore.getState().set(ULID_PAGE, NAMESPACED_PAGE_TITLE, false)
+    const versionAfterPreload = useResolveStore.getState().version
+
+    // `has()` short-circuits the fetch for an already-cached id, so drive the
+    // second write the way `clearCache()` does — the forced re-resolve path,
+    // which is precisely where a diverging seed re-writes the same key.
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_PAGE, title: NAMESPACED_PAGE_TITLE, block_type: 'page', deleted: false },
+    ])
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_PAGE}]]` }])]
+    const { result, rerender } = renderHook(({ g }) => useBacklinkResolution(g), {
+      initialProps: { g: groups },
+    })
+
+    act(() => {
+      result.current.clearCache()
+    })
+    rerender({ g: [makeGroup([{ id: 'B1', content: `[[${ULID_PAGE}]]` }])] })
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalled()
+    })
+
+    // `batchSet` diffs on VALUE, so a seed that agrees with preload writes
+    // nothing and leaves `version` alone; a normalised seed would differ on
+    // this 62-char title, flip the entry and re-render every subscriber.
+    await waitFor(() => {
+      expect(useResolveStore.getState().cache.get(keyFor(null, ULID_PAGE))?.title).toBe(
+        NAMESPACED_PAGE_TITLE,
+      )
+    })
+    expect(useResolveStore.getState().version).toBe(versionAfterPreload)
   })
 })
 

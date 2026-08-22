@@ -14,6 +14,7 @@ import { useEffect, useMemo } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -79,9 +80,16 @@ export async function fetchAndCacheLinks(
     // activeSpaceId() and caps via evictOldest — behaviour is preserved.
     const entries: Array<{ id: string; title: string; deleted: boolean }> = []
     for (const r of resolved) {
+      // #4228/#4239 — one gate, `resolveStoreTitle`, shared with every other
+      // seed writer (`@/lib/block-title`'s docblock enumerates them), so the
+      // same block id reached by two paths produces the same bytes and
+      // `batchSet`'s value diff sees a genuine no-op. A resolved-but-blank
+      // `r.title` therefore gets the "Untitled" placeholder those seeders
+      // use — not the `[[id…]]` broken-link shape, which is reserved below
+      // for a target the backend didn't return at all.
       entries.push({
         id: r.id,
-        title: r.title?.slice(0, 60) || `[[${r.id.slice(0, 8)}...]]`,
+        title: resolveStoreTitle(r.block_type, r.title),
         deleted: r.deleted,
       })
     }

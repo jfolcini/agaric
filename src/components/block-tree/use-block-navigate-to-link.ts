@@ -19,6 +19,7 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { toSpaceScope } from '@/lib/space-scope'
@@ -125,12 +126,17 @@ export function useBlockNavigateToLink({
           return
         }
 
-        // Populate cache with the fetched block info
+        // Populate cache with the fetched block info. #4228/#4239 — one gate,
+        // `resolveStoreTitle`, shared with every other seed writer
+        // (`@/lib/block-title`'s docblock enumerates them). A page target
+        // reaches this line — the `block_type === 'page'` branch immediately
+        // below is proof — and the gate is what keeps its namespaced path
+        // un-capped and un-split here.
         useResolveStore
           .getState()
           .set(
             targetId,
-            targetBlock.content?.slice(0, 60) || `[[${targetId.slice(0, 8)}...]]`,
+            resolveStoreTitle(targetBlock.block_type, targetBlock.content),
             targetBlock.deleted_at !== null,
           )
 

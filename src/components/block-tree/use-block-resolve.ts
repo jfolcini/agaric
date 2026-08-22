@@ -18,6 +18,7 @@ import type { PickerItem } from '@/editor/SuggestionList'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { TagCacheRow } from '@/lib/bindings'
+import { blockFirstLineOr, resolveStoreTitle, untitledOr } from '@/lib/block-title'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { t as translate } from '@/lib/i18n'
@@ -64,7 +65,19 @@ export interface UseBlockResolveReturn {
 // passed in explicitly. Keeping them as free functions (rather than inline
 // closures) makes the dispatcher below a linear, low-complexity sequence.
 
-type PagesListRef = React.RefObject<Array<{ id: string; title: string }>>
+/**
+ * One page suggestion as the strategies deal in it: the RAW title, exactly
+ * as stored. The strategies stop at this shape and the dispatcher renders it
+ * into a `PickerItem` — #4239, so the resolve-cache seed can be handed the
+ * un-split path instead of `makePagePickerItem`'s leaf-only label. See
+ * `populatePageResolveCache`.
+ */
+interface PageRow {
+  id: string
+  title: string
+}
+
+type PagesListRef = React.RefObject<PageRow[]>
 
 /**
  * Splits a `parent/child/leaf` title into `{ label: leaf, breadcrumb: 'parent / child' }`.
@@ -98,75 +111,15 @@ function formatNamespacedLabel(title: string): {
  * placeholder still needs to be SHOWN, so it is applied here, once, at
  * display time, rather than at every seed site.
  *
- * One call SITE elsewhere in this file — two literals — is deliberately NOT
- * routed through `untitledOr` (below), because it doesn't receive the `''`
- * cache-seed shape that helper is written against (#4150 review):
- *   - `searchBlockRefs` renders BLOCK content for the `((` picker, a
- *     different surface with its own truncation rules — not a page title.
- *     (#4153 routed its two literals through `translate(...)` for i18n; the
- *     trimmed-empty test they were still missing landed in #4190 via the
- *     sibling `blockContentOr` / `blockFirstLineOr` helpers below, kept
- *     apart from `untitledOr` itself for the same reason.)
+ * `untitledOr` / `blockFirstLineOr` live in `@/lib/block-title` now (#4228)
+ * — shared with the resolve-store BLOCK title seed (`searchBlockRefs`
+ * below, plus the two other seed call sites in
+ * `use-block-link-resolve.ts` / `use-block-navigate-to-link.ts`), which is
+ * a different surface with its own truncation rules, not a page title.
  */
 function makePagePickerItem(id: string, title: string): PickerItem {
   const { label, breadcrumb } = formatNamespacedLabel(untitledOr(title))
   return { id, label, icon: FileText, breadcrumb }
-}
-
-/**
- * #4153 — shared "what does the user see for this title" normalisation,
- * used to DISPLAY a page title (`makePagePickerItem`, `mergeAliasPrefixMatches`).
- *
- * Deliberately NOT used as a search-match key: #4152 (whether a NULL-content
- * page should be findable by typing its displayed "Untitled" placeholder) is
- * an open product question, not a defect — see the issue and #4154, which
- * filed it without implementing it. Matching on the placeholder here would
- * decide that question as a side effect of this fix, which is out of scope.
- *
- * Two independent pre-existing gaps, fixed together because they live in
- * the same test:
- *   1. Trimmed, not exact-empty (`=== ''` / `?? ''`) — a whitespace-only
- *      title (`'   '`, `'\n'`) is not `=== ''`, so the old exact-empty test
- *      rendered it as a blank, unlabelled picker row instead of the
- *      placeholder. `BlockZoomBar` already applies the same TEST for the
- *      zoom label (`stripped.length > 0 ? stripped : t('block.untitled')`),
- *      though it goes on to render the STRIPPED value; a picker row keeps
- *      the raw title, so `'  foo  '` still shows its surrounding space.
- *   2. Routed through `translate(...)` (the module-scope i18n singleton,
- *      since these are free functions with no `useTranslation()` hook
- *      context) instead of the hardcoded English literal, matching every
- *      other 'Untitled' surface in the app (`TemplatePicker`, `DuePanel`,
- *      `BlockZoomBar`, `PageBrowser`'s filter editors).
- */
-function untitledOr(title: string | null): string {
-  return title === null || title.trim() === '' ? translate('block.untitled') : title
-}
-
-/**
- * #4190 — sibling of `untitledOr`, scoped to BLOCK content rather than a
- * page title (kept a separate helper per #4150's review: block content is a
- * different surface with its own truncation rules, not the `''`-cache-seed
- * shape `untitledOr` is written against — see `makePagePickerItem`'s
- * docblock above). Same trimmed-empty test on the RAW content, for the one
- * call site that stores the FULL content rather than a truncated preview
- * (the resolve-store title seed in `searchBlockRefs`).
- */
-function blockContentOr(content: string | null): string {
-  return untitledOr(content)
-}
-
-/**
- * #4190 — like `blockContentOr`, but for the `((` picker ROW, which shows
- * only the block's first LINE (see the length-based truncation at its call
- * site below). The trimmed-empty test has to run against that first line,
- * not the raw multi-line string: `content.split('\n')[0]` is `''` for
- * content starting with a newline even when a later line holds real text,
- * and is whitespace-only for a `'   '` block — both shapes rendered a
- * blank, unlabelled picker row before this fix, the residual #4153 (the
- * `[[` page picker's equivalent fix) left open on this surface.
- */
-function blockFirstLineOr(content: string | null): string {
-  return untitledOr(content?.split('\n')[0] ?? null)
 }
 
 /**
@@ -179,7 +132,7 @@ function blockFirstLineOr(content: string | null): string {
  * document continue to resolve via the shared resolve cache, they just
  * don't appear as new suggestions.
  */
-async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promise<PickerItem[]> {
+async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promise<PageRow[]> {
   let source = pagesListRef.current
   if (source.length === 0) {
     // limit-clamp-followup — replaced the silently-clamped
@@ -207,7 +160,10 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
     }
   }
   const filtered = q ? matchSorter(source, q, { keys: ['title'] }) : source
-  return filtered.slice(0, 20).map((p) => makePagePickerItem(p.id, p.title))
+  // Copy rather than hand back `pagesListRef.current`'s own objects — the
+  // dispatcher and the cache seed both read these, and aliasing the ref's
+  // entries would let a future consumer mutate the lazily-filled cache.
+  return filtered.slice(0, 20).map((p) => ({ id: p.id, title: p.title }))
 }
 
 /**
@@ -217,7 +173,7 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
  *
  * Phase 2 — the FTS call is scoped to the current space.
  */
-async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise<PickerItem[]> {
+async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise<PageRow[]> {
   // #2248 c — `searchBlocks` is space-scoped and rejects an empty scope. No
   // active space ⇒ nothing to search; short-circuit to empty rather than send
   // a `''` that used to mean "match nothing" but now throws.
@@ -246,12 +202,12 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
   )
   const matches = resp.items
     .filter((b) => b.block_type === 'page')
-    // #4150 review — pass the raw `''` rather than the placeholder, same as
+    // #4150 review — carry the raw `''` rather than the placeholder, same as
     // the cache seed above. `makePagePickerItem` maps `''` to `'Untitled'`,
     // so the rendered label is unchanged; this value is only ever a label
     // input (never a sort or match key), which is what makes the two forms
     // interchangeable here and the render site the sole owner of the string.
-    .map((b) => makePagePickerItem(b.id, b.content ?? ''))
+    .map((b) => ({ id: b.id, title: b.content ?? '' }))
 
   if (matches.length >= 5 || pagesListRef.current.length === 0) {
     return matches
@@ -262,7 +218,7 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
   const cacheMatches = pagesListRef.current
     .filter((p) => matchesSearchFolded(p.title, q) && !ftsIds.has(p.id))
     .slice(0, 10)
-    .map((p) => makePagePickerItem(p.id, p.title))
+    .map((p) => ({ id: p.id, title: p.title }))
   return [...matches, ...cacheMatches].slice(0, 20)
 }
 
@@ -283,14 +239,31 @@ function isRequestSpaceStillActive(requestSpaceId: string | null): boolean {
  * Populates the resolve cache so page links show titles instead of raw ULIDs.
  *
  * #853 — see `isRequestSpaceStillActive` above.
+ *
+ * #4239 — takes page ROWS, not the rendered `PickerItem`s. It used to seed
+ * `m.label`, and `makePagePickerItem` builds that label through
+ * `formatNamespacedLabel`, which SPLITS a namespaced title into
+ * `{ label: leaf, breadcrumb: 'parent / child' }`. So the picker stored
+ * `Observability` for a page whose title is
+ * `Engineering/Platform/Observability`, while `preload` and the three
+ * id-fetching seeders store the full path under that same key — a permanent
+ * value-diff that re-bumped `version` every time the user typed `[[` on a
+ * page with a namespace, and left `renderBlockLink`'s `title=` tooltip (and
+ * `getPageDisplayName`'s own leaf/breadcrumb split) working off a path that
+ * had already been truncated once. Seeding from the row keeps the stored
+ * title un-split and un-capped, which is the page/tag arm of the invariant
+ * in `@/lib/block-title`.
  */
-function populatePageResolveCache(matches: PickerItem[], requestSpaceId: string | null): void {
-  if (matches.length === 0) return
+function populatePageResolveCache(
+  rows: ReadonlyArray<{ id: string; title: string }>,
+  requestSpaceId: string | null,
+): void {
+  if (rows.length === 0) return
   if (!isRequestSpaceStillActive(requestSpaceId)) return
   useResolveStore
     .getState()
     .batchSet(
-      matches.filter((m) => !m.isCreate).map((m) => ({ id: m.id, title: m.label, deleted: false })),
+      rows.map((r) => ({ id: r.id, title: resolveStoreTitle('page', r.title), deleted: false })),
     )
 }
 
@@ -646,9 +619,17 @@ export function useBlockResolve(): UseBlockResolveReturn {
           // nothing new, so re-running the diff every keystroke bought
           // nothing (#3277).
           if (fetched.length > 0) {
-            useResolveStore
-              .getState()
-              .batchSet(fetched.map((t) => ({ id: t.tag_id, title: t.name, deleted: false })))
+            // #4239 — `resolveStoreTitle` on the tag arm is `untitledOr`:
+            // verbatim for a real name, the placeholder for a blank one. That
+            // matches `preload`'s tag half and `fetchAndCacheLinks`, so a tag
+            // reached by two paths does not churn `version`.
+            useResolveStore.getState().batchSet(
+              fetched.map((t) => ({
+                id: t.tag_id,
+                title: resolveStoreTitle('tag', t.name),
+                deleted: false,
+              })),
+            )
           }
         }
       }
@@ -712,12 +693,18 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // For short/empty queries, use the preloaded pages cache for instant
       // results. For longer queries, use FTS5 server-side search for
       // relevance-ranked results.
-      const matches =
+      const rows =
         q.length <= 2
           ? await searchPagesViaCache(q, pagesListRef)
           : await searchPagesViaFts(q, pagesListRef)
 
-      populatePageResolveCache(matches, requestSpaceId)
+      // #4239 — seed from the ROWS (raw, un-split titles) and render the
+      // picker items separately, so `makePagePickerItem`'s leaf/breadcrumb
+      // split stays a DISPLAY concern and never reaches the resolve store.
+      // Order is unchanged: the seed still runs before the alias merge, so
+      // alias-only hits are still not seeded.
+      populatePageResolveCache(rows, requestSpaceId)
+      const matches = rows.map((r) => makePagePickerItem(r.id, r.title))
       await mergeAliasPrefixMatches(matches, q)
       appendCreatePageOptionIfNeeded(matches, query, q, pagesListRef)
 
@@ -778,39 +765,44 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // Read once before the per-row map (#1637) — the active space can't
       // change mid-map (synchronous transform), so one read is exact.
       const parentSpaceId = useSpaceStore.getState().currentSpaceId
-      const results: PickerItem[] = resp.items
-        .filter((b) => b.deleted_at === null)
-        .map((b) => {
-          // #4153 i18n'd this (was a hardcoded English literal); #4190 gave
-          // it the trimmed-empty test `untitledOr` uses for page titles,
-          // scoped to the first LINE via `blockFirstLineOr` since this maps
-          // BLOCK content for the `((` picker, a different surface with its
-          // own truncation rules — not a page title (see `makePagePickerItem`'s
-          // docblock).
-          const firstLine = blockFirstLineOr(b.content)
-          const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine
-          const parentTitle = b.parent_id
-            ? cacheRef.current.get(keyFor(parentSpaceId, b.parent_id))?.title
-            : undefined
-          return { id: b.id, label, icon: Hash, breadcrumb: parentTitle }
-        })
+      const liveRows = resp.items.filter((b) => b.deleted_at === null)
+      const results: PickerItem[] = liveRows.map((b) => {
+        // #4153 i18n'd this (was a hardcoded English literal); #4190 gave
+        // it the trimmed-empty test `untitledOr` uses for page titles,
+        // scoped to the first LINE via `blockFirstLineOr` since this maps
+        // BLOCK content for the `((` picker, a different surface with its
+        // own truncation rules — not a page title (see `makePagePickerItem`'s
+        // docblock).
+        const firstLine = blockFirstLineOr(b.content)
+        const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine
+        const parentTitle = b.parent_id
+          ? cacheRef.current.get(keyFor(parentSpaceId, b.parent_id))?.title
+          : undefined
+        return { id: b.id, label, icon: Hash, breadcrumb: parentTitle }
+      })
 
       // Populate resolve cache. #853 — gate behind the captured-space guard.
-      if (results.length > 0 && isRequestSpaceStillActive(requestSpaceId)) {
+      //
+      // #4239 review 3 — this seeder ran UNGATED: it wrote
+      // `normalizeBlockRefTitle` for every row, and the `searchBlocks` call
+      // above passes `blockTypeFilter: null`, so page and tag rows come back
+      // here too (`searchPagesViaFts` makes the identical unfiltered call and
+      // then filters `block_type === 'page'` — same response shape, proof in
+      // this file). Capping a page's namespaced path there is exactly the
+      // damage `resolveStoreTitle` exists to prevent; route through it like
+      // every other seeder.
+      //
+      // Seeded from `liveRows` rather than by re-finding each picker item in
+      // `resp.items`: the picker LABEL has its own 80-char rule and is not the
+      // stored title, so the row is what this needs — and the O(n^2) `find`
+      // per row goes away with it.
+      if (liveRows.length > 0 && isRequestSpaceStillActive(requestSpaceId)) {
         useResolveStore.getState().batchSet(
-          results.map((r) => {
-            const block = resp.items.find((b) => b.id === r.id)
-            return {
-              id: r.id,
-              // #4190 — same trimmed-empty test as the label above, but on
-              // the raw content: this seeds the resolve store's FULL title
-              // (consumers like the block-ref chip read the whole content,
-              // not just the first line), so `blockContentOr` — not
-              // `blockFirstLineOr` — is the right sibling here.
-              title: blockContentOr(block?.content ?? null),
-              deleted: false,
-            }
-          }),
+          liveRows.map((b) => ({
+            id: b.id,
+            title: resolveStoreTitle(b.block_type, b.content),
+            deleted: false,
+          })),
         )
       }
       logSlowQuery('searchBlockRefs', q, t0, results.length)

@@ -41,6 +41,7 @@ import {
   useBlockLinkResolve,
 } from '@/components/block-tree/use-block-link-resolve'
 import type { ResolvedBlock } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { useResolveStore } from '@/stores/resolve'
 import { keyFor } from '@/stores/resolve'
@@ -320,7 +321,12 @@ describe('fetchAndCacheLinks — single-batchSet writeback (#1072)', () => {
       { id: ULID_A, title: 'Linked A', block_type: 'content', deleted: false },
       // resolved, deleted flag preserved.
       { id: ULID_B, title: 'Deleted B', block_type: 'content', deleted: true },
-      // resolved with an empty title — falls back to the [[id…]] placeholder.
+      // #4228 — resolved with an empty title now gets the SAME "Untitled"
+      // placeholder every other seed call site uses for blank content
+      // (`normalizeBlockRefTitle`, `@/lib/block-title`), not the `[[id…]]`
+      // broken-link shape the pre-#4228 seed wrote here — that shape is
+      // reserved for a target the backend didn't return at all (ULID_D,
+      // below), a different situation from "resolved, but blank".
       { id: ULID_C, title: '', block_type: 'content', deleted: false },
     ])
 
@@ -335,9 +341,9 @@ describe('fetchAndCacheLinks — single-batchSet writeback (#1072)', () => {
       title: 'Deleted B',
       deleted: true,
     })
-    // Empty title → [[<first 8 of id>...]] fallback (matches old `set` loop).
+    // Empty title (resolved, blank content) → "Untitled" placeholder.
     expect(cache.get(keyFor(TEST_SPACE_ID, ULID_C))).toEqual({
-      title: `[[${ULID_C.slice(0, 8)}...]]`,
+      title: t('block.untitled'),
       deleted: false,
     })
     // Requested but not returned → deleted placeholder.
@@ -347,7 +353,44 @@ describe('fetchAndCacheLinks — single-batchSet writeback (#1072)', () => {
     })
   })
 
-  it('truncates resolved titles to 60 chars like the old loop', async () => {
+  // #4228 — the old loop hard-cut at exactly 60 chars with no ellipsis
+  // (`.slice(0, 60)`); the shared seed normalisation caps at 60 chars
+  // WITH a trailing `...` (57 chars of content + `...`), matching what
+  // `searchBlockRefs` and `handleNavigate` write for the same-length input.
+  it('writes a long PAGE title verbatim — capping it would break the leaf-name split', async () => {
+    // `batch_resolve` returns `b.content` for EVERY block type, so a page's
+    // namespaced path arrives here too. `renderBlockLink` splits the stored
+    // title via `getPageDisplayName(title, 'leaf')`; a cap that lands before
+    // the last `/` yields a namespace segment as the page name, and one that
+    // lands after it truncates the leaf. `preload` also writes `p.content`
+    // verbatim under this same key, so capping here re-opens the divergence
+    // #4228 exists to close.
+    const longPath = `Engineering/Platform/Observability/${'z'.repeat(40)}`
+    expect(longPath.length).toBeGreaterThan(60)
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: ULID_A, title: longPath, block_type: 'page', deleted: false },
+    ])
+
+    await fetchAndCacheLinks(new Set([ULID_A]), TEST_SPACE_ID, () => false)
+
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, ULID_A))).toEqual({
+      title: longPath,
+      deleted: false,
+    })
+  })
+
+  it('writes a long TAG name verbatim too — same reason, same gate', async () => {
+    const longTag = `area/${'t'.repeat(80)}`
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: ULID_A, title: longTag, block_type: 'tag', deleted: false },
+    ])
+
+    await fetchAndCacheLinks(new Set([ULID_A]), TEST_SPACE_ID, () => false)
+
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, ULID_A))?.title).toBe(longTag)
+  })
+
+  it('caps resolved titles to 60 chars (57 + ellipsis) like the shared seed normalisation', async () => {
     const longTitle = 'x'.repeat(120)
     mockedBatchResolve.mockResolvedValueOnce([
       { id: ULID_A, title: longTitle, block_type: 'content', deleted: false },
@@ -356,7 +399,7 @@ describe('fetchAndCacheLinks — single-batchSet writeback (#1072)', () => {
     await fetchAndCacheLinks(new Set([ULID_A]), TEST_SPACE_ID, () => false)
 
     expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, ULID_A))).toEqual({
-      title: longTitle.slice(0, 60),
+      title: `${'x'.repeat(57)}...`,
       deleted: false,
     })
   })

@@ -999,7 +999,7 @@ describe('searchPages — long query (>2 chars)', () => {
         },
         {
           id: 'F2',
-          block_type: 'block',
+          block_type: 'content',
           content: 'meeting agenda item',
           parent_id: 'F1',
           position: 0,
@@ -2207,7 +2207,7 @@ describe('searchBlockRefs — resolve-store space guard (#853)', () => {
   function blockHit(id: string, content: string) {
     return {
       id,
-      block_type: 'block' as const,
+      block_type: 'content' as const,
       content,
       parent_id: null,
       position: 0,
@@ -2825,7 +2825,7 @@ describe('searchBlockRefs — icons', () => {
       items: [
         {
           id: 'BR1',
-          block_type: 'block',
+          block_type: 'content',
           content: 'Some block content',
           parent_id: null,
           position: 0,
@@ -2861,7 +2861,7 @@ describe('searchBlockRefs — icons', () => {
       items: [
         {
           id: 'BR2',
-          block_type: 'block',
+          block_type: 'content',
           content: 'A child block',
           parent_id: 'PARENT_PAGE',
           position: 0,
@@ -2897,7 +2897,7 @@ describe('searchBlockRefs — icons', () => {
 
     const mkItem = (id: string, parent: string | null) => ({
       id,
-      block_type: 'block' as const,
+      block_type: 'content' as const,
       content: `block ${id}`,
       parent_id: parent,
       position: 0,
@@ -2944,7 +2944,7 @@ describe('searchBlockRefs — icons', () => {
         items: [
           {
             id: 'BR3',
-            block_type: 'block',
+            block_type: 'content',
             content: null,
             parent_id: null,
             position: 0,
@@ -2987,9 +2987,15 @@ describe('searchBlockRefs — icons', () => {
 // newline makes `content.split('\n')[0]` empty even though later lines hold
 // real text.
 describe('searchBlockRefs — untitled placeholder for blank content (#4190)', () => {
+  // #4239 — every `search_blocks` fixture in this file used to say
+  // `block_type: 'block'`, which is OUTSIDE the closed `content | tag | page`
+  // domain `0005_block_type_check.sql` enforces. `searchBlockRefs` now gates
+  // on that column (`resolveStoreTitle`), so an out-of-domain fixture would
+  // take the page/tag arm and quietly stop testing the block path at all —
+  // the mirror image of how the ungated seeder originally shipped green.
   const mkBlock = (id: string, content: string | null) => ({
     id,
-    block_type: 'block' as const,
+    block_type: 'content' as const,
     content,
     parent_id: null,
     position: 0,
@@ -3037,6 +3043,32 @@ describe('searchBlockRefs — untitled placeholder for blank content (#4190)', (
     expect(items).toEqual([expect.objectContaining({ id: 'BR11', label: t('block.untitled') })])
   })
 
+  // #4228 — before this fix, the resolve-store seed for newline-leading
+  // content stored the RAW content (`'\nreal text'`) while the picker row
+  // above independently derived "Untitled" for display. A block-ref chip
+  // reads the STORED title, so it rendered blank even though this exact
+  // row read "Untitled". The seed now applies the same normalisation, so
+  // the stored title — what the chip actually renders — is non-blank too.
+  it('seeds the resolve store with the "Untitled" placeholder for newline-leading content too, not the raw blank-first-line content', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [mkBlock('BR11B', '\nreal text')],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchBlockRefs('some block')
+    })
+
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'BR11B'))).toEqual({
+      title: t('block.untitled'),
+      deleted: false,
+    })
+  })
+
   // A genuinely-titled block must keep rendering its real title — a fix that
   // shows the placeholder unconditionally is not a fix.
   it('still renders the real first line for a genuinely-titled block', async () => {
@@ -3057,10 +3089,11 @@ describe('searchBlockRefs — untitled placeholder for blank content (#4190)', (
     expect(items).toEqual([expect.objectContaining({ id: 'BR12', label: 'real title' })])
   })
 
-  // The resolve-store title seed (consumed by the block-ref chip / block
-  // link renderers, which read the FULL content) gets the same trimmed-empty
-  // test, via the sibling `blockContentOr` helper — not truncated to the
-  // first line the way the picker label is.
+  // #4228 — the resolve-store title seed (consumed by the block-ref chip /
+  // block link renderers) gets the same trimmed-empty test as the picker
+  // label above, via the shared `normalizeBlockRefTitle` helper
+  // (`@/lib/block-title`) — now the SAME first-line-capped shape as the
+  // picker label, not the untruncated full content the pre-#4228 seed wrote.
   it('seeds the resolve store with the "Untitled" placeholder for whitespace-only content too', async () => {
     mockedSearchBlocks.mockResolvedValueOnce({
       items: [mkBlock('BR13', '  \n  ')],
@@ -3081,10 +3114,12 @@ describe('searchBlockRefs — untitled placeholder for blank content (#4190)', (
     })
   })
 
-  // A genuinely-titled block's FULL raw content is what gets stored (not
-  // truncated to the first line) — the resolve-store seed is a different
-  // call site from the picker label, with a different truncation rule.
-  it('seeds the resolve store with the full raw content for a genuinely-titled block', async () => {
+  // #4228 — the resolve-store seed is now the FIRST LINE only (capped,
+  // Untitled-substituted), same as every other seed call site and both
+  // block-ref renderers, which render the stored value verbatim. Storing
+  // the full raw content here (the pre-#4228 shape) let this one seed path
+  // disagree with the other two and with the chip renderers' own caps.
+  it('seeds the resolve store with the first line only for a genuinely-titled multi-line block', async () => {
     mockedSearchBlocks.mockResolvedValueOnce({
       items: [mkBlock('BR14', 'real title\nsecond line')],
       next_cursor: null,
@@ -3099,7 +3134,7 @@ describe('searchBlockRefs — untitled placeholder for blank content (#4190)', (
     })
 
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'BR14'))).toEqual({
-      title: 'real title\nsecond line',
+      title: 'real title',
       deleted: false,
     })
   })

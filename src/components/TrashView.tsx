@@ -39,6 +39,7 @@ import { useTrashFilter } from '@/hooks/useTrashFilter'
 import { useTrashListShortcuts } from '@/hooks/useTrashListShortcuts'
 import { announce } from '@/lib/announcer'
 import { isInvalidOperation } from '@/lib/app-error'
+import { resolveStoreTitle } from '@/lib/block-title'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
@@ -232,7 +233,14 @@ export function TrashView(): React.ReactElement {
         await restoreBlock(block.id, block.deleted_at)
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         if (block.block_type === 'page' || block.block_type === 'tag') {
-          useResolveStore.getState().set(block.id, block.content ?? t('common.untitled'), false)
+          // #4239 — the shared gate rather than a local `?? t('common.untitled')`.
+          // Two catalogue entries spell the same placeholder (`common.untitled`
+          // and the `block.untitled` the seeders use) and this one tested
+          // `=== null`, so a whitespace-titled page restored here disagreed
+          // with what `preload` writes back on the next sync.
+          useResolveStore
+            .getState()
+            .set(block.id, resolveStoreTitle(block.block_type, block.content), false)
           // #4007 — a restored page/tag is offerable again, and the picker
           // caches DROPPED it when it was trashed (or never saw it at all).
           // They are filled once per space, so nothing else re-adds it: drop
@@ -289,7 +297,10 @@ export function TrashView(): React.ReactElement {
       let restoredNamedEntity = false
       for (const block of selectedBlocks) {
         if (block.block_type === 'page' || block.block_type === 'tag') {
-          useResolveStore.getState().set(block.id, block.content ?? t('common.untitled'), false)
+          // #4239 — same gate as the single-row restore above.
+          useResolveStore
+            .getState()
+            .set(block.id, resolveStoreTitle(block.block_type, block.content), false)
           restoredNamedEntity = true
         }
       }
