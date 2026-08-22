@@ -1979,3 +1979,406 @@ async fn block_links_unresolved_oracle_leaves_a_tombstoned_source_alone_4229() {
     assert_block_links_unresolved_reconciled(&pool, "source soft-deleted, obligation retained")
         .await;
 }
+
+/// **#4241 part 2.** The MISSING arm's irreducible purge window, made
+/// TRIAGEABLE rather than merely documented: a divergence whose target was
+/// hard-deleted by a `PurgeBlock` (permanent residue, not a defect), a
+/// divergence whose target is live right now (an actively repairable debt),
+/// and a divergence whose target is soft-deleted (a dormant debt) must render
+/// DISTINGUISHABLY, so a triager reading the report does not have to
+/// re-derive which one it is by hand.
+///
+/// All three are produced in the SAME vault and read off ONE
+/// `reconcile_block_links_unresolved` call, so this is not three tests
+/// asserting three unrelated strings — it is one call whose report must let a
+/// reader tell all three apart, pairwise:
+///
+/// * `PW_SRC_LIVE -> PW_TGT_LIVE` never gets reindexed at all — the plain
+///   "no maintainer has run yet" shape, with a target that exists and is LIVE
+///   right now. Actively repairable: reindexing the source today would
+///   resolve it immediately.
+/// * `PW_SRC_PURGE -> PW_TGT_DOOMED` DOES get reindexed while the target is
+///   live (so the edge lands in `block_links`, not here) — and the target is
+///   THEN hard-deleted, which `ON DELETE CASCADE` (migration 0061) takes the
+///   `block_links` row with it. Nothing reindexes `PW_SRC_PURGE` afterward
+///   (no delete/purge arm enqueues `ReindexBlockLinks`), so its content still
+///   names the token and the fold reports it MISSING — on a vault where every
+///   writer behaved exactly as designed. This is the window the MISSING arm's
+///   doc enumerates as irreducible.
+/// * `PW_SRC_DORMANT -> PW_TGT_DORMANT` never gets reindexed either, and its
+///   target is SOFT-deleted (still a `blocks` row, `deleted_at` set) rather
+///   than purged or live — the third `target_state` arm, otherwise untested:
+///   a match with only its first two arms covered would still pass every
+///   assertion above while this one silently fell back to whichever of the
+///   other two branches came first in a broken rewrite.
+#[tokio::test]
+async fn block_links_unresolved_oracle_distinguishes_all_three_target_states_4241() {
+    const PW_SPACE: &str = "01SPACE4241000000000000000";
+    const PW_PAGE: &str = "01PAGE42410000000000000000";
+    const PW_SRC_LIVE: &str = "01SRCLIVE42410000000000000";
+    const PW_TGT_LIVE: &str = "01TGTLIVE42410000000000000";
+    const PW_SRC_PURGE: &str = "01SRCPURGE4241000000000000";
+    const PW_TGT_DOOMED: &str = "01TGTDOOM42410000000000000";
+    const PW_SRC_DORMANT: &str = "01SRCDORM42410000000000000";
+    const PW_TGT_DORMANT: &str = "01TGTDORM42410000000000000";
+
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("purge_window.db"))
+        .await
+        .expect("init_pool");
+
+    bl_insert_page(&pool, PW_SPACE, None).await;
+    bl_register_space(&pool, PW_SPACE).await;
+    bl_insert_page(&pool, PW_PAGE, Some(PW_SPACE)).await;
+
+    bl_insert_content(&pool, PW_TGT_LIVE, PW_PAGE, Some(PW_SPACE), "a live target").await;
+    bl_insert_content(
+        &pool,
+        PW_TGT_DOOMED,
+        PW_PAGE,
+        Some(PW_SPACE),
+        "a doomed target",
+    )
+    .await;
+    bl_insert_content(
+        &pool,
+        PW_TGT_DORMANT,
+        PW_PAGE,
+        Some(PW_SPACE),
+        "a dormant target",
+    )
+    .await;
+    bl_insert_content(
+        &pool,
+        PW_SRC_LIVE,
+        PW_PAGE,
+        Some(PW_SPACE),
+        &format!("see [[{PW_TGT_LIVE}]]"),
+    )
+    .await;
+    bl_insert_content(
+        &pool,
+        PW_SRC_PURGE,
+        PW_PAGE,
+        Some(PW_SPACE),
+        &format!("see [[{PW_TGT_DOOMED}]]"),
+    )
+    .await;
+    bl_insert_content(
+        &pool,
+        PW_SRC_DORMANT,
+        PW_PAGE,
+        Some(PW_SPACE),
+        &format!("see [[{PW_TGT_DORMANT}]]"),
+    )
+    .await;
+
+    // PW_SRC_LIVE and PW_SRC_DORMANT are deliberately left un-reindexed — the
+    // plain unmaintained shape, against a live target and a soft-deleted one
+    // respectively. PW_SRC_PURGE IS reindexed while its target is still live,
+    // so the edge lands in `block_links` exactly like production would settle
+    // it.
+    agaric_store::cache::reindex_block_links(&pool, PW_SRC_PURGE)
+        .await
+        .expect("reindex_block_links");
+    assert_eq!(
+        bl_stored_targets(&pool, PW_SRC_PURGE).await,
+        vec![PW_TGT_DOOMED.to_owned()],
+        "the target must resolve into block_links BEFORE it is purged, or this fixture is not \
+         exercising the purge window at all"
+    );
+
+    // The purge itself: a hard DELETE under the connection's standing
+    // `PRAGMA foreign_keys = ON` (agaric-store/src/db/mod.rs), so
+    // `block_links.target_id REFERENCES blocks(id) ON DELETE CASCADE`
+    // (migration 0061) removes the edge in the same statement. Nothing
+    // reindexes PW_SRC_PURGE afterward — this IS the production shape, not a
+    // fault injection standing in for one.
+    sqlx::query("DELETE FROM blocks WHERE id = ?")
+        .bind(PW_TGT_DOOMED)
+        .execute(&pool)
+        .await
+        .expect("purge the target");
+    assert_eq!(
+        bl_stored_targets(&pool, PW_SRC_PURGE).await,
+        Vec::<String>::new(),
+        "the cascade must have taken the block_links edge with the purged target"
+    );
+
+    // A SOFT delete of the dormant target — the row survives, only
+    // `deleted_at` is set, exactly what `DeleteBlock` does (migration 0080's
+    // epoch-ms column).
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = ?")
+        .bind(PW_TGT_DORMANT)
+        .execute(&pool)
+        .await
+        .expect("soft-delete the dormant target");
+
+    let divergences = reconcile_block_links_unresolved(&pool)
+        .await
+        .expect("reconcile_block_links_unresolved");
+    let live_case = divergences
+        .iter()
+        .find(|d| d.key == format!("{PW_SRC_LIVE} -> {PW_TGT_LIVE}"))
+        .unwrap_or_else(|| {
+            panic!("the unmaintained live-target debt must be reported, got:\n{divergences:#?}")
+        });
+    let purge_case = divergences
+        .iter()
+        .find(|d| d.key == format!("{PW_SRC_PURGE} -> {PW_TGT_DOOMED}"))
+        .unwrap_or_else(|| {
+            panic!("the purge-residue debt must be reported, got:\n{divergences:#?}")
+        });
+    let dormant_case = divergences
+        .iter()
+        .find(|d| d.key == format!("{PW_SRC_DORMANT} -> {PW_TGT_DORMANT}"))
+        .unwrap_or_else(|| {
+            panic!("the soft-deleted-target debt must be reported, got:\n{divergences:#?}")
+        });
+
+    // THE CLAIM: distinguishable PAIRWISE across all three — each one's text
+    // carries a marker the OTHER TWO do not. Collapsing any two of the three
+    // `target_state` branches back into one arm (the mistake #4241 exists to
+    // catch) reddens this: the collapsed pair's `expected` strings become
+    // byte-identical, so each would then also contain the other's
+    // now-shared marker, and the `!contains` assertions below would fail.
+    assert!(
+        live_case.expected.contains("LIVE right now")
+            && live_case.expected.contains("actively repairable"),
+        "the live-target case must name the target as live and repairable, got:\n{}",
+        live_case.expected
+    );
+    assert!(
+        purge_case.expected.contains("does NOT exist")
+            && purge_case.expected.contains("PurgeBlock hard-deleted"),
+        "the purge-residue case must name the target as absent and mention the purge, got:\n{}",
+        purge_case.expected
+    );
+    assert!(
+        dormant_case.expected.contains("SOFT-deleted")
+            && dormant_case
+                .expected
+                .contains("dormant unless the target is restored"),
+        "the soft-deleted-target case must name the target as soft-deleted and dormant, got:\n{}",
+        dormant_case.expected
+    );
+    for (name, this, others) in [
+        (
+            "live",
+            &live_case.expected,
+            [&purge_case.expected, &dormant_case.expected],
+        ),
+        (
+            "purge",
+            &purge_case.expected,
+            [&live_case.expected, &dormant_case.expected],
+        ),
+        (
+            "dormant",
+            &dormant_case.expected,
+            [&live_case.expected, &purge_case.expected],
+        ),
+    ] {
+        for marker in ["LIVE right now", "does NOT exist", "SOFT-deleted"] {
+            let this_has = this.contains(marker);
+            let others_share_it = others.iter().any(|o| o.contains(marker));
+            assert!(
+                !(this_has && others_share_it),
+                "the {name} case's marker {marker:?} must not also appear in either of the \
+                 other two cases' text — got this=\n{this}\nothers={others:#?}"
+            );
+        }
+    }
+    assert_ne!(live_case.expected, purge_case.expected);
+    assert_ne!(live_case.expected, dormant_case.expected);
+    assert_ne!(
+        purge_case.expected, dormant_case.expected,
+        "a real, repairable debt, permanent purge residue, and a dormant soft-deleted-target \
+         debt must not render as the same text"
+    );
+}
+
+/// The measurement behind the LANE decision, mirroring
+/// [`block_links_oracle_scale_sweep_3955`] (#4241): `reconcile_block_links_unresolved`
+/// runs the SAME shape of cost — two `dump_*` passes and a fold over every
+/// block — and had no equivalent sweep pinning it at scale.
+///
+/// Same bound style as the sibling: `#[ignore]`d so the per-PR suite does not
+/// pay for it (`scheduled-deep-checks.yml`'s `--run-ignored=only` sweep runs
+/// it) and no wall-clock budget asserted in the test body — a weekly lane on
+/// shared CI runners is the wrong place for an in-test timing assertion, so
+/// the elapsed time is printed, not bounded.
+///
+/// # Scale, and why THIS scale
+///
+/// Printing an unbounded number is only worth a weekly lane's minutes if the
+/// harness *itself* fails on a real regression, and that failure comes from
+/// nextest's slow-timeout, not from an assertion here. So the scale has to be
+/// large enough that a plausible O(n²) defect breaches that timeout — which
+/// makes the scale the actual gate, and therefore something to measure rather
+/// than inherit.
+///
+/// **The timeout in force.** The lane runs `cargo nextest run --workspace
+/// --run-ignored=only` with NO `--profile`, so it uses `profile.default` from
+/// `src-tauri/.config/nextest.toml`: `slow-timeout = { period = "30s",
+/// terminate-after = 2 }` — flagged SLOW at 30s, **TERMINATED at 60s**. (Not
+/// the 120s of `profile.ci`; that profile is only passed by `full-suite`.)
+/// This test carries no per-test override, so 60s is the number to beat.
+///
+/// **The defect measured against.** The realistic O(n²) shape for this fold
+/// is losing the "load once, fold over the slice" property: re-running the
+/// unfiltered `dump_blocks` full-table scan once per source block instead of
+/// reusing the already-loaded `blocks`. It is behaviour-preserving — every
+/// assertion below still passes — so wall-clock is the only thing that can
+/// catch it. Injected into `reconcile_block_links_unresolved` and measured
+/// on one unloaded dev box (`cargo test --lib -- --ignored`, so nextest's
+/// timeout could not truncate the defective runs):
+///
+/// | scale | reconcile, clean | wall, clean | reconcile, O(n²) | wall, O(n²) |
+/// |---|---|---|---|---|
+/// | 20 x 100 (2,042 rows, the scale this shipped at) | 27ms | 1.7s | 20.1s | 21.6s |
+/// | 50 x 100 (5,102 rows, current) | 66ms | 4.1s | 138.3s | 142.3s |
+///
+/// At the original 20x100 the defective fold finished in 21.6s — comfortably
+/// GREEN against a 60s kill, so a 740x reconcile regression would have
+/// shipped silently. That is the whole reason the scale moved.
+///
+/// **Why 50 and not less.** 40x100 was measured too: 102.0s reconcile /
+/// 113.9s wall, only ~1.9x over the kill — inside the range where a loaded or
+/// slower runner could drag a real regression back under the line and make
+/// the guard flakily green. 50x100 lands at 142.3s, **2.4x** over the 60s
+/// kill, which survives ordinary machine-to-machine variance. Confirmed
+/// end-to-end under nextest at 50x100: the defective run is TERMINATED on
+/// both the first try and the retry (`Summary [120.024s] 1 test run: 0
+/// passed, 1 timed out`), i.e. it reddens the lane rather than merely
+/// crawling.
+///
+/// **And the clean side stays far from the line.** 4.1s wall at 50x100 is
+/// ~15x under the 60s kill — a sweep that is itself near its own timeout is a
+/// flaky test, which is worse than a loose one. The cost of the bigger
+/// fixture is ~2.4s of extra WEEKLY wall-clock (1.7s -> 4.1s); it is not on
+/// the per-PR path.
+///
+/// The two clean and two defective numbers are recorded above so the next
+/// person can re-derive the choice instead of re-guessing it: re-inject the
+/// same one-scan-per-source-block defect and the ratios should hold.
+///
+/// # Non-vacuity
+///
+/// Chaining every block to "the next one" the way the sibling does would
+/// settle EVERY token into `block_links` and leave zero obligations standing
+/// at the end — a green `owed_by_content: 0` that cannot tell a correct fold
+/// from one that forgot the OWED side entirely. So the last block of EACH
+/// page instead links to a page-count worth of blocks planted in a SEPARATE
+/// space: a live, existing, correctly-resolvable target whose space simply
+/// does not match, exactly [`BlockLinksUnresolvedCoverage`]'s
+/// `owed_with_a_live_target` case. Those `PAGES` edges can never become
+/// `block_links` rows, so they are still-standing obligations at the vault's
+/// SETTLED state — non-vacuous by the same discipline as the sibling's
+/// `page_fallback_space_targets > 0` check.
+#[tokio::test]
+#[ignore = "deep-checks lane: seeds a 5000-block vault to measure the obligation-index re-derivation"]
+async fn block_links_unresolved_oracle_scale_sweep_4241() {
+    // 50 x 100 = 5,000 seeded blocks (5,102 rows including the fixture's
+    // pages and cross-space targets). Chosen by measurement, not taste — see
+    // the "# Scale" section of this test's doc comment.
+    const PAGES: usize = 50;
+    const BLOCKS_PER_PAGE: usize = 100;
+
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("scale_unresolved.db"))
+        .await
+        .expect("init_pool");
+
+    bl_insert_page(&pool, BL_SPACE, None).await;
+    bl_register_space(&pool, BL_SPACE).await;
+    bl_insert_page(&pool, BL_OTHER_SPACE, None).await;
+    bl_register_space(&pool, BL_OTHER_SPACE).await;
+    bl_insert_page(&pool, BL_OTHER_PAGE, Some(BL_OTHER_SPACE)).await;
+
+    // One permanently-cross-space target per page — planted, live, and never
+    // going to resolve, so the obligation it eventually owes is the
+    // `owed_with_a_live_target` shape rather than #4118 case 1's absent one.
+    let mut cross_ids = Vec::new();
+    for p in 0..PAGES {
+        let xid = format!("01XTGT{p:020}");
+        assert_eq!(xid.len(), 26, "seed ids must be token-shaped");
+        bl_insert_content(
+            &pool,
+            &xid,
+            BL_OTHER_PAGE,
+            Some(BL_OTHER_SPACE),
+            "cross target",
+        )
+        .await;
+        cross_ids.push(xid);
+    }
+
+    let mut ids = Vec::new();
+    for p in 0..PAGES {
+        let page = format!("01PAGE{p:020}");
+        bl_insert_page(&pool, &page, Some(BL_SPACE)).await;
+        for b in 0..BLOCKS_PER_PAGE {
+            let id = format!("01BLK{p:03}{b:018}");
+            assert_eq!(id.len(), 26, "seed ids must be token-shaped");
+            // Half the blocks leave `space_id` NULL, so the owning-page
+            // fallback is on the hot path here too, same as the sibling sweep.
+            let space = if b % 2 == 0 { Some(BL_SPACE) } else { None };
+            bl_insert_content(&pool, &id, &page, space, "body").await;
+            ids.push(id);
+        }
+    }
+
+    // Chain every block to the next one, EXCEPT the last block of each page,
+    // which points at that page's planted cross-space target instead — one
+    // unresolvable edge per page, `PAGES` in total, the rest resolving exactly
+    // like the sibling sweep's chain.
+    for (i, id) in ids.iter().enumerate() {
+        let target = if (i + 1) % BLOCKS_PER_PAGE == 0 {
+            &cross_ids[i / BLOCKS_PER_PAGE]
+        } else {
+            &ids[(i + 1) % ids.len()]
+        };
+        bl_set_content(&pool, id, &format!("body [[{target}]]")).await;
+        agaric_store::cache::reindex_block_links(&pool, id)
+            .await
+            .expect("reindex_block_links");
+    }
+
+    let started = std::time::Instant::now();
+    let divergences = reconcile_block_links_unresolved(&pool)
+        .await
+        .expect("block_links_unresolved reconcile");
+    let elapsed = started.elapsed();
+
+    let coverage = block_links_unresolved_coverage(&pool)
+        .await
+        .expect("coverage");
+    println!(
+        "block_links_unresolved oracle scale sweep: {} blocks, {} obligations, \
+         reconcile_block_links_unresolved took {:?} ({coverage:?})",
+        ids.len() + cross_ids.len() + PAGES + 2,
+        coverage.owed_by_content,
+        elapsed,
+    );
+    assert_eq!(
+        (
+            coverage.owed_by_content,
+            coverage.owed_with_a_live_target,
+            coverage.unresolved_rows,
+        ),
+        (
+            i64::try_from(PAGES).unwrap(),
+            i64::try_from(PAGES).unwrap(),
+            i64::try_from(PAGES).unwrap(),
+        ),
+        "exactly the {PAGES} planted cross-space edges must still be owed, every one of them \
+         against a LIVE target, and production's writer must have recorded exactly that \
+         many rows, got {coverage:?}"
+    );
+    assert!(
+        divergences.is_empty(),
+        "a vault settled by production's own writer must reconcile; first: {:?}",
+        divergences.first()
+    );
+}
