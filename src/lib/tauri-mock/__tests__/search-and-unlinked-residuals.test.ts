@@ -16,7 +16,7 @@
  *  2. `PALETTE_CONTENT_PREVIEW_CAP` (512 codepoints,
  *     `fts/search/partitioned.rs:53`) was unmodelled. It is a per-CALLER
  *     argument: the all-toggles-off partitioned arm passes it
- *     (`toggle_filter.rs:466-473`) and the `case_sensitive` / `whole_word` arm
+ *     (`src-tauri/agaric-store/src/fts/toggle_filter.rs:466-473`) and the `case_sensitive` / `whole_word` arm
  *     passes `None` so its post-filter regex can still match past the cut
  *     (`:499-521`). The asymmetry is the behaviour, not the cap alone;
  *  3. `list_unlinked_references` resolved the search title from ANY block.
@@ -101,7 +101,7 @@ describe('search structural scan — item 1: metadata predicates (#4159)', () =>
 
   it('splits the `none` sentinel out of `stateFilter` into an IS NULL branch', () => {
     // `state:none` selects `todo_state IS NULL` — the PAGE row, and only it
-    // (`metadata_filter.rs:163-169`).
+    // (`src-tauri/agaric-store/src/fts/metadata_filter.rs:163-169`).
     expect(ids(search({ query: '', filter: { stateFilter: ['none'] } }))).toEqual([PAGE])
     // With a value alongside, the two are OR-joined.
     expect(ids(search({ query: '', filter: { stateFilter: ['none', 'DONE'] } }))).toEqual([
@@ -238,7 +238,7 @@ describe('search_blocks_partitioned — item 2: content preview cap (#4159)', ()
 
   it('does not truncate on `search_blocks`, which passes no cap at all', () => {
     // The FE/IPC path passes `snippet_len: None` on every arm; only the MCP
-    // `search` tool caps there (`toggle_filter.rs:140-145`).
+    // `search` tool caps there (`src-tauri/agaric-store/src/fts/toggle_filter.rs:140-145`).
     const res = search({ query: 'zebrafish' })
     expect(res.items[0]?.['content']).toBe(CONTENT)
   })
@@ -295,7 +295,7 @@ describe('list_unlinked_references — item 3: title lookup guard (#4159)', () =
 
   it('still searches a soft-deleted page on its ALIAS, which carries no guard', () => {
     // `SELECT alias FROM page_aliases WHERE page_id = ?1` is unconditional
-    // (`grouped.rs:601-605`), and `title = None` is not an early return on the
+    // (`src-tauri/agaric-store/src/backlink/grouped.rs:601-605`), and `title = None` is not an early return on the
     // backend — so the alias term alone drives the search.
     pageAliases.set(DELETED, ['habitat'])
     expect(mentionIds(unlinked(DELETED))).toEqual([MENTION])

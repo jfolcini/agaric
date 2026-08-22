@@ -36,7 +36,7 @@ export function id(label: string): string {
  * then drop the seed itself.
  *
  * `pageAliases` is one the three copies of this preamble had all missed — it
- * was seeded (`seed.ts:653`) and never cleared, so it survived every reset. It
+ * was seeded (`src/lib/tauri-mock/seed.ts:653`) and never cleared, so it survived every reset. It
  * was inert only for as long as no handler read it; `list_unlinked_references`
  * now does (#4036 item 1). This is the drift the extraction exists to prevent,
  * showing up on the very first store the extraction made it possible to fix in

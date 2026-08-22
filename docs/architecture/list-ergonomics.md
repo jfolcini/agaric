@@ -19,10 +19,10 @@ static HTML (`src/editor/use-roving-editor.ts:1`, `docs/architecture/editor-and-
 
 Against that grain, ordered/unordered lists are currently modelled **inside** a
 block as real ProseMirror `bulletList` / `orderedList` / `listItem` nodes
-(stock `@tiptap/extension-list`, `use-roving-editor.ts:24`). List-ness is also
+(stock `@tiptap/extension-list`, `src/editor/use-roving-editor.ts:24`). List-ness is also
 baked into the block's markdown `content` string as a `-` / `1.` prefix, and
-created by prepending that prefix to the text (`use-block-tree-event-listeners.ts:195`,
-`block-type-convert.ts:105`). The visible marker comes from the browser's native
+created by prepending that prefix to the text (`src/components/block-tree/use-block-tree-event-listeners.ts:195`,
+`src/lib/block-type-convert.ts:161-166`). The visible marker comes from the browser's native
 CSS list-marker on `<ul>`/`<ol>` (`src/index.css:1176`), not from anything
 agaric draws.
 
@@ -85,7 +85,7 @@ first-class inline decoration, not as native `<ul>` chrome.
 3. **Ordered numbers are computed**, not stored: the number is the block's
    position among consecutive same-`listStyle`, same-depth siblings, recomputed
    on reorder/insert. This mirrors the serializer, which already emits positional
-   `${idx + 1}.` and discards any parsed literal (`markdown-serialize.ts:926`,
+   `${idx + 1}.` and discards any parsed literal (`src/editor/markdown-serialize.ts:1150`,
    `markdown-parse/parser.ts:407` — the ordinal is regenerated, never preserved).
 4. **Nesting stays the block tree** (Tab / Shift-Tab → indent/dedent). No second
    indent mechanism inside a block. This retires the in-block PM list node
@@ -108,21 +108,21 @@ gutter chrome or a schema-bending list node.
 ### Where the attribute is stored
 
 Agaric already has a generic, migration-free home for block attributes: the
-`block_properties` key/value table (`0001_initial.sql:25`, typed value columns;
-schema registry in `property_definitions`, `0011_property_definitions.sql:2`).
+`block_properties` key/value table (`src-tauri/migrations/0001_initial.sql:25`, typed value columns;
+schema registry in `property_definitions`, `src-tauri/migrations/0011_property_definitions.sql:2`).
 Two options were considered:
 
 - **`block_properties` row (recommended).** Store `listStyle` as a `value_text`
   property with a `select`-type `property_definitions` seed for its allowed
   values. **No `blocks` schema change**, no `BlockRow` change, no touching the
-  ~20 `query_as!` sites. Reserved-key gate in `op.rs:483` is only for the five
+  ~20 `query_as!` sites. Reserved-key gate in `src-tauri/agaric-store/src/op.rs:483` is only for the five
   column-backed keys, so `listStyle` is unaffected. Reuses `set_property` /
-  `get_property` (`src/lib/tauri/properties.ts`, `use-block-properties.ts:102`).
+  `get_property` (`src/lib/tauri/properties.ts`, `src/components/block-tree/use-block-properties.ts:102`).
 - **Column-backed on `blocks` (not recommended for v1).** Only justified if
   ordered-number recomputation needs an indexed SQL query over siblings, which
   it does not (the sibling set is already materialised in the per-page store,
-  `page-blocks-types.ts:15`). Column-backing costs an `ALTER TABLE`, updates to
-  all four column-list consts in `block_row_columns.rs:64`, every `query_as!`,
+  `src/stores/page-blocks-types.ts:15`). Column-backing costs an `ALTER TABLE`, updates to
+  all four column-list consts in `src-tauri/agaric-store/src/pagination/block_row_columns.rs:64`, every `query_as!`,
   the `BlockRow` / `ActiveBlockRow` structs, and the generated `bindings.ts`.
 
 Recommendation: **`block_properties`**. Revisit column-backing only if a future
@@ -240,12 +240,12 @@ PASTE into the editor takes. A markdown file read from disk goes through the
 Rust vault importer instead (`src-tauri/agaric-engine/src/import.rs`), and it
 decides both questions differently:
 
-- **Lone `\r`** — `import.rs:514` normalises `\r\n` to `\n` and then *every
+- **Lone `\r`** — `src-tauri/agaric-engine/src/import.rs:514` normalises `\r\n` to `\n` and then *every
   remaining* `\r` to `\n`, i.e. CommonMark §2.3: a lone CR is a line ending and
   splits the block. The TS parser keeps it as content (rule 5). So `a\rb` is two
   blocks imported from disk and one paragraph holding a CR when pasted.
-- **Tabs** — `import.rs:517` expands `\t` to two spaces flat (not to the next
-  4-column stop), and `import.rs:596-600` derives depth as
+- **Tabs** — `src-tauri/agaric-engine/src/import.rs:517` expands `\t` to two spaces flat (not to the next
+  4-column stop), and `src-tauri/agaric-engine/src/import.rs:596-600` derives depth as
   `leading-space-count / 2`. So a tab is exactly one nesting level there, while
   the TS parser measures a tab as the columns it occupies and spends one content
   column per level.
@@ -295,7 +295,7 @@ in the FE serializer round-trip — no data migration:
   the `listStyle` attribute.
 - **Serialize:** emit the marker from `listStyle` instead of from an in-block
   list node. The `bulletList`/`orderedList` serializers
-  (`markdown-serialize.ts:915`) and parsers stay only as long as needed to read
+  (`src/editor/markdown-serialize.ts:1143-1160`) and parsers stay only as long as needed to read
   legacy multi-item content, then can be retired once no content produces them.
 - **Read-only renderer:** `RichContentRenderer/marks/orderedList.tsx` and
   `marks/block.tsx` gain a path that draws the computed marker for a
@@ -321,8 +321,8 @@ sequenced as separate slices so each is independently shippable and testable:
    same-style, same-depth siblings in the per-page store; recompute on
    reorder/insert.
 5. **Keyboard grain + backspace.** `Enter` = sibling block, `Shift+Enter` = soft
-   break (largely already the outliner default — `use-block-keyboard.ts:365`),
-   and Backspace-at-start strip-then-merge (`use-block-keyboard.ts:437`).
+   break (largely already the outliner default — `src/editor/use-block-keyboard.ts:365`),
+   and Backspace-at-start strip-then-merge (`src/editor/use-block-keyboard.ts:439`).
 6. **Legacy list retirement.** Once content no longer produces in-block list
    nodes, remove the TipTap `BulletList`/`OrderedList`/`ListItem` extensions and
    collapse the serializer/parser to single-block markers.

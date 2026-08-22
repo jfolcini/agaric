@@ -7,7 +7,7 @@
 | **Items closed** | `#4187` |
 | **Items modified** | `#4204`, `#4188` (measured and re-scoped; see their threads) |
 | **Tests added** | +6 (backend) |
-| **Files touched** | see PR #4233's file list |
+| **Files touched** | see PR #4235's file list |
 
 **Summary:** #4112 closed the live-block-under-a-tombstone shape on the two **materializer**
 replay arms. The **third** interpreter of the same op — `db::recovery.rs`'s `move_block`
@@ -83,4 +83,4 @@ Every falsification reproduced independently: sweep disabled → 3 RED; probe ov
 guard's own scanner: ADDED 2, REMOVED 0, no grandfathered site un-marked);
 `table-ownership-baseline.txt` `12 → 13` app/`blocks`.
 
-**Commit plan:** single commit on `claude/sync-move-delete-convergence`, shipped as PR #4233.
+**Commit plan:** single commit on `claude/sync-move-delete-convergence`, shipped as PR #4235.

@@ -1070,7 +1070,7 @@ const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
 // change and is listed here so the omission is a stated remainder rather than a
 // silent cap (#3927):
 //
-//   - `resolve_sort` (`engine.rs:208`) — 6 arms (5 `SortColumn` variants, one
+//   - `resolve_sort` (`src-tauri/agaric-store/src/query/engine.rs:208`) — 6 arms (5 `SortColumn` variants, one
 //     of which adds the `pages_cache` LEFT JOIN, plus `Relevance`), THEN a
 //     conditional tail: an empty `sort` defaults to relevance-first WITH
 //     full-text and to the `b.id DESC` recency keyset without, and the terminal
@@ -1079,7 +1079,7 @@ const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
 //     of those arms has ever run — and the empty-sort default splits on
 //     `has_fulltext`, i.e. it is a combination this sum-of-dimensions model
 //     cannot express as a unit.
-//   - `group_key_expr` (`engine.rs:1166`) — SEVEN arms behind the (waived)
+//   - `group_key_expr` (`src-tauri/agaric-store/src/query/engine.rs:1166`) — SEVEN arms behind the (waived)
 //     `grouped` branch (`Tag` / `Page` / `State` / `BlockType` / `Priority` /
 //     `Property` / `DateBucket`), the last of which sub-dispatches again on
 //     `DateField`'s 4 variants crossed with `DateBucketUnit`. Counted off the

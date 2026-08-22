@@ -53,7 +53,7 @@ import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
 
 /**
  * `MARKUP_RE` — the five inline-formatting delimiters in one alternation, in
- * the backend's order (`strip.rs:44-47`). Bold precedes italic so leftmost-first
+ * the backend's order (`src-tauri/agaric-store/src/fts/strip.rs:44-47`). Bold precedes italic so leftmost-first
  * alternation prefers the longer delimiter at a given position.
  *
  * Spelled `[^\n]` where the backend spells `.`, which is NOT pedantry: Rust's
@@ -73,10 +73,10 @@ const FTS_TAG_REF_RE = /#\[([0-9A-Z]{26})\]/g
 // private one would fork the link grammar away from the conformance snapshot's
 // derivation, which is the failure that guard exists to prevent. The backend
 // shares one regex between `cache` and `fts::strip` for the same reason
-// (`strip.rs:85-98`).
+// (`src-tauri/agaric-store/src/fts/strip.rs:85-98`).
 
 /**
- * `strip_inline_markup` (`strip.rs:63-83`): apply {@link FTS_MARKUP_RE} until
+ * `strip_inline_markup` (`src-tauri/agaric-store/src/fts/strip.rs:63-83`): apply {@link FTS_MARKUP_RE} until
  * the result stops changing, which is what preserves the nested case
  * (`**bold *italic***` ⇒ `bold italic`). Every replacement strictly shrinks the
  * string — the captured group is always shorter than its delimiters — so the
@@ -99,7 +99,7 @@ function stripInlineMarkup(content: string): string {
 }
 
 /**
- * `load_ref_maps`' two maps (`strip.rs:210-236`), resolved per lookup instead
+ * `load_ref_maps`' two maps (`src-tauri/agaric-store/src/fts/strip.rs:210-236`), resolved per lookup instead
  * of pre-loaded: the name a `#[ULID]` / `[[ULID]]` token resolves to, or `''`
  * when the target is missing, tombstoned, of the wrong `block_type`, or has no
  * content — every one of which is a row the SQL's
@@ -114,11 +114,11 @@ function ftsRefName(ulid: string, blockType: 'tag' | 'page'): string {
   return (target['content'] as string | null) ?? ''
 }
 
-/** `FTS_MAX_INDEXED_BYTES` (`strip.rs:171`) — 128 KiB of UTF-8, per block. */
+/** `FTS_MAX_INDEXED_BYTES` (`src-tauri/agaric-store/src/fts/strip.rs:171`) — 128 KiB of UTF-8, per block. */
 const FTS_MAX_INDEXED_BYTES = 128 * 1024
 
 /**
- * `cap_indexed_text` (`strip.rs:179-195`): truncate to at most
+ * `cap_indexed_text` (`src-tauri/agaric-store/src/fts/strip.rs:179-195`): truncate to at most
  * {@link FTS_MAX_INDEXED_BYTES} UTF-8 bytes, on a char boundary.
  *
  * Modelled rather than declared-and-omitted. Nothing in this tree is within
@@ -157,7 +157,7 @@ function capIndexedText(s: string): string {
  *  2. resolve `#[ULID]` tag references to the tag's name;
  *  3. resolve `[[ULID]]` page links to the page's title;
  *  4. unescape `\*` `\`` `\~` `\=`, NFC-normalise, then cap the indexed bytes
- *     ({@link capIndexedText}) — `strip.rs:141-162`.
+ *     ({@link capIndexedText}) — `src-tauri/agaric-store/src/fts/strip.rs:141-162`.
  */
 export function stripForFts(content: string | null | undefined): string {
   let result = stripInlineMarkup(content ?? '')
@@ -224,7 +224,7 @@ export function foldForFtsIndex(s: string): string {
  * blank-ness before calling in, but the `Contains` filter of
  * `query_backlinks_filtered` does NOT (`handlers/links.ts`), so that branch IS
  * reachable — and the backend
- * returns an EMPTY set there instead (`filters.rs:382`, `:957`, on
+ * returns an EMPTY set there instead (`src-tauri/agaric-store/src/backlink/filters.rs:382`, `:957`, on
  * `query.trim().is_empty()`). Note `trim()`: a whitespace-only query is
  * blank to the backend and a three-space substring test here. Both gaps are
  * query-side, predate the #4022 seam, and are named at that call site.
@@ -337,10 +337,10 @@ type CursorValue =
   | { t: 'Real'; v: number }
   | { t: 'Null' }
 
-/** Cursor schema version — mirrors `CURSOR_VERSION` (`engine.rs:64`). */
+/** Cursor schema version — mirrors `CURSOR_VERSION` (`src-tauri/agaric-store/src/query/engine.rs:64`). */
 const CURSOR_VERSION = 1
 
-/** The decoded keyset cursor. Mirrors the engine's `QueryCursor` (`engine.rs:167`). */
+/** The decoded keyset cursor. Mirrors the engine's `QueryCursor` (`src-tauri/agaric-store/src/query/engine.rs:167`). */
 interface QueryCursorPayload {
   version: number
   values: CursorValue[]
@@ -480,7 +480,7 @@ const SORT_COLUMN_GETTERS = new Map<string, (m: MatchedEntry) => SortValue>(
 
 /**
  * `SortColumn` name → {@link CursorKind}, mirroring `resolve_sort`'s
- * `SortColumn::*` ⇒ `CursorKind::*` mapping (`engine.rs:216-243`). Keys match
+ * `SortColumn::*` ⇒ `CursorKind::*` mapping (`src-tauri/agaric-store/src/query/engine.rs:216-243`). Keys match
  * {@link SORT_COLUMN_GETTERS} exactly (both are keyed off the same closed
  * `SortColumn` set); a `Map`, not an object literal, for the same
  * prototype-pollution reason documented on `SORT_COLUMN_GETTERS`.
@@ -551,7 +551,7 @@ function resolveSortTerms(
 
 /**
  * Read one resolved term's value off `m` and tag it into a {@link
- * CursorValue}, mirroring `EngineRow::cursor_value` (`engine.rs:310-332`).
+ * CursorValue}, mirroring `EngineRow::cursor_value` (`src-tauri/agaric-store/src/query/engine.rs:310-332`).
  *
  * Exported ONLY as a test seam for the `Rank` non-finite guard below: that
  * branch is unreachable through `run_advanced_query` itself (see the guard's
@@ -565,7 +565,7 @@ export function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorV
   // value, so it needs its own check ahead of the general `raw === null`.
   //
   // The sentinel encodes as the engine's `Int(0)`, NOT `Null`:
-  // `EngineRow::cursor_value` (`engine.rs:322`) reads the COALESCE'd
+  // `EngineRow::cursor_value` (`src-tauri/agaric-store/src/query/engine.rs:322`) reads the COALESCE'd
   // `last_edited: i64` and can only ever emit `CursorValue::Int` for this
   // column — `Null` is UNREACHABLE there, and `COALESCE(…, 0)` makes `0` the
   // exact value an op-log-free row carries. Emitting a tag the engine cannot
@@ -594,7 +594,7 @@ export function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorV
       // reject the cursor outright rather than merely disagree with it.
       // `Null` is the engine's OWN answer for a row with no rank
       // (`EngineRow::cursor_value`: `self.rank.map_or(CursorValue::Null,
-      // CursorValue::Real)`, `engine.rs:322`), so the guard emits a tag the
+      // CursorValue::Real)`, `src-tauri/agaric-store/src/query/engine.rs:322`), so the guard emits a tag the
       // engine can actually produce.
       //
       // Unreachable through this handler — the MATCH narrowing
@@ -628,7 +628,7 @@ export function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorV
 
 /**
  * Encode a keyset cursor from one row's resolved sort-term values, mirroring
- * `QueryCursor::encode` (`engine.rs:175-178`): URL-safe, unpadded base64 of
+ * `QueryCursor::encode` (`src-tauri/agaric-store/src/query/engine.rs:175-178`): URL-safe, unpadded base64 of
  * the JSON `{ version, values }` envelope (`base64::URL_SAFE_NO_PAD`, not the
  * standard alphabet `btoa` produces on its own).
  *
@@ -656,7 +656,7 @@ function encodeCursor(values: CursorValue[]): string {
 /**
  * Each `CursorValue` tag → the JSON type its `v` payload must carry, mirroring
  * what serde accepts for the engine's `#[serde(tag = "t", content = "v")]`
- * enum (`engine.rs:143`): `Text(String)`, `Int(i64)`, `Real(f64)` and the unit
+ * enum (`src-tauri/agaric-store/src/query/engine.rs:143`): `Text(String)`, `Int(i64)`, `Real(f64)` and the unit
  * variant `Null`.
  *
  * A `Map`, not an object literal, for the same prototype-pollution reason
@@ -814,7 +814,7 @@ interface GroupCursorPayload {
  * Decode a GROUP-level keyset cursor, THROWING a {@link validationRejection}
  * on any malformed input — mirroring `GroupCursor::decode`
  * (`agaric-store/src/query/engine.rs:1255-1270`), which the backend's
- * `run_grouped` calls on its OWN cursor type (`engine.rs:1321-1324`); it does
+ * `run_grouped` calls on its OWN cursor type (`src-tauri/agaric-store/src/query/engine.rs:1321-1324`); it does
  * NOT reuse `QueryCursor::decode`, and the two structs are not
  * interchangeable — a well-formed `QueryCursor` payload (`{version,values}`)
  * is not a well-formed `GroupCursor` (`{version,count,key}`) and vice versa.
@@ -851,7 +851,7 @@ function decodeGroupCursor(s: string): GroupCursorPayload {
     throw validationRejection('invalid group cursor JSON: not valid JSON')
   }
   // Field PRESENCE + TYPE — EVERY field, `version` included — before the
-  // version COMPARISON below. `GroupCursor` (`engine.rs:1241-1247`) declares
+  // version COMPARISON below. `GroupCursor` (`src-tauri/agaric-store/src/query/engine.rs:1241-1247`) declares
   // `version` first, and serde deserializes the whole struct (every declared
   // field, typed) before `GroupCursor::decode` ever compares `cursor.version`
   // — so a cursor missing `version` entirely fails deserialization itself
@@ -1004,7 +1004,7 @@ function compareCursorValue(
  * `cursorValues[i]` against `terms[i]` with NO lookup of which term the
  * cursor was minted under, mirroring the engine's OWN indexing
  * (`cursor.values[i]` against the CURRENT request's `terms[i]`,
- * `engine.rs:429,434`). The prior mock code instead read the cursor's `id`
+ * `src-tauri/agaric-store/src/query/engine.rs:429,434`). The prior mock code instead read the cursor's `id`
  * out of whichever slot the CURRENT sort's `column: 'Id'` term happened to
  * occupy — correct only when the cursor was minted under an IDENTICAL sort,
  * and silently wrong (restarting the query from row 0 rather than resuming)
@@ -1068,7 +1068,7 @@ interface SearchPageResponse {
 }
 
 /** `fts::MAX_SEARCH_RESULTS` — the FTS scan ceiling `search_blocks_inner`
- *  rejects a larger explicit `limit` against (`queries.rs:239-245`). */
+ *  rejects a larger explicit `limit` against (`src-tauri/src/commands/queries.rs:239-245`). */
 const SEARCH_MAX_RESULTS = 100
 
 /**
@@ -1079,7 +1079,7 @@ const SEARCH_MAX_RESULTS = 100
  * #4159 item 2. It is a PER-CALLER argument, not a global one, and the
  * asymmetry is the point: `search_with_toggles_partitioned` passes it only on
  * the all-toggles-off arm, where `content` is a snippet FALLBACK and no
- * post-filter runs (`toggle_filter.rs:455-478`). The `case_sensitive` /
+ * post-filter runs (`src-tauri/agaric-store/src/fts/toggle_filter.rs:455-478`). The `case_sensitive` /
  * `whole_word` arm passes `None` — FULL content — precisely so its literal
  * regex can still match past codepoint 512 instead of silently dropping the
  * row (`:499-521`). The regex arm passes `None` too (`:389-405`), and so does
@@ -1090,7 +1090,7 @@ const PALETTE_CONTENT_PREVIEW_CAP = 512
 
 /**
  * SQL `substr(b.content, 1, n)` over a TEXT column — the first `n` CODEPOINTS,
- * never a split multi-byte character (`partitioned.rs:38-41`). Spread-iterating
+ * never a split multi-byte character (`src-tauri/agaric-store/src/fts/search/partitioned.rs:38-41`). Spread-iterating
  * the string is JS's codepoint iteration, so a surrogate pair counts once here
  * and once there; `slice(0, n)` would count it twice and could halve a pair.
  *
@@ -1138,7 +1138,7 @@ function capPaletteContent(
  *  distinct refusal messages in {@link searchHandlers.search_blocks}. */
 const PAGINATION_MAX_PAGE_SIZE = 200
 
-/** `pagination::DEFAULT_PAGE_SIZE` (`mod.rs:52`) — what an OMITTED `limit`
+/** `pagination::DEFAULT_PAGE_SIZE` (`src-tauri/agaric-store/src/pagination/mod.rs:52`) — what an OMITTED `limit`
  *  (serde `None`) falls through to. An omitted limit is not an out-of-range
  *  one: it skips the range check entirely. */
 const PAGINATION_DEFAULT_PAGE_SIZE = 50
@@ -1186,10 +1186,10 @@ const SEARCH_STRUCTURAL_FILTER_FIELDS = [
  * `honourBlockType: false` is the PARTITIONED disjunction. The two Rust
  * functions spell `has_filters` almost identically, and the one difference is
  * `block_type_filter`: `search_with_toggles` takes it as a parameter and lists
- * it as a disjunct (`toggle_filter.rs:154-161`), while
+ * it as a disjunct (`src-tauri/agaric-store/src/fts/toggle_filter.rs:154-161`), while
  * `search_with_toggles_partitioned` has NO such parameter — the partitioning
  * IS the block-type split — so its disjunction omits it
- * (`toggle_filter.rs:330-336`). A blank query whose only "filter" is
+ * (`src-tauri/agaric-store/src/fts/toggle_filter.rs:330-336`). A blank query whose only "filter" is
  * `blockTypeFilter` is therefore the FILTERED page on `search_blocks` and the
  * EMPTY page on `search_blocks_partitioned`.
  */
@@ -1224,8 +1224,8 @@ function searchHasStructuralFilter(
  *
  *  - `stateFilter` / `excludedStateFilter` → one `State` primitive each, the
  *    include with `exclude: false` and the exclude with `exclude: true`
- *    (`filter_builder.rs:658-669`). The `none` sentinel
- *    (`eq_ignore_ascii_case`, `metadata_filter.rs:163-169` / `:181-187`) is
+ *    (`src-tauri/agaric-store/src/fts/filter_builder.rs:658-669`). The `none` sentinel
+ *    (`eq_ignore_ascii_case`, `src-tauri/agaric-store/src/fts/metadata_filter.rs:163-169` / `:181-187`) is
  *    split OUT of `values` and into `is_null`;
  *  - `priorityFilter` / `excludedPriorityFilter` → the same two-primitive
  *    shape over `Priority` (`:676-687`);
@@ -1235,16 +1235,16 @@ function searchHasStructuralFilter(
  *  - `dueFilter` / `scheduledFilter` → `DueDate` / `Scheduled`, the wire
  *    `DateFilter` resolved against TODAY and then mapped through
  *    `meta_date_to_primitive` (`:80-98`) — see {@link searchResolveDateFilter};
- *  - `lastEdited` → `LastEdited`, carried verbatim (`metadata_filter.rs:234`).
+ *  - `lastEdited` → `LastEdited`, carried verbatim (`src-tauri/agaric-store/src/fts/metadata_filter.rs:234`).
  *
  * An empty set emits NOTHING, mirroring each `add_*_via_projection`'s early
  * return, so `metadata.length === 0` is exactly `MetadataPredicates::is_empty`
- * (`metadata_filter.rs:124-141`) and the candidate scan can skip the whole
+ * (`src-tauri/agaric-store/src/fts/metadata_filter.rs:124-141`) and the candidate scan can skip the whole
  * block.
  *
  * NOT modelled, deliberately and narrowly: `prepare_metadata`'s two
  * VALIDATION refusals — an empty (trimmed) `prop:` key
- * (`metadata_filter.rs:211-221`) and an unparseable date / unknown bucket
+ * (`src-tauri/agaric-store/src/fts/metadata_filter.rs:211-221`) and an unparseable date / unknown bucket
  * (`:240-256`) — both of which are `AppError::Validation` raised BEFORE any
  * arm is picked. Modelling the predicates without them means a malformed
  * filter over-returns here where the backend refuses; it does not mean a
@@ -1267,7 +1267,7 @@ function searchMetadataPrimitives(filter: Record<string, unknown>): Record<strin
 
   const pushProperties = (raw: unknown, exclude: boolean): void => {
     for (const pf of (raw as Array<Record<string, unknown>> | undefined) ?? []) {
-      // BE-8 — the KEY is bound trimmed (`filter_builder.rs:434-437`).
+      // BE-8 — the KEY is bound trimmed (`src-tauri/agaric-store/src/fts/filter_builder.rs:419-425`).
       const key = ((pf['key'] as string | undefined) ?? '').trim()
       const value = (pf['value'] as string | undefined) ?? ''
       const predicate =
@@ -1292,7 +1292,7 @@ function searchMetadataPrimitives(filter: Record<string, unknown>): Record<strin
 
 /**
  * Split the `none` sentinel out of a `state:` / `priority:` value list, the
- * way `prepare_metadata` does (`metadata_filter.rs:162-196`).
+ * way `prepare_metadata` does (`src-tauri/agaric-store/src/fts/metadata_filter.rs:162-196`).
  *
  * The comparison is `eq_ignore_ascii_case`, so {@link asciiLowercase} rather
  * than `String.toLowerCase` — the latter folds beyond ASCII and would treat a
@@ -1340,7 +1340,7 @@ function searchInferPropertyValue(raw: string): Record<string, unknown> {
  * arms read. `null` for an absent filter (no primitive emitted).
  *
  * `today` is the LOCAL date — `chrono::Local::now().date_naive()`
- * (`metadata_filter.rs:149`) — so the ISO strings are built from
+ * (`src-tauri/agaric-store/src/fts/metadata_filter.rs:149`) — so the ISO strings are built from
  * `getFullYear` / `getMonth` / `getDate` and never from `toISOString`, which
  * would shift the day by one either side of UTC for most of the world.
  *
@@ -1446,7 +1446,7 @@ function searchPagesCacheTitle(pageId: string): string | null {
 /**
  * The structurally-filtered, live block set every arm draws its candidates
  * from — the mock's stand-in for `apply_structural_filters`'s WHERE clauses
- * (`toggle_filter.rs:1021-1049`), now covering every one of them.
+ * (`src-tauri/agaric-store/src/fts/toggle_filter.rs:1021-1049`), now covering every one of them.
  *
  * #4159 item 1 — it used to model `parentId` / `tagIds` / `scope` /
  * `blockTypeFilter` and stop there, while {@link searchHasStructuralFilter}
@@ -1460,10 +1460,10 @@ function searchPagesCacheTitle(pageId: string): string | null {
  * `honourBlockType` defaults to `true` for `search_blocks`. #4065 item 1 —
  * `search_blocks_partitioned` reuses this same structural set but must pass
  * `false`: its `filter`'s `block_type_filter` is DOCUMENTED as ignored there
- * (`queries.rs:657-663`, "the partitioning IS the block-type split") — the two
+ * (`src-tauri/src/commands/queries.rs:657-663`, "the partitioning IS the block-type split") — the two
  * `pages` / `blocks` scans apply their own `block_type = 'page'` pre-filter (or
  * none) downstream instead, mirroring `fts_fetch_rows`'s per-scan `block_type`
- * argument (`partitioned.rs:165-212`). No other field is conditional: the
+ * argument (`src-tauri/agaric-store/src/fts/search/partitioned.rs:165-212`). No other field is conditional: the
  * globs and the metadata predicates reach BOTH commands' scans.
  */
 function searchStructuralCandidates(
@@ -1503,7 +1503,7 @@ function searchStructuralCandidates(
       // GLOB ?)` — `SearchProjection::compile_path_glob`
       // (`filters/primitive.rs:1372-1399`), OR-joined across the include list
       // and AND-joined across the exclude list
-      // (`filter_builder.rs:575-616`).
+      // (`src-tauri/agaric-store/src/fts/filter_builder.rs:575-616`).
       //
       // A NULL `page_id` makes BOTH `IN` and `NOT IN` evaluate to NULL, so the
       // row is dropped either way — not kept by the exclude half. (Pages
@@ -1584,7 +1584,7 @@ const PAGINATION_CURSOR_VERSION = 1
 /**
  * The `pagination::Cursor` struct (`pagination/mod.rs:553-564`) as far as
  * `search_blocks` populates it: `id` always, and `rank` on the FTS arm
- * (`Cursor::for_id_and_rank`, `mod.rs:788-796`). The other three slots
+ * (`Cursor::for_id_and_rank`, `src-tauri/agaric-store/src/pagination/mod.rs:788-796`). The other three slots
  * (`position` / `deleted_at` / `seq`) belong to other queries and are never
  * written here, so they are never READ here either — a cursor carrying them is
  * a foreign one, and `search_blocks` ignores the slots its keyset does not use.
@@ -1607,7 +1607,7 @@ interface SearchCursor {
  * the struct's JSON with a `version` key injected.
  *
  * The unset slots are OMITTED, not written as `null` — every optional field
- * carries `skip_serializing_if = "Option::is_none"` (`mod.rs:556-563`), and
+ * carries `skip_serializing_if = "Option::is_none"` (`src-tauri/agaric-store/src/pagination/mod.rs:556-563`), and
  * presence IS the keyset, which is precisely what the conformance harness's
  * `cursorShape` (#3893) records: `v1:{id}` for the filter-only arm and
  * `v1:{id,rank}` for the FTS arm. Writing an explicit `"rank":null` would
@@ -1736,7 +1736,7 @@ export function cursorVersionSlotIsU8(value: unknown, source: string | undefined
  * mirrors a DIFFERENT Rust function:
  *
  *  - a MISSING `version` key decodes as the current version. `Cursor::decode`
- *    treats pre-versioning cursors as version 1 by design (`mod.rs:654-657`);
+ *    treats pre-versioning cursors as version 1 by design (`src-tauri/agaric-store/src/pagination/mod.rs:654-657`);
  *    `QueryCursor::decode` has no such clause;
  *  - `id` is a required `String` and `rank` an optional `f64`, so those are
  *    what serde would reject on — there is no `values` array here.
@@ -1776,14 +1776,14 @@ function decodeSearchCursor(s: string): SearchCursor {
   const versionSource = versionSlots.find((slot) => slot.holder === parsed)?.source
   // The version comparison runs BEFORE the field shapes, which is the order
   // `Cursor::decode` reads them in: it pulls `version` off the untyped
-  // `serde_json::Value` and rejects a mismatch (`mod.rs:654-670`), and only
+  // `serde_json::Value` and rejects a mismatch (`src-tauri/agaric-store/src/pagination/mod.rs:654-670`), and only
   // THEN hands the value to `serde_json::from_value::<Cursor>`
-  // (`mod.rs:675-676`). Get this backwards and `{"version":2}` reports a
+  // (`src-tauri/agaric-store/src/pagination/mod.rs:675-676`). Get this backwards and `{"version":2}` reports a
   // missing `id` on a cursor the backend refuses for its version.
   //
   // #4030 item 3 — a MALFORMED version slot is a DIFFERENT refusal from a
   // version MISMATCH, and the mock used to report the latter for both.
-  // `Cursor::decode` matches on the `serde_json::Value` (`mod.rs:658-668`):
+  // `Cursor::decode` matches on the `serde_json::Value` (`src-tauri/agaric-store/src/pagination/mod.rs:658-668`):
   // anything that is not a `Number` fails immediately, and a `Number` that is
   // not a `u8` fails the `as_u64().and_then(|v| u8::try_from(v).ok())` chain —
   // both with `cursor: invalid version field`, before `CURRENT_CURSOR_VERSION`
@@ -1801,7 +1801,7 @@ function decodeSearchCursor(s: string): SearchCursor {
     throw validationRejection('cursor: invalid version field')
   }
   // A MISSING `version` decodes as the current one — `Cursor::decode`'s
-  // `None => CURRENT_CURSOR_VERSION` arm (`mod.rs:657`), the pre-versioning
+  // `None => CURRENT_CURSOR_VERSION` arm (`src-tauri/agaric-store/src/pagination/mod.rs:657`), the pre-versioning
   // compatibility clause `QueryCursor::decode` has no equivalent of.
   const version = rawVersion === undefined ? PAGINATION_CURSOR_VERSION : rawVersion
   if (version !== PAGINATION_CURSOR_VERSION) {
@@ -1867,7 +1867,7 @@ function searchIdDescPage(
  * resume within, and the `(rank, id)` cursor `search_fts` mints from the
  * boundary row (`cursor.rs`, `Cursor::for_id_and_rank`).
  *
- * The keyset predicate is `fetch.rs:199-201`'s, epsilon included:
+ * The keyset predicate is `src-tauri/agaric-store/src/fts/search/fetch.rs:199-201`'s, epsilon included:
  * `rank > cursor_rank + eps OR (|rank - cursor_rank| <= eps AND id > cursor_id)`
  * with `eps = 1e-9 * MAX(1, |cursor_rank|)` — a RELATIVE band (#1598) so the
  * tolerance scales with the rank's magnitude. The mock's ranks are exact
@@ -1946,7 +1946,7 @@ function searchFtsRankedPage(
  * the regex is not compiled with the `u` flag, which is why none is passed.
  *
  * BOTH composers NFC-normalise the pattern first — `compose_literal_pattern`
- * (`toggle_filter.rs:567`) and `regex_mode_query` (`toggle_filter.rs:762`) —
+ * (`src-tauri/agaric-store/src/fts/toggle_filter.rs:567`) and `regex_mode_query` (`src-tauri/agaric-store/src/fts/toggle_filter.rs:762`) —
  * and neither normalises the CONTENT they run against, which stays as the user
  * typed it. That asymmetry is the backend's, so it is reproduced rather than
  * repaired: an NFD-stored block still evades an NFC pattern on both stacks.
@@ -1972,8 +1972,8 @@ function buildSearchRegex(
 }
 
 /** The `block_type = 'page'` predicate the partitioned command's PAGES scan
- *  adds to its SQL on every arm (`partitioned.rs:165-212`,
- *  `toggle_filter.rs:377-397`, `:1246-1258`) — the partition split itself. */
+ *  adds to its SQL on every arm (`src-tauri/agaric-store/src/fts/search/partitioned.rs:165-212`,
+ *  `src-tauri/agaric-store/src/fts/toggle_filter.rs:377-397`, `:1246-1258`) — the partition split itself. */
 function isPageTyped(b: Record<string, unknown>): boolean {
   return b['block_type'] === 'page'
 }
@@ -1984,7 +1984,7 @@ function isPageTyped(b: Record<string, unknown>): boolean {
  * Every non-FTS arm of `search_with_toggles_partitioned` ends in the same
  * three lines, and they are identical across the arms:
  * `has_more = limit_usize > 0 && rows.len() > limit_usize`, then
- * `rows.truncate(limit_usize)` (`toggle_filter.rs:437-443` regex,
+ * `rows.truncate(limit_usize)` (`src-tauri/agaric-store/src/fts/toggle_filter.rs:437-443` regex,
  * `:530-539` post-filter, `:1273-1281` filter-only). The `limit > 0` half is
  * the degenerate-ask guard — the caller asked this partition for nothing, so
  * there is nothing to "have more" of — and it is what makes a zero limit LEGAL
@@ -1993,7 +1993,7 @@ function isPageTyped(b: Record<string, unknown>): boolean {
  * Pass the FULL scan result: the backend fetches `limit + 1` and compares
  * `len() > limit`, which is the same boolean as comparing an untruncated
  * length. `next_cursor` is always `null` — the palette does not paginate
- * (`queries.rs:783-796`).
+ * (`src-tauri/src/commands/queries.rs:783-796`).
  */
 function searchPartitionOf(rows: Record<string, unknown>[], limit: number): SearchPageResponse {
   return {
@@ -2010,7 +2010,7 @@ function searchPartitionOf(rows: Record<string, unknown>[], limit: number): Sear
  *
  * #3939 item 2 — the order of those two steps is observable and the mock had
  * it backwards. `regex_mode_query`'s SQL carries `AND b.content IS NOT NULL`
- * in its `WHERE` (`toggle_filter.rs:810-816`) and applies `ORDER BY b.id DESC
+ * in its `WHERE` (`src-tauri/agaric-store/src/fts/toggle_filter.rs:810-816`) and applies `ORDER BY b.id DESC
  * LIMIT ?cap` (`:866-869`, bound to `REGEX_PRE_FILTER_CAP`, `:119`) AFTER it,
  * so the 1000-row window is 1000 rows WITH content. Capping first and dropping
  * null-content rows afterwards — which is what a `searchRegexMatches` that
@@ -2021,7 +2021,7 @@ function searchPartitionOf(rows: Record<string, unknown>[], limit: number): Sear
  * `search_blocks` regex arm and each partition of the
  * `search_blocks_partitioned` regex arm (whose pages partition pushes
  * `block_type = 'page'` into the same SQL, hence a window narrowed BEFORE the
- * cap there too — `toggle_filter.rs:377-397`).
+ * cap there too — `src-tauri/agaric-store/src/fts/toggle_filter.rs:377-397`).
  */
 function searchRegexPrefilterWindow(
   candidates: Record<string, unknown>[],
@@ -2037,9 +2037,9 @@ function searchRegexPrefilterWindow(
  *
  *  #3939 item 3 — a NON-ZERO-WIDTH match is required. Both backend sites
  *  collect `re.find_iter(content).filter(|m| m.end() > m.start())` and drop the
- *  row when nothing survives: `post_filter_row` (`toggle_filter.rs:618-641`,
+ *  row when nothing survives: `post_filter_row` (`src-tauri/agaric-store/src/fts/toggle_filter.rs:618-641`,
  *  "no non-zero-width match") and `regex_mode_query`'s inline loop
- *  (`toggle_filter.rs:905-919`). `RegExp.prototype.test` has no such filter, so
+ *  (`src-tauri/agaric-store/src/fts/toggle_filter.rs:905-919`). `RegExp.prototype.test` has no such filter, so
  *  a nullable pattern (`a*`, `(?:)`, an all-optional group) matched EVERY row
  *  here and NO row there — the mock's most inverted regex answer. Spelled with
  *  `exec` + an explicit width test rather than by rejecting nullable patterns
@@ -2112,7 +2112,7 @@ export const searchHandlers = {
       // with a live cursor contract). Skipping straight to the empty-tail
       // return let a malformed/foreign/version-stale cursor through
       // silently, diverging from the backend's `run_grouped`, which decodes
-      // its OWN `GroupCursor` (`engine.rs:1321-1324`) before doing anything
+      // its OWN `GroupCursor` (`src-tauri/agaric-store/src/query/engine.rs:1321-1324`) before doing anything
       // else with it. Uses {@link decodeGroupCursor}, NOT the flat path's
       // {@link decodeCursor} — the two cursor shapes are not interchangeable
       // (`{count,key}` vs `{values}`); see that function's doc for the
@@ -2205,7 +2205,7 @@ export const searchHandlers = {
 
     // #3863 — the cursor carries the FULL resolved sort-term tuple
     // (`{ version, values }`, one tagged `CursorValue` per term, in ORDER BY
-    // order), mirroring the engine's `QueryCursor` (`engine.rs:166-196`) —
+    // order), mirroring the engine's `QueryCursor` (`src-tauri/agaric-store/src/query/engine.rs:166-196`) —
     // not just `{ id }`.
     //
     // #3900 — resume by REPLAYING the engine's positional keyset predicate
@@ -2306,7 +2306,7 @@ export const searchHandlers = {
     //     accepted a limit of `0` — served as an empty page with
     //     `has_more: false` even with rows remaining, because `items.at(-1)`
     //     is `undefined` — and equally silently shrank an over-cap ask;
-    //  2. the SAME call then decodes the cursor (`mod.rs:866-869`), so a
+    //  2. the SAME call then decodes the cursor (`src-tauri/agaric-store/src/pagination/mod.rs:866-869`), so a
     //     malformed cursor is refused ahead of any arm. Decoding here rather
     //     than inside the two paging helpers is what extends that to the regex
     //     and blank-unfiltered arms, which return before either helper runs;
@@ -2402,7 +2402,7 @@ export const searchHandlers = {
     //
     // THIS is what arm 4's deletion would fall through to, and the two now
     // disagree wherever `fts_blocks.stripped` differs from raw `blocks.content`
-    // — `post_filter_row` (`toggle_filter.rs:618-642`) matches the composed
+    // — `post_filter_row` (`src-tauri/agaric-store/src/fts/toggle_filter.rs:618-642`) matches the composed
     // pattern against the RAW column, so a block whose term survives only in
     // the stripped text is an arm-4 hit and an arm-5 miss. That divergence is
     // the whole of #3938: it is the only observable difference between the two
@@ -2438,11 +2438,11 @@ export const searchHandlers = {
     //
     // #4030 item 1 — and the same is true of their ORDER, which #3938 left at
     // `blocks` Map insertion order. Both partitions run through
-    // `fts_fetch_rows` (`partitioned.rs:165-212`), whose SQL ends
-    // `ORDER BY fts.rank, b.id` (`fetch.rs:292`) — the very clause
+    // `fts_fetch_rows` (`src-tauri/agaric-store/src/fts/search/partitioned.rs:165-212`), whose SQL ends
+    // `ORDER BY fts.rank, b.id` (`src-tauri/agaric-store/src/fts/search/fetch.rs:292`) — the very clause
     // {@link searchFtsRankedPage} models for `search_blocks`, which is why the
     // partitions go through that seam rather than a sort spelled again here.
-    // `partitioned.rs:55-60` documents both partitions as "in rank order".
+    // `src-tauri/agaric-store/src/fts/search/partitioned.rs:55-60` documents both partitions as "in rank order".
     //
     // #4065 item 1 — `filter` used to be read no further than `query` /
     // `pageLimit` / `blockLimit`, so this scan was UNSCOPED where
@@ -2450,9 +2450,9 @@ export const searchHandlers = {
     // {@link searchStructuralCandidates} with `search_blocks` for `parentId` /
     // `tagIds` / `scope` (→ `space_id`) — the fields
     // `search_blocks_partitioned_inner` also threads into `fts_fetch_rows` on
-    // both partitions (`queries.rs:663-678`, `partitioned.rs:165-212`) —
+    // both partitions (`src-tauri/src/commands/queries.rs:663-678`, `src-tauri/agaric-store/src/fts/search/partitioned.rs:165-212`) —
     // called with `honourBlockType: false`, because `filter.block_type_filter`
-    // is DOCUMENTED as ignored on this command (`queries.rs:657-663`: "the
+    // is DOCUMENTED as ignored on this command (`src-tauri/src/commands/queries.rs:657-663`: "the
     // partitioning IS the block-type split"). Page-name globs and the
     // `MetadataPredicates` bundle stay unmodelled here too, for the same
     // reason `search_blocks`'s docstring gives for leaving them out there.
@@ -2463,18 +2463,18 @@ export const searchHandlers = {
     const blockLimit = (a['blockLimit'] as number) ?? 0
 
     // #4065 item 2 — `search_blocks_partitioned_inner`'s BE-2 guard
-    // (`queries.rs:735-741`) rejects either limit outside
+    // (`src-tauri/src/commands/queries.rs:735-741`) rejects either limit outside
     // `[0, MAX_SEARCH_RESULTS]` BEFORE dispatch, so an over-cap `blockLimit`
     // used to be served rather than refused. `0` is legal HERE (unlike
     // `search_blocks`'s `[1, 200]` `PageRequest::new` range) — see
-    // `partitioned.rs:237-238`'s explicit `page_limit_usize > 0 && …` clause,
+    // `src-tauri/agaric-store/src/fts/search/partitioned.rs:237-238`'s explicit `page_limit_usize > 0 && …` clause,
     // which is what makes this a DIFFERENT guard from the one #4030 item 4
     // added to `search_blocks`, not the same one reused.
     //
     // Where the two stacks part, in KIND as well as text — the same exception
     // {@link searchHandlers.search_blocks} documents for its own guard, which
     // this one inherited without inheriting the note. `page_limit` /
-    // `block_limit` are `u32` in Rust (`queries.rs:713-720`), so a NEGATIVE or
+    // `block_limit` are `u32` in Rust (`src-tauri/src/commands/queries.rs:713-720`), so a NEGATIVE or
     // FRACTIONAL value never reaches `search_blocks_partitioned_inner` at all:
     // Tauri's serde deserialisation refuses it at the IPC boundary, and a
     // deserialisation failure is not an `AppError`, so there is no backend kind
@@ -2502,10 +2502,10 @@ export const searchHandlers = {
 
     // Arm 1 + 2 — the blank-query dispatch, MODE-INDEPENDENT and therefore
     // ahead of the mode branch, exactly as `search_with_toggles_partitioned`
-    // puts it ahead of its own (`toggle_filter.rs:330-360`).
+    // puts it ahead of its own (`src-tauri/agaric-store/src/fts/toggle_filter.rs:330-360`).
     //
     // #4065 item 3 — every path on this command sets `total_count: null`
-    // (`queries.rs:783-796`'s `PageResponse`s do); this short circuit used to
+    // (`src-tauri/src/commands/queries.rs:783-796`'s `PageResponse`s do); this short circuit used to
     // leave the key off entirely, so a consumer reading it got `undefined`
     // here and `null` everywhere else. Two SEPARATE literals, not one `empty`
     // shared by both partitions: a single object handed to both handed them
@@ -2514,15 +2514,15 @@ export const searchHandlers = {
     // response as read-only, but nothing here enforced that.
     //
     // #4151 review item 2 — `query.trim() === ''`, not `!query`. The backend
-    // short-circuits on `query.trim().is_empty()` (`toggle_filter.rs:330`, and
-    // `partitioned.rs:127` behind it), and this mock's own `search_blocks`
+    // short-circuits on `query.trim().is_empty()` (`src-tauri/agaric-store/src/fts/toggle_filter.rs:330`, and
+    // `src-tauri/agaric-store/src/fts/search/partitioned.rs:127` behind it), and this mock's own `search_blocks`
     // already trims. A query of `'   '` used to fall through to the FTS path
     // and match on a space substring where both backend sites answer the
     // blank-query dispatch.
     //
     // #4151 review item 1 — the other half of #4065 item 1. With NO user
     // filter the answer is two empty partitions; with at least one it is
-    // `fts_fetch_filter_only_partitioned` (`toggle_filter.rs:1233-1288`) — the
+    // `fts_fetch_filter_only_partitioned` (`src-tauri/agaric-store/src/fts/toggle_filter.rs:1233-1288`) — the
     // same two partitions, FTS-free, each an `ORDER BY b.id DESC` scan
     // (`filter_only_scan`, `:1141-1145`) with its own `limit + 1` probe. Until
     // #4151 threaded `filter` through, this branch could not be told apart
@@ -2545,7 +2545,7 @@ export const searchHandlers = {
     }
 
     // Arm 3 — `isRegex`: two parallel `regex_mode_query` scans, FTS bypassed
-    // (`toggle_filter.rs:363-453`). The pages scan pushes `block_type = 'page'`
+    // (`src-tauri/agaric-store/src/fts/toggle_filter.rs:363-453`). The pages scan pushes `block_type = 'page'`
     // into the SAME SQL rather than filtering the shared window afterwards
     // (`:377-397`), so each partition gets its own
     // {@link searchRegexPrefilterWindow} — a pages partition can reach page
@@ -2582,22 +2582,22 @@ export const searchHandlers = {
     const contentOf = new Map(matching.map((c) => [c.b, c.content]))
 
     // Arm 4 — every toggle off: the straight partitioned FTS scan
-    // (`toggle_filter.rs:454-478`). Two INDEPENDENT scans, each capped at its
-    // own limit — not one scan partitioned afterwards (`partitioned.rs:17-27`:
+    // (`src-tauri/agaric-store/src/fts/toggle_filter.rs:454-478`). Two INDEPENDENT scans, each capped at its
+    // own limit — not one scan partitioned afterwards (`src-tauri/agaric-store/src/fts/search/partitioned.rs:17-27`:
     // the one-scan shape could drop the pages partition entirely). `null` for
     // the cursor because the palette does not paginate:
     // `search_fts_partitioned` passes `None` through to both `fts_fetch_rows`
     // calls and the command answers `next_cursor: None`
-    // (`queries.rs:783-796`), so the cursor the seam mints from the boundary
+    // (`src-tauri/src/commands/queries.rs:783-796`), so the cursor the seam mints from the boundary
     // row is DISCARDED here rather than put on the wire. What is kept is the
     // rest of `search_fts`'s window: the `(rank, id)` order, the
     // `take(limit)`, and the `limit + 1` probe behind `has_more` — including
-    // its zero-limit answer (`partitioned.rs:237-238`:
+    // its zero-limit answer (`src-tauri/agaric-store/src/fts/search/partitioned.rs:237-238`:
     // `page_limit_usize > 0 && …`, which the seam reproduces because a
     // zero-limit page has no boundary row to mint from).
     //
     // #4159 item 2 — and it is the ONE arm that ships `content` truncated to
-    // {@link PALETTE_CONTENT_PREVIEW_CAP} (`toggle_filter.rs:466-473`). See
+    // {@link PALETTE_CONTENT_PREVIEW_CAP} (`src-tauri/agaric-store/src/fts/toggle_filter.rs:466-473`). See
     // {@link capPaletteContent} for why the cut is per-arm rather than global,
     // and arm 5 below for the arm that must NOT carry it.
     if (filter['caseSensitive'] !== true && filter['wholeWord'] !== true) {
@@ -2624,7 +2624,7 @@ export const searchHandlers = {
     }
 
     // Arm 5 — `caseSensitive` and/or `wholeWord` (and NOT `isRegex`)
-    // (`toggle_filter.rs:479-543`). This path has no cursor, so it cannot page
+    // (`src-tauri/agaric-store/src/fts/toggle_filter.rs:479-543`). This path has no cursor, so it cannot page
     // for more survivors the way `search_blocks`'s arm 5 can: it OVER-FETCHES
     // each partition to `MAX_SEARCH_RESULTS` BEFORE the post-filter, then
     // derives `has_more` from the SURVIVOR count against the caller's real
@@ -2635,7 +2635,7 @@ export const searchHandlers = {
     //
     // #4159 item 2 — this arm ships `content` in FULL, and deliberately so:
     // `search_with_toggles_partitioned` passes `snippet_len: None` here
-    // (`toggle_filter.rs:499-521`) because the post-filter runs a literal regex
+    // (`src-tauri/agaric-store/src/fts/toggle_filter.rs:499-521`) because the post-filter runs a literal regex
     // against `row.content` and a DB-side `substr(content, 1, 512)` would hide
     // any match first appearing past codepoint 512 — dropping the row outright.
     // Arm 4 above, which runs no post-filter, is the one that truncates. The
