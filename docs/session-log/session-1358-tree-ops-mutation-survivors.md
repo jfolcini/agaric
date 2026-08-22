@@ -132,6 +132,17 @@ implicit "resolved" framing stand.
      `361:9`/`361:15`, matching the audit's breakdown precisely.
    All three closely match the diff's claimed scores; none regressed.
 
+   UNREPRODUCED (#4223): these three percentages are from local runs of this
+   command whose `reports/mutation/` output was never committed (it's
+   gitignored) — a future reader can re-run the command but cannot check
+   these exact numbers against a saved report. Update, 2026-08 (#4223): the
+   `page-blocks-move` figure was independently re-run twice more (before and
+   after deleting `page-blocks.reorder.test.ts`'s duplicate
+   `wouldCreateMoveCycle` cases) and reproduced 94.00% / 141 killed / 9
+   survived / the identical nine `line:col` positions both times — so that
+   one figure is now corroborated, not merely claimed. `block-tree-ops` and
+   `tree-utils` were not re-run this pass and remain unverified.
+
 **Process notes:**
 
 - The strongest-looking evidence in this diff (algebraic identities, canary hit

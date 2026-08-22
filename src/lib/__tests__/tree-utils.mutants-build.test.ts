@@ -184,6 +184,15 @@ describe('computeSelectionRoots', () => {
  * identical everywhere. Even then the seeded id is only ever passed to
  * `selected.has(...)`, so it can change the result only if the caller selects
  * Stryker's own placeholder string.
+ *
+ * UNREPRODUCED (#4223): the 885 205-input figure above is from an ad-hoc
+ * local run with no committed harness or artifact — unlike
+ * `page-blocks-move.ts:217:35`'s sweep (`scripts/mutation-harnesses/`), a
+ * future reader cannot re-derive this exact count. The equivalence verdict
+ * does not depend on it — the structural argument two paragraphs up (every
+ * real caller feeds a full DFS-flattened list, so item 0 always has depth 0)
+ * holds on its own — so read the number as corroboration that was never
+ * re-run, not as a standing proof.
  */
 
 /*

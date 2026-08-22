@@ -72,6 +72,20 @@ describe('wouldCreateMoveCycle (#3799)', () => {
     expect(wouldCreateMoveCycle(blocks, ['A1'], 'B')).toBe(false)
   })
 
+  // EQUIVALENCE (#4223, moved here from page-blocks.reorder.test.ts) — the
+  // `if (wantParent == null) return false` guard skipped outright (Stryker's
+  // `if (false)` ConditionalExpression mutant at this line): `orderedIds` is
+  // always `readonly string[]` and every `FlatBlock.id` is always a
+  // `string`, so for `wantParent === null`, both `orderedIds.includes(null)`
+  // and `getDragDescendants(...).has(null)` are ALWAYS false regardless of
+  // `blocks`/`orderedIds` content (no string ever `===` `null`) — the
+  // fall-through path converges on the exact same `false` the early return
+  // would have produced. Killing this would require an id that is literally
+  // `null` at runtime, contradicting the `string[]` contract every real
+  // caller (and this suite) respects. Confirmed by applying the mutation by
+  // hand and running this file plus `page-blocks.move-reparent.test.ts`:
+  // unchanged green (not the proof itself — the argument above is — just
+  // consistent with it).
   it('allows moving a block to root (null)', () => {
     expect(wouldCreateMoveCycle(blocks, ['A1a'], null)).toBe(false)
   })
