@@ -511,10 +511,9 @@ fn reverse_add_attachment_fs_path(
 /// `with_read_pool` and `with_read_pool_and_lifecycle` — the last of which is
 /// the one `build_materializer` itself calls — are all `pub` and all leave the
 /// `OnceLock` empty, so a future production caller could reintroduce a
-/// rootless `Materializer` and this
-/// guard would silently do nothing there. The skip therefore logs at WARN —
-/// noise-free in production (where it never fires) and loud enough to find in
-/// the field if that ever changes.
+/// rootless `Materializer` and this guard would silently do nothing there.
+/// The skip therefore logs at WARN — noise-free in production (where it never
+/// fires) and loud enough to find in the field if that ever changes.
 async fn require_reverse_attachment_bytes(
     app_data_dir: Option<&std::path::Path>,
     p: &agaric_store::op::AddAttachmentPayload,

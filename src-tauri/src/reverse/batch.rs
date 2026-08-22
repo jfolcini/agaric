@@ -888,7 +888,14 @@ fn build_reverse_delete_property(
 }
 
 /// Batch twin of [`attachment_ops::reverse_delete_attachment`]. Keep the two
-/// byte-identical — the parity test in `super::tests` is the oracle.
+/// byte-identical — `compute_reverse_batch_matches_per_op_loop` in
+/// `super::tests` is the oracle: its fixture seeds each `delete_attachment`
+/// with a DIFFERENT `fs_path` from the matching `add_attachment` (#3706
+/// review), so a twin that fails to adopt the delete-time path — or adopts
+/// the wrong one — makes `batched` disagree with `legacy` there. An absolute
+/// pin on the batched `fs_path` in that same test additionally catches a
+/// regression shared by both twins (e.g. in the `adopt_delete_time_fs_path`
+/// helper they both call), which the parity comparison alone cannot see.
 ///
 /// `record` is the `delete_attachment` being reversed; its payload carries the
 /// `fs_path` the row held at delete time, which

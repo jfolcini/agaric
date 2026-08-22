@@ -66,17 +66,37 @@ pub fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> 
 /// before C-3, which deserialize to `""`; those keep the original payload's
 /// path, which is all that was ever recorded for them.
 ///
-/// Two other "is it stale too?" cases both resolve to *no worse than the
+/// One other "is it stale too?" case resolves to *no worse than the
 /// original*:
 ///
-/// * A `delete_attachment` minted by [`reverse_add_attachment`] (the undo of
-///   an add) copies the ADD payload's path forward rather than reading the
-///   live row, so its `fs_path` is byte-identical to the fallback. The redo
-///   path that reverses it therefore behaves exactly as before.
 /// * A *peer's* delete op would carry that peer's device-local path, which is
 ///   meaningless here — but no reverse path can reach one: `revert_ops_in_tx`
 ///   calls `reject_replicated_targets` first, and every other undo/redo
 ///   target query filters `is_replicated = 0` (#2481/#2549).
+///
+/// # Residual: redo after undo-of-add can still false-refuse
+///
+/// A `delete_attachment` minted by [`reverse_add_attachment`] (the reverse of
+/// undoing an `add_attachment`) copies the ADD payload's ORIGINAL `fs_path`
+/// forward rather than reading the live row — see that function's doc. This
+/// module's adoption fixes the case where a REAL `delete_attachment` observes
+/// the repoint; it does nothing for a SYNTHETIC one that never does.
+///
+/// Concretely: add → something repoints the row onto a shared blob → the
+/// ordinary sweep reclaims the now-orphaned original path (the bytes stay
+/// alive under the blob) → undo the add (hard-deletes the row; the synthetic
+/// `delete_attachment` this mints carries the ORIGINAL path, since
+/// `reverse_add_attachment` never saw the repoint) → redo reconstructs the
+/// `add_attachment` from that synthetic op, this function finds no
+/// delete-time path to adopt (there is only the original, already-reclaimed
+/// one), and the #3706 byte-existence guard refuses — over bytes that are
+/// right there under the blob.
+///
+/// This is strictly better than pre-#3706 (which would have committed a row
+/// over the reclaimed path instead of refusing), but it is a **false
+/// refusal**, not a fully-fixed path. Closing it symmetrically would mean
+/// [`reverse_add_attachment`] reading the live row instead of its own
+/// payload — a wider change, deliberately not made in the #3706 review.
 pub(super) fn adopt_delete_time_fs_path(
     delete_fs_path: &str,
     add_payload: &mut agaric_store::op::AddAttachmentPayload,

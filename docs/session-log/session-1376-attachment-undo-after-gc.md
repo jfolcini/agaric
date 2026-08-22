@@ -110,11 +110,20 @@ It also keeps the replicated reverse op and the local row naming the same file.
 
 Three "is the delete-time path stale too?" cases were checked. Legacy pre-C-3 delete ops
 deserialize `fs_path = ""` (it is `#[serde(default)]`) and fall back to the original — all
-that was ever recorded for them. A `delete_attachment` minted by `reverse_add_attachment`
-copies the ADD payload's path forward, so it is byte-identical to the fallback: no change. A
-*peer's* delete op would carry a meaningless device-local path, but no reverse path can reach
-one — `revert_ops_in_tx` calls `reject_replicated_targets` first and every other undo/redo
-target query filters `is_replicated = 0`.
+that was ever recorded for them. A *peer's* delete op would carry a meaningless device-local
+path, but no reverse path can reach one — `revert_ops_in_tx` calls `reject_replicated_targets`
+first and every other undo/redo target query filters `is_replicated = 0`.
+
+The third — a `delete_attachment` minted by `reverse_add_attachment` — is a **residual false
+refusal**, not a closed case. That function copies the ADD payload's ORIGINAL path forward
+rather than reading the live row, so it never sees a repoint. Concretely: add → something
+repoints the row onto a shared blob → the sweep reclaims the now-orphaned original path (the
+bytes stay alive under the blob) → undo the add (mints a synthetic `delete_attachment` carrying
+that original, now-reclaimed path) → redo reconstructs `add_attachment` from it and the #3706
+guard refuses, over bytes that are right there under the blob. Strictly better than pre-PR (no
+dangling row gets committed), but not correct. Closing it symmetrically would mean
+`reverse_add_attachment` reading the live row instead of its own payload — a wider change,
+deliberately not made here.
 
 **Four smaller corrections.**
 
