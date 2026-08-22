@@ -5,11 +5,68 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { untitledOr } from '@/lib/block-title'
 import { handleBlockNavigation, resolveBlockDisplay } from '@/lib/query-result-utils'
 
 // ---------------------------------------------------------------------------
 // resolveBlockDisplay
 // ---------------------------------------------------------------------------
+describe('resolveBlockDisplay — the "Untitled" synthetic arm (#4228)', () => {
+  // #4228 moved title normalisation to the SEED, so a newline-leading or
+  // blank block is now STORED as the localised placeholder rather than as
+  // the `[[id...]]` cache-miss shape. `isSyntheticTitle` was widened to treat
+  // that placeholder as synthetic too, otherwise a query row that used to
+  // show the block's real text would show "Untitled" instead — a row is not
+  // a chip and has an 80-char budget with no one-line constraint.
+  //
+  // That widening was the change reaching furthest outside this PR's stated
+  // scope and was the only production change here with no falsifying test:
+  // deleting the clause reverted the behaviour with every other test still
+  // green. These pin it, in both directions.
+
+  it('falls back to the block content when the stored title is the placeholder', () => {
+    const block = makeBlock({ id: 'b1', parent_id: 'p1', page_id: 'p1', content: '\nreal text' })
+    const pageTitles = new Map([['p1', 'My Page']])
+    const resolveBlockTitle = vi.fn().mockReturnValue(untitledOr(null))
+
+    const result = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
+
+    // The fallback is the block's RAW content, newline included — it is not
+    // re-normalised, because a row has an 80-char budget and no one-line
+    // constraint. Pinned exactly rather than loosely, so a future change to
+    // the fallback's shape is a decision and not a silent drift.
+    expect(result.title).toBe('\nreal text')
+    expect(result.title).not.toBe(untitledOr(null))
+  })
+
+  it('does NOT fall back when the block is genuinely titled "Untitled" plus more', () => {
+    // The synthetic test is on the RESOLVED string, not the content, so a
+    // block whose first line happens to read "Untitled" still resolves to
+    // whatever the seeder stored for it.
+    const block = makeBlock({ id: 'b2', parent_id: 'p1', page_id: 'p1', content: 'Untitled\nmore' })
+    const pageTitles = new Map([['p1', 'My Page']])
+    const resolveBlockTitle = vi.fn().mockReturnValue('a real stored title')
+
+    const result = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
+
+    expect(result.title).toBe('a real stored title')
+  })
+
+  it('renders the empty marker for a cached BLANK block, not the placeholder', () => {
+    // Undocumented consequence of the same clause, pinned so it is a decision
+    // rather than a surprise: a cached blank block used to render "Untitled"
+    // and now takes the content fallback, which yields the empty marker. The
+    // UNCACHED blank block already rendered that, so this makes the two agree.
+    const block = makeBlock({ id: 'b3', parent_id: 'p1', page_id: 'p1', content: '' })
+    const pageTitles = new Map([['p1', 'My Page']])
+    const resolveBlockTitle = vi.fn().mockReturnValue(untitledOr(null))
+
+    const result = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
+
+    expect(result.title).not.toBe(untitledOr(null))
+  })
+})
+
 describe('resolveBlockDisplay', () => {
   it('returns the resolved block title and page title (happy path)', () => {
     const block = makeBlock({ id: 'b1', parent_id: 'p1', page_id: 'p1', content: 'raw content' })

@@ -10,8 +10,10 @@
  * ## Which rule carries which half of the bound
  *
  * The WIDTH bound (`max-width`) belongs to `.block-ref-chip`. It does NOT
- * also need `overflow: hidden` — #4239 removed that, and this file no longer
- * asserts it. The label below clips itself against the chip's `max-width`
+ * also need `overflow: hidden`, and this file deliberately does not assert
+ * it. (Both this file and that rule arrive with #4239, so against `main`
+ * that is an absence rather than a removal — an earlier draft of the change
+ * carried the declaration and dropped it before merge.) The label below clips itself against the chip's `max-width`
  * (measured in Chrome: a 60-char title's scrollWidth 760px vs clientWidth
  * 306px in a 320px chip, its right edge 6.8px inside the chip's, identical
  * with and without the parent declaration), so the parent's overflow was

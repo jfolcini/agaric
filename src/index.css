@@ -1316,10 +1316,13 @@
      genuinely clips a full-length title rather than being a rare edge case.
      Bound the rendered WIDTH regardless of what lands in the DOM.
 
-     #4239 — this rule also carried `overflow: hidden`, now removed. It was
-     redundant AND a portability risk. Measured in Chrome 141 with the chips
-     inline in a paragraph (the earlier check rendered them side by side,
-     which cannot show either effect):
+     #4239 — this rule deliberately does NOT carry `overflow: hidden`. An
+     earlier draft of this change added it; it was dropped before merge as
+     redundant AND a portability risk, and the measurements are kept here so
+     nobody adds it back. (Against `main` this is an absence, not a removal —
+     `.block-ref-chip` never carried it.) Measured in Chrome 141 with the
+     chips inline in a paragraph (an earlier check rendered them side by
+     side, which cannot show either effect):
        - Clipping: `.block-ref-chip-label` is a flex item with `min-width: 0`
          and its own `overflow: hidden`, so it clips ITSELF against this
          `max-width`. A 60-char title measured scrollWidth 760px against
