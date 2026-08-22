@@ -14,7 +14,7 @@ import { useEffect, useMemo } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import { normalizeBlockRefTitle, untitledOr } from '@/lib/block-title'
+import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -80,27 +80,16 @@ export async function fetchAndCacheLinks(
     // activeSpaceId() and caps via evictOldest — behaviour is preserved.
     const entries: Array<{ id: string; title: string; deleted: boolean }> = []
     for (const r of resolved) {
-      // #4228 — `normalizeBlockRefTitle` is the same normalisation
-      // `searchBlockRefs` (use-block-resolve.ts) and `handleNavigate`
-      // (use-block-navigate-to-link.ts) apply to their own content, so all
-      // three seed call sites write byte-identical titles for the same
-      // CONTENT block id (`@/lib/block-title`'s docblock). A
-      // resolved-but-blank `r.title` gets the same "Untitled" placeholder
-      // those seeders use — not the `[[id…]]` broken-link shape, which is
-      // reserved below for a target the backend didn't return at all.
-      //
-      // Gated on `block_type` for the reason the sibling writer in
-      // `useBacklinkResolution` is: `batch_resolve` returns `b.content` for
-      // EVERY type, so a page's namespaced path and a tag's name arrive here
-      // too. Capping those breaks `getPageDisplayName(title, 'leaf')` in
-      // `renderBlockLink`, and disagrees with `useResolveStore.preload`,
-      // which writes `p.content` / `t.name` verbatim under this same key.
-      // Page and tag still take `untitledOr` — the trimmed-empty test WITHOUT
-      // the first-line split or the cap — so a blank one is still labelled
-      // rather than stored as `null`.
+      // #4228/#4239 — one gate, `resolveStoreTitle`, shared with every other
+      // seed writer (`@/lib/block-title`'s docblock enumerates them), so the
+      // same block id reached by two paths produces the same bytes and
+      // `batchSet`'s value diff sees a genuine no-op. A resolved-but-blank
+      // `r.title` therefore gets the "Untitled" placeholder those seeders
+      // use — not the `[[id…]]` broken-link shape, which is reserved below
+      // for a target the backend didn't return at all.
       entries.push({
         id: r.id,
-        title: r.block_type === 'content' ? normalizeBlockRefTitle(r.title) : untitledOr(r.title),
+        title: resolveStoreTitle(r.block_type, r.title),
         deleted: r.deleted,
       })
     }

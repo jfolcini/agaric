@@ -999,7 +999,7 @@ describe('searchPages — long query (>2 chars)', () => {
         },
         {
           id: 'F2',
-          block_type: 'block',
+          block_type: 'content',
           content: 'meeting agenda item',
           parent_id: 'F1',
           position: 0,
@@ -2207,7 +2207,7 @@ describe('searchBlockRefs — resolve-store space guard (#853)', () => {
   function blockHit(id: string, content: string) {
     return {
       id,
-      block_type: 'block' as const,
+      block_type: 'content' as const,
       content,
       parent_id: null,
       position: 0,
@@ -2825,7 +2825,7 @@ describe('searchBlockRefs — icons', () => {
       items: [
         {
           id: 'BR1',
-          block_type: 'block',
+          block_type: 'content',
           content: 'Some block content',
           parent_id: null,
           position: 0,
@@ -2861,7 +2861,7 @@ describe('searchBlockRefs — icons', () => {
       items: [
         {
           id: 'BR2',
-          block_type: 'block',
+          block_type: 'content',
           content: 'A child block',
           parent_id: 'PARENT_PAGE',
           position: 0,
@@ -2897,7 +2897,7 @@ describe('searchBlockRefs — icons', () => {
 
     const mkItem = (id: string, parent: string | null) => ({
       id,
-      block_type: 'block' as const,
+      block_type: 'content' as const,
       content: `block ${id}`,
       parent_id: parent,
       position: 0,
@@ -2944,7 +2944,7 @@ describe('searchBlockRefs — icons', () => {
         items: [
           {
             id: 'BR3',
-            block_type: 'block',
+            block_type: 'content',
             content: null,
             parent_id: null,
             position: 0,
@@ -2987,9 +2987,15 @@ describe('searchBlockRefs — icons', () => {
 // newline makes `content.split('\n')[0]` empty even though later lines hold
 // real text.
 describe('searchBlockRefs — untitled placeholder for blank content (#4190)', () => {
+  // #4239 — every `search_blocks` fixture in this file used to say
+  // `block_type: 'block'`, which is OUTSIDE the closed `content | tag | page`
+  // domain `0005_block_type_check.sql` enforces. `searchBlockRefs` now gates
+  // on that column (`resolveStoreTitle`), so an out-of-domain fixture would
+  // take the page/tag arm and quietly stop testing the block path at all —
+  // the mirror image of how the ungated seeder originally shipped green.
   const mkBlock = (id: string, content: string | null) => ({
     id,
-    block_type: 'block' as const,
+    block_type: 'content' as const,
     content,
     parent_id: null,
     position: 0,

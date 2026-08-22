@@ -22,7 +22,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { unwrap } from '@/lib/app-error'
 import type { BacklinkGroup, ResolvedBlock } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
-import { normalizeBlockRefTitle } from '@/lib/block-title'
+import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -60,9 +60,9 @@ function collectContentIds(groups: BacklinkGroup[]): Set<string> {
  * block. The three values need different handling, so gate on
  * `r.block_type` (a closed domain — the `check_block_type_insert` trigger
  * in migration `0005_block_type_check.sql` restricts it to
- * `content | tag | page`):
+ * `content | tag | page`) via the shared {@link resolveStoreTitle}:
  *
- *   - `content` → {@link normalizeBlockRefTitle}, the single owner of what
+ *   - `content` → `normalizeBlockRefTitle`, the single owner of what
  *     a stored BLOCK title is (first line, Untitled-substituted, capped).
  *     `r.title` is not pre-truncated by the backend, and this hook's ids
  *     share the resolve store's `${spaceId}::${ulid}` key space with the
@@ -73,30 +73,41 @@ function collectContentIds(groups: BacklinkGroup[]): Set<string> {
  *     chip and its deleted `aria-label`, and would flip that entry back and
  *     forth (bumping `version`) against the normalising seeders.
  *
- *   - `page` / `tag` → stored VERBATIM, matching `useResolveStore.preload`
- *     (`@/stores/resolve`), which writes `p.content` / `t.name` raw under
- *     the very same key. Normalising them would (a) desync this writer from
- *     preload on every >60-char title, so each pass flips the entry and
- *     re-renders every version-subscribed consumer, and (b) corrupt the
- *     path: `renderBlockLink` splits the stored title on `/` via
- *     `getPageDisplayName(title, 'leaf')`, so a capped
+ *   - `page` / `tag` → un-capped and un-split, matching
+ *     `useResolveStore.preload` (`@/stores/resolve`), which writes
+ *     `p.content` / `t.name` under the very same key. Capping them would
+ *     (a) desync this writer from preload on every >60-char title, so each
+ *     pass flips the entry and re-renders every version-subscribed consumer,
+ *     and (b) corrupt the path: `renderBlockLink` splits the stored title on
+ *     `/` via `getPageDisplayName(title, 'leaf')`, so a capped
  *     `Eng/Platform/Observability/Distributed Tracing Ro...` yields the
  *     wrong leaf — or, if the cap lands before the last `/`, a NAMESPACE
  *     segment as the page name — and the `title=` attribute that exists to
  *     keep the full path available would carry a truncated one.
  *
- * An empty/absent title still falls back to the tag/page placeholder, and
- * that fallback is deliberately NOT routed through the normaliser (which
- * would turn it into "Untitled"): the row keeps a stable label AND `has()`
- * stays true for it — otherwise a name-less-but-real row would be re-fetched
- * on every pass — and `resolveBlockDisplay` (`@/lib/query-result-utils`)
- * pattern-matches exactly this `[[id...]]` shape to detect a cache miss and
- * fall back to the block's own content.
+ * #4239 — both arms are now {@link resolveStoreTitle}, the ONE place that
+ * `block_type` test lives, so this writer cannot drift from its siblings
+ * again. That also fixes a narrower divergence the old spelling had: a
+ * WHITESPACE-ONLY page title passed `r.title.length > 0` and was stored raw
+ * (`'   '`), where every other writer's trimmed-empty test made it
+ * "Untitled". It is now "Untitled" here too.
+ *
+ * ## The one cell that still diverges (#4238)
+ *
+ * A `null`/`''` title on a non-tag row keeps the `[[id…]]` broken-link shape
+ * instead of the "Untitled" placeholder its siblings write. That is
+ * deliberate and NOT reconcilable here: the row keeps a stable label AND
+ * `has()` stays true for it — otherwise a name-less-but-real row would be
+ * re-fetched on every pass — and `resolveBlockDisplay`
+ * (`@/lib/query-result-utils`) pattern-matches exactly this `[[id...]]`
+ * shape to detect "nothing real is cached" and fall back to the block's own
+ * content. Routing it through the gate would make a nameless row look
+ * resolved on both surfaces. So the divergence is real, it is exactly one
+ * cell wide, the matrix in `resolve-store-title-seed-parity.test.ts` asserts
+ * it explicitly rather than skipping it, and #4238 tracks unifying it.
  */
 function storeTitle(r: ResolvedBlock): string {
-  if (r.title && r.title.length > 0) {
-    return r.block_type === 'content' ? normalizeBlockRefTitle(r.title) : r.title
-  }
+  if (r.title !== null && r.title.length > 0) return resolveStoreTitle(r.block_type, r.title)
   return r.block_type === 'tag' ? `#${r.id.slice(0, 8)}...` : `[[${r.id.slice(0, 8)}...]]`
 }
 

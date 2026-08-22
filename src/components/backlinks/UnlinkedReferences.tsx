@@ -27,6 +27,7 @@ import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
 import { useUnlinkedReferences } from '@/hooks/useUnlinkedReferences'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
@@ -144,11 +145,18 @@ export function UnlinkedReferences({
   // or load-more) changes the merged group list, mirroring the old per-fetch
   // `batchSet` in `fetchGroups`.
   useEffect(() => {
+    // #4239 — these are PAGE ids, so they share the resolve store's
+    // `${spaceId}::${ulid}` key space with `preload`'s page half and with the
+    // `[[ULID]]` seeders. Route through the shared gate so a blank or
+    // whitespace-only source-page title lands as the same "Untitled"
+    // placeholder they write, rather than being dropped here (a dropped row
+    // is not neutral: it leaves the header on `resolveTitle`'s `[[ULID…]]`
+    // fallback, which is a THIRD value for the same key).
     const resolveEntries = groups
-      .filter((g) => g.page_title != null && g.page_title.length > 0)
+      .filter((g) => g.page_title != null)
       .map((g) => ({
         id: g.page_id,
-        title: g.page_title as string,
+        title: resolveStoreTitle('page', g.page_title),
         deleted: false,
       }))
     if (resolveEntries.length > 0) {

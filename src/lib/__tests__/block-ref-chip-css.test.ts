@@ -9,8 +9,19 @@
  *
  * ## Which rule carries which half of the bound
  *
- * The WIDTH bound (`max-width`, plus `overflow: hidden` so nothing spills
- * past the chip's rounded box) belongs to `.block-ref-chip`.
+ * The WIDTH bound (`max-width`) belongs to `.block-ref-chip`. It does NOT
+ * also need `overflow: hidden` — #4239 removed that, and this file no longer
+ * asserts it. The label below clips itself against the chip's `max-width`
+ * (measured in Chrome: a 60-char title's scrollWidth 760px vs clientWidth
+ * 306px in a 320px chip, its right edge 6.8px inside the chip's, identical
+ * with and without the parent declaration), so the parent's overflow was
+ * unreachable — while `overflow` other than `visible` is exactly the
+ * condition under which an inline-level box can be given a SYNTHESIZED
+ * baseline instead of its content's. Chrome does not apply that to
+ * `inline-flex` (an inline-BLOCK control shifted 7.78px under the same test;
+ * this chip did not move), but the declaration was buying nothing to offset
+ * the risk that another engine does. `.block-link-chip` and `.tag-ref-chip`
+ * — byte-identical rules but for colour and this bound — never carried it.
  *
  * The single-line + ellipsis half CANNOT live there. `.block-ref-chip` is
  * `inline-flex`, and `text-overflow` applies only to a BLOCK container: a
@@ -60,12 +71,21 @@ import { describe, expect, it } from 'vitest'
 
 const CSS_SOURCE = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
 
-/** Extract a single top-level rule's declaration block by its selector. */
+/**
+ * Extract a single top-level rule's DECLARATIONS by its selector.
+ *
+ * Comments are stripped. This file's assertions are regexes over the rule
+ * text, so without stripping, prose is indistinguishable from code: a comment
+ * merely mentioning `overflow: hidden` would satisfy a "must set" assertion
+ * and violate a "must not set" one. These rules carry long explanatory
+ * comments (deliberately — they encode measurements), so that is not a
+ * hypothetical.
+ */
 function ruleFor(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const m = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`).exec(CSS_SOURCE)
   if (!m) throw new Error(`rule not found in index.css: ${selector}`)
-  return m[1] as string
+  return (m[1] as string).replace(/\/\*[\s\S]*?\*\//g, '')
 }
 
 /** Every utility named by every `@apply` directive in `rule`, flattened. */
@@ -112,14 +132,22 @@ describe('.block-ref-chip bounded width (#4228)', () => {
     )
   })
 
-  it('sets overflow: hidden on the chip so content past max-width does not spill out of its box', () => {
-    expectBoundedBy(
-      '.block-ref-chip',
-      chipRule,
-      chipApplied,
-      /overflow:\s*hidden/,
-      'overflow: hidden',
-    )
+  /**
+   * The inverse pin of the one above it: #4239 established that the chip's
+   * own `overflow` is redundant (the label clips itself) and is the one
+   * declaration that could give an inline-level box a synthesized baseline,
+   * so it must STAY off. Without this arm the removal is silently
+   * reversible by anyone who reads the sibling `.block-ref-chip-label`
+   * assertions and assumes the parent wants the same treatment.
+   *
+   * `@apply truncate` would reintroduce it, so the check has to look through
+   * the applied utilities too — the same way the assertions above accept it.
+   */
+  it('does NOT set overflow on the chip itself — the label carries the clipping (#4239)', () => {
+    expect(
+      chipApplied.includes('truncate') || /overflow:/.test(chipRule),
+      `.block-ref-chip must NOT set \`overflow\` — it is redundant (\`.block-ref-chip-label\` clips itself against this rule's \`max-width\`) and a non-\`visible\` overflow is the condition for an inline-level box's baseline to be synthesized from its margin edge rather than taken from its content, which would sit block-ref chips at a different height from surrounding text and from the sibling chip rules. Rule text:\n${chipRule}`,
+    ).toBe(false)
   })
 
   /**

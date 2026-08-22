@@ -1,31 +1,75 @@
 /**
- * The resolve-store block title — one owner, one shape.
+ * The resolve-store title — one owner, one shape.
  *
- * #4228 — three call sites feed block content into the shared resolve
- * store (`@/stores/resolve`) as a block id's `title`:
- *   - `searchBlockRefs` in `@/components/block-tree/use-block-resolve.ts`
- *   - `fetchAndCacheLinks` in `@/components/block-tree/use-block-link-resolve.ts`
- *   - `handleNavigate` in `@/components/block-tree/use-block-navigate-to-link.ts`
+ * #4228 — the shared resolve store (`@/stores/resolve`) holds ONE
+ * `{ title, deleted }` per `${spaceId}::${ulid}`, and `set` / `batchSet`
+ * diff on the title's BYTES. So every writer that can reach the same id has
+ * to compute the same string, or the last writer wins, `version` bumps, and
+ * every version-subscribed consumer re-renders — for a value that did not
+ * really change. Three successive reviews of #4239 each found one more
+ * writer that had drifted, so the enumeration is written down here and
+ * pinned by a test (`resolve-store-title-seed-parity.test.ts`, which reads
+ * this source tree and fails on an unregistered writer).
  *
- * Before this module existed each one computed its own value — full raw
- * content, `.slice(0, 60)`, `.slice(0, 60)` — so `batchSet` / `set`'s
- * diff-on-value guard (`@/stores/resolve.ts`) saw three different byte
- * strings for the same id and treated whichever write landed last as "the"
- * title, bumping `version` (and re-rendering every version-subscribed
- * consumer) every time the seeders disagreed. The two block-ref renderers
- * (`renderBlockRef` and the TipTap `BlockRef` NodeView,
- * `@/editor/extensions/block-ref.ts`) then EACH re-derived their own
- * first-line/cap from whatever landed in the cache, so the same stored
- * title could also render two different ways depending which renderer read
- * it — and a title whose first line was empty (content starting with
- * `"\n"`) rendered as a blank chip, because neither renderer applied the
- * placeholder substitution the picker row already had (#4190/#4222).
+ * ## The invariant
  *
- * This module is the single owner of what the stored title IS. All three
- * seed call sites above call {@link normalizeBlockRefTitle} and write its
- * result verbatim; both renderers render the stored value verbatim — there
- * is no per-renderer split/cap left to disagree with the seed or with each
- * other.
+ * `block_type` decides the shape, and {@link resolveStoreTitle} is the ONLY
+ * place that decision is made:
+ *
+ *   - `content` → {@link normalizeBlockRefTitle}: first line, Untitled-
+ *     substituted, capped to {@link TITLE_MAX_LEN}. A block ref is a chip;
+ *     a chip shows one short line.
+ *   - `page` / `tag` → {@link untitledOr}: Untitled-substituted and
+ *     otherwise VERBATIM — un-split and un-capped.
+ *
+ * The page/tag arm is not symmetry for its own sake. `batch_resolve`,
+ * `get_block` and `search_blocks` all return `b.content` for EVERY block
+ * type, so a page's namespaced path (`Eng/Platform/Observability`) and a
+ * tag's name arrive at these writers too. `renderBlockLink` then runs
+ * `getPageDisplayName(title, 'leaf')` over the stored value: cap it and the
+ * leaf is wrong, or — if the cut lands before the last `/` — a NAMESPACE
+ * SEGMENT renders as the page name; split it at the seed and the `title=`
+ * attribute that exists to keep the full path available carries a partial
+ * one. And `preload` writes page/tag titles verbatim under the same key, so
+ * any capping or splitting writer churns against it on every sync.
+ *
+ * ## The writers (all of them)
+ *
+ * Seed writers — title comes from a FETCHED row, so the gate applies:
+ *   1. `searchBlockRefs`      `@/components/block-tree/use-block-resolve.ts`
+ *   2. `fetchAndCacheLinks`   `@/components/block-tree/use-block-link-resolve.ts`
+ *   3. `handleNavigate`       `@/components/block-tree/use-block-navigate-to-link.ts`
+ *   4. `storeTitle`           `@/hooks/useBacklinkResolution.ts` (see the gap below)
+ *   5. `runPreloadScan`       `@/stores/resolve.ts` — pages + tags only
+ *   6. `populatePageResolveCache` / the `searchTags` fill
+ *                             `@/components/block-tree/use-block-resolve.ts` — pages / tags
+ *   7. the unlinked-refs pre-warm `@/components/backlinks/UnlinkedReferences.tsx` — pages
+ *   8. the trash restore hint `@/components/TrashView.tsx` — pages + tags
+ *
+ * Echo writers — the title is a value the caller just WROTE to the backend
+ * (create / rename / delete), not a value it read back, so there is nothing
+ * to normalise: it is non-blank by construction and already the exact bytes
+ * a later `preload` will re-fetch. `TagList`, `useBlockTags`,
+ * `useRichContentCallbacks`, `paste-internalize`, `page-rename`,
+ * `usePageDeleteAction`, `onCreatePage` / `onCreateTag`, the journal /
+ * date-picker page seeds, and the three `createPageInSpace(…, 'Untitled')`
+ * new-page paths (`App.tsx`, `useAppKeyboardShortcuts.ts`,
+ * `palette-commands.ts` — whose `'Untitled'` is the PERSISTED content, so it
+ * must stay that untranslated literal to match what `preload` reads back).
+ *
+ * ## The one gap that is NOT closed (#4238)
+ *
+ * `useBacklinkResolution`'s `storeTitle` deliberately writes the `[[id…]]`
+ * broken-link shape — NOT the Untitled placeholder — for a row the backend
+ * returned with a `null`/empty title. `resolveBlockDisplay`
+ * (`@/lib/query-result-utils.ts`) pattern-matches that exact shape as its
+ * "nothing real is cached" signal, so replacing it with "Untitled" would
+ * make a nameless row look resolved. Everything ELSE about that writer is
+ * on the invariant (a whitespace-only page title now becomes "Untitled"
+ * there like everywhere else); the residual divergence is exactly one cell —
+ * `title === null || title === ''` on a non-tag row — and #4238 tracks it.
+ * The docblock this replaced claimed parity that did not hold; it does not
+ * hold now either, and this paragraph is the honest version.
  */
 
 import { t as translate } from '@/lib/i18n'
@@ -106,4 +150,26 @@ export function normalizeBlockRefTitle(content: string | null): string {
   return firstLine.length > TITLE_MAX_LEN
     ? `${sliceWithoutOrphanSurrogate(firstLine, TITLE_MAX_LEN - 3)}...`
     : firstLine
+}
+
+/**
+ * THE gate. Every resolve-store seed writer calls exactly this — the
+ * `block_type === 'content'` test lives here and nowhere else, so a writer
+ * cannot half-apply it and a new writer has one function to reach for. See
+ * the module docblock for the invariant it encodes and for the full writer
+ * enumeration this is applied at.
+ *
+ * `blockType` is typed as a loose string because that is what the bindings
+ * hand back (`BlockRow.block_type: string`, `ResolvedBlock.block_type:
+ * string`) — the closed `content | tag | page` domain is enforced by the
+ * backend's `0005_block_type_check.sql`, not by the TS type. The test is
+ * deliberately `=== 'content'` rather than `!== 'page' && !== 'tag'`:
+ * capping a page path is the harm this exists to prevent, so an
+ * unrecognised type must fall to the verbatim arm, not to the capping one.
+ */
+export function resolveStoreTitle(
+  blockType: string | null | undefined,
+  content: string | null,
+): string {
+  return blockType === 'content' ? normalizeBlockRefTitle(content) : untitledOr(content)
 }

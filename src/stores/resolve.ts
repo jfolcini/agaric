@@ -35,6 +35,7 @@
 
 import { create } from 'zustand'
 
+import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { batchResolve, listAllTagsInSpace, listBlocks, listBlocksLimit } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
@@ -297,7 +298,17 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         // never removes a stale key either.
         for (const resolved of await batchResolve(targetedIds, spaceId)) {
           fetchedPages.set(keyFor(spaceId, resolved.id), {
-            title: resolved.title ?? 'Untitled',
+            // #4239 — `resolveStoreTitle('page', …)` rather than the
+            // hardcoded `?? 'Untitled'` this used to carry. Two writers
+            // disagreeing about a blank title is the same value-diff churn
+            // as two disagreeing about a long one: the literal is
+            // untranslated (the sibling seeders use the `block.untitled`
+            // catalogue entry) and its test is `=== null`, so a
+            // whitespace-only page title stayed raw here and became
+            // "Untitled" everywhere else. Both halves now go through the one
+            // gate. `changedPageIds` carries page ids, hence the `'page'`
+            // literal — see the doc on `preload`.
+            title: resolveStoreTitle('page', resolved.title),
             deleted: resolved.deleted,
           })
         }
@@ -315,7 +326,9 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
           })
           for (const p of pagesResp.items) {
             fetchedPages.set(keyFor(spaceId, p.id), {
-              title: p.content ?? 'Untitled',
+              // #4239 — see the targeted half above. `blockType: 'page'`
+              // scopes this walk, so the `'page'` literal is exact.
+              title: resolveStoreTitle('page', p.content),
               deleted: p.deleted_at !== null,
             })
           }
@@ -344,7 +357,11 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       const fetchedTags = new Map<string, ResolveEntry>()
       for (const t of tags) {
         fetchedTags.set(keyFor(spaceId, t.tag_id), {
-          title: t.name,
+          // #4239 — the tag arm of the same gate. `untitledOr` is the
+          // identity for any real name, so this only bites on a blank one,
+          // where it agrees with `fetchAndCacheLinks` and the `@`-picker
+          // fill instead of storing whitespace.
+          title: resolveStoreTitle('tag', t.name),
           deleted: false,
         })
       }

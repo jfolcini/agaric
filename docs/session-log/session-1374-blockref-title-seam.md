@@ -126,3 +126,72 @@ and deliberately disagree on blank — `fetchAndCacheLinks` writes "Untitled" wh
 `useBacklinkResolution` writes `[[id…]]`, because that shape is load-bearing for cache-miss
 detection. Full four-way parity needs the cache-miss signal moved off the title string,
 which is its own design decision.
+
+## Round 4 — stop finding writers one at a time
+
+Three reviews, three ungated writers, found singly. The fix this round is structural rather
+than another one-line gate.
+
+**One gate, and a written-down denominator.** `resolveStoreTitle(blockType, content)` in
+`@/lib/block-title` is now the only place the `block_type === 'content'` test exists;
+`content` → `normalizeBlockRefTitle`, `page`/`tag` → `untitledOr` (un-capped, un-split).
+Enumerating exhaustively — `find_referencing_symbols` plus a whitespace-tolerant scan that
+also catches the aliased `const store = useResolveStore.getState(); store.batchSet(…)` form
+— found **25 mutator calls across 18 files**: 8 seed writers (title comes from a fetched
+row) and 10 echo writers (title is the value the caller just wrote to the backend, non-blank
+by construction). All 8 seeds are gated; the echoes deliberately are not.
+
+**Two more holes the previous rounds had not reached.** `searchBlockRefs` was the one review
+3 named — `blockTypeFilter: null`, so pages and tags come back and were being capped. The
+other was silent: `populatePageResolveCache` seeded `m.label`, and `makePagePickerItem`
+builds that through `formatNamespacedLabel`, which *splits* a namespaced title. So typing
+`[[` on a namespaced page stored `Observability` where `preload` stores
+`Engineering/Platform/Observability` — a permanent value-diff bumping `version` on every
+picker keystroke. The page strategies now return raw rows and the dispatcher renders them,
+so the leaf/breadcrumb split is a display concern that never reaches the store.
+
+**The blank-title disagreement, settled as far as it goes.** Three writers held three
+positions. `preload`'s hardcoded, untranslated `?? 'Untitled'` (null-only test) and
+TrashView's `?? t('common.untitled')` (a *second* catalogue entry for the same word) are
+both on the gate now, as is `useBacklinkResolution`'s whitespace-only cell, which used to
+store `'   '` raw. What remains is exactly one cell: a `null`/`''` title on a non-tag row
+still keeps the `[[id…]]` shape there, because `resolveBlockDisplay` pattern-matches it as
+the cache-miss signal. That is stated precisely in the code and in the matrix rather than
+asserted away — the previous docblock claimed a parity that did not hold.
+
+**A matrix instead of three examples.** 7 writers × 3 block types × 7 content shapes, with
+the expected value per cell written as a **literal** (a test that derives its expectation
+from the function under test proves nothing). `mkSearchBlock` now takes a real `block_type`:
+the old fixture hardcoded `'block'`, outside the closed domain
+`0005_block_type_check.sql` enforces, which is *why* no realistic page row ever flowed
+through path 1. A second tier scans the source tree and fails on any resolve-store writer
+not declared in the file, pinning the per-file write count too — so a new writer, or a
+second write in an existing file, cannot ship unnoticed.
+
+Falsified both tiers. Reverting the `searchBlockRefs` gate → **16 red** (8 matrix cells + 8
+convergence cells), including a page path capped to `…/BBBBBB...` where the cut lands before
+the last `/` and a namespace segment would render as the leaf. Adding a stray second write
+to `page-rename.ts` → the enumeration guard reddens with the file named.
+
+**`overflow: hidden` on `.block-ref-chip`: measured, then removed.** The suspicion was a
+synthesized baseline. Measured in Chrome with the chips inline in a paragraph and an
+inline-*block* positive control: the control shifted 7.78px and grew the line box
+25.81→33.41px, while the `inline-flex` chip was byte-identical to `.block-link-chip` with
+and without the declaration — CSS2.1 §10.8.1 scopes that rule to `inline-block`, and
+flexbox defines its own baselines with no overflow clause. So not a bug here. It was however
+unreachable (the label clips itself: scrollWidth 760 vs clientWidth 306 in a 320px chip,
+right edge 6.8px *inside* the parent's), and only one engine reading the older rule would
+make block-ref chips sit at a different height from every sibling. Removed, with the numbers
+recorded in the rule. The CSS test now strips comments before matching — without that, prose
+mentioning a declaration satisfied a "must set" assertion.
+
+**Cross-surface consequence, fixed rather than accepted.** Moving normalisation to the seed
+meant a newline-leading block resolved to the "Untitled" placeholder, so
+`resolveBlockDisplay`'s cache-miss test no longer fired and a query row that used to show
+the block's real text showed "Untitled". A query row is not a chip — it has an 80-char
+budget and no one-line constraint — so the test widened from "cache miss" to "synthetic
+title", restoring the pre-#4228 row for both the blank and the newline-leading shape.
+
+**Verification:** `tsc -b` clean; `vitest run` → **781 files passed, 17905 passed**, 1
+expected fail, 37 skipped (the unreachable matrix cells, skipped visibly rather than
+omitted).

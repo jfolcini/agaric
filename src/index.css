@@ -1314,9 +1314,29 @@
      explicit bound here a long single line still grows the chip past its
      container: 60 chars at 0.85em need roughly 25rem, so the bound below
      genuinely clips a full-length title rather than being a rare edge case.
-     Bound the rendered WIDTH regardless of what lands in the DOM. */
+     Bound the rendered WIDTH regardless of what lands in the DOM.
+
+     #4239 — this rule also carried `overflow: hidden`, now removed. It was
+     redundant AND a portability risk. Measured in Chrome 141 with the chips
+     inline in a paragraph (the earlier check rendered them side by side,
+     which cannot show either effect):
+       - Clipping: `.block-ref-chip-label` is a flex item with `min-width: 0`
+         and its own `overflow: hidden`, so it clips ITSELF against this
+         `max-width`. A 60-char title measured scrollWidth 760px against
+         clientWidth 306px inside a 320px chip, and the label's right edge
+         sat 6.8px INSIDE the chip's — identical with and without the
+         declaration. Nothing was ever reaching it.
+       - Baseline: an inline-level box whose `overflow` is not `visible`
+         takes its baseline from the bottom margin edge — but CSS2.1 §10.8.1
+         scopes that to `inline-block`, and flexbox defines its own container
+         baselines with no overflow clause. Chrome agrees: an inline-BLOCK
+         control shifted 7.78px and grew the line box 25.81→33.41px, while
+         this `inline-flex` chip measured byte-identical to `.block-link-chip`
+         with and without it. So it did no harm HERE — but it only takes one
+         engine reading the older rule to make block-ref chips sit at a
+         different height from every sibling chip, and the declaration was
+         buying nothing to offset that. */
   max-width: 20rem;
-  overflow: hidden;
 }
 /* The `…` marker for a clipped title.
    It CANNOT live on `.block-ref-chip` itself: that rule is `inline-flex`, and
