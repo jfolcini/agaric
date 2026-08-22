@@ -66,19 +66,25 @@
 // cannot emit runtime code no matter what it contains, so there is
 // nothing here for this guard to check.
 //
-// The same "no runtime code" logic applies to a `declare module '…' { … }`
-// or `declare global { … }` BODY inside an ordinary `.ts`/`.tsx` file — the
-// standard TS module-augmentation pattern for typing an untyped third-party
-// module. The outer `declare` makes the whole block ambient; `tsc --strict`
-// rejects any real initializer there (TS1254/TS1183) exactly as it would in
-// a `.d.ts`. Before #4245 this guard did not know that: it is a flat token
-// walk with no block-nesting awareness, so `export const bar: number`
-// *inside* such a block was flagged as if it were a file-scope leak. The
-// fix tracks these two block shapes specifically (declare-then-{module,
-// global}, at statement position — not a property name after `.`/`?.`) and
-// treats every export inside the brace-matched body as ambient, regardless
-// of export shape. A file-scope `export const` outside any such block is
-// still flagged exactly as before.
+// The same "no runtime code" logic applies to a `declare module '…' { … }`,
+// `declare global { … }`, `declare namespace Foo { … }`, or legacy
+// non-string `declare module Foo { … }` BODY inside an ordinary
+// `.ts`/`.tsx` file — the standard TS module-augmentation / ambient-
+// namespace pattern for typing an untyped third-party module or grouping
+// ambient declarations. The outer `declare` makes the whole block ambient;
+// `tsc --strict` rejects any real initializer there (TS1039) or
+// implementation there (TS1183) exactly as it would in a `.d.ts`. Before
+// #4245 this guard did not know that: it is a flat token walk with no
+// block-nesting awareness, so `export const bar: number` *inside* such a
+// block was flagged as if it were a file-scope leak. The fix tracks these
+// block shapes specifically (declare-then-{module, global, namespace}, at
+// statement position — not a property name after `.`/`?.`) and treats
+// every export inside the brace-matched body as ambient, regardless of
+// export shape. #4245 covered `module` (string form) and `global`; #4265
+// widened the same tracking to `namespace` and the legacy identifier form
+// of `module`, which are ambient in exactly the same sense. A file-scope
+// `export const` outside any such block is still flagged exactly as
+// before.
 //
 // ─── Detection ──────────────────────────────────────────────────────
 //
@@ -184,35 +190,40 @@ const RUNTIME_LEAD = new Set([
   'async',
 ])
 
-/** Identifier keywords that, as the token right after a statement-position `declare`, open an ambient block whose body cannot emit runtime code (#4245). */
-const AMBIENT_BLOCK_LEAD = new Set(['module', 'global'])
+/** Identifier keywords that, as the token right after a statement-position `declare`, open an ambient block whose body cannot emit runtime code (#4245, widened by #4265). */
+const AMBIENT_BLOCK_LEAD = new Set(['module', 'global', 'namespace'])
 
 /**
  * Compute the `[start, end)` source-offset ranges of every `declare
- * module '…' { … }` / `declare global { … }` BODY in `tokens`. An
- * `export` inside one of these ranges is ambient — the outer `declare`
- * makes the whole block a type-only augmentation, and `tsc --strict`
- * rejects any real initializer there (TS1254/TS1183) — so it must not be
- * flagged as a leak, regardless of what export shape it uses (#4245).
+ * module '…' { … }` / `declare global { … }` / `declare namespace Foo { … }`
+ * / legacy `declare module Foo { … }` BODY in `tokens`. An `export` inside
+ * one of these ranges is ambient — the outer `declare` makes the whole
+ * block a type-only augmentation, and `tsc --strict` rejects any real
+ * initializer there (TS1039) or implementation there (TS1183) — so it must
+ * not be flagged as a leak, regardless of what export shape it uses (#4245,
+ * widened to `namespace` and the legacy identifier form of `module` by
+ * #4265).
  *
  * Deliberately narrow, per the issue's "declare at statement position":
- * only `declare` immediately followed by the `module`/`global` keyword,
- * and not itself a PROPERTY NAME (`x.declare`), counts. A brace-matched
- * body is required — a bodyless SHORTHAND module declaration
+ * only `declare` immediately followed by the `module`/`global`/`namespace`
+ * keyword, and not itself a PROPERTY NAME (`x.declare`), counts. A
+ * brace-matched body is required — a bodyless SHORTHAND module declaration
  * (`declare module 'x'`, a valid ambient stub with no `{`) contributes no
  * range, so it is scanned normally (there is nothing to scan inside it
  * anyway).
  *
  * The `{` lookup is bounded to the declaration's own head — the token
- * immediately after `global`, or after `module`'s string specifier — NOT
- * a forward scan for the next `{`/`;` anywhere in the token stream. A
- * scan that keeps going looks for a `;` to stop a bodyless form at, but
- * this repo is semicolon-free, so a bodyless `declare module 'x'` written
- * naturally has none — the scan would run past it and latch onto the
- * next unrelated `{` in the file (e.g. a later `namespace` block),
- * marking it ambient and hiding a real runtime export nested inside
- * (#4258). Bounding to the head is fail-closed: anything other than an
- * immediately-adjacent `{` means "no body", not "keep looking".
+ * immediately after `global`, after `module`'s string specifier, or after
+ * the (possibly dotted, `Foo.Bar.Baz`) IDENTIFIER name a `namespace` or a
+ * legacy non-string `module` takes — NOT a forward scan for the next
+ * `{`/`;` anywhere in the token stream. A scan that keeps going looks for a
+ * `;` to stop a bodyless form at, but this repo is semicolon-free, so a
+ * bodyless `declare module 'x'` written naturally has none — the scan
+ * would run past it and latch onto the next unrelated `{` in the file
+ * (e.g. a later `namespace` block), marking it ambient and hiding a real
+ * runtime export nested inside (#4258). Bounding to the head is
+ * fail-closed: anything other than an immediately-adjacent `{` means "no
+ * body", not "keep looking".
  *
  * @param {{kind: string, value?: string, start: number, propertyName?: boolean}[]} tokens
  * @param {string} src
@@ -225,11 +236,24 @@ function findAmbientRanges(tokens, src) {
     const next = tokens[i + 1]
     if (!next || next.kind !== 'ident' || !AMBIENT_BLOCK_LEAD.has(next.value)) continue
 
-    // `declare global` opens its body directly; `declare module` takes a
-    // string specifier first (`declare module '…'`) — skip over exactly
-    // that one token, nothing else, before looking for `{`.
+    // `declare global` opens its body directly. `declare module '…'` takes
+    // a STRING specifier — skip over exactly that one token. `declare
+    // namespace Foo` and the legacy `declare module Foo` (no quotes) take a
+    // possibly-dotted IDENTIFIER name instead (`Foo`, `Foo.Bar.Baz`) — skip
+    // over the whole dotted chain, nothing else, before looking for `{`.
     let j = i + 2
-    if (next.value === 'module' && tokens[j] && tokens[j].kind === 'string') j++
+    if (next.value === 'module' && tokens[j] && tokens[j].kind === 'string') {
+      j++
+    } else if (tokens[j] && tokens[j].kind === 'ident') {
+      j++
+      while (
+        tokens[j]?.kind === 'punct' &&
+        tokens[j].value === '.' &&
+        tokens[j + 1]?.kind === 'ident'
+      ) {
+        j += 2
+      }
+    }
     const openTok = tokens[j]
     if (!openTok || openTok.kind !== 'punct' || openTok.value !== '{') continue
 
@@ -542,6 +566,37 @@ function runSelfTest() {
       path.join(typesDir, 'declareModuleMixed.ts'),
       "declare module 'some-untyped-lib' {\n  export const bar: number\n}\nexport const leaked = { a: 1 }\n",
     )
+    // LEGAL (#4265): `declare namespace Foo { … }` is ambient in exactly
+    // the same sense as `declare module '…'`/`declare global` — `tsc
+    // --strict` rejects a real initializer inside it (TS1039) just the
+    // same.
+    fs.writeFileSync(
+      path.join(typesDir, 'declareNamespaceAmbient.ts'),
+      'declare namespace Foo {\n  export const x: string\n}\n',
+    )
+    // LEGAL (#4265): the legacy non-string `declare module Foo { … }` form
+    // (an identifier name, not a quoted module specifier) is the same
+    // ambient shape as `declare namespace` — just an older spelling of it.
+    fs.writeFileSync(
+      path.join(typesDir, 'declareModuleLegacyAmbient.ts'),
+      'declare module Foo {\n  export const x: string\n}\n',
+    )
+    // LEGAL (#4265): a DOTTED ambient name (`Foo.Bar`) must still find the
+    // brace-matched body — proves the fix skips the whole dotted identifier
+    // chain, not just a single identifier token, before looking for `{`.
+    fs.writeFileSync(
+      path.join(typesDir, 'declareNamespaceDottedAmbient.ts'),
+      'declare namespace Foo.Bar {\n  export const x: string\n}\n',
+    )
+    // BOTH ARMS IN ONE FILE (#4265): mirrors declareModuleMixed above for
+    // the new `namespace` shape — an ambient export inside a `declare
+    // namespace` block must pass, and a REAL runtime export at file scope
+    // in the SAME file must still be caught. Proves the widening excludes
+    // the BLOCK, not the FILE.
+    fs.writeFileSync(
+      path.join(typesDir, 'declareNamespaceMixed.ts'),
+      'declare namespace Foo {\n  export const x: string\n}\nexport const leaked = { a: 1 }\n',
+    )
     // FALSIFYING FIXTURE (#4258): a bodyless SHORTHAND ambient module
     // declaration (`declare module 'x'` with no `{`, no `;` — this repo is
     // semicolon-free, so this is how it is written naturally) followed by
@@ -617,6 +672,48 @@ function runSelfTest() {
       fail(
         'file-scope export still caught alongside an ambient block',
         JSON.stringify(details.get(rel('declareModuleMixed.ts'))),
+      )
+    }
+
+    if (!offenders.includes(rel('declareNamespaceAmbient.ts'))) {
+      ok("'declare namespace' ambient export passes (#4265)")
+    } else {
+      fail(
+        "'declare namespace' ambient export passes",
+        JSON.stringify(details.get(rel('declareNamespaceAmbient.ts'))),
+      )
+    }
+
+    if (!offenders.includes(rel('declareModuleLegacyAmbient.ts'))) {
+      ok("legacy non-string 'declare module Foo' ambient export passes (#4265)")
+    } else {
+      fail(
+        "legacy non-string 'declare module Foo' ambient export passes",
+        JSON.stringify(details.get(rel('declareModuleLegacyAmbient.ts'))),
+      )
+    }
+
+    if (!offenders.includes(rel('declareNamespaceDottedAmbient.ts'))) {
+      ok("'declare namespace' with a dotted name (Foo.Bar) still finds its body (#4265)")
+    } else {
+      fail(
+        "'declare namespace' with a dotted name still finds its body",
+        JSON.stringify(details.get(rel('declareNamespaceDottedAmbient.ts'))),
+      )
+    }
+
+    if (
+      offenders.includes(rel('declareNamespaceMixed.ts')) &&
+      details.get(rel('declareNamespaceMixed.ts')).length === 1 &&
+      details.get(rel('declareNamespaceMixed.ts'))[0].startsWith('line 4:')
+    ) {
+      ok(
+        'a file-scope runtime export is still caught even in a file that also has an ambient declare-namespace block (widening excludes the block, not the file) (#4265)',
+      )
+    } else {
+      fail(
+        'file-scope export still caught alongside an ambient declare-namespace block',
+        JSON.stringify(details.get(rel('declareNamespaceMixed.ts'))),
       )
     }
 

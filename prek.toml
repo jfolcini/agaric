@@ -422,7 +422,12 @@ pass_filenames = false
 # dead citation recurs there — see scripts/check-doc-code-paths.mjs's header)
 # plus the baseline file itself, so editing the baseline without touching any
 # scanned source still re-validates it.
-files = '\.(md|ts|tsx)$|^scripts/doc-code-paths-baseline\.json$'
+# #4264: the guard's own source is here for the same reason. Since
+# `KNOWN_INTENTIONAL_WARNINGS` became failure-bearing config (a stale entry
+# reddens the check), editing it is editing a baseline — and without this, a
+# commit touching only the .mjs would run the self-test and never the
+# real-tree check that judges the list it just changed.
+files = '\.(md|ts|tsx)$|^scripts/(doc-code-paths-baseline\.json|check-doc-code-paths\.mjs)$'
 stages = ["pre-commit"]
 # `verbose = true` is load-bearing, same as `commit-sentinel` below: prek
 # swallows a PASSING hook's output, and the line-bounds check (#4258) exits
