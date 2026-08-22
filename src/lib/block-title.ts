@@ -66,10 +66,21 @@
  * "nothing real is cached" signal, so replacing it with "Untitled" would
  * make a nameless row look resolved. Everything ELSE about that writer is
  * on the invariant (a whitespace-only page title now becomes "Untitled"
- * there like everywhere else); the residual divergence is exactly one cell —
- * `title === null || title === ''` on a non-tag row — and #4238 tracks it.
- * The docblock this replaced claimed parity that did not hold; it does not
- * hold now either, and this paragraph is the honest version.
+ * there like everywhere else); the residual divergence is TWO cells, not one,
+ * and both are `title === null || title === ''`:
+ *
+ *   - a NON-TAG row keeps `[[<id>...]]` (the cache-miss signal above), where
+ *     every other writer puts "Untitled";
+ *   - a TAG row keeps `#<id>...`, where `fetchAndCacheLinks`, `preload`'s tag
+ *     half and the `searchTags` fill all put "Untitled" under the same key.
+ *
+ * #4238 tracks both. The matrix's `deviates` hook pins each cell, so they are
+ * tested — an earlier version of this paragraph said "exactly one cell" and
+ * undercounted, which in a docblock whose whole point is an honest
+ * enumeration is the one mistake that matters. Practical impact of the tag
+ * cell is near zero (a blank tag name should not exist), but the count is the
+ * count. The docblock this replaced claimed outright parity, which did not
+ * hold at all; this paragraph is what actually holds.
  */
 
 import { t as translate } from '@/lib/i18n'

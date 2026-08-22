@@ -514,7 +514,14 @@ describe('cross-writer convergence — no version churn on a second seed', () =>
  * file. It is part of the pin on purpose: adding a second write to a file
  * that already has one is exactly how review 3's hole got there.
  */
-const DECLARED_WRITERS: Record<string, { writes: number; kind: 'seed' | 'echo'; note: string }> = {
+// `kind` is per FILE, but a file can hold both kinds — `use-block-resolve.ts`
+// has three seeds and two echoes. `seedWrites` names the seed count where it
+// differs from `writes`, so the gate check below counts against the right
+// denominator instead of the file's total.
+const DECLARED_WRITERS: Record<
+  string,
+  { writes: number; seedWrites?: number; kind: 'seed' | 'echo'; note: string }
+> = {
   'src/App.tsx': {
     writes: 1,
     kind: 'echo',
@@ -552,6 +559,7 @@ const DECLARED_WRITERS: Record<string, { writes: number; kind: 'seed' | 'echo'; 
   },
   'src/components/block-tree/use-block-resolve.ts': {
     writes: 5,
+    seedWrites: 3,
     kind: 'seed',
     note: 'populatePageResolveCache + searchTags fill + searchBlockRefs (matrix rows), plus onCreatePage / onCreateTag echoes',
   },
@@ -681,15 +689,34 @@ describe('writer enumeration — the denominator, checked', () => {
     expect(actual).toEqual(declared)
   })
 
-  it('routes every SEED writer through the shared gate', () => {
-    const ungated = Object.entries(DECLARED_WRITERS)
+  it('routes every SEED writer through the shared gate — counted, not merely present', () => {
+    // A bare `includes('resolveStoreTitle')` is file-granular, and that is not
+    // enough: `use-block-resolve.ts` holds THREE seed writers, so one of them
+    // could lose its gate while the check still passed on its siblings'
+    // reference. Count the gate calls against the file's declared seed count
+    // instead, so losing one is visible.
+    //
+    // Residual, stated rather than hidden: a file whose seeds are gated but
+    // which gains a FOURTH ungated seed would also trip this — which is the
+    // intent — but a gate call reached through an indirection this regex
+    // cannot see would still read as covered. That is the same class of hole
+    // as the three this guard was written to close; see the note on
+    // `countStoreWrites`.
+    const gateCalls = (src: string): number => (src.match(/\bresolveStoreTitle\s*\(/g) ?? []).length
+
+    const shortfalls = Object.entries(DECLARED_WRITERS)
       .filter(([, d]) => d.kind === 'seed')
-      .map(([file]) => file)
-      .filter((file) => !readFileSync(file, 'utf8').includes('resolveStoreTitle'))
-      .toSorted()
+      .map(([file, d]) => ({
+        file,
+        declared: d.seedWrites ?? d.writes,
+        gated: gateCalls(readFileSync(file, 'utf8')),
+      }))
+      .filter((r) => r.gated < r.declared)
+      .toSorted((a, b) => a.file.localeCompare(b.file))
+
     expect(
-      ungated,
-      'A seed writer does not reference `resolveStoreTitle`. Its title comes from a fetched row, so it can be a namespaced page path or blank content and MUST go through the gate in `@/lib/block-title`.',
+      shortfalls,
+      'A seed writer does not route through `resolveStoreTitle`. Its title comes from a fetched row, so it can be a namespaced page path or blank content and MUST go through the gate in `@/lib/block-title`. Each entry shows the declared seed-write count against the number of gate calls found.',
     ).toEqual([])
   })
 
