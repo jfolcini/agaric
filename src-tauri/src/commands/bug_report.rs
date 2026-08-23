@@ -2416,6 +2416,11 @@ mod tests {
     /// name is taken by a directory — so this also fails pre-fix, where the
     /// single `agaric.log.<today>.is_file()` probe goes false and the walk
     /// falls through to an absent plain file.
+    // Unix-only: builds the fixture with `PermissionsExt` and `symlink`, the
+    // same reason its sibling `read_logs_warns_on_unreadable_file_and_excludes_it`
+    // is gated. Without this, `cargo test` does not compile on Windows locally —
+    // CI would not catch it, since the Windows target only builds the binary.
+    #[cfg(unix)]
     #[test]
     fn recent_errors_skips_junk_names_and_unreadable_files_without_aborting() {
         use std::os::unix::fs::PermissionsExt as _;
@@ -2499,10 +2504,17 @@ mod tests {
                 "an unreadable day must be skipped, not surfaced, got: {errors:?}"
             );
         }
+        // Derived, not hardcoded: as root, mode 0o000 does not deny the read,
+        // so the unreadable day legitimately contributes its own line. Pinning
+        // 1 unconditionally reddens every root run (Docker, devcontainers)
+        // while staying green on GitHub's non-root runner — a failure only
+        // some contributors would ever see.
+        let expected = if read_is_really_denied { 1 } else { 2 };
         assert_eq!(
             errors.len(),
-            1,
-            "only the one good day's single ERROR should survive, got: {errors:?}"
+            expected,
+            "only the good day (plus the unreadable one when the fixture could \
+             not actually deny the read) should survive, got: {errors:?}"
         );
 
         // The junk shapes must agree between the two selectors — they share
