@@ -18,6 +18,12 @@ git ls-tree -r --name-only origin/main -- docs/session-log | grep -oP 'session-\
 Take the larger of the two. Reading only the merge target under-counts when your branch
 already holds a higher number.
 
+The first command approximates the guard rather than reproducing it: the guard reads the
+**committed** tree (`HEAD`) plus the merge target, while `ls docs/session-log` reads the
+working directory — so an **untracked** entry counts for you and not for it. A **staged**
+entry does count for the guard, and each staged addition advances the window's floor for
+the one after it whether or not its own number was accepted.
+
 **Never derive it from plain `ls | tail`** — past session-999 that sorts
 lexicographically (`session-1000` < `session-996`) and reports a stale max; fifteen
 sessions collided on `session-1000` this way.
