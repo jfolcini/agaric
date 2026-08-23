@@ -29,7 +29,8 @@
 #   scripts/bump-version.sh --self-test
 #
 #   <new-version>     Semver triple, e.g. `0.1.16`. No leading `v`.
-#   --commit          Stage the 5 changed files and create a release commit.
+#   --commit          Stage the changed files (see `Files updated:` above)
+#                     and create a release commit.
 #   --tag             Create the `<new-version>` git tag (requires --commit).
 #   --push            Push main + the new tag to origin (requires --tag).
 #   --check-identity  Only check that the configured git identity can produce
@@ -1024,7 +1025,19 @@ mv "$TMP" package-lock.json
 # (the sed above) — `--precise` names the path dep's own manifest version. It
 # is independent of `src-tauri/Cargo.lock`: separate workspace, resolved from
 # `../Cargo.toml`, never from the parent lock. Verified both orders.
-( cd src-tauri/fuzz && cargo update -p agaric --precise "$NEW_VERSION" >/dev/null 2>&1 )
+# stderr is NOT swallowed here, unlike the parent call above. This one runs
+# on a maintainer-only path that no test and no CI job exercises, and it
+# fires AFTER four manifests and the parent lock have already been rewritten
+# — so a failure (network down, or cargo declining --precise) would abort the
+# bump under `set -e` leaving a dirty tree and no explanation. The cost of
+# keeping stderr is a little noise on success; the cost of dropping it is a
+# silent abort mid-release.
+if ! ( cd src-tauri/fuzz && cargo update -p agaric --precise "$NEW_VERSION" >/dev/null ); then
+  echo "error: failed to bump agaric to $NEW_VERSION in src-tauri/fuzz/Cargo.lock." >&2
+  echo "  The parent manifests and src-tauri/Cargo.lock have ALREADY been rewritten," >&2
+  echo "  so the tree is dirty. Fix the cause above, then re-run this script." >&2
+  exit 1
+fi
 
 # ── Sanity: every manifest now agrees ───────────────────────────────────────
 

@@ -7,7 +7,8 @@ name: Validate (prek-equivalent)
 # Invoked by ci.yml (every push/PR) and release.yml (every tag).
 #
 # PEND-39 C3 + C5 + C8 split the historical monolithic `validate` job into
-# parallel workers; later passes (PEND-86, #833) grew that into nine jobs,
+# parallel workers; later passes (PEND-86, #833) grew that into the set
+# enumerated below,
 # fanned out from a `detect-changes` per-category classifier that is
 # fail-closed (an unrecognized or undiffable path runs everything):
 #   - detect-changes — classifies the diff into docs_only/frontend/backend/ci.
@@ -17,7 +18,7 @@ name: Validate (prek-equivalent)
 #                        no docs-only skip.
 #   - verify-lockfiles — asserts BOTH Cargo.lock files (src-tauri/ and
 #                        src-tauri/fuzz/) are a faithful resolution of their
-#                        manifests (#4142); no build, ~30s. Gated on backend
+#                        manifests (#4142); no build. Gated on backend
 #                        changes.
 #   - lint            — the full prek hook suite (clippy, cargo-deny,
 #                        cargo-audit, zizmor, sqlx-prepare, …); skipped on a
