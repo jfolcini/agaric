@@ -824,8 +824,8 @@ async fn dispatch_delete_block_enqueues_full_cache_rebuild_plus_fts_removal() {
 }
 
 /// `dispatch_op` on a `RestoreBlock` op must produce the full cache fan-out
-/// + an `UpdateFtsBlock` for the target — 8 background tasks in total plus
-/// the flush barrier.
+/// + a per-block `ReindexBlockLinks` (#4209) + an `UpdateFtsBlock` for the
+/// target — 11 background tasks in total plus the flush barrier.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_restore_block_enqueues_full_cache_rebuild_plus_fts_update() {
     let (pool, _dir) = test_pool().await;
@@ -847,12 +847,16 @@ async fn dispatch_restore_block_enqueues_full_cache_rebuild_plus_fts_update() {
     mat.flush_background().await.unwrap();
     let after_bg = mat.metrics().bg_processed.load(AtomicOrdering::Relaxed);
 
-    // 9 rebuild tasks + 1 UpdateFtsBlock + 1 flush Barrier = 11
-    // (#2042 added RebuildPagesCacheCounts to the fan-out).
+    // 9 rebuild tasks + 1 ReindexBlockLinks + 1 UpdateFtsBlock + 1 flush
+    // Barrier = 12 (#2042 added RebuildPagesCacheCounts to the fan-out;
+    // #4209 added the per-block link reindex — the restore is the third way
+    // a block becomes linkable, and it is the only member of this set that
+    // re-derives `block_links` from content rather than folding it).
     assert_eq!(
         after_bg - before_bg,
-        11,
-        "restore_block must enqueue 9 cache rebuilds + 1 UpdateFtsBlock (+ 1 flush barrier)"
+        12,
+        "restore_block must enqueue 9 cache rebuilds + 1 ReindexBlockLinks + \
+         1 UpdateFtsBlock (+ 1 flush barrier)"
     );
 }
 

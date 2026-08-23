@@ -3,7 +3,9 @@
 //! Provides two read-only commands consumed by the in-app bug-report dialog:
 //!
 //! - `collect_bug_report_metadata` — gathers app version, OS, arch, device ID,
-//!   and the last [`RECENT_ERRORS_CAP`] error/warn lines from today's log file.
+//!   and the last [`RECENT_ERRORS_CAP`] error/warn lines from the recent
+//!   daily log files (#4216 — the newest days back to
+//!   [`MAX_ROLLED_AGE_DAYS`], not just the current UTC day's).
 //!   #609: the recent-error lines are ALWAYS redacted (same pipeline as the
 //!   ZIP path) because the frontend embeds them into the prefilled public
 //!   GitHub issue body.
@@ -341,8 +343,14 @@ pub struct BugReport {
     pub os: String,
     pub arch: String,
     pub device_id: String,
-    /// Last [`RECENT_ERRORS_CAP`] error/warn lines from today's
-    /// `agaric.log`, newest last.
+    /// Last [`RECENT_ERRORS_CAP`] error/warn lines from the recent
+    /// `agaric.log.YYYY-MM-DD` files, newest last.
+    ///
+    /// #4216: this is a recency window, not a calendar-day one — the walk
+    /// crosses UTC day boundaries backwards until the cap is full or the
+    /// bundle's own [`MAX_ROLLED_AGE_DAYS`] retention runs out, so a report
+    /// filed minutes after midnight still shows the errors that prompted
+    /// it. See [`recent_errors_from_log_dir`].
     ///
     /// #609: ALWAYS redacted through the same pipeline as the ZIP export
     /// ([`redact_line_with_redactor`]) — the frontend embeds these lines
@@ -485,25 +493,92 @@ fn extract_recent_errors<'a, I: Iterator<Item = &'a str>>(lines: I) -> Vec<Strin
     matches
 }
 
-/// Read the tail of today's log file as a list of `ERROR`/`WARN` lines.
+/// Read the most recent `ERROR`/`WARN` lines from the app's daily log
+/// files, newest last.
 ///
-/// Silently returns an empty vec if the file does not exist or cannot be
+/// Walks the rolled `agaric.log.YYYY-MM-DD` family from the newest day
+/// backwards, stopping as soon as [`RECENT_ERRORS_CAP`] lines have been
+/// collected. #4216 — reading only the current UTC day made this field
+/// blind by the calendar rather than by recency: a report filed at 00:10
+/// UTC saw nothing from the incident twenty minutes earlier, because the
+/// appender had already rolled to a near-empty current-day file and the
+/// errors sat in `agaric.log.<yesterday>`. Those files are already IN the
+/// report bundle (`should_include_log_file` accepts them); they just never
+/// reached the summary field a triager reads first.
+///
+/// The cap is by line count, not by file, so a day boundary is no longer a
+/// cliff. Two bounds, both taken from constants this module already
+/// enforces rather than invented for this walk:
+///
+/// * how far back — [`MAX_ROLLED_AGE_DAYS`], the same retention window
+///   `should_include_log_file` applies to the bundle (shared by
+///   construction: both go through [`parse_rolled_log_date`] +
+///   [`is_within_log_retention`]). The shared piece is the *selection
+///   predicate*, and only that: after selection the bundle runs
+///   [`apply_bundle_cap`], which drops the OLDEST files once the redacted
+///   total passes [`MAX_BUNDLE_BYTES`]. So on a log dir whose in-window
+///   days are individually huge, the bundle can ship fewer days than this
+///   walk read, and a summarised line may name a day whose file was
+///   dropped (the bundle says so, via its
+///   `[skipped N older logs …]` entry). The invariant this bullet buys is
+///   the useful direction — the summary never reaches a day the bundle's
+///   own retention would have refused — not set equality with the shipped
+///   ZIP.
+/// * how much — [`RECENT_ERRORS_CAP`], unchanged, applied to the combined
+///   cross-day tail exactly as it was to the single-day one.
+///
+/// Cost. Each file read is capped at [`MAX_FILE_BYTES`] by
+/// [`read_capped_file`] — the same window `read_logs_for_report_inner`
+/// uses, so the preview matches the bundle-export window byte-for-byte.
+/// The walk stops at the first file that fills the cap, so a chatty
+/// current day is still a single read; but "quiet" here means *no
+/// ERROR/WARN lines*, not *small*, and a healthy app is quiet by
+/// definition — so the reach-back branch is a normal case, not a rare one,
+/// and its cost is the one to budget against:
+///
+/// * cumulative bytes read — at most
+///   `MAX_FILE_BYTES * (1 + MAX_ROLLED_AGE_DAYS)` (2 MiB × 8 = 16 MiB),
+///   when every in-window day exists at the per-file cap and none of them
+///   holds a single ERROR/WARN line. That is strictly less than what the
+///   bundle path already reads on the same directory: it reads the same
+///   eight dated files plus the OTel signal files. Note this is a READ
+///   ceiling, not [`MAX_BUNDLE_BYTES`] — that constant caps what the ZIP
+///   *ships*, and exists precisely because 16 MiB is more than a user can
+///   upload. It is not a licence for 16 MiB elsewhere; the reason this
+///   walk can afford the reads is the next bullet.
+/// * peak resident bytes — one capped file (≤ [`MAX_FILE_BYTES`]) plus at
+///   most [`RECENT_ERRORS_CAP`] retained lines. `read_errors_from_path`
+///   drops each file's `String` before the next is opened, where
+///   `read_logs_for_report_inner` holds every file's contents at once. So
+///   this path is strictly gentler on memory than the bundle path, and its
+///   output is bounded by a line count rather than a byte budget.
+///
+/// The remaining cost is blocking I/O time, and it grew 8× against the
+/// single-file version. [`collect_bug_report_metadata`] is an async
+/// command, so this runs on an async-runtime worker rather than on the UI
+/// thread — but it is still synchronous `fs` work inside a `Future`, which
+/// is why the [`MAX_FILE_BYTES`] cap (rather than a plain
+/// `fs::read_to_string`) matters more here than it did when this read one
+/// file: the dialog must not stall behind a multi-MB read, times eight.
+///
+/// Silently returns an empty vec if the dir does not exist or cannot be
 /// read — a bug report without recent errors is still useful, and boot-time
 /// failures (no log dir, permission denied) should not also break the
 /// report surface.
-///
-/// Reuses [`read_capped_file`] (cap = [`MAX_FILE_BYTES`]) so
-/// a chatty session that grows `agaric.log` to tens of MB does not stall
-/// the bug-report dialog's IPC thread on a multi-MB
-/// `fs::read_to_string` followed by a full-buffer line scan. The cap is
-/// shared with `read_logs_for_report_inner`, so the preview window
-/// matches the bundle-export window byte-for-byte.
 fn recent_errors_from_log_dir(log_dir: &Path) -> Vec<String> {
-    let today = chrono::Utc::now()
-        .date_naive()
-        .format("%Y-%m-%d")
-        .to_string();
+    recent_errors_from_log_dir_at(log_dir, chrono::Utc::now().date_naive())
+}
 
+/// Clock seam for [`recent_errors_from_log_dir`]: the same logic with the
+/// "today" boundary injected instead of read from `Utc::now()`.
+///
+/// Mirrors the seam [`should_include_log_file`] already exposes (it takes
+/// `today: NaiveDate` for the same reason). Tests drive this variant with a
+/// fixed synthetic date so a fixture's filenames and the code's notion of
+/// "today" cannot disagree — neither because the real calendar moved nor
+/// because the test straddled a UTC midnight between building the fixture
+/// and calling the function.
+fn recent_errors_from_log_dir_at(log_dir: &Path, today: chrono::NaiveDate) -> Vec<String> {
     // #4127 — `build_log_file_appender` (`lib.rs`) configures
     // `tracing_appender`'s `RollingFileAppender` with `Rotation::DAILY` and
     // `filename_prefix("agaric.log")` and no suffix. `RollingWriter::join_date`
@@ -512,22 +587,79 @@ fn recent_errors_from_log_dir(log_dir: &Path) -> Vec<String> {
     // that ever produces a plain, undated `agaric.log`, not even for
     // "today": the current day's live file is `agaric.log.YYYY-MM-DD` from
     // the moment it is created, and a rollover just starts a new dated file
-    // under the same scheme. So the dated name IS today's live file, and
-    // that is the primary (and, in production, only) path this must find.
-    let dated_path = log_dir.join(format!("agaric.log.{today}"));
-    if dated_path.is_file() {
-        return read_errors_from_path(&dated_path);
+    // under the same scheme. So the dated family IS what production writes,
+    // and it is what this must read.
+    let mut days: Vec<(chrono::NaiveDate, PathBuf)> = Vec::new();
+    if let Ok(read_dir) = fs::read_dir(log_dir) {
+        for entry in read_dir.flatten() {
+            let name_os = entry.file_name();
+            let Some(name) = name_os.to_str() else {
+                continue;
+            };
+            let Some(file_date) = parse_rolled_log_date(name) else {
+                continue;
+            };
+            if !is_within_log_retention(file_date, today) {
+                continue;
+            }
+            let path = entry.path();
+            if path.is_file() {
+                days.push((file_date, path));
+            }
+        }
     }
-    // Fall back to a plain `agaric.log`: the production appender never
-    // writes one today, but this tolerates a future rotation-policy change
-    // (e.g. `Rotation::NEVER`, which DOES yield the bare prefix with no
-    // date) without silently going blind, and it is what hand-written test
-    // fixtures use.
-    let today_path = log_dir.join("agaric.log");
-    if today_path.is_file() {
-        return read_errors_from_path(&today_path);
+
+    if days.is_empty() {
+        // Fall back to a plain `agaric.log`: the production appender never
+        // writes one, but this tolerates a future rotation-policy change
+        // (e.g. `Rotation::NEVER`, which DOES yield the bare prefix with no
+        // date) without silently going blind, and it is what hand-written
+        // test fixtures use.
+        //
+        // Reached when the loop above found no USABLE in-window dated
+        // file — which is broader than "no dated file exists": every
+        // dated file being older than [`MAX_ROLLED_AGE_DAYS`], or
+        // future-dated (clock skew), or not a regular file (a directory
+        // or dangling symlink wearing a dated name) also lands here. That
+        // is the same set of shapes the pre-#4216 code fell through on,
+        // so this is not a new preference for the stale file; and #4127's
+        // invariant is preserved exactly where it bites — whenever a
+        // readable in-window dated file exists, `days` is non-empty and
+        // this arm is unreachable, so a stale plain `agaric.log` can
+        // never be preferred over, or mixed into, the real dated files.
+        let plain_path = log_dir.join("agaric.log");
+        if plain_path.is_file() {
+            return read_errors_from_path(&plain_path);
+        }
+        return Vec::new();
     }
-    Vec::new()
+
+    // Newest day first, so the walk below spends its budget on the most
+    // recent lines and can stop early.
+    days.sort_by_key(|(file_date, _)| std::cmp::Reverse(*file_date));
+
+    // `out` accumulates newest-day-first-collected lines in CHRONOLOGICAL
+    // order (newest last, matching `BugReport::recent_errors`): each older
+    // day's tail is prepended to what the newer days already contributed.
+    let mut out: Vec<String> = Vec::new();
+    for (_, path) in days {
+        // `room` is > 0 here: the loop breaks as soon as the cap is full.
+        let room = RECENT_ERRORS_CAP - out.len();
+        let mut older = read_errors_from_path(&path);
+        if older.len() > room {
+            // Keep this day's NEWEST `room` lines — the same
+            // keep-the-tail rule `extract_recent_errors` applies within a
+            // single file, extended across the day boundary.
+            let start = older.len() - room;
+            older.drain(..start);
+        }
+        older.extend(out);
+        out = older;
+        if out.len() >= RECENT_ERRORS_CAP {
+            break;
+        }
+    }
+    out
 }
 
 fn read_errors_from_path(path: &Path) -> Vec<String> {
@@ -538,11 +670,30 @@ fn read_errors_from_path(path: &Path) -> Vec<String> {
     // `extract_recent_errors` below.
     match read_capped_file(path) {
         Ok(contents) => extract_recent_errors(contents.lines()),
-        Err(_) => Vec::new(),
+        Err(e) => {
+            // Skip, never abort: one unreadable day must not cost the
+            // triager the other seven. Traced at warn for the same reason
+            // `read_logs_for_report_inner` traces its per-file drops —
+            // #4216 made this loop multi-file, so a silent `Vec::new()`
+            // here is now indistinguishable from "that day had no
+            // errors". Only the file name is logged (the dir is the app's
+            // own log dir, but the full path can carry the user's home).
+            tracing::warn!(
+                name = %path.file_name().map_or_else(
+                    || "<no name>".to_string(),
+                    |n| n.to_string_lossy().chars().take(80).collect::<String>(),
+                ),
+                error = %e,
+                "skipping log file in recent-errors walk — read failed \
+                 (permission denied or io error?)",
+            );
+            Vec::new()
+        }
     }
 }
 
-/// Gather metadata about the running app + the tail of today's log file.
+/// Gather metadata about the running app + the recent error/warn tail of
+/// its daily log files.
 ///
 /// `os` / `arch` are sourced from `tauri-plugin-os` rather than
 /// `std::env::consts::*` directly so per-platform branches are centralised
@@ -651,12 +802,32 @@ fn should_include_log_file(name: &str, today: chrono::NaiveDate) -> bool {
     if name == "agaric.log" {
         return true;
     }
-    let Some(rest) = name.strip_prefix("agaric.log.") else {
+    let Some(file_date) = parse_rolled_log_date(name) else {
         return false;
     };
-    let Ok(file_date) = chrono::NaiveDate::parse_from_str(rest, "%Y-%m-%d") else {
-        return false;
-    };
+    is_within_log_retention(file_date, today)
+}
+
+/// Parse the date out of a rolled log filename (`agaric.log.YYYY-MM-DD`),
+/// or `None` for anything else — including the plain `agaric.log`, which
+/// carries no date.
+///
+/// Shared by [`should_include_log_file`] (bundle selection) and
+/// [`recent_errors_from_log_dir_at`] (summary selection) so the two cannot
+/// drift apart on which filenames count as a log day.
+fn parse_rolled_log_date(name: &str) -> Option<chrono::NaiveDate> {
+    let rest = name.strip_prefix("agaric.log.")?;
+    chrono::NaiveDate::parse_from_str(rest, "%Y-%m-%d").ok()
+}
+
+/// Is a log day inside the [`MAX_ROLLED_AGE_DAYS`] retention window ending
+/// at `today`? Future-dated files (negative age — clock skew, a restored
+/// backup) are outside it.
+///
+/// The single definition of the window, so the `recent_errors` summary
+/// reaches back exactly as far as the bundle that accompanies it and no
+/// further (#4216).
+fn is_within_log_retention(file_date: chrono::NaiveDate, today: chrono::NaiveDate) -> bool {
     let age = today.signed_duration_since(file_date).num_days();
     (0..=MAX_ROLLED_AGE_DAYS).contains(&age)
 }
@@ -1997,6 +2168,518 @@ mod tests {
             !errors.iter().any(|l| l.contains("STALE_MARKER")),
             "recent_errors_from_log_dir must NOT read the stale plain \
              agaric.log ahead of the real dated file, got: {errors:?}"
+        );
+    }
+
+    // -- #4216: recent_errors must not be blind to prior log days ---------
+
+    /// A synthetic "today" for the #4216 fixtures. Deliberately unrelated to
+    /// the real calendar: every one of these tests drives
+    /// `recent_errors_from_log_dir_at` with this date, so none of them
+    /// depends on the day the suite happens to run (or on the suite not
+    /// crossing UTC midnight mid-test).
+    fn d4216_today() -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2025, 3, 10).expect("valid fixture date")
+    }
+
+    /// Write `agaric.log.<date>` — the exact name `build_log_file_appender`'s
+    /// `Rotation::DAILY` appender produces for that day.
+    fn write_day_log(log_dir: &Path, date: chrono::NaiveDate, contents: &str) {
+        let name = format!("agaric.log.{}", date.format("%Y-%m-%d"));
+        fs::write(log_dir.join(name), contents).unwrap();
+    }
+
+    fn day_before(date: chrono::NaiveDate, days: i64) -> chrono::NaiveDate {
+        date.checked_sub_signed(chrono::Duration::days(days))
+            .expect("fixture date arithmetic must not overflow")
+    }
+
+    /// #4216 case 2 — a report about something that happened yesterday.
+    ///
+    /// Today's rolled file exists and is error-free; the errors the user is
+    /// reporting are in yesterday's file, which the bundle already ships
+    /// (`should_include_log_file` accepts it) but which the summary field a
+    /// triager reads first never looked at.
+    ///
+    /// Discriminating by construction: today's file contains no ERROR/WARN
+    /// line at all, so a pass cannot come from "today's errors were found".
+    #[test]
+    fn recent_errors_reads_a_prior_day_when_todays_file_has_no_errors() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        let today = d4216_today();
+        let yesterday = day_before(today, 1);
+
+        write_day_log(
+            &log_dir,
+            yesterday,
+            "2025-03-09T18:00:00Z ERROR [agaric] M4216_YESTERDAY\n",
+        );
+        write_day_log(&log_dir, today, "2025-03-10T09:00:00Z INFO [agaric] boot\n");
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert!(
+            errors.iter().any(|l| l.contains("M4216_YESTERDAY")),
+            "recent_errors must surface a prior day's ERROR when today's \
+             file has none, got: {errors:?}"
+        );
+    }
+
+    /// #4216 case 1 — the motivating shape: an error logged shortly BEFORE a
+    /// UTC day rollover, read shortly AFTER it. At 00:10 UTC the appender has
+    /// already rolled to a nearly-empty current-day file, so the incident
+    /// twenty minutes earlier lives in `agaric.log.<yesterday>`.
+    ///
+    /// Covers both halves of the pair — the pre-rollover error AND the
+    /// post-rollover one — and pins their relative order (chronological,
+    /// newest last, matching the `BugReport::recent_errors` contract). A test
+    /// asserting only the post-rollover line would pass before the fix.
+    #[test]
+    fn recent_errors_spans_the_utc_midnight_rollover_in_chronological_order() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        let today = d4216_today();
+        let yesterday = day_before(today, 1);
+
+        // 23:50 — the incident, in the day that just rolled away.
+        write_day_log(
+            &log_dir,
+            yesterday,
+            "2025-03-09T23:49:00Z INFO [agaric] working\n\
+             2025-03-09T23:50:00Z ERROR [agaric] M4216_BEFORE_MIDNIGHT\n",
+        );
+        // 00:05–00:09 — the freshly rolled file the user files against.
+        write_day_log(
+            &log_dir,
+            today,
+            "2025-03-10T00:05:00Z INFO [agaric] boot\n\
+             2025-03-10T00:09:00Z ERROR [agaric] M4216_AFTER_MIDNIGHT\n",
+        );
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        let before = errors
+            .iter()
+            .position(|l| l.contains("M4216_BEFORE_MIDNIGHT"));
+        let after = errors
+            .iter()
+            .position(|l| l.contains("M4216_AFTER_MIDNIGHT"));
+
+        assert!(
+            before.is_some(),
+            "the pre-rollover ERROR (23:50, yesterday's file) must reach \
+             recent_errors, got: {errors:?}"
+        );
+        assert!(
+            after.is_some(),
+            "the post-rollover ERROR (00:09, today's file) must reach \
+             recent_errors, got: {errors:?}"
+        );
+        assert!(
+            before < after,
+            "recent_errors is newest-last: the pre-rollover line must come \
+             before the post-rollover one, got: {errors:?}"
+        );
+    }
+
+    /// The multi-day window is bounded by the SAME retention the bundle
+    /// already applies (`MAX_ROLLED_AGE_DAYS`, via `should_include_log_file`)
+    /// — the summary field must not reach further back than the files that
+    /// ship with the report.
+    ///
+    /// Both halves of the boundary pair are asserted: the oldest in-window
+    /// day is read, the day one older is not. Dates are derived from
+    /// `MAX_ROLLED_AGE_DAYS` so the test tracks the constant rather than
+    /// re-hardcoding it.
+    #[test]
+    fn recent_errors_window_matches_the_bundle_retention_on_both_sides() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        let today = d4216_today();
+        let oldest_in_window = day_before(today, MAX_ROLLED_AGE_DAYS);
+        let just_out_of_window = day_before(today, MAX_ROLLED_AGE_DAYS + 1);
+
+        // Confirm the premise the pair rests on: these two days really do
+        // straddle the bundle's own retention predicate.
+        assert!(
+            should_include_log_file(
+                &format!("agaric.log.{}", oldest_in_window.format("%Y-%m-%d")),
+                today
+            ),
+            "premise broken: the in-window day must be one the bundle ships"
+        );
+        assert!(
+            !should_include_log_file(
+                &format!("agaric.log.{}", just_out_of_window.format("%Y-%m-%d")),
+                today
+            ),
+            "premise broken: the out-of-window day must be one the bundle drops"
+        );
+
+        write_day_log(
+            &log_dir,
+            oldest_in_window,
+            "2025-03-03T10:00:00Z ERROR [agaric] M4216_IN_WINDOW\n",
+        );
+        write_day_log(
+            &log_dir,
+            just_out_of_window,
+            "2025-03-02T10:00:00Z ERROR [agaric] M4216_OUT_OF_WINDOW\n",
+        );
+        write_day_log(&log_dir, today, "2025-03-10T09:00:00Z INFO [agaric] boot\n");
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert!(
+            errors.iter().any(|l| l.contains("M4216_IN_WINDOW")),
+            "the oldest day inside MAX_ROLLED_AGE_DAYS must be read, got: {errors:?}"
+        );
+        assert!(
+            !errors.iter().any(|l| l.contains("M4216_OUT_OF_WINDOW")),
+            "a day older than MAX_ROLLED_AGE_DAYS must NOT be read — the \
+             summary must not out-reach the bundle, got: {errors:?}"
+        );
+    }
+
+    /// The cap is by LINE COUNT (`RECENT_ERRORS_CAP`), not by file: crossing
+    /// a day boundary must not become a second, hidden cliff.
+    ///
+    /// Today's file carries `RECENT_ERRORS_CAP - 1` errors and yesterday's
+    /// carries two, so exactly one line — the oldest — must be dropped.
+    /// Asserting the surviving yesterday line makes this fail before the fix
+    /// too; asserting the dropped one keeps the new multi-day read honest
+    /// about its ceiling.
+    #[test]
+    fn recent_errors_caps_by_line_count_across_days_keeping_the_newest() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        let today = d4216_today();
+        let yesterday = day_before(today, 1);
+
+        write_day_log(
+            &log_dir,
+            yesterday,
+            "2025-03-09T22:00:00Z ERROR [agaric] M4216_DROPPED_OLDEST\n\
+             2025-03-09T23:00:00Z ERROR [agaric] M4216_KEPT_OLDER\n",
+        );
+        let mut today_log = String::new();
+        for i in 0..(RECENT_ERRORS_CAP - 1) {
+            today_log.push_str(&format!(
+                "2025-03-10T01:00:00Z ERROR [agaric] M4216_TODAY_{i}\n"
+            ));
+        }
+        write_day_log(&log_dir, today, &today_log);
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert_eq!(
+            errors.len(),
+            RECENT_ERRORS_CAP,
+            "the cross-day tail must be capped at RECENT_ERRORS_CAP lines, got: {errors:?}"
+        );
+        assert!(
+            errors[0].contains("M4216_KEPT_OLDER"),
+            "the newest of yesterday's errors must survive the cap and lead \
+             the chronological list, got: {errors:?}"
+        );
+        assert!(
+            !errors.iter().any(|l| l.contains("M4216_DROPPED_OLDEST")),
+            "the oldest line beyond the cap must be dropped, got: {errors:?}"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|l| l.contains(&format!("M4216_TODAY_{}", RECENT_ERRORS_CAP - 2))),
+            "today's newest error must always survive, got: {errors:?}"
+        );
+    }
+
+    /// #4216 hardening — the multi-file walk must SKIP junk in the log dir,
+    /// never abort on it. Pre-#4216 the function touched exactly one path;
+    /// now it enumerates the whole directory, so every entry a hostile or
+    /// merely-corrupted log dir can hold is newly reachable. A bug-report
+    /// path that panics or errors on a junk file is worse than one that
+    /// misses a day.
+    ///
+    /// Every junk shape carries its own marker and the ONE good day carries
+    /// another, so the assertions discriminate "skipped the junk" from
+    /// "returned nothing at all". The good day is `yesterday`, and today's
+    /// name is taken by a directory — so this also fails pre-fix, where the
+    /// single `agaric.log.<today>.is_file()` probe goes false and the walk
+    /// falls through to an absent plain file.
+    // Unix-only: builds the fixture with `PermissionsExt` and `symlink`, the
+    // same reason its sibling `read_logs_warns_on_unreadable_file_and_excludes_it`
+    // is gated. Without this, `cargo test` does not compile on Windows locally —
+    // CI would not catch it, since the Windows target only builds the binary.
+    #[cfg(unix)]
+    #[test]
+    fn recent_errors_skips_junk_names_and_unreadable_files_without_aborting() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+        let today = d4216_today();
+
+        // Unparseable dates and non-log names.
+        fs::write(
+            log_dir.join("agaric.log.2025-13-45"),
+            "x ERROR [agaric] M4216_BAD_DATE\n",
+        )
+        .unwrap();
+        fs::write(
+            log_dir.join("agaric.log.notadate"),
+            "x ERROR [agaric] M4216_NOT_A_DATE\n",
+        )
+        .unwrap();
+        fs::write(
+            log_dir.join("agaric.log.2025-03-08.gz"),
+            "x ERROR [agaric] M4216_COMPRESSED\n",
+        )
+        .unwrap();
+
+        // A DIRECTORY wearing today's log filename.
+        let dir_named_like_a_log = log_dir.join(format!("agaric.log.{}", today.format("%Y-%m-%d")));
+        fs::create_dir_all(&dir_named_like_a_log).unwrap();
+        fs::write(
+            dir_named_like_a_log.join("inner"),
+            "x ERROR [agaric] M4216_INSIDE_DIR\n",
+        )
+        .unwrap();
+
+        // A symlink to a directory, and a dangling symlink.
+        std::os::unix::fs::symlink(dir.path(), log_dir.join("agaric.log.2025-03-07")).unwrap();
+        std::os::unix::fs::symlink(
+            dir.path().join("does-not-exist"),
+            log_dir.join("agaric.log.2025-03-06"),
+        )
+        .unwrap();
+
+        // A file with no read permission.
+        let unreadable = log_dir.join("agaric.log.2025-03-05");
+        fs::write(&unreadable, "x ERROR [agaric] M4216_UNREADABLE\n").unwrap();
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+        // Running as root defeats mode 0o000; only assert the skip when the
+        // fixture actually denies the read.
+        let read_is_really_denied = fs::read_to_string(&unreadable).is_err();
+
+        // The one good day.
+        write_day_log(
+            &log_dir,
+            day_before(today, 1),
+            "x ERROR [agaric] M4216_GOOD_DAY\n",
+        );
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert!(
+            errors.iter().any(|l| l.contains("M4216_GOOD_DAY")),
+            "the walk must survive every junk entry and still read the one \
+             good day, got: {errors:?}"
+        );
+        for junk in [
+            "M4216_BAD_DATE",
+            "M4216_NOT_A_DATE",
+            "M4216_COMPRESSED",
+            "M4216_INSIDE_DIR",
+        ] {
+            assert!(
+                !errors.iter().any(|l| l.contains(junk)),
+                "{junk} must not be read — its filename is not a valid \
+                 agaric.log.YYYY-MM-DD regular file, got: {errors:?}"
+            );
+        }
+        if read_is_really_denied {
+            assert!(
+                !errors.iter().any(|l| l.contains("M4216_UNREADABLE")),
+                "an unreadable day must be skipped, not surfaced, got: {errors:?}"
+            );
+        }
+        // Derived, not hardcoded: as root, mode 0o000 does not deny the read,
+        // so the unreadable day legitimately contributes its own line. Pinning
+        // 1 unconditionally reddens every root run (Docker, devcontainers)
+        // while staying green on GitHub's non-root runner — a failure only
+        // some contributors would ever see.
+        let expected = if read_is_really_denied { 1 } else { 2 };
+        assert_eq!(
+            errors.len(),
+            expected,
+            "only the good day (plus the unreadable one when the fixture could \
+             not actually deny the read) should survive, got: {errors:?}"
+        );
+
+        // The junk shapes must agree between the two selectors — they share
+        // `parse_rolled_log_date`, so pin that the bundle rejects them too.
+        for junk_name in [
+            "agaric.log.2025-13-45",
+            "agaric.log.notadate",
+            "agaric.log.2025-03-08.gz",
+        ] {
+            assert!(
+                !should_include_log_file(junk_name, today),
+                "{junk_name} must be rejected by the bundle selector as well"
+            );
+        }
+    }
+
+    /// #4216 — the early exit must drop only OLDER lines, never newer ones.
+    ///
+    /// Three days, with the MIDDLE one carrying more errors than the cap:
+    /// today has 5, yesterday has `RECENT_ERRORS_CAP + 10`, and the day
+    /// before that has 5 that must never be reached. A walk that filled the
+    /// cap from the wrong end — or that stopped before folding in the newest
+    /// day — would show up here as a missing today-marker or a present
+    /// oldest-day marker.
+    #[test]
+    fn recent_errors_early_exit_drops_only_older_days_never_newer_ones() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        let today = d4216_today();
+        const TODAY_ERRORS: usize = 5;
+        let middle_errors = RECENT_ERRORS_CAP + 10;
+
+        write_day_log(
+            &log_dir,
+            day_before(today, 2),
+            "x ERROR [agaric] M4216_OLDEST_DAY\n",
+        );
+        let mut middle = String::new();
+        for i in 0..middle_errors {
+            middle.push_str(&format!("x ERROR [agaric] M4216_MID_{i}\n"));
+        }
+        write_day_log(&log_dir, day_before(today, 1), &middle);
+        let mut newest = String::new();
+        for i in 0..TODAY_ERRORS {
+            newest.push_str(&format!("x ERROR [agaric] M4216_NEW_{i}\n"));
+        }
+        write_day_log(&log_dir, today, &newest);
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert_eq!(
+            errors.len(),
+            RECENT_ERRORS_CAP,
+            "the cross-day tail must be exactly RECENT_ERRORS_CAP, got: {errors:?}"
+        );
+        assert!(
+            !errors.iter().any(|l| l.contains("M4216_OLDEST_DAY")),
+            "the day beyond the filled cap must never be reached, got: {errors:?}"
+        );
+        // The newest day survives in full, last, in order.
+        let tail: Vec<&String> = errors.iter().rev().take(TODAY_ERRORS).rev().collect();
+        for (i, line) in tail.iter().enumerate() {
+            assert!(
+                line.contains(&format!("M4216_NEW_{i}")),
+                "today's errors must be the chronological tail, in order — \
+                 position {i} was {line:?}, full: {errors:?}"
+            );
+        }
+        // The middle day contributes its NEWEST lines, not its oldest.
+        let kept_from_middle = RECENT_ERRORS_CAP - TODAY_ERRORS;
+        let first_kept_mid = middle_errors - kept_from_middle;
+        assert!(
+            errors[0].contains(&format!("M4216_MID_{first_kept_mid}")),
+            "the surviving middle-day lines must be its newest \
+             {kept_from_middle}, so the list must start at MID_\
+             {first_kept_mid}, got: {errors:?}"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|l| l.contains(&format!("M4216_MID_{}", first_kept_mid - 1))),
+            "the line one older than the cap boundary must be dropped, got: {errors:?}"
+        );
+    }
+
+    /// #4127 under #4216, deterministically: a stale plain `agaric.log`
+    /// must never be MIXED INTO the dated family, not merely never
+    /// preferred over it. The existing appender-driven #4127 test runs
+    /// against the real clock and a single dated day; this one drives the
+    /// `_at` seam with two dated days plus the stale plain file, which is
+    /// the shape the multi-file walk newly makes reachable.
+    ///
+    /// The second half pins the fallback's ACTUAL trigger — no usable
+    /// in-window dated file, which is broader than "no dated file at all".
+    /// That half is characterisation, not #4216 coverage: it behaves the
+    /// same before and after the fix, and exists to keep the code comment
+    /// honest about when the plain file can still win.
+    #[test]
+    fn recent_errors_never_mixes_a_stale_plain_log_into_the_dated_family() {
+        let today = d4216_today();
+
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(
+            log_dir.join("agaric.log"),
+            "x ERROR [agaric] M4216_STALE_PLAIN\n",
+        )
+        .unwrap();
+        write_day_log(
+            &log_dir,
+            day_before(today, 1),
+            "x ERROR [agaric] M4216_DATED_YESTERDAY\n",
+        );
+        write_day_log(&log_dir, today, "x ERROR [agaric] M4216_DATED_TODAY\n");
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert_eq!(
+            errors.len(),
+            2,
+            "exactly the two dated days' errors — the plain file must not \
+             be mixed in even though the cap had room, got: {errors:?}"
+        );
+        assert!(
+            !errors.iter().any(|l| l.contains("M4216_STALE_PLAIN")),
+            "#4127: the stale plain agaric.log must never be read while a \
+             dated in-window file exists, got: {errors:?}"
+        );
+        assert!(
+            errors[0].contains("M4216_DATED_YESTERDAY") && errors[1].contains("M4216_DATED_TODAY"),
+            "both dated days, chronological, newest last, got: {errors:?}"
+        );
+
+        // Characterisation: with every dated file OUT of the retention
+        // window, `days` is empty and the plain fallback does fire. This is
+        // unchanged from pre-#4216 (which also fell through whenever
+        // `agaric.log.<today>` was absent), and it is why the fallback
+        // comment says "no usable in-window dated file" rather than "no
+        // dated file".
+        let dir2 = TempDir::new().unwrap();
+        let log_dir2 = dir2.path().join("logs");
+        fs::create_dir_all(&log_dir2).unwrap();
+        write_day_log(
+            &log_dir2,
+            day_before(today, MAX_ROLLED_AGE_DAYS + 3),
+            "x ERROR [agaric] M4216_TOO_OLD\n",
+        );
+        fs::write(
+            log_dir2.join("agaric.log"),
+            "x ERROR [agaric] M4216_PLAIN_FALLBACK\n",
+        )
+        .unwrap();
+
+        let fallback = recent_errors_from_log_dir_at(&log_dir2, today);
+        assert!(
+            fallback.iter().any(|l| l.contains("M4216_PLAIN_FALLBACK")),
+            "with no in-window dated file the plain fallback must still \
+             fire, got: {fallback:?}"
+        );
+        assert!(
+            !fallback.iter().any(|l| l.contains("M4216_TOO_OLD")),
+            "an out-of-window dated file must not be read, got: {fallback:?}"
         );
     }
 
