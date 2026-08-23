@@ -5322,3 +5322,369 @@ async fn rebuild_block_links_unresolved_on_an_empty_vault_writes_nothing_4218() 
         "content with no tokens — and NULL content — owe nothing"
     );
 }
+
+// ====================================================================
+// #4242 — the residency measurement behind the `fetch_all` -> streaming
+// change in `rebuild_block_links_unresolved_conn`
+// ====================================================================
+//
+// The change was justified by a `/proc/self/status` diagnostic that was then
+// THROWN AWAY, so its numbers could never be re-verified and a future
+// regression in the same function had nothing to measure against. This is
+// that diagnostic, landed instead of deleted, in the same `#[ignore]`d
+// deep-checks shape the reconciliation-oracle scale sweeps use
+// (`scheduled-deep-checks.yml`'s `bench-slo` job runs
+// `cargo nextest run --workspace --run-ignored=only`, so `--workspace` picks
+// these up from this crate).
+//
+// It pins NO memory threshold. A byte budget for peak RSS would be a number
+// invented rather than measured — it moves with the allocator, the libc, the
+// SQLite page cache and the runner — and a red weekly lane on allocator noise
+// teaches people to ignore the lane. What it DOES pin is the equivalence the
+// rewrite has to preserve: the streamed fold and the old buffered fold must
+// derive byte-identical obligations from the same vault. The residency
+// numbers are printed for a human (or a future bisect) to read.
+//
+// # One variable
+//
+// The discarded diagnostic compared two vault SHAPES that differed in block
+// count, content size AND link density at once, so "grows with vault size"
+// was not something it could actually separate out. Here content size and
+// link-bearing share are HELD FIXED (`RSS_CONTENT_BYTES`,
+// `RSS_LINK_BEARING_PERCENT`) and only the block count moves, across the
+// three `_4242` tests below. Whatever the three printed gaps do as a
+// function of block count is therefore a statement about block count alone.
+//
+// # Method, and its known bias
+//
+// Each test runs in its OWN process (nextest executes every test in a
+// separate process), so its baseline is not polluted by a sibling's heap.
+// Within a process each arm resets the kernel's peak-RSS watermark
+// (`/proc/self/clear_refs`, mode 5 — Linux 4.0+) so `VmHWM` afterwards is the
+// peak reached DURING that arm rather than over the process's whole life,
+// which the 100k-row seeding would otherwise dominate.
+//
+// There are TWO known biases, and both point the same way — DOWNWARD, so the
+// buffered arm's true footprint is at least what is printed, never less. That
+// is the conservative direction for a claim of the form "buffering costs
+// memory", which is why the arrangement is left as it is.
+//
+// 1. ARENA WARMTH. The two arms share one heap and the STREAMING arm runs
+//    first, so its peak is measured against a cold-ish arena while the
+//    BUFFERED arm runs second and can satisfy part of its demand from what
+//    the first arm just freed. Running them in the other order would flatter
+//    the change and is deliberately not what happens here.
+//
+// 2. ARM ASYMMETRY. Arm 1 is the whole production function, INCLUDING the
+//    chunked INSERT of the obligation rows; arm 2 replicates only the
+//    pre-#4242 read and fold, not the write that followed it. So the streamed
+//    arm's peak carries write-path residency the buffered arm never pays,
+//    which shrinks the measured gap by however much that write costs. This is
+//    a bias in the measurement, not a flaw in the comparison — the read+fold
+//    is the part #4242 changed — but it is a second reason the printed gap
+//    understates the difference, and the doc would be misleading if it named
+//    only the first.
+//
+// Linux-only: the whole apparatus reads `/proc/self`. `bench-slo` runs on
+// `ubuntu-24.04`, and on any other host these tests simply do not exist.
+//
+// # Observed when this landed
+//
+// One unloaded dev box, debug profile, glibc malloc — a REFERENCE POINT for a
+// future bisect, not a budget and not something any assertion below reads:
+//
+//   blocks | streamed kB | buffered kB |  gap kB | gap % | wall
+//   -------+-------------+-------------+---------+-------+------
+//     20k  |      20,460 |      20,980 |     520 |  2.5% | 1.0s
+//     50k  |      47,992 |      56,104 |   8,112 | 14.5% | 2.0s
+//    100k  |      96,520 |     112,136 |  15,616 | 13.9% | 4.0s
+//
+// The 100k point reproduces the discarded diagnostic's headline (it reported
+// 14.64% at 100k) closely enough to believe the original was measuring what
+// it said it was. What the three points add, and the original could not, is
+// that the ABSOLUTE gap grows with block count — with content size and link
+// density pinned, so that growth is attributable to block count and nothing
+// else.
+//
+// The 20k point is the one NOT to read as a measurement of anything. Repeat
+// runs put it at 520 kB and at 0 kB, and 0 kB is what the method predicts
+// there: the whole buffered content vector is only ~6 MB, which fits inside
+// the arena the streaming arm's transaction had just released, so `VmHWM`
+// never has to move. It is kept as the low end of the sweep — a point where
+// the effect is genuinely too small to see through the bias is worth showing
+// — but the two larger points are the ones carrying the claim. The 50k and
+// 100k gaps have been stable across runs to within a few hundred kB.
+//
+// Total weekly cost of all three: ~7s.
+
+/// Bytes of `content` on every seeded block — HELD FIXED across the three
+/// measurement points so block count is the only variable that moves.
+#[cfg(target_os = "linux")]
+const RSS_CONTENT_BYTES: usize = 425;
+
+/// Percentage of seeded blocks carrying a link token — HELD FIXED, same
+/// reason. Every link-bearing block carries exactly ONE token, so the
+/// obligation count is exactly this share of the vault.
+#[cfg(target_os = "linux")]
+const RSS_LINK_BEARING_PERCENT: usize = 70;
+
+/// Rows per seeding INSERT. `flush_rss_seed` binds three values per row (id,
+/// block_type, content), so a chunk of 250 is 750 bind parameters per
+/// statement — comfortably under SQLite's `SQLITE_MAX_VARIABLE_NUMBER`, but
+/// note the rate when raising it: the older 999 limit is crossed at 334 rows,
+/// not 500. The seeder's own live buffer (`chunk * RSS_CONTENT_BYTES` bytes,
+/// ~100 kB) stays three orders of magnitude below anything the arms measure.
+#[cfg(target_os = "linux")]
+const RSS_SEED_CHUNK: usize = 250;
+
+/// Read one `kB`-valued field out of `/proc/self/status`.
+#[cfg(target_os = "linux")]
+fn proc_status_kb(field: &str) -> u64 {
+    let status = std::fs::read_to_string("/proc/self/status").expect("read /proc/self/status");
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix(field).and_then(|r| r.strip_prefix(':')) {
+            return rest
+                .trim()
+                .trim_end_matches("kB")
+                .trim()
+                .parse()
+                .expect("kB value");
+        }
+    }
+    panic!("{field} missing from /proc/self/status");
+}
+
+/// Reset `VmHWM` to the current `VmRSS` (procfs `clear_refs` mode 5).
+///
+/// Returns false when the write is refused — some sandboxes mount `/proc`
+/// restricted. The caller then falls back to sampling `VmRSS` at the arm's
+/// end, which is a point-in-time reading rather than a peak, and says so in
+/// its output rather than silently printing a different quantity under the
+/// same label.
+#[cfg(target_os = "linux")]
+fn reset_peak_rss() -> bool {
+    std::fs::write("/proc/self/clear_refs", "5").is_ok()
+}
+
+/// One arm's peak-over-baseline residency, in kB.
+#[cfg(target_os = "linux")]
+struct ArmResidency {
+    peak_over_baseline_kb: u64,
+    /// False when `clear_refs` was refused and `VmRSS` was sampled instead.
+    is_true_peak: bool,
+}
+
+/// Seed `blocks` blocks at the fixed content size and link density.
+///
+/// Returns how many of them carry a token. Every link-bearing block names one
+/// EXISTING block, so nothing here depends on the dangling-target case.
+#[cfg(target_os = "linux")]
+async fn seed_rss_vault(pool: &SqlitePool, blocks: usize) -> usize {
+    assert_eq!(
+        blocks % 100,
+        0,
+        "block count must be a multiple of 100 so the link density is exact"
+    );
+    let mut pending: Vec<(String, String)> = Vec::with_capacity(RSS_SEED_CHUNK);
+    let mut link_bearing = 0usize;
+    for i in 0..blocks {
+        let id = format!("01BLK{i:021}");
+        assert_eq!(id.len(), 26, "seed ids must be token-shaped");
+        let content = if i % 100 < RSS_LINK_BEARING_PERCENT {
+            link_bearing += 1;
+            let target = format!("01BLK{:021}", (i + 1) % blocks);
+            let mut c = format!("[[{target}]] ");
+            c.push_str(&"x".repeat(RSS_CONTENT_BYTES - c.len()));
+            c
+        } else {
+            // No `[[` and no `((`, so production's LIKE pre-filter drops these
+            // before they are ever decoded — which is part of what the arms
+            // are measuring.
+            "y".repeat(RSS_CONTENT_BYTES)
+        };
+        assert_eq!(content.len(), RSS_CONTENT_BYTES);
+        pending.push((id, content));
+        if pending.len() == RSS_SEED_CHUNK {
+            flush_rss_seed(pool, &mut pending).await;
+        }
+    }
+    flush_rss_seed(pool, &mut pending).await;
+    link_bearing
+}
+
+/// Insert one seeding chunk and clear it.
+#[cfg(target_os = "linux")]
+async fn flush_rss_seed(pool: &SqlitePool, pending: &mut Vec<(String, String)>) {
+    if pending.is_empty() {
+        return;
+    }
+    // Multi-row INSERT via `QueryBuilder`: the only dynamic part is how many
+    // `VALUES` tuples the statement carries, every value is still a bind.
+    let mut qb: sqlx::QueryBuilder<sqlx::Sqlite> =
+        sqlx::QueryBuilder::new("INSERT INTO blocks (id, block_type, content) ");
+    qb.push_values(pending.iter(), |mut row, (id, content)| {
+        row.push_bind(id.as_str())
+            .push_bind("content")
+            .push_bind(content.as_str());
+    });
+    qb.build().execute(pool).await.unwrap();
+    pending.clear();
+}
+
+/// Run one arm with the peak watermark reset around it.
+#[cfg(target_os = "linux")]
+async fn measure_arm<F, Fut, T>(arm: F) -> (T, ArmResidency)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    let is_true_peak = reset_peak_rss();
+    let baseline = proc_status_kb("VmRSS");
+    let value = arm().await;
+    let peak = proc_status_kb(if is_true_peak { "VmHWM" } else { "VmRSS" });
+    (
+        value,
+        ArmResidency {
+            peak_over_baseline_kb: peak.saturating_sub(baseline),
+            is_true_peak,
+        },
+    )
+}
+
+/// The measurement itself, shared by the three block-count points.
+///
+/// Arm 1 is production (`rebuild_block_links_unresolved_conn`, streamed since
+/// #4242), end to end — including the chunked INSERT of the obligation rows.
+/// The `_conn` form is the one measured, not the pool wrapper: the wrapper
+/// returns `Result<(), AppError>` through `rebuild_with_timing` and so cannot
+/// return the `inserted` count the assertion below uses.
+/// Arm 2 replicates the pre-#4242 READ AND FOLD only, not the write that
+/// followed it: `fetch_all` the matched rows into a `Vec` and fold that, with
+/// the row buffer still alive while the pair vector is built — the
+/// simultaneity that was the whole cost.
+///
+/// The arms are therefore not symmetric, and deliberately so: the read+fold is
+/// the part #4242 changed. But it means arm 1 pays a write-path peak arm 2
+/// never does, which is the second of the two downward biases described in the
+/// module comment above. Do not read arm 2 as "the whole pre-#4242 function".
+#[cfg(target_os = "linux")]
+#[allow(clippy::cast_precision_loss)]
+async fn measure_unresolved_rebuild_residency(blocks: usize) {
+    let (pool, _dir) = test_pool().await;
+    let link_bearing = seed_rss_vault(&pool, blocks).await;
+    assert!(link_bearing > 0, "the fixture must own some obligations");
+
+    // Arm 1 — production, streamed, in a transaction of its own, which is the
+    // shape the snapshot restore calls it in (`agaric-sync`'s
+    // `snapshot/restore.rs` runs it inside the restore's own transaction).
+    let (inserted, streamed) = measure_arm(|| async {
+        let mut tx = pool.begin().await.expect("begin");
+        let inserted = rebuild_block_links_unresolved_conn(&mut tx)
+            .await
+            .expect("streamed rebuild");
+        tx.commit().await.expect("commit");
+        inserted
+    })
+    .await;
+
+    // Arm 2 — the pre-#4242 buffered shape, same SQL, same regex, same dedup.
+    let (buffered_pairs, buffered) = measure_arm(|| async {
+        // dynamic-sql: test-only replica of the pre-#4242 production read.
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT id, content FROM blocks \
+             WHERE deleted_at IS NULL AND content IS NOT NULL \
+               AND (content LIKE '%[[%' OR content LIKE '%((%')",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("buffered read");
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for (id, content) in &rows {
+            let content = content.clone().unwrap_or_default();
+            for cap in super::ulid_link_re().captures_iter(&content) {
+                pairs.push((id.clone(), cap[1].to_owned()));
+            }
+        }
+        // `rows` is deliberately still alive here: holding the whole content
+        // buffer while the pairs are built is exactly what #4242 removed.
+        assert_eq!(
+            rows.len(),
+            link_bearing,
+            "the LIKE pre-filter must match \
+             every link-bearing block and nothing else"
+        );
+        pairs.sort_unstable();
+        pairs.dedup();
+        pairs
+    })
+    .await;
+
+    // THE PIN: the rewrite is an allocation change, not a semantic one.
+    // `block_links` is empty in this fixture, so production's `NOT EXISTS`
+    // clause discharges nothing and the two folds must agree exactly.
+    assert_eq!(
+        inserted,
+        u64::try_from(buffered_pairs.len()).unwrap(),
+        "the streamed fold and the pre-#4242 buffered fold must derive the same obligations"
+    );
+    assert_eq!(
+        inserted,
+        u64::try_from(link_bearing).unwrap(),
+        "one token per link-bearing block, none of them already an edge"
+    );
+    assert_eq!(
+        all_unresolved(&pool).await,
+        buffered_pairs,
+        "and the rows production wrote must BE that set, not merely count the same"
+    );
+
+    let gap = buffered
+        .peak_over_baseline_kb
+        .saturating_sub(streamed.peak_over_baseline_kb);
+    let share = if buffered.peak_over_baseline_kb == 0 {
+        0.0
+    } else {
+        100.0 * gap as f64 / buffered.peak_over_baseline_kb as f64
+    };
+    let quantity = if streamed.is_true_peak && buffered.is_true_peak {
+        "peak-over-baseline RSS (VmHWM, watermark reset per arm)"
+    } else {
+        "END-OF-ARM RSS (VmRSS) — clear_refs was refused, so these are NOT peaks"
+    };
+    println!(
+        "#4242 rebuild_block_links_unresolved residency @ {blocks} blocks \
+         ({RSS_CONTENT_BYTES} B content/block, {RSS_LINK_BEARING_PERCENT}% link-bearing, \
+         {link_bearing} obligations — content size and density HELD FIXED across points)\n  \
+         quantity: {quantity}\n  \
+         streamed (production, post-#4242): {} kB\n  \
+         buffered (pre-#4242 fetch_all):    {} kB\n  \
+         gap: {gap} kB = {share:.2}% of the buffered arm's peak \
+         (a LOWER bound — the buffered arm runs second, on a warm arena)",
+        streamed.peak_over_baseline_kb, buffered.peak_over_baseline_kb,
+    );
+}
+
+/// #4242 point 1 of 3 — 20k blocks. See the module section above for method.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+#[ignore = "deep-checks lane: seeds a 20k-block vault to measure rebuild peak residency"]
+async fn rebuild_block_links_unresolved_residency_at_20k_blocks_4242() {
+    measure_unresolved_rebuild_residency(20_000).await;
+}
+
+/// #4242 point 2 of 3 — 50k blocks, same content size and link density.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+#[ignore = "deep-checks lane: seeds a 50k-block vault to measure rebuild peak residency"]
+async fn rebuild_block_links_unresolved_residency_at_50k_blocks_4242() {
+    measure_unresolved_rebuild_residency(50_000).await;
+}
+
+/// #4242 point 3 of 3 — 100k blocks, same content size and link density.
+/// The largest of the three, and the one the discarded diagnostic quoted.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+#[ignore = "deep-checks lane: seeds a 100k-block vault to measure rebuild peak residency"]
+async fn rebuild_block_links_unresolved_residency_at_100k_blocks_4242() {
+    measure_unresolved_rebuild_residency(100_000).await;
+}
