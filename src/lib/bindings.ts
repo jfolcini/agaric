@@ -1721,8 +1721,14 @@ export type BugReport = {
 	arch: string,
 	device_id: string,
 	/**
-	 *  Last [`RECENT_ERRORS_CAP`] error/warn lines from today's
-	 *  `agaric.log`, newest last.
+	 *  Last [`RECENT_ERRORS_CAP`] error/warn lines from the recent
+	 *  `agaric.log.YYYY-MM-DD` files, newest last.
+	 * 
+	 *  #4216: this is a recency window, not a calendar-day one — the walk
+	 *  crosses UTC day boundaries backwards until the cap is full or the
+	 *  bundle's own [`MAX_ROLLED_AGE_DAYS`] retention runs out, so a report
+	 *  filed minutes after midnight still shows the errors that prompted
+	 *  it. See [`recent_errors_from_log_dir`].
 	 * 
 	 *  #609: ALWAYS redacted through the same pipeline as the ZIP export
 	 *  ([`redact_line_with_redactor`]) — the frontend embeds these lines

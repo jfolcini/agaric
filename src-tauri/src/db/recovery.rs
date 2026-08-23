@@ -1,4 +1,14 @@
 use agaric_core::attachment_filename::sanitize_attachment_filename;
+// #4232: the recursion-depth cap every recursive CTE in this file carries. The
+// SQL still spells it `100` inline — raw-string statements cannot interpolate a
+// `const`, and the #1655 drift guard greps every `descendants` recursive arm in
+// this crate for that literal — exactly as `agaric_store::block_descendants`
+// documents for its own macros. Importing the name here means the cap has ONE
+// definition across the engine, the store and this pre-migration replay: it is
+// what the truncation reports below carry as their `depth`, what the report
+// names, and what the tests build their chains against, so none of those can
+// drift from the bound the SQL enforces.
+use agaric_store::block_descendants::DESCENDANT_DEPTH_CAP;
 use sqlx::{Row, SqlitePool};
 
 use super::now_ms;
@@ -1144,7 +1154,66 @@ struct ReplayDiagnostics {
     /// carrying its cohort token), because the sweep's own live-subject
     /// guard suppresses it on a block a previous sweep already tombstoned.
     move_swept_under_tombstone: Vec<String>,
+    /// #4232: recursive cascades that stopped at [`DESCENDANT_DEPTH_CAP`] with
+    /// tree still beyond it. One entry per truncated walk, naming WHICH walk
+    /// and at what depth.
+    cascade_truncations: Vec<CascadeTruncation>,
 }
+
+/// #4232: one recursive walk in this replay that hit the depth cap with more
+/// tree beyond it — i.e. answered from an INCOMPLETE view of the tree.
+///
+/// STRUCTURAL, not semantic. An entry means "this walk was cut off", never
+/// "the cut changed the answer" — the two probes below cannot tell those apart
+/// without the unbounded walk this replay deliberately does not have (see
+/// [`descendant_cascade_truncated`] for the three shapes that report despite a
+/// provably correct result). Read an entry as "verify this subtree", not as
+/// "this subtree is wrong".
+///
+/// The engine's R27 walks (`collect_subtree_ids_unbounded`,
+/// `nearest_tombstoned_ancestor`) re-anchor past the cap and warn when they
+/// cross it. This replay's cascades cannot: they run before `sqlx::migrate!`,
+/// at whatever era `max_applied_migration` names, and the batched re-anchoring
+/// walk is written against the head shape. Truncating is therefore the
+/// behaviour that stays; being unable to TELL is not. A merged sync tree may
+/// legally be deeper than any locally-enforced bound — no single device's
+/// create-path guard constrains what a merge produces — so a rebuild of such a
+/// vault stamps a partial cohort, and the rebuilt `blocks` silently disagrees
+/// with the live one on the one code path whose whole job is to be trustworthy
+/// once everything else has failed. Reported, not logged, for the same #3269 R5
+/// reason as every other entry here: the replay may run twice.
+#[derive(Debug, PartialEq, Eq)]
+struct CascadeTruncation {
+    /// Which walk was cut off — one of the `CASCADE_*` names below. A report
+    /// that said only "something truncated" would leave a post-mortem reader
+    /// unable to tell an incomplete delete cohort (rows that should be in the
+    /// trash and are not) from an incomplete purge (rows the user destroyed
+    /// that are still there).
+    cascade: &'static str,
+    /// The op's subject block: the seed the truncated walk started from.
+    block_id: String,
+    /// The depth the walk stopped at, always [`DESCENDANT_DEPTH_CAP`]. Carried
+    /// explicitly so the report names the number instead of implying it.
+    depth: i64,
+}
+
+/// The `move_block` arm's upward probe for the nearest tombstoned ancestor.
+/// Truncation here means the sweep may have found NO tombstone where one
+/// exists further up, so a live block was left parked under a trashed ancestor.
+const CASCADE_MOVE_SWEEP_ANCESTOR_PROBE: &str = "move_block ancestor probe";
+/// The `move_block` arm's downward sweep into the ancestor's deletion cohort
+/// (#4187). Truncation leaves the deep tail of the moved subtree live.
+const CASCADE_MOVE_SWEEP: &str = "move_block sweep cascade";
+/// The `delete_block` arm's soft-delete cascade (#429). Truncation leaves the
+/// deep tail live under a tombstoned ancestor.
+const CASCADE_DELETE: &str = "delete_block cascade";
+/// The `restore_block` arm's cohort un-delete (#613). Truncation leaves the
+/// deep tail tombstoned after a restore that should have raised it.
+const CASCADE_RESTORE: &str = "restore_block cascade";
+/// The `purge_block` arm's hard-delete cascade (#615). Truncation leaves the
+/// deep tail of user-destroyed data in the table, which the orphan cleanup
+/// after the replay loop then PROMOTES to live top-level blocks.
+const CASCADE_PURGE: &str = "purge_block cascade";
 
 impl ReplayDiagnostics {
     /// Emit everything this pass observed, exactly once.
@@ -1231,7 +1300,204 @@ impl ReplayDiagnostics {
                 self.move_swept_under_tombstone.len()
             );
         }
+
+        // #4232: a walk that ran out of rope answered from a PARTIAL view of
+        // the tree, so the rebuilt table may be wrong and no longer merely
+        // noisy — hence an error, alongside the #2504 data-loss report, rather
+        // than a warning. Before this the failure was indistinguishable from
+        // success, which is the worst property a recovery path can have.
+        //
+        // The message states what the probe actually establishes and no more.
+        // The probe is STRUCTURAL (see `descendant_cascade_truncated`): it
+        // proves the walk was cut off, NOT that the cut changed the answer, and
+        // there are three shapes where the cut is provably harmless. Asserting
+        // "the rebuilt table holds a truncated cohort" would therefore be false
+        // on a correct rebuild, and telling an operator to distrust a correct
+        // rebuild — on the disaster path, where the rebuild may be all they
+        // have — is its own kind of wrong answer.
+        //
+        // The site list rides ONLY in the `sites` field, matching
+        // `constraint_rejected_creates` / `move_swept_under_tombstone` above:
+        // interpolating it into the message body too would carry an unbounded
+        // payload twice in one record, and this vector grows per truncated OP,
+        // so on a deep vault it is not small.
+        if !self.cascade_truncations.is_empty() {
+            let sites = self
+                .cascade_truncations
+                .iter()
+                .map(|t| {
+                    format!(
+                        "{} at `{}`, stopped at depth {}",
+                        t.cascade, t.block_id, t.depth
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            tracing::error!(
+                truncated = self.cascade_truncations.len(),
+                depth_cap = DESCENDANT_DEPTH_CAP,
+                sites = %sites,
+                "INCOMPLETE RECOVERY CASCADE (#4232): {} recursive walk(s) stopped at the \
+                 depth-{} runaway cap with tree still beyond it, so each answered from a \
+                 PARTIAL view; `sites` names which walk, on which seed. A merged sync tree can \
+                 legally be deeper than any locally-enforced bound, so this is reachable on a \
+                 healthy vault. Where the cut mattered, the rebuilt `blocks` table disagrees \
+                 with the live one below that depth: deep descendants left live under a \
+                 tombstoned ancestor (delete / move sweep), left tombstoned after a restore, \
+                 left present after a purge (and then promoted to a LIVE TOP-LEVEL block by \
+                 the orphan cleanup, i.e. purged data resurrected), or a move sweep that never \
+                 fired at all because the ancestor probe could not see the tombstone above the \
+                 cap. The probe is structural: it proves the walk was cut off, not that the \
+                 cut changed the answer — a deep tail that was already tombstoned, outside the \
+                 restored cohort, or under no tombstoned ancestor at all reports here despite \
+                 a correct rebuild. Verify the named subtrees against a peer or \
+                 `loro_doc_state` before trusting this rebuild below the cap.",
+                self.cascade_truncations.len(),
+                DESCENDANT_DEPTH_CAP
+            );
+        }
     }
+}
+
+/// #4232: did the descendant walk rooted at `seed` have MORE tree below it than
+/// the cascades' depth-capped CTE can reach?
+///
+/// Reuses those CTEs verbatim — same seed row, same *standard* recursive arm
+/// (no `deleted_at` filter, so the answer does not depend on whether the caller
+/// probes before or after its own cascade has run), same `DESCENDANT_DEPTH_CAP`
+/// bound — and asks the one-level-deeper question in the OUTER `EXISTS`: does a
+/// row the walk reached at exactly the cap still have a child? That child sits
+/// at `DESCENDANT_DEPTH_CAP + 1` and is a descendant the cascade provably did
+/// not touch. Sharing the arm rather than restating it one level deeper is what
+/// keeps the probe from being bounded differently than the walk it is probing.
+///
+/// Era-agnostic by construction, like the sweep's own statements: it reads
+/// `id` and `parent_id` only, and both exist with the same type in every era
+/// this pre-migration pass can run at. That is why it does not call
+/// `agaric_store::block_descendants::cascade_depth_saturated`, which is
+/// additionally deliberately conservative (`>= CAP - 1`, so it fires on a tree
+/// sitting exactly AT the cap that was not truncated at all) — a false
+/// truncation report on the disaster path is its own kind of silence.
+///
+/// A corrupted `parent_id` CYCLE saturates any bound and so reports here too.
+/// That is correct: the cascade's answer is equally untrustworthy either way,
+/// and the cycle is not hypothetical — this replay carries no cycle probe
+/// (#2894), so a corrupt op_log can close one.
+///
+/// # What this does NOT establish
+///
+/// It answers the STRUCTURAL question — "is there tree the walk could not
+/// reach" — and not the semantic one, "did not reaching it change the row set
+/// the cascade wrote". Those differ because each caller narrows the CTE's
+/// output with its OWN outer predicate, which this probe deliberately does not
+/// mirror (mirroring it would make the answer depend on whether the caller
+/// probes before or after its cascade, and would still be inexact: the deep
+/// tail can be arbitrarily far past `DESCENDANT_DEPTH_CAP + 1`, so only an
+/// unbounded walk could decide it). Three reachable shapes therefore report a
+/// truncation on a rebuild that is byte-identical to the uncapped one:
+///
+/// * `delete_block` / the move sweep, when everything past the cap is ALREADY
+///   tombstoned — the `deleted_at IS NULL` guard would have skipped it anyway.
+/// * `restore_block`, when the deep tail is not a member of the restored
+///   cohort (e.g. a peer created it under the trashed frontier after the
+///   delete), so `deleted_at = ?ref` excludes it.
+/// * [`ancestor_probe_truncated`], on a deep chain carrying no tombstoned
+///   ancestor at ANY depth — the sweep was right not to fire.
+///
+/// This is the accepted trade: a "verify this subtree" false positive on a very
+/// deep tree costs a post-mortem read, whereas the false NEGATIVE it replaces
+/// is #4232 itself. [`ReplayDiagnostics::emit`] states the distinction in the
+/// report rather than letting the reader infer a certainty that is not there.
+async fn descendant_cascade_truncated(
+    executor: &mut sqlx::SqliteConnection,
+    seed: &str,
+) -> Result<bool, sqlx::Error> {
+    // dynamic-sql: the cascades' own recursive CTE, at the pre-migration era
+    // where `query_scalar!`'s head-shaped check must not be assumed (same
+    // reason as the sweep's statements below).
+    //
+    // The recursive arm is BYTE-IDENTICAL to the four cascades' — same seed,
+    // same standard filter, same `d.depth < 100` bound — and the extra level is
+    // asked for in the OUTER `EXISTS` instead: does any row the walk DID reach,
+    // at exactly the cap, still have a child? That child is at
+    // `DESCENDANT_DEPTH_CAP + 1`, i.e. a descendant the cascade provably did
+    // not touch, so the answer is the same as walking one level deeper — and
+    // this way the probe cannot be bounded differently from the thing it is
+    // probing, which a second, separately-bounded walk could be. It is also why
+    // the bound is not interpolated from the const: the #1655 drift guard
+    // (`every_descendants_cte_keeps_depth_cap`, agaric-store) requires the
+    // literal `d.depth < 100` in EVERY `descendants` recursive arm in this
+    // crate, and an interpolated `{cap} + 1` arm fails it — correctly, since
+    // such an arm is by construction not the cascades' walk.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+    sqlx::query_scalar::<_, bool>(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ?1 \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+               JOIN descendants d ON b.parent_id = d.id \
+              WHERE d.depth < 100 \
+         ) \
+         SELECT EXISTS ( \
+             SELECT 1 FROM blocks c \
+               JOIN descendants d ON c.parent_id = d.id \
+              WHERE d.depth = 100 \
+         )",
+    )
+    .bind(seed)
+    .fetch_one(executor)
+    .await
+}
+
+/// #4232: the upward sibling of [`descendant_cascade_truncated`], for the
+/// `move_block` arm's nearest-tombstoned-ancestor probe.
+///
+/// Reuses that probe's CTE verbatim — including its seed's `deleted_at IS NULL`
+/// live-subject guard, so a move on an already-tombstoned subject (which yields
+/// no seed row and hence no sweep at all) reports nothing — and asks in the
+/// outer `EXISTS` whether the ancestor at exactly the cap still has a parent. Callers must only consult this when the probe found NOTHING: a
+/// tombstone found within the cap is by construction the NEAREST one
+/// (`ORDER BY depth LIMIT 1` over ancestors 1..CAP, so a nearer tombstone
+/// would already have won), so anything beyond the cap could not have changed
+/// the answer — including a hit at EXACTLY the cap. That suppression rule is
+/// pinned by
+/// `recover_move_ancestor_probe_suppressed_when_a_tombstone_was_found_within_the_cap`.
+///
+/// Structural, like its downward sibling: it reports that the climb ran out of
+/// rope, not that a tombstone was actually missed. A block moved anywhere under
+/// a chain deeper than the cap reports here even when the vault holds no
+/// tombstone at all — see [`descendant_cascade_truncated`]'s "What this does
+/// NOT establish", and
+/// `recover_move_ancestor_probe_reports_a_deep_live_chain_with_no_tombstone`.
+async fn ancestor_probe_truncated(
+    executor: &mut sqlx::SqliteConnection,
+    seed: &str,
+) -> Result<bool, sqlx::Error> {
+    // dynamic-sql: as `descendant_cascade_truncated` above — pre-migration era.
+    // Same construction too: the recursive arm is byte-identical to the sweep's
+    // own probe (`a.depth < 100`), and the one-level-deeper question is asked in
+    // the outer `EXISTS` — does the ancestor at exactly the cap still have a
+    // parent? That parent is the `DESCENDANT_DEPTH_CAP + 1`-th ancestor, the
+    // first one the sweep's probe could not see.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+    sqlx::query_scalar::<_, bool>(
+        "WITH RECURSIVE ancestors(id, depth) AS ( \
+             SELECT parent_id, 1 FROM blocks \
+              WHERE id = ?1 AND deleted_at IS NULL AND parent_id IS NOT NULL \
+             UNION ALL \
+             SELECT b.parent_id, a.depth + 1 FROM blocks b \
+               JOIN ancestors a ON b.id = a.id \
+              WHERE b.parent_id IS NOT NULL AND a.depth < 100 \
+         ) \
+         SELECT EXISTS ( \
+             SELECT 1 FROM blocks b \
+               JOIN ancestors a ON b.id = a.id \
+              WHERE a.depth = 100 AND b.parent_id IS NOT NULL \
+         )",
+    )
+    .bind(seed)
+    .fetch_one(executor)
+    .await
 }
 
 /// Replay block-level ops from `op_log` into an existing (temporary)
@@ -1630,6 +1896,23 @@ async fn recover_blocks_from_op_log(
                 .fetch_optional(&mut *executor)
                 .await?;
 
+                // #4232: only when the probe found NOTHING. A tombstone found
+                // within the cap is by construction the nearest one
+                // (`ORDER BY a.depth LIMIT 1`), so anything above the cap could
+                // not have changed the answer and reporting it would be noise.
+                // With no hit, though, "no tombstoned ancestor" and "ran out of
+                // rope at depth 100" are the same empty result — and only one
+                // of them means the sweep was correct to stay quiet.
+                if tombstoned_ancestor.is_none()
+                    && ancestor_probe_truncated(&mut *executor, block_id).await?
+                {
+                    diagnostics.cascade_truncations.push(CascadeTruncation {
+                        cascade: CASCADE_MOVE_SWEEP_ANCESTOR_PROBE,
+                        block_id: block_id.to_owned(),
+                        depth: DESCENDANT_DEPTH_CAP,
+                    });
+                }
+
                 if let Some(ancestor_id) = tombstoned_ancestor {
                     // The `delete_block` arm's cascade shape, keyed on the
                     // ancestor's own stored `deleted_at` (era-agnostic, and
@@ -1663,6 +1946,17 @@ async fn recover_blocks_from_op_log(
                     // remove. The residual recovery-vs-engine reach gap is
                     // the delete cascade's, i.e. the #4188 / #4204 lane, and
                     // closing it means changing BOTH arms together.
+                    // #4232: the sweep's own reach. Probed before the UPDATE
+                    // only for symmetry with the purge arm (this walk is the
+                    // standard one, so the answer is the same either side of
+                    // the cascade).
+                    if descendant_cascade_truncated(&mut *executor, block_id).await? {
+                        diagnostics.cascade_truncations.push(CascadeTruncation {
+                            cascade: CASCADE_MOVE_SWEEP,
+                            block_id: block_id.to_owned(),
+                            depth: DESCENDANT_DEPTH_CAP,
+                        });
+                    }
                     // dynamic-sql: recursive descendant CTE, same
                     // pre-migration-era reason as the probe above.
                     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
@@ -1716,6 +2010,16 @@ async fn recover_blocks_from_op_log(
                 // differs; the era-switched TEXT/INTEGER stamp above cannot be
                 // expressed through it, so unifying would mis-stamp the
                 // pre-0080 (TEXT) era.
+                // #4232: a truncated delete cohort leaves the subtree's deep
+                // tail LIVE under a tombstoned ancestor — the invisible orphan
+                // this arm exists to prevent, below depth 100.
+                if descendant_cascade_truncated(&mut *executor, block_id).await? {
+                    diagnostics.cascade_truncations.push(CascadeTruncation {
+                        cascade: CASCADE_DELETE,
+                        block_id: block_id.to_owned(),
+                        depth: DESCENDANT_DEPTH_CAP,
+                    });
+                }
                 // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
                 let query = sqlx::query(
                     "UPDATE blocks SET deleted_at = ?1 \
@@ -1775,6 +2079,18 @@ async fn recover_blocks_from_op_log(
                 let deleted_at_ref = payload
                     .get("deleted_at_ref")
                     .and_then(serde_json::Value::as_i64);
+                // #4232: the mirror-image truncation — a restore that stops at
+                // the cap leaves the deep tail TOMBSTONED, orphaned from the
+                // cohort it was raised with. Probed before the UPDATE for
+                // symmetry; the walk is the standard one, so the answer does
+                // not depend on that.
+                if descendant_cascade_truncated(&mut *executor, block_id).await? {
+                    diagnostics.cascade_truncations.push(CascadeTruncation {
+                        cascade: CASCADE_RESTORE,
+                        block_id: block_id.to_owned(),
+                        depth: DESCENDANT_DEPTH_CAP,
+                    });
+                }
                 // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
                 const RESTORE_CASCADE_PREFIX: &str = "UPDATE blocks SET deleted_at = NULL \
                      WHERE id IN ( \
@@ -1832,6 +2148,22 @@ async fn recover_blocks_from_op_log(
                 // top-level blocks (`parent_id = NULL`), resurrecting
                 // user-destroyed data. Cascade with the same depth-bounded
                 // recursive CTE shape as the delete arm.
+                //
+                // #4232: probed BEFORE the DELETE — unlike the soft-delete
+                // arms, this one removes the rows the probe walks, so
+                // afterwards there is nothing left to ask. Truncation here is
+                // the worst of the four descendant walks: the unreached tail
+                // survives the purge, and the orphan cleanup after the replay
+                // loop then NULLs its dangling `parent_id`, promoting
+                // user-destroyed data to a live top-level block — exactly the
+                // resurrection #615 closed.
+                if descendant_cascade_truncated(&mut *executor, block_id).await? {
+                    diagnostics.cascade_truncations.push(CascadeTruncation {
+                        cascade: CASCADE_PURGE,
+                        block_id: block_id.to_owned(),
+                        depth: DESCENDANT_DEPTH_CAP,
+                    });
+                }
                 // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
                 sqlx::query(
                     "DELETE FROM blocks \
@@ -3287,6 +3619,659 @@ mod tests {
             diagnostics.move_swept_under_tombstone.is_empty(),
             "nothing was swept: {:?}",
             diagnostics.move_swept_under_tombstone
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // #4232: every recursive cascade here stops dead at DESCENDANT_DEPTH_CAP.
+    //
+    // The engine's R27 walks re-anchor past the cap and warn; these cannot (the
+    // batched walk is written against the head shape and this pass runs before
+    // `sqlx::migrate!`). So the truncation stays and the SILENCE goes: each of
+    // the five capped walks in this file now files a `CascadeTruncation`
+    // naming itself and the depth it stopped at.
+    //
+    // The shape is reachable on a healthy vault: a merged sync tree may be
+    // deeper than any locally-enforced bound, because no single device's
+    // create-path guard constrains what a merge produces.
+    //
+    // Every truncation test below is paired with a boundary NEGATIVE at exactly
+    // the cap, so an over-broad probe (one that fired on any deep-ish tree, or
+    // was off by one) reddens rather than passing by luck.
+    // ---------------------------------------------------------------------
+
+    /// Seed `create_block` ops for one chain `<prefix>0` (root, no parent) →
+    /// `<prefix>1` → … → `<prefix>{depth}`, i.e. `depth` levels BELOW the root.
+    /// `created_at` tracks `seq` so the replay order is the seeding order.
+    /// Returns the next free `seq`.
+    async fn seed_chain(
+        pool: &SqlitePool,
+        prefix: &str,
+        depth: usize,
+        t0: i64,
+        first_seq: i64,
+    ) -> i64 {
+        let mut seq = first_seq;
+        for level in 0..=depth {
+            let id = format!("{prefix}{level}");
+            let parent = (level > 0).then(|| format!("{prefix}{}", level - 1));
+            seed_create_op(pool, seq, &id, parent.as_deref(), t0 + seq).await;
+            seq += 1;
+        }
+        seq
+    }
+
+    /// [`DESCENDANT_DEPTH_CAP`] as a chain length / index bound. A helper rather
+    /// than an `as` cast at each site, which is a lossy-cast lint.
+    fn depth_cap() -> usize {
+        usize::try_from(DESCENDANT_DEPTH_CAP).expect("the depth cap is a small positive constant")
+    }
+
+    async fn block_exists(pool: &SqlitePool, id: &str) -> bool {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            > 0
+    }
+
+    fn truncation(cascade: &'static str, block_id: &str) -> CascadeTruncation {
+        CascadeTruncation {
+            cascade,
+            block_id: block_id.to_owned(),
+            depth: DESCENDANT_DEPTH_CAP,
+        }
+    }
+
+    /// #4232 acceptance, on the `delete_block` cascade (#429). A chain one
+    /// level deeper than the cap: the cascade stamps the cohort down to the
+    /// frontier and stops, leaving `c{CAP+1}` LIVE under a tombstoned ancestor
+    /// — an invisible orphan the rebuilt table carries and the live one does
+    /// not.
+    ///
+    /// Pre-fix this replay returned a `ReplayDiagnostics` with nothing in it:
+    /// the truncated rebuild was byte-for-byte indistinguishable from a
+    /// complete one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_delete_cascade_reports_its_depth_cap_truncation() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+
+        let seq = seed_chain(&pool, "c", cap + 1, T0, 1).await;
+        seed_delete_op(&pool, seq, "c0", T0 + seq).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // The truncation is REAL, not merely announced: the cap's frontier is
+        // in the cohort and the block one step past it is not.
+        assert_eq!(
+            deleted_at_ms(&pool, &format!("c{cap}")).await,
+            Some(T0 + seq),
+            "the cascade reaches exactly to the depth cap"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, &format!("c{}", cap + 1)).await,
+            None,
+            "one level past the cap is left LIVE under a tombstoned ancestor — the \
+             truncation this test exists to make visible"
+        );
+
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![truncation(CASCADE_DELETE, "c0")],
+            "#4232: the delete cascade must REPORT which walk truncated, on which seed, \
+             and at what depth — reported rather than logged (#3269 R5: the replay may \
+             run twice)"
+        );
+    }
+
+    /// The boundary negative for the same cascade: a chain exactly AT the cap
+    /// is fully reached, so nothing may be reported. Reddens on an off-by-one
+    /// probe (one bounded at the cap instead of one past it) and on any probe
+    /// that fires on depth alone rather than on tree left unreached.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_delete_cascade_at_exactly_the_cap_reports_nothing() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+
+        let seq = seed_chain(&pool, "c", cap, T0, 1).await;
+        seed_delete_op(&pool, seq, "c0", T0 + seq).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        for level in 0..=cap {
+            assert_eq!(
+                deleted_at_ms(&pool, &format!("c{level}")).await,
+                Some(T0 + seq),
+                "a chain at exactly the cap is stamped end to end (c{level})"
+            );
+        }
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![],
+            "nothing was left unreached, so nothing may be reported"
+        );
+    }
+
+    /// #4232 on the `restore_block` cascade (#613), and the harm is the mirror
+    /// image: the deep tail stays TOMBSTONED after a restore that should have
+    /// raised it.
+    ///
+    /// Two deletes at the same `created_at` put the whole `CAP + 1`-deep chain
+    /// into ONE cohort (the second seeds at the frontier, so it reaches past
+    /// where the first stopped; the `deleted_at IS NULL` guard leaves the
+    /// already-stamped rows alone). The restore then keys on that shared token
+    /// and truncates at the cap.
+    ///
+    /// Also pins that the report is per-WALK, not per-replay: the first delete
+    /// truncates and the second does not, so the vector names two cascades, in
+    /// replay order, not one aggregate "something truncated".
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_restore_cascade_reports_its_depth_cap_truncation() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+
+        let seq = seed_chain(&pool, "c", cap + 1, T0, 1).await;
+        let cohort = T0 + seq;
+        seed_delete_op(&pool, seq, "c0", cohort).await;
+        // Same cohort timestamp, seeded at the frontier: sweeps up the tail the
+        // first cascade could not reach. Its own subtree is 1 deep, so THIS
+        // delete does not truncate.
+        seed_delete_op(&pool, seq + 1, &format!("c{cap}"), cohort).await;
+        seed_replay_op(
+            &pool,
+            seq + 2,
+            "restore_block",
+            &serde_json::json!({ "block_id": "c0", "deleted_at_ref": cohort }),
+            cohort + 1,
+        )
+        .await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            deleted_at_ms(&pool, &format!("c{cap}")).await,
+            None,
+            "the restore reaches exactly to the depth cap"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, &format!("c{}", cap + 1)).await,
+            Some(cohort),
+            "one level past the cap stays TRASHED after a restore of its own cohort — \
+             the restore-side truncation"
+        );
+
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![
+                truncation(CASCADE_DELETE, "c0"),
+                truncation(CASCADE_RESTORE, "c0"),
+            ],
+            "#4232: one entry per truncated WALK, naming which cascade — the frontier \
+             delete reached everything below it and must NOT appear"
+        );
+    }
+
+    /// #4232 on the `purge_block` cascade (#615), whose truncation is the worst
+    /// of the four descendant walks: the unreached tail survives the purge, and
+    /// the orphan cleanup that runs after the replay loop then sets its dangling
+    /// `parent_id` to NULL — PROMOTING user-destroyed data to a live top-level
+    /// block, which is the exact resurrection #615 closed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_purge_cascade_reports_its_depth_cap_truncation() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+
+        let seq = seed_chain(&pool, "c", cap + 1, T0, 1).await;
+        seed_replay_op(
+            &pool,
+            seq,
+            "purge_block",
+            &serde_json::json!({ "block_id": "c0" }),
+            T0 + seq,
+        )
+        .await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        // `ensure_blocks_table_exists` wraps the head-shaped attempt in a
+        // transaction carrying `PRAGMA defer_foreign_keys = ON`, so the replay's
+        // intermediate states (dangling `parent_id`s, `page_id` derived only
+        // afterwards) are legal and only the committed state is checked; the
+        // scaffold fallback has no FK constraints at all. These tests call the
+        // replay directly, in autocommit, where that deferral has nothing to
+        // attach to — so stand it in per-connection. Without it the truncated
+        // purge (whose surviving tail still points at a deleted parent) aborts
+        // on an immediate FK check and the test never reaches the behaviour it
+        // is about.
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let tail = format!("c{}", cap + 1);
+        assert!(
+            !block_exists(&pool, &format!("c{cap}")).await,
+            "the purge reaches exactly to the depth cap"
+        );
+        assert!(
+            block_exists(&pool, &tail).await,
+            "one level past the cap SURVIVES the purge"
+        );
+        assert_eq!(
+            parent_of(&pool, &tail).await,
+            None,
+            "and the post-replay orphan cleanup promotes it to a live top-level block — \
+             purged data resurrected in the rebuilt table"
+        );
+
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![truncation(CASCADE_PURGE, "c0")],
+            "#4232: the purge cascade must name itself, so a post-mortem can tell \
+             resurrected purged data from a merely incomplete trash cohort"
+        );
+    }
+
+    /// #4232 on the `move_block` arm's DOWNWARD sweep (#4187). `P` is trashed,
+    /// `b0` is moved under it carrying a `CAP + 1`-deep subtree; the sweep
+    /// stamps the cohort to the cap and stops, so the tail stays live under a
+    /// tombstone — the invisible orphan #4187 exists to remove, reintroduced
+    /// below depth 100.
+    ///
+    /// The upward probe here is NOT truncated (`P` is the parent, depth 1), so
+    /// exactly one entry appears and it names the sweep, not the probe.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_sweep_cascade_reports_its_depth_cap_truncation() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+
+        let seq = seed_chain(&pool, "b", cap + 1, T0, 1).await;
+        seed_create_op(&pool, seq, "P", None, T0 + seq).await;
+        seed_delete_op(&pool, seq + 1, "P", T0 + seq + 1).await;
+        seed_move_op(&pool, seq + 2, "b0", "P", T0 + seq + 2).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let cohort = deleted_at_ms(&pool, "P").await;
+        assert_eq!(cohort, Some(T0 + seq + 1), "P's own cohort anchor");
+        assert_eq!(
+            diagnostics.move_swept_under_tombstone,
+            vec!["b0".to_string()],
+            "the sweep DID fire — this test is about its reach, not its trigger"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, &format!("b{cap}")).await,
+            cohort,
+            "the sweep reaches exactly to the depth cap"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, &format!("b{}", cap + 1)).await,
+            None,
+            "one level past the cap is left live under a tombstoned ancestor"
+        );
+
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![truncation(CASCADE_MOVE_SWEEP, "b0")],
+            "#4232: the sweep cascade truncated; its ancestor probe (P is the parent, \
+             depth 1) did not, and must not be reported"
+        );
+    }
+
+    /// #4232 on the fifth capped walk — the `move_block` arm's UPWARD
+    /// nearest-tombstoned-ancestor probe, which the issue's list of four does
+    /// not name.
+    ///
+    /// `c0` is trashed while childless; the chain `c1..c{CAP}` is then created
+    /// UNDER it (a peer adding children to a block another device concurrently
+    /// deleted — the shape
+    /// `recover_move_of_an_already_tombstoned_block_keeps_its_original_cohort`
+    /// already relies on), so every ancestor between `X` and the tombstone is
+    /// LIVE. `c0` therefore sits at depth `CAP + 1` from `X`, one step beyond
+    /// the probe, and the sweep does not fire at all.
+    ///
+    /// This is the truncation whose silence is most complete: no cohort is
+    /// stamped, no row differs from a correct no-op, and pre-fix the returned
+    /// diagnostics were empty — identical to the overwhelmingly common case of
+    /// a move under a live parent.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_ancestor_probe_reports_its_depth_cap_truncation() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+
+        seed_create_op(&pool, 1, "c0", None, T0 + 1).await;
+        seed_delete_op(&pool, 2, "c0", T0 + 2).await;
+        let mut seq = 3;
+        for level in 1..=cap {
+            seed_create_op(
+                &pool,
+                seq,
+                &format!("c{level}"),
+                Some(&format!("c{}", level - 1)),
+                T0 + seq,
+            )
+            .await;
+            seq += 1;
+        }
+        seed_create_op(&pool, seq, "X", None, T0 + seq).await;
+        seed_move_op(&pool, seq + 1, "X", &format!("c{cap}"), T0 + seq + 1).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            deleted_at_ms(&pool, "c0").await,
+            Some(T0 + 2),
+            "the tombstone the probe was supposed to find is really there"
+        );
+        assert_eq!(
+            parent_of(&pool, "X").await,
+            Some(format!("c{cap}")),
+            "the move is applied regardless"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "X").await,
+            None,
+            "the probe missed the tombstone at depth CAP+1, so X is left live under a \
+             trashed root — the silent wrong answer"
+        );
+        assert!(
+            diagnostics.move_swept_under_tombstone.is_empty(),
+            "no sweep fired: {:?}",
+            diagnostics.move_swept_under_tombstone
+        );
+
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![truncation(CASCADE_MOVE_SWEEP_ANCESTOR_PROBE, "X")],
+            "#4232: an unbounded probe would have found the tombstone, so the capped one \
+             must say it ran out of rope"
+        );
+    }
+
+    /// The boundary positive's mirror, one level shallower: `c0` sits at
+    /// exactly depth `CAP` from `X`, the production probe reaches it, the sweep
+    /// fires, and nothing is reported.
+    ///
+    /// What this pins is the SWEEP at the cap boundary, not the truncation
+    /// probe. Because the tombstone is found, `ancestor_probe_truncated` is
+    /// never consulted here at all, so this case is blind to both an off-by-one
+    /// in that probe and to the loss of the `is_none()` suppression guard — the
+    /// two shapes it reads as if it rejected. Those are pinned by
+    /// `recover_move_ancestor_probe_at_exactly_the_cap_with_no_tombstone_reports_nothing`
+    /// and
+    /// `recover_move_ancestor_probe_suppressed_when_a_tombstone_was_found_within_the_cap`
+    /// respectively.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_ancestor_probe_at_exactly_the_cap_reports_nothing() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+        // `c0` is at depth `chain_len + 1` from X; we want exactly `cap`.
+        let chain_len = cap - 1;
+
+        seed_create_op(&pool, 1, "c0", None, T0 + 1).await;
+        seed_delete_op(&pool, 2, "c0", T0 + 2).await;
+        let mut seq = 3;
+        for level in 1..=chain_len {
+            seed_create_op(
+                &pool,
+                seq,
+                &format!("c{level}"),
+                Some(&format!("c{}", level - 1)),
+                T0 + seq,
+            )
+            .await;
+            seq += 1;
+        }
+        seed_create_op(&pool, seq, "X", None, T0 + seq).await;
+        seed_move_op(&pool, seq + 1, "X", &format!("c{chain_len}"), T0 + seq + 1).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            deleted_at_ms(&pool, "X").await,
+            Some(T0 + 2),
+            "the probe reaches the tombstone at exactly the cap, so X joins its cohort"
+        );
+        assert_eq!(
+            diagnostics.move_swept_under_tombstone,
+            vec!["X".to_string()],
+            "the sweep fired"
+        );
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![],
+            "the walk answered completely, so nothing may be reported"
+        );
+    }
+
+    /// The upward probe's REAL boundary negative: the probe is consulted (no
+    /// tombstone is found, so the `is_none()` arm runs) and the chain's top
+    /// sits at exactly depth `CAP` from `X`, so the climb answered completely.
+    ///
+    /// Unlike
+    /// `recover_move_ancestor_probe_at_exactly_the_cap_reports_nothing`, which
+    /// finds a tombstone and therefore never reaches the probe, this is the
+    /// case an off-by-one probe cannot pass: bounded at `CAP` instead of
+    /// `CAP + 1` it would see `c0` at depth `CAP` and report a truncation on a
+    /// walk that ran to the root.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_ancestor_probe_at_exactly_the_cap_with_no_tombstone_reports_nothing() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+        // `c0` ends up at depth `chain_len + 1` from `X`; we want exactly `cap`.
+        let chain_len = cap - 1;
+
+        // Every block LIVE: no delete op anywhere in the log.
+        let mut seq = seed_chain(&pool, "c", chain_len, T0, 1).await;
+        seed_create_op(&pool, seq, "X", None, T0 + seq).await;
+        seq += 1;
+        seed_move_op(&pool, seq, "X", &format!("c{chain_len}"), T0 + seq).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            parent_of(&pool, "X").await,
+            Some(format!("c{chain_len}")),
+            "the move is applied"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "X").await,
+            None,
+            "there is no tombstone to sweep into"
+        );
+        assert!(
+            diagnostics.move_swept_under_tombstone.is_empty(),
+            "no sweep fired: {:?}",
+            diagnostics.move_swept_under_tombstone
+        );
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![],
+            "the climb reached the root within the cap, so nothing may be reported"
+        );
+    }
+
+    /// The suppression rule, which no other test reaches: a tombstone found
+    /// WITHIN the cap is by construction the nearest one (`ORDER BY a.depth
+    /// LIMIT 1` over ancestors 1..CAP), so the probe must stay silent even
+    /// though the chain provably continues past `CAP + 1`.
+    ///
+    /// `c{CAP}` is tombstoned as a descendant of `delete_block(c{CAP - 1})`, so
+    /// `X`'s nearest tombstoned ancestor is at depth 1 — while `c0` sits at
+    /// depth `CAP + 1`, exactly the level `ancestor_probe_truncated` reports on.
+    /// Dropping the `tombstoned_ancestor.is_none()` guard turns this red; with
+    /// it, the answer could not have changed and the report would be noise.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_ancestor_probe_suppressed_when_a_tombstone_was_found_within_the_cap() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+
+        let mut seq = seed_chain(&pool, "c", cap, T0, 1).await;
+        // Trashes `c{cap - 1}` and its only descendant `c{cap}`.
+        let cohort = T0 + seq;
+        seed_delete_op(&pool, seq, &format!("c{}", cap - 1), cohort).await;
+        seq += 1;
+        seed_create_op(&pool, seq, "X", None, T0 + seq).await;
+        seq += 1;
+        seed_move_op(&pool, seq, "X", &format!("c{cap}"), T0 + seq).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            deleted_at_ms(&pool, &format!("c{cap}")).await,
+            Some(cohort),
+            "the nearest tombstoned ancestor sits at depth 1 from X"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "X").await,
+            Some(cohort),
+            "so the sweep fired and X joined that cohort"
+        );
+        assert_eq!(
+            diagnostics.move_swept_under_tombstone,
+            vec!["X".to_string()],
+        );
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![],
+            "the chain continues to `c0` at depth CAP + 1, but a nearer tombstone was already \
+             found, so the unreachable part could not have changed the answer"
+        );
+    }
+
+    /// #4232, the probe's known FALSE POSITIVE on the upward arm, pinned as a
+    /// documented characteristic rather than left as a surprise: `X` is moved
+    /// under a chain deeper than the cap that carries NO tombstone at any
+    /// depth. The production probe's `None` is the right answer, the sweep is
+    /// right not to fire, every row is right — and a truncation is still
+    /// reported, because the probe establishes only that the climb was cut off.
+    ///
+    /// This is the most FREQUENT report on the very vault #4232 is about (a
+    /// merged tree deeper than the cap): one per `move_block` op under the deep
+    /// chain. `ReplayDiagnostics::emit` therefore says "verify", not "this is
+    /// wrong"; making it exact needs the depth-unbounded re-anchoring walk,
+    /// i.e. the issue's option 1.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_ancestor_probe_reports_a_deep_live_chain_with_no_tombstone() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+
+        // One link deeper than the boundary negative above: `c0` lands at
+        // depth `CAP + 1` from `X`. Still no delete op anywhere.
+        let mut seq = seed_chain(&pool, "c", cap, T0, 1).await;
+        seed_create_op(&pool, seq, "X", None, T0 + seq).await;
+        seq += 1;
+        seed_move_op(&pool, seq, "X", &format!("c{cap}"), T0 + seq).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        // The rebuild is CORRECT: nothing is tombstoned, so an unbounded climb
+        // would also have found no tombstoned ancestor and also not swept.
+        assert_eq!(deleted_at_ms(&pool, "X").await, None);
+        assert_eq!(deleted_at_ms(&pool, "c0").await, None);
+        assert!(diagnostics.move_swept_under_tombstone.is_empty());
+
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![truncation(CASCADE_MOVE_SWEEP_ANCESTOR_PROBE, "X")],
+            "structural, not semantic: the climb ran out of rope, which is all the report \
+             claims — see `descendant_cascade_truncated`'s \"What this does NOT establish\""
+        );
+    }
+
+    /// The same characteristic on a DOWNWARD arm, where it is easiest to see
+    /// that the reported walk wrote exactly the rows an uncapped one would
+    /// have: everything past the cap is already tombstoned in an earlier
+    /// cohort, so the delete cascade's `deleted_at IS NULL` guard would have
+    /// skipped it even with unlimited reach. The rebuilt table is
+    /// byte-identical to the uncapped rebuild, and the truncation is reported
+    /// anyway.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_delete_cascade_truncation_is_structural_not_semantic() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+        let tail = format!("c{}", cap + 1);
+
+        let seq = seed_chain(&pool, "c", cap + 1, T0, 1).await;
+        // Trash the one node past the cap first, in a cohort of its own.
+        seed_delete_op(&pool, seq, &tail, T0 + seq).await;
+        seed_delete_op(&pool, seq + 1, "c0", T0 + seq + 1).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            deleted_at_ms(&pool, &tail).await,
+            Some(T0 + seq),
+            "the deep tail keeps its ORIGINAL cohort — which is exactly what an uncapped \
+             cascade would also have left it with, since the guard skips it"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, &format!("c{cap}")).await,
+            Some(T0 + seq + 1),
+            "and the reachable cohort is stamped in full"
+        );
+
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![truncation(CASCADE_DELETE, "c0")],
+            "reported despite a rebuild identical to the uncapped one: the probe mirrors the \
+             cascade's CTE, not the cascade's outer `deleted_at IS NULL` predicate"
         );
     }
 

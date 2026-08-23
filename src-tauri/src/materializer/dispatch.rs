@@ -1585,6 +1585,92 @@ pub(crate) fn invalidations_for_op(
                     .cloned(),
             );
             if !block_id.is_empty() {
+                // #4209: a RESTORE is the third way a block becomes LINKABLE,
+                // and it was the one #4118 did not observe.
+                //
+                // `reindex_block_links_conn`'s INSERT guard requires the target
+                // to exist AND be live (`… AND deleted_at IS NULL` — invariant
+                // #9), so a token naming a TOMBSTONED target is declined
+                // exactly like one naming a nonexistent block, and since #4118
+                // the declined token is recorded in `block_links_unresolved`.
+                // #4118 discharges that debt from the TARGET's
+                // `ReindexBlockLinks` (`resolve_referrers_of`, task_handlers.rs)
+                // and reaches it on the create / edit / `SetBlockPageId`
+                // space-stamp triggers. This arm reached it on none of them:
+                // the only link-shaped member of `lifecycle_rebuild_tasks` is
+                // the vault-wide `RebuildPageLinkCache`, which *folds*
+                // `block_links` into the page roll-up and so cannot invent a
+                // row that is not there. The unresolved row therefore survived
+                // with nothing left to trigger it, and the edge stayed missing
+                // until one of the two blocks was edited — #4118's permanent
+                // loss, on its uncovered transition.
+                //
+                // The per-block task also repairs the restored block's OWN
+                // outbound edges, which nothing else here re-derives either: a
+                // reindex that ran while the block was soft-deleted read its
+                // content as `WHERE … deleted_at IS NULL` → content-less, and
+                // diffed the whole edge set away (reachable through the
+                // retry-queue sweeper re-running an obligation shed before the
+                // delete, and through `resolve_referrers_of`, which reindexes a
+                // recorded referrer without checking its liveness). That half
+                // leaves NO `block_links_unresolved` row behind — only a live
+                // source owes a target (#4229) — so the target-side push can
+                // never reach it; only a reindex of the restored block can.
+                // `run_reindex_block_links` runs `reindex_one_block_links` for
+                // the restored block before `resolve_referrers_of`, so one task
+                // covers both directions.
+                //
+                // Cheap and idempotent, like the #3296 create-arm reindex: for
+                // a restored block with no link tokens and no waiting referrers
+                // it is two source-keyed index seeks and an empty diff. It is
+                // enqueued INLINE rather than routed through the lifecycle
+                // debounce (`is_global_lifecycle_rebuild` matches only the
+                // argument-less O(vault) rebuilds), and it runs BEFORE the
+                // debounced `RebuildPageLinkCache` — the right order, since
+                // that roll-up folds the rows this task writes.
+                //
+                // SCOPE, stated for the TARGET's delete→restore (the reported
+                // shape, where the SOURCE stays live throughout): an edge that
+                // existed before the target was tombstoned is not affected and
+                // needs nothing — soft-delete does not cascade `block_links`
+                // rows away and downstream consumers filter on liveness, so it
+                // survives the round trip untouched (pinned by
+                // `a_pre_delete_edge_survives_the_targets_delete_restore_untouched_4209`).
+                // Only edges attempted DURING the deleted window are at risk.
+                //
+                // That bound does NOT carry over to the SOURCE's own
+                // delete→restore: there a pre-delete edge survives only while
+                // nothing reindexes the tombstoned source, and the paragraph
+                // above names two things that do. Hence the outbound half —
+                // and hence the reindex, not just a target-side push.
+                //
+                // KNOWN RESIDUAL: the task is seeded for the SEED block only.
+                // A restore un-deletes a whole cohort (descendants + the #1884
+                // contiguous ancestor chain), but `invalidations_for_op` sees
+                // just `record.block_id` — the cohort is computed inside the
+                // apply tx (`ApplyEffects::restored_cohort`) and is not
+                // available here. Both directions are affected for a
+                // non-seed member: a referrer waiting on a restored
+                // DESCENDANT stays stranded, and so do that descendant's own
+                // outbound edges if a deleted-window reindex dropped them.
+                // Either still needs one of the two blocks to be touched. The
+                // cohort is in hand at BOTH post-commit fan-out sites — the
+                // remote/replay `handlers::apply` one and the LOCAL
+                // `commands::blocks::crud::restore_block_inner` one (plus the
+                // two batch-trash paths), which does its own fan-out and never
+                // routes through `apply_op` — so a fix has to cover both.
+                //
+                // SCOPE (path): this arm is the LOCAL command fan-out.
+                // `enqueue_background_tasks` is reached only from
+                // `CommandTx::commit_and_dispatch`; an inbound-sync import
+                // fans out through `enqueue_inbound_sync_rebuilds`, which
+                // carries per-changed-block FTS and `block_tag_refs` tasks but
+                // no per-block link reindex. A restore that arrives from a
+                // PEER therefore still does not reach this pass — the same
+                // path bound #4118's push half already has.
+                tasks.push(MaterializeTask::ReindexBlockLinks {
+                    block_id: Arc::from(block_id),
+                });
                 tasks.push(MaterializeTask::UpdateFtsBlock {
                     block_id: Arc::from(block_id),
                 });
@@ -2347,6 +2433,11 @@ mod tests {
         let r = make_record("restore_block", r#"{"block_id":"R1"}"#, Some("R1"));
         let tasks = invalidations_for_op(&r, None, None).unwrap();
         let mut want = full_rebuild_labels();
+        // #4209: the per-block link reindex that re-links the referrers which
+        // were declined while this block was tombstoned (and re-derives the
+        // block's own outbound edges). Ordered before the FTS task, matching
+        // the arm.
+        want.push("ReindexBlockLinks(R1)".into());
         // Restore re-adds to FTS rather than removing.
         want.push("UpdateFtsBlock(R1)".into());
         assert_eq!(labels(&tasks), want);
@@ -2429,6 +2520,8 @@ mod tests {
         // #2934: a content RESTORE uses CONTENT_RESTORE_REBUILD_TASKS — the
         // page-row rebuild is dropped but the tag-inheritance rebuild is KEPT.
         let mut want = content_restore_rebuild_labels();
+        // #4209: see `invalidations_for_op_restore_block_includes_full_cache_rebuild`.
+        want.push("ReindexBlockLinks(R1)".into());
         want.push("UpdateFtsBlock(R1)".into());
         assert_eq!(labels(&tasks), want);
         assert!(!contains_kind(&tasks, &MaterializeTask::RebuildPagesCache));

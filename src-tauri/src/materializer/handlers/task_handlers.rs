@@ -333,10 +333,30 @@ async fn reindex_one_block_links(
 /// `reindex_block_links_conn` drops a parsed link token whose target does not
 /// yet exist / is not yet live / has no `space_id` stamped. All three are
 /// properties of the TARGET, all three can become true later — a peer can
-/// deliver the referrer before the referent, and `space_id` is stamped
-/// post-commit by `SetBlockPageId` — and the reindexer's only trigger is a
-/// change to the SOURCE's content. With no vault-wide `rebuild_block_links`
-/// behind it, the edge was lost permanently.
+/// deliver the referrer before the referent, `space_id` is stamped post-commit
+/// by `SetBlockPageId`, and a tombstoned target can be RESTORED — and the
+/// reindexer's only trigger is a change to the SOURCE's content. With no
+/// vault-wide `rebuild_block_links` behind it, the edge was lost permanently.
+///
+/// # Which events reach this pass
+///
+/// Every one that enqueues a per-block `ReindexBlockLinks` for the target:
+/// `CreateBlock` and `EditBlock` (#3296), `SetBlockPageId` (#3842 — it re-runs
+/// the whole arm when it stamps the space), and `RestoreBlock` (#4209 — the
+/// third transition, which the original fix did not observe; its arm emitted
+/// only `lifecycle_rebuild_tasks` + `UpdateFtsBlock`, and the sole link member
+/// of that set, the vault-wide `RebuildPageLinkCache`, folds `block_links`
+/// rather than re-deriving it). Adding a fourth means enqueueing the task, not
+/// touching this function.
+///
+/// All four are arms of `invalidations_for_op`, which is reached only from
+/// `CommandTx::commit_and_dispatch` — so this pass is bound to the LOCAL
+/// command path. An inbound-sync import maintains a changed block's OUTBOUND
+/// edges in-tx (`agaric-engine`'s `maintain_pages_cache_counts_after_op` calls
+/// `reindex_block_links_conn` directly, which records the unresolved debt) but
+/// fans out through `enqueue_inbound_sync_rebuilds`, which enqueues no
+/// per-block `ReindexBlockLinks` — so a target that becomes linkable by a
+/// REMOTE op does not reach this push half until something local touches it.
 ///
 /// # Why push and not pull
 ///

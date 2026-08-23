@@ -1555,3 +1555,389 @@ async fn set_block_page_id_space_stamp_relinks_referrers_without_a_page_id_chang
 
     mat.shutdown();
 }
+
+// ====================================================================
+// #4209 — a target RESTORED from soft-delete (#4118's third transition)
+// ====================================================================
+
+// Canonical-ULID fixture ids. Unlike the #4118 tests above — whose ids never
+// leave SQL — these drive a real `RestoreBlock` op, so the id round-trips
+// through `BlockId`'s ULID codec. A ULID's first character encodes only the
+// top 2 bits of the 128-bit value, so anything above `7` OVERFLOWS and is
+// silently normalised (`TT00…` decodes back as `2T00…`), which would aim the
+// restore at a block that does not exist and make the test pass or fail for
+// the wrong reason. Every id here starts `01`.
+const RESTORE_PAGE_P: &str = "01PP0000000000000000000000";
+const RESTORE_SOURCE_S: &str = "01SS0000000000000000000000";
+const RESTORE_TARGET_T: &str = "01TT0000000000000000000000";
+
+/// #4209 — THE reported scenario. A reference written while its target sits
+/// SOFT-DELETED must resolve when the target is restored, without either block
+/// ever being edited again.
+///
+/// #4118 records every declined token in `block_links_unresolved` and
+/// discharges the debt from the TARGET's `ReindexBlockLinks`
+/// (`resolve_referrers_of`). It covers two transitions — the target being
+/// created later and its `space_id` being stamped later — because both ride
+/// events that reach that handler (`CreateBlock`, `EditBlock`,
+/// `SetBlockPageId`). RESTORE is a third, and it did not.
+///
+/// `reindex_block_links_conn`'s INSERT guard is
+/// `WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value AND deleted_at IS
+/// NULL)`, so a TOMBSTONED target is declined exactly like a nonexistent one
+/// and the unresolved row is written. But `RestoreBlock`'s dispatch arm emitted
+/// `lifecycle_rebuild_tasks(...)` + `UpdateFtsBlock` — a set whose only link
+/// member is the vault-wide `RebuildPageLinkCache`, which merely *folds*
+/// `block_links` and therefore cannot invent the missing edge. So the row
+/// survived with nothing left to trigger it and the edge was lost for exactly
+/// as long as neither block was touched again, which in this scenario is
+/// forever: #4118's permanent loss, on the transition its fix does not observe.
+///
+/// The fix is the same trick #4118 used for the space stamp — a per-block
+/// `ReindexBlockLinks` for the restored block, whose handler already runs
+/// `resolve_referrers_of`. No new task kind, no new table.
+///
+/// Reachable without exotica: the referrer is created (locally, or by an
+/// out-of-order remote replay) while the target sits in the trash, and the user
+/// later restores the target.
+///
+/// SCOPE — this is strictly the edge attempted DURING the deleted window. An
+/// edge that existed BEFORE the soft-delete is unaffected and needs no repair;
+/// `a_pre_delete_edge_survives_the_targets_delete_restore_untouched_4209` pins
+/// that, so this test cannot be satisfied by a fix that merely re-adds rows
+/// soft-delete never removed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restored_target_relinks_the_referrers_waiting_on_it_4209() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_p = RESTORE_PAGE_P;
+    let source_s = RESTORE_SOURCE_S;
+    let target_t = RESTORE_TARGET_T;
+
+    for id in [page_p, target_t] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'pg', ?)",
+        )
+        .bind(id)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // The target is in the trash BEFORE the referrer is ever indexed. The
+    // timestamp is `FIXED_TS` because `RestoreBlock` keys its cohort on the
+    // shared `deleted_at` its `deleted_at_ref` names.
+    soft_delete_block_direct(&pool, target_t).await;
+
+    // The referrer arrives during the deleted window and is reindexed by the
+    // real production task, so the declined token is recorded by the real
+    // `sync_unresolved_links` rather than by the test.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', ?, ?, ?, 1)",
+    )
+    .bind(source_s)
+    .bind(format!("link [[{target_t}]]"))
+    .bind(page_p)
+    .bind(page_p)
+    .execute(&pool)
+    .await
+    .unwrap();
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(source_s),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert!(
+        all_edges(&pool).await.is_empty(),
+        "seed: the tombstoned target must be DECLINED by the INSERT's \
+         `deleted_at IS NULL` guard — invariant #9"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, source_s).await,
+        vec![target_t.to_owned()],
+        "seed: and #4118 must have recorded the debt, so the only thing missing \
+         is the trigger"
+    );
+
+    // --- The target is restored, through the real op pipeline. ---
+    let restore = make_op_record(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id(target_t),
+            deleted_at_ref: FIXED_TS,
+        }),
+    )
+    .await;
+    mat.dispatch_op(&restore).await.unwrap();
+    mat.flush().await.unwrap();
+
+    let live: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(target_t)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        live, None,
+        "seed: the restore must actually have un-deleted the target — otherwise the \
+         assertion below would be measuring a restore that never happened"
+    );
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(source_s.to_owned(), target_t.to_owned())],
+        "#4209: restoring the target is the third way it becomes linkable, and the \
+         referrer that was declined for the tombstone must be re-linked. The restore \
+         arm's `RebuildPageLinkCache` only FOLDS `block_links`, so nothing but a \
+         per-block `ReindexBlockLinks` on the restored block can produce this row"
+    );
+    assert!(
+        unresolved_targets(&pool, source_s).await.is_empty(),
+        "and the recorded debt must be discharged"
+    );
+
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache ORDER BY 1, 2",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(page_p.to_owned(), target_t.to_owned(), 1)],
+        "and the page-level roll-up the graph view reads must gain the edge too"
+    );
+
+    mat.shutdown();
+}
+
+/// #4209, the OUTBOUND half — a block reindexed WHILE soft-deleted loses its
+/// own outbound edges, and the restore must give them back.
+///
+/// This is the other side of the same missing trigger, and it is not
+/// symmetrical with the inbound case: no `block_links_unresolved` row records
+/// it. `reindex_block_links_conn` reads its source content as
+/// `SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL`, so a
+/// tombstoned source reindexes as CONTENT-LESS — `to_delete` becomes its whole
+/// edge set and `new_targets` is empty, which drops the edges AND leaves
+/// `sync_unresolved_links` nothing to record (correctly: only a LIVE source
+/// owes a target, which is the rule the #4229 oracle folds). So
+/// `resolve_referrers_of` on the target can never reach this half; only a
+/// reindex of the restored block itself can.
+///
+/// The loss needs an INTERVENING reindex during the deleted window — which is
+/// why this test drives one the way production does, through the retry-queue
+/// sweeper re-running a `ReindexBlockLinks` obligation that was SHED at enqueue
+/// before the delete and never executed (the shape #3843 measured at 74–90% of
+/// a large import's background fan-out). `resolve_referrers_of` is a second
+/// production route to the same reindex: it re-indexes every recorded referrer
+/// of a target without filtering on the referrer's liveness.
+///
+/// The same per-block `ReindexBlockLinks` on the restore arm repairs this,
+/// because `run_reindex_block_links` runs `reindex_one_block_links` for the
+/// restored block itself before it runs `resolve_referrers_of`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restored_source_regains_the_outbound_edges_a_deleted_window_reindex_dropped_4209() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_p = RESTORE_PAGE_P;
+    let source_s = RESTORE_SOURCE_S;
+    let target_t = RESTORE_TARGET_T;
+
+    for id in [page_p, target_t] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'pg', ?)",
+        )
+        .bind(id)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', ?, ?, ?, 1)",
+    )
+    .bind(source_s)
+    .bind(format!("link [[{target_t}]]"))
+    .bind(page_p)
+    .bind(page_p)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(source_s),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(source_s.to_owned(), target_t.to_owned())],
+        "seed: while both blocks are live the edge exists"
+    );
+
+    // The source goes to the trash carrying an un-executed `ReindexBlockLinks`
+    // obligation — shed at enqueue, so it never ran.
+    soft_delete_block_direct(&pool, source_s).await;
+    sqlx::query(
+        "INSERT INTO materializer_retry_queue \
+             (block_id, task_kind, attempts, last_error, next_attempt_at) \
+         VALUES (?, 'ReindexBlockLinks', 1, ?, 0)",
+    )
+    .bind(source_s)
+    .bind(crate::materializer::retry_queue::SHED_LAST_ERROR)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let re_enqueued = crate::materializer::retry_queue::sweep_once(&pool, &pool, &mat)
+        .await
+        .unwrap();
+    assert!(
+        re_enqueued >= 1,
+        "seed: the sweeper must re-enqueue the shed obligation"
+    );
+    mat.flush_background().await.unwrap();
+
+    assert!(
+        all_edges(&pool).await.is_empty(),
+        "seed: a reindex during the deleted window reads the source as content-less \
+         (`WHERE … deleted_at IS NULL`) and diffs its whole edge set away"
+    );
+    assert!(
+        unresolved_targets(&pool, source_s).await.is_empty(),
+        "seed: and nothing is owed for it — only a LIVE source owes a target — so \
+         `resolve_referrers_of` on the target can never repair this half"
+    );
+
+    // --- The source is restored, through the real op pipeline. ---
+    let restore = make_op_record(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id(source_s),
+            deleted_at_ref: FIXED_TS,
+        }),
+    )
+    .await;
+    mat.dispatch_op(&restore).await.unwrap();
+    mat.flush().await.unwrap();
+
+    let live: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(source_s)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        live, None,
+        "seed: the restore must actually have un-deleted the source"
+    );
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(source_s.to_owned(), target_t.to_owned())],
+        "#4209: the restored block's content names the target again, so its OUTBOUND \
+         edges must be re-derived. Nothing else in the restore set does that — \
+         `RebuildPageLinkCache` folds `block_links` rather than re-parsing content — \
+         so the per-block `ReindexBlockLinks` is what repairs it"
+    );
+
+    mat.shutdown();
+}
+
+/// #4209 SCOPE — an edge that existed BEFORE the target's soft-delete needs no
+/// repair, and this pins why: soft-delete does not remove `block_links` rows.
+///
+/// The defect is bounded to edges *attempted during the deleted window*. If a
+/// delete had cascaded the target's inbound rows away, the restore would owe a
+/// re-derivation for every referrer of the restored block — a much larger
+/// obligation than the one #4209 adds. It does not: the row survives the whole
+/// delete→restore round trip untouched (downstream consumers filter on
+/// liveness instead), so the per-block reindex is a complete fix rather than a
+/// partial one.
+///
+/// This is the negative half of the pair. Without it the inbound test above
+/// could be satisfied by a fix that merely re-added rows that were never
+/// missing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pre_delete_edge_survives_the_targets_delete_restore_untouched_4209() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page_p = RESTORE_PAGE_P;
+    let source_s = RESTORE_SOURCE_S;
+    let target_t = RESTORE_TARGET_T;
+
+    for id in [page_p, target_t] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'pg', ?)",
+        )
+        .bind(id)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', ?, ?, ?, 1)",
+    )
+    .bind(source_s)
+    .bind(format!("link [[{target_t}]]"))
+    .bind(page_p)
+    .bind(page_p)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(source_s),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(source_s.to_owned(), target_t.to_owned())],
+        "seed: the edge is established while both blocks are live"
+    );
+
+    // The TARGET is soft-deleted. Nothing touches the referrer.
+    soft_delete_block_direct(&pool, target_t).await;
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(source_s.to_owned(), target_t.to_owned())],
+        "the scope claim: a soft-delete does NOT cascade `block_links` away, so the \
+         pre-existing edge is still there while the target is tombstoned"
+    );
+
+    let restore = make_op_record(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id(target_t),
+            deleted_at_ref: FIXED_TS,
+        }),
+    )
+    .await;
+    mat.dispatch_op(&restore).await.unwrap();
+    mat.flush().await.unwrap();
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(source_s.to_owned(), target_t.to_owned())],
+        "and the restore leaves it exactly as it was — no duplicate, no loss. This \
+         is what bounds #4209 to the window: only an edge ATTEMPTED while the \
+         target was tombstoned is ever missing"
+    );
+    assert!(
+        unresolved_targets(&pool, source_s).await.is_empty(),
+        "and no debt was ever owed for it"
+    );
+
+    mat.shutdown();
+}
