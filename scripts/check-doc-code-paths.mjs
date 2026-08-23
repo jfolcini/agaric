@@ -110,7 +110,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, normalize } from 'node:path'
+import { dirname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 
 import {
   initScratchRepo,
@@ -346,18 +346,16 @@ function extractCandidates(text) {
 // historical anchor a test asserts the ABSENCE of (`src/lib/tauri.ts` is
 // 106 lines; the comment calls the anchor "stale" in so many words). A hard
 // check would redden the build on that citation, which is correct as
-// written. So this only ever prints — `check()` never folds it into
-// `failed`.
+// written. So a WARNING itself never folds into `failed` — see `check()`.
 //
 // Known floor: that same `tauri.ts:1871` anchor is permanent by
 // construction (the test it lives in exists to assert the anchor stays
 // gone), so this warning channel opens at a floor of ONE known-intentional
 // citation, not zero — a clean tree still prints one warning line. This is
 // the only entry in that floor as of #4258; if the floor grows beyond
-// deliberately-historical anchors like this one, the fix is an
-// acknowledgment list (baseline it the way `newMisses` is baselined above),
-// NOT deleting the warning — a permanent non-zero floor left undocumented
-// is how a warning channel gets tuned out and ignored.
+// deliberately-historical anchors like this one, add to the acknowledgment
+// list below, NOT delete the warning — a permanent non-zero floor left
+// undocumented is how a warning channel gets tuned out and ignored.
 //
 // `extractCandidates` above already discards the `:N` suffix (that is the
 // whole reason #4244 part (a), the sweep, has to happen by hand instead of
@@ -368,16 +366,78 @@ function extractCandidates(text) {
 // suffix) instead, over the same two surfaces (inline code spans, markdown
 // link targets) `extractCandidates` scans.
 //
-// The one known-intentional entry in this channel's floor (see the header
-// above) — the historical `tauri.ts:1871` anchor. Named here, as a plain
-// literal rather than a baseline file, purely so the warning OUTPUT can
-// say "known-intentional" vs "new" instead of a bare undifferentiated
-// list; this is not a suppression/acknowledgment mechanism (there isn't
-// one — see the header) and nothing here changes `check()`'s exit code.
-const KNOWN_INTENTIONAL_WARNINGS = new Set([
-  'src/lib/__tests__/platform.test.ts src/lib/tauri.ts 1871',
-])
+// #4264 — this WAS "a plain literal … not a suppression/acknowledgment
+// mechanism … nothing here changes check()'s exit code", but a floor that
+// can only ever grow, tagged by a mechanism nothing keeps honest, is
+// exactly the baseline hazard `readBaseline`'s `staleEntries` already
+// exists to close for `newMisses` — so this acknowledgment list gets the
+// SAME shrink-only treatment: an entry whose (doc, ref, maxCited) no
+// longer corresponds to a LIVE warning (the citing file was fixed, the
+// anchor was removed, `platform.test.ts` was renamed) is a STALE entry,
+// and `check()` DOES now fold that into `failed` — never the warning
+// itself, only a rotted acknowledgment of one. Structured records (not
+// pre-joined `warningKey` strings) so the staleness check can read
+// `entry.doc` back out without reparsing the composite key.
+//
+// The staleness test itself is UNGATED over this list — an entry with no
+// matching LIVE warning is stale, full stop. #4264 names TWO rot triggers
+// ("if `platform.test.ts` is RENAMED or the anchor REMOVED"), and a
+// PER-ENTRY gate can only ever catch one of them. Gating on "was this
+// entry's `doc` among the files scanned this run" catches the anchor being
+// removed (the doc is still scanned, it simply no longer warns) and
+// structurally CANNOT catch the doc being renamed: a renamed-away path is
+// by definition not in the scan set, so such a gate skips the entry at
+// exactly the moment it has most certainly rotted — the acknowledgment
+// silently detaches, and the same citation comes back under the new
+// filename tagged NEW, forever, with nothing forcing the dead entry out.
+//
+// What IS gated — once, over the whole list rather than per entry — is
+// whether the tree being judged is the tree this guard SHIPS IN
+// (`GUARD_SELF_PATH`, resolved in `computeMisses`, which hands `check()` the
+// acknowledgments that apply to the tree it judged). That is the isolation
+// `doc-code-paths-baseline.json` gets for free by being a REPO_ROOT-relative
+// FILE a throwaway fixture simply does not have; a source-level literal is
+// embedded unchanged in every fixture instead, so it has to ask explicitly
+// the question the baseline file's absence answers implicitly. Fixtures that
+// never stand up this guard are untouched (`knownIntentionalWarningScenarios`
+// asserts that directly); the real repository, which always tracks this
+// file, gets BOTH rot triggers.
+const KNOWN_INTENTIONAL_WARNINGS = [
+  { doc: 'src/lib/__tests__/platform.test.ts', ref: 'src/lib/tauri.ts', maxCited: 1871 },
+]
 const warningKey = (w) => `${w.doc} ${w.ref} ${w.maxCited}`
+
+// The path this guard occupies in its OWN repository — the marker that says
+// "the acknowledgment list above describes THIS tree". Derived WHOLLY from
+// `import.meta.filename`, DIRECTORY included, by walking up from the
+// script's own location to the repository that contains it and taking the
+// path relative to that root. A hardcoded `scripts/` prefix would have made
+// renaming the file safe (the basename came from `import.meta.filename`
+// already) but MOVING it a silent no-op: the `tracked.has()` lookup below
+// would simply miss, `acknowledged` would resolve empty, and the whole
+// acknowledgment mechanism would go inert with nothing said about it.
+// Deriving both halves means neither operation can defang it quietly.
+//
+// SCRIPT-anchored on purpose, unlike `REPO_ROOT` (cwd-derived — see its
+// comment): the question here is "where does this guard live in its own
+// repo", which is a property of the script, not of the tree under judgement.
+// Under `--self-test` those differ — the script runs against scratch
+// fixtures elsewhere — and the fixture reproduces this exact path to declare
+// itself the guard's home repo.
+//
+// `null` when no containing repository can be found (an unpacked tarball,
+// say). That is reported out loud at the single use site rather than
+// degrading into the same silent inertness the derivation exists to prevent.
+function deriveGuardSelfPath(filename) {
+  let dir = dirname(filename)
+  for (;;) {
+    if (existsSync(join(dir, '.git'))) return relative(dir, filename).split(sep).join('/')
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+}
+const GUARD_SELF_PATH = deriveGuardSelfPath(import.meta.filename)
 
 // @param {string} text
 // @returns {{cleaned: string, lineNumbers: number[]}[]}
@@ -406,13 +466,18 @@ function extractLineCitations(text) {
 }
 
 /**
- * Count a file's lines the way `wc -l` does: the number of `\n` bytes, plus
- * one more if the content does not itself end in a newline (an unterminated
- * final line still counts as a line). A trailing newline is the common case
- * and must NOT add a phantom empty final line — `body.split('\n').length`
- * alone over-counts by exactly one for any newline-terminated file, which
- * would make every citation of the file's true last line look one short of
- * a warning.
+ * Count a file's lines the way an EDITOR numbers them: the number of `\n`
+ * bytes, plus one more if the content does not itself end in a newline (an
+ * unterminated final line still counts as a line). This is NOT what `wc -l`
+ * reports — `wc -l` counts newline bytes only, so `a\nb` (one `\n`, two
+ * editor-visible lines) reports 1, not 2 — but editor-numbering is the
+ * correct semantics for a LINE CITATION (`file.ts:1871` names the line a
+ * reader would land on opening the file), which is the only thing this
+ * function's caller ever bound-checks against. A trailing newline is the
+ * common case and must NOT add a phantom empty final line —
+ * `body.split('\n').length` alone over-counts by exactly one for any
+ * newline-terminated file, which would make every citation of the file's
+ * true last line look one short of a warning.
  *
  * @param {string} body
  */
@@ -605,6 +670,28 @@ function computeMisses() {
     return { exitCode: 0 }
   }
   const tracked = new Set(entries.paths)
+  // #4264 — is the tree under judgement the one this guard SHIPS IN? Only
+  // there does `KNOWN_INTENTIONAL_WARNINGS` describe anything, so only there
+  // may a missing match be called STALE. Read off the tracked set (not
+  // `existsSync`) so it answers about the same copy the rest of the guard is
+  // judging under `--cached`. See that constant's header for why the gate
+  // sits here, on the list as a whole, and not per entry. Resolved to the
+  // list that APPLIES to this tree (empty when it is not this guard's own),
+  // rather than handed to `check()` as a flag for it to branch on again:
+  // "which acknowledgments describe the tree under judgement" is a question
+  // about the tree, and this is the function that knows the tree.
+  // `GUARD_SELF_PATH === null` means the derivation could not find the
+  // repository containing this script at all, so the gate cannot be asked
+  // honestly. Say so instead of resolving empty in silence, which is
+  // indistinguishable from "this simply is not the guard's home tree".
+  if (GUARD_SELF_PATH === null) {
+    process.stderr.write(
+      'check-doc-code-paths: WARNING: no repository found above ' +
+        `${import.meta.filename}; KNOWN_INTENTIONAL_WARNINGS is inert this run.\n`,
+    )
+  }
+  const acknowledged =
+    GUARD_SELF_PATH !== null && tracked.has(GUARD_SELF_PATH) ? KNOWN_INTENTIONAL_WARNINGS : []
   // Every ANCESTOR DIRECTORY of every tracked path, built ONCE from
   // `entries.paths` — not per candidate. A directory-shaped citation (a
   // citing text that names a directory, not a file) resolves by asking
@@ -626,7 +713,17 @@ function computeMisses() {
   const docs = listMarkdownFiles(entries.paths)
   const tsFiles = listTsFiles(entries.paths)
   if (docs.length === 0 && tsFiles.length === 0) {
-    return { misses: [], scanErrors: [], warnings: [], chosen }
+    // A VACUOUS scan — nothing scannable in the tree at all — hands back NO
+    // acknowledgments, whatever the self-path gate said. Staleness is
+    // measured against this run's LIVE warnings, and a run that examined
+    // zero files produces zero warnings for reasons that have nothing to do
+    // with the acknowledgment list. Passing `acknowledged` through here
+    // would turn every entry stale at once and report a tree that tracks
+    // this guard but holds no `.md`/`.ts`/`.tsx` as a rotted list, instead
+    // of the clean no-op it is. Degenerate for the real repository (which
+    // always has both); reachable for a fixture, and for a `--cached` run
+    // over a commit that happens to stage neither.
+    return { misses: [], scanErrors: [], warnings: [], chosen, acknowledged: [] }
   }
   let bodies
   let tsBodies
@@ -752,7 +849,21 @@ function computeMisses() {
   // whatever reason is silently skipped rather than surfaced as a
   // scanError (which WOULD fail the build, exactly what this feature must
   // not do).
+  //
+  // #4264 made that promise conditional and it has to be paid for here.
+  // `staleKnownWarnings` in `check()` judges each acknowledgment against
+  // this run's LIVE `warnings`; if the batch read below throws, every
+  // warning disappears and the acknowledged entry looks rotted, so the
+  // guard would fail after all — telling the maintainer to prune a list
+  // that is perfectly current, and naming a rotted acknowledgment when the
+  // real cause is I/O. Deliberate resolution: keep the read failure
+  // NON-FATAL as the comment above promises, but (a) say out loud that it
+  // happened, naming the actual cause, and (b) withhold the
+  // acknowledgments for this run, because staleness is not measurable from
+  // a warning set that could not be computed. Absence of evidence is not
+  // evidence of rot.
   const warnings = []
+  let targetReadFailed = false
   if (lineCitations.length > 0) {
     let targetBodies
     try {
@@ -762,26 +873,60 @@ function computeMisses() {
         entries,
         env: GIT_ENV,
       })
-    } catch {
+    } catch (err) {
+      targetReadFailed = true
       targetBodies = new Map()
+      process.stderr.write(
+        'check-doc-code-paths: WARNING: could not read the targets of line-numbered ' +
+          `citations (${err.message}); line-bound warnings are skipped this run, and ` +
+          'KNOWN_INTENTIONAL_WARNINGS is not staleness-checked against an uncomputable ' +
+          'warning set.\n',
+      )
     }
-    for (const { doc, resolved, lineNumbers } of lineCitations) {
+    // #4264 — `countFileLines` per UNIQUE target, not per citation: the
+    // reads above are already batched this way (one `readContents` call per
+    // distinct `resolved` path), but the line-count itself used to be
+    // recomputed from scratch for every citation of that same target, same
+    // as the batching this mirrors.
+    const lineCountByTarget = new Map()
+    const lineCountFor = (resolved) => {
+      if (lineCountByTarget.has(resolved)) return lineCountByTarget.get(resolved)
       const body = targetBodies.get(resolved)
-      if (body === undefined) continue
-      const fileLineCount = countFileLines(body)
+      const count = body === undefined ? undefined : countFileLines(body)
+      lineCountByTarget.set(resolved, count)
+      return count
+    }
+    // #4264 — dedupe on the (doc, ref, maxCited) tuple BEFORE pushing: a doc
+    // citing both `path:40` and `path:2-40` produces two `lineCitations`
+    // entries whose `resolved`/`maxCited` are identical (see
+    // `extractLineCitations`'s own header), which would otherwise print the
+    // same warning line twice and double-count it into `knownCount` below.
+    const seenWarningKeys = new Set()
+    for (const { doc, resolved, lineNumbers } of lineCitations) {
+      const fileLineCount = lineCountFor(resolved)
+      if (fileLineCount === undefined) continue
       const maxCited = Math.max(...lineNumbers)
       if (maxCited > fileLineCount) {
+        const key = warningKey({ doc, ref: resolved, maxCited })
+        if (seenWarningKeys.has(key)) continue
+        seenWarningKeys.add(key)
         warnings.push({ doc, ref: resolved, maxCited, fileLineCount })
       }
     }
   }
-  return { misses, scanErrors, warnings, chosen }
+  return {
+    misses,
+    scanErrors,
+    warnings,
+    chosen,
+    acknowledged: targetReadFailed ? [] : acknowledged,
+  }
 }
 
 function check() {
   const result = computeMisses()
   if (result.exitCode !== undefined) return result.exitCode
-  const { misses, scanErrors, warnings, chosen } = result
+  const { misses, scanErrors, warnings, chosen, acknowledged } = result
 
   let baseline
   try {
@@ -794,11 +939,34 @@ function check() {
   const missKeys = new Set(misses.map((m) => baselineKey(m.doc, m.ref)))
   const newMisses = misses.filter((m) => !baselineSet.has(baselineKey(m.doc, m.ref)))
   const staleEntries = baseline.filter((e) => !missKeys.has(baselineKey(e.file, e.ref)))
+  // #4264 — the SAME shrink-only staleness check `staleEntries` runs for the
+  // JSON baseline, applied to `KNOWN_INTENTIONAL_WARNINGS`: an entry whose
+  // (doc, ref, maxCited) is no longer among this run's LIVE `warnings` is a
+  // rotted acknowledgment, not a covered one — whether the citation was
+  // fixed, the anchor removed, or the whole citing file renamed away. The
+  // list is taken as a whole or not at all — `computeMisses` hands over the
+  // acknowledgments that APPLY to the tree it just judged, empty when that
+  // tree is not this guard's own repository at all; see
+  // `KNOWN_INTENTIONAL_WARNINGS`'s own header for why that gate and not a
+  // per-entry "was this doc scanned this run" one, which cannot see a rename
+  // by construction. `acknowledgedKeys` drives the known/new SPLIT below off
+  // the same gated list, so a tree this list does not describe can neither
+  // be failed by it nor borrow its `known-intentional` tag.
+  const acknowledgedKeys = new Set(acknowledged.map(warningKey))
+  const warningKeysPresent = new Set(warnings.map(warningKey))
+  const staleKnownWarnings = acknowledged.filter((e) => !warningKeysPresent.has(warningKey(e)))
   // #4244 part (b) — `warnings` never joins this: it decides whether the
   // run PRINTS, not whether it FAILS. A run with warnings and nothing else
   // wrong must still exit 0 — see `extractLineCitations`'s header for why
-  // (the `tauri.ts:1871` historical citation must stay green).
-  const failed = newMisses.length > 0 || staleEntries.length > 0 || scanErrors.length > 0
+  // (the `tauri.ts:1871` historical citation must stay green). A STALE
+  // acknowledgment of a warning is different: `staleKnownWarnings` is not a
+  // warning, it is a rotted piece of THIS GUARD'S OWN CONFIG, exactly like a
+  // stale baseline entry — so it fails the same way `staleEntries` does.
+  const failed =
+    newMisses.length > 0 ||
+    staleEntries.length > 0 ||
+    scanErrors.length > 0 ||
+    staleKnownWarnings.length > 0
 
   if (!failed && warnings.length === 0) {
     return 0
@@ -852,6 +1020,20 @@ function check() {
     }
     process.stderr.write('\nPrune with:  node scripts/check-doc-code-paths.mjs --update-baseline\n')
   }
+  if (staleKnownWarnings.length > 0) {
+    process.stderr.write(
+      'ERROR: KNOWN_INTENTIONAL_WARNINGS (check-doc-code-paths.mjs) has stale entr(ies) that no longer correspond to a live warning:\n',
+    )
+    for (const e of staleKnownWarnings) {
+      process.stderr.write(
+        `  - ${e.doc} → \`${e.ref}\`  (was acknowledged at line ${e.maxCited})\n`,
+      )
+    }
+    process.stderr.write(
+      '\nThe citation was fixed, the anchor moved, or the doc was renamed — prune the entry from ' +
+        'KNOWN_INTENTIONAL_WARNINGS in scripts/check-doc-code-paths.mjs.\n',
+    )
+  }
   if (scanErrors.length > 0) {
     process.stderr.write(
       'ERROR: file(s) could not be lexed unambiguously, so their comments were not checked:\n',
@@ -866,26 +1048,34 @@ function check() {
     // shrank, or the section moved), but not always — see the
     // `tauri.ts:1871` historical citation above — so this can only ever be
     // a nudge to go look, not a gate.
-    const newWarnings = warnings.filter((w) => !KNOWN_INTENTIONAL_WARNINGS.has(warningKey(w)))
-    const knownCount = warnings.length - newWarnings.length
+    const newWarnings = warnings.filter((w) => !acknowledgedKeys.has(warningKey(w)))
+    const knownWarnings = warnings.filter((w) => acknowledgedKeys.has(warningKey(w)))
+    const knownCount = knownWarnings.length
     process.stderr.write(
       `WARNING: citation(s) name a line number beyond the target file’s current length (${knownCount} known-intentional, ${newWarnings.length} new) —\n`,
     )
     process.stderr.write(
       'the cited line may be stale (or deliberately historical). Not a build failure:\n',
     )
+    // #4264 — NEW-first, THEN known-intentional, so the cap below can only
+    // ever truncate ACKNOWLEDGED warnings, never a genuinely new one. The
+    // `(N known-intentional, M new)` header above already discloses both
+    // totals regardless of the cap, so nothing is silently lost either way —
+    // this just makes the truncation land on the entries that already have
+    // eyes on them.
+    const ordered = [...newWarnings, ...knownWarnings]
     // Same cap-and-tail shape as `newMisses` above: a refactor that shrinks
     // a heavily-cited file (or a mechanical rename sweep) could otherwise
     // dump an unbounded block here.
-    const shownWarnings = warnings.slice(0, 50)
+    const shownWarnings = ordered.slice(0, 50)
     for (const w of shownWarnings) {
-      const tag = KNOWN_INTENTIONAL_WARNINGS.has(warningKey(w)) ? 'known-intentional' : 'NEW'
+      const tag = acknowledgedKeys.has(warningKey(w)) ? 'known-intentional' : 'NEW'
       process.stderr.write(
         `  - ${w.doc} → \`${w.ref}\`  cites line ${w.maxCited}, but the file is only ${w.fileLineCount} line(s) long  (${tag})\n`,
       )
     }
-    if (warnings.length > shownWarnings.length) {
-      process.stderr.write(`  ...and ${warnings.length - shownWarnings.length} more\n`)
+    if (ordered.length > shownWarnings.length) {
+      process.stderr.write(`  ...and ${ordered.length - shownWarnings.length} more\n`)
     }
     process.stderr.write('\n')
   }
@@ -1516,6 +1706,386 @@ function lineBoundsWarningScenarios(root) {
 }
 
 /**
+ * #4274 — `deriveGuardSelfPath` itself, and what the self-test does when it
+ * comes back `null`.
+ *
+ * The derivation is the thing that makes MOVING this guard impossible to do
+ * quietly (see `GUARD_SELF_PATH`'s header), so both of its outcomes are
+ * pinned directly rather than only through the fixtures that consume it:
+ * the DIRECTORY half is derived, not assumed (a guard living at
+ * `tools/nested/…` derives `tools/nested/…`, not a hardcoded `scripts/`),
+ * and a script with NO repository above it derives `null` instead of, say,
+ * an absolute path or a throw.
+ *
+ * The third assertion is the one with the runtime consequence: with
+ * `null` in hand, `knownIntentionalWarningScenarios` used to call
+ * `dirname(null)` and take the ENTIRE self-test down with a `TypeError` —
+ * on an environment (an unpacked tarball, a vendored copy) where nothing
+ * is actually wrong with the guard. Driven by passing `null` explicitly
+ * rather than by relocating this script at test time: the failing input is
+ * a value, so the value is what the test supplies, and the assertion stays
+ * legible without a second scratch checkout of the whole guard.
+ */
+function guardSelfPathDerivationScenarios(root) {
+  const results = []
+  const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+
+  const repoDir = join(root, 'self-path-derivation', 'repo')
+  mkdirSync(join(repoDir, '.git'), { recursive: true })
+  mkdirSync(join(repoDir, 'tools', 'nested'), { recursive: true })
+  const nested = join(repoDir, 'tools', 'nested', 'check-doc-code-paths.mjs')
+  writeFileSync(nested, '// stand-in for a MOVED copy of this guard\n')
+  record(
+    'deriveGuardSelfPath derives the DIRECTORY too — a guard moved to tools/nested/ resolves there, not to a hardcoded scripts/',
+    deriveGuardSelfPath(nested) === 'tools/nested/check-doc-code-paths.mjs',
+    `got ${JSON.stringify(deriveGuardSelfPath(nested))}`,
+  )
+
+  // No `.git` anywhere above it — unless the OS temp dir happens to sit
+  // inside a checkout, in which case the input this case needs cannot be
+  // built here and saying so is more honest than asserting something else.
+  const orphanDir = join(root, 'self-path-derivation', 'no-repo-above')
+  mkdirSync(orphanDir, { recursive: true })
+  const orphan = join(orphanDir, 'check-doc-code-paths.mjs')
+  writeFileSync(orphan, '// stand-in for a copy with no containing repository\n')
+  const derivedOrphan = deriveGuardSelfPath(orphan)
+  if (derivedOrphan === null) {
+    record(
+      'deriveGuardSelfPath returns null (not a throw, not an absolute path) when no repository contains the script',
+      true,
+    )
+  } else {
+    results.push({
+      name: 'deriveGuardSelfPath returns null when no repository contains the script',
+      ok: true,
+      skipped: true,
+      detail: `${tmpdir()} is itself inside a git checkout (derived ${derivedOrphan}), so a repo-less location cannot be constructed here`,
+    })
+  }
+
+  // The consequence: the battery that consumes it must REPORT, not crash.
+  let degraded
+  let threw = null
+  try {
+    degraded = knownIntentionalWarningScenarios(root, null)
+  } catch (err) {
+    threw = err
+  }
+  record(
+    'a null GUARD_SELF_PATH makes the known-intentional battery report itself skipped instead of throwing TypeError',
+    threw === null &&
+      Array.isArray(degraded) &&
+      degraded.length === 1 &&
+      degraded[0].skipped === true &&
+      degraded[0].ok === true &&
+      /no repository found above/.test(degraded[0].detail),
+    threw ? `threw ${threw}` : `got ${JSON.stringify(degraded)}`,
+  )
+
+  return results
+}
+
+/**
+ * #4264 — the ACKNOWLEDGMENT LIST itself, not the warnings it tags. Four
+ * things:
+ *
+ *   0. THE GATE. A throwaway fixture that has not stood this guard up is
+ *      untouched by `KNOWN_INTENTIONAL_WARNINGS` — no false staleness. This
+ *      is what every OTHER scenario in this file silently depends on (the
+ *      list is a source literal, so it is embedded in all of them), asserted
+ *      once, out loud, instead of being inferred from "nothing went red".
+ *   1. STALENESS, BOTH TRIGGERS. #4264 names two ways the entry rots — "if
+ *      `platform.test.ts` is RENAMED or the anchor REMOVED" — so both are
+ *      driven, on a fixture reproducing the REAL entry
+ *      (`src/lib/__tests__/platform.test.ts` citing `src/lib/tauri.ts:1871`)
+ *      key for key, both being repo-relative paths a fixture can name
+ *      exactly. Matching → green and tagged; anchor removed → red; restored
+ *      → green; doc RENAMED with the citation intact → red (the trigger a
+ *      per-entry "was this doc scanned this run" gate cannot see at all,
+ *      because the renamed-away path is not in the scan set); rename undone
+ *      → green. Each arm re-runs the guard against a genuinely mutated tree.
+ *   2. CAP ORDERING. With more than 50 warnings — the real known-intentional
+ *      entry plus 50 distinct NEW ones, i.e. exactly the 51st crossing the
+ *      50-entry cap — the cap must drop the acknowledged warning, never a
+ *      new one, while the header still reports the TRUE totals.
+ *   3. DEDUPE, both directions. A doc citing the same target twice with the
+ *      SAME `maxCited` (`path:N` and `path:M-N`) prints and counts ONCE;
+ *      the same shape with DIFFERENT `maxCited` prints TWICE. The second is
+ *      not decoration: a dedupe keyed too loosely would swallow a real
+ *      second warning, and only the pair can tell the two apart.
+ *
+ * The fixture declares itself the repository this guard ships in by tracking
+ * the guard's own path — the same move `baselineScenarios` makes when it
+ * writes the fixture's own `scripts/doc-code-paths-baseline.json`: guard
+ * config is read from the tree under judgement, so a fixture supplies it the
+ * same way the real repo does.
+ *
+ * The known-intentional fixture is left MATCHING for scenarios 2 and 3
+ * rather than re-touched per scenario: mutating it there would redden the
+ * run under scenario 1's own check, conflating "the cap/dedupe fix works"
+ * with "the staleness check fires".
+ */
+function knownIntentionalWarningScenarios(root, selfPath = GUARD_SELF_PATH) {
+  // #4274 — every fixture below writes `join(dir, selfPath)` to declare
+  // itself this guard's home repository, so a `null` derivation (no
+  // repository above this script at all — an unpacked tarball, a vendored
+  // copy) used to reach `dirname(null)` and abort the WHOLE self-test with a
+  // `TypeError` before any other scenario ran. The runtime path already says
+  // this out loud rather than degrading silently (see `check()`); the
+  // self-test must too. A guard that CRASHES in a legitimate environment
+  // tells its reader nothing about which of its properties still hold — so
+  // this reports the one battery it cannot construct, by name, and lets the
+  // rest of the suite run and be believed.
+  if (selfPath === null) {
+    return [
+      {
+        name: 'the KNOWN_INTENTIONAL_WARNINGS battery (needs this guard’s own repo-relative path)',
+        ok: true,
+        skipped: true,
+        detail:
+          `no repository found above ${import.meta.filename}, so GUARD_SELF_PATH is null and ` +
+          'no fixture can declare itself this guard’s home tree — run the self-test from a git ' +
+          'checkout to exercise it',
+      },
+    ]
+  }
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+    const dir = join(root, 'known-intentional-warnings')
+    const env = scrubbedGitEnv(root)
+    const git = initScratchRepo(dir, env)
+    const run = (flags) => {
+      const r = spawnSync(process.execPath, [import.meta.filename, ...flags], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      })
+      return { status: r.status, stderr: r.stderr ?? '' }
+    }
+
+    // ── 0. THE GATE ──────────────────────────────────────────────────────
+    // No `scripts/<this guard>` yet, so this tree is not the one the
+    // acknowledgment list describes and the list must be wholly inert. With
+    // the gate removed the list's single entry matches nothing here and
+    // would report itself STALE — which is exactly what would happen to
+    // every other fixture in this file, so this assertion is the one
+    // standing in for all of them.
+    mkdirSync(join(dir, 'src', 'lib', '__tests__'), { recursive: true })
+    // Short, so a `:1871` citation of it is out of bounds — reproduces the
+    // real entry's exact (doc, ref, maxCited) key.
+    writeFileSync(
+      join(dir, 'src', 'lib', 'tauri.ts'),
+      'export const A = 1\nexport const B = 2\nexport const C = 3\nexport const D = 4\nexport const E = 5\n',
+    )
+    writeFileSync(join(dir, 'README.md'), 'Nothing is cited here.\n')
+    git('add', '-A')
+    const notHome = run(['--worktree'])
+    record(
+      'a fixture that is NOT this guard’s own repository is untouched by the acknowledgment list',
+      notHome.status === 0 && !/KNOWN_INTENTIONAL_WARNINGS/.test(notHome.stderr),
+      `expected 0 with no KNOWN_INTENTIONAL_WARNINGS output at all, got ${notHome.status}: ${notHome.stderr}`,
+    )
+
+    // ── 0b. THE VACUOUS SCAN ─────────────────────────────────────────────
+    // The gate's other side: a tree that DOES track this guard, so the
+    // acknowledgment list applies to it, but holds nothing scannable at all
+    // (`docs.length === 0 && tsFiles.length === 0`). Zero warnings there is
+    // a consequence of scanning zero files, not of an acknowledgment
+    // rotting, so the run must be the clean no-op it was before #4264 — not
+    // a staleness failure. Its own scratch repo, so scenario 1's mutations
+    // cannot reach it.
+    const emptyDir = join(root, 'known-intentional-vacuous-scan')
+    const emptyEnv = scrubbedGitEnv(root)
+    const emptyGit = initScratchRepo(emptyDir, emptyEnv)
+    mkdirSync(join(emptyDir, dirname(selfPath)), { recursive: true })
+    writeFileSync(
+      join(emptyDir, selfPath),
+      '// self-test marker: this fixture stands in for the repo this guard ships in.\n',
+    )
+    emptyGit('add', '-A')
+    const vacuous = spawnSync(process.execPath, [import.meta.filename, '--worktree'], {
+      cwd: emptyDir,
+      env: emptyEnv,
+      encoding: 'utf8',
+    })
+    record(
+      'a tree that tracks this guard but holds NO scannable file is a clean no-op, not a stale-acknowledgment failure',
+      vacuous.status === 0 && !/KNOWN_INTENTIONAL_WARNINGS/.test(vacuous.stderr ?? ''),
+      `expected 0 with no KNOWN_INTENTIONAL_WARNINGS output, got ${vacuous.status}: ${vacuous.stderr}`,
+    )
+
+    // ── 1. STALENESS ─────────────────────────────────────────────────────
+    // From here the fixture IS the guard's home repository. Tracking the
+    // guard's own path is the whole declaration — the content is never read
+    // (this guard scans `.md`/`.ts`/`.tsx` only), so a marker says it as
+    // honestly as a copy would and cannot drift from the real file. The path
+    // comes from `GUARD_SELF_PATH` itself (via this function's `selfPath`
+    // parameter, which defaults to it), not a re-spelling of it, so
+    // MOVING the guard moves the fixture's marker with it — a hand-written
+    // `scripts/<basename>` here would keep passing scenario 0 and start
+    // failing everything after it.
+    mkdirSync(join(dir, dirname(selfPath)), { recursive: true })
+    writeFileSync(
+      join(dir, selfPath),
+      '// self-test marker: this fixture stands in for the repo this guard ships in.\n',
+    )
+    const citingDoc = join(dir, 'src', 'lib', '__tests__', 'platform.test.ts')
+    const CITATION =
+      '// must NOT carry the stale `src/lib/tauri.ts:1871` doc anchor.\nexport const OK = 1\n'
+    writeFileSync(citingDoc, CITATION)
+    git('add', '-A')
+    const matching = run(['--worktree'])
+    record(
+      'the real KNOWN_INTENTIONAL_WARNINGS entry, reproduced exactly, is tagged known-intentional and stays green',
+      matching.status === 0 &&
+        /known-intentional/.test(matching.stderr) &&
+        !/ERROR: KNOWN_INTENTIONAL_WARNINGS/.test(matching.stderr),
+      `expected 0 tagged known-intentional with no staleness ERROR, got ${matching.status}: ${matching.stderr}`,
+    )
+
+    // TRIGGER (a) — the ANCHOR IS REMOVED. The doc stays tracked and
+    // scanned; the (doc, ref, maxCited) the entry names simply no longer
+    // produces any warning.
+    writeFileSync(citingDoc, '// nothing interesting here anymore.\nexport const OK = 1\n')
+    git('add', '-A')
+    const anchorGone = run(['--worktree'])
+    record(
+      'a KNOWN_INTENTIONAL_WARNINGS entry whose anchor was REMOVED reddens the check',
+      anchorGone.status === 1 &&
+        /ERROR: KNOWN_INTENTIONAL_WARNINGS/.test(anchorGone.stderr) &&
+        /platform\.test\.ts/.test(anchorGone.stderr) &&
+        /tauri\.ts/.test(anchorGone.stderr),
+      `expected 1 with a staleness ERROR naming platform.test.ts/tauri.ts, got ${anchorGone.status}: ${anchorGone.stderr}`,
+    )
+
+    // …and restoring the citation clears it again — staleness tracks the
+    // CURRENT warning set, not a one-way latch.
+    writeFileSync(citingDoc, CITATION)
+    git('add', '-A')
+    const restored = run(['--worktree'])
+    record(
+      'restoring the SAME citation clears the staleness ERROR again',
+      restored.status === 0 && !/ERROR: KNOWN_INTENTIONAL_WARNINGS/.test(restored.stderr),
+      `expected 0 with no staleness ERROR, got ${restored.status}: ${restored.stderr}`,
+    )
+
+    // TRIGGER (b) — the DOC IS RENAMED, citation byte-for-byte intact. The
+    // acknowledged key can never match again: its `doc` no longer names a
+    // file in the tree, and the identical warning now arrives under the new
+    // path. Nothing about the doc is in scope any more, which is precisely
+    // why a gate asking "was this entry's doc scanned this run" skips the
+    // entry here and lets it rot forever.
+    const renamedDoc = join(dir, 'src', 'lib', '__tests__', 'platform-compat.test.ts')
+    rmSync(citingDoc)
+    writeFileSync(renamedDoc, CITATION)
+    git('add', '-A')
+    const renamed = run(['--worktree'])
+    record(
+      'a KNOWN_INTENTIONAL_WARNINGS entry whose doc was RENAMED AWAY reddens the check (the #4264 trigger a per-entry gate cannot see)',
+      renamed.status === 1 &&
+        /ERROR: KNOWN_INTENTIONAL_WARNINGS/.test(renamed.stderr) &&
+        /- src\/lib\/__tests__\/platform\.test\.ts/.test(renamed.stderr),
+      `expected 1 with a staleness ERROR naming the OLD path platform.test.ts, got ${renamed.status}: ${renamed.stderr}`,
+    )
+    record(
+      'the renamed doc’s identical citation is re-reported as NEW, so the rename is a detached acknowledgment and not a vanished warning',
+      /platform-compat\.test\.ts .*cites line 1871.*\(NEW\)/.test(renamed.stderr),
+      `expected the same citation tagged NEW under the new path, got: ${renamed.stderr}`,
+    )
+
+    // Undo the rename — green again, and scenarios 2 and 3 inherit a
+    // matching fixture.
+    rmSync(renamedDoc)
+    writeFileSync(citingDoc, CITATION)
+    git('add', '-A')
+    const unrenamed = run(['--worktree'])
+    record(
+      'undoing the rename clears the staleness ERROR again',
+      unrenamed.status === 0 && !/ERROR: KNOWN_INTENTIONAL_WARNINGS/.test(unrenamed.stderr),
+      `expected 0 with no staleness ERROR, got ${unrenamed.status}: ${unrenamed.stderr}`,
+    )
+
+    // ── 2. CAP ORDERING ──────────────────────────────────────────────────
+    // One known-intentional warning is already live. Add 50 distinct NEW
+    // out-of-bounds citations, for 51 total — the exact boundary at which
+    // the 50-entry cap first truncates anything.
+    //
+    // The 50 live in `src/lib/gen/*.ts`, NOT in `docs/*.md`, and that is
+    // load-bearing rather than incidental. `computeMisses` judges every `.md`
+    // doc before any `.ts` file, and within `.ts` it walks the tracked list in
+    // sort order, where `src/lib/__tests__/` precedes `src/lib/gen/`. So a
+    // markdown fixture would put the 50 new warnings ahead of the
+    // acknowledged one in DISCOVERY order, and an unsorted `slice(0, 50)`
+    // would truncate the acknowledged one all by itself — the assertions
+    // below would pass against the very bug they exist to catch (measured:
+    // with the NEW-first sort deleted, a `docs/*.md` fixture still went
+    // green). Sourcing them from `src/lib/gen/` makes the acknowledged
+    // warning the FIRST one discovered, which is the only arrangement in
+    // which the cap's ordering is observable at all.
+    mkdirSync(join(dir, 'src', 'lib', 'gen'), { recursive: true })
+    for (let i = 0; i < 50; i++) {
+      writeFileSync(
+        join(dir, 'src', 'lib', 'gen', `w${i}.ts`),
+        `// See \`src/lib/tauri.ts:9999\` (generated warning ${i}).\nexport const W${i} = ${i}\n`,
+      )
+    }
+    git('add', '-A')
+    const capped = run(['--worktree'])
+    record(
+      '51 total warnings (1 known-intentional + 50 new) — the header counts both regardless of the cap',
+      capped.status === 0 && /\(1 known-intentional, 50 new\)/.test(capped.stderr),
+      `expected the (1 known-intentional, 50 new) header, got ${capped.status}: ${capped.stderr}`,
+    )
+    record(
+      'the cap truncates the ACKNOWLEDGED warning, not a new one — no known-intentional tag survives the cut',
+      !/\(known-intentional\)\n/.test(capped.stderr) &&
+        (capped.stderr.match(/\(NEW\)\n/g) ?? []).length === 50 &&
+        /\.\.\.and 1 more/.test(capped.stderr),
+      `expected 50 surviving "(NEW)" bullets, no "(known-intentional)" bullet and a "...and 1 more" tail, got: ${capped.stderr}`,
+    )
+
+    // ── 3. DEDUPE ────────────────────────────────────────────────────────
+    // Clear the 50 generated files; the known-intentional warning stays live.
+    rmSync(join(dir, 'src', 'lib', 'gen'), { recursive: true, force: true })
+    writeFileSync(
+      join(dir, 'README.md'),
+      'See `src/lib/tauri.ts:40` and also `src/lib/tauri.ts:2-40` for the constant.\n',
+    )
+    git('add', '-A')
+    const duped = run(['--worktree'])
+    record(
+      'the same target cited as `path:N` and `path:M-N` (identical maxCited) prints as ONE warning, not two',
+      duped.status === 0 &&
+        (duped.stderr.match(/cites line 40/g) ?? []).length === 1 &&
+        /\(1 known-intentional, 1 new\)/.test(duped.stderr),
+      `expected exactly one "cites line 40" bullet and a (1 known-intentional, 1 new) header, got ${duped.status}: ${duped.stderr}`,
+    )
+
+    // The other half of the pair: the SAME two shapes, differing only in the
+    // line number they top out at, are two DIFFERENT warnings and must both
+    // survive. Without this, a dedupe that keyed on (doc, ref) alone — and
+    // so silently swallowed a second, genuinely distinct out-of-bounds
+    // citation — would pass the assertion above unchanged.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'See `src/lib/tauri.ts:40` and also `src/lib/tauri.ts:2-41` for the constant.\n',
+    )
+    git('add', '-A')
+    const distinct = run(['--worktree'])
+    record(
+      'the same doc and target at DIFFERENT maxCited are NOT collapsed — two bullets, counted twice',
+      distinct.status === 0 &&
+        /cites line 40/.test(distinct.stderr) &&
+        /cites line 41/.test(distinct.stderr) &&
+        /\(1 known-intentional, 2 new\)/.test(distinct.stderr),
+      `expected both "cites line 40" and "cites line 41" bullets and a (1 known-intentional, 2 new) header, got ${distinct.status}: ${distinct.stderr}`,
+    )
+    return results
+  })
+}
+
+/**
  * #4126 — the shrink-only baseline. Three assertions, each proving one
  * direction the mechanism must hold:
  *   1. a miss LISTED in the baseline is grandfathered (green);
@@ -1695,11 +2265,21 @@ function selfTest() {
     results.push(...bareCitationScenarios(root))
     results.push(...partiallyRootedCitationScenarios(root))
     results.push(...lineBoundsWarningScenarios(root))
+    results.push(...guardSelfPathDerivationScenarios(root))
+    results.push(...knownIntentionalWarningScenarios(root))
     results.push(...baselineScenarios(root))
     results.push(...corruptBaselineScenarios(root))
     let failures = 0
     for (const result of results) {
-      if (result.ok) {
+      if (result.skipped) {
+        // A battery that could not be CONSTRUCTED in this environment, as
+        // opposed to one that ran and passed. Printed with its reason and
+        // counted as neither pass nor failure: silently omitting it would
+        // let a self-test that exercised strictly less still print the same
+        // "self-test OK", and failing it would redden a legitimate
+        // environment over something the guard cannot ask there (#4274).
+        console.log(`  skip - ${result.name}: ${result.detail}`)
+      } else if (result.ok) {
         console.log(`  ok   - ${result.name}`)
       } else {
         failures += 1

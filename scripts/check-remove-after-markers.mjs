@@ -101,30 +101,110 @@
 // needs the phrase to name a real deadline or be reported malformed, same
 // as before.
 //
-// Fence detection (`MD_FENCE_RE`): a line consisting of only leading
-// whitespace (0–3 spaces, matching CommonMark's list-indent allowance) then
-// 3-or-more backticks or tildes OPENS a fence, recording its delimiter
-// CHARACTER and LENGTH; the fence delimiter line itself, and every line
-// while a fence is open, are skipped before either marker regex runs. A
-// later fence-shaped line only CLOSES it if the run uses the SAME character
-// and is AT LEAST AS LONG as the opener, and carries nothing else on the
-// line — CommonMark's own closing-fence rule. This matters: a doc that
-// nests a shorter example fence inside a longer one (```` wrapping a
-// literal ``` shown as text, or vice versa with `~~~`/backticks mixed) must
-// not have the inner delimiter-shaped line close the OUTER fence early —
-// early closing does not just under-hide the nested example, it also
-// desyncs the open/close PARITY for the rest of the file, which can hide a
-// later, genuinely live marker in ordinary prose that was never meant to be
-// fenced at all. (This was live and demonstrable before length/character
-// matching was added — see `fenceStateMachineScenarios` in the self-test
-// below.) An odd number of correctly-matched fence delimiters (an
-// unterminated fence) leaves it open through end of file. At the document
-// level that is the same "rest of the document is code" reading CommonMark
-// itself gives an unclosed fence; CommonMark actually closes an unclosed
-// fence at the end of its *containing block* (e.g. a list item), so a fence
-// opened inside a list item and never closed diverges from CommonMark
-// there — this scanner has no notion of block containers, so it keeps the
-// fence open through EOF regardless. Deliberate, not a special case here.
+// Fence detection (`MD_FENCE_RE`): a line consisting of leading SPACES
+// (capped at 0–3, CommonMark's own per-container fence-indent allowance —
+// spaces only, never a tab, which CommonMark expands to the next 4-column
+// tab stop and is therefore already indented code, not a fence),
+// then 3-or-more backticks or tildes OPENS a fence, recording its delimiter
+// CHARACTER, LENGTH, and blockquote NESTING DEPTH; the fence delimiter line
+// itself, and every line while a fence is open, are skipped before either
+// marker regex runs.
+//
+// Widened for #4174, in PART: the 0–3-space allowance may now be preceded
+// by one or more `>` blockquote markers (each optionally preceded by 0–3
+// spaces of its own, `MD_FENCE_RE`'s `(?: {0,3}>)*` — CommonMark's cap on
+// the indent before a block-quote marker), so a fence written
+// inside a blockquote — `> ` followed by the delimiter — is recognized.
+// Before this, that shape never matched at all: the "fence" never opened,
+// and a `REMOVE AFTER` marker written inside one as inert documentation was
+// scanned as ordinary text and falsely reported.
+//
+// FORWARD-LOOKING, stated rather than implied: no tracked `.md` in this repo
+// carries a blockquoted fence today. CONTRIBUTING.md's own "Marking code with
+// a removal deadline" section — the obvious candidate, and the one an earlier
+// draft of this comment wrongly cited — writes its illustrations in PLAIN
+// ```` ```rust ```` fences (CONTRIBUTING.md's `### Marking code with a removal
+// deadline` section), which the 0–3-space rule already exempted before #4174.
+// So this widening changes the verdict on nothing currently in the tree; it
+// exists because the blockquoted shape is a natural way to quote an example
+// (#4174 reports it from a doc under review) and because being falsely
+// reported for it would push an author toward NOT documenting the convention.
+//
+// #4174 ALSO asked to recognize a fence nested inside a list item at 4+
+// spaces of content indent (legal CommonMark once the list item's own
+// marker is wide enough, e.g. a two-digit ordered marker, "10. ", is
+// itself 4 columns) by making the leading whitespace unbounded instead of
+// capped at 0–3. That half was tried and REJECTED on review: this scanner
+// has no notion of list-item content columns, so "unbounded whitespace
+// opens a fence" cannot tell a list-nested fence apart from a plain
+// 4-space INDENTED CODE block (not inside a list item at all) whose
+// content happens to start with a fence-shaped line — CommonMark reads
+// that as literal text, never a fence. Unbounded, this scanner reads it as
+// a fence open instead, and if that block (as is typical — it is not
+// actually a fence) never carries a matching bare closer, the "fence"
+// stays open through EOF, silently skipping every line after it — INCLUDING
+// a genuinely live `REMOVE AFTER` marker elsewhere in the same document.
+// That is not the false-positive #4174 sets out to fix; it is the false
+// NEGATIVE this whole guard exists to prevent (#4129's own incident), and
+// unlike the accepted "unterminated fence swallows to EOF" tradeoff
+// documented below, it is triggered by ordinary indented prose, not a
+// malformed fence — demonstrated live in review (see the
+// `plainIndentedCodeIsNotAFenceScenarios` self-test below, the fixture
+// that would have gone red-before/green-after this rejection). So the
+// list-nested-4-space shape stays UNrecognized, same as before #4174: a
+// false positive (CI goes red, visibly and loudly) rather than a silent
+// hole. Left as a documented limitation, per #4174's own stated fallback
+// ("explicitly document the current limitation... if a full
+// CommonMark-accurate block-container model is out of scope").
+//
+// A later fence-shaped line only CLOSES an open fence if the run uses the
+// SAME character, is AT LEAST AS LONG as the opener, is at the SAME
+// blockquote nesting depth as the opener, and carries nothing else on the
+// line — CommonMark's own closing-fence rule, plus the nesting-depth match
+// this review added. Without the depth match, a blockquoted opener could
+// be closed by a bare (non-blockquoted) fence-shaped line elsewhere in the
+// document, or vice versa — demonstrated live in review to desync the
+// open/close PARITY for the rest of the file: an unrelated, well-formed
+// bare fence closes early against a distant blockquoted line that merely
+// happens to share its character and length, and the bare fence's own
+// intended closer then reads as a fresh OPEN, silently swallowing
+// everything after it, including a live marker. Requiring the depth to
+// match closes that: a depth-mismatched pairing simply does not close —
+// the fence stays open to EOF, same "unterminated fence" reading already
+// documented and accepted below, not a cross-fence corruption. This
+// matters generally, not just for blockquote depth: a doc that nests a
+// shorter example fence inside a longer one (```` wrapping a literal ```
+// shown as text, or vice versa with `~~~`/backticks mixed) must not have
+// the inner delimiter-shaped line close the OUTER fence early — early
+// closing does not just under-hide the nested example, it also desyncs
+// parity for the rest of the file, which can hide a later, genuinely live
+// marker in ordinary prose that was never meant to be fenced at all. (This
+// was live and demonstrable before length/character matching was added —
+// see `fenceStateMachineScenarios` in the self-test below.) An odd number
+// of correctly-matched fence delimiters (an unterminated fence) leaves it
+// open through end of file. At the document level that is the same "rest
+// of the document is code" reading CommonMark itself gives an unclosed
+// fence; CommonMark actually closes an unclosed fence at the end of its
+// *containing block*, so a fence opened inside ANY block container and
+// never closed diverges from CommonMark there — this scanner has no notion
+// of block containers, so it keeps the fence open through EOF regardless.
+// Deliberate, not a special case here.
+//
+// That divergence is stated for BOTH containers on purpose, because #4174's
+// blockquote widening made the blockquote half newly REACHABLE: before it, a
+// `> ```rust` line was not a fence open at all, so a blockquoted fence left
+// unclosed could not swallow anything. Now it can, and the swallowing is not
+// confined to the blockquote — CommonMark closes that fence at the end of
+// the quoted block, this scanner does not, so every line AFTER the
+// blockquote, back in ordinary prose, is skipped too. Verified live, not
+// reasoned about: a `CONTRIBUTING.md` whose blockquote opens `> ```rust`
+// with no `> ``` ` closer, followed by a bare `REMOVE AFTER 0.1.0` in
+// ordinary prose against a 0.9.8 manifest, exits 0 with no output; adding
+// the `> ``` ` closer makes the SAME file exit 1 naming that marker. Same
+// class as the list-item divergence, and accepted for the same reason (a
+// scanner with no container model cannot tell where a container ends) —
+// pinned by `blockContainerFenceScenarios`' own unterminated-blockquote
+// fixture below, so a future change cannot alter it silently.
 //
 // ─── The escape hatch ────────────────────────────────────────────────────
 //
@@ -152,8 +232,11 @@
 //   - `docs/session-log/**` is excluded: a historical session recounting a
 //     marker that has since been resolved is an archive, not a live one.
 //   - In `.md` files only, a line inside a fenced code block (a ` ``` ` or
-//     `~~~` delimiter line, optionally indented up to 3 spaces) is exempt
-//     from BOTH checks — see "Markdown fenced code blocks" below (#4146).
+//     `~~~` delimiter line — indented 0–3 spaces, optionally blockquoted,
+//     e.g. `> ` ``` `) is exempt from BOTH checks — see "Markdown fenced
+//     code blocks" below (#4146, widened for #4174's blockquote case only;
+//     see that section for why the list-nested-4-space case was NOT
+//     widened).
 //   - Each file (including the version manifest itself) is read from the
 //     copy the caller is actually judging — the STAGED INDEX during a
 //     commit, the WORKING TREE otherwise (#3962). `--cached` / `--worktree`
@@ -244,23 +327,60 @@ const MARKER_PHRASE_RE = /REMOVE AFTER/
 // lookahead now also rejects. Same shape turns `1.0.12.4` into `1.0.1`.
 const MARKER_STRICT_RE = /REMOVE AFTER\s+`?(\d+)\.(\d+)\.(\d+)(?![\d-]|\.\d)`?/
 
-// A markdown fenced code block delimiter: only whitespace (0–3 spaces, the
-// CommonMark list-indent allowance), then 3-or-more backticks or tildes,
-// captured so the caller can read back which character and how many.
-// Checked only for `.md` files (see "Markdown fenced code blocks" in the
-// header, #4146). Matching this regex is necessary but NOT sufficient to
-// CLOSE an already-open fence — see `MD_FENCE_BARE_RE` and the
-// character/length check in `findMarkers` below; a fence-shaped line with a
-// different character, a shorter run, or trailing content past the run
-// (an info string, e.g. an inner ` ``` ` shown as literal text) is fenced
-// CONTENT, not a delimiter, while a fence is already open.
-const MD_FENCE_RE = /^ {0,3}(`{3,}|~{3,})/
+// A markdown fenced code block delimiter: zero or more `>` blockquote
+// markers (each optionally preceded by 0–3 SPACES of its own, CommonMark's
+// cap on the indent before a block-quote marker; captured in group 1 so the
+// caller can compute nesting DEPTH), then 0–3 more spaces —
+// CommonMark's own per-container fence-indent cap, deliberately NOT widened
+// past that (see below) — then 3-or-more backticks or tildes (group 2, so
+// the caller can read back which character and how many). Checked only for
+// `.md` files (see "Markdown fenced code blocks" in the header, #4146).
+// Widened for #4174 to also recognize a fence inside a blockquote — the
+// list-nested-4+-space case #4174 also asked for was tried and REJECTED on
+// review (see the header's "Fence detection" paragraph for why: unbounded
+// indent cannot be told apart from a plain 4-space indented code block, and
+// demonstrably creates a silent false negative, not just an accepted
+// tradeoff). Matching this regex is necessary but NOT sufficient to CLOSE
+// an already-open fence — see `MD_FENCE_BARE_RE` and the character/length/
+// depth check in `findMarkers` below; a fence-shaped line with a different
+// character, a shorter run, a different blockquote nesting depth, or
+// trailing content past the run (an info string, e.g. an inner ` ``` `
+// shown as literal text) is fenced CONTENT, not a delimiter, while a fence
+// is already open.
+//
+// Every whitespace allowance here is SPACES ONLY — no `\t` — in both
+// positions, and both are capped at 3. A tab is not a space of indent:
+// CommonMark expands one to the next 4-column tab stop, so a SINGLE
+// leading tab is already 4 columns, i.e. indented code, whose content is
+// literal text and never a fence. Admitting `\t` into either class
+// (`[ \t]{0,3}`) makes one tab satisfy the cap and phantom-opens a fence
+// on tab-indented code; an unbounded ` *` before the `>` marker does the
+// same for a `>` sitting at 4+ columns, which CommonMark also reads as
+// indented code. Both are the identical fail-open the list-nested
+// widening was rejected for (see the header), and both are pinned red-
+// before/green-after by `plainIndentedCodeIsNotAFenceScenarios`. Note
+// that MD010 is NOT a backstop for the tab shape: `.markdownlint-cli2
+// .jsonc` ignores every `AGENTS.md`, `PROMPT.md`, `REVIEW-LATER.md`,
+// `FEATURE-MAP.md` and `SESSION-LOG.md`, while `EXCLUDE_PATH_RE` here
+// excludes only `^docs/session-log/` — so those files are scanned by this
+// guard with hard tabs entirely unlinted.
+//
+// One deliberate off-by-one, in the SAFE direction. The ` {0,3}` AFTER the
+// prefix group is not CommonMark's cap when a `>` precedes it: a blockquote
+// marker consumes one following space as its separator, so `>` + four spaces
+// + a delimiter run is a legal fence whose content indent is only 3, and this
+// regex refuses it. That is a FALSE POSITIVE — loud, a marker reported that
+// is really fenced — which is the direction this guard is allowed to be wrong
+// in. Widening it to ` {0,4}` after a prefix would be correct per spec but
+// re-opens exactly the fail-open the tab and unbounded-space cases above were
+// capped to close, for one extra column of tolerance nothing in the tree uses.
+const MD_FENCE_RE = /^((?: {0,3}>)*) {0,3}(`{3,}|~{3,})/
 
-// The stricter shape a CLOSING fence must have: the same leading-whitespace
-// allowance, the delimiter run, and then NOTHING but trailing whitespace —
-// no info string. An opening fence may carry one (`` ```rust ``); a closing
-// one, per CommonMark, may not.
-const MD_FENCE_BARE_RE = /^ {0,3}(`{3,}|~{3,})\s*$/
+// The stricter shape a CLOSING fence must have: the same blockquote-prefix/
+// whitespace allowance, the delimiter run, and then NOTHING but trailing
+// whitespace — no info string. An opening fence may carry one
+// (`` ```rust ``); a closing one, per CommonMark, may not.
+const MD_FENCE_BARE_RE = /^((?: {0,3}>)*) {0,3}(`{3,}|~{3,})\s*$/
 
 function scanTargets(tracked) {
   return tracked.filter((f) => {
@@ -300,10 +420,11 @@ function compareSemver(a, b) {
  * checks (#4146, see the header's "Markdown fenced code blocks") — the
  * fence state is tracked PER FILE (`fence`, reset for each file), never
  * across files. A fence only CLOSES on a same-character, same-or-longer,
- * bare delimiter line (CommonMark's own rule) — a shorter or
- * different-character fence-shaped line nested inside is fenced content,
+ * same-blockquote-depth, bare delimiter line (CommonMark's own rule, plus
+ * the depth match #4174's review added) — a shorter, different-character,
+ * or different-depth fence-shaped line nested inside is fenced content,
  * not a close, so it cannot desync the open/close parity for the rest of
- * the file (see the header's fence-detection paragraph, #4146).
+ * the file (see the header's fence-detection paragraph, #4146/#4174).
  */
 function findMarkers(files, bodies) {
   const markers = []
@@ -312,22 +433,25 @@ function findMarkers(files, bodies) {
     const body = bodies.get(file)
     if (body === undefined) continue
     const isMarkdown = file.endsWith('.md')
-    // `null` while outside a fence; `{ char, len }` — the OPENING
-    // delimiter's character (`` ` `` or `~`) and run length — while inside
-    // one, so a later fence-shaped line can be judged against what
-    // actually opened it rather than toggled unconditionally.
+    // `null` while outside a fence; `{ char, len, quoteDepth }` — the
+    // OPENING delimiter's character (`` ` `` or `~`), run length, and
+    // blockquote nesting depth — while inside one, so a later fence-shaped
+    // line can be judged against what actually opened it rather than
+    // toggled unconditionally.
     let fence = null
     const lines = body.split('\n')
     lines.forEach((line, idx) => {
       if (isMarkdown) {
         const fenceMatch = MD_FENCE_RE.exec(line)
         if (fenceMatch) {
-          const delim = fenceMatch[1]
+          const quoteDepth = (fenceMatch[1].match(/>/g) ?? []).length
+          const delim = fenceMatch[2]
           if (fence === null) {
-            fence = { char: delim[0], len: delim.length }
+            fence = { char: delim[0], len: delim.length, quoteDepth }
           } else if (
             delim[0] === fence.char &&
             delim.length >= fence.len &&
+            quoteDepth === fence.quoteDepth &&
             MD_FENCE_BARE_RE.test(line)
           ) {
             fence = null
@@ -991,6 +1115,332 @@ function fenceStateMachineScenarios(root) {
 }
 
 /**
+ * #4174 — `MD_FENCE_RE`/`MD_FENCE_BARE_RE` widened to recognize a fence
+ * inside a blockquote (`> ` prefix), which previously never matched at
+ * all: the "fence" never opened, and a `REMOVE AFTER` marker written
+ * inside one as inert documentation — the false positive #4174 reports —
+ * was scanned as ordinary text and falsely reported as a live marker.
+ *
+ * The blockquoted fixture below is FORWARD-LOOKING, not a copy of anything
+ * in this tree: no tracked `.md` here carries a blockquoted fence, and
+ * CONTRIBUTING.md's "Marking code with a removal deadline" section (the
+ * obvious candidate) uses plain unquoted ```` ```rust ```` fences, already
+ * exempt before #4174. It pins the shape the widening exists for.
+ *
+ * #4174's OTHER named shape — a fence nested in a list item at 4+ spaces
+ * of content indent — was tried (widening the leading whitespace to
+ * unbounded) and REJECTED on review: see the header's "Fence detection"
+ * paragraph for why (it cannot be told apart from a plain 4-space indented
+ * code block, and demonstrably creates a silent false negative). The first
+ * scenario below locks that rejection in: the SAME list-nested fixture
+ * #4174 asked to exempt must still be caught (RED), proving the guard did
+ * not silently regress to the rejected widening. See
+ * `plainIndentedCodeIsNotAFenceScenarios` below for the actual false
+ * negative that rejection avoids.
+ */
+function blockContainerFenceScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+
+    // A fence nested in a list item at 4-space content indent — a
+    // two-digit ordered marker ("10. ") is itself 4 columns wide, past
+    // `MD_FENCE_RE`'s 0–3-space cap. #4174 asked for this to be
+    // recognized; review rejected that (see the header), so this stays
+    // UNrecognized — the marker is still caught, not exempt.
+    const listDir = join(root, 'fence-list-nested')
+    const listEnv = scrubbedGitEnv(root)
+    const listGit = initScratchRepo(listDir, listEnv)
+    mkdirSync(join(listDir, 'src-tauri'), { recursive: true })
+    writeFileSync(join(listDir, 'src-tauri', 'tauri.conf.json'), tauriConf('0.9.8'))
+    writeFileSync(
+      join(listDir, 'CONTRIBUTING.md'),
+      [
+        '10. Nested example (a two-digit ordered marker gives 4-space content indent):',
+        '',
+        '    ```rust',
+        '    // REMOVE AFTER 0.1.0. Example only, inside a two-digit ordered list item.',
+        '    ```',
+        '',
+      ].join('\n'),
+    )
+    listGit('add', '-A')
+    const listResult = run(listDir, listEnv, ['--worktree'])
+    record(
+      'a marker inside a fence nested in a list item at 4-space content indent is NOT exempt (still red) — the widening review rejected, locked in',
+      listResult.status === 1 && /0\.1\.0/.test(listResult.stderr),
+      `expected 1 naming 0.1.0, got ${listResult.status}: ${listResult.stderr}`,
+    )
+
+    // A fence inside a blockquote — the `>` prefix means the delimiter
+    // line never matched the old unprefixed-only regex.
+    const quoteDir = join(root, 'fence-blockquoted')
+    const quoteEnv = scrubbedGitEnv(root)
+    const quoteGit = initScratchRepo(quoteDir, quoteEnv)
+    mkdirSync(join(quoteDir, 'src-tauri'), { recursive: true })
+    writeFileSync(join(quoteDir, 'src-tauri', 'tauri.conf.json'), tauriConf('0.9.8'))
+    writeFileSync(
+      join(quoteDir, 'CONTRIBUTING.md'),
+      [
+        '> Documenting the convention:',
+        '>',
+        '> ```rust',
+        '> // REMOVE AFTER 0.1.0. Example only, inside a blockquote fence.',
+        '> ```',
+        '',
+      ].join('\n'),
+    )
+    quoteGit('add', '-A')
+    const quoteResult = run(quoteDir, quoteEnv, ['--worktree'])
+    record(
+      'a marker inside a fence inside a blockquote is exempt (green)',
+      quoteResult.status === 0,
+      `expected 0, got ${quoteResult.status}: ${quoteResult.stderr}`,
+    )
+
+    // The divergence the widening made REACHABLE, pinned so a future change
+    // cannot alter it silently: a blockquoted fence left UNCLOSED. CommonMark
+    // closes it at the end of the quoted block, so the later bare marker is
+    // live text there; this scanner has no container model, keeps the fence
+    // open through EOF, and skips it. Before #4174 the opener never matched,
+    // so this shape could not swallow anything at all. Two arms, because only
+    // the pair shows the swallowing is caused by the missing closer and not
+    // by the fixture being unflaggable in the first place: unclosed → green
+    // (marker hidden), the SAME file with the `> ``` ` closer added → red.
+    const unclosedQuoteDir = join(root, 'fence-blockquoted-unterminated')
+    const unclosedQuoteEnv = scrubbedGitEnv(root)
+    const unclosedQuoteGit = initScratchRepo(unclosedQuoteDir, unclosedQuoteEnv)
+    mkdirSync(join(unclosedQuoteDir, 'src-tauri'), { recursive: true })
+    writeFileSync(join(unclosedQuoteDir, 'src-tauri', 'tauri.conf.json'), tauriConf('0.9.8'))
+    const quotedDoc = join(unclosedQuoteDir, 'CONTRIBUTING.md')
+    const afterTheQuote = [
+      '',
+      'Back in ordinary prose, outside the blockquote entirely.',
+      '',
+      'REMOVE AFTER 0.1.0 — a genuinely live, expired marker.',
+      '',
+    ]
+    writeFileSync(
+      quotedDoc,
+      [
+        '> Documenting the convention:',
+        '>',
+        '> ```rust',
+        '> // REMOVE AFTER 0.1.0. Example only, inside a blockquote fence.',
+        ...afterTheQuote,
+      ].join('\n'),
+    )
+    unclosedQuoteGit('add', '-A')
+    const unclosedQuote = run(unclosedQuoteDir, unclosedQuoteEnv, ['--worktree'])
+    record(
+      'an UNCLOSED blockquoted fence swallows every later line, including one outside the blockquote — the CommonMark divergence #4174 made reachable, accepted and locked in',
+      unclosedQuote.status === 0,
+      `expected 0 (accepted limitation), got ${unclosedQuote.status}: ${unclosedQuote.stderr}`,
+    )
+
+    writeFileSync(
+      quotedDoc,
+      [
+        '> Documenting the convention:',
+        '>',
+        '> ```rust',
+        '> // REMOVE AFTER 0.1.0. Example only, inside a blockquote fence.',
+        '> ```',
+        ...afterTheQuote,
+      ].join('\n'),
+    )
+    unclosedQuoteGit('add', '-A')
+    const closedQuote = run(unclosedQuoteDir, unclosedQuoteEnv, ['--worktree'])
+    record(
+      'the same file with the blockquoted fence CLOSED flags the marker after it — so the swallowing above is the missing closer, not an unflaggable fixture',
+      closedQuote.status === 1 && /0\.1\.0/.test(closedQuote.stderr),
+      `expected 1 naming 0.1.0, got ${closedQuote.status}: ${closedQuote.stderr}`,
+    )
+
+    return results
+  })
+}
+
+/**
+ * The false negative the unbounded-indent widening was rejected to avoid
+ * (see the header's "Fence detection" paragraph). A PLAIN 4-space indented
+ * code block (no list item, no blockquote) whose content happens to start
+ * with a fence-shaped line: CommonMark reads that whole block as literal
+ * indented-code text, never a fence. An UNBOUNDED `MD_FENCE_RE` reads the
+ * fence-shaped line as an OPEN instead — and since the block is not
+ * actually a fence, nothing that follows carries a matching bare closer,
+ * so the "fence" stays open through EOF, silently skipping every line
+ * after it, including a genuinely live `REMOVE AFTER` marker elsewhere in
+ * the document. `MD_FENCE_RE`'s 0–3-space cap means the indented line
+ * never matches at all, so this fixture's marker is caught throughout —
+ * this is the fixture that would have gone red-before/green-after had the
+ * rejected widening shipped instead: red under the unbounded regex
+ * (swallowed, exit 0 — wrongly GREEN, an unreported expired marker), red
+ * (correctly, exit 1) under the shipped 0–3 cap.
+ *
+ * The other two cases pin the same property against the two OTHER ways the
+ * cap can be widened past CommonMark, both of which shipped briefly on this
+ * branch and were caught on review — each was genuinely red-before (exit 0,
+ * marker swallowed) and green-after here:
+ *   - a TAB-indented block. Admitting `\t` into the leading-indent class
+ *     (`[ \t]{0,3}`) lets ONE tab satisfy the 0–3 cap, but CommonMark
+ *     expands a tab to the next 4-column tab stop, so one tab is already
+ *     4 columns of indented code.
+ *   - a `>` marker at 4 leading spaces. An unbounded whitespace star before
+ *     each marker (`(?:[ \t]*>)*`) opens a depth-1 fence there; CommonMark
+ *     caps the pre-marker indent at 3 spaces, so at 4 the line is indented
+ *     code and the `>` is literal text.
+ */
+function plainIndentedCodeIsNotAFenceScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+
+    // Each case: a document whose indented-code block holds a fence-SHAPED
+    // line that must NOT open a fence, followed by a genuinely expired
+    // marker in ordinary prose. If the shaped line phantom-opens, the
+    // fence never closes (nothing below is a matching bare closer) and the
+    // marker is silently swallowed — exit 0 instead of 1.
+    const phantom = (slug, name, docLines) => {
+      const dir = join(root, slug)
+      const env = scrubbedGitEnv(root)
+      const git = initScratchRepo(dir, env)
+      mkdirSync(join(dir, 'src-tauri'), { recursive: true })
+      writeFileSync(join(dir, 'src-tauri', 'tauri.conf.json'), tauriConf('0.9.8'))
+      writeFileSync(
+        join(dir, 'CONTRIBUTING.md'),
+        [
+          ...docLines,
+          '',
+          'Back to normal prose. Here is a REAL expired marker:',
+          '',
+          'REMOVE AFTER 0.1.0',
+          '',
+        ].join('\n'),
+      )
+      git('add', '-A')
+      const result = run(dir, env, ['--worktree'])
+      record(
+        name,
+        result.status === 1 && /0\.1\.0/.test(result.stderr),
+        `expected 1 naming 0.1.0, got ${result.status}: ${result.stderr}`,
+      )
+    }
+
+    phantom(
+      'plain-indented-code-phantom-fence',
+      'a fence-shaped line inside a plain 4-space indented code block does not phantom-open a fence — a real marker later in the document is still caught',
+      [
+        'Some doc text.',
+        '',
+        '    This is a PLAIN 4-space indented code block (not a list item,',
+        '    not a fenced block). Its content happens to include a line',
+        '    that looks like a fence opener:',
+        '    ```',
+        '    that indented line above is CommonMark literal text, not a fence',
+      ],
+    )
+
+    // Same shape, indented with a TAB. CommonMark expands a tab to the
+    // next 4-column tab stop, so ONE leading tab is already 4 columns —
+    // indented code, never a fence. A leading-indent class that admits
+    // `\t` alongside the space lets a single tab satisfy the 0–3
+    // repetition cap and phantom-opens here.
+    phantom(
+      'tab-indented-code-phantom-fence',
+      'a fence-shaped line inside a TAB-indented code block does not phantom-open a fence — one tab is 4 columns, past the 0–3 cap',
+      [
+        'Some doc text.',
+        '',
+        '\tThis is a TAB-indented code block — one tab expands to the next',
+        '\t4-column tab stop, so this is indented code, not a fence:',
+        '\t```',
+        '\tthat tab-indented line above is CommonMark literal text',
+      ],
+    )
+
+    // A `>` marker preceded by FOUR spaces. CommonMark allows 0–3 spaces
+    // before a block-quote marker; at 4 the line is plain indented code
+    // and the `>` is literal text. A blockquote-prefix group with an
+    // UNBOUNDED whitespace star before each marker opens a depth-1 fence
+    // here instead.
+    phantom(
+      'overindented-blockquote-phantom-fence',
+      'a fence-shaped line whose `>` marker carries FOUR leading spaces does not phantom-open a blockquoted fence — 4 spaces before the marker is indented code',
+      [
+        'Some doc text.',
+        '',
+        '    This is a PLAIN 4-space indented code block whose content',
+        '    happens to start with a blockquote-shaped fence line:',
+        '    > ```',
+        '    that line above is CommonMark literal text, not a blockquote',
+      ],
+    )
+
+    return results
+  })
+}
+
+/**
+ * The false negative a blockquote-depth-BLIND close check would create
+ * (see the header's "Fence detection" paragraph): without requiring the
+ * closer's blockquote nesting depth to match the opener's, a bare fence
+ * and a blockquoted fence — two otherwise-unrelated fences that merely
+ * share a character and length — can close EACH OTHER's containers,
+ * desyncing open/close parity for the rest of the file.
+ *
+ * Concretely: a bare fence opens; a blockquoted aside elsewhere (`> ` ```,
+ * alone on its own line — e.g. quoting someone explaining "just write
+ * ` ``` `") happens to match the same character/length and, without a
+ * depth check, closes the bare fence EARLY. The bare fence's own real,
+ * intended closer then reads as a fresh OPEN (since the fence state is
+ * already `null`), silently swallowing everything after it, including a
+ * genuinely live marker. Requiring the depth to match means the
+ * mismatched blockquoted line never closes the bare fence — it stays open
+ * content until the real bare closer is reached, exactly once, at the
+ * right place.
+ *
+ * This is the fixture that was red-before/green-after in review: GREEN
+ * (wrongly — exit 0, an unreported expired marker) before the depth check
+ * was added, RED (correctly — exit 1) after.
+ */
+function blockquoteDepthMismatchScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+
+    const dir = join(root, 'blockquote-depth-mismatch-cascade')
+    const env = scrubbedGitEnv(root)
+    const git = initScratchRepo(dir, env)
+    mkdirSync(join(dir, 'src-tauri'), { recursive: true })
+    writeFileSync(join(dir, 'src-tauri', 'tauri.conf.json'), tauriConf('0.9.8'))
+    writeFileSync(
+      join(dir, 'CONTRIBUTING.md'),
+      [
+        '```',
+        'genuinely hidden line 1',
+        '> ```',
+        'genuinely hidden line 2 (must still be hidden — the line above must',
+        'not close this fence; its blockquote depth does not match the opener)',
+        '```',
+        '',
+        'REMOVE AFTER 0.1.0',
+        '',
+      ].join('\n'),
+    )
+    git('add', '-A')
+    const result = run(dir, env, ['--worktree'])
+    record(
+      'a depth-mismatched blockquoted fence-shaped line does not close a bare fence early — the real closer still closes it once, and a marker after is caught',
+      result.status === 1 && /0\.1\.0/.test(result.stderr),
+      `expected 1 naming 0.1.0, got ${result.status}: ${result.stderr}`,
+    )
+
+    return results
+  })
+}
+
+/**
  * `SCAN_EXT_RE` covers `.js`/`.mjs` so a marker left in a GUARD SCRIPT is as
  * findable as one in application source — a fixture `.mjs` file under
  * `scripts/` (NOT this guard's own `SELF_PATH`) with an expired marker must
@@ -1066,10 +1516,38 @@ function sourceScenarios(root) {
 /**
  * Extract one top-level GitHub Actions job's body from a workflow file's
  * raw text: from the `  <jobName>:` header line (exclusive) to the line
- * before the next 2-space-indented, non-blank key (or EOF). A coarse,
- * indentation-based slice — not a YAML parser — but jobs in this repo's
- * workflows are always top-level 2-space keys (verified against
- * `_validate.yml`'s own job list), which is all this needs.
+ * before the next top-level job KEY (or EOF). A coarse, indentation-based
+ * slice — not a YAML parser — but jobs in this repo's workflows are always
+ * top-level 2-space keys (verified against `_validate.yml`'s own job list),
+ * which is all this needs.
+ *
+ * The termination check matches an actual job-key SHAPE
+ * (`^ {2}[A-Za-z_][\w-]*:(?:\s|$)`), not merely "the first 2-space-indented,
+ * non-space line" (#4175 finding 2). `_validate.yml` happens to put a
+ * `# ---` comment banner at 2-space indent between jobs, which the old,
+ * looser check also matched — but only by COINCIDENCE: any real job key
+ * matches the looser check too (a job key is always 2-space-indented,
+ * non-space), so the banner was never load-bearing for correctness, and
+ * removing it changes nothing either way. What the looser check actually
+ * got wrong is the other direction — a stray 2-space-indented COMMENT
+ * *inside* a job body (not a banner between jobs) would terminate the slice
+ * right there, silently truncating the rest of the job. Matching the
+ * job-key shape instead means only a real job key ends the block, whatever
+ * comments do or don't appear at 2-space indent along the way. See
+ * `extractJobBlockScenarios` below for the falsifying fixture.
+ *
+ * The key shape deliberately tolerates TRAILING CONTENT after the colon
+ * (`(?:\s|$)`, not `\s*$`). Anchoring at end-of-line narrows the match set
+ * to a strict subset of the old check's, which fixes stopping too EARLY but
+ * introduces the opposite failure the old check could not have: a next-job
+ * key written with a trailing comment (`  vitest: # docs-only PRs skip it`)
+ * or a YAML anchor (`  vitest: &vitest`) is a real job key that `\s*$`
+ * refuses, so the slice runs ON into the following jobs. `docsLintWiring
+ * Scenario` would then be searching a body containing OTHER jobs' steps and
+ * could match one of THEIR `prek run --all-files` lines — passing the #4147
+ * wiring assertion vacuously, against a run line that has nothing to do with
+ * `docs-lint`. A comment cannot be mistaken for a key either way: `#` is not
+ * in `[A-Za-z_]`.
  */
 function extractJobBlock(text, jobName) {
   const lines = text.split('\n')
@@ -1078,12 +1556,31 @@ function extractJobBlock(text, jobName) {
   if (start === -1) return null
   let end = lines.length
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^ {2}\S/.test(lines[i])) {
+    if (/^ {2}[A-Za-z_][\w-]*:(?:\s|$)/.test(lines[i])) {
       end = i
       break
     }
   }
   return lines.slice(start + 1, end).join('\n')
+}
+
+/**
+ * The `run:` line inside a `docs-lint`-shaped job body that actually names
+ * this hook — NOT simply the first `run: prek run --all-files …` line
+ * (#4175 finding 1). `_validate.yml`'s `docs-lint` job has TWO steps whose
+ * `run:` line matches that shape: the doc-hooks step (which must name
+ * `remove-after-markers`) and a `--hook-stage pre-push lychee` step. A bare
+ * `.find()` over both would only be correct by STEP ORDER — whichever one
+ * happens to come first in the job body. Excluding the
+ * `--hook-stage`-qualified line picks the doc-hooks step regardless of
+ * which one comes first, so a future reordering of the two steps can't
+ * silently make this scenario assert against the wrong line. See
+ * `docsLintRunLineOrderScenario` below for the falsifying fixture.
+ */
+function findDocsLintRunLine(jobBody) {
+  return jobBody
+    .split('\n')
+    .find((l) => /^\s*run:\s*prek run --all-files\b/.test(l) && !/--hook-stage\b/.test(l))
 }
 
 /**
@@ -1136,14 +1633,154 @@ function docsLintWiringScenario() {
     )
     return results
   }
-  const runLine = jobBody.split('\n').find((l) => /^\s*run:\s*prek run --all-files\b/.test(l))
+  const runLine = findDocsLintRunLine(jobBody)
   record(
     "the docs-lint job's prek hook list includes remove-after-markers (#4147)",
     !!runLine && /\bremove-after-markers\b/.test(runLine),
     runLine
       ? `docs-lint's run line: ${runLine.trim()}`
-      : 'no `run: prek run --all-files …` line found in the docs-lint job',
+      : 'no non-`--hook-stage` `run: prek run --all-files …` line found in the docs-lint job',
   )
+  return results
+}
+
+/**
+ * #4175 finding 1 — falsification of the `.find()` first-match-wins
+ * dependency `findDocsLintRunLine` replaces. A synthetic docs-lint-shaped
+ * job body carrying the SAME two `run: prek run --all-files` steps as the
+ * real job, but in REVERSE order (the `--hook-stage pre-push lychee` step
+ * BEFORE the doc-hooks step) — the exact shape a future reordering of
+ * `_validate.yml`'s steps could produce. A naive first-match `.find()`
+ * would return the lychee line here, which does not name
+ * `remove-after-markers`, and the wiring check would wrongly fail even
+ * though the job IS correctly wired — proving the matcher has to find the
+ * doc-hooks line by its shape, not by position.
+ */
+function docsLintRunLineOrderScenario() {
+  const results = []
+  const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+  const reversedJobBody = [
+    '    needs: detect-changes',
+    '    steps:',
+    '      - name: Run lychee link check (pre-push-staged hook)',
+    '        run: prek run --all-files --hook-stage pre-push lychee',
+    '      - name: Run doc-only prek hooks (markdownlint, link/citation, typos, remove-after-markers)',
+    '        run: prek run --all-files markdownlint md-link-targets doc-vs-code-paths typos remove-after-markers',
+  ].join('\n')
+  const runLine = findDocsLintRunLine(reversedJobBody)
+  record(
+    'the doc-hooks run line is found even when the --hook-stage lychee step comes first in the job body (order-independent)',
+    !!runLine && /\bremove-after-markers\b/.test(runLine),
+    runLine ? `matched: ${runLine.trim()}` : 'no non-`--hook-stage` run line found',
+  )
+  return results
+}
+
+/**
+ * #4175 finding 2 — falsification of `extractJobBlock`'s termination
+ * condition, in BOTH directions.
+ *
+ * Too EARLY: every real job-key line already satisfies the ORIGINAL "any
+ * 2-space-indented non-space line" condition, so that check could only go
+ * wrong by stopping too early, on a 2-space-indented line that is not a job
+ * key. The falsifying fixture is a stray 2-space-indented comment INSIDE a
+ * job body (not a banner between jobs): the original code truncates the
+ * block right there, losing the rest of the job — in the real file, that
+ * would mean losing the `remove-after-markers` run line itself.
+ *
+ * Too LATE: tightening to a job-key shape ANCHORED at end of line
+ * (`:\s*$`) fixes that but opens the opposite hole, which the original
+ * check could not have had — its match set was a strict superset. A real
+ * job key carrying a trailing comment or a YAML anchor no longer
+ * terminates, so the slice runs on into following jobs and
+ * `findDocsLintRunLine` can match one of THEIR run lines, passing the
+ * #4147 wiring assertion vacuously. The last two fixtures below pin that:
+ * the first shows the leak directly, the second shows the vacuous pass it
+ * causes. Both are red under `:\s*$` and green under the shipped
+ * `:(?:\s|$)`.
+ *
+ * The issue's OTHER named case — the `# ---` banner between jobs simply
+ * REMOVED, next job's key following directly — is kept here too, but does
+ * NOT diverge under the old code, and structurally cannot: the next job's
+ * key line is itself a 2-space-indented non-space line, so it already
+ * satisfies the old condition on its own, banner or not (verified: same
+ * output either way). It is included as a locked-in correctness case, not
+ * a red-before/green-after fixture.
+ */
+function extractJobBlockScenarios() {
+  const results = []
+  const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+
+  const makeFixture = (middleLines, nextJobKey = '  vitest:') =>
+    [
+      '  docs-lint:',
+      '    needs: detect-changes',
+      '    steps:',
+      '      - name: doc hooks',
+      ...middleLines,
+      '        run: prek run --all-files markdownlint remove-after-markers',
+      '      - name: lychee',
+      '        run: prek run --all-files --hook-stage pre-push lychee',
+      nextJobKey,
+      '    needs: detect-changes',
+    ].join('\n')
+
+  const noBannerBody = extractJobBlock(makeFixture([]), 'docs-lint')
+  record(
+    'with no `# ---` banner at all, the block still ends exactly at the next job key (not a red-before case — see doc comment above)',
+    !!noBannerBody && /remove-after-markers/.test(noBannerBody) && !/vitest/.test(noBannerBody),
+    `got: ${JSON.stringify(noBannerBody)}`,
+  )
+
+  const interiorBody = extractJobBlock(
+    makeFixture(['  # a stray 2-space-indented comment landing inside the job body']),
+    'docs-lint',
+  )
+  record(
+    'a 2-space-indented comment INSIDE the job body does not truncate the block early',
+    !!interiorBody && /remove-after-markers/.test(interiorBody) && !/vitest/.test(interiorBody),
+    `got: ${JSON.stringify(interiorBody)}`,
+  )
+
+  // Red-before/green-after for the OTHER direction — stopping too LATE.
+  // The next job's key carries a trailing comment, which an end-anchored
+  // key shape (`:\s*$`) refuses, so the slice runs on into that job.
+  const trailingCommentBody = extractJobBlock(
+    makeFixture([], '  vitest: # docs-only PRs skip this one'),
+    'docs-lint',
+  )
+  record(
+    'a next-job key with a TRAILING COMMENT still terminates the block — the slice does not run on into the following job',
+    !!trailingCommentBody &&
+      /remove-after-markers/.test(trailingCommentBody) &&
+      !/vitest/.test(trailingCommentBody),
+    `got: ${JSON.stringify(trailingCommentBody)}`,
+  )
+
+  // The consequence that makes stopping too late a real defect, not a
+  // cosmetic one: a docs-lint job with NO doc-hooks `prek run --all-files`
+  // step of its own (exactly the #4147 bug) must FAIL the wiring check. If
+  // the block runs on past a trailing-comment job key, `findDocsLintRunLine`
+  // finds the NEXT job's run line instead and the assertion passes
+  // VACUOUSLY, against a line that has nothing to do with docs-lint.
+  const vacuousFixture = [
+    '  docs-lint:',
+    '    needs: detect-changes',
+    '    steps:',
+    '      - name: lychee',
+    '        run: prek run --all-files --hook-stage pre-push lychee',
+    '  other-lint: # a job key with a trailing comment',
+    '    steps:',
+    '      - name: doc hooks',
+    '        run: prek run --all-files markdownlint remove-after-markers',
+  ].join('\n')
+  const vacuousRunLine = findDocsLintRunLine(extractJobBlock(vacuousFixture, 'docs-lint') ?? '')
+  record(
+    "a docs-lint job missing its own doc-hooks run line does not borrow a LATER job's — the #4147 wiring check cannot pass vacuously",
+    vacuousRunLine === undefined,
+    `expected no run line, got: ${JSON.stringify(vacuousRunLine)}`,
+  )
+
   return results
 }
 
@@ -1158,9 +1795,14 @@ function selfTest() {
       ...stillMatchesCanonicalScenarios(root),
       ...fencedCodeBlockScenarios(root),
       ...fenceStateMachineScenarios(root),
+      ...blockContainerFenceScenarios(root),
+      ...plainIndentedCodeIsNotAFenceScenarios(root),
+      ...blockquoteDepthMismatchScenarios(root),
       ...scriptExtensionScenarios(root),
       ...sourceScenarios(root),
       ...docsLintWiringScenario(),
+      ...docsLintRunLineOrderScenario(),
+      ...extractJobBlockScenarios(),
     ]
     let failures = 0
     for (const result of results) {

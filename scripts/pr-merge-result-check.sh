@@ -665,8 +665,12 @@ provision_node_modules() {
 
 # Do the merged tree's dependencies match the install we are about to
 # borrow? Byte-compare the two lockfiles. Returns 0 when they agree (borrow
-# is sound), 1 when they do not (borrowing would type-check the merge
-# against the wrong dependency set).
+# is sound), 1 when they both exist but their CONTENT differs (borrowing
+# would type-check the merge against the wrong dependency set), 2 when the
+# merged tree has NO lockfile at all because the merge itself deleted one
+# that existed on a parent (#4176 — a different claim from 1: there is no
+# merged-tree lockfile left to differ FROM, so callers must not describe
+# this as a content mismatch).
 #
 # A lockfile MISSING on either side is "agree", not "disagree" — WITH ONE
 # EXCEPTION (#4169 follow-up 2). A merged tree that never had a
@@ -689,12 +693,26 @@ lockfiles_agree() {
   if [ ! -f "$a" ]; then
     if git -C "$workdir" cat-file -e "${base_tip}:package-lock.json" 2>/dev/null ||
        git -C "$workdir" cat-file -e "${head_sha}:package-lock.json" 2>/dev/null; then
-      return 1
+      return 2
     fi
     return 0
   fi
   [ -f "$b" ] || return 0
-  cmp -s "$a" "$b"
+  # `cmp -s` exits 2, not just 0/1, on TROUBLE unrelated to content — e.g. a
+  # permission error or other I/O failure opening a file the `-f` checks
+  # above already confirmed exists. Propagating that raw would collide with
+  # THIS function's own explicit `return 2` above, which means something far
+  # narrower and more specific: no merged-tree lockfile exists AT ALL because
+  # the merge deleted it. Both files are confirmed present by this point, so
+  # cmp trouble here is an anomaly, not a deletion — collapse it into 1
+  # ("differs"), the pre-existing generic fallback that re-installs and
+  # type-checks for real, rather than a `2` that would misroute into the
+  # #4176 "the merge result has no package-lock.json" message for a file
+  # that is, in fact, present.
+  local cmp_rc=0
+  cmp -s "$a" "$b" || cmp_rc=$?
+  [ "$cmp_rc" -le 1 ] && return "$cmp_rc"
+  return 1
 }
 
 # Type-check the merged tree.
@@ -749,12 +767,42 @@ process.exit(p.scripts && p.scripts.typecheck ? 0 : 1)
   fi
   src_root=$(dirname "$src")
 
-  if lockfiles_agree "$workdir" "$src_root" "$base_tip" "$head_sha"; then
+  local lockfiles_rc=0
+  lockfiles_agree "$workdir" "$src_root" "$base_tip" "$head_sha" || lockfiles_rc=$?
+  if [ "$lockfiles_rc" -eq 0 ]; then
     if ! provision_node_modules "$workdir" "$src"; then
       echo "pr-merge-result-check: could not link the borrowed node_modules ($src)" >&2
       echo "  into the merged worktree, or it is empty. NOTHING was type-checked." >&2
       return 3
     fi
+  elif [ "$lockfiles_rc" -eq 2 ]; then
+    # #4176: the merge itself DELETED package-lock.json — it exists at
+    # base_tip and/or head_sha but not in the merged tree. There is no
+    # merged-tree lockfile left to differ from the borrowed one, so the
+    # "differs" wording below would be false, and the subsequent `npm ci`
+    # has nothing to install FROM (no lockfile at all), not a content
+    # mismatch. That is the merge's own change, i.e. the PR's — not a
+    # runner or script gap — so this points at the PR, unlike the generic
+    # `npm ci` failure message the "differs" branch falls into below.
+    #
+    # The wording stays AGNOSTIC about intent. This branch fires on any
+    # merge whose result lacks a lockfile a parent had, and that includes a
+    # PR that drops `package-lock.json` ON PURPOSE — a package-manager
+    # migration, say. "Restore or regenerate it" is simply the wrong
+    # instruction there, so the message states the consequence (this lane
+    # cannot type-check the merge) and leaves the remedy to the author,
+    # which covers both the accidental deletion and the deliberate one. The
+    # exit code is 3 either way: not a verdict on the merge, and never a
+    # silent pass.
+    echo "pr-merge-result-check: the merge result has no package-lock.json — one" >&2
+    echo "  exists at $base_tip and/or $head_sha but not in the merged tree, so" >&2
+    echo "  there is nothing for \`npm ci\` to install from. That is the merge's own" >&2
+    echo "  change, not a script or runner problem. NOTHING was type-checked." >&2
+    echo "  If the deletion was unintended, restore or regenerate the lockfile. If" >&2
+    echo "  the PR drops it deliberately (a package-manager migration, say), this" >&2
+    echo "  lane cannot judge the merge as written and needs teaching about the new" >&2
+    echo "  lockfile — either way the fix is in the PR, not in this script." >&2
+    return 3
   else
     # The borrowed install is for a DIFFERENT lockfile. Do not type-check
     # the merge against dependencies it does not declare — install the ones
@@ -2550,18 +2598,42 @@ STUB
   # type-check the merge against a dependency set it no longer declares.
   # `lockfiles_agree` now has to notice the file existed on either parent and
   # refuse to borrow; the merged tree still has no lockfile of its own for
-  # `npm ci` to install FROM (see the `else` branch of run_typecheck), so the
-  # correct outcome is exit 3 (verified nothing), not exit 0 (a false pass)
-  # and not exit 4 (a false "does not compile" — nothing was type-checked at
-  # all).
+  # `npm ci` to install FROM, so the correct outcome is exit 3 (verified
+  # nothing), not exit 0 (a false pass) and not exit 4 (a false "does not
+  # compile" — nothing was type-checked at all).
+  #
+  # #4176: this case used to fall into the SAME `else` branch as "both
+  # lockfiles exist but their content differs" and inherit that branch's
+  # wording — "the merged tree's package-lock.json differs from ..." (false:
+  # there is no merged-tree lockfile to differ) and a generic "`npm ci`
+  # FAILED in the merged tree" (true, but misnames a missing-file problem as
+  # a content mismatch, and the exit-3 summary then tells the author to fix
+  # the script or runner for a case the PR itself caused by deleting the
+  # file). `lockfiles_agree` now returns 2 for this case specifically, and
+  # `run_typecheck` gives it an early return with its own message BEFORE
+  # ever invoking `npm ci` — so neither the "differs" wording nor the
+  # generic "npm ci\` FAILED" wording should reach stderr here at all.
   local lockdel="$tmp/lockfile-deleted-by-merge"
   mkdir -p "$lockdel"
   mr_make_lockfile_deleted_repo "$lockdel"
   ( cd "$lockdel" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/lockdel.err"; rc2=$?
   st_expect 'a merge that DELETES package-lock.json is never a silent pass — exit 3, not 0' \
     '3' "$rc2"
-  st_expect 'and the cause is the install, not a phantom type error' \
-    '1' "$(grep -c 'npm ci` FAILED in the merged tree' "$tmp/lockdel.err" || true)"
+  st_expect 'and the cause is named as the merged tree having no lockfile' \
+    '1' "$(grep -c 'the merge result has no package-lock.json' "$tmp/lockdel.err" || true)"
+  st_expect 'and it points at the PR, not the script or runner' \
+    '1' "$(grep -c 'the fix is in the PR, not in this script' "$tmp/lockdel.err" || true)"
+  # The wording must not ASSUME the deletion was accidental: `lockfiles_agree`
+  # returns 2 for a deliberate drop (a package-manager migration) exactly as
+  # it does for an accidental one, so an unconditional "restore or regenerate
+  # package-lock.json" would be the wrong instruction for half the cases that
+  # reach here. The message has to name the deliberate case too.
+  st_expect 'and it does not assume the deletion was accidental' \
+    '1' "$(grep -c 'deliberately' "$tmp/lockdel.err" || true)"
+  st_expect 'and it is NOT reported as the two lockfiles disagreeing in content' \
+    '0' "$(grep -c "package-lock.json differs from" "$tmp/lockdel.err" || true)"
+  st_expect 'and `npm ci` is never invoked to fail on a lockfile that is not there' \
+    '0' "$(grep -c 'npm ci` FAILED in the merged tree' "$tmp/lockdel.err" || true)"
 
   # #4169 follow-up 3: MR_NODE_MODULES is read (resolve_node_modules_source)
   # but nothing had ever SET it — an override only the test uses is one the

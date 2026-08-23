@@ -662,6 +662,17 @@ jobs:
             # or shared exit 2 with the genuine conflict case and rendered
             # as a `::warning::` on an otherwise GREEN job — a runner-side
             # failure that verified nothing reporting the lane as passing.
+            #
+            # #4176: one member of this bucket is NOT a runner/script fault —
+            # the merge itself deleting `package-lock.json` (present on a
+            # parent, absent from the merged tree) is the PR's own doing.
+            # Exit code stays 3 (nothing was type-checked either way, same
+            # as every other member here), but the blanket "fix the script
+            # or the runner rather than the PR" below would misdirect the
+            # author on exactly that one cause, so it no longer states that
+            # categorically — the job log (which the script itself now
+            # names explicitly for this cause) is the source of truth for
+            # WHICH of these applies and who owns the fix.
             {
               echo "### Merge-result check: VERIFIED NOTHING"
               echo
@@ -670,10 +681,12 @@ jobs:
               echo "\`RATCHET_GUARDS\` is absent from the merged tree, no \`.rs\` file exists"
               echo "under any crate root the script knows about, python3 is unavailable,"
               echo "or the typecheck half had nothing to run (#4078: no installed"
-              echo "\`node_modules\` to borrow, or a merged tree with no \`package.json\`,"
-              echo "no \`typecheck\` script or no \`tsconfig.json\`). This is not a pass —"
-              echo "see the job log for which, and fix the script or the runner rather"
-              echo "than the PR."
+              echo "\`node_modules\` to borrow, a merged tree with no \`package.json\`,"
+              echo "no \`typecheck\` script or no \`tsconfig.json\`, or (#4176) the merge"
+              echo "itself deleting \`package-lock.json\`). This is not a pass — see the"
+              echo "job log above for which: most of these are the script's or the"
+              echo "runner's fault, but a lockfile the merge deleted is the PR's own"
+              echo "doing, and the job log says so explicitly when that is the cause."
             } | tee -a "$GITHUB_STEP_SUMMARY" || true
             echo "::error::pr-merge-result-check: verified nothing — the check itself is broken"
             exit 1
