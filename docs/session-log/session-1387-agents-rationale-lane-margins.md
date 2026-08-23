@@ -56,7 +56,7 @@ is an equality assertion and the RSS figures are printed, not bounded, so a term
 can only destroy a diagnostic and redden the lane on runner noise.
 
 So the leash covers the trio only, `profile.default` only (`--run-ignored=only` is passed
-by `bench-slo` alone, with no `--profile`; the two `--profile ci` invocations never run
+by `bench-slo` alone, with no `--profile`; all three `--profile ci` invocations never run
 ignored tests). The 30s SLOW flag still fires underneath it, so decay stays visible — the
 leash removes a spurious kill, not the warning.
 

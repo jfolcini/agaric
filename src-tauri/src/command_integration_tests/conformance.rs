@@ -62,7 +62,8 @@
 //! (<https://github.com/jfolcini/agaric/issues/1079>) is gone.
 //!
 //! That does NOT make this module runner-agnostic. The
-//! `*_parity_local_matches_remote_*` / `local_delete_block_cohort_engine_fanout_*`
+//! `*_local_matches_remote_*` (both the `_parity_` and `_converges_` names)
+//! / `local_delete_block_cohort_engine_fanout_*`
 //! tests below read the PROCESS-GLOBAL
 //! `crate::materializer::sql_only_fallback_count()` before and after their op
 //! and assert the DELTA is 0 ("took the engine path, not the SQL-only
