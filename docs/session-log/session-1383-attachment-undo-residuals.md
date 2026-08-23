@@ -123,3 +123,39 @@ from it, and the selection SQL never reads the delete's `filename`/`fs_path`.
 `sync_daemon` timing flake. `SQLX_OFFLINE=true cargo check --workspace
 --all-targets` clean. `cargo fmt --check` clean — a formatting failure the #4247
 work introduced would have aborted the commit and was caught in review.
+
+## Round-two review — the probe was wider than the bug
+
+The new paired-`add_attachment` probe was added under the pre-existing
+`op_type IN ('delete_attachment', 'rename_attachment')` gate, so it admitted
+orphaned **rename** ops too. After `add → rename → delete` with the row already
+gone, the rename became reachable — and `reverse_rename_attachment` is a pure
+payload swap while `apply_rename_attachment_tx` drops its `rows_affected`, so
+the reverse was a zero-row UPDATE. Verified end to end before fixing: the undo
+*succeeded*, changed nothing (0 attachment rows before and after, block text
+unchanged), appended a reverse op anyway, and inflated the group to 3 when only
+2 of its members could revert.
+
+In the coalesced group case it was worse than a no-op. Reverting newest-first
+restores the row, and then the rename reverse dragged the just-restored
+attachment back to its pre-rename name inside a single Ctrl-Z.
+
+Fixed by narrowing the probe to `delete_attachment` rather than by asserting
+`rows_affected == 1` in the rename reverse. The fallback exists because the
+delete is the op that removed the row the first probe looks for, and the only
+one of the two whose payload cannot name its own block; a rename has no such
+need, since its live-row probe is correct whenever the row exists. The assert
+would instead have turned a silent no-op into a hard failure across *every*
+rename reverse, including the ref-addressed and redo paths this work never
+touched, and would abort whole groups under `skip_non_reversible = false`.
+
+Nothing becomes unreachable. For a user who renames, deletes, then presses
+Ctrl-Z: the first press undoes the delete and restores the attachment under the
+name it held at delete time; because the row is live again, the ordinary
+live-row probe admits the rename, so a second press undoes it. The orphaned
+rename is invisible only while its row is gone, and it self-heals.
+
+Also documented the group-undo blast radius for the **common** GC case, which
+had the sentence only for the rarer compaction-boundary one: a byte-less
+`delete_attachment` joining a 500 ms coalescing window aborts the whole group
+and rolls back reversible siblings.

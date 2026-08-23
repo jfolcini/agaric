@@ -1930,6 +1930,36 @@ pub async fn undo_page_op_inner(
     // `idx_op_log_attachment_id` is EQP-confirmed to serve the correlated
     // subquery as `SEARCH src_add USING INDEX … (attachment_id=?)`).
     //
+    // The probe is gated on `ol.op_type = 'delete_attachment'` INSIDE the
+    // outer `op_type IN ('delete_attachment', 'rename_attachment')`
+    // predicate, and that apparent redundancy is load-bearing (#4278
+    // review). The outer gate predates this fix and is there for
+    // `rename_attachment`, whose owning block the live-`attachments` probe
+    // resolves. Ungated, the paired-`add` probe would ALSO admit renames
+    // whose `attachments` row is already gone — `add → rename → delete` —
+    // and reversing one of those is a silent nothing:
+    // `reverse::attachment_ops::reverse_rename_attachment` is a pure
+    // payload swap that reads no row, and
+    // `agaric_engine::apply::attachments::apply_rename_attachment_tx` never
+    // checks `rows_affected`, so the zero-row `UPDATE` still "succeeds" —
+    // spending a Ctrl-Z, appending a no-effect reverse op and inflating
+    // `find_undo_group_inner`'s count, all invisibly.
+    //
+    // Only the delete needs the fallback: it is the op that removed the
+    // row the first probe looks for, and the only one of the two whose
+    // payload cannot name its own block. An orphaned rename therefore
+    // stays invisible exactly as it was before #4247 — which is also what
+    // `list_page_history` shows today (#4277) — and it self-heals: undoing
+    // the delete restores the row, so the live-`attachments` probe admits
+    // the rename again on the very next Ctrl-Z. The alternative the review
+    // weighed (making the rename reverse assert `rows_affected == 1`) was
+    // rejected: it converts a silent no-op into a hard failure on EVERY
+    // rename reverse, including the ref-addressed `revert_ops` and redo
+    // paths this fix does not touch, and it would leave the user's second
+    // Ctrl-Z as an error with no way forward instead of a working undo.
+    // Pinned by `undo_page_op_skips_orphaned_rename_attachment_4278` and
+    // its two per-site siblings.
+    //
     // It is the SAME source `reverse::attachment_ops::reverse_delete_attachment`
     // reads, with the same `is_replicated = 0` filter — but the admitted set
     // and the rebuildable set are NOT equal, and neither containment holds.
@@ -1967,7 +1997,16 @@ pub async fn undo_page_op_inner(
     // Ctrl-Z issued after the orphan GC has reclaimed the bytes surfaces
     // the `NonReversible` refusal from `require_reverse_attachment_bytes`
     // instead of silently reversing the wrong op. That is the correct
-    // outcome — a visible refusal beats a silent wrong undo.
+    // outcome — a visible refusal beats a silent wrong undo. The same
+    // amplification flagged for the compaction boundary above applies
+    // here, and THIS is the common case: a byte-less `delete_attachment`
+    // that joined a 500 ms coalescing window makes `undo_page_group_inner`
+    // call `revert_ops_in_tx` with `skip_non_reversible = false`, so the
+    // refusal aborts the WHOLE group and rolls back its reversible
+    // siblings — an adjacent `edit_block` that used to undo fine now does
+    // not. That is the pre-existing ref-addressed contract, pinned by
+    // `a_batch_undo_containing_a_byte_less_delete_attachment_aborts_the_whole_batch_3706`;
+    // the UX follow-up is #4249.
     //
     // `find_undo_group_inner` and `undo_page_group_inner` carry the
     // IDENTICAL predicate; all three MUST share one row-numbering universe
@@ -1993,12 +2032,15 @@ pub async fn undo_page_op_inner(
                          WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
                          AND a.block_id IN (SELECT id FROM page_blocks) \
                      ) \
-                     OR EXISTS ( \
-                         SELECT 1 FROM op_log src_add \
-                         WHERE src_add.op_type = 'add_attachment' \
-                         AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
-                         AND src_add.is_replicated = 0 \
-                         AND src_add.block_id IN (SELECT id FROM page_blocks) \
+                     OR ( \
+                         ol.op_type = 'delete_attachment' \
+                         AND EXISTS ( \
+                             SELECT 1 FROM op_log src_add \
+                             WHERE src_add.op_type = 'add_attachment' \
+                             AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                             AND src_add.is_replicated = 0 \
+                             AND src_add.block_id IN (SELECT id FROM page_blocks) \
+                         ) \
                      ) \
                  ) \
              ) \
@@ -2296,7 +2338,8 @@ pub async fn find_undo_group_inner(
     //
     // #4247: `ordered_ops` carries the same two-branch attachment disjunct
     // as `undo_page_op_inner` — the live-`attachments` probe PLUS the
-    // paired-`add_attachment` probe. Without the second branch a
+    // paired-`add_attachment` probe, the latter gated on
+    // `delete_attachment` alone (#4278; see the rationale there). Without the second branch a
     // `delete_attachment` was invisible to `ordered_ops` (no `block_id` on
     // the row, and the delete hard-deleted the `attachments` row the first
     // probe looks for), so the group MISCOUNTED: the delete neither seeded
@@ -2333,12 +2376,15 @@ pub async fn find_undo_group_inner(
                              WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
                              AND a.block_id IN (SELECT id FROM page_blocks) \
                          ) \
-                         OR EXISTS ( \
-                             SELECT 1 FROM op_log src_add \
-                             WHERE src_add.op_type = 'add_attachment' \
-                             AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
-                             AND src_add.is_replicated = 0 \
-                             AND src_add.block_id IN (SELECT id FROM page_blocks) \
+                         OR ( \
+                             ol.op_type = 'delete_attachment' \
+                             AND EXISTS ( \
+                                 SELECT 1 FROM op_log src_add \
+                                 WHERE src_add.op_type = 'add_attachment' \
+                                 AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                                 AND src_add.is_replicated = 0 \
+                                 AND src_add.block_id IN (SELECT id FROM page_blocks) \
+                             ) \
                          ) \
                      ) \
                  ) \
@@ -2459,9 +2505,9 @@ pub async fn undo_page_group_inner(
     // here keeps group undo usable and the rn universe identical to
     // `find_undo_group_inner` / `undo_page_op_inner`.
     // also #4247: the attachment disjunct's second `EXISTS` (owning block
-    // resolved from the paired `add_attachment` op) is part of that same
-    // shared rn universe — see the note on `undo_page_op_inner`'s target
-    // query. Without it a `delete_attachment` was enumerated by none of the
+    // resolved from the paired `add_attachment` op, gated on
+    // `delete_attachment` alone per #4278) is part of that same shared rn
+    // universe — see the note on `undo_page_op_inner`'s target query. Without it a `delete_attachment` was enumerated by none of the
     // three, so a group undo silently skipped the delete.
     let seed_rn: i64 = depth + 1;
     let rows = sqlx::query!(
@@ -2486,12 +2532,15 @@ pub async fn undo_page_group_inner(
                              WHERE a.id = json_extract(ol.payload, '$.attachment_id')
                              AND a.block_id IN (SELECT id FROM page_blocks)
                          )
-                         OR EXISTS (
-                             SELECT 1 FROM op_log src_add
-                             WHERE src_add.op_type = 'add_attachment'
-                             AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id')
-                             AND src_add.is_replicated = 0
-                             AND src_add.block_id IN (SELECT id FROM page_blocks)
+                         OR (
+                             ol.op_type = 'delete_attachment'
+                             AND EXISTS (
+                                 SELECT 1 FROM op_log src_add
+                                 WHERE src_add.op_type = 'add_attachment'
+                                 AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id')
+                                 AND src_add.is_replicated = 0
+                                 AND src_add.block_id IN (SELECT id FROM page_blocks)
+                             )
                          )
                      )
                  )
@@ -4192,6 +4241,233 @@ mod tests {
              invisible to the page-membership predicate again, so depth 0 lands \
              on the edit underneath"
         );
+
+        mat.shutdown();
+    }
+
+    // -----------------------------------------------------------------
+    // #4278 review finding — the #4247 paired-`add_attachment` probe must
+    // admit `delete_attachment` ONLY.
+    //
+    // The probe was added underneath the pre-existing
+    // `op_type IN ('delete_attachment', 'rename_attachment')` gate, so it
+    // also resurrected `rename_attachment` ops whose `attachments` row is
+    // already gone (`add → rename → delete`). Reversing one of those is a
+    // ZERO-ROW `UPDATE`:
+    // `reverse::attachment_ops::reverse_rename_attachment` is a pure
+    // payload swap (it reads no row) and
+    // `agaric_engine::apply::attachments::apply_rename_attachment_tx`
+    // never checks `rows_affected` — so the undo *succeeds*, spends the
+    // user's Ctrl-Z, appends a no-effect reverse op and inflates the
+    // coalesced group, all invisibly.
+    //
+    // The fix gates the SECOND probe on `delete_attachment`, which is the
+    // only op type whose owning block the probe can legitimately recover
+    // (its payload has no `block_id`, and the delete is what removed the
+    // `attachments` row the first probe looks for). An orphaned rename
+    // goes back to being invisible exactly as it was before #4247 — and
+    // nothing is lost by that: undoing the delete restores the row, at
+    // which point the live-`attachments` probe admits the rename again on
+    // the very next Ctrl-Z.
+    //
+    // One test per site. The three queries MUST share one row-numbering
+    // universe (see the #2549 note in `find_undo_group_inner`), so a fix
+    // landed in two of the three would be worse than no fix at all.
+    // -----------------------------------------------------------------
+
+    /// Seed the orphaned-rename shape on one page, one device:
+    /// `create_block` @TS, `add_attachment` @TS+1, `edit_block` (`v1` →
+    /// `v2`) @TS+1000, `rename_attachment` (`f.png` → `g.png`) @TS+1001,
+    /// `delete_attachment` @TS+1002 — with the `attachments` row
+    /// hard-deleted, as `delete_attachment_inner` leaves it.
+    ///
+    /// The three newest ops sit 1 ms apart and 999 ms clear of the seeded
+    /// pair, so a 10 ms grouping window contains exactly them.
+    ///
+    /// Newest-first, the page's undoable ops are therefore
+    /// `[delete_attachment, edit_block, add_attachment, create_block]` —
+    /// and, while the second probe still admitted renames, the orphaned
+    /// `rename_attachment` wedged itself in at depth 1.
+    async fn seed_add_rename_delete_attachment(pool: &SqlitePool) -> (BlockId, BlockId, BlockId) {
+        use agaric_store::op::{
+            DeleteAttachmentPayload, EditBlockPayload, RenameAttachmentPayload,
+        };
+
+        let (page_id, child_id, att_id) = seed_page_with_attachment(pool).await;
+
+        let edit = OpPayload::EditBlock(EditBlockPayload {
+            block_id: child_id.clone(),
+            to_text: "v2".into(),
+            prev_edit: None,
+        });
+        append_local_op_at(pool, DEV, edit, FIXED_TS + 1000)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET content = 'v2' WHERE id = ?")
+            .bind(child_id.as_str())
+            .execute(pool)
+            .await
+            .unwrap();
+
+        let rename = OpPayload::RenameAttachment(RenameAttachmentPayload {
+            attachment_id: att_id.clone(),
+            old_filename: "f.png".into(),
+            new_filename: "g.png".into(),
+        });
+        append_local_op_at(pool, DEV, rename, FIXED_TS + 1001)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE attachments SET filename = 'g.png' WHERE id = ?")
+            .bind(att_id.as_str())
+            .execute(pool)
+            .await
+            .unwrap();
+
+        // `filename` is captured from the LIVE row inside the delete's own
+        // transaction (#4262), so it is the POST-rename name.
+        let del = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+            attachment_id: att_id.clone(),
+            fs_path: "attachments/p_f.png".into(),
+            filename: "g.png".into(),
+        });
+        append_local_op_at(pool, DEV, del, FIXED_TS + 1002)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM attachments WHERE id = ?")
+            .bind(att_id.as_str())
+            .execute(pool)
+            .await
+            .unwrap();
+
+        (page_id, child_id, att_id)
+    }
+
+    /// #4278 site 1 of 3 — `undo_page_op_inner`'s target query.
+    ///
+    /// Depth 1 is the op one Ctrl-Z below the delete. With the orphaned
+    /// rename admitted it landed THERE: the reverse updated zero rows, the
+    /// block text stayed at `v2`, and the user's second Ctrl-Z bought
+    /// nothing. Depth 1 must be the `edit_block`, and reversing it must
+    /// actually put `v1` back.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_skips_orphaned_rename_attachment_4278() {
+        let (pool, _dir) = test_pool().await;
+        let (page_id, child_id, att_id) = seed_add_rename_delete_attachment(&pool).await;
+
+        // Premise: the rename op really is in the log, and its row really
+        // is gone — so only the paired-`add` probe could admit it.
+        let renames: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE op_type = 'rename_attachment'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(renames, 1, "premise: exactly one rename_attachment op");
+        let live_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
+            .bind(att_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            live_rows, 0,
+            "premise: the delete hard-deleted the row, so the live-`attachments` \
+             probe cannot admit the rename"
+        );
+
+        let mat = Materializer::new(pool.clone());
+        let res = undo_page_op_inner(&pool, DEV, &mat, page_id.to_string(), 1)
+            .await
+            .expect("undo at depth 1 must resolve");
+
+        assert_eq!(
+            res.reversed_op_type, "edit_block",
+            "#4278: an orphaned rename_attachment must not be admitted — its \
+             reverse is a zero-row UPDATE that silently spends an undo step"
+        );
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(child_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            content, "v1",
+            "the undo step must have a visible effect: the edit is reversed"
+        );
+
+        mat.shutdown();
+    }
+
+    /// #4278 site 2 of 3 — `find_undo_group_inner`, the FE's group sizer.
+    ///
+    /// The orphaned rename sat between the delete and the edit, 1 ms from
+    /// each, so it did not merely appear in the group: it INFLATED it to
+    /// three ops, one of which cannot change anything. With the probe
+    /// narrowed the delete and the edit are still 2 ms apart and still
+    /// group — the count drops to the two ops that actually revert.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn find_undo_group_excludes_orphaned_rename_attachment_4278() {
+        let (pool, _dir) = test_pool().await;
+        let (page_id, _child_id, _att_id) = seed_add_rename_delete_attachment(&pool).await;
+
+        let group = find_undo_group_inner(&pool, page_id.as_str(), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            group, 2,
+            "#4278: the group is [delete_attachment, edit_block]; the orphaned \
+             rename between them must not swell it to 3; got {group}"
+        );
+
+        // Guard against a false pass by a vanished window: all five ops are
+        // in the log, so the count is a filtering result, not an empty one.
+        let ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(ops, 5, "expected exactly five seeded ops; got {ops}");
+    }
+
+    /// #4278 site 3 of 3 — `undo_page_group_inner`, the fused batch undo.
+    ///
+    /// Reverting newest-first restores the row before the rename is
+    /// reached, so here the stray reverse was not a no-op but something
+    /// arguably worse: it renamed the just-restored attachment back to
+    /// `f.png`, the name the user had already moved away from, inside a
+    /// single Ctrl-Z. The group must revert the delete and the edit and
+    /// leave the attachment under its delete-time name (#4262).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_group_excludes_orphaned_rename_attachment_4278() {
+        let (pool, _dir) = test_pool().await;
+        let (page_id, child_id, att_id) = seed_add_rename_delete_attachment(&pool).await;
+
+        // No app_data_dir → the #3706 byte guard is skipped; this test pins
+        // enumeration, not byte reclamation.
+        let mat = Materializer::new(pool.clone());
+        let results = undo_page_group_inner(&pool, DEV, &mat, page_id.to_string(), 0, 10)
+            .await
+            .expect("group undo must succeed");
+
+        let reversed: Vec<&str> = results
+            .iter()
+            .map(|r| r.reversed_op_type.as_str())
+            .collect();
+        assert_eq!(
+            reversed,
+            vec!["delete_attachment", "edit_block"],
+            "#4278: the coalesced group must not pick up the orphaned rename"
+        );
+
+        assert_eq!(
+            filename_of(&pool, &att_id).await,
+            "g.png",
+            "the restored attachment keeps the name it held at delete time; the \
+             stray rename reverse would have dragged it back to f.png"
+        );
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(child_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(content, "v1", "the group also reverses the edit it spans");
 
         mat.shutdown();
     }
